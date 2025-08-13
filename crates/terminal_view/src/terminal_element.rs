@@ -127,7 +127,7 @@ impl BatchedTextRun {
         cx: &mut App,
     ) {
         let pos = Point::new(
-            (origin.x + self.start_point.column as f32 * dimensions.cell_width).floor(),
+            origin.x + self.start_point.column as f32 * dimensions.cell_width,
             origin.y + self.start_point.line as f32 * dimensions.line_height,
         );
 
@@ -136,7 +136,7 @@ impl BatchedTextRun {
             .shape_line(
                 self.text.clone().into(),
                 self.font_size.to_pixels(window.rem_size()),
-                &[self.style.clone()],
+                std::slice::from_ref(&self.style),
                 Some(dimensions.cell_width),
             )
             .paint(pos, dimensions.line_height, window, cx);
@@ -494,6 +494,30 @@ impl TerminalElement {
         }
     }
 
+    /// Checks if a character is a decorative block/box-like character that should
+    /// preserve its exact colors without contrast adjustment.
+    ///
+    /// This specifically targets characters used as visual connectors, separators,
+    /// and borders where color matching with adjacent backgrounds is critical.
+    /// Regular icons (git, folders, etc.) are excluded as they need to remain readable.
+    ///
+    /// Fixes https://github.com/zed-industries/zed/issues/34234
+    fn is_decorative_character(ch: char) -> bool {
+        matches!(
+            ch as u32,
+            // Unicode Box Drawing and Block Elements
+            0x2500..=0x257F // Box Drawing (└ ┐ ─ │ etc.)
+            | 0x2580..=0x259F // Block Elements (▀ ▄ █ ░ ▒ ▓ etc.)
+            | 0x25A0..=0x25FF // Geometric Shapes (■ ▶ ● etc. - includes triangular/circular separators)
+
+            // Private Use Area - Powerline separator symbols only
+            | 0xE0B0..=0xE0B7 // Powerline separators: triangles (E0B0-E0B3) and half circles (E0B4-E0B7)
+            | 0xE0B8..=0xE0BF // Additional Powerline separators: angles, flames, etc.
+            | 0xE0C0..=0xE0C8 // Powerline separators: pixelated triangles, curves
+            | 0xE0CC..=0xE0D4 // Powerline separators: rounded triangles, ice/lego style
+        )
+    }
+
     /// Converts the Alacritty cell styles to GPUI text styles and background color.
     fn cell_style(
         indexed: &IndexedCell,
@@ -508,7 +532,10 @@ impl TerminalElement {
         let mut fg = convert_color(&fg, colors);
         let bg = convert_color(&bg, colors);
 
-        fg = color_contrast::ensure_minimum_contrast(fg, bg, minimum_contrast);
+        // Only apply contrast adjustment to non-decorative characters
+        if !Self::is_decorative_character(indexed.c) {
+            fg = color_contrast::ensure_minimum_contrast(fg, bg, minimum_contrast);
+        }
 
         // Ghostty uses (175/255) as the multiplier (~0.69), Alacritty uses 0.66, Kitty
         // uses 0.75. We're using 0.7 because it's pretty well in the middle of that.
@@ -1574,6 +1601,101 @@ pub fn convert_color(fg: &terminal::alacritty_terminal::vte::ansi::Color, theme:
 mod tests {
     use super::*;
     use gpui::{AbsoluteLength, Hsla, font};
+
+    #[test]
+    fn test_is_decorative_character() {
+        // Box Drawing characters (U+2500 to U+257F)
+        assert!(TerminalElement::is_decorative_character('─')); // U+2500
+        assert!(TerminalElement::is_decorative_character('│')); // U+2502
+        assert!(TerminalElement::is_decorative_character('┌')); // U+250C
+        assert!(TerminalElement::is_decorative_character('┐')); // U+2510
+        assert!(TerminalElement::is_decorative_character('└')); // U+2514
+        assert!(TerminalElement::is_decorative_character('┘')); // U+2518
+        assert!(TerminalElement::is_decorative_character('┼')); // U+253C
+
+        // Block Elements (U+2580 to U+259F)
+        assert!(TerminalElement::is_decorative_character('▀')); // U+2580
+        assert!(TerminalElement::is_decorative_character('▄')); // U+2584
+        assert!(TerminalElement::is_decorative_character('█')); // U+2588
+        assert!(TerminalElement::is_decorative_character('░')); // U+2591
+        assert!(TerminalElement::is_decorative_character('▒')); // U+2592
+        assert!(TerminalElement::is_decorative_character('▓')); // U+2593
+
+        // Geometric Shapes - block/box-like subset (U+25A0 to U+25D7)
+        assert!(TerminalElement::is_decorative_character('■')); // U+25A0
+        assert!(TerminalElement::is_decorative_character('□')); // U+25A1
+        assert!(TerminalElement::is_decorative_character('▲')); // U+25B2
+        assert!(TerminalElement::is_decorative_character('▼')); // U+25BC
+        assert!(TerminalElement::is_decorative_character('◆')); // U+25C6
+        assert!(TerminalElement::is_decorative_character('●')); // U+25CF
+
+        // The specific character from the issue
+        assert!(TerminalElement::is_decorative_character('◗')); // U+25D7
+        assert!(TerminalElement::is_decorative_character('◘')); // U+25D8 (now included in Geometric Shapes)
+        assert!(TerminalElement::is_decorative_character('◙')); // U+25D9 (now included in Geometric Shapes)
+
+        // Powerline symbols (Private Use Area)
+        assert!(TerminalElement::is_decorative_character('\u{E0B0}')); // Powerline right triangle
+        assert!(TerminalElement::is_decorative_character('\u{E0B2}')); // Powerline left triangle
+        assert!(TerminalElement::is_decorative_character('\u{E0B4}')); // Powerline right half circle (the actual issue!)
+        assert!(TerminalElement::is_decorative_character('\u{E0B6}')); // Powerline left half circle
+
+        // Characters that should NOT be considered decorative
+        assert!(!TerminalElement::is_decorative_character('A')); // Regular letter
+        assert!(!TerminalElement::is_decorative_character('$')); // Symbol
+        assert!(!TerminalElement::is_decorative_character(' ')); // Space
+        assert!(!TerminalElement::is_decorative_character('←')); // U+2190 (Arrow, not in our ranges)
+        assert!(!TerminalElement::is_decorative_character('→')); // U+2192 (Arrow, not in our ranges)
+        assert!(!TerminalElement::is_decorative_character('\u{F00C}')); // Font Awesome check (icon, needs contrast)
+        assert!(!TerminalElement::is_decorative_character('\u{E711}')); // Devicons (icon, needs contrast)
+        assert!(!TerminalElement::is_decorative_character('\u{EA71}')); // Codicons folder (icon, needs contrast)
+        assert!(!TerminalElement::is_decorative_character('\u{F401}')); // Octicons (icon, needs contrast)
+        assert!(!TerminalElement::is_decorative_character('\u{1F600}')); // Emoji (not in our ranges)
+    }
+
+    #[test]
+    fn test_decorative_character_boundary_cases() {
+        // Test exact boundaries of our ranges
+        // Box Drawing range boundaries
+        assert!(TerminalElement::is_decorative_character('\u{2500}')); // First char
+        assert!(TerminalElement::is_decorative_character('\u{257F}')); // Last char
+        assert!(!TerminalElement::is_decorative_character('\u{24FF}')); // Just before
+
+        // Block Elements range boundaries
+        assert!(TerminalElement::is_decorative_character('\u{2580}')); // First char
+        assert!(TerminalElement::is_decorative_character('\u{259F}')); // Last char
+
+        // Geometric Shapes subset boundaries
+        assert!(TerminalElement::is_decorative_character('\u{25A0}')); // First char
+        assert!(TerminalElement::is_decorative_character('\u{25FF}')); // Last char
+        assert!(!TerminalElement::is_decorative_character('\u{2600}')); // Just after
+    }
+
+    #[test]
+    fn test_decorative_characters_bypass_contrast_adjustment() {
+        // Decorative characters should not be affected by contrast adjustment
+
+        // The specific character from issue #34234
+        let problematic_char = '◗'; // U+25D7
+        assert!(
+            TerminalElement::is_decorative_character(problematic_char),
+            "Character ◗ (U+25D7) should be recognized as decorative"
+        );
+
+        // Verify some other commonly used decorative characters
+        assert!(TerminalElement::is_decorative_character('│')); // Vertical line
+        assert!(TerminalElement::is_decorative_character('─')); // Horizontal line
+        assert!(TerminalElement::is_decorative_character('█')); // Full block
+        assert!(TerminalElement::is_decorative_character('▓')); // Dark shade
+        assert!(TerminalElement::is_decorative_character('■')); // Black square
+        assert!(TerminalElement::is_decorative_character('●')); // Black circle
+
+        // Verify normal text characters are NOT decorative
+        assert!(!TerminalElement::is_decorative_character('A'));
+        assert!(!TerminalElement::is_decorative_character('1'));
+        assert!(!TerminalElement::is_decorative_character('$'));
+        assert!(!TerminalElement::is_decorative_character(' '));
+    }
 
     #[test]
     fn test_contrast_adjustment_logic() {

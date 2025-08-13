@@ -20,6 +20,7 @@ pub struct EditorSettings {
     pub lsp_highlight_debounce: u64,
     pub hover_popover_enabled: bool,
     pub hover_popover_delay: u64,
+    pub status_bar: StatusBar,
     pub toolbar: Toolbar,
     pub scrollbar: Scrollbar,
     pub minimap: Minimap,
@@ -123,6 +124,14 @@ pub struct JupyterContent {
     ///
     /// Default: true
     pub enabled: Option<bool>,
+}
+
+#[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct StatusBar {
+    /// Whether to display the active language button in the status bar.
+    ///
+    /// Default: true
+    pub active_language_button: bool,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -395,6 +404,8 @@ pub enum SnippetSortOrder {
     Inline,
     /// Place snippets at the bottom of the completion list
     Bottom,
+    /// Do not show snippets in the completion list
+    None,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
@@ -438,6 +449,8 @@ pub struct EditorSettingsContent {
     ///
     /// Default: 300
     pub hover_popover_delay: Option<u64>,
+    /// Status bar related settings
+    pub status_bar: Option<StatusBarContent>,
     /// Toolbar related settings
     pub toolbar: Option<ToolbarContent>,
     /// Scrollbar related settings
@@ -563,6 +576,15 @@ pub struct EditorSettingsContent {
     ///
     /// Default: [`DocumentColorsRenderMode::Inlay`]
     pub lsp_document_colors: Option<DocumentColorsRenderMode>,
+}
+
+// Status bar related settings
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct StatusBarContent {
+    /// Whether to display the active language button in the status bar.
+    ///
+    /// Default: true
+    pub active_language_button: Option<bool>,
 }
 
 // Toolbar related settings

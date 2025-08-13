@@ -74,6 +74,12 @@ static ZED_CLIENT_CHECKSUM_SEED: LazyLock<Option<Vec<u8>>> = LazyLock::new(|| {
         })
 });
 
+pub static MINIDUMP_ENDPOINT: LazyLock<Option<String>> = LazyLock::new(|| {
+    option_env!("ZED_MINIDUMP_ENDPOINT")
+        .map(|s| s.to_owned())
+        .or_else(|| env::var("ZED_MINIDUMP_ENDPOINT").ok())
+});
+
 static DOTNET_PROJECT_FILES_REGEX: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"^(global\.json|Directory\.Build\.props|.*\.(csproj|fsproj|vbproj|sln))$").unwrap()
 });
@@ -334,22 +340,35 @@ impl Telemetry {
     }
 
     pub fn log_edit_event(self: &Arc<Self>, environment: &'static str, is_via_ssh: bool) {
+        static LAST_EVENT_TIME: Mutex<Option<Instant>> = Mutex::new(None);
+
         let mut state = self.state.lock();
         let period_data = state.event_coalescer.log_event(environment);
         drop(state);
 
-        if let Some((start, end, environment)) = period_data {
-            let duration = end
-                .saturating_duration_since(start)
-                .min(Duration::from_secs(60 * 60 * 24))
-                .as_millis() as i64;
+        if let Some(mut last_event) = LAST_EVENT_TIME.try_lock() {
+            let current_time = std::time::Instant::now();
+            let last_time = last_event.get_or_insert(current_time);
 
-            telemetry::event!(
-                "Editor Edited",
-                duration = duration,
-                environment = environment,
-                is_via_ssh = is_via_ssh
-            );
+            if current_time.duration_since(*last_time) > Duration::from_secs(60 * 10) {
+                *last_time = current_time;
+            } else {
+                return;
+            }
+
+            if let Some((start, end, environment)) = period_data {
+                let duration = end
+                    .saturating_duration_since(start)
+                    .min(Duration::from_secs(60 * 60 * 24))
+                    .as_millis() as i64;
+
+                telemetry::event!(
+                    "Editor Edited",
+                    duration = duration,
+                    environment = environment,
+                    is_via_ssh = is_via_ssh
+                );
+            }
         }
     }
 
@@ -358,13 +377,13 @@ impl Telemetry {
         worktree_id: WorktreeId,
         updated_entries_set: &UpdatedEntriesSet,
     ) {
-        let Some(project_type_names) = self.detect_project_types(worktree_id, updated_entries_set)
+        let Some(project_types) = self.detect_project_types(worktree_id, updated_entries_set)
         else {
             return;
         };
 
-        for project_type_name in project_type_names {
-            telemetry::event!("Project Opened", project_type = project_type_name);
+        for project_type in project_types {
+            telemetry::event!("Project Opened", project_type = project_type);
         }
     }
 

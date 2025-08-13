@@ -58,14 +58,14 @@ use std::{
     path::PathBuf,
     process::ExitStatus,
     sync::Arc,
-    time::{Duration, Instant},
+    time::Instant,
 };
 use thiserror::Error;
 
 use gpui::{
-    AnyWindowHandle, App, AppContext as _, Bounds, ClipboardItem, Context, EventEmitter, Hsla,
-    Keystroke, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point,
-    Rgba, ScrollWheelEvent, SharedString, Size, Task, TouchPhase, Window, actions, black, px,
+    App, AppContext as _, Bounds, ClipboardItem, Context, EventEmitter, Hsla, Keystroke, Modifiers,
+    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, Rgba,
+    ScrollWheelEvent, SharedString, Size, Task, TouchPhase, Window, actions, black, px,
 };
 
 use crate::mappings::{colors::to_alac_rgb, keys::to_esc_str};
@@ -162,7 +162,8 @@ enum InternalEvent {
     UpdateSelection(Point<Pixels>),
     // Adjusted mouse position, should open
     FindHyperlink(Point<Pixels>, bool),
-    Copy,
+    // Whether keep selection when copy
+    Copy(Option<bool>),
     // Vi mode events
     ToggleViMode,
     ViMotion(ViMotion),
@@ -350,7 +351,7 @@ impl TerminalBuilder {
         alternate_scroll: AlternateScroll,
         max_scroll_history_lines: Option<usize>,
         is_ssh_terminal: bool,
-        window: AnyWindowHandle,
+        window_id: u64,
         completion_tx: Sender<Option<ExitStatus>>,
         cx: &App,
     ) -> Result<TerminalBuilder> {
@@ -371,35 +372,48 @@ impl TerminalBuilder {
             release_channel::AppVersion::global(cx).to_string(),
         );
 
-        let mut terminal_title_override = None;
+        #[derive(Default)]
+        struct ShellParams {
+            program: String,
+            args: Option<Vec<String>>,
+            title_override: Option<SharedString>,
+        }
+
+        let shell_params = match shell.clone() {
+            Shell::System => {
+                #[cfg(target_os = "windows")]
+                {
+                    Some(ShellParams {
+                        program: util::get_windows_system_shell(),
+                        ..Default::default()
+                    })
+                }
+                #[cfg(not(target_os = "windows"))]
+                None
+            }
+            Shell::Program(program) => Some(ShellParams {
+                program,
+                ..Default::default()
+            }),
+            Shell::WithArguments {
+                program,
+                args,
+                title_override,
+            } => Some(ShellParams {
+                program,
+                args: Some(args),
+                title_override,
+            }),
+        };
+        let terminal_title_override = shell_params.as_ref().and_then(|e| e.title_override.clone());
+
+        #[cfg(windows)]
+        let shell_program = shell_params.as_ref().map(|params| params.program.clone());
 
         let pty_options = {
-            let alac_shell = match shell.clone() {
-                Shell::System => {
-                    #[cfg(target_os = "windows")]
-                    {
-                        Some(alacritty_terminal::tty::Shell::new(
-                            util::get_windows_system_shell(),
-                            Vec::new(),
-                        ))
-                    }
-                    #[cfg(not(target_os = "windows"))]
-                    {
-                        None
-                    }
-                }
-                Shell::Program(program) => {
-                    Some(alacritty_terminal::tty::Shell::new(program, Vec::new()))
-                }
-                Shell::WithArguments {
-                    program,
-                    args,
-                    title_override,
-                } => {
-                    terminal_title_override = title_override;
-                    Some(alacritty_terminal::tty::Shell::new(program, args))
-                }
-            };
+            let alac_shell = shell_params.map(|params| {
+                alacritty_terminal::tty::Shell::new(params.program, params.args.unwrap_or_default())
+            });
 
             alacritty_terminal::tty::Options {
                 shell: alac_shell,
@@ -449,11 +463,7 @@ impl TerminalBuilder {
         let term = Arc::new(FairMutex::new(term));
 
         //Setup the pty...
-        let pty = match tty::new(
-            &pty_options,
-            TerminalBounds::default().into(),
-            window.window_id().as_u64(),
-        ) {
+        let pty = match tty::new(&pty_options, TerminalBounds::default().into(), window_id) {
             Ok(pty) => pty,
             Err(error) => {
                 bail!(TerminalError {
@@ -503,6 +513,8 @@ impl TerminalBuilder {
             python_venv_directory,
             last_mouse_move_time: Instant::now(),
             last_hyperlink_search_position: None,
+            #[cfg(windows)]
+            shell_program,
         };
 
         Ok(TerminalBuilder {
@@ -522,10 +534,15 @@ impl TerminalBuilder {
 
                 'outer: loop {
                     let mut events = Vec::new();
+
+                    #[cfg(any(test, feature = "test-support"))]
+                    let mut timer = cx.background_executor().simulate_random_delay().fuse();
+                    #[cfg(not(any(test, feature = "test-support")))]
                     let mut timer = cx
                         .background_executor()
-                        .timer(Duration::from_millis(4))
+                        .timer(std::time::Duration::from_millis(4))
                         .fuse();
+
                     let mut wakeup = false;
                     loop {
                         futures::select_biased! {
@@ -663,6 +680,8 @@ pub struct Terminal {
     is_ssh_terminal: bool,
     last_mouse_move_time: Instant,
     last_hyperlink_search_position: Option<Point<Pixels>>,
+    #[cfg(windows)]
+    shell_program: Option<String>,
 }
 
 pub struct TaskState {
@@ -708,6 +727,20 @@ impl Terminal {
     fn process_event(&mut self, event: AlacTermEvent, cx: &mut Context<Self>) {
         match event {
             AlacTermEvent::Title(title) => {
+                // ignore default shell program title change as windows always sends those events
+                // and it would end up showing the shell executable path in breadcrumbs
+                #[cfg(windows)]
+                {
+                    if self
+                        .shell_program
+                        .as_ref()
+                        .map(|e| *e == title)
+                        .unwrap_or(false)
+                    {
+                        return;
+                    }
+                }
+
                 self.breadcrumb_text = title;
                 cx.emit(Event::BreadcrumbsChanged);
             }
@@ -900,13 +933,13 @@ impl Terminal {
                 }
             }
 
-            InternalEvent::Copy => {
+            InternalEvent::Copy(keep_selection) => {
                 if let Some(txt) = term.selection_to_string() {
                     cx.write_to_clipboard(ClipboardItem::new_string(txt));
-
-                    let settings = TerminalSettings::get_global(cx);
-
-                    if !settings.keep_selection_on_copy {
+                    if !keep_selection.unwrap_or_else(|| {
+                        let settings = TerminalSettings::get_global(cx);
+                        settings.keep_selection_on_copy
+                    }) {
                         self.events.push_back(InternalEvent::SetSelection(None));
                     }
                 }
@@ -1077,8 +1110,8 @@ impl Terminal {
             .push_back(InternalEvent::SetSelection(selection));
     }
 
-    pub fn copy(&mut self) {
-        self.events.push_back(InternalEvent::Copy);
+    pub fn copy(&mut self, keep_selection: Option<bool>) {
+        self.events.push_back(InternalEvent::Copy(keep_selection));
     }
 
     pub fn clear(&mut self) {
@@ -1236,8 +1269,7 @@ impl Terminal {
             }
 
             "y" => {
-                self.events.push_back(InternalEvent::Copy);
-                self.events.push_back(InternalEvent::SetSelection(None));
+                self.copy(Some(false));
                 return;
             }
 
@@ -1622,7 +1654,7 @@ impl Terminal {
             }
         } else {
             if e.button == MouseButton::Left && setting.copy_on_select {
-                self.copy();
+                self.copy(Some(true));
             }
 
             //Hyperlinks
@@ -1790,6 +1822,14 @@ impl Terminal {
                         })
                         .unwrap_or_else(|| "Terminal".to_string())
                 }),
+        }
+    }
+
+    pub fn kill_active_task(&mut self) {
+        if let Some(task) = self.task() {
+            if task.status == TaskStatus::Running {
+                self.pty_info.kill_current_process();
+            }
         }
     }
 
@@ -2069,16 +2109,56 @@ pub fn rgba_color(r: u8, g: u8, b: u8) -> Hsla {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+    use crate::{
+        IndexedCell, TerminalBounds, TerminalBuilder, TerminalContent, content_index_for_mouse,
+        rgb_for_index,
+    };
     use alacritty_terminal::{
         index::{Column, Line, Point as AlacPoint},
         term::cell::Cell,
     };
-    use gpui::{Pixels, Point, bounds, point, size};
+    use collections::HashMap;
+    use gpui::{Pixels, Point, TestAppContext, bounds, point, size};
     use rand::{Rng, distributions::Alphanumeric, rngs::ThreadRng, thread_rng};
 
-    use crate::{
-        IndexedCell, TerminalBounds, TerminalContent, content_index_for_mouse, rgb_for_index,
-    };
+    #[cfg_attr(windows, ignore = "TODO: fix on windows")]
+    #[gpui::test]
+    async fn test_basic_terminal(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+
+        let (completion_tx, completion_rx) = smol::channel::unbounded();
+        let terminal = cx.new(|cx| {
+            TerminalBuilder::new(
+                None,
+                None,
+                None,
+                task::Shell::WithArguments {
+                    program: "echo".into(),
+                    args: vec!["hello".into()],
+                    title_override: None,
+                },
+                HashMap::default(),
+                CursorShape::default(),
+                AlternateScroll::On,
+                None,
+                false,
+                0,
+                completion_tx,
+                cx,
+            )
+            .unwrap()
+            .subscribe(cx)
+        });
+        assert_eq!(
+            completion_rx.recv().await.unwrap(),
+            Some(ExitStatus::default())
+        );
+        assert_eq!(
+            terminal.update(cx, |term, _| term.get_content()).trim(),
+            "hello"
+        );
+    }
 
     #[test]
     fn test_rgb_for_index() {

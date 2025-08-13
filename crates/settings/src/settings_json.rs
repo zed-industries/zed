@@ -190,6 +190,7 @@ fn replace_value_in_json_text(
                 }
             }
 
+            let mut removed_comma = false;
             // Look backward for a preceding comma first
             let preceding_text = text.get(0..removal_start).unwrap_or("");
             if let Some(comma_pos) = preceding_text.rfind(',') {
@@ -197,10 +198,12 @@ fn replace_value_in_json_text(
                 let between_comma_and_key = text.get(comma_pos + 1..removal_start).unwrap_or("");
                 if between_comma_and_key.trim().is_empty() {
                     removal_start = comma_pos;
+                    removed_comma = true;
                 }
             }
-
-            if let Some(remaining_text) = text.get(existing_value_range.end..) {
+            if let Some(remaining_text) = text.get(existing_value_range.end..)
+                && !removed_comma
+            {
                 let mut chars = remaining_text.char_indices();
                 while let Some((offset, ch)) = chars.next() {
                     if ch == ',' {
@@ -353,29 +356,58 @@ pub fn replace_top_level_array_value_in_json_text(
     let range = cursor.node().range();
     let indent_width = range.start_point.column;
     let offset = range.start_byte;
-    let value_str = &text[range.start_byte..range.end_byte];
+    let text_range = range.start_byte..range.end_byte;
+    let value_str = &text[text_range.clone()];
     let needs_indent = range.start_point.row > 0;
 
-    let (mut replace_range, mut replace_value) =
-        replace_value_in_json_text(value_str, key_path, tab_size, new_value, replace_key);
-
-    replace_range.start += offset;
-    replace_range.end += offset;
-
-    if needs_indent {
-        let increased_indent = format!("\n{space:width$}", space = ' ', width = indent_width);
-        replace_value = replace_value.replace('\n', &increased_indent);
-        // replace_value.push('\n');
+    if new_value.is_none() && key_path.is_empty() {
+        let mut remove_range = text_range.clone();
+        if index == 0 {
+            while cursor.goto_next_sibling()
+                && (cursor.node().is_extra() || cursor.node().is_missing())
+            {}
+            if cursor.node().kind() == "," {
+                remove_range.end = cursor.node().range().end_byte;
+            }
+            if let Some(next_newline) = &text[remove_range.end + 1..].find('\n') {
+                if text[remove_range.end + 1..remove_range.end + next_newline]
+                    .chars()
+                    .all(|c| c.is_ascii_whitespace())
+                {
+                    remove_range.end = remove_range.end + next_newline;
+                }
+            }
+        } else {
+            while cursor.goto_previous_sibling()
+                && (cursor.node().is_extra() || cursor.node().is_missing())
+            {}
+            if cursor.node().kind() == "," {
+                remove_range.start = cursor.node().range().start_byte;
+            }
+        }
+        return Ok((remove_range, String::new()));
     } else {
-        while let Some(idx) = replace_value.find("\n ") {
-            replace_value.remove(idx + 1);
-        }
-        while let Some(idx) = replace_value.find("\n") {
-            replace_value.replace_range(idx..idx + 1, " ");
-        }
-    }
+        let (mut replace_range, mut replace_value) =
+            replace_value_in_json_text(value_str, key_path, tab_size, new_value, replace_key);
 
-    return Ok((replace_range, replace_value));
+        replace_range.start += offset;
+        replace_range.end += offset;
+
+        if needs_indent {
+            let increased_indent = format!("\n{space:width$}", space = ' ', width = indent_width);
+            replace_value = replace_value.replace('\n', &increased_indent);
+            // replace_value.push('\n');
+        } else {
+            while let Some(idx) = replace_value.find("\n ") {
+                replace_value.remove(idx + 1);
+            }
+            while let Some(idx) = replace_value.find("\n") {
+                replace_value.replace_range(idx..idx + 1, " ");
+            }
+        }
+
+        return Ok((replace_range, replace_value));
+    }
 }
 
 pub fn append_top_level_array_value_in_json_text(
@@ -408,17 +440,19 @@ pub fn append_top_level_array_value_in_json_text(
     );
     debug_assert_eq!(cursor.node().kind(), "]");
     let close_bracket_start = cursor.node().start_byte();
-    cursor.goto_previous_sibling();
-    while (cursor.node().is_extra() || cursor.node().is_missing()) && cursor.goto_previous_sibling()
-    {
-    }
+    while cursor.goto_previous_sibling()
+        && (cursor.node().is_extra() || cursor.node().is_missing())
+        && !cursor.node().is_error()
+    {}
 
     let mut comma_range = None;
     let mut prev_item_range = None;
 
-    if cursor.node().kind() == "," {
+    if cursor.node().kind() == "," || is_error_of_kind(&mut cursor, ",") {
         comma_range = Some(cursor.node().byte_range());
-        while cursor.goto_previous_sibling() && cursor.node().is_extra() {}
+        while cursor.goto_previous_sibling()
+            && (cursor.node().is_extra() || cursor.node().is_missing())
+        {}
 
         debug_assert_ne!(cursor.node().kind(), "[");
         prev_item_range = Some(cursor.node().range());
@@ -485,6 +519,17 @@ pub fn append_top_level_array_value_in_json_text(
         replace_value.push('\n');
     }
     return Ok((replace_range, replace_value));
+
+    fn is_error_of_kind(cursor: &mut tree_sitter::TreeCursor<'_>, kind: &str) -> bool {
+        if cursor.node().kind() != "ERROR" {
+            return false;
+        }
+
+        let descendant_index = cursor.descendant_index();
+        let res = cursor.goto_first_child() && cursor.node().kind() == kind;
+        cursor.goto_descendant(descendant_index);
+        return res;
+    }
 }
 
 pub fn to_pretty_json(
@@ -1005,14 +1050,14 @@ mod tests {
             input: impl ToString,
             index: usize,
             key_path: &[&str],
-            value: Value,
+            value: Option<Value>,
             expected: impl ToString,
         ) {
             let input = input.to_string();
             let result = replace_top_level_array_value_in_json_text(
                 &input,
                 key_path,
-                Some(&value),
+                value.as_ref(),
                 None,
                 index,
                 4,
@@ -1023,10 +1068,10 @@ mod tests {
             pretty_assertions::assert_eq!(expected.to_string(), result_str);
         }
 
-        check_array_replace(r#"[1, 3, 3]"#, 1, &[], json!(2), r#"[1, 2, 3]"#);
-        check_array_replace(r#"[1, 3, 3]"#, 2, &[], json!(2), r#"[1, 3, 2]"#);
-        check_array_replace(r#"[1, 3, 3,]"#, 3, &[], json!(2), r#"[1, 3, 3, 2]"#);
-        check_array_replace(r#"[1, 3, 3,]"#, 100, &[], json!(2), r#"[1, 3, 3, 2]"#);
+        check_array_replace(r#"[1, 3, 3]"#, 1, &[], Some(json!(2)), r#"[1, 2, 3]"#);
+        check_array_replace(r#"[1, 3, 3]"#, 2, &[], Some(json!(2)), r#"[1, 3, 2]"#);
+        check_array_replace(r#"[1, 3, 3,]"#, 3, &[], Some(json!(2)), r#"[1, 3, 3, 2]"#);
+        check_array_replace(r#"[1, 3, 3,]"#, 100, &[], Some(json!(2)), r#"[1, 3, 3, 2]"#);
         check_array_replace(
             r#"[
                 1,
@@ -1036,7 +1081,7 @@ mod tests {
             .unindent(),
             1,
             &[],
-            json!({"foo": "bar", "baz": "qux"}),
+            Some(json!({"foo": "bar", "baz": "qux"})),
             r#"[
                 1,
                 {
@@ -1051,7 +1096,7 @@ mod tests {
             r#"[1, 3, 3,]"#,
             1,
             &[],
-            json!({"foo": "bar", "baz": "qux"}),
+            Some(json!({"foo": "bar", "baz": "qux"})),
             r#"[1, { "foo": "bar", "baz": "qux" }, 3,]"#,
         );
 
@@ -1059,7 +1104,7 @@ mod tests {
             r#"[1, { "foo": "bar", "baz": "qux" }, 3,]"#,
             1,
             &["baz"],
-            json!({"qux": "quz"}),
+            Some(json!({"qux": "quz"})),
             r#"[1, { "foo": "bar", "baz": { "qux": "quz" } }, 3,]"#,
         );
 
@@ -1074,7 +1119,7 @@ mod tests {
             ]"#,
             1,
             &["baz"],
-            json!({"qux": "quz"}),
+            Some(json!({"qux": "quz"})),
             r#"[
                 1,
                 {
@@ -1100,7 +1145,7 @@ mod tests {
             ]"#,
             1,
             &["baz"],
-            json!("qux"),
+            Some(json!("qux")),
             r#"[
                 1,
                 {
@@ -1127,7 +1172,7 @@ mod tests {
             ]"#,
             1,
             &["baz"],
-            json!("qux"),
+            Some(json!("qux")),
             r#"[
                 1,
                 {
@@ -1151,7 +1196,7 @@ mod tests {
             ]"#,
             2,
             &[],
-            json!("replaced"),
+            Some(json!("replaced")),
             r#"[
                 1,
                 // This is element 2
@@ -1169,7 +1214,7 @@ mod tests {
             .unindent(),
             0,
             &[],
-            json!("first"),
+            Some(json!("first")),
             r#"[
                 // Empty array with comment
                 "first"
@@ -1180,7 +1225,7 @@ mod tests {
             r#"[]"#.unindent(),
             0,
             &[],
-            json!("first"),
+            Some(json!("first")),
             r#"[
                 "first"
             ]"#
@@ -1197,7 +1242,7 @@ mod tests {
             ]"#,
             0,
             &[],
-            json!({"new": "object"}),
+            Some(json!({"new": "object"})),
             r#"[
                 // Leading comment
                 // Another leading comment
@@ -1217,7 +1262,7 @@ mod tests {
                     ]"#,
             1,
             &[],
-            json!("deep"),
+            Some(json!("deep")),
             r#"[
                         1,
                         "deep",
@@ -1230,7 +1275,7 @@ mod tests {
             r#"[1,2,   3,    4]"#,
             2,
             &[],
-            json!("spaced"),
+            Some(json!("spaced")),
             r#"[1,2,   "spaced",    4]"#,
         );
 
@@ -1243,7 +1288,7 @@ mod tests {
             ]"#,
             1,
             &[],
-            json!(["a", "b", "c", "d"]),
+            Some(json!(["a", "b", "c", "d"])),
             r#"[
                 [1, 2, 3],
                 [
@@ -1268,7 +1313,7 @@ mod tests {
             ]"#,
             0,
             &[],
-            json!("updated"),
+            Some(json!("updated")),
             r#"[
                 /*
                  * This is a
@@ -1284,7 +1329,7 @@ mod tests {
             r#"[true, false, true]"#,
             1,
             &[],
-            json!(null),
+            Some(json!(null)),
             r#"[true, null, true]"#,
         );
 
@@ -1293,7 +1338,7 @@ mod tests {
             r#"[42]"#,
             0,
             &[],
-            json!({"answer": 42}),
+            Some(json!({"answer": 42})),
             r#"[{ "answer": 42 }]"#,
         );
 
@@ -1307,12 +1352,60 @@ mod tests {
             .unindent(),
             10,
             &[],
-            json!(123),
+            Some(json!(123)),
             r#"[
                 // Comment 1
                 // Comment 2
                 // Comment 3
                 123
+            ]"#
+            .unindent(),
+        );
+
+        check_array_replace(
+            r#"[
+                {
+                    "key": "value"
+                },
+                {
+                    "key": "value2"
+                }
+            ]"#
+            .unindent(),
+            0,
+            &[],
+            None,
+            r#"[
+                {
+                    "key": "value2"
+                }
+            ]"#
+            .unindent(),
+        );
+
+        check_array_replace(
+            r#"[
+                {
+                    "key": "value"
+                },
+                {
+                    "key": "value2"
+                },
+                {
+                    "key": "value3"
+                },
+            ]"#
+            .unindent(),
+            1,
+            &[],
+            None,
+            r#"[
+                {
+                    "key": "value"
+                },
+                {
+                    "key": "value3"
+                },
             ]"#
             .unindent(),
         );

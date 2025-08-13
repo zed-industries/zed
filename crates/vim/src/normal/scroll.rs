@@ -97,7 +97,7 @@ impl Vim {
         let amount = by(Vim::take_count(cx).map(|c| c as f32));
         Vim::take_forced_motion(cx);
         self.exit_temporary_normal(window, cx);
-        self.update_editor(window, cx, |_, editor, window, cx| {
+        self.update_editor(cx, |_, editor, cx| {
             scroll_editor(editor, move_cursor, &amount, window, cx)
         });
     }
@@ -230,7 +230,11 @@ fn scroll_editor(
                 // column position, or the right-most column in the current
                 // line, seeing as the cursor might be in a short line, in which
                 // case we don't want to go past its last column.
-                let max_row_column = map.line_len(new_row);
+                let max_row_column = if new_row <= map.max_point().row() {
+                    map.line_len(new_row)
+                } else {
+                    0
+                };
                 let max_column = match min_column + visible_column_count as u32 {
                     max_column if max_column >= max_row_column => max_row_column,
                     max_column => max_column,

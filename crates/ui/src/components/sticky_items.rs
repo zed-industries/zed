@@ -149,47 +149,7 @@ where
     ) -> AnyElement {
         let entries = (self.compute_fn)(visible_range.clone(), window, cx);
 
-        struct StickyAnchor<T> {
-            entry: T,
-            index: usize,
-        }
-
-        let mut sticky_anchor = None;
-        let mut last_item_is_drifting = false;
-
-        let mut iter = entries.iter().enumerate().peekable();
-        while let Some((ix, current_entry)) = iter.next() {
-            let depth = current_entry.depth();
-
-            if depth < ix {
-                sticky_anchor = Some(StickyAnchor {
-                    entry: current_entry.clone(),
-                    index: visible_range.start + ix,
-                });
-                break;
-            }
-
-            if let Some(&(_next_ix, next_entry)) = iter.peek() {
-                let next_depth = next_entry.depth();
-                let next_item_outdented = next_depth + 1 == depth;
-
-                let depth_same_as_index = depth == ix;
-                let depth_greater_than_index = depth == ix + 1;
-
-                if next_item_outdented && (depth_same_as_index || depth_greater_than_index) {
-                    if depth_greater_than_index {
-                        last_item_is_drifting = true;
-                    }
-                    sticky_anchor = Some(StickyAnchor {
-                        entry: current_entry.clone(),
-                        index: visible_range.start + ix,
-                    });
-                    break;
-                }
-            }
-        }
-
-        let Some(sticky_anchor) = sticky_anchor else {
+        let Some(sticky_anchor) = find_sticky_anchor(&entries, visible_range.start) else {
             return StickyItemsElement {
                 drifting_element: None,
                 drifting_decoration: None,
@@ -203,23 +163,21 @@ where
         let mut elements = (self.render_fn)(sticky_anchor.entry, window, cx);
         let items_count = elements.len();
 
-        let indents: SmallVec<[usize; 8]> = {
-            elements
-                .iter()
-                .enumerate()
-                .map(|(ix, _)| anchor_depth.saturating_sub(items_count.saturating_sub(ix)))
-                .collect()
-        };
+        let indents: SmallVec<[usize; 8]> = (0..items_count)
+            .map(|ix| anchor_depth.saturating_sub(items_count.saturating_sub(ix)))
+            .collect();
 
         let mut last_decoration_element = None;
         let mut rest_decoration_elements = SmallVec::new();
 
-        let available_space = size(
-            AvailableSpace::Definite(bounds.size.width),
+        let expanded_width = bounds.size.width + scroll_offset.x.abs();
+
+        let decor_available_space = size(
+            AvailableSpace::Definite(expanded_width),
             AvailableSpace::Definite(bounds.size.height),
         );
 
-        let drifting_y_offset = if last_item_is_drifting {
+        let drifting_y_offset = if sticky_anchor.drifting {
             let scroll_top = -scroll_offset.y;
             let anchor_top = item_height * (sticky_anchor.index + 1);
             let sticky_area_height = item_height * items_count;
@@ -228,7 +186,7 @@ where
             Pixels::ZERO
         };
 
-        let (drifting_indent, rest_indents) = if last_item_is_drifting && !indents.is_empty() {
+        let (drifting_indent, rest_indents) = if sticky_anchor.drifting && !indents.is_empty() {
             let last = indents[indents.len() - 1];
             let rest: SmallVec<[usize; 8]> = indents[..indents.len() - 1].iter().copied().collect();
             (Some(last), rest)
@@ -236,11 +194,14 @@ where
             (None, indents)
         };
 
+        let base_origin = bounds.origin - point(px(0.), scroll_offset.y);
+
         for decoration in &self.decorations {
             if let Some(drifting_indent) = drifting_indent {
                 let drifting_indent_vec: SmallVec<[usize; 8]> =
                     [drifting_indent].into_iter().collect();
-                let sticky_origin = bounds.origin - scroll_offset
+
+                let sticky_origin = base_origin
                     + point(px(0.), item_height * rest_indents.len() + drifting_y_offset);
                 let decoration_bounds = Bounds::new(sticky_origin, bounds.size);
 
@@ -252,13 +213,13 @@ where
                     window,
                     cx,
                 );
-                drifting_dec.layout_as_root(available_space, window, cx);
+                drifting_dec.layout_as_root(decor_available_space, window, cx);
                 drifting_dec.prepaint_at(sticky_origin, window, cx);
                 last_decoration_element = Some(drifting_dec);
             }
 
             if !rest_indents.is_empty() {
-                let decoration_bounds = Bounds::new(bounds.origin - scroll_offset, bounds.size);
+                let decoration_bounds = Bounds::new(base_origin, bounds.size);
                 let mut rest_dec = decoration.as_ref().compute(
                     &rest_indents,
                     decoration_bounds,
@@ -267,44 +228,43 @@ where
                     window,
                     cx,
                 );
-                rest_dec.layout_as_root(available_space, window, cx);
+                rest_dec.layout_as_root(decor_available_space, window, cx);
                 rest_dec.prepaint_at(bounds.origin, window, cx);
                 rest_decoration_elements.push(rest_dec);
             }
         }
 
         let (mut drifting_element, mut rest_elements) =
-            if last_item_is_drifting && !elements.is_empty() {
+            if sticky_anchor.drifting && !elements.is_empty() {
                 let last = elements.pop().unwrap();
                 (Some(last), elements)
             } else {
                 (None, elements)
             };
 
-        for (ix, element) in rest_elements.iter_mut().enumerate() {
-            let sticky_origin = bounds.origin - scroll_offset + point(px(0.), item_height * ix);
-            let element_available_space = size(
-                AvailableSpace::Definite(bounds.size.width),
-                AvailableSpace::Definite(item_height),
-            );
+        let element_available_space = size(
+            AvailableSpace::Definite(expanded_width),
+            AvailableSpace::Definite(item_height),
+        );
 
-            element.layout_as_root(element_available_space, window, cx);
-            element.prepaint_at(sticky_origin, window, cx);
-        }
-
+        // order of prepaint is important here
+        // mouse events checks hitboxes in reverse insertion order
         if let Some(ref mut drifting_element) = drifting_element {
-            let sticky_origin = bounds.origin - scroll_offset
+            let sticky_origin = base_origin
                 + point(
                     px(0.),
                     item_height * rest_elements.len() + drifting_y_offset,
                 );
-            let element_available_space = size(
-                AvailableSpace::Definite(bounds.size.width),
-                AvailableSpace::Definite(item_height),
-            );
 
             drifting_element.layout_as_root(element_available_space, window, cx);
             drifting_element.prepaint_at(sticky_origin, window, cx);
+        }
+
+        for (ix, element) in rest_elements.iter_mut().enumerate() {
+            let sticky_origin = base_origin + point(px(0.), item_height * ix);
+
+            element.layout_as_root(element_available_space, window, cx);
+            element.prepaint_at(sticky_origin, window, cx);
         }
 
         StickyItemsElement {
@@ -315,6 +275,48 @@ where
         }
         .into_any_element()
     }
+}
+
+struct StickyAnchor<T> {
+    entry: T,
+    index: usize,
+    drifting: bool,
+}
+
+fn find_sticky_anchor<T: StickyCandidate + Clone>(
+    entries: &SmallVec<[T; 8]>,
+    visible_range_start: usize,
+) -> Option<StickyAnchor<T>> {
+    let mut iter = entries.iter().enumerate().peekable();
+    while let Some((ix, current_entry)) = iter.next() {
+        let depth = current_entry.depth();
+
+        if depth < ix {
+            return Some(StickyAnchor {
+                entry: current_entry.clone(),
+                index: visible_range_start + ix,
+                drifting: false,
+            });
+        }
+
+        if let Some(&(_next_ix, next_entry)) = iter.peek() {
+            let next_depth = next_entry.depth();
+            let next_item_outdented = next_depth + 1 == depth;
+
+            let depth_same_as_index = depth == ix;
+            let depth_greater_than_index = depth == ix + 1;
+
+            if next_item_outdented && (depth_same_as_index || depth_greater_than_index) {
+                return Some(StickyAnchor {
+                    entry: current_entry.clone(),
+                    index: visible_range_start + ix,
+                    drifting: depth_greater_than_index,
+                });
+            }
+        }
+    }
+
+    None
 }
 
 /// A decoration for a [`StickyItems`]. This can be used for various things,
