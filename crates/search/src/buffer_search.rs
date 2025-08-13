@@ -359,60 +359,34 @@ impl Render for BufferSearchBar {
                     }),
             );
 
-        let replace_line = should_show_replace_input.then(|| {
-            h_flex()
-                .gap_2()
-                .child(
-                    input_base_styles(replacement_border).child(render_text_input(
-                        &self.replacement_editor,
-                        None,
-                        cx,
-                    )),
-                )
-                .child(
-                    h_flex()
-                        .min_w_64()
-                        .gap_1()
-                        .child(
-                            IconButton::new("search-replace-next", ui::IconName::ReplaceNext)
-                                .shape(IconButtonShape::Square)
-                                .tooltip({
-                                    let focus_handle = focus_handle.clone();
-                                    move |window, cx| {
-                                        Tooltip::for_action_in(
-                                            "Replace Next Match",
-                                            &ReplaceNext,
-                                            &focus_handle,
-                                            window,
-                                            cx,
-                                        )
-                                    }
-                                })
-                                .on_click(cx.listener(|this, _, window, cx| {
-                                    this.replace_next(&ReplaceNext, window, cx)
-                                })),
-                        )
-                        .child(
-                            IconButton::new("search-replace-all", ui::IconName::ReplaceAll)
-                                .shape(IconButtonShape::Square)
-                                .tooltip({
-                                    let focus_handle = focus_handle.clone();
-                                    move |window, cx| {
-                                        Tooltip::for_action_in(
-                                            "Replace All Matches",
-                                            &ReplaceAll,
-                                            &focus_handle,
-                                            window,
-                                            cx,
-                                        )
-                                    }
-                                })
-                                .on_click(cx.listener(|this, _, window, cx| {
-                                    this.replace_all(&ReplaceAll, window, cx)
-                                })),
-                        ),
-                )
-        });
+        let replace_line =
+            should_show_replace_input.then(|| {
+                let replace_column = input_base_styles(replacement_border)
+                    .child(render_text_input(&self.replacement_editor, None, cx));
+                let focus_handle = self.replacement_editor.read(cx).focus_handle(cx);
+
+                let replace_actions = h_flex()
+                    .min_w_64()
+                    .gap_1()
+                    .child(render_nav_button(
+                        IconName::ReplaceNext,
+                        true,
+                        "Replace Next Match",
+                        &ReplaceNext,
+                        focus_handle.clone(),
+                    ))
+                    .child(render_nav_button(
+                        IconName::ReplaceAll,
+                        true,
+                        "Replace All Matches",
+                        &ReplaceAll,
+                        focus_handle,
+                    ));
+                h_flex()
+                    .gap_2()
+                    .child(replace_column)
+                    .child(replace_actions)
+            });
 
         let query_error_line = self.query_error.as_ref().map(|error| {
             Label::new(error)

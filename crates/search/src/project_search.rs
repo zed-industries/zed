@@ -2099,52 +2099,20 @@ impl Render for ProjectSearchBar {
             let replace_actions = h_flex()
                 .min_w_64()
                 .gap_1()
-                .child(
-                    IconButton::new("project-search-replace-next", IconName::ReplaceNext)
-                        .shape(IconButtonShape::Square)
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            if let Some(search) = this.active_project_search.as_ref() {
-                                search.update(cx, |this, cx| {
-                                    this.replace_next(&ReplaceNext, window, cx);
-                                })
-                            }
-                        }))
-                        .tooltip({
-                            let focus_handle = focus_handle.clone();
-                            move |window, cx| {
-                                Tooltip::for_action_in(
-                                    "Replace Next Match",
-                                    &ReplaceNext,
-                                    &focus_handle,
-                                    window,
-                                    cx,
-                                )
-                            }
-                        }),
-                )
-                .child(
-                    IconButton::new("project-search-replace-all", IconName::ReplaceAll)
-                        .shape(IconButtonShape::Square)
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            if let Some(search) = this.active_project_search.as_ref() {
-                                search.update(cx, |this, cx| {
-                                    this.replace_all(&ReplaceAll, window, cx);
-                                })
-                            }
-                        }))
-                        .tooltip({
-                            let focus_handle = focus_handle.clone();
-                            move |window, cx| {
-                                Tooltip::for_action_in(
-                                    "Replace All Matches",
-                                    &ReplaceAll,
-                                    &focus_handle,
-                                    window,
-                                    cx,
-                                )
-                            }
-                        }),
-                );
+                .child(render_nav_button(
+                    IconName::ReplaceNext,
+                    true,
+                    "Replace Next Match",
+                    &ReplaceNext,
+                    focus_handle.clone(),
+                ))
+                .child(render_nav_button(
+                    IconName::ReplaceAll,
+                    true,
+                    "Replace All Matches",
+                    &ReplaceAll,
+                    focus_handle,
+                ));
 
             h_flex()
                 .w_full()
