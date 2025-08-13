@@ -5,7 +5,9 @@ use agent_client_protocol as acp;
 use anyhow::{Result, anyhow};
 use cloud_llm_client::WebSearchResponse;
 use gpui::{App, AppContext, Task};
-use language_model::LanguageModelToolResultContent;
+use language_model::{
+    LanguageModelProviderId, LanguageModelToolResultContent, ZED_CLOUD_PROVIDER_ID,
+};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use ui::prelude::*;
@@ -48,6 +50,11 @@ impl AgentTool for WebSearchTool {
 
     fn initial_title(&self, _input: Result<Self::Input, serde_json::Value>) -> SharedString {
         "Searching the Web".into()
+    }
+
+    /// We currently only support Zed Cloud as a provider.
+    fn supported_provider(&self, provider: &LanguageModelProviderId) -> bool {
+        provider == &ZED_CLOUD_PROVIDER_ID
     }
 
     fn run(
