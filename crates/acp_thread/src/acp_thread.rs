@@ -632,7 +632,8 @@ pub struct AcpThread {
 }
 
 pub enum AcpThreadEvent {
-    EntriesUpdated(Range<usize>),
+    NewEntry,
+    EntryUpdated(usize),
     EntriesRemoved(Range<usize>),
     ToolAuthorizationRequired,
     Stopped,
@@ -809,7 +810,7 @@ impl AcpThread {
             *id = message_id.or(id.take());
             content.append(chunk, &language_registry, cx);
             let idx = entries_len - 1;
-            cx.emit(AcpThreadEvent::EntriesUpdated(idx..idx + 1));
+            cx.emit(AcpThreadEvent::EntryUpdated(idx));
         } else {
             let content = ContentBlock::new(chunk, &language_registry, cx);
             self.push_entry(
@@ -835,7 +836,7 @@ impl AcpThread {
             && let AgentThreadEntry::AssistantMessage(AssistantMessage { chunks }) = last_entry
         {
             let idx = entries_len - 1;
-            cx.emit(AcpThreadEvent::EntriesUpdated(idx..idx + 1));
+            cx.emit(AcpThreadEvent::EntryUpdated(idx));
             match (chunks.last_mut(), is_thought) {
                 (Some(AssistantMessageChunk::Message { block }), false)
                 | (Some(AssistantMessageChunk::Thought { block }), true) => {
@@ -870,7 +871,7 @@ impl AcpThread {
     fn push_entry(&mut self, entry: AgentThreadEntry, cx: &mut Context<Self>) {
         let idx = self.entries.len();
         self.entries.push(entry);
-        cx.emit(AcpThreadEvent::EntriesUpdated(idx..idx + 1));
+        cx.emit(AcpThreadEvent::NewEntry);
     }
 
     pub fn update_tool_call(
@@ -906,7 +907,7 @@ impl AcpThread {
             }
         }
 
-        cx.emit(AcpThreadEvent::EntriesUpdated(ix..ix + 1));
+        cx.emit(AcpThreadEvent::EntryUpdated(ix));
 
         Ok(())
     }
@@ -932,7 +933,7 @@ impl AcpThread {
         if let Some((ix, current_call)) = self.tool_call_mut(&call.id) {
             *current_call = call;
 
-            cx.emit(AcpThreadEvent::EntriesUpdated(ix..ix + 1));
+            cx.emit(AcpThreadEvent::EntryUpdated(ix));
         } else {
             self.push_entry(AgentThreadEntry::ToolCall(call), cx);
         };
@@ -997,7 +998,7 @@ impl AcpThread {
                 }
                 if tool_call.resolved_locations != resolved_locations {
                     tool_call.resolved_locations = resolved_locations;
-                    cx.emit(AcpThreadEvent::EntriesUpdated(ix..ix + 1));
+                    cx.emit(AcpThreadEvent::EntryUpdated(ix));
                 }
             })
         })
@@ -1052,7 +1053,7 @@ impl AcpThread {
             panic!("tried to authorize an already authorized tool call");
         }
 
-        cx.emit(AcpThreadEvent::EntriesUpdated(ix..ix + 1));
+        cx.emit(AcpThreadEvent::EntryUpdated(ix));
     }
 
     /// Returns true if the last turn is awaiting tool authorization
@@ -1206,7 +1207,7 @@ impl AcpThread {
                         this.update(cx, |this, cx| {
                             if let Some((ix, message)) = this.user_message_mut(&message_id) {
                                 message.checkpoint = Some(old_checkpoint);
-                                cx.emit(AcpThreadEvent::EntriesUpdated(ix..ix + 1));
+                                cx.emit(AcpThreadEvent::EntryUpdated(ix));
                             }
                         })?;
                     }
