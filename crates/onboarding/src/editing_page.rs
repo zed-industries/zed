@@ -657,7 +657,7 @@ fn render_popular_settings_section(
                 |toggle_state, _, cx| {
                     let enabled = toggle_state == &ToggleState::Selected;
                     telemetry::event!(
-                        "Welcome format on save",
+                        "Welcome Format On Save Changed",
                         options = if enabled { "on" } else { "off" },
                     );
 
@@ -682,7 +682,7 @@ fn render_popular_settings_section(
                 |toggle_state, _, cx| {
                     let enabled = toggle_state == &ToggleState::Selected;
                     telemetry::event!(
-                        "Welcome inlay hints",
+                        "Welcome Inlay Hints Changed",
                         options = if enabled { "on" } else { "off" },
                     );
 
@@ -707,7 +707,7 @@ fn render_popular_settings_section(
                 |toggle_state, _, cx| {
                     let enabled = toggle_state == &ToggleState::Selected;
                     telemetry::event!(
-                        "Welcome Git Blame",
+                        "Welcome Git Blame Changed",
                         options = if enabled { "on" } else { "off" },
                     );
 

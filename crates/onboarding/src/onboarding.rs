@@ -212,7 +212,7 @@ pub fn init(cx: &mut App) {
 }
 
 pub fn show_onboarding_view(app_state: Arc<AppState>, cx: &mut App) -> Task<anyhow::Result<()>> {
-    telemetry::event!("Onboarding Page Open");
+    telemetry::event!("Onboarding Page Opened");
     open_new(
         Default::default(),
         app_state,
@@ -273,7 +273,7 @@ impl Onboarding {
     fn set_page(&mut self, page: SelectedPage, clicked: Option<&'static str>, cx: &mut Context<Self>) {
         if let Some(click) = clicked {
             telemetry::event!(
-                "Welcome tab clicked",
+                "Welcome Tab Clicked",
                 from = self.selected_page.name(),
                 to = page.name(),
                 clicked = click,

@@ -189,7 +189,7 @@ fn render_llm_provider_card(
                                     .update(cx, |workspace, cx| {
                                         workspace.toggle_modal(window, cx, |window, cx| {
                                             telemetry::event!(
-                                                "Welcome AI modal open",
+                                                "Welcome AI Modal Opened",
                                                 provider = provider.name().0,
                                             );
 
