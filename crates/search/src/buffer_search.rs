@@ -290,7 +290,7 @@ impl Render for BufferSearchBar {
                 let query_focus = self.query_editor.focus_handle(cx);
                 let matches_column = h_flex()
                     .pl_2()
-                    .ml_1()
+                    .ml_2()
                     .border_l_1()
                     .border_color(theme_colors.border_variant)
                     .child(render_action_button(
@@ -308,7 +308,18 @@ impl Render for BufferSearchBar {
                         "Select Next Match",
                         &SelectNextMatch,
                         query_focus.clone(),
-                    ));
+                    ))
+                    .when(!narrow_mode, |this| {
+                        this.child(div().ml_2().min_w(rems_from_px(40.)).child(
+                            Label::new(match_text).size(LabelSize::Small).color(
+                                if self.active_match_index.is_some() {
+                                    Color::Default
+                                } else {
+                                    Color::Disabled
+                                },
+                            ),
+                        ))
+                    });
 
                 el.child(render_action_button(
                     "buffer-search-nav-button",
@@ -319,17 +330,6 @@ impl Render for BufferSearchBar {
                     query_focus,
                 ))
                 .child(matches_column)
-                .when(!narrow_mode, |this| {
-                    this.child(h_flex().ml_2().min_w(rems_from_px(40.)).child(
-                        Label::new(match_text).size(LabelSize::Small).color(
-                            if self.active_match_index.is_some() {
-                                Color::Default
-                            } else {
-                                Color::Disabled
-                            },
-                        ),
-                    ))
-                })
             })
             .when(find_in_results, |el| {
                 el.child(render_action_button(
@@ -343,6 +343,7 @@ impl Render for BufferSearchBar {
             });
 
         let search_line = h_flex()
+            .w_full()
             .gap_2()
             .when(find_in_results, |el| {
                 el.child(Label::new("Find in results").color(Color::Hint))
@@ -376,6 +377,7 @@ impl Render for BufferSearchBar {
                         focus_handle,
                     ));
                 h_flex()
+                    .w_full()
                     .gap_2()
                     .child(replace_column)
                     .child(replace_actions)
@@ -414,6 +416,7 @@ impl Render for BufferSearchBar {
             .id("buffer_search")
             .gap_2()
             .py(px(1.0))
+            .w_full()
             .track_scroll(&self.scroll_handle)
             .key_context(key_context)
             .capture_action(cx.listener(Self::tab))

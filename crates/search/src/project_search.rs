@@ -2009,6 +2009,7 @@ impl Render for ProjectSearchBar {
 
         let mode_column = h_flex()
             .gap_1()
+            .min_w_64()
             .child(
                 IconButton::new("project-search-filter-button", IconName::Filter)
                     .shape(IconButtonShape::Square)
@@ -2075,7 +2076,8 @@ impl Render for ProjectSearchBar {
             .child(
                 div()
                     .id("matches")
-                    .ml_1()
+                    .ml_2()
+                    .min_w(rems_from_px(40.))
                     .child(Label::new(match_text).size(LabelSize::Small).color(
                         if search.active_match_index.is_some() {
                             Color::Default
@@ -2201,7 +2203,9 @@ impl Render for ProjectSearchBar {
         });
 
         v_flex()
+            .gap_2()
             .py(px(1.0))
+            .w_full()
             .key_context(key_context)
             .on_action(cx.listener(|this, _: &ToggleFocus, window, cx| {
                 this.move_focus_to_results(window, cx)
@@ -2248,8 +2252,6 @@ impl Render for ProjectSearchBar {
             })
             .on_action(cx.listener(Self::select_next_match))
             .on_action(cx.listener(Self::select_prev_match))
-            .gap_2()
-            .w_full()
             .child(search_line)
             .children(query_error_line)
             .children(replace_line)
