@@ -679,17 +679,19 @@ impl AcpThreadView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let count = self.list_state.item_count();
         match event {
             AcpThreadEvent::NewEntry => {
                 let index = thread.read(cx).entries().len() - 1;
                 self.sync_thread_entry_view(index, window, cx);
-                self.list_state.splice(count..count, 1);
+                self.list_state.splice(index..index, 1);
             }
             AcpThreadEvent::EntryUpdated(index) => {
-                let index = *index;
-                self.sync_thread_entry_view(index, window, cx);
-                self.list_state.splice(index..index + 1, 1);
+                self.sync_thread_entry_view(*index, window, cx);
+                self.list_state.splice(*index..index + 1, 1);
+            }
+            AcpThreadEvent::EntriesRemoved(range) => {
+                // TODO: Clean up unused diff editors and terminal views
+                self.list_state.splice(range.clone(), 0);
             }
             AcpThreadEvent::ToolAuthorizationRequired => {
                 self.notify_with_sound("Waiting for tool confirmation", IconName::Info, window, cx);
@@ -3789,6 +3791,7 @@ mod tests {
 
         fn prompt(
             &self,
+            _id: Option<acp_thread::UserMessageId>,
             params: acp::PromptRequest,
             cx: &mut App,
         ) -> Task<gpui::Result<acp::PromptResponse>> {
@@ -3873,6 +3876,7 @@ mod tests {
 
         fn prompt(
             &self,
+            _id: Option<acp_thread::UserMessageId>,
             _params: acp::PromptRequest,
             _cx: &mut App,
         ) -> Task<gpui::Result<acp::PromptResponse>> {

@@ -1,6 +1,5 @@
 use super::*;
-use crate::MessageContent;
-use acp_thread::{AgentConnection, AgentModelGroupName, AgentModelList};
+use acp_thread::{AgentConnection, AgentModelGroupName, AgentModelList, UserMessageId};
 use action_log::ActionLog;
 use agent_client_protocol::{self as acp};
 use agent_settings::AgentProfileId;
@@ -38,15 +37,19 @@ async fn test_echo(cx: &mut TestAppContext) {
 
     let events = thread
         .update(cx, |thread, cx| {
-            thread.send("Testing: Reply with 'Hello'", cx)
+            thread.send(UserMessageId::new(), ["Testing: Reply with 'Hello'"], cx)
         })
         .collect()
         .await;
     thread.update(cx, |thread, _cx| {
         assert_eq!(
-            thread.messages().last().unwrap().content,
-            vec![MessageContent::Text("Hello".to_string())]
-        );
+            thread.last_message().unwrap().to_markdown(),
+            indoc! {"
+                ## Assistant
+
+                Hello
+            "}
+        )
     });
     assert_eq!(stop_events(events), vec![acp::StopReason::EndTurn]);
 }
@@ -59,12 +62,13 @@ async fn test_thinking(cx: &mut TestAppContext) {
     let events = thread
         .update(cx, |thread, cx| {
             thread.send(
-                indoc! {"
+                UserMessageId::new(),
+                [indoc! {"
                     Testing:
 
                     Generate a thinking step where you just think the word 'Think',
                     and have your final answer be 'Hello'
-                "},
+                "}],
                 cx,
             )
         })
@@ -72,9 +76,10 @@ async fn test_thinking(cx: &mut TestAppContext) {
         .await;
     thread.update(cx, |thread, _cx| {
         assert_eq!(
-            thread.messages().last().unwrap().to_markdown(),
+            thread.last_message().unwrap().to_markdown(),
             indoc! {"
-                ## assistant
+                ## Assistant
+
                 <think>Think</think>
                 Hello
             "}
@@ -95,7 +100,9 @@ async fn test_system_prompt(cx: &mut TestAppContext) {
 
     project_context.borrow_mut().shell = "test-shell".into();
     thread.update(cx, |thread, _| thread.add_tool(EchoTool));
-    thread.update(cx, |thread, cx| thread.send("abc", cx));
+    thread.update(cx, |thread, cx| {
+        thread.send(UserMessageId::new(), ["abc"], cx)
+    });
     cx.run_until_parked();
     let mut pending_completions = fake_model.pending_completions();
     assert_eq!(
@@ -132,7 +139,8 @@ async fn test_basic_tool_calls(cx: &mut TestAppContext) {
         .update(cx, |thread, cx| {
             thread.add_tool(EchoTool);
             thread.send(
-                "Now test the echo tool with 'Hello'. Does it work? Say 'Yes' or 'No'.",
+                UserMessageId::new(),
+                ["Now test the echo tool with 'Hello'. Does it work? Say 'Yes' or 'No'."],
                 cx,
             )
         })
@@ -146,7 +154,11 @@ async fn test_basic_tool_calls(cx: &mut TestAppContext) {
             thread.remove_tool(&AgentTool::name(&EchoTool));
             thread.add_tool(DelayTool);
             thread.send(
-                "Now call the delay tool with 200ms. When the timer goes off, then you echo the output of the tool.",
+                UserMessageId::new(),
+                [
+                    "Now call the delay tool with 200ms.",
+                    "When the timer goes off, then you echo the output of the tool.",
+                ],
                 cx,
             )
         })
@@ -156,13 +168,14 @@ async fn test_basic_tool_calls(cx: &mut TestAppContext) {
     thread.update(cx, |thread, _cx| {
         assert!(
             thread
-                .messages()
-                .last()
+                .last_message()
+                .unwrap()
+                .as_agent_message()
                 .unwrap()
                 .content
                 .iter()
                 .any(|content| {
-                    if let MessageContent::Text(text) = content {
+                    if let AgentMessageContent::Text(text) = content {
                         text.contains("Ding")
                     } else {
                         false
@@ -182,7 +195,7 @@ async fn test_streaming_tool_calls(cx: &mut TestAppContext) {
     // Test a tool call that's likely to complete *before* streaming stops.
     let mut events = thread.update(cx, |thread, cx| {
         thread.add_tool(WordListTool);
-        thread.send("Test the word_list tool.", cx)
+        thread.send(UserMessageId::new(), ["Test the word_list tool."], cx)
     });
 
     let mut saw_partial_tool_use = false;
@@ -190,8 +203,10 @@ async fn test_streaming_tool_calls(cx: &mut TestAppContext) {
         if let Ok(AgentResponseEvent::ToolCall(tool_call)) = event {
             thread.update(cx, |thread, _cx| {
                 // Look for a tool use in the thread's last message
-                let last_content = thread.messages().last().unwrap().content.last().unwrap();
-                if let MessageContent::ToolUse(last_tool_use) = last_content {
+                let message = thread.last_message().unwrap();
+                let agent_message = message.as_agent_message().unwrap();
+                let last_content = agent_message.content.last().unwrap();
+                if let AgentMessageContent::ToolUse(last_tool_use) = last_content {
                     assert_eq!(last_tool_use.name.as_ref(), "word_list");
                     if tool_call.status == acp::ToolCallStatus::Pending {
                         if !last_tool_use.is_input_complete
@@ -229,7 +244,7 @@ async fn test_tool_authorization(cx: &mut TestAppContext) {
 
     let mut events = thread.update(cx, |thread, cx| {
         thread.add_tool(ToolRequiringPermission);
-        thread.send("abc", cx)
+        thread.send(UserMessageId::new(), ["abc"], cx)
     });
     cx.run_until_parked();
     fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(
@@ -357,7 +372,9 @@ async fn test_tool_hallucination(cx: &mut TestAppContext) {
     let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
     let fake_model = model.as_fake();
 
-    let mut events = thread.update(cx, |thread, cx| thread.send("abc", cx));
+    let mut events = thread.update(cx, |thread, cx| {
+        thread.send(UserMessageId::new(), ["abc"], cx)
+    });
     cx.run_until_parked();
     fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(
         LanguageModelToolUse {
@@ -449,7 +466,12 @@ async fn test_concurrent_tool_calls(cx: &mut TestAppContext) {
         .update(cx, |thread, cx| {
             thread.add_tool(DelayTool);
             thread.send(
-                "Call the delay tool twice in the same message. Once with 100ms. Once with 300ms. When both timers are complete, describe the outputs.",
+                UserMessageId::new(),
+                [
+                    "Call the delay tool twice in the same message.",
+                    "Once with 100ms. Once with 300ms.",
+                    "When both timers are complete, describe the outputs.",
+                ],
                 cx,
             )
         })
@@ -460,12 +482,13 @@ async fn test_concurrent_tool_calls(cx: &mut TestAppContext) {
     assert_eq!(stop_reasons, vec![acp::StopReason::EndTurn]);
 
     thread.update(cx, |thread, _cx| {
-        let last_message = thread.messages().last().unwrap();
-        let text = last_message
+        let last_message = thread.last_message().unwrap();
+        let agent_message = last_message.as_agent_message().unwrap();
+        let text = agent_message
             .content
             .iter()
             .filter_map(|content| {
-                if let MessageContent::Text(text) = content {
+                if let AgentMessageContent::Text(text) = content {
                     Some(text.as_str())
                 } else {
                     None
@@ -521,7 +544,7 @@ async fn test_profiles(cx: &mut TestAppContext) {
     // Test that test-1 profile (default) has echo and delay tools
     thread.update(cx, |thread, cx| {
         thread.set_profile(AgentProfileId("test-1".into()));
-        thread.send("test", cx);
+        thread.send(UserMessageId::new(), ["test"], cx);
     });
     cx.run_until_parked();
 
@@ -539,7 +562,7 @@ async fn test_profiles(cx: &mut TestAppContext) {
     // Switch to test-2 profile, and verify that it has only the infinite tool.
     thread.update(cx, |thread, cx| {
         thread.set_profile(AgentProfileId("test-2".into()));
-        thread.send("test2", cx)
+        thread.send(UserMessageId::new(), ["test2"], cx)
     });
     cx.run_until_parked();
     let mut pending_completions = fake_model.pending_completions();
@@ -562,7 +585,8 @@ async fn test_cancellation(cx: &mut TestAppContext) {
         thread.add_tool(InfiniteTool);
         thread.add_tool(EchoTool);
         thread.send(
-            "Call the echo tool and then call the infinite tool, then explain their output",
+            UserMessageId::new(),
+            ["Call the echo tool, then call the infinite tool, then explain their output"],
             cx,
         )
     });
@@ -607,14 +631,20 @@ async fn test_cancellation(cx: &mut TestAppContext) {
     // Ensure we can still send a new message after cancellation.
     let events = thread
         .update(cx, |thread, cx| {
-            thread.send("Testing: reply with 'Hello' then stop.", cx)
+            thread.send(
+                UserMessageId::new(),
+                ["Testing: reply with 'Hello' then stop."],
+                cx,
+            )
         })
         .collect::<Vec<_>>()
         .await;
     thread.update(cx, |thread, _cx| {
+        let message = thread.last_message().unwrap();
+        let agent_message = message.as_agent_message().unwrap();
         assert_eq!(
-            thread.messages().last().unwrap().content,
-            vec![MessageContent::Text("Hello".to_string())]
+            agent_message.content,
+            vec![AgentMessageContent::Text("Hello".to_string())]
         );
     });
     assert_eq!(stop_events(events), vec![acp::StopReason::EndTurn]);
@@ -625,13 +655,16 @@ async fn test_refusal(cx: &mut TestAppContext) {
     let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
     let fake_model = model.as_fake();
 
-    let events = thread.update(cx, |thread, cx| thread.send("Hello", cx));
+    let events = thread.update(cx, |thread, cx| {
+        thread.send(UserMessageId::new(), ["Hello"], cx)
+    });
     cx.run_until_parked();
     thread.read_with(cx, |thread, _| {
         assert_eq!(
             thread.to_markdown(),
             indoc! {"
-                ## user
+                ## User
+
                 Hello
             "}
         );
@@ -643,9 +676,12 @@ async fn test_refusal(cx: &mut TestAppContext) {
         assert_eq!(
             thread.to_markdown(),
             indoc! {"
-                ## user
+                ## User
+
                 Hello
-                ## assistant
+
+                ## Assistant
+
                 Hey!
             "}
         );
@@ -658,6 +694,85 @@ async fn test_refusal(cx: &mut TestAppContext) {
     assert_eq!(stop_events(events), vec![acp::StopReason::Refusal]);
     thread.read_with(cx, |thread, _| {
         assert_eq!(thread.to_markdown(), "");
+    });
+}
+
+#[gpui::test]
+async fn test_truncate(cx: &mut TestAppContext) {
+    let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
+    let fake_model = model.as_fake();
+
+    let message_id = UserMessageId::new();
+    thread.update(cx, |thread, cx| {
+        thread.send(message_id.clone(), ["Hello"], cx)
+    });
+    cx.run_until_parked();
+    thread.read_with(cx, |thread, _| {
+        assert_eq!(
+            thread.to_markdown(),
+            indoc! {"
+                ## User
+
+                Hello
+            "}
+        );
+    });
+
+    fake_model.send_last_completion_stream_text_chunk("Hey!");
+    cx.run_until_parked();
+    thread.read_with(cx, |thread, _| {
+        assert_eq!(
+            thread.to_markdown(),
+            indoc! {"
+                ## User
+
+                Hello
+
+                ## Assistant
+
+                Hey!
+            "}
+        );
+    });
+
+    thread
+        .update(cx, |thread, _cx| thread.truncate(message_id))
+        .unwrap();
+    cx.run_until_parked();
+    thread.read_with(cx, |thread, _| {
+        assert_eq!(thread.to_markdown(), "");
+    });
+
+    // Ensure we can still send a new message after truncation.
+    thread.update(cx, |thread, cx| {
+        thread.send(UserMessageId::new(), ["Hi"], cx)
+    });
+    thread.update(cx, |thread, _cx| {
+        assert_eq!(
+            thread.to_markdown(),
+            indoc! {"
+                ## User
+
+                Hi
+            "}
+        );
+    });
+    cx.run_until_parked();
+    fake_model.send_last_completion_stream_text_chunk("Ahoy!");
+    cx.run_until_parked();
+    thread.read_with(cx, |thread, _| {
+        assert_eq!(
+            thread.to_markdown(),
+            indoc! {"
+                ## User
+
+                Hi
+
+                ## Assistant
+
+                Ahoy!
+            "}
+        );
     });
 }
 
@@ -774,6 +889,7 @@ async fn test_agent_connection(cx: &mut TestAppContext) {
     let result = cx
         .update(|cx| {
             connection.prompt(
+                Some(acp_thread::UserMessageId::new()),
                 acp::PromptRequest {
                     session_id: session_id.clone(),
                     prompt: vec!["ghi".into()],
@@ -796,7 +912,9 @@ async fn test_tool_updates_to_completion(cx: &mut TestAppContext) {
     thread.update(cx, |thread, _cx| thread.add_tool(ThinkingTool));
     let fake_model = model.as_fake();
 
-    let mut events = thread.update(cx, |thread, cx| thread.send("Think", cx));
+    let mut events = thread.update(cx, |thread, cx| {
+        thread.send(UserMessageId::new(), ["Think"], cx)
+    });
     cx.run_until_parked();
 
     // Simulate streaming partial input.
