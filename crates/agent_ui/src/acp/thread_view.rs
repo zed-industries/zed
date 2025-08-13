@@ -685,9 +685,9 @@ impl AcpThreadView {
                 self.sync_thread_entry_view(index, window, cx);
                 self.list_state.splice(index..index, 1);
             }
-            AcpThreadEvent::EntryUpdated(&index) => {
-                self.sync_thread_entry_view(index, window, cx);
-                self.list_state.splice(index..index + 1, 1);
+            AcpThreadEvent::EntryUpdated(index) => {
+                self.sync_thread_entry_view(*index, window, cx);
+                self.list_state.splice(*index..index + 1, 1);
             }
             AcpThreadEvent::EntriesRemoved(range) => {
                 // TODO: Clean up unused diff editors and terminal views

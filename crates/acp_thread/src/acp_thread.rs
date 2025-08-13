@@ -869,7 +869,6 @@ impl AcpThread {
     }
 
     fn push_entry(&mut self, entry: AgentThreadEntry, cx: &mut Context<Self>) {
-        let idx = self.entries.len();
         self.entries.push(entry);
         cx.emit(AcpThreadEvent::NewEntry);
     }
