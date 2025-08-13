@@ -1,12 +1,14 @@
 use crate::{ItemHandle, Pane};
+use editor::EditorSettings;
 use gpui::{
     AnyView, App, Context, Decorations, Entity, IntoElement, ParentElement, Render, Styled,
-    Subscription, Window,
+    Subscription, Window, div,
 };
 use std::any::TypeId;
 use theme::CLIENT_SIDE_DECORATION_ROUNDING;
 use ui::{h_flex, prelude::*};
 use util::ResultExt;
+use settings::Settings as _;
 
 pub trait StatusItemView: Render {
     fn set_active_pane_item(
@@ -37,6 +39,10 @@ pub struct StatusBar {
 
 impl Render for StatusBar {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if !EditorSettings::get_global(cx).status_bar.visible {
+            return div();
+        }
+
         h_flex()
             .w_full()
             .justify_between()

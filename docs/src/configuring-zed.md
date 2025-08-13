@@ -1283,19 +1283,12 @@ Each option controls displaying of a particular toolbar element. If all elements
 
 ```json
 "status_bar": {
+  "visible": true,
   "active_language_button": true,
 },
 ```
 
-## Title Bar Visibility
 
-- Description: Control the visibility of the title bar.
-- Setting: `title_bar.visible`
-- Default: `true`
-
-**Options**
-
-`boolean` values
 
 ## LSP
 

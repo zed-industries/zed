@@ -78,6 +78,7 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use session::AppSession;
 use settings::{Settings, update_settings_file};
+use editor::EditorSettings;
 use shared_screen::SharedScreen;
 use sqlez::{
     bindable::{Bind, Column, StaticColumnCount},
@@ -1317,9 +1318,11 @@ impl Workspace {
         let right_dock_buttons = cx.new(|cx| PanelButtons::new(right_dock.clone(), cx));
         let status_bar = cx.new(|cx| {
             let mut status_bar = StatusBar::new(&center_pane.clone(), window, cx);
-            status_bar.add_left_item(left_dock_buttons, window, cx);
-            status_bar.add_right_item(right_dock_buttons, window, cx);
-            status_bar.add_right_item(bottom_dock_buttons, window, cx);
+            if EditorSettings::get_global(cx).status_bar.visible {
+                status_bar.add_left_item(left_dock_buttons, window, cx);
+                status_bar.add_right_item(right_dock_buttons, window, cx);
+                status_bar.add_right_item(bottom_dock_buttons, window, cx);
+            }
             status_bar
         });
 
@@ -6261,6 +6264,7 @@ impl Render for Workspace {
         let mut context = KeyContext::new_with_defaults();
         context.add("Workspace");
         context.set("keyboard_layout", cx.keyboard_layout().name().to_string());
+        let show_status_bar = EditorSettings::get_global(cx).status_bar.visible;
         if let Some(status) = self
             .debugger_provider
             .as_ref()
@@ -6693,7 +6697,7 @@ impl Render for Workspace {
                                 }))
                                 .children(self.render_notifications(window, cx)),
                         )
-                        .child(self.status_bar.clone())
+                        .when(show_status_bar, |div| div.child(self.status_bar.clone()))
                         .child(self.modal_layer.clone())
                         .child(self.toast_layer.clone()),
                 ),
