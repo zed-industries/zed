@@ -1452,9 +1452,18 @@ fn is_virtual_key_pressed(vkey: VIRTUAL_KEY) -> bool {
 
 #[inline]
 pub(crate) fn current_modifiers() -> Modifiers {
+    let is_altgr = is_virtual_key_pressed(VK_RMENU) && is_virtual_key_pressed(VK_CONTROL);
     Modifiers {
-        control: is_virtual_key_pressed(VK_CONTROL),
-        alt: is_virtual_key_pressed(VK_MENU),
+        control: if is_altgr {
+            false
+        } else {
+            is_virtual_key_pressed(VK_CONTROL)
+        },
+        alt: if is_altgr {
+            false
+        } else {
+            is_virtual_key_pressed(VK_MENU)
+        },
         shift: is_virtual_key_pressed(VK_SHIFT),
         platform: is_virtual_key_pressed(VK_LWIN) || is_virtual_key_pressed(VK_RWIN),
         function: false,
