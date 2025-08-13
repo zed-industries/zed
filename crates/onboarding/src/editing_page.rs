@@ -573,7 +573,7 @@ fn font_picker(
 ) -> FontPicker {
     let delegate = FontPickerDelegate::new(current_font, on_font_changed, cx);
 
-    Picker::list(delegate, window, cx)
+    Picker::uniform_list(delegate, window, cx)
         .show_scrollbar(true)
         .width(rems_from_px(210.))
         .max_height(Some(rems(20.).into()))
@@ -655,7 +655,7 @@ fn render_popular_settings_section(
         .child(
             SwitchField::new(
                 "onboarding-git-blame-switch",
-                "Git Blame",
+                "Inline Git Blame",
                 Some("See who committed each line on a given file.".into()),
                 if read_git_blame(cx) {
                     ui::ToggleState::Selected

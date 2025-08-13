@@ -490,7 +490,7 @@ impl StackFrameList {
                             .child(
                                 IconButton::new(
                                     ("restart-stack-frame", stack_frame.id),
-                                    IconName::DebugRestart,
+                                    IconName::RotateCcw,
                                 )
                                 .icon_size(IconSize::Small)
                                 .on_click(cx.listener({

@@ -2814,7 +2814,7 @@ impl Window {
             content_mask: content_mask.scale(scale_factor),
             color: style.color.unwrap_or_default().opacity(element_opacity),
             thickness: style.thickness.scale(scale_factor),
-            wavy: style.wavy,
+            wavy: if style.wavy { 1 } else { 0 },
         });
     }
 
@@ -2845,7 +2845,7 @@ impl Window {
             content_mask: content_mask.scale(scale_factor),
             thickness: style.thickness.scale(scale_factor),
             color: style.color.unwrap_or_default().opacity(opacity),
-            wavy: false,
+            wavy: 0,
         });
     }
 
@@ -3688,7 +3688,8 @@ impl Window {
         );
 
         if !match_result.to_replay.is_empty() {
-            self.replay_pending_input(match_result.to_replay, cx)
+            self.replay_pending_input(match_result.to_replay, cx);
+            cx.propagate_event = true;
         }
 
         if !match_result.pending.is_empty() {

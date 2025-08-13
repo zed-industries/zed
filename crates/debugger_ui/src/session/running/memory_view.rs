@@ -18,11 +18,8 @@ use project::debugger::{MemoryCell, dap_command::DataBreakpointContext, session:
 use settings::Settings;
 use theme::ThemeSettings;
 use ui::{
-    ActiveTheme, AnyElement, App, Color, Context, ContextMenu, Divider, DropdownMenu, Element,
-    FluentBuilder, Icon, IconName, InteractiveElement, IntoElement, Label, LabelCommon,
-    ParentElement, Pixels, PopoverMenuHandle, Render, ScrollableHandle, SharedString,
-    StatefulInteractiveElement, Styled, TextSize, Tooltip, Window, WithScrollbar, div, h_flex, px,
-    v_flex,
+    ContextMenu, Divider, DropdownMenu, FluentBuilder, IntoElement, PopoverMenuHandle, Render,
+    ScrollableHandle, StatefulInteractiveElement, Tooltip, WithScrollbar, prelude::*,
 };
 use workspace::Workspace;
 

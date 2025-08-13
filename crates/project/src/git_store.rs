@@ -441,6 +441,7 @@ impl GitStore {
         client.add_entity_request_handler(Self::handle_blame_buffer);
         client.add_entity_message_handler(Self::handle_update_repository);
         client.add_entity_message_handler(Self::handle_remove_repository);
+        client.add_entity_request_handler(Self::handle_git_clone);
     }
 
     pub fn is_local(&self) -> bool {
@@ -1464,6 +1465,45 @@ impl GitStore {
         }
     }
 
+    pub fn git_clone(
+        &self,
+        repo: String,
+        path: impl Into<Arc<std::path::Path>>,
+        cx: &App,
+    ) -> Task<Result<()>> {
+        let path = path.into();
+        match &self.state {
+            GitStoreState::Local { fs, .. } => {
+                let fs = fs.clone();
+                cx.background_executor()
+                    .spawn(async move { fs.git_clone(&repo, &path).await })
+            }
+            GitStoreState::Ssh {
+                upstream_client,
+                upstream_project_id,
+                ..
+            } => {
+                let request = upstream_client.request(proto::GitClone {
+                    project_id: upstream_project_id.0,
+                    abs_path: path.to_string_lossy().to_string(),
+                    remote_repo: repo,
+                });
+
+                cx.background_spawn(async move {
+                    let result = request.await?;
+
+                    match result.success {
+                        true => Ok(()),
+                        false => Err(anyhow!("Git Clone failed")),
+                    }
+                })
+            }
+            GitStoreState::Remote { .. } => {
+                Task::ready(Err(anyhow!("Git Clone isn't supported for remote users")))
+            }
+        }
+    }
+
     async fn handle_update_repository(
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::UpdateRepository>,
@@ -1548,6 +1588,22 @@ impl GitStore {
             .await?;
 
         Ok(proto::Ack {})
+    }
+
+    async fn handle_git_clone(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::GitClone>,
+        cx: AsyncApp,
+    ) -> Result<proto::GitCloneResponse> {
+        let path: Arc<Path> = PathBuf::from(envelope.payload.abs_path).into();
+        let repo_name = envelope.payload.remote_repo;
+        let result = cx
+            .update(|cx| this.read(cx).git_clone(repo_name, path, cx))?
+            .await;
+
+        Ok(proto::GitCloneResponse {
+            success: result.is_ok(),
+        })
     }
 
     async fn handle_fetch(

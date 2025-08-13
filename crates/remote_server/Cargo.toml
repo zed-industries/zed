@@ -74,6 +74,7 @@ libc.workspace = true
 minidumper.workspace = true
 
 [dev-dependencies]
+action_log.workspace = true
 assistant_tool.workspace = true
 assistant_tools.workspace = true
 client = { workspace = true, features = ["test-support"] }

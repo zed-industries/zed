@@ -957,17 +957,14 @@ mod mac_os {
     ) -> Result<()> {
         use anyhow::bail;
 
-        let app_id_prompt = format!("id of app \"{}\"", channel.display_name());
-        let app_id_output = Command::new("osascript")
+        let app_path_prompt = format!(
+            "POSIX path of (path to application \"{}\")",
+            channel.display_name()
+        );
+        let app_path_output = Command::new("osascript")
             .arg("-e")
-            .arg(&app_id_prompt)
+            .arg(&app_path_prompt)
             .output()?;
-        if !app_id_output.status.success() {
-            bail!("Could not determine app id for {}", channel.display_name());
-        }
-        let app_name = String::from_utf8(app_id_output.stdout)?.trim().to_owned();
-        let app_path_prompt = format!("kMDItemCFBundleIdentifier == '{app_name}'");
-        let app_path_output = Command::new("mdfind").arg(app_path_prompt).output()?;
         if !app_path_output.status.success() {
             bail!(
                 "Could not determine app path for {}",

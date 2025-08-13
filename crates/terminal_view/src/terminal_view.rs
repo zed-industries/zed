@@ -34,7 +34,7 @@ use terminal_scrollbar::TerminalScrollHandle;
 use terminal_slash_command::TerminalSlashCommand;
 use terminal_tab_tooltip::TerminalTooltip;
 use ui::{
-    ContextMenu, Icon, IconName, Label, Scrollbars, Tooltip, WithScrollbar, h_flex,
+    ContextMenu, Icon, IconName, Label, ScrollAxes, Scrollbars, Tooltip, WithScrollbar, h_flex,
     prelude::*,
     scrollbars::{self, GlobalValue, ScrollbarVisibilitySetting},
 };
@@ -65,7 +65,6 @@ use std::{
 };
 
 const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(500);
-
 const GIT_DIFF_PATH_PREFIXES: &[&str] = &["a", "b"];
 
 /// Event to transmit the scroll from the element to the view
@@ -1437,6 +1436,7 @@ impl Render for TerminalView {
                 div()
                     .id("terminal-view-container")
                     .size_full()
+                    .bg(cx.theme().colors().editor_background)
                     .child(TerminalElement::new(
                         terminal_handle,
                         terminal_view_handle,
@@ -1450,6 +1450,8 @@ impl Render for TerminalView {
                     .when(self.content_mode(window, cx).is_scrollable(), |div| {
                         div.custom_scrollbars(
                             Scrollbars::for_settings::<TerminalScrollbarSettingsWrapper>()
+                                .show_along(ScrollAxes::Vertical)
+                                .with_track_along(ScrollAxes::Vertical)
                                 .tracked_scroll_handle(self.scroll_handle.clone()),
                             window,
                             cx,
@@ -1488,7 +1490,7 @@ impl Item for TerminalView {
         let (icon, icon_color, rerun_button) = match terminal.task() {
             Some(terminal_task) => match &terminal_task.status {
                 TaskStatus::Running => (
-                    IconName::PlayOutlined,
+                    IconName::PlayFilled,
                     Color::Disabled,
                     TerminalView::rerun_button(&terminal_task),
                 ),
@@ -1551,7 +1553,6 @@ impl Item for TerminalView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<Entity<Self>> {
-        let window_handle = window.window_handle();
         let terminal = self
             .project
             .update(cx, |project, cx| {
@@ -1563,7 +1564,6 @@ impl Item for TerminalView {
                 project.create_terminal_with_venv(
                     TerminalKind::Shell(working_directory),
                     python_venv_directory,
-                    window_handle,
                     cx,
                 )
             })
@@ -1699,7 +1699,6 @@ impl SerializableItem for TerminalView {
         window: &mut Window,
         cx: &mut App,
     ) -> Task<anyhow::Result<Entity<Self>>> {
-        let window_handle = window.window_handle();
         window.spawn(cx, async move |cx| {
             let cwd = cx
                 .update(|_window, cx| {
@@ -1723,7 +1722,7 @@ impl SerializableItem for TerminalView {
 
             let terminal = project
                 .update(cx, |project, cx| {
-                    project.create_terminal(TerminalKind::Shell(cwd), window_handle, cx)
+                    project.create_terminal(TerminalKind::Shell(cwd), cx)
                 })?
                 .await?;
             cx.update(|window, cx| {

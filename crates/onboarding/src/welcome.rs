@@ -1,6 +1,6 @@
 use gpui::{
     Action, App, Context, Entity, EventEmitter, FocusHandle, Focusable, InteractiveElement,
-    NoAction, ParentElement, Render, Styled, Window, actions,
+    ParentElement, Render, Styled, Window, actions,
 };
 use menu::{SelectNext, SelectPrevious};
 use ui::{ButtonLike, Divider, DividerColor, KeyBinding, Vector, VectorName, prelude::*};
@@ -38,8 +38,7 @@ const CONTENT: (Section<4>, Section<3>) = (
             SectionEntry {
                 icon: IconName::CloudDownload,
                 title: "Clone a Repo",
-                // TODO: use proper action
-                action: &NoAction,
+                action: &git::Clone,
             },
             SectionEntry {
                 icon: IconName::ListCollapse,

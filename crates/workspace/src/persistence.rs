@@ -542,6 +542,20 @@ define_connection! {
         ALTER TABLE breakpoints ADD COLUMN condition TEXT;
         ALTER TABLE breakpoints ADD COLUMN hit_condition TEXT;
     ),
+    sql!(CREATE TABLE toolchains2 (
+        workspace_id INTEGER,
+        worktree_id INTEGER,
+        language_name TEXT NOT NULL,
+        name TEXT NOT NULL,
+        path TEXT NOT NULL,
+        raw_json TEXT NOT NULL,
+        relative_worktree_path TEXT NOT NULL,
+        PRIMARY KEY (workspace_id, worktree_id, language_name, relative_worktree_path)) STRICT;
+        INSERT INTO toolchains2
+            SELECT * FROM toolchains;
+        DROP TABLE toolchains;
+        ALTER TABLE toolchains2 RENAME TO toolchains;
+    )
     ];
 }
 
@@ -1428,12 +1442,12 @@ impl WorkspaceDb {
         self.write(move |conn| {
             let mut insert = conn
                 .exec_bound(sql!(
-                    INSERT INTO toolchains(workspace_id, worktree_id, relative_worktree_path, language_name, name, path) VALUES (?, ?, ?, ?, ?,  ?)
+                    INSERT INTO toolchains(workspace_id, worktree_id, relative_worktree_path, language_name, name, path, raw_json) VALUES (?, ?, ?, ?, ?,  ?, ?)
                     ON CONFLICT DO
                     UPDATE SET
                         name = ?5,
-                        path = ?6
-
+                        path = ?6,
+                        raw_json = ?7
                 ))
                 .context("Preparing insertion")?;
 
@@ -1444,6 +1458,7 @@ impl WorkspaceDb {
                 toolchain.language_name.as_ref(),
                 toolchain.name.as_ref(),
                 toolchain.path.as_ref(),
+                toolchain.as_json.to_string(),
             ))?;
 
             Ok(())

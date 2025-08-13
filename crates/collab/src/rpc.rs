@@ -929,6 +929,7 @@ impl Server {
                                 login=field::Empty,
                                 impersonator=field::Empty,
                                 multi_lsp_query_request=field::Empty,
+                                release_channel=field::Empty,
                                 { TOTAL_DURATION_MS }=field::Empty,
                                 { PROCESSING_DURATION_MS }=field::Empty,
                                 { QUEUE_DURATION_MS }=field::Empty,

@@ -26,6 +26,7 @@ editor.workspace = true
 feature_flags.workspace = true
 fs.workspace = true
 fuzzy.workspace = true
+git.workspace = true
 gpui.workspace = true
 itertools.workspace = true
 language.workspace = true

@@ -112,7 +112,7 @@ impl SlashCommand for FetchSlashCommand {
     }
 
     fn icon(&self) -> IconName {
-        IconName::Globe
+        IconName::ToolWeb
     }
 
     fn menu_text(&self) -> String {
@@ -171,7 +171,7 @@ impl SlashCommand for FetchSlashCommand {
                 text,
                 sections: vec![SlashCommandOutputSection {
                     range,
-                    icon: IconName::Globe,
+                    icon: IconName::ToolWeb,
                     label: format!("fetch {}", url).into(),
                     metadata: None,
                 }],
