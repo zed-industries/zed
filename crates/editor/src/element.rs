@@ -9,7 +9,7 @@ use crate::{
     MAX_LINE_LEN, MINIMAP_FONT_SIZE, MULTI_BUFFER_EXCERPT_HEADER_HEIGHT, OpenExcerpts, PageDown,
     PageUp, PhantomBreakpointIndicator, Point, RowExt, RowRangeExt, SelectPhase,
     SelectedTextHighlight, Selection, SelectionDragState, SoftWrap, StickyHeaderExcerpt, ToPoint,
-    ToggleFold, ToggleFoldAll, rainbow_brackets,
+    ToggleFold, ToggleFoldAll,
     code_context_menus::{CodeActionsMenu, MENU_ASIDE_MAX_WIDTH, MENU_ASIDE_MIN_WIDTH, MENU_GAP},
     display_map::{
         Block, BlockContext, BlockStyle, ChunkRendererId, DisplaySnapshot, EditorMargins,
@@ -28,6 +28,7 @@ use crate::{
     inlay_hint_settings,
     items::BufferSearchHighlights,
     mouse_context_menu::{self, MenuPosition},
+    rainbow_brackets,
     scroll::{ActiveScrollbarState, ScrollbarThumbState, scroll_amount::ScrollAmount},
 };
 use buffer_diff::{DiffHunkStatus, DiffHunkStatusKind};
@@ -8915,7 +8916,7 @@ impl Element for EditorElement {
 
                     self.editor.update(cx, |editor, cx| {
                         editor.last_position_map = Some(position_map.clone());
-                        
+
                         // Refresh rainbow brackets for the visible range
                         rainbow_brackets::refresh_rainbow_bracket_highlights(editor, window, cx);
                     });

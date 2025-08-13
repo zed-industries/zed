@@ -1,5 +1,5 @@
 use crate::Editor;
-use gpui::{Context, Hsla, Window};
+use gpui::{Context, HighlightStyle, Hsla, Window};
 use language::{Bias, BufferSnapshot};
 use std::collections::HashMap;
 use std::ops::Range;
@@ -12,9 +12,9 @@ pub fn compute_rainbow_brackets_for_range(
 ) -> Option<HashMap<usize, Vec<Range<usize>>>> {
     let language = buffer_snapshot.language()?;
     let rainbow_config = language.grammar()?.rainbow_config.as_ref()?;
-    
+
     let mut highlights_by_level: HashMap<usize, Vec<Range<usize>>> = HashMap::new();
-    
+
     // Similar to Helix's RainbowScope structure
     #[derive(Debug)]
     struct RainbowScope {
@@ -22,18 +22,18 @@ pub fn compute_rainbow_brackets_for_range(
         node: Option<usize>, // node ID
         level: usize,
     }
-    
+
     let mut scope_stack = Vec::<RainbowScope>::new();
-    
+
     // Use the proper tree-sitter query matching API
     let mut matches = buffer_snapshot.matches(range, |grammar| {
         grammar.rainbow_config.as_ref().map(|c| &c.query)
     });
-    
+
     // Process all matches in order
     while let Some(mat) = matches.peek() {
         let byte_range = mat.captures[0].node.byte_range();
-        
+
         // Pop any scopes that end before this capture begins
         while scope_stack
             .last()
@@ -41,7 +41,7 @@ pub fn compute_rainbow_brackets_for_range(
         {
             scope_stack.pop();
         }
-        
+
         // Check which capture this is
         let is_scope_capture = rainbow_config
             .scope_capture_ix
@@ -49,7 +49,7 @@ pub fn compute_rainbow_brackets_for_range(
         let is_bracket_capture = rainbow_config
             .bracket_capture_ix
             .map_or(false, |ix| mat.captures.iter().any(|c| c.index == ix));
-        
+
         if is_scope_capture {
             // Process scope capture
             if let Some(scope_capture) = rainbow_config
@@ -58,7 +58,7 @@ pub fn compute_rainbow_brackets_for_range(
             {
                 let node = scope_capture.node;
                 let byte_range = node.byte_range();
-                
+
                 scope_stack.push(RainbowScope {
                     end_byte: byte_range.end,
                     node: if rainbow_config
@@ -73,7 +73,7 @@ pub fn compute_rainbow_brackets_for_range(
                 });
             }
         }
-        
+
         if is_bracket_capture {
             // Process bracket capture
             if let Some(bracket_capture) = rainbow_config
@@ -82,7 +82,7 @@ pub fn compute_rainbow_brackets_for_range(
             {
                 let node = bracket_capture.node;
                 let byte_range = node.byte_range();
-                
+
                 if let Some(scope) = scope_stack.last() {
                     // Check if this bracket should be highlighted
                     let should_highlight = if let Some(scope_node_id) = scope.node {
@@ -93,7 +93,7 @@ pub fn compute_rainbow_brackets_for_range(
                         // include-children mode: highlight all brackets in this scope
                         true
                     };
-                    
+
                     if should_highlight {
                         let level = scope.level % 10;
                         highlights_by_level
@@ -104,11 +104,11 @@ pub fn compute_rainbow_brackets_for_range(
                 }
             }
         }
-        
+
         // IMPORTANT: Always advance to prevent infinite loop
         matches.advance();
     }
-    
+
     Some(highlights_by_level)
 }
 
@@ -131,28 +131,28 @@ pub fn refresh_rainbow_bracket_highlights(
         let display_map = editor.display_map.update(cx, |map, cx| map.snapshot(cx));
         let scroll_position = editor.scroll_position(cx);
         let height = editor.visible_line_count().unwrap_or(50.0);
-        
+
         // Calculate visible display rows
         let start_row = scroll_position.y.floor() as u32;
-        let end_row = ((scroll_position.y + height).ceil() as u32).min(display_map.max_point().row().0);
-        
+        let end_row =
+            ((scroll_position.y + height).ceil() as u32).min(display_map.max_point().row().0);
+
         // Convert display rows to buffer offsets
         let start_point = display_map.display_point_to_point(
             crate::DisplayPoint::new(crate::DisplayRow(start_row), 0),
-            crate::Bias::Left
+            crate::Bias::Left,
         );
         let end_point = display_map.display_point_to_point(
             crate::DisplayPoint::new(crate::DisplayRow(end_row), 0),
-            crate::Bias::Right
+            crate::Bias::Right,
         );
-        
+
         let start_offset = start_point.to_offset(buffer_snapshot);
         let end_offset = end_point.to_offset(buffer_snapshot);
-        
-        if let Some(highlights_by_level) = compute_rainbow_brackets_for_range(
-            buffer_snapshot,
-            start_offset..end_offset,
-        ) {
+
+        if let Some(highlights_by_level) =
+            compute_rainbow_brackets_for_range(buffer_snapshot, start_offset..end_offset)
+        {
             // Apply highlights by level
             for (level, ranges) in highlights_by_level {
                 // Convert text ranges to multi-buffer anchors
@@ -165,59 +165,32 @@ pub fn refresh_rainbow_bracket_highlights(
                     })
                     .collect();
 
-                // TODO: make it a text style instead of a background highlight
+                // Use text highlighting instead of background highlighting
                 // Create a unique type for each level to avoid conflicts
+                let style = match level {
+                    0 => get_rainbow_style_0(),
+                    1 => get_rainbow_style_1(),
+                    2 => get_rainbow_style_2(),
+                    3 => get_rainbow_style_3(),
+                    4 => get_rainbow_style_4(),
+                    5 => get_rainbow_style_5(),
+                    6 => get_rainbow_style_6(),
+                    7 => get_rainbow_style_7(),
+                    8 => get_rainbow_style_8(),
+                    _ => get_rainbow_style_9(),
+                };
+
                 match level {
-                    0 => editor.highlight_background::<RainbowLevel0>(
-                        &multi_buffer_ranges,
-                        get_rainbow_color_0,
-                        cx,
-                    ),
-                    1 => editor.highlight_background::<RainbowLevel1>(
-                        &multi_buffer_ranges,
-                        get_rainbow_color_1,
-                        cx,
-                    ),
-                    2 => editor.highlight_background::<RainbowLevel2>(
-                        &multi_buffer_ranges,
-                        get_rainbow_color_2,
-                        cx,
-                    ),
-                    3 => editor.highlight_background::<RainbowLevel3>(
-                        &multi_buffer_ranges,
-                        get_rainbow_color_3,
-                        cx,
-                    ),
-                    4 => editor.highlight_background::<RainbowLevel4>(
-                        &multi_buffer_ranges,
-                        get_rainbow_color_4,
-                        cx,
-                    ),
-                    5 => editor.highlight_background::<RainbowLevel5>(
-                        &multi_buffer_ranges,
-                        get_rainbow_color_5,
-                        cx,
-                    ),
-                    6 => editor.highlight_background::<RainbowLevel6>(
-                        &multi_buffer_ranges,
-                        get_rainbow_color_6,
-                        cx,
-                    ),
-                    7 => editor.highlight_background::<RainbowLevel7>(
-                        &multi_buffer_ranges,
-                        get_rainbow_color_7,
-                        cx,
-                    ),
-                    8 => editor.highlight_background::<RainbowLevel8>(
-                        &multi_buffer_ranges,
-                        get_rainbow_color_8,
-                        cx,
-                    ),
-                    _ => editor.highlight_background::<RainbowLevel9>(
-                        &multi_buffer_ranges,
-                        get_rainbow_color_9,
-                        cx,
-                    ),
+                    0 => editor.highlight_text::<RainbowLevel0>(multi_buffer_ranges, style, cx),
+                    1 => editor.highlight_text::<RainbowLevel1>(multi_buffer_ranges, style, cx),
+                    2 => editor.highlight_text::<RainbowLevel2>(multi_buffer_ranges, style, cx),
+                    3 => editor.highlight_text::<RainbowLevel3>(multi_buffer_ranges, style, cx),
+                    4 => editor.highlight_text::<RainbowLevel4>(multi_buffer_ranges, style, cx),
+                    5 => editor.highlight_text::<RainbowLevel5>(multi_buffer_ranges, style, cx),
+                    6 => editor.highlight_text::<RainbowLevel6>(multi_buffer_ranges, style, cx),
+                    7 => editor.highlight_text::<RainbowLevel7>(multi_buffer_ranges, style, cx),
+                    8 => editor.highlight_text::<RainbowLevel8>(multi_buffer_ranges, style, cx),
+                    _ => editor.highlight_text::<RainbowLevel9>(multi_buffer_ranges, style, cx),
                 }
             }
         }
@@ -225,57 +198,87 @@ pub fn refresh_rainbow_bracket_highlights(
 }
 
 fn clear_current_rainbow_highlights(editor: &mut Editor, cx: &mut Context<Editor>) {
-    editor.clear_background_highlights::<RainbowLevel0>(cx);
-    editor.clear_background_highlights::<RainbowLevel1>(cx);
-    editor.clear_background_highlights::<RainbowLevel2>(cx);
-    editor.clear_background_highlights::<RainbowLevel3>(cx);
-    editor.clear_background_highlights::<RainbowLevel4>(cx);
-    editor.clear_background_highlights::<RainbowLevel5>(cx);
-    editor.clear_background_highlights::<RainbowLevel6>(cx);
-    editor.clear_background_highlights::<RainbowLevel7>(cx);
-    editor.clear_background_highlights::<RainbowLevel8>(cx);
-    editor.clear_background_highlights::<RainbowLevel9>(cx);
+    editor.clear_highlights::<RainbowLevel0>(cx);
+    editor.clear_highlights::<RainbowLevel1>(cx);
+    editor.clear_highlights::<RainbowLevel2>(cx);
+    editor.clear_highlights::<RainbowLevel3>(cx);
+    editor.clear_highlights::<RainbowLevel4>(cx);
+    editor.clear_highlights::<RainbowLevel5>(cx);
+    editor.clear_highlights::<RainbowLevel6>(cx);
+    editor.clear_highlights::<RainbowLevel7>(cx);
+    editor.clear_highlights::<RainbowLevel8>(cx);
+    editor.clear_highlights::<RainbowLevel9>(cx);
 }
 
 // TODO! Make it configurable from settings
-fn get_rainbow_color_0(_theme: &theme::Theme) -> Hsla {
-    hsla(0.0, 0.7, 0.6, 0.3) // Red
+fn get_rainbow_style_0() -> HighlightStyle {
+    HighlightStyle {
+        color: Some(hsla(0.0, 0.8, 0.6, 1.0)), // Red
+        ..Default::default()
+    }
 }
 
-fn get_rainbow_color_1(_theme: &theme::Theme) -> Hsla {
-    hsla(30.0, 0.7, 0.6, 0.3) // Orange
+fn get_rainbow_style_1() -> HighlightStyle {
+    HighlightStyle {
+        color: Some(hsla(30.0, 0.8, 0.6, 1.0)), // Orange
+        ..Default::default()
+    }
 }
 
-fn get_rainbow_color_2(_theme: &theme::Theme) -> Hsla {
-    hsla(60.0, 0.7, 0.6, 0.3) // Yellow
+fn get_rainbow_style_2() -> HighlightStyle {
+    HighlightStyle {
+        color: Some(hsla(60.0, 0.8, 0.6, 1.0)), // Yellow
+        ..Default::default()
+    }
 }
 
-fn get_rainbow_color_3(_theme: &theme::Theme) -> Hsla {
-    hsla(120.0, 0.7, 0.6, 0.3) // Green
+fn get_rainbow_style_3() -> HighlightStyle {
+    HighlightStyle {
+        color: Some(hsla(120.0, 0.8, 0.6, 1.0)), // Green
+        ..Default::default()
+    }
 }
 
-fn get_rainbow_color_4(_theme: &theme::Theme) -> Hsla {
-    hsla(180.0, 0.7, 0.6, 0.3) // Cyan
+fn get_rainbow_style_4() -> HighlightStyle {
+    HighlightStyle {
+        color: Some(hsla(180.0, 0.8, 0.6, 1.0)), // Cyan
+        ..Default::default()
+    }
 }
 
-fn get_rainbow_color_5(_theme: &theme::Theme) -> Hsla {
-    hsla(240.0, 0.7, 0.6, 0.3) // Blue
+fn get_rainbow_style_5() -> HighlightStyle {
+    HighlightStyle {
+        color: Some(hsla(240.0, 0.8, 0.6, 1.0)), // Blue
+        ..Default::default()
+    }
 }
 
-fn get_rainbow_color_6(_theme: &theme::Theme) -> Hsla {
-    hsla(270.0, 0.7, 0.6, 0.3) // Purple
+fn get_rainbow_style_6() -> HighlightStyle {
+    HighlightStyle {
+        color: Some(hsla(270.0, 0.8, 0.6, 1.0)), // Purple
+        ..Default::default()
+    }
 }
 
-fn get_rainbow_color_7(_theme: &theme::Theme) -> Hsla {
-    hsla(0.0, 0.7, 0.6, 0.3) // Red (repeat)
+fn get_rainbow_style_7() -> HighlightStyle {
+    HighlightStyle {
+        color: Some(hsla(0.0, 0.8, 0.6, 1.0)), // Red (repeat)
+        ..Default::default()
+    }
 }
 
-fn get_rainbow_color_8(_theme: &theme::Theme) -> Hsla {
-    hsla(30.0, 0.7, 0.6, 0.3) // Orange (repeat)
+fn get_rainbow_style_8() -> HighlightStyle {
+    HighlightStyle {
+        color: Some(hsla(30.0, 0.8, 0.6, 1.0)), // Orange (repeat)
+        ..Default::default()
+    }
 }
 
-fn get_rainbow_color_9(_theme: &theme::Theme) -> Hsla {
-    hsla(60.0, 0.7, 0.6, 0.3) // Yellow (repeat)
+fn get_rainbow_style_9() -> HighlightStyle {
+    HighlightStyle {
+        color: Some(hsla(60.0, 0.8, 0.6, 1.0)), // Yellow (repeat)
+        ..Default::default()
+    }
 }
 
 fn hsla(hue: f32, saturation: f32, lightness: f32, alpha: f32) -> Hsla {
