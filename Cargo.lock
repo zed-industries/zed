@@ -11152,12 +11152,10 @@ dependencies = [
  "ai_onboarding",
  "anyhow",
  "client",
- "command_palette_hooks",
  "component",
  "db",
  "documented",
  "editor",
- "feature_flags",
  "fs",
  "fuzzy",
  "git",
@@ -18889,33 +18887,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "53a85b86a771b1c87058196170769dd264f66c0782acf1ae6cc51bfd64b39082"
 
 [[package]]
-name = "welcome"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "client",
- "component",
- "db",
- "documented",
- "editor",
- "fuzzy",
- "gpui",
- "install_cli",
- "language",
- "picker",
- "project",
- "serde",
- "settings",
- "telemetry",
- "ui",
- "util",
- "vim_mode_setting",
- "workspace",
- "workspace-hack",
- "zed_actions",
-]
-
-[[package]]
 name = "which"
 version = "4.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -20669,7 +20640,6 @@ dependencies = [
  "watch",
  "web_search",
  "web_search_providers",
- "welcome",
  "windows 0.61.1",
  "winresource",
  "workspace",
