@@ -3,13 +3,14 @@ use gpui::{
     px, rgb, size,
 };
 
-struct HelloWorld {}
+// https://en.wikipedia.org/wiki/Holy_grail_(web_design)
+struct HolyGrailExample {}
 
-impl Render for HelloWorld {
+impl Render for HolyGrailExample {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         let block = |color: Hsla| {
             div()
-                .size_12()
+                .size_full()
                 .bg(color)
                 .border_1()
                 .border_dashed()
@@ -25,14 +26,41 @@ impl Render for HelloWorld {
             .size(px(500.0))
             .shadow_lg()
             .border_1()
-            .border_color(rgb(0x0000ff))
-            .grid_cols(3)
-            .child(block(gpui::white()).row_span_full())
-            .child(block(gpui::red()).col_span(2).items_center())
-            .child(block(gpui::green()).row_span(2).items_center())
-            .child(block(gpui::blue()).col_span_full())
-            .child(block(gpui::yellow()))
-            .child(block(gpui::black()))
+            .size_full()
+            .grid_cols(5)
+            .grid_rows(5)
+            .child(
+                block(gpui::white())
+                    .row_span(1)
+                    .col_span_full()
+                    .child("Header"),
+            )
+            .child(
+                block(gpui::red())
+                    .col_span(1)
+                    .h_56()
+                    .child("Table of contents"),
+            )
+            .child(
+                block(gpui::green())
+                    .col_span(3)
+                    .row_span(3)
+                    .child("Content"),
+            )
+            .child(
+                block(gpui::blue())
+                    .col_span(1)
+                    .row_span(3)
+                    .child("AD :(")
+                    .text_color(gpui::white()),
+            )
+            .child(
+                block(gpui::black())
+                    .row_span(1)
+                    .col_span_full()
+                    .text_color(gpui::white())
+                    .child("Footer"),
+            )
     }
 }
 
@@ -44,7 +72,7 @@ fn main() {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
                 ..Default::default()
             },
-            |_, cx| cx.new(|_| HelloWorld {}),
+            |_, cx| cx.new(|_| HolyGrailExample {}),
         )
         .unwrap();
         cx.activate(true);
