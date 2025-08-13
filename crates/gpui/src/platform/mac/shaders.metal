@@ -109,8 +109,8 @@ fragment float4 quad_fragment(QuadFragmentInput input [[stage_in]],
   float4 border_color = input.border_color;
 
   // Apply content_mask corner radii clipping
-  ContentMask_ScaledPixels content_mask = quad.content_mask;
-  float clip_sdf = quad_sdf(input.position.xy, content_mask.bounds, content_mask.corner_radii);
+  float clip_sdf = quad_sdf(input.position.xy, quad.content_mask.bounds,
+    quad.content_mask.corner_radii);
   float clip_alpha = saturate(antialias_threshold - clip_sdf);
   background_color.a *= clip_alpha;
   border_color *= clip_alpha;

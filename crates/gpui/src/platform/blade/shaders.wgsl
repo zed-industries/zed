@@ -483,7 +483,7 @@ fn vs_quad(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) insta
     out.background_color1 = gradient.color1;
     out.border_color = hsla_to_rgba(quad.border_color);
     out.quad_id = instance_id;
-    out.clip_distances = distance_from_clip_rect(unit_vertex, quad.bounds, quad.content_mask);
+    out.clip_distances = distance_from_clip_rect(unit_vertex, quad.bounds, quad.content_mask.bounds);
     return out;
 }
 
@@ -496,16 +496,24 @@ fn fs_quad(input: QuadVarying) -> @location(0) vec4<f32> {
 
     let quad = b_quads[input.quad_id];
 
-    // Apply content_mask's corner radii to the quad's corner radii.
-    let clipped_corner_radii = max_corner_radii(quad.corner_radii, quad.content_mask.corner_radii);
+    // Signed distance field threshold for inclusion of pixels. 0.5 is the
+    // minimum distance between the center of the pixel and the edge.
+    let antialias_threshold = 0.5;
 
-    let background_color = gradient_color(quad.background, input.position.xy, quad.bounds,
+    var background_color = gradient_color(quad.background, input.position.xy, quad.bounds,
         input.background_solid, input.background_color0, input.background_color1);
+    var border_color = input.border_color;
 
-    let unrounded = clipped_corner_radii.top_left == 0.0 &&
-        clipped_corner_radii.bottom_left == 0.0 &&
-        clipped_corner_radii.top_right == 0.0 &&
-        clipped_corner_radii.bottom_right == 0.0;
+    // Apply content_mask corner radii clipping
+    let clip_sdf = quad_sdf(input.position.xy, quad.content_mask.bounds, quad.content_mask.corner_radii);
+    let clip_alpha = saturate(antialias_threshold - clip_sdf);
+    background_color.a *= clip_alpha;
+    border_color.a *= clip_alpha;
+
+    let unrounded = quad.corner_radii.top_left == 0.0 &&
+        quad.corner_radii.bottom_left == 0.0 &&
+        quad.corner_radii.top_right == 0.0 &&
+        quad.corner_radii.bottom_right == 0.0;
 
     // Fast path when the quad is not rounded and doesn't have any border
     if (quad.border_widths.top == 0.0 &&
@@ -521,12 +529,8 @@ fn fs_quad(input: QuadVarying) -> @location(0) vec4<f32> {
     let point = input.position.xy - quad.bounds.origin;
     let center_to_point = point - half_size;
 
-    // Signed distance field threshold for inclusion of pixels. 0.5 is the
-    // minimum distance between the center of the pixel and the edge.
-    let antialias_threshold = 0.5;
-
     // Radius of the nearest corner
-    let corner_radius = pick_corner_radius(center_to_point, clipped_corner_radii);
+    let corner_radius = pick_corner_radius(center_to_point, quad.corner_radii);
 
     // Width of the nearest borders
     let border = vec2<f32>(
@@ -615,8 +619,6 @@ fn fs_quad(input: QuadVarying) -> @location(0) vec4<f32> {
 
     var color = background_color;
     if (border_sdf < antialias_threshold) {
-        var border_color = input.border_color;
-
         // Dashed border logic when border_style == 1
         if (quad.border_style == 1) {
             // Position along the perimeter in "dash space", where each dash
@@ -652,7 +654,11 @@ fn fs_quad(input: QuadVarying) -> @location(0) vec4<f32> {
                 let is_horizontal =
                         corner_center_to_point.x <
                         corner_center_to_point.y;
-                let border_width = select(border.y, border.x, is_horizontal);
+                var border_width = select(border.y, border.x, is_horizontal);
+                // When border width of some side is 0, we need to use the other side width for dash velocity.
+                if (border_width == 0.0) {
+                    border_width = select(border.x, border.y, is_horizontal);
+                }
                 dash_velocity = dv_numerator / border_width;
                 t = select(point.y, point.x, is_horizontal) * dash_velocity;
                 max_t = select(size.y, size.x, is_horizontal) * dash_velocity;
@@ -660,10 +666,10 @@ fn fs_quad(input: QuadVarying) -> @location(0) vec4<f32> {
                 // When corners are rounded, the dashes are laid out clockwise
                 // around the whole perimeter.
 
-                let r_tr = clipped_corner_radii.top_right;
-                let r_br = clipped_corner_radii.bottom_right;
-                let r_bl = clipped_corner_radii.bottom_left;
-                let r_tl = clipped_corner_radii.top_left;
+                let r_tr = quad.corner_radii.top_right;
+                let r_br = quad.corner_radii.bottom_right;
+                let r_bl = quad.corner_radii.bottom_left;
+                let r_tl = quad.corner_radii.top_left;
 
                 let w_t = quad.border_widths.top;
                 let w_r = quad.border_widths.right;
@@ -892,7 +898,7 @@ fn vs_shadow(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) ins
     out.position = to_device_position(unit_vertex, shadow.bounds);
     out.color = hsla_to_rgba(shadow.color);
     out.shadow_id = instance_id;
-    out.clip_distances = distance_from_clip_rect(unit_vertex, shadow.bounds, shadow.content_mask);
+    out.clip_distances = distance_from_clip_rect(unit_vertex, shadow.bounds, shadow.content_mask.bounds);
     return out;
 }
 
@@ -1058,7 +1064,7 @@ fn vs_underline(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) 
     out.position = to_device_position(unit_vertex, underline.bounds);
     out.color = hsla_to_rgba(underline.color);
     out.underline_id = instance_id;
-    out.clip_distances = distance_from_clip_rect(unit_vertex, underline.bounds, underline.content_mask);
+    out.clip_distances = distance_from_clip_rect(unit_vertex, underline.bounds, underline.content_mask.bounds);
     return out;
 }
 
@@ -1119,7 +1125,7 @@ fn vs_mono_sprite(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index
 
     out.tile_position = to_tile_position(unit_vertex, sprite.tile);
     out.color = hsla_to_rgba(sprite.color);
-    out.clip_distances = distance_from_clip_rect(unit_vertex, sprite.bounds, sprite.content_mask);
+    out.clip_distances = distance_from_clip_rect(unit_vertex, sprite.bounds, sprite.content_mask.bounds);
     return out;
 }
 
@@ -1163,7 +1169,7 @@ fn vs_poly_sprite(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index
     out.position = to_device_position(unit_vertex, sprite.bounds);
     out.tile_position = to_tile_position(unit_vertex, sprite.tile);
     out.sprite_id = instance_id;
-    out.clip_distances = distance_from_clip_rect(unit_vertex, sprite.bounds, sprite.content_mask);
+    out.clip_distances = distance_from_clip_rect(unit_vertex, sprite.bounds, sprite.content_mask.bounds);
     return out;
 }
 
