@@ -7,8 +7,8 @@ use super::{
 use crate::{
     Action, AnyWindowHandle, BackgroundExecutor, ClipboardEntry, ClipboardItem, ClipboardString,
     CursorStyle, ForegroundExecutor, Image, ImageFormat, KeyContext, Keymap, LayoutDirection,
-    MacDispatcher, MacDisplay, MacWindow, Menu, MenuItem, OsMenu, OwnedMenu, PathPromptOptions, Platform,
-    PlatformDisplay, PlatformKeyboardLayout, PlatformTextSystem, PlatformWindow, Result,
+    MacDispatcher, MacDisplay, MacWindow, Menu, MenuItem, OsMenu, OwnedMenu, PathPromptOptions,
+    Platform, PlatformDisplay, PlatformKeyboardLayout, PlatformTextSystem, PlatformWindow, Result,
     SemanticVersion, SystemMenuType, Task, WindowAppearance, WindowParams, hash,
 };
 use anyhow::{Context as _, anyhow};
