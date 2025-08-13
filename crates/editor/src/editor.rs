@@ -12176,6 +12176,8 @@ impl Editor {
         let clipboard_text = Cow::Borrowed(text);
 
         self.transact(window, cx, |this, window, cx| {
+            let had_active_edit_prediction = this.has_active_edit_prediction();
+
             if let Some(mut clipboard_selections) = clipboard_selections {
                 let old_selections = this.selections.all::<usize>(cx);
                 let all_selections_were_entire_line =
@@ -12248,6 +12250,11 @@ impl Editor {
             } else {
                 this.insert(&clipboard_text, window, cx);
             }
+
+            let trigger_in_words =
+                this.show_edit_predictions_in_menu() || !had_active_edit_prediction;
+
+            this.trigger_completion_on_input(&text, trigger_in_words, window, cx);
         });
     }
 
