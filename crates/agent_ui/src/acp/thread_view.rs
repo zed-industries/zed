@@ -273,7 +273,7 @@ impl AcpThreadView {
                         Err(e)
                     }
                 }
-                Ok(session_id) => Ok(session_id),
+                Ok(thread) => Ok(thread),
             };
 
             this.update_in(cx, |this, window, cx| {
@@ -290,6 +290,24 @@ impl AcpThreadView {
                             .splice(0..0, thread.read(cx).entries().len());
 
                         AgentDiff::set_active_thread(&workspace, thread.clone(), window, cx);
+
+                        this.model_selector =
+                            thread
+                                .read(cx)
+                                .connection()
+                                .model_selector()
+                                .map(|selector| {
+                                    cx.new(|cx| {
+                                        AcpModelSelectorPopover::new(
+                                            thread.read(cx).session_id().clone(),
+                                            selector,
+                                            PopoverMenuHandle::default(),
+                                            this.focus_handle(cx),
+                                            window,
+                                            cx,
+                                        )
+                                    })
+                                });
 
                         this.thread_state = ThreadState::Ready {
                             thread,
@@ -666,24 +684,6 @@ impl AcpThreadView {
                 let index = thread.read(cx).entries().len() - 1;
                 self.sync_thread_entry_view(index, window, cx);
                 self.list_state.splice(count..count, 1);
-
-                self.model_selector =
-                    thread
-                        .read(cx)
-                        .connection()
-                        .model_selector()
-                        .map(|selector| {
-                            cx.new(|cx| {
-                                AcpModelSelectorPopover::new(
-                                    thread.read(cx).session_id().clone(),
-                                    selector,
-                                    PopoverMenuHandle::default(),
-                                    self.focus_handle(cx),
-                                    window,
-                                    cx,
-                                )
-                            })
-                        });
             }
             AcpThreadEvent::EntryUpdated(index) => {
                 let index = *index;
