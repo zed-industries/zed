@@ -251,7 +251,15 @@ pub fn main() {
         return;
     }
 
-    log::info!("========== starting zed ==========");
+    log::info!(
+        "========== starting zed version {}, sha {} ==========",
+        app_version,
+        app_commit_sha
+            .as_ref()
+            .map(|sha| sha.short())
+            .as_deref()
+            .unwrap_or("unknown"),
+    );
 
     let app = Application::new().with_assets(Assets);
 
