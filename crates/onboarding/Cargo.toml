@@ -23,7 +23,6 @@ component.workspace = true
 db.workspace = true
 documented.workspace = true
 editor.workspace = true
-feature_flags.workspace = true
 fs.workspace = true
 fuzzy.workspace = true
 git.workspace = true

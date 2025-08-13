@@ -11155,7 +11155,6 @@ dependencies = [
  "db",
  "documented",
  "editor",
- "feature_flags",
  "fs",
  "fuzzy",
  "git",
