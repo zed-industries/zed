@@ -5,10 +5,9 @@ use collections::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
 use std::fmt::Debug;
 use taffy::{
-    GridTemplateComponent, GridTemplateRepetition, MaxTrackSizingFunction, MinMax,
-    MinTrackSizingFunction, RepetitionCount, TaffyTree, TraversePartialTree as _,
+    TaffyTree, TraversePartialTree as _,
     geometry::{Point as TaffyPoint, Rect as TaffyRect, Size as TaffySize},
-    prelude::TaffyZero,
+    prelude::TaffyGridSpan,
     style::AvailableSpace as TaffyAvailableSpace,
     tree::NodeId,
 };
@@ -278,7 +277,6 @@ impl ToTaffy<taffy::style::Style> for Style {
             flex_basis: self.flex_basis.to_taffy(rem_size),
             flex_grow: self.flex_grow,
             flex_shrink: self.flex_shrink,
-            // grid-template-rows: repeat(<number>, minmax(0, 1fr));
             grid_template_rows: if let Some(count) = self.grid_rows {
                 vec![repeat(count, vec![minmax(length(0.0), fr(1.0))])]
             } else {
@@ -290,6 +288,14 @@ impl ToTaffy<taffy::style::Style> for Style {
             } else {
                 Default::default()
             },
+            grid_row: self
+                .row_span
+                .map(taffy::Line::from_span)
+                .unwrap_or_default(),
+            grid_column: self
+                .col_span
+                .map(taffy::Line::from_span)
+                .unwrap_or_default(),
             ..Default::default() // Ignore grid properties for now
         }
     }

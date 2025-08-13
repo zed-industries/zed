@@ -266,6 +266,12 @@ pub struct Style {
     /// The grid rows of this element
     pub grid_rows: Option<u16>,
 
+    /// The row span of this element
+    pub row_span: Option<u16>,
+
+    /// The column span of this element
+    pub col_span: Option<u16>,
+
     /// Whether to draw a red debugging outline around this element
     #[cfg(debug_assertions)]
     pub debug: bool,
@@ -763,8 +769,10 @@ impl Default for Style {
             text: TextStyleRefinement::default(),
             mouse_cursor: None,
             opacity: None,
-            grid_cols: None,
             grid_rows: None,
+            row_span: None,
+            grid_cols: None,
+            col_span: None,
 
             #[cfg(debug_assertions)]
             debug: false,

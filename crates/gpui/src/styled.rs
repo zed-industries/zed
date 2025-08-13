@@ -659,6 +659,18 @@ pub trait Styled: Sized {
         self
     }
 
+    /// Sets the column span of this element.
+    fn col_span(mut self, span: u16) -> Self {
+        self.style().col_span = Some(span);
+        self
+    }
+
+    /// Sets the row span of this element.
+    fn row_span(mut self, span: u16) -> Self {
+        self.style().row_span = Some(span);
+        self
+    }
+
     // TODO: Make grid cols/rows helpers up to 5
 
     /// Draws a debug border around this element.
