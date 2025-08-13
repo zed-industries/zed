@@ -4,20 +4,20 @@ use crate::{
     FocusSearch, NextHistoryQuery, PreviousHistoryQuery, ReplaceAll, ReplaceNext, SearchOptions,
     SelectAllMatches, SelectNextMatch, SelectPreviousMatch, ToggleCaseSensitive, ToggleRegex,
     ToggleReplace, ToggleSelection, ToggleWholeWord,
-    search_bar::{input_base_styles, render_nav_button, toggle_replace_button},
+    search_bar::{input_base_styles, render_nav_button, render_text_input, toggle_replace_button},
 };
 use any_vec::AnyVec;
 use anyhow::Context as _;
 use collections::HashMap;
 use editor::{
-    DisplayPoint, Editor, EditorElement, EditorSettings, EditorStyle,
+    DisplayPoint, Editor, EditorSettings,
     actions::{Backtab, Tab},
 };
 use futures::channel::oneshot;
 use gpui::{
     Action, App, ClickEvent, Context, Entity, EventEmitter, FocusHandle, Focusable,
     InteractiveElement as _, IntoElement, KeyContext, ParentElement as _, Render, ScrollHandle,
-    Styled, Subscription, Task, TextStyle, Window, actions, div,
+    Styled, Subscription, Task, Window, actions, div,
 };
 use language::{Language, LanguageRegistry};
 use project::{
@@ -28,7 +28,6 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use settings::Settings;
 use std::sync::Arc;
-use theme::ThemeSettings;
 use zed_actions::outline::ToggleOutline;
 
 use ui::{
@@ -126,46 +125,6 @@ pub struct BufferSearchBar {
 }
 
 impl BufferSearchBar {
-    fn render_text_input(
-        &self,
-        editor: &Entity<Editor>,
-        color_override: Option<Color>,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement {
-        let (color, use_syntax) = if editor.read(cx).read_only(cx) {
-            (cx.theme().colors().text_disabled, false)
-        } else {
-            match color_override {
-                Some(color_override) => (color_override.color(cx), false),
-                None => (cx.theme().colors().text, true),
-            }
-        };
-
-        let settings = ThemeSettings::get_global(cx);
-        let text_style = TextStyle {
-            color,
-            font_family: settings.buffer_font.family.clone(),
-            font_features: settings.buffer_font.features.clone(),
-            font_fallbacks: settings.buffer_font.fallbacks.clone(),
-            font_size: rems(0.875).into(),
-            font_weight: settings.buffer_font.weight,
-            line_height: relative(1.3),
-            ..TextStyle::default()
-        };
-
-        let mut editor_style = EditorStyle {
-            background: cx.theme().colors().toolbar_background,
-            local_player: cx.theme().players().local(),
-            text: text_style,
-            ..EditorStyle::default()
-        };
-        if use_syntax {
-            editor_style.syntax = cx.theme().syntax().clone();
-        }
-
-        EditorElement::new(editor, editor_style)
-    }
-
     pub fn query_editor_focused(&self) -> bool {
         self.query_editor_focused
     }
@@ -251,13 +210,13 @@ impl Render for BufferSearchBar {
                 input_base_styles(query_border)
                     .id("editor-scroll")
                     .track_scroll(&self.editor_scroll_handle)
-                    .child(self.render_text_input(&self.query_editor, color_override, cx))
+                    .child(render_text_input(&self.query_editor, color_override, cx))
                     .when(!hide_inline_icons, |div| {
                         div.child(
                             h_flex()
                                 .gap_1()
-                                .children(supported_options.case.then(|| {
-                                    self.render_search_option_button(
+                                .when(supported_options.case, |div| {
+                                    div.child(self.render_search_option_button(
                                         SearchOptions::CASE_SENSITIVE,
                                         focus_handle.clone(),
                                         cx.listener(|this, _, window, cx| {
@@ -267,26 +226,26 @@ impl Render for BufferSearchBar {
                                                 cx,
                                             )
                                         }),
-                                    )
-                                }))
-                                .children(supported_options.word.then(|| {
-                                    self.render_search_option_button(
+                                    ))
+                                })
+                                .when(supported_options.word, |div| {
+                                    div.child(self.render_search_option_button(
                                         SearchOptions::WHOLE_WORD,
                                         focus_handle.clone(),
                                         cx.listener(|this, _, window, cx| {
                                             this.toggle_whole_word(&ToggleWholeWord, window, cx)
                                         }),
-                                    )
-                                }))
-                                .children(supported_options.regex.then(|| {
-                                    self.render_search_option_button(
+                                    ))
+                                })
+                                .when(supported_options.regex, |div| {
+                                    div.child(self.render_search_option_button(
                                         SearchOptions::REGEX,
                                         focus_handle.clone(),
                                         cx.listener(|this, _, window, cx| {
                                             this.toggle_regex(&ToggleRegex, window, cx)
                                         }),
-                                    )
-                                })),
+                                    ))
+                                }),
                         )
                     }),
             )
@@ -404,7 +363,7 @@ impl Render for BufferSearchBar {
             h_flex()
                 .gap_2()
                 .child(
-                    input_base_styles(replacement_border).child(self.render_text_input(
+                    input_base_styles(replacement_border).child(render_text_input(
                         &self.replacement_editor,
                         None,
                         cx,

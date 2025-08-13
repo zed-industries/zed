@@ -3,20 +3,20 @@ use crate::{
     SearchOptions, SelectNextMatch, SelectPreviousMatch, ToggleCaseSensitive, ToggleIncludeIgnored,
     ToggleRegex, ToggleReplace, ToggleWholeWord,
     buffer_search::Deploy,
-    search_bar::{input_base_styles, toggle_replace_button},
+    search_bar::{input_base_styles, render_text_input, toggle_replace_button},
 };
 use anyhow::Context as _;
 use collections::{HashMap, HashSet};
 use editor::{
-    Anchor, Editor, EditorElement, EditorEvent, EditorSettings, EditorStyle, MAX_TAB_TITLE_LEN,
-    MultiBuffer, SelectionEffects, actions::SelectAll, items::active_match_index,
+    Anchor, Editor, EditorEvent, EditorSettings, MAX_TAB_TITLE_LEN, MultiBuffer, SelectionEffects,
+    actions::SelectAll, items::active_match_index,
 };
 use futures::{StreamExt, stream::FuturesOrdered};
 use gpui::{
     Action, AnyElement, AnyView, App, Axis, Context, Entity, EntityId, EventEmitter, FocusHandle,
     Focusable, Global, Hsla, InteractiveElement, IntoElement, KeyContext, ParentElement, Point,
-    Render, SharedString, Styled, Subscription, Task, TextStyle, UpdateGlobal, WeakEntity, Window,
-    actions, div,
+    Render, SharedString, Styled, Subscription, Task, UpdateGlobal, WeakEntity, Window, actions,
+    div,
 };
 use language::{Buffer, Language};
 use menu::Confirm;
@@ -34,7 +34,6 @@ use std::{
     pin::pin,
     sync::Arc,
 };
-use theme::ThemeSettings;
 use ui::{
     Icon, IconButton, IconButtonShape, IconName, KeyBinding, Label, LabelCommon, LabelSize,
     Toggleable, Tooltip, h_flex, prelude::*, utils::SearchInputWidth, v_flex,
@@ -1917,37 +1916,6 @@ impl ProjectSearchBar {
             })
         }
     }
-
-    fn render_text_input(&self, editor: &Entity<Editor>, cx: &Context<Self>) -> impl IntoElement {
-        let (color, use_syntax) = if editor.read(cx).read_only(cx) {
-            (cx.theme().colors().text_disabled, false)
-        } else {
-            (cx.theme().colors().text, true)
-        };
-        let settings = ThemeSettings::get_global(cx);
-        let text_style = TextStyle {
-            color,
-            font_family: settings.buffer_font.family.clone(),
-            font_features: settings.buffer_font.features.clone(),
-            font_fallbacks: settings.buffer_font.fallbacks.clone(),
-            font_size: rems(0.875).into(),
-            font_weight: settings.buffer_font.weight,
-            line_height: relative(1.3),
-            ..TextStyle::default()
-        };
-
-        let mut editor_style = EditorStyle {
-            background: cx.theme().colors().toolbar_background,
-            local_player: cx.theme().players().local(),
-            text: text_style,
-            ..EditorStyle::default()
-        };
-        if use_syntax {
-            editor_style.syntax = cx.theme().syntax().clone();
-        }
-
-        EditorElement::new(editor, editor_style)
-    }
 }
 
 impl Render for ProjectSearchBar {
@@ -1973,6 +1941,35 @@ impl Render for ProjectSearchBar {
             })
         };
 
+        let project_search = search.entity.read(cx);
+        let limit_reached = project_search.limit_reached;
+
+        let color_override = match (
+            project_search.no_results,
+            &project_search.active_query,
+            &project_search.last_search_query_text,
+        ) {
+            (Some(true), Some(q), Some(p)) if q.as_str() == p => Some(Color::Error),
+            _ => None,
+        };
+        let match_text = search
+            .active_match_index
+            .and_then(|index| {
+                let index = index + 1;
+                let match_quantity = project_search.match_ranges.len();
+                if match_quantity > 0 {
+                    debug_assert!(match_quantity >= index);
+                    if limit_reached {
+                        Some(format!("{index}/{match_quantity}+"))
+                    } else {
+                        Some(format!("{index}/{match_quantity}"))
+                    }
+                } else {
+                    None
+                }
+            })
+            .unwrap_or_else(|| "0/0".to_string());
+
         let query_column = input_base_styles(BaseStyle::SingleInput, InputPanel::Query)
             .on_action(cx.listener(|this, action, window, cx| this.confirm(action, window, cx)))
             .on_action(cx.listener(|this, action, window, cx| {
@@ -1981,7 +1978,7 @@ impl Render for ProjectSearchBar {
             .on_action(
                 cx.listener(|this, action, window, cx| this.next_history_query(action, window, cx)),
             )
-            .child(self.render_text_input(&search.query_editor, cx))
+            .child(render_text_input(&search.query_editor, color_override, cx))
             .child(
                 h_flex()
                     .gap_1()
@@ -2049,26 +2046,6 @@ impl Render for ProjectSearchBar {
                     this.toggle_replace(&ToggleReplace, window, cx);
                 }),
             ));
-
-        let limit_reached = search.entity.read(cx).limit_reached;
-
-        let match_text = search
-            .active_match_index
-            .and_then(|index| {
-                let index = index + 1;
-                let match_quantity = search.entity.read(cx).match_ranges.len();
-                if match_quantity > 0 {
-                    debug_assert!(match_quantity >= index);
-                    if limit_reached {
-                        Some(format!("{index}/{match_quantity}+"))
-                    } else {
-                        Some(format!("{index}/{match_quantity}"))
-                    }
-                } else {
-                    None
-                }
-            })
-            .unwrap_or_else(|| "0/0".to_string());
 
         let matches_column = h_flex()
             .pl_2()
@@ -2149,62 +2126,59 @@ impl Render for ProjectSearchBar {
 
         let replace_line = search.replace_enabled.then(|| {
             let replace_column = input_base_styles(BaseStyle::SingleInput, InputPanel::Replacement)
-                .child(self.render_text_input(&search.replacement_editor, cx));
+                .child(render_text_input(&search.replacement_editor, None, cx));
 
             let focus_handle = search.replacement_editor.read(cx).focus_handle(cx);
 
-            let replace_actions =
-                h_flex()
-                    .min_w_64()
-                    .gap_1()
-                    .when(search.replace_enabled, |this| {
-                        this.child(
-                            IconButton::new("project-search-replace-next", IconName::ReplaceNext)
-                                .shape(IconButtonShape::Square)
-                                .on_click(cx.listener(|this, _, window, cx| {
-                                    if let Some(search) = this.active_project_search.as_ref() {
-                                        search.update(cx, |this, cx| {
-                                            this.replace_next(&ReplaceNext, window, cx);
-                                        })
-                                    }
-                                }))
-                                .tooltip({
-                                    let focus_handle = focus_handle.clone();
-                                    move |window, cx| {
-                                        Tooltip::for_action_in(
-                                            "Replace Next Match",
-                                            &ReplaceNext,
-                                            &focus_handle,
-                                            window,
-                                            cx,
-                                        )
-                                    }
-                                }),
-                        )
-                        .child(
-                            IconButton::new("project-search-replace-all", IconName::ReplaceAll)
-                                .shape(IconButtonShape::Square)
-                                .on_click(cx.listener(|this, _, window, cx| {
-                                    if let Some(search) = this.active_project_search.as_ref() {
-                                        search.update(cx, |this, cx| {
-                                            this.replace_all(&ReplaceAll, window, cx);
-                                        })
-                                    }
-                                }))
-                                .tooltip({
-                                    let focus_handle = focus_handle.clone();
-                                    move |window, cx| {
-                                        Tooltip::for_action_in(
-                                            "Replace All Matches",
-                                            &ReplaceAll,
-                                            &focus_handle,
-                                            window,
-                                            cx,
-                                        )
-                                    }
-                                }),
-                        )
-                    });
+            let replace_actions = h_flex()
+                .min_w_64()
+                .gap_1()
+                .child(
+                    IconButton::new("project-search-replace-next", IconName::ReplaceNext)
+                        .shape(IconButtonShape::Square)
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            if let Some(search) = this.active_project_search.as_ref() {
+                                search.update(cx, |this, cx| {
+                                    this.replace_next(&ReplaceNext, window, cx);
+                                })
+                            }
+                        }))
+                        .tooltip({
+                            let focus_handle = focus_handle.clone();
+                            move |window, cx| {
+                                Tooltip::for_action_in(
+                                    "Replace Next Match",
+                                    &ReplaceNext,
+                                    &focus_handle,
+                                    window,
+                                    cx,
+                                )
+                            }
+                        }),
+                )
+                .child(
+                    IconButton::new("project-search-replace-all", IconName::ReplaceAll)
+                        .shape(IconButtonShape::Square)
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            if let Some(search) = this.active_project_search.as_ref() {
+                                search.update(cx, |this, cx| {
+                                    this.replace_all(&ReplaceAll, window, cx);
+                                })
+                            }
+                        }))
+                        .tooltip({
+                            let focus_handle = focus_handle.clone();
+                            move |window, cx| {
+                                Tooltip::for_action_in(
+                                    "Replace All Matches",
+                                    &ReplaceAll,
+                                    &focus_handle,
+                                    window,
+                                    cx,
+                                )
+                            }
+                        }),
+                );
 
             h_flex()
                 .w_full()
@@ -2229,7 +2203,7 @@ impl Render for ProjectSearchBar {
                                 .on_action(cx.listener(|this, action, window, cx| {
                                     this.next_history_query(action, window, cx)
                                 }))
-                                .child(self.render_text_input(&search.included_files_editor, cx)),
+                                .child(render_text_input(&search.included_files_editor, None, cx)),
                         )
                         .child(
                             input_base_styles(BaseStyle::MultipleInputs, InputPanel::Exclude)
@@ -2239,7 +2213,7 @@ impl Render for ProjectSearchBar {
                                 .on_action(cx.listener(|this, action, window, cx| {
                                     this.next_history_query(action, window, cx)
                                 }))
-                                .child(self.render_text_input(&search.excluded_files_editor, cx)),
+                                .child(render_text_input(&search.excluded_files_editor, None, cx)),
                         ),
                 )
                 .child(
