@@ -3012,7 +3012,7 @@ impl EditorElement {
                     .icon_color(Color::Custom(cx.theme().colors().editor_line_number))
                     .icon_size(IconSize::Custom(rems(editor_font_size / window.rem_size())))
                     .shape(ui::IconButtonShape::Wide)
-                    .width(width.into())
+                    .width(width)
                     .on_click(move |_, window, cx| {
                         editor.update(cx, |editor, cx| {
                             editor.expand_excerpt(excerpt_id, direction, window, cx);
@@ -3628,7 +3628,7 @@ impl EditorElement {
                                     ButtonLike::new("toggle-buffer-fold")
                                         .style(ui::ButtonStyle::Transparent)
                                         .height(px(28.).into())
-                                        .width(px(28.).into())
+                                        .width(px(28.))
                                         .children(toggle_chevron_icon)
                                         .tooltip({
                                             let focus_handle = focus_handle.clone();

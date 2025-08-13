@@ -370,9 +370,9 @@ impl Platform for WindowsPlatform {
             .detach();
     }
 
-    fn restart(&self, _: Option<PathBuf>) {
+    fn restart(&self, binary_path: Option<PathBuf>) {
         let pid = std::process::id();
-        let Some(app_path) = self.app_path().log_err() else {
+        let Some(app_path) = binary_path.or(self.app_path().log_err()) else {
             return;
         };
         let script = format!(

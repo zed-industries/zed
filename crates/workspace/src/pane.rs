@@ -1829,6 +1829,7 @@ impl Pane {
         let mode = self.nav_history.mode();
         self.nav_history.set_mode(NavigationMode::ClosingItem);
         item.deactivated(window, cx);
+        item.on_removed(cx);
         self.nav_history.set_mode(mode);
 
         if self.is_active_preview_item(item.item_id()) {
