@@ -288,7 +288,9 @@ message StatusEntry {
 message StashEntry {
     bytes oid = 1;
     string message = 2;
-    int64 index = 3;
+    optional string branch = 3;
+    uint64 index = 4;
+    int64 timestamp = 5;
 }
 
 message Stage {

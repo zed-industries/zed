@@ -995,7 +995,7 @@ impl GitRepository for RealGitRepository {
             .spawn(async move {
                 let output = new_std_command(&git_binary_path)
                     .current_dir(working_directory?)
-                    .args(&["stash", "list", "--pretty=%gd:%H:%s"])
+                    .args(&["stash", "list", "--pretty=format:%gd%x00%H%x00%ct%x00%s"])
                     .output()?;
                 if output.status.success() {
                     let stdout = String::from_utf8_lossy(&output.stdout);
