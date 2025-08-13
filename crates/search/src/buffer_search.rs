@@ -201,163 +201,158 @@ impl Render for BufferSearchBar {
         let input_base_styles =
             |border_color| input_base_styles(border_color, |div| div.w(input_width));
 
+        let query_column = input_base_styles(query_border)
+            .id("editor-scroll")
+            .track_scroll(&self.editor_scroll_handle)
+            .child(render_text_input(&self.query_editor, color_override, cx))
+            .when(!hide_inline_icons, |div| {
+                div.child(
+                    h_flex()
+                        .gap_1()
+                        .when(supported_options.case, |div| {
+                            div.child(self.render_search_option_button(
+                                SearchOptions::CASE_SENSITIVE,
+                                focus_handle.clone(),
+                                cx.listener(|this, _, window, cx| {
+                                    this.toggle_case_sensitive(&ToggleCaseSensitive, window, cx)
+                                }),
+                            ))
+                        })
+                        .when(supported_options.word, |div| {
+                            div.child(self.render_search_option_button(
+                                SearchOptions::WHOLE_WORD,
+                                focus_handle.clone(),
+                                cx.listener(|this, _, window, cx| {
+                                    this.toggle_whole_word(&ToggleWholeWord, window, cx)
+                                }),
+                            ))
+                        })
+                        .when(supported_options.regex, |div| {
+                            div.child(self.render_search_option_button(
+                                SearchOptions::REGEX,
+                                focus_handle.clone(),
+                                cx.listener(|this, _, window, cx| {
+                                    this.toggle_regex(&ToggleRegex, window, cx)
+                                }),
+                            ))
+                        }),
+                )
+            });
+
+        let mode_column = h_flex()
+            .gap_1()
+            .min_w_64()
+            .when(supported_options.replacement, |this| {
+                this.child(toggle_replace_button(
+                    "buffer-search-bar-toggle-replace-button",
+                    focus_handle.clone(),
+                    self.replace_enabled,
+                    cx.listener(|this, _: &ClickEvent, window, cx| {
+                        this.toggle_replace(&ToggleReplace, window, cx);
+                    }),
+                ))
+            })
+            .when(supported_options.selection, |this| {
+                this.child(
+                    IconButton::new(
+                        "buffer-search-bar-toggle-search-selection-button",
+                        IconName::Quote,
+                    )
+                    .style(ButtonStyle::Subtle)
+                    .shape(IconButtonShape::Square)
+                    .when(self.selection_search_enabled, |button| {
+                        button.style(ButtonStyle::Filled)
+                    })
+                    .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+                        this.toggle_selection(&ToggleSelection, window, cx);
+                    }))
+                    .toggle_state(self.selection_search_enabled)
+                    .tooltip({
+                        let focus_handle = focus_handle.clone();
+                        move |window, cx| {
+                            Tooltip::for_action_in(
+                                "Toggle Search Selection",
+                                &ToggleSelection,
+                                &focus_handle,
+                                window,
+                                cx,
+                            )
+                        }
+                    }),
+                )
+            })
+            .when(!supported_options.find_in_results, |el| {
+                let matches_column = h_flex()
+                    .pl_2()
+                    .ml_1()
+                    .border_l_1()
+                    .border_color(cx.theme().colors().border_variant)
+                    .child(render_nav_button(
+                        ui::IconName::ChevronLeft,
+                        self.active_match_index.is_some(),
+                        "Select Previous Match",
+                        &SelectPreviousMatch,
+                        focus_handle.clone(),
+                    ))
+                    .child(render_nav_button(
+                        ui::IconName::ChevronRight,
+                        self.active_match_index.is_some(),
+                        "Select Next Match",
+                        &SelectNextMatch,
+                        focus_handle.clone(),
+                    ));
+                el.child(
+                    IconButton::new("select-all", ui::IconName::SelectAll)
+                        .on_click(|_, window, cx| {
+                            window.dispatch_action(SelectAllMatches.boxed_clone(), cx)
+                        })
+                        .shape(IconButtonShape::Square)
+                        .tooltip({
+                            let focus_handle = focus_handle.clone();
+                            move |window, cx| {
+                                Tooltip::for_action_in(
+                                    "Select All Matches",
+                                    &SelectAllMatches,
+                                    &focus_handle,
+                                    window,
+                                    cx,
+                                )
+                            }
+                        }),
+                )
+                .child(matches_column)
+                .when(!narrow_mode, |this| {
+                    this.child(h_flex().ml_2().min_w(rems_from_px(40.)).child(
+                        Label::new(match_text).size(LabelSize::Small).color(
+                            if self.active_match_index.is_some() {
+                                Color::Default
+                            } else {
+                                Color::Disabled
+                            },
+                        ),
+                    ))
+                })
+            })
+            .when(supported_options.find_in_results, |el| {
+                el.child(
+                    IconButton::new(SharedString::from("Close"), IconName::Close)
+                        .shape(IconButtonShape::Square)
+                        .tooltip(move |window, cx| {
+                            Tooltip::for_action("Close Search Bar", &Dismiss, window, cx)
+                        })
+                        .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+                            this.dismiss(&Dismiss, window, cx)
+                        })),
+                )
+            });
+
         let search_line = h_flex()
             .gap_2()
             .when(supported_options.find_in_results, |el| {
                 el.child(Label::new("Find in results").color(Color::Hint))
             })
-            .child(
-                input_base_styles(query_border)
-                    .id("editor-scroll")
-                    .track_scroll(&self.editor_scroll_handle)
-                    .child(render_text_input(&self.query_editor, color_override, cx))
-                    .when(!hide_inline_icons, |div| {
-                        div.child(
-                            h_flex()
-                                .gap_1()
-                                .when(supported_options.case, |div| {
-                                    div.child(self.render_search_option_button(
-                                        SearchOptions::CASE_SENSITIVE,
-                                        focus_handle.clone(),
-                                        cx.listener(|this, _, window, cx| {
-                                            this.toggle_case_sensitive(
-                                                &ToggleCaseSensitive,
-                                                window,
-                                                cx,
-                                            )
-                                        }),
-                                    ))
-                                })
-                                .when(supported_options.word, |div| {
-                                    div.child(self.render_search_option_button(
-                                        SearchOptions::WHOLE_WORD,
-                                        focus_handle.clone(),
-                                        cx.listener(|this, _, window, cx| {
-                                            this.toggle_whole_word(&ToggleWholeWord, window, cx)
-                                        }),
-                                    ))
-                                })
-                                .when(supported_options.regex, |div| {
-                                    div.child(self.render_search_option_button(
-                                        SearchOptions::REGEX,
-                                        focus_handle.clone(),
-                                        cx.listener(|this, _, window, cx| {
-                                            this.toggle_regex(&ToggleRegex, window, cx)
-                                        }),
-                                    ))
-                                }),
-                        )
-                    }),
-            )
-            .child(
-                h_flex()
-                    .gap_1()
-                    .min_w_64()
-                    .when(supported_options.replacement, |this| {
-                        this.child(toggle_replace_button(
-                            "buffer-search-bar-toggle-replace-button",
-                            focus_handle.clone(),
-                            self.replace_enabled,
-                            cx.listener(|this, _: &ClickEvent, window, cx| {
-                                this.toggle_replace(&ToggleReplace, window, cx);
-                            }),
-                        ))
-                    })
-                    .when(supported_options.selection, |this| {
-                        this.child(
-                            IconButton::new(
-                                "buffer-search-bar-toggle-search-selection-button",
-                                IconName::Quote,
-                            )
-                            .style(ButtonStyle::Subtle)
-                            .shape(IconButtonShape::Square)
-                            .when(self.selection_search_enabled, |button| {
-                                button.style(ButtonStyle::Filled)
-                            })
-                            .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
-                                this.toggle_selection(&ToggleSelection, window, cx);
-                            }))
-                            .toggle_state(self.selection_search_enabled)
-                            .tooltip({
-                                let focus_handle = focus_handle.clone();
-                                move |window, cx| {
-                                    Tooltip::for_action_in(
-                                        "Toggle Search Selection",
-                                        &ToggleSelection,
-                                        &focus_handle,
-                                        window,
-                                        cx,
-                                    )
-                                }
-                            }),
-                        )
-                    })
-                    .when(!supported_options.find_in_results, |el| {
-                        el.child(
-                            IconButton::new("select-all", ui::IconName::SelectAll)
-                                .on_click(|_, window, cx| {
-                                    window.dispatch_action(SelectAllMatches.boxed_clone(), cx)
-                                })
-                                .shape(IconButtonShape::Square)
-                                .tooltip({
-                                    let focus_handle = focus_handle.clone();
-                                    move |window, cx| {
-                                        Tooltip::for_action_in(
-                                            "Select All Matches",
-                                            &SelectAllMatches,
-                                            &focus_handle,
-                                            window,
-                                            cx,
-                                        )
-                                    }
-                                }),
-                        )
-                        .child(
-                            h_flex()
-                                .pl_2()
-                                .ml_1()
-                                .border_l_1()
-                                .border_color(cx.theme().colors().border_variant)
-                                .child(render_nav_button(
-                                    ui::IconName::ChevronLeft,
-                                    self.active_match_index.is_some(),
-                                    "Select Previous Match",
-                                    &SelectPreviousMatch,
-                                    focus_handle.clone(),
-                                ))
-                                .child(render_nav_button(
-                                    ui::IconName::ChevronRight,
-                                    self.active_match_index.is_some(),
-                                    "Select Next Match",
-                                    &SelectNextMatch,
-                                    focus_handle.clone(),
-                                )),
-                        )
-                        .when(!narrow_mode, |this| {
-                            this.child(h_flex().ml_2().min_w(rems_from_px(40.)).child(
-                                Label::new(match_text).size(LabelSize::Small).color(
-                                    if self.active_match_index.is_some() {
-                                        Color::Default
-                                    } else {
-                                        Color::Disabled
-                                    },
-                                ),
-                            ))
-                        })
-                    })
-                    .when(supported_options.find_in_results, |el| {
-                        el.child(
-                            IconButton::new(SharedString::from("Close"), IconName::Close)
-                                .shape(IconButtonShape::Square)
-                                .tooltip(move |window, cx| {
-                                    Tooltip::for_action("Close Search Bar", &Dismiss, window, cx)
-                                })
-                                .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
-                                    this.dismiss(&Dismiss, window, cx)
-                                })),
-                        )
-                    }),
-            );
+            .child(query_column)
+            .child(mode_column);
 
         let replace_line =
             should_show_replace_input.then(|| {
