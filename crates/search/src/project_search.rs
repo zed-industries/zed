@@ -1,7 +1,9 @@
 use crate::{
     BufferSearchBar, FocusSearch, NextHistoryQuery, PreviousHistoryQuery, ReplaceAll, ReplaceNext,
     SearchOptions, SelectNextMatch, SelectPreviousMatch, ToggleCaseSensitive, ToggleIncludeIgnored,
-    ToggleRegex, ToggleReplace, ToggleWholeWord, buffer_search::Deploy,
+    ToggleRegex, ToggleReplace, ToggleWholeWord,
+    buffer_search::Deploy,
+    search_bar::{input_base_styles, toggle_replace_button},
 };
 use anyhow::Context as _;
 use collections::{HashMap, HashSet};
@@ -1965,19 +1967,10 @@ impl Render for ProjectSearchBar {
         }
 
         let input_base_styles = |base_style: BaseStyle, panel: InputPanel| {
-            h_flex()
-                .min_w_32()
-                .map(|div| match base_style {
-                    BaseStyle::SingleInput => div.w(input_width),
-                    BaseStyle::MultipleInputs => div.flex_grow(),
-                })
-                .h_8()
-                .pl_2()
-                .pr_1()
-                .py_1()
-                .border_1()
-                .border_color(search.border_color_for(panel, cx))
-                .rounded_lg()
+            input_base_styles(search.border_color_for(panel, cx), |div| match base_style {
+                BaseStyle::SingleInput => div.w(input_width),
+                BaseStyle::MultipleInputs => div.flex_grow(),
+            })
         };
 
         let query_column = input_base_styles(BaseStyle::SingleInput, InputPanel::Query)
@@ -2045,31 +2038,17 @@ impl Render for ProjectSearchBar {
                         }
                     }),
             )
-            .child(
-                IconButton::new("project-search-toggle-replace", IconName::Replace)
-                    .shape(IconButtonShape::Square)
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        this.toggle_replace(&ToggleReplace, window, cx);
-                    }))
-                    .toggle_state(
-                        self.active_project_search
-                            .as_ref()
-                            .map(|search| search.read(cx).replace_enabled)
-                            .unwrap_or_default(),
-                    )
-                    .tooltip({
-                        let focus_handle = focus_handle.clone();
-                        move |window, cx| {
-                            Tooltip::for_action_in(
-                                "Toggle Replace",
-                                &ToggleReplace,
-                                &focus_handle,
-                                window,
-                                cx,
-                            )
-                        }
-                    }),
-            );
+            .child(toggle_replace_button(
+                "project-search-toggle-replace",
+                focus_handle.clone(),
+                self.active_project_search
+                    .as_ref()
+                    .map(|search| search.read(cx).replace_enabled)
+                    .unwrap_or_default(),
+                cx.listener(|this, _, window, cx| {
+                    this.toggle_replace(&ToggleReplace, window, cx);
+                }),
+            ));
 
         let limit_reached = search.entity.read(cx).limit_reached;
 

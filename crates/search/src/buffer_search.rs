@@ -3,7 +3,8 @@ mod registrar;
 use crate::{
     FocusSearch, NextHistoryQuery, PreviousHistoryQuery, ReplaceAll, ReplaceNext, SearchOptions,
     SelectAllMatches, SelectNextMatch, SelectPreviousMatch, ToggleCaseSensitive, ToggleRegex,
-    ToggleReplace, ToggleSelection, ToggleWholeWord, search_bar::render_nav_button,
+    ToggleReplace, ToggleSelection, ToggleWholeWord,
+    search_bar::{input_base_styles, render_nav_button, toggle_replace_button},
 };
 use any_vec::AnyVec;
 use anyhow::Context as _;
@@ -238,18 +239,8 @@ impl Render for BufferSearchBar {
         let container_width = window.viewport_size().width;
         let input_width = SearchInputWidth::calc_width(container_width);
 
-        let input_base_styles = |border_color| {
-            h_flex()
-                .min_w_32()
-                .w(input_width)
-                .h_8()
-                .pl_2()
-                .pr_1()
-                .py_1()
-                .border_1()
-                .border_color(border_color)
-                .rounded_lg()
-        };
+        let input_base_styles =
+            |border_color| input_base_styles(border_color, |div| div.w(input_width));
 
         let search_line = h_flex()
             .gap_2()
@@ -304,33 +295,14 @@ impl Render for BufferSearchBar {
                     .gap_1()
                     .min_w_64()
                     .when(supported_options.replacement, |this| {
-                        this.child(
-                            IconButton::new(
-                                "buffer-search-bar-toggle-replace-button",
-                                IconName::Replace,
-                            )
-                            .style(ButtonStyle::Subtle)
-                            .shape(IconButtonShape::Square)
-                            .when(self.replace_enabled, |button| {
-                                button.style(ButtonStyle::Filled)
-                            })
-                            .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+                        this.child(toggle_replace_button(
+                            "buffer-search-bar-toggle-replace-button",
+                            focus_handle.clone(),
+                            self.replace_enabled,
+                            cx.listener(|this, _: &ClickEvent, window, cx| {
                                 this.toggle_replace(&ToggleReplace, window, cx);
-                            }))
-                            .toggle_state(self.replace_enabled)
-                            .tooltip({
-                                let focus_handle = focus_handle.clone();
-                                move |window, cx| {
-                                    Tooltip::for_action_in(
-                                        "Toggle Replace",
-                                        &ToggleReplace,
-                                        &focus_handle,
-                                        window,
-                                        cx,
-                                    )
-                                }
                             }),
-                        )
+                        ))
                     })
                     .when(supported_options.selection, |this| {
                         this.child(
