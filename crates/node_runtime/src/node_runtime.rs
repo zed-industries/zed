@@ -29,6 +29,15 @@ pub struct NodeBinaryOptions {
     pub use_paths: Option<(PathBuf, PathBuf)>,
 }
 
+#[derive(Default)]
+pub enum VersionCheck {
+    /// Check whether the installed and requested version have a mismatch
+    VersionMismatch,
+    /// Only check whether the currently installed version is older than the newest one
+    #[default]
+    OlderVersion,
+}
+
 #[derive(Clone)]
 pub struct NodeRuntime(Arc<Mutex<NodeRuntimeState>>);
 
@@ -287,6 +296,7 @@ impl NodeRuntime {
         local_executable_path: &Path,
         local_package_directory: &Path,
         latest_version: &str,
+        version_check: VersionCheck,
     ) -> bool {
         // In the case of the local system not having the package installed,
         // or in the instances where we fail to parse package.json data,
@@ -311,7 +321,10 @@ impl NodeRuntime {
             return true;
         };
 
-        installed_version < latest_version
+        match version_check {
+            VersionCheck::VersionMismatch => installed_version != latest_version,
+            VersionCheck::OlderVersion => installed_version < latest_version,
+        }
     }
 }
 
