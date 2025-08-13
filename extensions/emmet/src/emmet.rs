@@ -5,7 +5,7 @@ struct EmmetExtension {
     did_find_server: bool,
 }
 
-const SERVER_PATH: &str = "node_modules/.bin/emmet-language-server";
+const SERVER_PATH: &str = "node_modules/@olrtg/emmet-language-server/dist/index.js";
 const PACKAGE_NAME: &str = "@olrtg/emmet-language-server";
 
 impl EmmetExtension {
