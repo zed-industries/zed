@@ -1,5 +1,4 @@
 use super::*;
-use crate::MessageContent;
 use acp_thread::{AgentConnection, AgentModelGroupName, AgentModelList, UserMessageId};
 use action_log::ActionLog;
 use agent_client_protocol::{self as acp};
@@ -44,9 +43,13 @@ async fn test_echo(cx: &mut TestAppContext) {
         .await;
     thread.update(cx, |thread, _cx| {
         assert_eq!(
-            thread.messages().last().unwrap().content,
-            vec![MessageContent::Text("Hello".to_string())]
-        );
+            thread.messages().last().unwrap().to_markdown(),
+            indoc! {"
+                ## Assistant
+
+                Hello
+            "}
+        )
     });
     assert_eq!(stop_events(events), vec![acp::StopReason::EndTurn]);
 }
@@ -75,7 +78,8 @@ async fn test_thinking(cx: &mut TestAppContext) {
         assert_eq!(
             thread.messages().last().unwrap().to_markdown(),
             indoc! {"
-                ## assistant
+                ## Assistant
+
                 <think>Think</think>
                 Hello
             "}
@@ -167,10 +171,12 @@ async fn test_basic_tool_calls(cx: &mut TestAppContext) {
                 .messages()
                 .last()
                 .unwrap()
+                .as_agent_message()
+                .unwrap()
                 .content
                 .iter()
                 .any(|content| {
-                    if let MessageContent::Text(text) = content {
+                    if let AgentMessageContent::Text(text) = content {
                         text.contains("Ding")
                     } else {
                         false
@@ -198,8 +204,10 @@ async fn test_streaming_tool_calls(cx: &mut TestAppContext) {
         if let Ok(AgentResponseEvent::ToolCall(tool_call)) = event {
             thread.update(cx, |thread, _cx| {
                 // Look for a tool use in the thread's last message
-                let last_content = thread.messages().last().unwrap().content.last().unwrap();
-                if let MessageContent::ToolUse(last_tool_use) = last_content {
+                let message = thread.messages().last().unwrap();
+                let agent_message = message.as_agent_message().unwrap();
+                let last_content = agent_message.content.last().unwrap();
+                if let AgentMessageContent::ToolUse(last_tool_use) = last_content {
                     assert_eq!(last_tool_use.name.as_ref(), "word_list");
                     if tool_call.status == acp::ToolCallStatus::Pending {
                         if !last_tool_use.is_input_complete
@@ -476,11 +484,12 @@ async fn test_concurrent_tool_calls(cx: &mut TestAppContext) {
 
     thread.update(cx, |thread, _cx| {
         let last_message = thread.messages().last().unwrap();
-        let text = last_message
+        let agent_message = last_message.as_agent_message().unwrap();
+        let text = agent_message
             .content
             .iter()
             .filter_map(|content| {
-                if let MessageContent::Text(text) = content {
+                if let AgentMessageContent::Text(text) = content {
                     Some(text.as_str())
                 } else {
                     None
@@ -632,9 +641,11 @@ async fn test_cancellation(cx: &mut TestAppContext) {
         .collect::<Vec<_>>()
         .await;
     thread.update(cx, |thread, _cx| {
+        let message = thread.messages().last().unwrap();
+        let agent_message = message.as_agent_message().unwrap();
         assert_eq!(
-            thread.messages().last().unwrap().content,
-            vec![MessageContent::Text("Hello".to_string())]
+            agent_message.content,
+            vec![AgentMessageContent::Text("Hello".to_string())]
         );
     });
     assert_eq!(stop_events(events), vec![acp::StopReason::EndTurn]);
@@ -653,8 +664,10 @@ async fn test_refusal(cx: &mut TestAppContext) {
         assert_eq!(
             thread.to_markdown(),
             indoc! {"
-                ## user
+                ## User
+
                 Hello
+
             "}
         );
     });
@@ -665,10 +678,14 @@ async fn test_refusal(cx: &mut TestAppContext) {
         assert_eq!(
             thread.to_markdown(),
             indoc! {"
-                ## user
+                ## User
+
                 Hello
-                ## assistant
+
+                ## Assistant
+
                 Hey!
+
             "}
         );
     });

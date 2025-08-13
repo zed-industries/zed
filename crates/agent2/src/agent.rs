@@ -1,8 +1,9 @@
 use crate::{AgentResponseEvent, Thread, templates::Templates};
 use crate::{
     ContextServerRegistry, CopyPathTool, CreateDirectoryTool, DiagnosticsTool, EditFileTool,
-    FetchTool, FindPathTool, GrepTool, ListDirectoryTool, MessageContent, MovePathTool, NowTool,
-    OpenTool, ReadFileTool, TerminalTool, ThinkingTool, ToolCallAuthorization, WebSearchTool,
+    FetchTool, FindPathTool, GrepTool, ListDirectoryTool, MovePathTool, NowTool, OpenTool,
+    ReadFileTool, TerminalTool, ThinkingTool, ToolCallAuthorization, UserMessageContent,
+    WebSearchTool,
 };
 use acp_thread::AgentModelSelector;
 use agent_client_protocol as acp;
@@ -662,7 +663,7 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
                 })?;
             log::debug!("Found session for: {}", session_id);
 
-            let content: Vec<MessageContent> = params
+            let content: Vec<UserMessageContent> = params
                 .prompt
                 .into_iter()
                 .map(Into::into)
