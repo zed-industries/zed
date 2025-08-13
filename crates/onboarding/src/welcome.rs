@@ -1,5 +1,6 @@
 use gpui::{
-    actions, Action, App, Context, Entity, EventEmitter, FocusHandle, Focusable, InteractiveElement, ParentElement, Render, Styled, Task, Window
+    Action, App, Context, Entity, EventEmitter, FocusHandle, Focusable, InteractiveElement,
+    ParentElement, Render, Styled, Task, Window, actions,
 };
 use menu::{SelectNext, SelectPrevious};
 use ui::{ButtonLike, Divider, DividerColor, KeyBinding, Vector, VectorName, prelude::*};
@@ -380,10 +381,12 @@ impl workspace::SerializableItem for WelcomePage {
         window: &mut Window,
         cx: &mut App,
     ) -> Task<gpui::Result<Entity<Self>>> {
-        if persistence::WELCOME_PAGES.get_welcome_page(item_id, workspace_id).ok().is_some_and(|is_open| is_open) {
-            window.spawn(cx, async move |cx| {
-                cx.update(WelcomePage::new)
-            })
+        if persistence::WELCOME_PAGES
+            .get_welcome_page(item_id, workspace_id)
+            .ok()
+            .is_some_and(|is_open| is_open)
+        {
+            window.spawn(cx, async move |cx| cx.update(WelcomePage::new))
         } else {
             Task::ready(Err(anyhow::anyhow!("No welcome page to deserialize")))
         }
@@ -403,7 +406,6 @@ impl workspace::SerializableItem for WelcomePage {
                 .save_welcome_page(item_id, workspace_id, true)
                 .await
         }))
-
     }
 
     fn should_serialize(&self, event: &Self::Event) -> bool {
@@ -414,7 +416,6 @@ impl workspace::SerializableItem for WelcomePage {
 mod persistence {
     use db::{define_connection, query, sqlez_macros::sql};
     use workspace::WorkspaceDb;
-
 
     define_connection! {
         pub static ref WELCOME_PAGES: WelcomePagesDb<WorkspaceDb> =
@@ -455,6 +456,5 @@ mod persistence {
                 WHERE item_id = ? AND workspace_id = ?
             }
         }
-
     }
 }
