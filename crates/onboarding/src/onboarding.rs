@@ -1,6 +1,8 @@
-use crate::welcome::{ShowWelcome, WelcomePage};
+use crate::{
+    multibuffer_hint::MultibufferHint,
+    welcome::{ShowWelcome, WelcomePage},
+};
 use client::{Client, UserStore, zed_urls};
-use command_palette_hooks::CommandPaletteFilter;
 use db::kvp::KEY_VALUE_STORE;
 use fs::Fs;
 use gpui::{
@@ -26,8 +28,10 @@ use workspace::{
 };
 
 mod ai_setup_page;
+mod base_keymap_picker;
 mod basics_page;
 mod editing_page;
+pub mod multibuffer_hint;
 mod theme_preview;
 mod welcome;
 
@@ -50,6 +54,7 @@ pub struct ImportCursorSettings {
 }
 
 pub const FIRST_OPEN: &str = "first_open";
+pub const DOCS_URL: &str = "https://zed.dev/docs/";
 
 actions!(
     zed,
@@ -73,11 +78,19 @@ actions!(
         /// Sign in while in the onboarding flow.
         SignIn,
         /// Open the user account in zed.dev while in the onboarding flow.
-        OpenAccount
+        OpenAccount,
+        /// Resets the welcome screen hints to their initial state.
+        ResetHints
     ]
 );
 
 pub fn init(cx: &mut App) {
+    cx.observe_new(|workspace: &mut Workspace, _, _cx| {
+        workspace
+            .register_action(|_workspace, _: &ResetHints, _, cx| MultibufferHint::set_count(0, cx));
+    })
+    .detach();
+
     cx.on_action(|_: &OpenOnboarding, cx| {
         with_active_or_new_workspace(cx, |workspace, window, cx| {
             workspace
@@ -175,17 +188,8 @@ pub fn init(cx: &mut App) {
     })
     .detach();
 
-    cx.observe_new::<Workspace>(|_, _, cx| {
-        let onboarding_actions = [
-            std::any::TypeId::of::<OpenOnboarding>(),
-            std::any::TypeId::of::<ShowWelcome>(),
-        ];
+    base_keymap_picker::init(cx);
 
-        CommandPaletteFilter::update_global(cx, |filter, _cx| {
-            filter.show_action_types(onboarding_actions.iter());
-        })
-    })
-    .detach();
     register_serializable_item::<Onboarding>(cx);
 }
 
