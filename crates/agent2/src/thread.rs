@@ -433,6 +433,7 @@ impl Thread {
     }
 
     pub fn truncate(&mut self, message_id: UserMessageId) -> Result<()> {
+        self.cancel();
         let Some(position) = self.messages.iter().position(
             |msg| matches!(msg, Message::User(UserMessage { id, .. }) if id == &message_id),
         ) else {

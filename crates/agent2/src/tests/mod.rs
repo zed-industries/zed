@@ -698,6 +698,85 @@ async fn test_refusal(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_truncate(cx: &mut TestAppContext) {
+    let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
+    let fake_model = model.as_fake();
+
+    let message_id = UserMessageId::new();
+    thread.update(cx, |thread, cx| {
+        thread.send(message_id.clone(), ["Hello"], cx)
+    });
+    cx.run_until_parked();
+    thread.read_with(cx, |thread, _| {
+        assert_eq!(
+            thread.to_markdown(),
+            indoc! {"
+                ## User
+
+                Hello
+            "}
+        );
+    });
+
+    fake_model.send_last_completion_stream_text_chunk("Hey!");
+    cx.run_until_parked();
+    thread.read_with(cx, |thread, _| {
+        assert_eq!(
+            thread.to_markdown(),
+            indoc! {"
+                ## User
+
+                Hello
+
+                ## Assistant
+
+                Hey!
+            "}
+        );
+    });
+
+    thread
+        .update(cx, |thread, _cx| thread.truncate(message_id))
+        .unwrap();
+    cx.run_until_parked();
+    thread.read_with(cx, |thread, _| {
+        assert_eq!(thread.to_markdown(), "");
+    });
+
+    // Ensure we can still send a new message after truncation.
+    thread.update(cx, |thread, cx| {
+        thread.send(UserMessageId::new(), ["Hi"], cx)
+    });
+    thread.update(cx, |thread, _cx| {
+        assert_eq!(
+            thread.to_markdown(),
+            indoc! {"
+                ## User
+
+                Hi
+            "}
+        );
+    });
+    cx.run_until_parked();
+    fake_model.send_last_completion_stream_text_chunk("Ahoy!");
+    cx.run_until_parked();
+    thread.read_with(cx, |thread, _| {
+        assert_eq!(
+            thread.to_markdown(),
+            indoc! {"
+                ## User
+
+                Hi
+
+                ## Assistant
+
+                Ahoy!
+            "}
+        );
+    });
+}
+
+#[gpui::test]
 async fn test_agent_connection(cx: &mut TestAppContext) {
     cx.update(settings::init);
     let templates = Templates::new();
