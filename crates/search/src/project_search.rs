@@ -3,7 +3,7 @@ use crate::{
     SearchOptions, SelectNextMatch, SelectPreviousMatch, ToggleCaseSensitive, ToggleIncludeIgnored,
     ToggleRegex, ToggleReplace, ToggleWholeWord,
     buffer_search::Deploy,
-    search_bar::{input_base_styles, render_text_input, toggle_replace_button},
+    search_bar::{input_base_styles, render_nav_button, render_text_input, toggle_replace_button},
 };
 use anyhow::Context as _;
 use collections::{HashMap, HashSet};
@@ -2052,54 +2052,20 @@ impl Render for ProjectSearchBar {
             .ml_2()
             .border_l_1()
             .border_color(cx.theme().colors().border_variant)
-            .child(
-                IconButton::new("project-search-prev-match", IconName::ChevronLeft)
-                    .shape(IconButtonShape::Square)
-                    .disabled(search.active_match_index.is_none())
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        if let Some(search) = this.active_project_search.as_ref() {
-                            search.update(cx, |this, cx| {
-                                this.select_match(Direction::Prev, window, cx);
-                            })
-                        }
-                    }))
-                    .tooltip({
-                        let focus_handle = focus_handle.clone();
-                        move |window, cx| {
-                            Tooltip::for_action_in(
-                                "Go To Previous Match",
-                                &SelectPreviousMatch,
-                                &focus_handle,
-                                window,
-                                cx,
-                            )
-                        }
-                    }),
-            )
-            .child(
-                IconButton::new("project-search-next-match", IconName::ChevronRight)
-                    .shape(IconButtonShape::Square)
-                    .disabled(search.active_match_index.is_none())
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        if let Some(search) = this.active_project_search.as_ref() {
-                            search.update(cx, |this, cx| {
-                                this.select_match(Direction::Next, window, cx);
-                            })
-                        }
-                    }))
-                    .tooltip({
-                        let focus_handle = focus_handle.clone();
-                        move |window, cx| {
-                            Tooltip::for_action_in(
-                                "Go To Next Match",
-                                &SelectNextMatch,
-                                &focus_handle,
-                                window,
-                                cx,
-                            )
-                        }
-                    }),
-            )
+            .child(render_nav_button(
+                IconName::ChevronLeft,
+                search.active_match_index.is_some(),
+                "Select Previous Match",
+                &SelectPreviousMatch,
+                focus_handle.clone(),
+            ))
+            .child(render_nav_button(
+                IconName::ChevronRight,
+                search.active_match_index.is_some(),
+                "Select Next Match",
+                &SelectNextMatch,
+                focus_handle.clone(),
+            ))
             .child(
                 div()
                     .id("matches")
