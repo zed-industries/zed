@@ -67,8 +67,8 @@ use theme::ThemeSettings;
 use time::UtcOffset;
 use ui::utils::WithRemSize;
 use ui::{
-    Banner, ButtonLike, Callout, ContextMenu, ContextMenuEntry, ElevationIndex, KeyBinding,
-    PopoverMenu, PopoverMenuHandle, ProgressBar, Tab, Tooltip, prelude::*,
+    Banner, Callout, ContextMenu, ContextMenuEntry, ElevationIndex, KeyBinding, PopoverMenu,
+    PopoverMenuHandle, ProgressBar, Tab, Tooltip, prelude::*,
 };
 use util::ResultExt as _;
 use workspace::{
@@ -2377,12 +2377,6 @@ impl AgentPanel {
                 }
             });
 
-        let selected_agent = h_flex()
-            .px_0p5()
-            .gap_1p5()
-            .child(Icon::new(self.selected_agent.icon()).color(Color::Muted))
-            .child(Label::new(self.selected_agent.label()));
-
         h_flex()
             .id("agent-panel-toolbar")
             .h(Tab::container_height(cx))
@@ -2407,7 +2401,15 @@ impl AgentPanel {
                             .px(DynamicSpacing::Base04.rems(cx))
                             .border_r_1()
                             .border_color(cx.theme().colors().border)
-                            .child(selected_agent)
+                            .child(
+                                h_flex()
+                                    .px_0p5()
+                                    .gap_1p5()
+                                    .child(
+                                        Icon::new(self.selected_agent.icon()).color(Color::Muted),
+                                    )
+                                    .child(Label::new(self.selected_agent.label())),
+                            )
                             .into_any_element(),
                     })
                     .child(self.render_title_view(window, cx)),
