@@ -1066,7 +1066,7 @@ impl FakeFsState {
                     }
                     Component::Normal(name) => {
                         let current_entry = *entry_stack.last()?;
-                        if let FakeFsEntry::Dir { entries, .. } = &*current_entry {
+                        if let FakeFsEntry::Dir { entries, .. } = current_entry {
                             let entry = entries.get(name.to_str().unwrap())?;
                             if path_components.peek().is_some() || follow_symlink {
                                 if let FakeFsEntry::Symlink { target, .. } = entry {

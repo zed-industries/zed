@@ -6,7 +6,7 @@ use agent_settings::{AgentProfileId, AgentSettings};
 use anyhow::{Context as _, Result, anyhow};
 use assistant_tool::adapt_schema_to_format;
 use cloud_llm_client::{CompletionIntent, CompletionMode};
-use collections::HashMap;
+use collections::IndexMap;
 use fs::Fs;
 use futures::{
     channel::{mpsc, oneshot},
@@ -321,7 +321,7 @@ impl AgentMessage {
 #[derive(Default, Debug, Clone, PartialEq, Eq)]
 pub struct AgentMessage {
     pub content: Vec<AgentMessageContent>,
-    pub tool_results: HashMap<LanguageModelToolUseId, LanguageModelToolResult>,
+    pub tool_results: IndexMap<LanguageModelToolUseId, LanguageModelToolResult>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -360,7 +360,7 @@ pub struct Thread {
     /// Survives across multiple requests as the model performs tool calls and
     /// we run tools, report their results.
     running_turn: Option<Task<()>>,
-    pending_agent_message: Option<AgentMessage>,
+    pub(crate) pending_agent_message: Option<AgentMessage>,
     tools: BTreeMap<SharedString, Arc<dyn AnyAgentTool>>,
     context_server_registry: Entity<ContextServerRegistry>,
     profile_id: AgentProfileId,
@@ -430,6 +430,16 @@ impl Thread {
         // todo!("do we need to emit a stop::cancel from acp?")
         self.running_turn.take();
         self.flush_pending_agent_message();
+    }
+
+    pub fn truncate(&mut self, message_id: UserMessageId) -> Result<()> {
+        let Some(position) = self.messages.iter().position(
+            |msg| matches!(msg, Message::User(UserMessage { id, .. }) if id == &message_id),
+        ) else {
+            return Err(anyhow!("Message not found"));
+        };
+        self.messages.truncate(position);
+        Ok(())
     }
 
     /// Sending a message results in the model streaming a response, which could include tool calls.

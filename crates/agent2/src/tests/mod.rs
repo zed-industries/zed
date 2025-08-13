@@ -204,8 +204,7 @@ async fn test_streaming_tool_calls(cx: &mut TestAppContext) {
         if let Ok(AgentResponseEvent::ToolCall(tool_call)) = event {
             thread.update(cx, |thread, _cx| {
                 // Look for a tool use in the thread's last message
-                let message = thread.messages().last().unwrap();
-                let agent_message = message.as_agent_message().unwrap();
+                let agent_message = thread.pending_agent_message.clone().unwrap();
                 let last_content = agent_message.content.last().unwrap();
                 if let AgentMessageContent::ToolUse(last_tool_use) = last_content {
                     assert_eq!(last_tool_use.name.as_ref(), "word_list");
@@ -667,7 +666,6 @@ async fn test_refusal(cx: &mut TestAppContext) {
                 ## User
 
                 Hello
-
             "}
         );
     });
@@ -685,7 +683,6 @@ async fn test_refusal(cx: &mut TestAppContext) {
                 ## Assistant
 
                 Hey!
-
             "}
         );
     });

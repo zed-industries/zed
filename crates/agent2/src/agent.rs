@@ -773,6 +773,27 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
             }
         });
     }
+
+    fn session_editor(
+        &self,
+        session_id: &agent_client_protocol::SessionId,
+        cx: &mut App,
+    ) -> Option<Rc<dyn acp_thread::AgentSessionEditor>> {
+        self.0.update(cx, |agent, _cx| {
+            agent
+                .sessions
+                .get(session_id)
+                .map(|session| Rc::new(NativeAgentSessionEditor(session.thread.clone())) as _)
+        })
+    }
+}
+
+struct NativeAgentSessionEditor(Entity<Thread>);
+
+impl acp_thread::AgentSessionEditor for NativeAgentSessionEditor {
+    fn truncate(&self, message_id: acp_thread::UserMessageId, cx: &mut App) -> Task<Result<()>> {
+        Task::ready(self.0.update(cx, |thread, _cx| thread.truncate(message_id)))
+    }
 }
 
 #[cfg(test)]

@@ -1134,7 +1134,11 @@ impl AcpThread {
         let git_store = self.project.read(cx).git_store().clone();
 
         let old_checkpoint = git_store.update(cx, |git, cx| git.checkpoint(cx));
-        let message_id = if self.connection.session_editor(&self.session_id).is_some() {
+        let message_id = if self
+            .connection
+            .session_editor(&self.session_id, cx)
+            .is_some()
+        {
             Some(UserMessageId::new())
         } else {
             None
@@ -1268,7 +1272,7 @@ impl AcpThread {
     /// Rewinds this thread to before the entry at `index`, removing it and all
     /// subsequent entries while reverting any changes made from that point.
     pub fn rewind(&mut self, id: UserMessageId, cx: &mut Context<Self>) -> Task<Result<()>> {
-        let Some(session_editor) = self.connection.session_editor(&self.session_id) else {
+        let Some(session_editor) = self.connection.session_editor(&self.session_id, cx) else {
             debug_panic!("id should have been absent because session editing is not supported");
             return Task::ready(Err(anyhow!("not supported")));
         };
@@ -2271,6 +2275,7 @@ mod tests {
         fn session_editor(
             &self,
             session_id: &acp::SessionId,
+            _cx: &mut App,
         ) -> Option<Rc<dyn AgentSessionEditor>> {
             Some(Rc::new(FakeAgentSessionEditor {
                 _session_id: session_id.clone(),

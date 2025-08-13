@@ -38,7 +38,11 @@ pub trait AgentConnection {
 
     fn cancel(&self, session_id: &acp::SessionId, cx: &mut App);
 
-    fn session_editor(&self, _session_id: &acp::SessionId) -> Option<Rc<dyn AgentSessionEditor>> {
+    fn session_editor(
+        &self,
+        _session_id: &acp::SessionId,
+        _cx: &mut App,
+    ) -> Option<Rc<dyn AgentSessionEditor>> {
         None
     }
 
