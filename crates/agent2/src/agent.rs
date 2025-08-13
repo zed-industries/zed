@@ -546,7 +546,11 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
 
                     let default_model = registry
                         .default_model()
-                        .and_then(|default_model| agent.models.model_from_id(&LanguageModels::model_id(&default_model.model)))
+                        .and_then(|default_model| {
+                            agent
+                                .models
+                                .model_from_id(&LanguageModels::model_id(&default_model.model))
+                        })
                         .ok_or_else(|| {
                             log::warn!("No default model configured in settings");
                             anyhow!(

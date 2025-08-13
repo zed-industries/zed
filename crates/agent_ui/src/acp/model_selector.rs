@@ -300,17 +300,13 @@ fn info_list_to_picker_entries(
     model_list: LanguageModelInfoList,
 ) -> impl Iterator<Item = AcpModelPickerEntry> {
     match model_list {
-        LanguageModelInfoList::Flat(list) => itertools::Either::Left(
-            list.into_iter()
-                .map(|info| AcpModelPickerEntry::Model(info)),
-        ),
+        LanguageModelInfoList::Flat(list) => {
+            itertools::Either::Left(list.into_iter().map(AcpModelPickerEntry::Model))
+        }
         LanguageModelInfoList::Grouped(index_map) => {
             itertools::Either::Right(index_map.into_iter().flat_map(|(group_name, models)| {
-                std::iter::once(AcpModelPickerEntry::Separator(group_name.0)).chain(
-                    models
-                        .into_iter()
-                        .map(|info| AcpModelPickerEntry::Model(info)),
-                )
+                std::iter::once(AcpModelPickerEntry::Separator(group_name.0))
+                    .chain(models.into_iter().map(AcpModelPickerEntry::Model))
             }))
         }
     }
