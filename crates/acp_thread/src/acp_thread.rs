@@ -1276,7 +1276,6 @@ impl AcpThread {
     /// subsequent entries while reverting any changes made from that point.
     pub fn rewind(&mut self, id: UserMessageId, cx: &mut Context<Self>) -> Task<Result<()>> {
         let Some(session_editor) = self.connection.session_editor(&self.session_id, cx) else {
-            debug_panic!("id should have been absent because session editing is not supported");
             return Task::ready(Err(anyhow!("not supported")));
         };
         let Some(message) = self.user_message(&id) else {
