@@ -411,6 +411,7 @@ impl VisibilityState {
         matches!(self, VisibilityState::Visible)
     }
 
+    #[inline]
     fn is_disabled(&self) -> bool {
         matches!(self, VisibilityState::Disabled)
     }
@@ -427,6 +428,7 @@ struct ScrollbarState<S: ScrollbarVisibilitySetting, T: ScrollableHandle = Scrol
     show_setting: ShowScrollbar,
     visibility: Point<ReservedSpace>,
     show_state: VisibilityState,
+    last_prepaint_state: Option<ScrollbarPrepaintState>,
     _auto_hide_task: Option<Task<()>>,
 }
 
@@ -449,6 +451,7 @@ impl<S: ScrollbarVisibilitySetting, T: ScrollableHandle> ScrollbarState<S, T> {
             tracked_setting: PhantomData,
             show_setting: ShowScrollbar::Always,
             show_state: VisibilityState::Visible,
+            last_prepaint_state: None,
             _auto_hide_task: None,
         };
         state.schedule_auto_hide(window, cx);
@@ -528,13 +531,13 @@ impl<S: ScrollbarVisibilitySetting, T: ScrollableHandle> ScrollbarState<S, T> {
         self.scroll_handle().drag_started();
     }
 
-    fn set_hovered_thumb(
-        &mut self,
-        hovered_thumb: Option<&ScrollbarLayout>,
-        cx: &mut Context<Self>,
-    ) {
+    fn update_hovered_thumb(&mut self, position: &Point<Pixels>, cx: &mut Context<Self>) {
         self.set_thumb_state(
-            if let Some(&ScrollbarLayout { axis, .. }) = hovered_thumb {
+            if let Some(&ScrollbarLayout { axis, .. }) = self
+                .last_prepaint_state
+                .as_ref()
+                .and_then(|state| state.thumb_for_position(position))
+            {
                 ThumbState::Hover(axis)
             } else {
                 ThumbState::Inactive
@@ -548,6 +551,30 @@ impl<S: ScrollbarVisibilitySetting, T: ScrollableHandle> ScrollbarState<S, T> {
             self.thumb_state = state;
             cx.notify();
         }
+    }
+
+    fn parent_hovered(&self, position: &Point<Pixels>) -> bool {
+        self.last_prepaint_state
+            .as_ref()
+            .is_some_and(|state| state.parent_bounds.contains(position))
+    }
+
+    fn thumb_for_position(&self, position: &Point<Pixels>) -> Option<&ScrollbarLayout> {
+        self.last_prepaint_state
+            .as_ref()
+            .and_then(|state| state.thumb_for_position(position))
+    }
+
+    fn hit_for_position(&self, position: &Point<Pixels>) -> Option<&ScrollbarLayout> {
+        self.last_prepaint_state
+            .as_ref()
+            .and_then(|state| state.hit_for_position(position))
+    }
+
+    fn thumb_for_axis(&self, axis: ScrollbarAxis) -> Option<&ScrollbarLayout> {
+        self.last_prepaint_state
+            .as_ref()
+            .and_then(|state| state.thumbs.iter().find(|thumb| thumb.axis == axis))
     }
 
     fn thumb_ranges(
@@ -592,6 +619,7 @@ impl<S: ScrollbarVisibilitySetting, T: ScrollableHandle> ScrollbarState<S, T> {
         self.show_state.is_visible()
     }
 
+    #[inline]
     fn disabled(&self) -> bool {
         self.show_state.is_disabled()
     }
@@ -825,70 +853,68 @@ impl<S: ScrollbarVisibilitySetting, T: ScrollableHandle> Element for ScrollbarEl
         window: &mut Window,
         cx: &mut App,
     ) -> Self::PrepaintState {
-        window.with_content_mask(Some(ContentMask { bounds }), |window| {
-            Some(ScrollbarPrepaintState {
-                parent_bounds: bounds,
-                thumbs: self
-                    .state
-                    .read(cx)
-                    .thumb_ranges()
-                    .map(|(axis, thumb_range, reserved_space)| {
-                        let track_anchor = match axis {
-                            ScrollbarAxis::Horizontal => Corner::BottomLeft,
-                            ScrollbarAxis::Vertical => Corner::TopRight,
-                        };
-                        let scroll_track_bounds = Bounds::from_corner_and_size(
-                            track_anchor,
-                            bounds
-                                .corner(track_anchor)
-                                .apply_along(axis.invert(), |corner| corner - SCROLLBAR_PADDING),
-                            bounds.size.apply_along(axis.invert(), |_| {
-                                self.state.read(cx).width.to_pixels()
-                            }),
-                        );
+        Some(ScrollbarPrepaintState {
+            parent_bounds: bounds,
+            thumbs: self
+                .state
+                .read(cx)
+                .thumb_ranges()
+                .map(|(axis, thumb_range, reserved_space)| {
+                    let track_anchor = match axis {
+                        ScrollbarAxis::Horizontal => Corner::BottomLeft,
+                        ScrollbarAxis::Vertical => Corner::TopRight,
+                    };
+                    let scroll_track_bounds = Bounds::from_corner_and_size(
+                        track_anchor,
+                        bounds
+                            .corner(track_anchor)
+                            .apply_along(axis.invert(), |corner| corner - SCROLLBAR_PADDING),
+                        bounds
+                            .size
+                            .apply_along(axis.invert(), |_| self.state.read(cx).width.to_pixels()),
+                    );
 
-                        let padded_bounds = scroll_track_bounds.extend(match axis {
-                            ScrollbarAxis::Horizontal => Edges {
-                                right: -SCROLLBAR_PADDING,
-                                left: -SCROLLBAR_PADDING,
-                                ..Default::default()
+                    let padded_bounds = scroll_track_bounds.extend(match axis {
+                        ScrollbarAxis::Horizontal => Edges {
+                            right: -SCROLLBAR_PADDING,
+                            left: -SCROLLBAR_PADDING,
+                            ..Default::default()
+                        },
+                        ScrollbarAxis::Vertical => Edges {
+                            top: -SCROLLBAR_PADDING,
+                            bottom: -SCROLLBAR_PADDING,
+                            ..Default::default()
+                        },
+                    });
+
+                    let thumb_offset = thumb_range.start * padded_bounds.size.along(axis);
+                    let thumb_end = thumb_range.end * padded_bounds.size.along(axis);
+
+                    let thumb_bounds = Bounds::new(
+                        padded_bounds
+                            .origin
+                            .apply_along(axis, |origin| origin + thumb_offset),
+                        padded_bounds
+                            .size
+                            .apply_along(axis, |_| thumb_end - thumb_offset),
+                    );
+
+                    ScrollbarLayout {
+                        thumb_bounds,
+                        track_bounds: padded_bounds,
+                        axis,
+                        cursor_hitbox: window.insert_hitbox(
+                            if reserved_space.needs_scroll_track() {
+                                padded_bounds
+                            } else {
+                                thumb_bounds
                             },
-                            ScrollbarAxis::Vertical => Edges {
-                                top: -SCROLLBAR_PADDING,
-                                bottom: -SCROLLBAR_PADDING,
-                                ..Default::default()
-                            },
-                        });
-
-                        let thumb_offset = thumb_range.start * padded_bounds.size.along(axis);
-                        let thumb_end = thumb_range.end * padded_bounds.size.along(axis);
-
-                        let thumb_bounds = Bounds::new(
-                            padded_bounds
-                                .origin
-                                .apply_along(axis, |origin| origin + thumb_offset),
-                            padded_bounds
-                                .size
-                                .apply_along(axis, |_| thumb_end - thumb_offset),
-                        );
-
-                        ScrollbarLayout {
-                            thumb_bounds,
-                            track_bounds: padded_bounds,
-                            axis,
-                            cursor_hitbox: window.insert_hitbox(
-                                if reserved_space.needs_scroll_track() {
-                                    padded_bounds
-                                } else {
-                                    thumb_bounds
-                                },
-                                HitboxBehavior::BlockMouseExceptScroll,
-                            ),
-                            reserved_space,
-                        }
-                    })
-                    .collect(),
-            })
+                            HitboxBehavior::BlockMouseExceptScroll,
+                        ),
+                        reserved_space,
+                    }
+                })
+                .collect(),
         })
     }
 
@@ -948,49 +974,54 @@ impl<S: ScrollbarVisibilitySetting, T: ScrollableHandle> Element for ScrollbarEl
                 }
             }
 
+            self.state.update(cx, |state, _| {
+                state.last_prepaint_state = Some(prepaint_state)
+            });
+
             window.on_mouse_event({
                 let state = self.state.clone();
-                // todo! Can this be removed?
-                let prepaint_state = prepaint_state.clone();
+
                 move |event: &MouseDownEvent, phase, _, cx| {
-                    let Some(scrollbar_layout) = (phase.capture()
-                        && event.button == MouseButton::Left)
-                        .then(|| prepaint_state.hit_for_position(&event.position))
-                        .flatten()
-                    else {
-                        return;
-                    };
+                    state.update(cx, |state, cx| {
+                        let Some(scrollbar_layout) = (phase.capture()
+                            && event.button == MouseButton::Left)
+                            .then(|| state.hit_for_position(&event.position))
+                            .flatten()
+                        else {
+                            return;
+                        };
 
-                    let ScrollbarLayout {
-                        thumb_bounds, axis, ..
-                    } = scrollbar_layout;
+                        let ScrollbarLayout {
+                            thumb_bounds, axis, ..
+                        } = scrollbar_layout;
 
-                    if thumb_bounds.contains(&event.position) {
-                        let offset = event.position.along(*axis) - thumb_bounds.origin.along(*axis);
-                        // todo!
-                        state.update(cx, |state, cx| state.set_dragging(*axis, offset, cx));
-                    } else {
-                        let scroll_handle = state.read(cx).scroll_handle();
-                        let click_offset = scrollbar_layout.compute_click_offset(
-                            event.position,
-                            scroll_handle.max_offset(),
-                            ScrollbarMouseEvent::TrackClick,
-                        );
-                        scroll_handle.set_offset(
-                            scroll_handle.offset().apply_along(*axis, |_| click_offset),
-                        );
+                        if thumb_bounds.contains(&event.position) {
+                            let offset =
+                                event.position.along(*axis) - thumb_bounds.origin.along(*axis);
+                            state.set_dragging(*axis, offset, cx)
+                        } else {
+                            let scroll_handle = state.scroll_handle();
+                            let click_offset = scrollbar_layout.compute_click_offset(
+                                event.position,
+                                scroll_handle.max_offset(),
+                                ScrollbarMouseEvent::TrackClick,
+                            );
+                            scroll_handle.set_offset(
+                                scroll_handle.offset().apply_along(*axis, |_| click_offset),
+                            );
 
-                        cx.stop_propagation();
-                    }
+                            cx.stop_propagation();
+                        }
+                    });
                 }
             });
 
             window.on_mouse_event({
                 let state = self.state.clone();
-                // todo! can this be removed?
-                let prepaint_state = prepaint_state.clone();
+
                 move |event: &ScrollWheelEvent, phase, window, cx| {
-                    if phase.capture() && prepaint_state.hit_for_position(&event.position).is_some()
+                    if phase.capture()
+                        && state.read(cx).thumb_for_position(&event.position).is_some()
                     {
                         let scroll_handle = state.read(cx).scroll_handle();
                         let current_offset = scroll_handle.offset();
@@ -1004,8 +1035,7 @@ impl<S: ScrollbarVisibilitySetting, T: ScrollableHandle> Element for ScrollbarEl
 
             window.on_mouse_event({
                 let state = self.state.clone();
-                // todo! can this be removed?
-                let prepaint_state = prepaint_state.clone();
+
                 move |event: &MouseMoveEvent, phase, window, cx| {
                     if !phase.capture() {
                         return;
@@ -1013,11 +1043,7 @@ impl<S: ScrollbarVisibilitySetting, T: ScrollableHandle> Element for ScrollbarEl
 
                     match state.read(cx).thumb_state {
                         ThumbState::Dragging(axis, drag_state) if event.dragging() => {
-                            if let Some(scrollbar_layout) = prepaint_state
-                                .thumbs
-                                .iter()
-                                .find(|thumb| thumb.axis == axis)
-                            {
+                            if let Some(scrollbar_layout) = state.read(cx).thumb_for_axis(axis) {
                                 let scroll_handle = state.read(cx).scroll_handle();
                                 let drag_offset = scrollbar_layout.compute_click_offset(
                                     event.position,
@@ -1035,14 +1061,12 @@ impl<S: ScrollbarVisibilitySetting, T: ScrollableHandle> Element for ScrollbarEl
                             }
                         }
                         _ => state.update(cx, |state, cx| {
-                            if prepaint_state.parent_bounds.contains(&event.position) {
+                            if state.parent_hovered(&event.position) {
                                 // todo! this should only be fired on first re-enter, if at all
                                 state.show_scrollbars(cx);
+
                                 if event.pressed_button.is_none() {
-                                    state.set_hovered_thumb(
-                                        prepaint_state.thumb_for_position(&event.position),
-                                        cx,
-                                    );
+                                    state.update_hovered_thumb(&event.position, cx);
                                     cx.stop_propagation();
                                 }
                             } else {
@@ -1066,15 +1090,12 @@ impl<S: ScrollbarVisibilitySetting, T: ScrollableHandle> Element for ScrollbarEl
                             state.notify_parent(cx);
                         }
 
-                        if !prepaint_state.parent_bounds.contains(&event.position) {
+                        if !state.parent_hovered(&event.position) {
                             state.schedule_auto_hide(window, cx);
                             return;
                         }
 
-                        state.set_hovered_thumb(
-                            prepaint_state.thumb_for_position(&event.position),
-                            cx,
-                        );
+                        state.update_hovered_thumb(&event.position, cx);
                     });
                 }
             });
