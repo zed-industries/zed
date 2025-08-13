@@ -1879,69 +1879,16 @@ impl AgentPanel {
             .into_any()
     }
 
-    fn render_toolbar_old(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_panel_options_menu(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         let user_store = self.user_store.read(cx);
         let usage = user_store.model_request_usage();
-
         let account_url = zed_urls::account_url(cx);
 
         let focus_handle = self.focus_handle(cx);
-
-        let go_back_button = div().child(
-            IconButton::new("go-back", IconName::ArrowLeft)
-                .icon_size(IconSize::Small)
-                .on_click(cx.listener(|this, _, window, cx| {
-                    this.go_back(&workspace::GoBack, window, cx);
-                }))
-                .tooltip({
-                    let focus_handle = focus_handle.clone();
-                    move |window, cx| {
-                        Tooltip::for_action_in(
-                            "Go Back",
-                            &workspace::GoBack,
-                            &focus_handle,
-                            window,
-                            cx,
-                        )
-                    }
-                }),
-        );
-
-        let recent_entries_menu = div().child(
-            PopoverMenu::new("agent-nav-menu")
-                .trigger_with_tooltip(
-                    IconButton::new("agent-nav-menu", IconName::MenuAlt)
-                        .icon_size(IconSize::Small)
-                        .style(ui::ButtonStyle::Subtle),
-                    {
-                        let focus_handle = focus_handle.clone();
-                        move |window, cx| {
-                            Tooltip::for_action_in(
-                                "Toggle Panel Menu",
-                                &ToggleNavigationMenu,
-                                &focus_handle,
-                                window,
-                                cx,
-                            )
-                        }
-                    },
-                )
-                .anchor(Corner::TopLeft)
-                .with_handle(self.assistant_navigation_menu_handle.clone())
-                .menu({
-                    let menu = self.assistant_navigation_menu.clone();
-                    move |window, cx| {
-                        if let Some(menu) = menu.as_ref() {
-                            menu.update(cx, |_, cx| {
-                                cx.defer_in(window, |menu, window, cx| {
-                                    menu.rebuild(window, cx);
-                                });
-                            })
-                        }
-                        menu.clone()
-                    }
-                }),
-        );
 
         let full_screen_label = if self.is_zoomed(window, cx) {
             "Disable Full Screen"
@@ -1949,77 +1896,7 @@ impl AgentPanel {
             "Enable Full Screen"
         };
 
-        let active_thread = match &self.active_view {
-            ActiveView::Thread { thread, .. } => Some(thread.read(cx).thread().clone()),
-            ActiveView::ExternalAgentThread { .. }
-            | ActiveView::TextThread { .. }
-            | ActiveView::History
-            | ActiveView::Configuration => None,
-        };
-
-        let new_thread_menu = PopoverMenu::new("new_thread_menu")
-            .trigger_with_tooltip(
-                IconButton::new("new_thread_menu_btn", IconName::Plus).icon_size(IconSize::Small),
-                Tooltip::text("New Thread…"),
-            )
-            .anchor(Corner::TopRight)
-            .with_handle(self.new_thread_menu_handle.clone())
-            .menu({
-                let focus_handle = focus_handle.clone();
-                move |window, cx| {
-                    let active_thread = active_thread.clone();
-                    Some(ContextMenu::build(window, cx, |mut menu, _window, cx| {
-                        menu = menu
-                            .context(focus_handle.clone())
-                            .when_some(active_thread, |this, active_thread| {
-                                let thread = active_thread.read(cx);
-
-                                if !thread.is_empty() {
-                                    let thread_id = thread.id().clone();
-                                    this.item(
-                                        ContextMenuEntry::new("New From Summary")
-                                            .icon(IconName::ThreadFromSummary)
-                                            .icon_color(Color::Muted)
-                                            .handler(move |window, cx| {
-                                                window.dispatch_action(
-                                                    Box::new(NewThread {
-                                                        from_thread_id: Some(thread_id.clone()),
-                                                    }),
-                                                    cx,
-                                                );
-                                            }),
-                                    )
-                                } else {
-                                    this
-                                }
-                            })
-                            .item(
-                                ContextMenuEntry::new("New Thread")
-                                    .icon(IconName::Thread)
-                                    .icon_color(Color::Muted)
-                                    .action(NewThread::default().boxed_clone())
-                                    .handler(move |window, cx| {
-                                        window.dispatch_action(
-                                            NewThread::default().boxed_clone(),
-                                            cx,
-                                        );
-                                    }),
-                            )
-                            .item(
-                                ContextMenuEntry::new("New Text Thread")
-                                    .icon(IconName::TextThread)
-                                    .icon_color(Color::Muted)
-                                    .action(NewTextThread.boxed_clone())
-                                    .handler(move |window, cx| {
-                                        window.dispatch_action(NewTextThread.boxed_clone(), cx);
-                                    }),
-                            );
-                        menu
-                    }))
-                }
-            });
-
-        let agent_panel_menu = PopoverMenu::new("agent-options-menu")
+        PopoverMenu::new("agent-options-menu")
             .trigger_with_tooltip(
                 IconButton::new("agent-options-menu", IconName::Ellipsis)
                     .icon_size(IconSize::Small),
@@ -2102,6 +1979,139 @@ impl AgentPanel {
                         menu
                     }))
                 }
+            })
+    }
+
+    fn render_recent_entries_menu(
+        &self,
+        icon: IconName,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let focus_handle = self.focus_handle(cx);
+
+        PopoverMenu::new("agent-nav-menu")
+            .trigger_with_tooltip(
+                IconButton::new("agent-nav-menu", icon)
+                    .icon_size(IconSize::Small)
+                    .style(ui::ButtonStyle::Subtle),
+                {
+                    let focus_handle = focus_handle.clone();
+                    move |window, cx| {
+                        Tooltip::for_action_in(
+                            "Toggle Panel Menu",
+                            &ToggleNavigationMenu,
+                            &focus_handle,
+                            window,
+                            cx,
+                        )
+                    }
+                },
+            )
+            .anchor(Corner::TopLeft)
+            .with_handle(self.assistant_navigation_menu_handle.clone())
+            .menu({
+                let menu = self.assistant_navigation_menu.clone();
+                move |window, cx| {
+                    if let Some(menu) = menu.as_ref() {
+                        menu.update(cx, |_, cx| {
+                            cx.defer_in(window, |menu, window, cx| {
+                                menu.rebuild(window, cx);
+                            });
+                        })
+                    }
+                    menu.clone()
+                }
+            })
+    }
+
+    fn render_toolbar_back_button(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let focus_handle = self.focus_handle(cx);
+
+        IconButton::new("go-back", IconName::ArrowLeft)
+            .icon_size(IconSize::Small)
+            .on_click(cx.listener(|this, _, window, cx| {
+                this.go_back(&workspace::GoBack, window, cx);
+            }))
+            .tooltip({
+                let focus_handle = focus_handle.clone();
+
+                move |window, cx| {
+                    Tooltip::for_action_in("Go Back", &workspace::GoBack, &focus_handle, window, cx)
+                }
+            })
+    }
+
+    fn render_toolbar_old(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let focus_handle = self.focus_handle(cx);
+
+        let active_thread = match &self.active_view {
+            ActiveView::Thread { thread, .. } => Some(thread.read(cx).thread().clone()),
+            ActiveView::ExternalAgentThread { .. }
+            | ActiveView::TextThread { .. }
+            | ActiveView::History
+            | ActiveView::Configuration => None,
+        };
+
+        let new_thread_menu = PopoverMenu::new("new_thread_menu")
+            .trigger_with_tooltip(
+                IconButton::new("new_thread_menu_btn", IconName::Plus).icon_size(IconSize::Small),
+                Tooltip::text("New Thread…"),
+            )
+            .anchor(Corner::TopRight)
+            .with_handle(self.new_thread_menu_handle.clone())
+            .menu({
+                let focus_handle = focus_handle.clone();
+                move |window, cx| {
+                    let active_thread = active_thread.clone();
+                    Some(ContextMenu::build(window, cx, |mut menu, _window, cx| {
+                        menu = menu
+                            .context(focus_handle.clone())
+                            .when_some(active_thread, |this, active_thread| {
+                                let thread = active_thread.read(cx);
+
+                                if !thread.is_empty() {
+                                    let thread_id = thread.id().clone();
+                                    this.item(
+                                        ContextMenuEntry::new("New From Summary")
+                                            .icon(IconName::ThreadFromSummary)
+                                            .icon_color(Color::Muted)
+                                            .handler(move |window, cx| {
+                                                window.dispatch_action(
+                                                    Box::new(NewThread {
+                                                        from_thread_id: Some(thread_id.clone()),
+                                                    }),
+                                                    cx,
+                                                );
+                                            }),
+                                    )
+                                } else {
+                                    this
+                                }
+                            })
+                            .item(
+                                ContextMenuEntry::new("New Thread")
+                                    .icon(IconName::Thread)
+                                    .icon_color(Color::Muted)
+                                    .action(NewThread::default().boxed_clone())
+                                    .handler(move |window, cx| {
+                                        window.dispatch_action(
+                                            NewThread::default().boxed_clone(),
+                                            cx,
+                                        );
+                                    }),
+                            )
+                            .item(
+                                ContextMenuEntry::new("New Text Thread")
+                                    .icon(IconName::TextThread)
+                                    .icon_color(Color::Muted)
+                                    .action(NewTextThread.boxed_clone())
+                                    .handler(move |window, cx| {
+                                        window.dispatch_action(NewTextThread.boxed_clone(), cx);
+                                    }),
+                            );
+                        menu
+                    }))
+                }
             });
 
         h_flex()
@@ -2120,8 +2130,12 @@ impl AgentPanel {
                     .pl_1()
                     .gap_1()
                     .child(match &self.active_view {
-                        ActiveView::History | ActiveView::Configuration => go_back_button,
-                        _ => recent_entries_menu,
+                        ActiveView::History | ActiveView::Configuration => {
+                            self.render_toolbar_back_button(cx).into_any_element()
+                        }
+                        _ => self
+                            .render_recent_entries_menu(IconName::MenuAlt, cx)
+                            .into_any_element(),
                     })
                     .child(self.render_title_view(window, cx)),
             )
@@ -2138,80 +2152,13 @@ impl AgentPanel {
                             .border_l_1()
                             .border_color(cx.theme().colors().border)
                             .child(new_thread_menu)
-                            .child(agent_panel_menu),
+                            .child(self.render_panel_options_menu(window, cx)),
                     ),
             )
     }
 
     fn render_toolbar_new(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let user_store = self.user_store.read(cx);
-        let usage = user_store.model_request_usage();
-
-        let account_url = zed_urls::account_url(cx);
-
         let focus_handle = self.focus_handle(cx);
-
-        let go_back_button = div().pl_1().child(
-            IconButton::new("go-back", IconName::ArrowLeft)
-                .icon_size(IconSize::Small)
-                .on_click(cx.listener(|this, _, window, cx| {
-                    this.go_back(&workspace::GoBack, window, cx);
-                }))
-                .tooltip({
-                    let focus_handle = focus_handle.clone();
-                    move |window, cx| {
-                        Tooltip::for_action_in(
-                            "Go Back",
-                            &workspace::GoBack,
-                            &focus_handle,
-                            window,
-                            cx,
-                        )
-                    }
-                }),
-        );
-
-        let recent_entries_menu = div().child(
-            PopoverMenu::new("agent-nav-menu")
-                .trigger_with_tooltip(
-                    IconButton::new("agent-nav-menu", IconName::HistoryRerun)
-                        .icon_size(IconSize::Small)
-                        .style(ui::ButtonStyle::Subtle),
-                    {
-                        let focus_handle = focus_handle.clone();
-                        move |window, cx| {
-                            Tooltip::for_action_in(
-                                "View Recent History",
-                                &ToggleNavigationMenu,
-                                &focus_handle,
-                                window,
-                                cx,
-                            )
-                        }
-                    },
-                )
-                .anchor(Corner::TopLeft)
-                .with_handle(self.assistant_navigation_menu_handle.clone())
-                .menu({
-                    let menu = self.assistant_navigation_menu.clone();
-                    move |window, cx| {
-                        if let Some(menu) = menu.as_ref() {
-                            menu.update(cx, |_, cx| {
-                                cx.defer_in(window, |menu, window, cx| {
-                                    menu.rebuild(window, cx);
-                                });
-                            })
-                        }
-                        menu.clone()
-                    }
-                }),
-        );
-
-        let full_screen_label = if self.is_zoomed(window, cx) {
-            "Disable Full Screen"
-        } else {
-            "Enable Full Screen"
-        };
 
         let active_thread = match &self.active_view {
             ActiveView::Thread { thread, .. } => Some(thread.read(cx).thread().clone()),
@@ -2452,91 +2399,6 @@ impl AgentPanel {
                 }
             });
 
-        let agent_panel_menu = PopoverMenu::new("agent-options-menu")
-            .trigger_with_tooltip(
-                IconButton::new("agent-options-menu", IconName::Ellipsis)
-                    .icon_size(IconSize::Small),
-                {
-                    let focus_handle = focus_handle.clone();
-                    move |window, cx| {
-                        Tooltip::for_action_in(
-                            "Toggle Agent Panel Menu",
-                            &ToggleOptionsMenu,
-                            &focus_handle,
-                            window,
-                            cx,
-                        )
-                    }
-                },
-            )
-            .anchor(Corner::TopRight)
-            .with_handle(self.agent_panel_menu_handle.clone())
-            .menu({
-                let focus_handle = focus_handle.clone();
-                move |window, cx| {
-                    Some(ContextMenu::build(window, cx, |mut menu, _window, _| {
-                        menu = menu.context(focus_handle.clone());
-                        if let Some(usage) = usage {
-                            menu = menu
-                                .header_with_link("Prompt Usage", "Manage", account_url.clone())
-                                .custom_entry(
-                                    move |_window, cx| {
-                                        let used_percentage = match usage.limit {
-                                            UsageLimit::Limited(limit) => {
-                                                Some((usage.amount as f32 / limit as f32) * 100.)
-                                            }
-                                            UsageLimit::Unlimited => None,
-                                        };
-
-                                        h_flex()
-                                            .flex_1()
-                                            .gap_1p5()
-                                            .children(used_percentage.map(|percent| {
-                                                ProgressBar::new("usage", percent, 100., cx)
-                                            }))
-                                            .child(
-                                                Label::new(match usage.limit {
-                                                    UsageLimit::Limited(limit) => {
-                                                        format!("{} / {limit}", usage.amount)
-                                                    }
-                                                    UsageLimit::Unlimited => {
-                                                        format!("{} / ∞", usage.amount)
-                                                    }
-                                                })
-                                                .size(LabelSize::Small)
-                                                .color(Color::Muted),
-                                            )
-                                            .into_any_element()
-                                    },
-                                    move |_, cx| cx.open_url(&zed_urls::account_url(cx)),
-                                )
-                                .separator()
-                        }
-
-                        menu = menu
-                            .header("MCP Servers")
-                            .action(
-                                "View Server Extensions",
-                                Box::new(zed_actions::Extensions {
-                                    category_filter: Some(
-                                        zed_actions::ExtensionCategoryFilter::ContextServers,
-                                    ),
-                                    id: None,
-                                }),
-                            )
-                            .action("Add Custom Server…", Box::new(AddContextServer))
-                            .separator();
-
-                        menu = menu
-                            .action("Rules…", Box::new(OpenRulesLibrary::default()))
-                            .action("Settings", Box::new(OpenSettings))
-                            .separator()
-                            .action(full_screen_label, Box::new(ToggleZoom));
-                        menu
-                    }))
-                }
-            });
-
         h_flex()
             .id("agent-panel-toolbar")
             .h(Tab::container_height(cx))
@@ -2552,13 +2414,16 @@ impl AgentPanel {
                     .size_full()
                     .gap(DynamicSpacing::Base08.rems(cx))
                     .child(match &self.active_view {
-                        ActiveView::History | ActiveView::Configuration => go_back_button,
+                        ActiveView::History | ActiveView::Configuration => {
+                            self.render_toolbar_back_button(cx).into_any_element()
+                        }
                         _ => h_flex()
                             .h_full()
                             .px(DynamicSpacing::Base04.rems(cx))
                             .border_r_1()
                             .border_color(cx.theme().colors().border)
-                            .child(new_thread_menu),
+                            .child(new_thread_menu)
+                            .into_any_element(),
                     })
                     .child(self.render_title_view(window, cx)),
             )
@@ -2575,8 +2440,8 @@ impl AgentPanel {
                             .pr(DynamicSpacing::Base06.rems(cx))
                             .border_l_1()
                             .border_color(cx.theme().colors().border)
-                            .child(recent_entries_menu)
-                            .child(agent_panel_menu),
+                            .child(self.render_recent_entries_menu(IconName::HistoryRerun, cx))
+                            .child(self.render_panel_options_menu(window, cx)),
                     ),
             )
     }
