@@ -452,7 +452,7 @@ float quarter_ellipse_sdf(float2 pt, float2 radii) {
 struct ContentMask {
     Bounds bounds;
     Corners corner_radii;
-}
+};
 
 struct Quad {
     uint order;
