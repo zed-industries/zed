@@ -70,8 +70,12 @@ pub fn init(cx: &mut App) {
         let Some(window) = window else {
             return;
         };
-        let item = cx.new(|cx| TitleBar::new("title-bar", workspace, window, cx));
-        workspace.set_titlebar_item(item.into(), window, cx);
+        if TitleBarSettings::get_global(cx).visible {
+            let item = cx.new(|cx| TitleBar::new("title-bar", workspace, window, cx));
+            workspace.set_titlebar_item(Some(item.into()), window, cx);
+        } else {
+            workspace.set_titlebar_item(None, window, cx);
+        }
 
         #[cfg(not(target_os = "macos"))]
         workspace.register_action(|workspace, action: &OpenApplicationMenu, window, cx| {
@@ -595,7 +599,7 @@ impl TitleBar {
                         .on_click(|_, window, cx| {
                             if let Some(auto_updater) = auto_update::AutoUpdater::get(cx) {
                                 if auto_updater.read(cx).status().is_updated() {
-                                    workspace::reload(&Default::default(), cx);
+                                    workspace::reload(cx);
                                     return;
                                 }
                             }

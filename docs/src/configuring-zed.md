@@ -1288,7 +1288,7 @@ Each option controls displaying of a particular toolbar element. If all elements
 },
 ```
 
-Each option controls displaying of the status bar or its elements. Set `"visible": false` to hide the bar entirely.
+
 
 ## LSP
 

@@ -5,6 +5,7 @@ use settings::{Settings, SettingsSources};
 
 #[derive(Copy, Clone, Deserialize, Debug)]
 pub struct TitleBarSettings {
+    pub visible: bool,
     pub show_branch_icon: bool,
     pub show_onboarding_banner: bool,
     pub show_user_picture: bool,
@@ -16,6 +17,10 @@ pub struct TitleBarSettings {
 
 #[derive(Copy, Clone, Default, Serialize, Deserialize, JsonSchema, Debug)]
 pub struct TitleBarSettingsContent {
+    /// Whether to show the title bar.
+    ///
+    /// Default: true
+    pub visible: Option<bool>,
     /// Whether to show the branch icon beside branch switcher in the title bar.
     ///
     /// Default: false

@@ -573,7 +573,7 @@ fn font_picker(
 ) -> FontPicker {
     let delegate = FontPickerDelegate::new(current_font, on_font_changed, cx);
 
-    Picker::list(delegate, window, cx)
+    Picker::uniform_list(delegate, window, cx)
         .show_scrollbar(true)
         .width(rems_from_px(210.))
         .max_height(Some(rems(20.).into()))
@@ -706,7 +706,7 @@ fn render_popular_settings_section(
                     })
                     .tab_index(tab_index)
                     .style(ToggleButtonGroupStyle::Outlined)
-                    .button_width(ui::rems_from_px(64.)),
+                    .width(ui::rems_from_px(3. * 64.)),
                 ),
         )
 }

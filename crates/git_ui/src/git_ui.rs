@@ -181,10 +181,6 @@ pub fn init(cx: &mut App) {
             workspace.toggle_modal(window, cx, |window, cx| {
                 GitCloneModal::show(panel, window, cx)
             });
-
-            // panel.update(cx, |panel, cx| {
-            //     panel.git_clone(window, cx);
-            // });
         });
         workspace.register_action(|workspace, _: &git::OpenModifiedFiles, window, cx| {
             open_modified_files(workspace, window, cx);

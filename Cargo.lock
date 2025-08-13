@@ -10,6 +10,7 @@ dependencies = [
  "agent-client-protocol",
  "anyhow",
  "buffer_diff",
+ "collections",
  "editor",
  "env_logger 0.11.8",
  "futures 0.3.31",
@@ -17,7 +18,6 @@ dependencies = [
  "indoc",
  "itertools 0.14.0",
  "language",
- "language_model",
  "markdown",
  "parking_lot",
  "project",
@@ -29,7 +29,9 @@ dependencies = [
  "tempfile",
  "terminal",
  "ui",
+ "url",
  "util",
+ "watch",
  "workspace-hack",
 ]
 
@@ -196,6 +198,7 @@ dependencies = [
  "clock",
  "cloud_llm_client",
  "collections",
+ "context_server",
  "ctor",
  "editor",
  "env_logger 0.11.8",
@@ -229,6 +232,7 @@ dependencies = [
  "task",
  "tempfile",
  "terminal",
+ "text",
  "theme",
  "tree-sitter-rust",
  "ui",
@@ -11154,6 +11158,7 @@ dependencies = [
  "feature_flags",
  "fs",
  "fuzzy",
+ "git",
  "gpui",
  "itertools 0.14.0",
  "language",
@@ -11240,6 +11245,7 @@ dependencies = [
  "anyhow",
  "futures 0.3.31",
  "http_client",
+ "log",
  "schemars",
  "serde",
  "serde_json",
@@ -18025,6 +18031,7 @@ dependencies = [
  "command_palette_hooks",
  "db",
  "editor",
+ "env_logger 0.11.8",
  "futures 0.3.31",
  "git_ui",
  "gpui",
@@ -20683,7 +20690,7 @@ dependencies = [
 
 [[package]]
 name = "zed_emmet"
-version = "0.0.4"
+version = "0.0.5"
 dependencies = [
  "zed_extension_api 0.1.0",
 ]
@@ -20922,6 +20929,7 @@ dependencies = [
  "menu",
  "postage",
  "project",
+ "rand 0.8.5",
  "regex",
  "release_channel",
  "reqwest_client",
