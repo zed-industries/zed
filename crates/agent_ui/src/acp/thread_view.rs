@@ -66,8 +66,8 @@ pub struct AcpThreadView {
     agent: Rc<dyn AgentServer>,
     workspace: WeakEntity<Workspace>,
     project: Entity<Project>,
-    thread_store: WeakEntity<ThreadStore>,
-    text_thread_store: WeakEntity<TextThreadStore>,
+    thread_store: Entity<ThreadStore>,
+    text_thread_store: Entity<TextThreadStore>,
     thread_state: ThreadState,
     diff_editors: HashMap<EntityId, Entity<Editor>>,
     terminal_views: HashMap<EntityId, Entity<TerminalView>>,
@@ -115,8 +115,8 @@ impl AcpThreadView {
         agent: Rc<dyn AgentServer>,
         workspace: WeakEntity<Workspace>,
         project: Entity<Project>,
-        thread_store: WeakEntity<ThreadStore>,
-        text_thread_store: WeakEntity<TextThreadStore>,
+        thread_store: Entity<ThreadStore>,
+        text_thread_store: Entity<TextThreadStore>,
         message_history: Rc<RefCell<MessageHistory<Vec<acp::ContentBlock>>>>,
         min_lines: usize,
         max_lines: Option<usize>,
@@ -154,8 +154,8 @@ impl AcpThreadView {
             editor.set_completion_provider(Some(Rc::new(ContextPickerCompletionProvider::new(
                 mention_set.clone(),
                 workspace.clone(),
-                thread_store.clone(),
-                text_thread_store.clone(),
+                thread_store.downgrade(),
+                text_thread_store.downgrade(),
                 cx.weak_entity(),
             ))));
             editor.set_context_menu_options(ContextMenuOptions {
@@ -414,12 +414,8 @@ impl AcpThreadView {
         let mut chunks: Vec<acp::ContentBlock> = Vec::new();
         let project = self.project.clone();
 
-        let Some(thread_store) = self.thread_store.upgrade() else {
-            return;
-        };
-        let Some(text_thread_store) = self.text_thread_store.upgrade() else {
-            return;
-        };
+        let thread_store = self.thread_store.clone();
+        let text_thread_store = self.text_thread_store.clone();
 
         let contents =
             self.mention_set
@@ -3520,6 +3516,7 @@ fn terminal_command_markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
 
 #[cfg(test)]
 mod tests {
+    use agent::{TextThreadStore, ThreadStore};
     use agent_client_protocol::SessionId;
     use editor::EditorSettings;
     use fs::FakeFs;
@@ -3648,14 +3645,19 @@ mod tests {
         let (workspace, cx) =
             cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
+        let thread_store =
+            cx.update(|_window, cx| cx.new(|cx| ThreadStore::fake(project.clone(), cx)));
+        let text_thread_store =
+            cx.update(|_window, cx| cx.new(|cx| TextThreadStore::fake(project.clone(), cx)));
+
         let thread_view = cx.update(|window, cx| {
             cx.new(|cx| {
                 AcpThreadView::new(
                     Rc::new(agent),
                     workspace.downgrade(),
                     project,
-                    WeakEntity::new_invalid(),
-                    WeakEntity::new_invalid(),
+                    thread_store.clone(),
+                    text_thread_store.clone(),
                     Rc::new(RefCell::new(MessageHistory::default())),
                     1,
                     None,
