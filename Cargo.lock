@@ -18,7 +18,6 @@ dependencies = [
  "indoc",
  "itertools 0.14.0",
  "language",
- "log",
  "markdown",
  "parking_lot",
  "project",

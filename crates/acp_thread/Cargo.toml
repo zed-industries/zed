@@ -26,7 +26,6 @@ futures.workspace = true
 gpui.workspace = true
 itertools.workspace = true
 language.workspace = true
-log.workspace = true
 markdown.workspace = true
 project.workspace = true
 serde.workspace = true
