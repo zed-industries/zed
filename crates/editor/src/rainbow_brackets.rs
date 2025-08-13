@@ -105,6 +105,7 @@ pub fn compute_rainbow_brackets_for_range(
             }
         }
         
+        // IMPORTANT: Always advance to prevent infinite loop
         matches.advance();
     }
     
@@ -297,3 +298,7 @@ enum RainbowLevel6 {}
 enum RainbowLevel7 {}
 enum RainbowLevel8 {}
 enum RainbowLevel9 {}
+
+#[cfg(test)]
+#[path = "rainbow_brackets_tests.rs"]
+mod tests;

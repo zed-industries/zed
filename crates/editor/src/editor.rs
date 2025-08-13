@@ -42,6 +42,8 @@ mod selections_collection;
 pub mod tasks;
 
 #[cfg(test)]
+mod rainbow_brackets_tests;
+#[cfg(test)]
 mod code_completion_tests;
 #[cfg(test)]
 mod edit_prediction_tests;
