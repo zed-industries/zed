@@ -51,9 +51,9 @@ struct Session {
 
 pub struct LanguageModels {
     /// Access language model by ID
-    models: HashMap<acp_thread::LanguageModelId, Arc<dyn LanguageModel>>,
+    models: HashMap<acp_thread::AgentModelId, Arc<dyn LanguageModel>>,
     /// Cached list for returning language model information
-    model_list: acp_thread::LanguageModelInfoList,
+    model_list: acp_thread::AgentModelList,
     refresh_models_rx: watch::Receiver<()>,
     refresh_models_tx: watch::Sender<()>,
 }
@@ -63,7 +63,7 @@ impl LanguageModels {
         let (refresh_models_tx, refresh_models_rx) = watch::channel(());
         let mut this = Self {
             models: HashMap::default(),
-            model_list: acp_thread::LanguageModelInfoList::Grouped(IndexMap::default()),
+            model_list: acp_thread::AgentModelList::Grouped(IndexMap::default()),
             refresh_models_rx,
             refresh_models_tx,
         };
@@ -91,7 +91,7 @@ impl LanguageModels {
         }
         if !recommended.is_empty() {
             language_model_list.insert(
-                acp_thread::LanguageModelGroup("Recommended".into()),
+                acp_thread::AgentModelGroupName("Recommended".into()),
                 recommended,
             );
         }
@@ -109,14 +109,14 @@ impl LanguageModels {
             }
             if !provider_models.is_empty() {
                 language_model_list.insert(
-                    acp_thread::LanguageModelGroup(provider.name().0.clone()),
+                    acp_thread::AgentModelGroupName(provider.name().0.clone()),
                     provider_models,
                 );
             }
         }
 
         self.models = models;
-        self.model_list = acp_thread::LanguageModelInfoList::Grouped(language_model_list);
+        self.model_list = acp_thread::AgentModelList::Grouped(language_model_list);
         self.refresh_models_tx.send(()).ok();
     }
 
@@ -126,7 +126,7 @@ impl LanguageModels {
 
     pub fn model_from_id(
         &self,
-        model_id: &acp_thread::LanguageModelId,
+        model_id: &acp_thread::AgentModelId,
     ) -> Option<Arc<dyn LanguageModel>> {
         self.models.get(model_id).cloned()
     }
@@ -134,16 +134,16 @@ impl LanguageModels {
     fn map_language_model_to_info(
         model: &Arc<dyn LanguageModel>,
         provider: &Arc<dyn LanguageModelProvider>,
-    ) -> acp_thread::LanguageModelInfo {
-        acp_thread::LanguageModelInfo {
+    ) -> acp_thread::AgentModelInfo {
+        acp_thread::AgentModelInfo {
             id: Self::model_id(model),
             name: model.name().0,
             icon: Some(provider.icon()),
         }
     }
 
-    fn model_id(model: &Arc<dyn LanguageModel>) -> acp_thread::LanguageModelId {
-        acp_thread::LanguageModelId(format!("{}/{}", model.provider_id().0, model.id().0).into())
+    fn model_id(model: &Arc<dyn LanguageModel>) -> acp_thread::AgentModelId {
+        acp_thread::AgentModelId(format!("{}/{}", model.provider_id().0, model.id().0).into())
     }
 }
 
@@ -433,7 +433,7 @@ impl NativeAgent {
 pub struct NativeAgentConnection(pub Entity<NativeAgent>);
 
 impl AgentModelSelector for NativeAgentConnection {
-    fn list_models(&self, cx: &mut App) -> Task<Result<acp_thread::LanguageModelInfoList>> {
+    fn list_models(&self, cx: &mut App) -> Task<Result<acp_thread::AgentModelList>> {
         log::debug!("NativeAgentConnection::list_models called");
         let list = self.0.read(cx).models.model_list.clone();
         Task::ready(if list.is_empty() {
@@ -446,7 +446,7 @@ impl AgentModelSelector for NativeAgentConnection {
     fn select_model(
         &self,
         session_id: acp::SessionId,
-        model_id: acp_thread::LanguageModelId,
+        model_id: acp_thread::AgentModelId,
         cx: &mut App,
     ) -> Task<Result<()>> {
         log::info!("Setting model for session {}: {}", session_id, model_id);
@@ -475,7 +475,7 @@ impl AgentModelSelector for NativeAgentConnection {
         &self,
         session_id: &acp::SessionId,
         cx: &mut App,
-    ) -> Task<Result<acp_thread::LanguageModelInfo>> {
+    ) -> Task<Result<acp_thread::AgentModelInfo>> {
         let session_id = session_id.clone();
 
         let Some(thread) = self
@@ -759,7 +759,7 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use acp_thread::{LanguageModelGroup, LanguageModelId, LanguageModelInfo};
+    use acp_thread::{AgentModelGroupName, AgentModelId, AgentModelInfo};
     use fs::FakeFs;
     use gpui::TestAppContext;
     use serde_json::json;
@@ -834,15 +834,15 @@ mod tests {
 
         let models = cx.update(|cx| connection.list_models(cx)).await.unwrap();
 
-        let acp_thread::LanguageModelInfoList::Grouped(models) = models else {
+        let acp_thread::AgentModelList::Grouped(models) = models else {
             panic!("Unexpected model group");
         };
         assert_eq!(
             models,
             IndexMap::from_iter([(
-                LanguageModelGroup("Fake".into()),
-                vec![LanguageModelInfo {
-                    id: LanguageModelId("fake/fake".into()),
+                AgentModelGroupName("Fake".into()),
+                vec![AgentModelInfo {
+                    id: AgentModelId("fake/fake".into()),
                     name: "Fake".into(),
                     icon: Some(ui::IconName::ZedAssistant),
                 }]

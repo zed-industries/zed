@@ -1,6 +1,6 @@
 use std::{cmp::Reverse, rc::Rc, sync::Arc};
 
-use acp_thread::{AgentModelSelector, LanguageModelInfo, LanguageModelInfoList};
+use acp_thread::{AgentModelInfo, AgentModelList, AgentModelSelector};
 use agent_client_protocol as acp;
 use anyhow::Result;
 use collections::IndexMap;
@@ -32,16 +32,16 @@ pub fn acp_model_selector(
 
 enum AcpModelPickerEntry {
     Separator(SharedString),
-    Model(LanguageModelInfo),
+    Model(AgentModelInfo),
 }
 
 pub struct AcpModelPickerDelegate {
     session_id: acp::SessionId,
     selector: Rc<dyn AgentModelSelector>,
     filtered_entries: Vec<AcpModelPickerEntry>,
-    models: Option<LanguageModelInfoList>,
+    models: Option<AgentModelList>,
     selected_index: usize,
-    selected_model: Option<LanguageModelInfo>,
+    selected_model: Option<AgentModelInfo>,
     _refresh_models_task: Task<()>,
 }
 
@@ -71,7 +71,6 @@ impl AcpModelPickerDelegate {
                     let (models, selected_model) = futures::join!(models_task, selected_model_task);
 
                     this.update_in(cx, |this, window, cx| {
-                        //TODO: Handle errors?
                         this.delegate.models = models.ok();
                         this.delegate.selected_model = selected_model.ok();
                         this.delegate.update_matches(this.query(cx), window, cx)
@@ -99,7 +98,7 @@ impl AcpModelPickerDelegate {
         }
     }
 
-    pub fn active_model(&self) -> Option<&LanguageModelInfo> {
+    pub fn active_model(&self) -> Option<&AgentModelInfo> {
         self.selected_model.as_ref()
     }
 }
@@ -153,7 +152,7 @@ impl PickerDelegate for AcpModelPickerDelegate {
                 .flatten()
             {
                 Some(task) => task.await,
-                None => LanguageModelInfoList::Flat(vec![]),
+                None => AgentModelList::Flat(vec![]),
             };
 
             this.update_in(cx, |this, window, cx| {
@@ -297,13 +296,13 @@ impl PickerDelegate for AcpModelPickerDelegate {
 }
 
 fn info_list_to_picker_entries(
-    model_list: LanguageModelInfoList,
+    model_list: AgentModelList,
 ) -> impl Iterator<Item = AcpModelPickerEntry> {
     match model_list {
-        LanguageModelInfoList::Flat(list) => {
+        AgentModelList::Flat(list) => {
             itertools::Either::Left(list.into_iter().map(AcpModelPickerEntry::Model))
         }
-        LanguageModelInfoList::Grouped(index_map) => {
+        AgentModelList::Grouped(index_map) => {
             itertools::Either::Right(index_map.into_iter().flat_map(|(group_name, models)| {
                 std::iter::once(AcpModelPickerEntry::Separator(group_name.0))
                     .chain(models.into_iter().map(AcpModelPickerEntry::Model))
@@ -313,15 +312,15 @@ fn info_list_to_picker_entries(
 }
 
 async fn fuzzy_search(
-    model_list: LanguageModelInfoList,
+    model_list: AgentModelList,
     query: String,
     executor: BackgroundExecutor,
-) -> LanguageModelInfoList {
+) -> AgentModelList {
     async fn fuzzy_search_list(
-        model_list: Vec<LanguageModelInfo>,
+        model_list: Vec<AgentModelInfo>,
         query: &str,
         executor: BackgroundExecutor,
-    ) -> Vec<LanguageModelInfo> {
+    ) -> Vec<AgentModelInfo> {
         let candidates = model_list
             .iter()
             .enumerate()
@@ -352,17 +351,17 @@ async fn fuzzy_search(
     }
 
     match model_list {
-        LanguageModelInfoList::Flat(model_list) => {
-            LanguageModelInfoList::Flat(fuzzy_search_list(model_list, &query, executor).await)
+        AgentModelList::Flat(model_list) => {
+            AgentModelList::Flat(fuzzy_search_list(model_list, &query, executor).await)
         }
-        LanguageModelInfoList::Grouped(index_map) => {
+        AgentModelList::Grouped(index_map) => {
             let groups =
                 futures::future::join_all(index_map.into_iter().map(|(group_name, models)| {
                     fuzzy_search_list(models, &query, executor.clone())
                         .map(|results| (group_name, results))
                 }))
                 .await;
-            LanguageModelInfoList::Grouped(IndexMap::from_iter(
+            AgentModelList::Grouped(IndexMap::from_iter(
                 groups
                     .into_iter()
                     .filter(|(_, results)| !results.is_empty()),
@@ -377,15 +376,15 @@ mod tests {
 
     use super::*;
 
-    fn create_model_list(grouped_models: Vec<(&str, Vec<&str>)>) -> LanguageModelInfoList {
-        LanguageModelInfoList::Grouped(IndexMap::from_iter(grouped_models.into_iter().map(
+    fn create_model_list(grouped_models: Vec<(&str, Vec<&str>)>) -> AgentModelList {
+        AgentModelList::Grouped(IndexMap::from_iter(grouped_models.into_iter().map(
             |(group, models)| {
                 (
-                    acp_thread::LanguageModelGroup(group.to_string().into()),
+                    acp_thread::AgentModelGroupName(group.to_string().into()),
                     models
                         .into_iter()
-                        .map(|model| acp_thread::LanguageModelInfo {
-                            id: acp_thread::LanguageModelId(model.to_string().into()),
+                        .map(|model| acp_thread::AgentModelInfo {
+                            id: acp_thread::AgentModelId(model.to_string().into()),
                             name: model.to_string().into(),
                             icon: None,
                         })
@@ -395,8 +394,8 @@ mod tests {
         )))
     }
 
-    fn assert_models_eq(result: LanguageModelInfoList, expected: Vec<(&str, Vec<&str>)>) {
-        let LanguageModelInfoList::Grouped(groups) = result else {
+    fn assert_models_eq(result: AgentModelList, expected: Vec<(&str, Vec<&str>)>) {
+        let AgentModelList::Grouped(groups) = result else {
             panic!("Expected LanguageModelInfoList::Grouped, got {:?}", result);
         };
 

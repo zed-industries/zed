@@ -1,6 +1,6 @@
 use super::*;
 use crate::MessageContent;
-use acp_thread::{AgentConnection, LanguageModelGroup, LanguageModelInfoList};
+use acp_thread::{AgentConnection, AgentModelGroupName, AgentModelList};
 use action_log::ActionLog;
 use agent_client_protocol::{self as acp};
 use agent_settings::AgentProfileId;
@@ -708,12 +708,12 @@ async fn test_agent_connection(cx: &mut TestAppContext) {
         .update(|cx| selector.list_models(cx))
         .await
         .expect("list_models should succeed");
-    let LanguageModelInfoList::Grouped(listed_models) = listed_models else {
+    let AgentModelList::Grouped(listed_models) = listed_models else {
         panic!("Unexpected model list type");
     };
     assert!(!listed_models.is_empty(), "should have at least one model");
     assert_eq!(
-        listed_models[&LanguageModelGroup("Fake".into())][0].id.0,
+        listed_models[&AgentModelGroupName("Fake".into())][0].id.0,
         "fake/fake"
     );
 
