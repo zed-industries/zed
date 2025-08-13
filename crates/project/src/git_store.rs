@@ -1771,7 +1771,7 @@ impl GitStore {
             .update(&mut cx, |repository_handle, cx| {
                 repository_handle.stash_drop(stash_index, cx)
             })?
-            .await?;
+            .await??;
 
         Ok(proto::Ack {})
     }
@@ -3758,33 +3758,58 @@ impl Repository {
         &mut self,
         index: Option<usize>,
         cx: &mut Context<Self>,
-    ) -> Task<anyhow::Result<()>> {
+    ) -> oneshot::Receiver<anyhow::Result<()>> {
         let id = self.id;
-        cx.spawn(async move |this, cx| {
-            this.update(cx, |this, _| {
-                this.send_job(None, move |git_repo, _cx| async move {
-                    match git_repo {
-                        RepositoryState::Local {
-                            backend,
-                            environment,
-                            ..
-                        } => backend.stash_drop(index, environment).await,
-                        RepositoryState::Remote { project_id, client } => {
-                            client
-                                .request(proto::StashDrop {
-                                    project_id: project_id.0,
-                                    repository_id: id.to_proto(),
-                                    stash_index: index.map(|i| i as u64),
-                                })
-                                .await
-                                .context("sending stash pop request")?;
-                            Ok(())
+        let updates_tx = self
+            .git_store()
+            .and_then(|git_store| match &git_store.read(cx).state {
+                GitStoreState::Local { downstream, .. } => downstream
+                    .as_ref()
+                    .map(|downstream| downstream.updates_tx.clone()),
+                _ => None,
+            });
+        let this = cx.weak_entity();
+        self.send_job(None, move |git_repo, mut cx| async move {
+            match git_repo {
+                RepositoryState::Local {
+                    backend,
+                    environment,
+                    ..
+                } => {
+                    let result = backend.stash_drop(index, environment).await;
+                    if result.is_ok() {
+                        if let Ok(stash_entries) = backend.stash_entries().await {
+                            let snapshot = this.update(&mut cx, |this, cx| {
+                                this.snapshot.stash_entries = stash_entries;
+                                let snapshot = this.snapshot.clone();
+                                cx.emit(RepositoryEvent::Updated {
+                                    full_scan: false,
+                                    new_instance: false,
+                                });
+                                snapshot
+                            })?;
+                            if let Some(updates_tx) = updates_tx {
+                                updates_tx
+                                    .unbounded_send(DownstreamUpdate::UpdateRepository(snapshot))
+                                    .ok();
+                            }
                         }
                     }
-                })
-            })?
-            .await??;
-            Ok(())
+
+                    result
+                }
+                RepositoryState::Remote { project_id, client } => {
+                    client
+                        .request(proto::StashDrop {
+                            project_id: project_id.0,
+                            repository_id: id.to_proto(),
+                            stash_index: index.map(|i| i as u64),
+                        })
+                        .await
+                        .context("sending stash pop request")?;
+                    Ok(())
+                }
+            }
         })
     }
 
@@ -4661,12 +4686,17 @@ impl Repository {
                     .await;
 
                 this.update(&mut cx, |this, cx| {
+                    let needs_update = !changed_path_statuses.is_empty()
+                        || this.snapshot.stash_entries != stash_entries;
                     this.snapshot.stash_entries = stash_entries;
                     if !changed_path_statuses.is_empty() {
                         this.snapshot
                             .statuses_by_path
                             .edit(changed_path_statuses, &());
                         this.snapshot.scan_id += 1;
+                    }
+
+                    if needs_update {
                         if let Some(updates_tx) = updates_tx {
                             updates_tx
                                 .unbounded_send(DownstreamUpdate::UpdateRepository(
