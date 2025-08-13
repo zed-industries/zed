@@ -25,6 +25,7 @@ use rope::Point;
 use text::{Anchor, OffsetRangeExt as _, ToPoint as _};
 use ui::prelude::*;
 use url::Url;
+use util::debug_panic;
 use workspace::Workspace;
 use workspace::notifications::NotifyResultExt;
 
@@ -206,6 +207,16 @@ impl MentionSet {
                             Mention::Text {
                                 uri: uri.clone(),
                                 content: content.clone(),
+                            },
+                        )))
+                    }
+                    MentionUri::Image => {
+                        debug_panic!("MentionUri::Image should not be added to mention set");
+                        Task::ready(Ok((
+                            crease_id,
+                            Mention::Text {
+                                uri: uri.clone(),
+                                content: String::new(),
                             },
                         )))
                     }

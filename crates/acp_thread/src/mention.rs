@@ -36,6 +36,7 @@ pub enum MentionUri {
     Fetch {
         url: Url,
     },
+    Image,
 }
 
 impl MentionUri {
@@ -100,6 +101,8 @@ impl MentionUri {
                         id: rule_id.into(),
                         name,
                     })
+                } else if let Some(_) = path.strip_prefix("/agent/image") {
+                    Ok(Self::Image)
                 } else {
                     bail!("invalid zed url: {:?}", input);
                 }
@@ -124,6 +127,7 @@ impl MentionUri {
                 path, line_range, ..
             } => selection_name(path, line_range),
             MentionUri::Fetch { url } => url.to_string(),
+            MentionUri::Image => "Image".into(),
         }
     }
 
@@ -182,6 +186,11 @@ impl MentionUri {
                 url
             }
             MentionUri::Fetch { url } => url.clone(),
+            MentionUri::Image => {
+                let mut url = Url::parse("zed:///").unwrap();
+                url.set_path(&format!("/agent/image"));
+                url
+            }
         }
     }
 }

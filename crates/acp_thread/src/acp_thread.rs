@@ -442,9 +442,8 @@ impl ContentBlock {
                     }),
                 ..
             }) => Self::resource_link_md(&uri),
-            acp::ContentBlock::Image(_)
-            | acp::ContentBlock::Audio(_)
-            | acp::ContentBlock::Resource(_) => String::new(),
+            acp::ContentBlock::Image(image) => Self::image_md(&image),
+            acp::ContentBlock::Audio(_) | acp::ContentBlock::Resource(_) => String::new(),
         }
     }
 
@@ -454,6 +453,10 @@ impl ContentBlock {
         } else {
             uri.to_string()
         }
+    }
+
+    fn image_md(_image: &acp::ImageContent) -> String {
+        "[Image](zed:///agent/image)".into()
     }
 
     fn to_markdown<'a>(&'a self, cx: &'a App) -> &'a str {
