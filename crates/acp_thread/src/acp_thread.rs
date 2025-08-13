@@ -711,7 +711,6 @@ impl AcpThread {
     ) -> Result<()> {
         match update {
             acp::SessionUpdate::UserMessageChunk { content } => {
-                // todo!(take an optional user_id)
                 self.push_user_content_block(None, content, cx);
             }
             acp::SessionUpdate::AgentMessageChunk { content } => {
@@ -735,7 +734,7 @@ impl AcpThread {
 
     pub fn push_user_content_block(
         &mut self,
-        new_id: Option<UserMessageId>,
+        message_id: Option<UserMessageId>,
         chunk: acp::ContentBlock,
         cx: &mut Context<Self>,
     ) {
@@ -745,14 +744,14 @@ impl AcpThread {
         if let Some(last_entry) = self.entries.last_mut()
             && let AgentThreadEntry::UserMessage(UserMessage { id, content, .. }) = last_entry
         {
-            *id = new_id.or(id.take());
+            *id = message_id.or(id.take());
             content.append(chunk, &language_registry, cx);
             cx.emit(AcpThreadEvent::EntryUpdated(entries_len - 1));
         } else {
             let content = ContentBlock::new(chunk, &language_registry, cx);
             self.push_entry(
                 AgentThreadEntry::UserMessage(UserMessage {
-                    id: new_id,
+                    id: message_id,
                     content,
                     checkpoint: None,
                 }),
@@ -1058,7 +1057,6 @@ impl AcpThread {
         let git_store = self.project.read(cx).git_store().clone();
 
         let old_checkpoint = git_store.update(cx, |git, cx| git.checkpoint(cx));
-        let entry_ix = self.entries.len();
         let message_id = if self.connection.session_editor(&self.session_id).is_some() {
             Some(UserMessageId::new())
         } else {
@@ -1113,32 +1111,31 @@ impl AcpThread {
 
             let response = rx.await;
 
-            let new_checkpoint = git_store
-                .update(cx, |git, cx| git.checkpoint(cx))?
-                .await
-                .context("failed to get new checkpoint")
-                .log_err();
-            let checkpoint = if let Some((old_checkpoint, new_checkpoint)) =
-                old_checkpoint.zip(new_checkpoint)
-            {
-                let equal = git_store
-                    .update(cx, |git, cx| {
-                        git.compare_checkpoints(old_checkpoint.clone(), new_checkpoint, cx)
-                    })?
+            if let Some((old_checkpoint, message_id)) = old_checkpoint.zip(message_id) {
+                let new_checkpoint = git_store
+                    .update(cx, |git, cx| git.checkpoint(cx))?
                     .await
-                    .unwrap_or(true);
-                if equal { None } else { Some(old_checkpoint) }
-            } else {
-                None
-            };
+                    .context("failed to get new checkpoint")
+                    .log_err();
+                if let Some(new_checkpoint) = new_checkpoint {
+                    let equal = git_store
+                        .update(cx, |git, cx| {
+                            git.compare_checkpoints(old_checkpoint.clone(), new_checkpoint, cx)
+                        })?
+                        .await
+                        .unwrap_or(true);
+                    if !equal {
+                        this.update(cx, |this, cx| {
+                            if let Some((ix, message)) = this.user_message_mut(&message_id) {
+                                message.checkpoint = Some(old_checkpoint);
+                                cx.emit(AcpThreadEvent::EntryUpdated(ix));
+                            }
+                        })?;
+                    }
+                }
+            }
 
             this.update(cx, |this, cx| {
-                if let Some(AgentThreadEntry::UserMessage(message)) = this.entries.get_mut(entry_ix)
-                {
-                    message.checkpoint = checkpoint;
-                    cx.emit(AcpThreadEvent::EntryUpdated(entry_ix));
-                }
-
                 match response {
                     Ok(Err(e)) => {
                         cx.emit(AcpThreadEvent::Error);
@@ -1204,17 +1201,7 @@ impl AcpThread {
             debug_panic!("id should have been absent because session editing is not supported");
             return Task::ready(Err(anyhow!("not supported")));
         };
-        let Some((ix, message)) = self.entries.iter().enumerate().find_map(|(ix, entry)| {
-            if let AgentThreadEntry::UserMessage(message) = entry {
-                if message.id.as_ref() == Some(&id) {
-                    Some((ix, message))
-                } else {
-                    None
-                }
-            } else {
-                None
-            }
-        }) else {
+        let Some(message) = self.user_message(&id) else {
             return Task::ready(Err(anyhow!("message not found")));
         };
 
@@ -1228,11 +1215,42 @@ impl AcpThread {
                     .await?;
             }
 
-            cx.update(|cx| session_editor.truncate(id, cx))?.await?;
+            cx.update(|cx| session_editor.truncate(id.clone(), cx))?
+                .await?;
             this.update(cx, |this, cx| {
-                this.entries.truncate(ix);
-                // todo!(emit event)
+                if let Some((ix, _)) = this.user_message_mut(&id) {
+                    this.entries.truncate(ix);
+                    // todo!(emit event)
+                }
             })
+        })
+    }
+
+    fn user_message(&self, id: &UserMessageId) -> Option<&UserMessage> {
+        self.entries.iter().find_map(|entry| {
+            if let AgentThreadEntry::UserMessage(message) = entry {
+                if message.id.as_ref() == Some(&id) {
+                    Some(message)
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        })
+    }
+
+    fn user_message_mut(&mut self, id: &UserMessageId) -> Option<(usize, &mut UserMessage)> {
+        self.entries.iter_mut().enumerate().find_map(|(ix, entry)| {
+            if let AgentThreadEntry::UserMessage(message) = entry {
+                if message.id.as_ref() == Some(&id) {
+                    Some((ix, message))
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
         })
     }
 
@@ -1885,6 +1903,7 @@ mod tests {
         let connection = Rc::new(FakeAgentConnection::new().on_user_message({
             let simulate_changes = simulate_changes.clone();
             let next_filename = next_filename.clone();
+            let fs = fs.clone();
             move |request, thread, mut cx| {
                 let fs = fs.clone();
                 let simulate_changes = simulate_changes.clone();
@@ -1892,7 +1911,7 @@ mod tests {
                 async move {
                     if simulate_changes.load(SeqCst) {
                         let filename = format!("/test/file-{}", next_filename.fetch_add(1, SeqCst));
-                        fs.write(Path::new(&filename), b"bar").await?;
+                        fs.write(Path::new(&filename), b"").await?;
                     }
 
                     let acp::ContentBlock::Text(content) = &request.prompt[0] else {
@@ -1938,6 +1957,7 @@ mod tests {
                 "}
             );
         });
+        assert_eq!(fs.files(), vec![Path::new("/test/file-0")]);
 
         cx.update(|cx| thread.update(cx, |thread, cx| thread.send(vec!["ipsum".into()], cx)))
             .await
@@ -1965,6 +1985,10 @@ mod tests {
                 "}
             );
         });
+        assert_eq!(
+            fs.files(),
+            vec![Path::new("/test/file-0"), Path::new("/test/file-1")]
+        );
 
         // Checkpoint isn't stored when there are no changes.
         simulate_changes.store(false, SeqCst);
@@ -2002,12 +2026,37 @@ mod tests {
                 "}
             );
         });
+        assert_eq!(
+            fs.files(),
+            vec![Path::new("/test/file-0"), Path::new("/test/file-1")]
+        );
 
         // Rewinding the conversation truncates the history and restores the checkpoint.
-        // thread
-        //     .update(cx, |thread, cx| thread.rewind(entries[0].id))
-        //     .await
-        //     .unwrap();
+        thread
+            .update(cx, |thread, cx| {
+                let AgentThreadEntry::UserMessage(message) = &thread.entries[2] else {
+                    panic!("unexpected entries {:?}", thread.entries)
+                };
+                thread.rewind(message.id.clone().unwrap(), cx)
+            })
+            .await
+            .unwrap();
+        thread.read_with(cx, |thread, cx| {
+            assert_eq!(
+                thread.to_markdown(cx),
+                indoc! {"
+                    ## User (checkpoint)
+
+                    Lorem
+
+                    ## Assistant
+
+                    LOREM
+
+                "}
+            );
+        });
+        assert_eq!(fs.files(), vec![Path::new("/test/file-0")]);
     }
 
     async fn run_until_first_tool_call(
@@ -2145,6 +2194,25 @@ mod tests {
                     .await
             })
             .detach();
+        }
+
+        fn session_editor(
+            &self,
+            session_id: &acp::SessionId,
+        ) -> Option<Rc<dyn AgentSessionEditor>> {
+            Some(Rc::new(FakeAgentSessionEditor {
+                _session_id: session_id.clone(),
+            }))
+        }
+    }
+
+    struct FakeAgentSessionEditor {
+        _session_id: acp::SessionId,
+    }
+
+    impl AgentSessionEditor for FakeAgentSessionEditor {
+        fn truncate(&self, _message_id: UserMessageId, _cx: &mut App) -> Task<Result<()>> {
+            Task::ready(Ok(()))
         }
     }
 }

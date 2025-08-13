@@ -73,7 +73,7 @@ pub trait AgentConnection {
 
     fn cancel(&self, session_id: &acp::SessionId, cx: &mut App);
 
-    fn session_editor(&self, _session_id: &acp::SessionId) -> Option<Rc<dyn SessionEditor>> {
+    fn session_editor(&self, _session_id: &acp::SessionId) -> Option<Rc<dyn AgentSessionEditor>> {
         None
     }
 
@@ -86,7 +86,7 @@ pub trait AgentConnection {
     }
 }
 
-pub trait SessionEditor {
+pub trait AgentSessionEditor {
     fn truncate(&self, message_id: UserMessageId, cx: &mut App) -> Task<Result<()>>;
 }
 
