@@ -41,8 +41,8 @@ use ui::{
 };
 use util::{ResultExt, maybe, paths::PathWithPosition, post_inc};
 use workspace::{
-    ModalView, OpenOptions, OpenVisible, SplitDirection, Workspace, item::PreviewTabsSettings,
-    notifications::NotifyResultExt, pane,
+    ItemHandle, ModalView, OpenOptions, OpenVisible, PreviewTabsSettings, SplitDirection,
+    Workspace, notifications::NotifyResultExt, pane,
 };
 
 actions!(
@@ -53,7 +53,9 @@ actions!(
         /// Toggles the file filter menu.
         ToggleFilterMenu,
         /// Toggles the split direction menu.
-        ToggleSplitMenu
+        ToggleSplitMenu,
+        /// Toggles including folders in the file finder.
+        ToggleIncludeFolders
     ]
 );
 
@@ -279,6 +281,20 @@ impl FileFinder {
         });
     }
 
+    fn handle_toggle_folders(
+        &mut self,
+        _: &ToggleIncludeFolders,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.picker.update(cx, |picker, cx| {
+            picker.delegate.include_folders =
+                Some(!picker.delegate.include_folders.unwrap_or(false));
+            picker.delegate.include_folders_refresh =
+                picker.delegate.update_matches(picker.query(cx), window, cx);
+        });
+    }
+
     fn go_to_file_split_left(
         &mut self,
         _: &pane::SplitLeft,
@@ -385,6 +401,7 @@ impl Render for FileFinder {
             .on_action(cx.listener(Self::handle_filter_toggle_menu))
             .on_action(cx.listener(Self::handle_split_toggle_menu))
             .on_action(cx.listener(Self::handle_toggle_ignored))
+            .on_action(cx.listener(Self::handle_toggle_folders))
             .on_action(cx.listener(Self::go_to_file_split_left))
             .on_action(cx.listener(Self::go_to_file_split_right))
             .on_action(cx.listener(Self::go_to_file_split_up))
@@ -414,6 +431,8 @@ pub struct FileFinderDelegate {
     focus_handle: FocusHandle,
     include_ignored: Option<bool>,
     include_ignored_refresh: Task<()>,
+    include_folders: Option<bool>,
+    include_folders_refresh: Task<()>,
 }
 
 /// Use a custom ordering for file finder: the regular one
@@ -499,6 +518,17 @@ impl Match {
             Match::History { panel_match, .. } => panel_match.as_ref(),
             Match::Search(panel_match) => Some(&panel_match),
             Match::CreateNew(_) => None,
+        }
+    }
+
+    fn project_path(&self) -> ProjectPath {
+        match self {
+            Match::History { path, .. } => path.project.clone(),
+            Match::Search(panel_match) => ProjectPath {
+                worktree_id: WorktreeId::from_usize(panel_match.0.worktree_id),
+                path: Arc::clone(&panel_match.0.path),
+            },
+            Match::CreateNew(project_path) => project_path.clone(),
         }
     }
 }
@@ -705,7 +735,7 @@ fn matching_history_items<'a>(
         .chain(currently_opened)
         .filter_map(|found_path| {
             let candidate = PathMatchCandidate {
-                is_dir: false, // You can't open directories as project items
+                is_dir: found_path.project.path.is_dir(), // You can't open directories as project items
                 path: &found_path.project.path,
                 // Only match history items names, otherwise their paths may match too many queries, producing false positives.
                 // E.g. `foo` would match both `something/foo/bar.rs` and `something/foo/foo.rs` and if the former is a history item,
@@ -834,6 +864,8 @@ impl FileFinderDelegate {
             focus_handle: cx.focus_handle(),
             include_ignored: FileFinderSettings::get_global(cx).include_ignored,
             include_ignored_refresh: Task::ready(()),
+            include_folders: FileFinderSettings::get_global(cx).include_folders,
+            include_folders_refresh: Task::ready(()),
         }
     }
 
@@ -883,7 +915,10 @@ impl FileFinderDelegate {
                             .map_or(false, |entry| entry.is_ignored)
                     }),
                     include_root_name,
-                    candidates: project::Candidates::Files,
+                    candidates: match self.include_folders {
+                        Some(true) => project::Candidates::Entries,
+                        _ => project::Candidates::Files,
+                    },
                 }
             })
             .collect::<Vec<_>>();
@@ -1280,6 +1315,42 @@ fn full_path_budget(
     (((max_width / 0.8) - file_name.len() * normal_em) / small_em) as usize
 }
 
+fn open_or_split_path(
+    workspace: &mut Workspace,
+    project_path: ProjectPath,
+    allow_preview: bool,
+    split: bool,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) -> Task<anyhow::Result<Box<dyn ItemHandle>>> {
+    if split {
+        workspace.split_path_preview(project_path, allow_preview, None, window, cx)
+    } else {
+        workspace.open_path_preview(project_path, None, true, allow_preview, true, window, cx)
+    }
+}
+fn open_or_split_abs_path(
+    workspace: &mut Workspace,
+    abs_path: PathBuf,
+    split: bool,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) -> Task<anyhow::Result<Box<dyn ItemHandle>>> {
+    if split {
+        workspace.split_abs_path(abs_path, false, window, cx)
+    } else {
+        workspace.open_abs_path(
+            abs_path,
+            OpenOptions {
+                visible: Some(OpenVisible::None),
+                ..Default::default()
+            },
+            window,
+            cx,
+        )
+    }
+}
+
 impl PickerDelegate for FileFinderDelegate {
     type ListItem = ListItem;
 
@@ -1432,124 +1503,69 @@ impl PickerDelegate for FileFinderDelegate {
 
     fn confirm(
         &mut self,
-        secondary: bool,
+        split: bool,
         window: &mut Window,
         cx: &mut Context<Picker<FileFinderDelegate>>,
     ) {
         if let Some(m) = self.matches.get(self.selected_index()) {
             if let Some(workspace) = self.workspace.upgrade() {
-                let open_task = workspace.update(cx, |workspace, cx| {
-                    let split_or_open =
-                        |workspace: &mut Workspace,
-                         project_path,
-                         window: &mut Window,
-                         cx: &mut Context<Workspace>| {
-                            let allow_preview =
-                                PreviewTabsSettings::get_global(cx).enable_preview_from_file_finder;
-                            if secondary {
-                                workspace.split_path_preview(
-                                    project_path,
-                                    allow_preview,
-                                    None,
-                                    window,
-                                    cx,
-                                )
-                            } else {
-                                workspace.open_path_preview(
-                                    project_path,
-                                    None,
-                                    true,
-                                    allow_preview,
-                                    true,
-                                    window,
-                                    cx,
-                                )
-                            }
-                        };
-                    match &m {
-                        Match::CreateNew(project_path) => {
-                            // Create a new file with the given filename
-                            if secondary {
-                                workspace.split_path_preview(
-                                    project_path.clone(),
-                                    false,
-                                    None,
-                                    window,
-                                    cx,
-                                )
-                            } else {
-                                workspace.open_path_preview(
-                                    project_path.clone(),
-                                    None,
-                                    true,
-                                    false,
-                                    true,
-                                    window,
-                                    cx,
-                                )
-                            }
-                        }
+                let project_path = m.project_path();
+                let project_entity = workspace.read(cx).project().clone();
+                if let Some(entry) = project_entity.read(cx).entry_for_path(&project_path, cx) {
+                    if entry.is_dir() {
+                        project_entity.update(cx, |_, cx| {
+                            cx.emit(project::Event::RevealInProjectPanel(entry.id))
+                        });
+                        return;
+                    }
+                }
 
-                        Match::History { path, .. } => {
-                            let worktree_id = path.project.worktree_id;
-                            if workspace
-                                .project()
-                                .read(cx)
-                                .worktree_for_id(worktree_id, cx)
-                                .is_some()
-                            {
-                                split_or_open(
-                                    workspace,
-                                    ProjectPath {
-                                        worktree_id,
-                                        path: Arc::clone(&path.project.path),
-                                    },
-                                    window,
-                                    cx,
-                                )
-                            } else {
-                                match path.absolute.as_ref() {
-                                    Some(abs_path) => {
-                                        if secondary {
-                                            workspace.split_abs_path(
-                                                abs_path.to_path_buf(),
-                                                false,
-                                                window,
-                                                cx,
-                                            )
-                                        } else {
-                                            workspace.open_abs_path(
-                                                abs_path.to_path_buf(),
-                                                OpenOptions {
-                                                    visible: Some(OpenVisible::None),
-                                                    ..Default::default()
-                                                },
-                                                window,
-                                                cx,
-                                            )
-                                        }
-                                    }
-                                    None => split_or_open(
-                                        workspace,
-                                        ProjectPath {
-                                            worktree_id,
-                                            path: Arc::clone(&path.project.path),
-                                        },
-                                        window,
-                                        cx,
-                                    ),
-                                }
-                            }
+                let open_task = workspace.update(cx, |workspace, cx| {
+                    let allow_preview =
+                        PreviewTabsSettings::get_global(cx).enable_preview_from_file_finder;
+
+                    match &m {
+                        Match::CreateNew(_) => {
+                            open_or_split_path(workspace, project_path, false, split, window, cx)
                         }
-                        Match::Search(m) => split_or_open(
+                        Match::Search(_) => open_or_split_path(
                             workspace,
-                            ProjectPath {
-                                worktree_id: WorktreeId::from_usize(m.0.worktree_id),
-                                path: m.0.path.clone(),
-                            },
+                            project_path,
+                            allow_preview,
+                            split,
                             window,
                             cx,
                         ),
+                        Match::History { path, .. } => {
+                            let proj = workspace.project().read(cx);
+                            if proj.worktree_for_id(project_path.worktree_id, cx).is_some() {
+                                open_or_split_path(
+                                    workspace,
+                                    project_path.clone(),
+                                    allow_preview,
+                                    split,
+                                    window,
+                                    cx,
+                                )
+                            } else if let Some(abs) = path.absolute.as_ref() {
+                                open_or_split_abs_path(
+                                    workspace,
+                                    abs.to_path_buf(),
+                                    split,
+                                    window,
+                                    cx,
+                                )
+                            } else {
+                                open_or_split_path(
+                                    workspace,
+                                    path.project.clone(),
+                                    allow_preview,
+                                    split,
+                                    window,
+                                    cx,
+                                )
+                            }
+                        }
                     }
                 });
 
@@ -1631,10 +1647,30 @@ impl PickerDelegate for FileFinderDelegate {
             if !settings.file_icons {
                 return None;
             }
+
+            let project_path = path_match.project_path();
+            let is_dir = self
+                .workspace
+                .upgrade()
+                .and_then(|ws| {
+                    ws.read(cx)
+                        .project()
+                        .read(cx)
+                        .entry_for_path(&project_path, cx)
+                        .map(|e| e.is_dir())
+                })
+                .unwrap_or(false);
+
+            // Get absolute path then file name for icon lookup
             let abs_path = path_match.abs_path(&self.project, cx)?;
             let file_name = abs_path.file_name()?;
-            let icon = FileIcons::get_icon(file_name.as_ref(), cx)?;
-            Some(Icon::from_path(icon).color(Color::Muted))
+
+            let icon_path = match is_dir {
+                true => FileIcons::get_folder_icon(false, cx)?,
+                false => FileIcons::get_icon(file_name.as_ref(), cx)?,
+            };
+
+            Some(Icon::from_path(icon_path).color(Color::Muted))
         });
 
         Some(
@@ -1660,7 +1696,7 @@ impl PickerDelegate for FileFinderDelegate {
         cx: &mut Context<Picker<Self>>,
     ) -> Option<AnyElement> {
         let focus_handle = self.focus_handle.clone();
-
+        let has_filters = self.include_ignored.is_some() || self.include_folders.is_some();
         Some(
             h_flex()
                 .w_full()
@@ -1681,8 +1717,8 @@ impl PickerDelegate for FileFinderDelegate {
                             IconButton::new("filter-trigger", IconName::Sliders)
                                 .icon_size(IconSize::Small)
                                 .icon_size(IconSize::Small)
-                                .toggle_state(self.include_ignored.unwrap_or(false))
-                                .when(self.include_ignored.is_some(), |this| {
+                                .toggle_state(has_filters)
+                                .when(has_filters, |this| {
                                     this.indicator(Indicator::dot().color(Color::Info))
                                 }),
                             {
@@ -1701,12 +1737,16 @@ impl PickerDelegate for FileFinderDelegate {
                         .menu({
                             let focus_handle = focus_handle.clone();
                             let include_ignored = self.include_ignored;
+                            let include_folders = self.include_folders;
 
                             move |window, cx| {
                                 Some(ContextMenu::build(window, cx, {
                                     let focus_handle = focus_handle.clone();
                                     move |menu, _, _| {
-                                        menu.context(focus_handle.clone())
+                                        let fh_menu = focus_handle.clone();
+                                        let fh_ignored = fh_menu.clone();
+                                        let fh_folders = fh_menu.clone();
+                                        menu.context(fh_menu)
                                             .header("Filter Options")
                                             .toggleable_entry(
                                                 "Include Ignored Files",
@@ -1714,9 +1754,22 @@ impl PickerDelegate for FileFinderDelegate {
                                                 ui::IconPosition::End,
                                                 Some(ToggleIncludeIgnored.boxed_clone()),
                                                 move |window, cx| {
-                                                    window.focus(&focus_handle);
+                                                    window.focus(&fh_ignored);
                                                     window.dispatch_action(
                                                         ToggleIncludeIgnored.boxed_clone(),
+                                                        cx,
+                                                    );
+                                                },
+                                            )
+                                            .toggleable_entry(
+                                                "Include Folders",
+                                                include_folders.unwrap_or(false),
+                                                ui::IconPosition::End,
+                                                Some(ToggleIncludeFolders.boxed_clone()),
+                                                move |window, cx| {
+                                                    window.focus(&fh_folders);
+                                                    window.dispatch_action(
+                                                        ToggleIncludeFolders.boxed_clone(),
                                                         cx,
                                                     );
                                                 },
