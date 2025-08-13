@@ -7,7 +7,7 @@ use gpui::{
     SharedString, Styled, Subscription, Task, Window, actions, px, rems,
 };
 use picker::{Picker, PickerDelegate, PickerEditorPosition};
-use project::git_store::Repository;
+use project::git_store::{Repository, RepositoryEvent};
 use std::sync::Arc;
 use ui::{HighlightedLabel, KeyBinding, ListItem, ListItemSpacing, prelude::*};
 use util::ResultExt;
@@ -63,7 +63,7 @@ pub struct StashList {
     width: Rems,
     pub picker: Entity<Picker<StashListDelegate>>,
     picker_focus_handle: FocusHandle,
-    _subscription: Subscription,
+    _subscriptions: Vec<Subscription>,
 }
 
 impl StashList {
@@ -74,9 +74,33 @@ impl StashList {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        let mut _subscriptions = Vec::new();
         let stash_request = repository
             .clone()
             .map(|repository| repository.read_with(cx, |repo, _| repo.stash_entries.clone()));
+
+        if let Some(repo) = repository.clone() {
+            _subscriptions.push(
+                cx.subscribe_in(&repo, window, |this, _, event, window, cx| {
+                    if matches!(event, RepositoryEvent::Updated { .. }) {
+                        let stash_entries = this.picker.read_with(cx, |picker, cx| {
+                            picker.delegate.repo.clone().map(|repo| {
+                                repo.read(cx)
+                                    .snapshot()
+                                    .stash_entries
+                                    .entries
+                                    .to_vec()
+                                    .clone()
+                            })
+                        });
+                        this.picker.update(cx, |this, cx| {
+                            this.delegate.all_stash_entries = stash_entries;
+                            this.refresh(window, cx);
+                        });
+                    }
+                }),
+            )
+        }
 
         cx.spawn_in(window, async move |this, cx| {
             let stash_entries = stash_request
@@ -101,15 +125,15 @@ impl StashList {
             picker.delegate.focus_handle = picker_focus_handle.clone();
         });
 
-        let _subscription = cx.subscribe(&picker, |_, _, _, cx| {
+        _subscriptions.push(cx.subscribe(&picker, |_, _, _, cx| {
             cx.emit(DismissEvent);
-        });
+        }));
 
         Self {
             picker,
             picker_focus_handle,
             width,
-            _subscription,
+            _subscriptions,
         }
     }
 
@@ -207,7 +231,7 @@ impl StashListDelegate {
 
         cx.spawn(async move |_, cx| {
             repo.update(cx, |repo, cx| repo.stash_drop(Some(stash_index), cx))?
-                .await?;
+                .await??;
             Ok(())
         })
         .detach_and_prompt_err("Failed to apply stash", window, cx, |e, _, _| {
