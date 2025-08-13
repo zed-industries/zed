@@ -11,7 +11,8 @@ use anyhow::Context as _;
 use collections::{HashMap, HashSet};
 use editor::{
     Anchor, Editor, EditorEvent, EditorSettings, MAX_TAB_TITLE_LEN, MultiBuffer, SelectionEffects,
-    actions::SelectAll, items::active_match_index,
+    actions::{Backtab, SelectAll, Tab},
+    items::active_match_index,
 };
 use futures::{StreamExt, stream::FuturesOrdered};
 use gpui::{
@@ -1613,16 +1614,11 @@ impl ProjectSearchBar {
         }
     }
 
-    fn tab(&mut self, _: &editor::actions::Tab, window: &mut Window, cx: &mut Context<Self>) {
+    fn tab(&mut self, _: &Tab, window: &mut Window, cx: &mut Context<Self>) {
         self.cycle_field(Direction::Next, window, cx);
     }
 
-    fn backtab(
-        &mut self,
-        _: &editor::actions::Backtab,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn backtab(&mut self, _: &Backtab, window: &mut Window, cx: &mut Context<Self>) {
         self.cycle_field(Direction::Prev, window, cx);
     }
 
@@ -1637,29 +1633,22 @@ impl ProjectSearchBar {
     fn cycle_field(&mut self, direction: Direction, window: &mut Window, cx: &mut Context<Self>) {
         let active_project_search = match &self.active_project_search {
             Some(active_project_search) => active_project_search,
-
-            None => {
-                return;
-            }
+            None => return,
         };
 
         active_project_search.update(cx, |project_view, cx| {
-            let mut views = vec![&project_view.query_editor];
+            let mut views = vec![project_view.query_editor.focus_handle(cx)];
             if project_view.replace_enabled {
-                views.push(&project_view.replacement_editor);
+                views.push(project_view.replacement_editor.focus_handle(cx));
             }
             if project_view.filters_enabled {
                 views.extend([
-                    &project_view.included_files_editor,
-                    &project_view.excluded_files_editor,
+                    project_view.included_files_editor.focus_handle(cx),
+                    project_view.excluded_files_editor.focus_handle(cx),
                 ]);
             }
-            let current_index = match views
-                .iter()
-                .enumerate()
-                .find(|(_, editor)| editor.focus_handle(cx).is_focused(window))
-            {
-                Some((index, _)) => index,
+            let current_index = match views.iter().position(|focus| focus.is_focused(window)) {
+                Some(index) => index,
                 None => return,
             };
 
@@ -1668,8 +1657,8 @@ impl ProjectSearchBar {
                 Direction::Prev if current_index == 0 => views.len() - 1,
                 Direction::Prev => (current_index - 1) % views.len(),
             };
-            let next_focus_handle = views[new_index].focus_handle(cx);
-            window.focus(&next_focus_handle);
+            let next_focus_handle = &views[new_index];
+            window.focus(next_focus_handle);
             cx.stop_propagation();
         });
     }
@@ -2213,14 +2202,8 @@ impl Render for ProjectSearchBar {
             .on_action(cx.listener(|this, _: &ToggleFilters, window, cx| {
                 this.toggle_filters(window, cx);
             }))
-            .capture_action(cx.listener(|this, action, window, cx| {
-                this.tab(action, window, cx);
-                cx.stop_propagation();
-            }))
-            .capture_action(cx.listener(|this, action, window, cx| {
-                this.backtab(action, window, cx);
-                cx.stop_propagation();
-            }))
+            .capture_action(cx.listener(Self::tab))
+            .capture_action(cx.listener(Self::backtab))
             .on_action(cx.listener(|this, action, window, cx| this.confirm(action, window, cx)))
             .on_action(cx.listener(|this, action, window, cx| {
                 this.toggle_replace(action, window, cx);

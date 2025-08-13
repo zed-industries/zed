@@ -697,7 +697,7 @@ impl BufferSearchBar {
             active_editor.search_bar_visibility_changed(false, window, cx);
             active_editor.toggle_filtered_search_ranges(false, window, cx);
             let handle = active_editor.item_focus_handle(cx);
-            self.focus(&handle, window, cx);
+            self.focus(&handle, window);
         }
         cx.emit(Event::UpdateLocation);
         cx.emit(ToolbarItemEvent::ChangeLocation(
@@ -853,7 +853,7 @@ impl BufferSearchBar {
     }
 
     pub fn focus_replace(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.focus(&self.replacement_editor.focus_handle(cx), window, cx);
+        self.focus(&self.replacement_editor.focus_handle(cx), window);
         cx.notify();
     }
 
@@ -1295,28 +1295,32 @@ impl BufferSearchBar {
     }
 
     fn tab(&mut self, _: &Tab, window: &mut Window, cx: &mut Context<Self>) {
-        // Search -> Replace -> Editor
-        let focus_handle = if self.replace_enabled && self.query_editor_focused {
-            self.replacement_editor.focus_handle(cx)
-        } else if let Some(item) = self.active_searchable_item.as_ref() {
-            item.item_focus_handle(cx)
-        } else {
-            return;
-        };
-        self.focus(&focus_handle, window, cx);
-        cx.stop_propagation();
+        self.cycle_field(Direction::Next, window, cx);
     }
 
     fn backtab(&mut self, _: &Backtab, window: &mut Window, cx: &mut Context<Self>) {
-        // Search -> Replace -> Search
-        let focus_handle = if self.replace_enabled && self.query_editor_focused {
-            self.replacement_editor.focus_handle(cx)
-        } else if self.replacement_editor_focused {
-            self.query_editor.focus_handle(cx)
-        } else {
-            return;
+        self.cycle_field(Direction::Prev, window, cx);
+    }
+    fn cycle_field(&mut self, direction: Direction, window: &mut Window, cx: &mut Context<Self>) {
+        let mut handles = vec![self.query_editor.focus_handle(cx)];
+        if self.replace_enabled {
+            handles.push(self.replacement_editor.focus_handle(cx));
+        }
+        if let Some(item) = self.active_searchable_item.as_ref() {
+            handles.push(item.item_focus_handle(cx));
+        }
+        let current_index = match handles.iter().position(|focus| focus.is_focused(window)) {
+            Some(index) => index,
+            None => return,
         };
-        self.focus(&focus_handle, window, cx);
+
+        let new_index = match direction {
+            Direction::Next => (current_index + 1) % handles.len(),
+            Direction::Prev if current_index == 0 => handles.len() - 1,
+            Direction::Prev => (current_index - 1) % handles.len(),
+        };
+        let next_focus_handle = &handles[new_index];
+        self.focus(next_focus_handle, window);
         cx.stop_propagation();
     }
 
@@ -1364,10 +1368,8 @@ impl BufferSearchBar {
         }
     }
 
-    fn focus(&self, handle: &gpui::FocusHandle, window: &mut Window, cx: &mut Context<Self>) {
-        cx.on_next_frame(window, |_, window, _| {
-            window.invalidate_character_coordinates();
-        });
+    fn focus(&self, handle: &gpui::FocusHandle, window: &mut Window) {
+        window.invalidate_character_coordinates();
         window.focus(handle);
     }
 
@@ -1379,7 +1381,7 @@ impl BufferSearchBar {
             } else {
                 self.query_editor.focus_handle(cx)
             };
-            self.focus(&handle, window, cx);
+            self.focus(&handle, window);
             cx.notify();
         }
     }

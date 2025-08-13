@@ -3880,9 +3880,7 @@ impl Workspace {
                 local,
                 focus_changed,
             } => {
-                cx.on_next_frame(window, |_, window, _| {
-                    window.invalidate_character_coordinates();
-                });
+                window.invalidate_character_coordinates();
 
                 pane.update(cx, |pane, _| {
                     pane.track_alternate_file_items();
@@ -3923,9 +3921,7 @@ impl Workspace {
                 }
             }
             pane::Event::Focus => {
-                cx.on_next_frame(window, |_, window, _| {
-                    window.invalidate_character_coordinates();
-                });
+                window.invalidate_character_coordinates();
                 self.handle_pane_focused(pane.clone(), window, cx);
             }
             pane::Event::ZoomIn => {
