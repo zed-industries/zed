@@ -26,7 +26,7 @@ if [[ "$OSTYPE" == "darwin"* ]]; then
         dev) APP_NAME="Zed Dev" ;;
     esac
 elif [[ "$OSTYPE" == "linux-gnu"* ]]; then
-    DB_BASE_DIR="$HOME/.config/zed/db"
+    DB_BASE_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/zed/db"
     DB_DIR="$DB_BASE_DIR/0-$CHANNEL"
     DB_BACKUP_DIR="$DB_BASE_DIR/0-$CHANNEL.onboarding_backup"
     case "$CHANNEL" in
