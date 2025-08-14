@@ -111,7 +111,6 @@ restore_onboarding() {
     echo -e "${GREEN}✓ Restored: $DB_DIR${NC}"
     echo ""
     echo -e "${GREEN}Success! Your original database has been restored.${NC}"
-    echo "Zed will now behave as it did before the reset."
 }
 
 show_status() {
@@ -120,8 +119,8 @@ show_status() {
 
     if [ -d "$DB_BACKUP_DIR" ]; then
         echo -e "${YELLOW}Status: TESTING MODE${NC}"
-        echo "  • Original database backed up at: $DB_BACKUP_DIR"
-        echo "  • Zed is currently using: $DB_DIR"
+        echo "  • Original database: $DB_BACKUP_DIR"
+        echo "  • Zed is using: $DB_DIR"
         echo "  • Run './script/onboarding $CHANNEL restore' to return to normal"
     elif [ -d "$DB_DIR" ]; then
         echo -e "${GREEN}Status: NORMAL${NC}"
@@ -132,11 +131,6 @@ show_status() {
         echo "  • No Zed database directory exists yet"
         echo "  • Zed will show onboarding on next launch"
     fi
-
-    echo ""
-    echo "Database locations:"
-    echo "  Active: $DB_DIR"
-    echo "  Backup: $DB_BACKUP_DIR"
 }
 
 case "${COMMAND:-}" in
