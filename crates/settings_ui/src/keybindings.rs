@@ -1540,9 +1540,10 @@ impl Render for KeymapEditor {
                                 right_click_menu("open-keymap-menu")
                                     .menu(|window, cx| {
                                         ContextMenu::build(window, cx, |menu, _, _| {
-                                            menu.action("Open Keymap JSON", zed_actions::OpenKeymap.boxed_clone())
-                                                .action("Open Default Keymap JSON", zed_actions::OpenDefaultKeymap.boxed_clone())
-                                                .action("Open Vim Keymap JSON", vim::OpenDefaultKeymap.boxed_clone())
+                                            menu.header("Open Keymap JSON")
+                                                .action("User", zed_actions::OpenKeymap.boxed_clone())
+                                                .action("Zed Default", zed_actions::OpenDefaultKeymap.boxed_clone())
+                                                .action("Vim Default", vim::OpenDefaultKeymap.boxed_clone())
                                         })
                                     })
                                     .anchor(gpui::Corner::TopLeft)
