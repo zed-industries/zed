@@ -1,6 +1,6 @@
-name = "C++"
+name = "Arduino"
 grammar = "cpp"
-path_suffixes = ["cc", "hh", "cpp", "h", "hpp", "cxx", "hxx", "c++", "ipp", "inl", "ixx", "cu", "cuh", "C", "H"]
+path_suffixes = ["ino"]
 line_comments = ["// ", "/// ", "//! "]
 decrease_indent_patterns = [
   { pattern = "^\\s*\\{.*\\}?\\s*$", valid_after = ["if", "for", "while", "do", "switch", "else"] },
@@ -15,5 +15,5 @@ brackets = [
     { start = "'", end = "'", close = true, newline = false, not_in = ["string", "comment"] },
     { start = "/*", end = " */", close = true, newline = false, not_in = ["string", "comment"] },
 ]
-debuggers = ["CodeLLDB", "GDB"]
+debuggers = []
 documentation_comment = { start = "/*", prefix = "* ", end = "*/", tab_size = 1 }

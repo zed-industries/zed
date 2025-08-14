@@ -108,6 +108,11 @@ pub fn init(languages: Arc<LanguageRegistry>, node: NodeRuntime, cx: &mut App) {
 
     let built_in_languages = [
         LanguageInfo {
+            name: "arduino",
+            adapters: vec![],
+            ..Default::default()
+        },
+        LanguageInfo {
             name: "bash",
             context: Some(Arc::new(bash::bash_task_context())),
             ..Default::default()
