@@ -324,7 +324,7 @@ impl FixedWidth for Button {
     /// ```
     ///
     /// This sets the button's width to be exactly 100 pixels.
-    fn width(mut self, width: DefiniteLength) -> Self {
+    fn width(mut self, width: impl Into<DefiniteLength>) -> Self {
         self.base = self.base.width(width);
         self
     }
@@ -390,6 +390,11 @@ impl ButtonCommon for Button {
     /// This will create a button with a tooltip that displays "This is a tooltip" when hovered over.
     fn tooltip(mut self, tooltip: impl Fn(&mut Window, &mut App) -> AnyView + 'static) -> Self {
         self.base = self.base.tooltip(tooltip);
+        self
+    }
+
+    fn tab_index(mut self, tab_index: impl Into<isize>) -> Self {
+        self.base = self.base.tab_index(tab_index);
         self
     }
 

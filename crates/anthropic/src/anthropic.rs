@@ -36,11 +36,18 @@ pub enum AnthropicModelMode {
 pub enum Model {
     #[serde(rename = "claude-opus-4", alias = "claude-opus-4-latest")]
     ClaudeOpus4,
+    #[serde(rename = "claude-opus-4-1", alias = "claude-opus-4-1-latest")]
+    ClaudeOpus4_1,
     #[serde(
         rename = "claude-opus-4-thinking",
         alias = "claude-opus-4-thinking-latest"
     )]
     ClaudeOpus4Thinking,
+    #[serde(
+        rename = "claude-opus-4-1-thinking",
+        alias = "claude-opus-4-1-thinking-latest"
+    )]
+    ClaudeOpus4_1Thinking,
     #[default]
     #[serde(rename = "claude-sonnet-4", alias = "claude-sonnet-4-latest")]
     ClaudeSonnet4,
@@ -91,8 +98,16 @@ impl Model {
     }
 
     pub fn from_id(id: &str) -> Result<Self> {
+        if id.starts_with("claude-opus-4-1-thinking") {
+            return Ok(Self::ClaudeOpus4_1Thinking);
+        }
+
         if id.starts_with("claude-opus-4-thinking") {
             return Ok(Self::ClaudeOpus4Thinking);
+        }
+
+        if id.starts_with("claude-opus-4-1") {
+            return Ok(Self::ClaudeOpus4_1);
         }
 
         if id.starts_with("claude-opus-4") {
@@ -141,7 +156,9 @@ impl Model {
     pub fn id(&self) -> &str {
         match self {
             Self::ClaudeOpus4 => "claude-opus-4-latest",
+            Self::ClaudeOpus4_1 => "claude-opus-4-1-latest",
             Self::ClaudeOpus4Thinking => "claude-opus-4-thinking-latest",
+            Self::ClaudeOpus4_1Thinking => "claude-opus-4-1-thinking-latest",
             Self::ClaudeSonnet4 => "claude-sonnet-4-latest",
             Self::ClaudeSonnet4Thinking => "claude-sonnet-4-thinking-latest",
             Self::Claude3_5Sonnet => "claude-3-5-sonnet-latest",
@@ -159,6 +176,7 @@ impl Model {
     pub fn request_id(&self) -> &str {
         match self {
             Self::ClaudeOpus4 | Self::ClaudeOpus4Thinking => "claude-opus-4-20250514",
+            Self::ClaudeOpus4_1 | Self::ClaudeOpus4_1Thinking => "claude-opus-4-1-20250805",
             Self::ClaudeSonnet4 | Self::ClaudeSonnet4Thinking => "claude-sonnet-4-20250514",
             Self::Claude3_5Sonnet => "claude-3-5-sonnet-latest",
             Self::Claude3_7Sonnet | Self::Claude3_7SonnetThinking => "claude-3-7-sonnet-latest",
@@ -173,7 +191,9 @@ impl Model {
     pub fn display_name(&self) -> &str {
         match self {
             Self::ClaudeOpus4 => "Claude Opus 4",
+            Self::ClaudeOpus4_1 => "Claude Opus 4.1",
             Self::ClaudeOpus4Thinking => "Claude Opus 4 Thinking",
+            Self::ClaudeOpus4_1Thinking => "Claude Opus 4.1 Thinking",
             Self::ClaudeSonnet4 => "Claude Sonnet 4",
             Self::ClaudeSonnet4Thinking => "Claude Sonnet 4 Thinking",
             Self::Claude3_7Sonnet => "Claude 3.7 Sonnet",
@@ -192,7 +212,9 @@ impl Model {
     pub fn cache_configuration(&self) -> Option<AnthropicModelCacheConfiguration> {
         match self {
             Self::ClaudeOpus4
+            | Self::ClaudeOpus4_1
             | Self::ClaudeOpus4Thinking
+            | Self::ClaudeOpus4_1Thinking
             | Self::ClaudeSonnet4
             | Self::ClaudeSonnet4Thinking
             | Self::Claude3_5Sonnet
@@ -215,7 +237,9 @@ impl Model {
     pub fn max_token_count(&self) -> u64 {
         match self {
             Self::ClaudeOpus4
+            | Self::ClaudeOpus4_1
             | Self::ClaudeOpus4Thinking
+            | Self::ClaudeOpus4_1Thinking
             | Self::ClaudeSonnet4
             | Self::ClaudeSonnet4Thinking
             | Self::Claude3_5Sonnet
@@ -232,7 +256,9 @@ impl Model {
     pub fn max_output_tokens(&self) -> u64 {
         match self {
             Self::ClaudeOpus4
+            | Self::ClaudeOpus4_1
             | Self::ClaudeOpus4Thinking
+            | Self::ClaudeOpus4_1Thinking
             | Self::ClaudeSonnet4
             | Self::ClaudeSonnet4Thinking
             | Self::Claude3_5Sonnet
@@ -249,7 +275,9 @@ impl Model {
     pub fn default_temperature(&self) -> f32 {
         match self {
             Self::ClaudeOpus4
+            | Self::ClaudeOpus4_1
             | Self::ClaudeOpus4Thinking
+            | Self::ClaudeOpus4_1Thinking
             | Self::ClaudeSonnet4
             | Self::ClaudeSonnet4Thinking
             | Self::Claude3_5Sonnet
@@ -269,6 +297,7 @@ impl Model {
     pub fn mode(&self) -> AnthropicModelMode {
         match self {
             Self::ClaudeOpus4
+            | Self::ClaudeOpus4_1
             | Self::ClaudeSonnet4
             | Self::Claude3_5Sonnet
             | Self::Claude3_7Sonnet
@@ -277,6 +306,7 @@ impl Model {
             | Self::Claude3Sonnet
             | Self::Claude3Haiku => AnthropicModelMode::Default,
             Self::ClaudeOpus4Thinking
+            | Self::ClaudeOpus4_1Thinking
             | Self::ClaudeSonnet4Thinking
             | Self::Claude3_7SonnetThinking => AnthropicModelMode::Thinking {
                 budget_tokens: Some(4_096),

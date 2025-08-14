@@ -53,7 +53,7 @@ impl Vim {
         cx: &mut Context<Self>,
     ) {
         self.store_visual_marks(window, cx);
-        self.update_editor(window, cx, |vim, editor, window, cx| {
+        self.update_editor(cx, |vim, editor, cx| {
             let mut edits = Vec::new();
             let mut new_anchors = Vec::new();
 

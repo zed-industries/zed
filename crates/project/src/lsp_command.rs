@@ -2154,6 +2154,16 @@ impl LspCommand for GetHover {
     }
 }
 
+impl GetCompletions {
+    pub fn can_resolve_completions(capabilities: &lsp::ServerCapabilities) -> bool {
+        capabilities
+            .completion_provider
+            .as_ref()
+            .and_then(|options| options.resolve_provider)
+            .unwrap_or(false)
+    }
+}
+
 #[async_trait(?Send)]
 impl LspCommand for GetCompletions {
     type Response = CoreCompletionResponse;
@@ -2762,6 +2772,23 @@ impl GetCodeActions {
     }
 }
 
+impl OnTypeFormatting {
+    pub fn supports_on_type_formatting(trigger: &str, capabilities: &ServerCapabilities) -> bool {
+        let Some(on_type_formatting_options) = &capabilities.document_on_type_formatting_provider
+        else {
+            return false;
+        };
+        on_type_formatting_options
+            .first_trigger_character
+            .contains(trigger)
+            || on_type_formatting_options
+                .more_trigger_character
+                .iter()
+                .flatten()
+                .any(|chars| chars.contains(trigger))
+    }
+}
+
 #[async_trait(?Send)]
 impl LspCommand for OnTypeFormatting {
     type Response = Option<Transaction>;
@@ -2773,20 +2800,7 @@ impl LspCommand for OnTypeFormatting {
     }
 
     fn check_capabilities(&self, capabilities: AdapterServerCapabilities) -> bool {
-        let Some(on_type_formatting_options) = &capabilities
-            .server_capabilities
-            .document_on_type_formatting_provider
-        else {
-            return false;
-        };
-        on_type_formatting_options
-            .first_trigger_character
-            .contains(&self.trigger)
-            || on_type_formatting_options
-                .more_trigger_character
-                .iter()
-                .flatten()
-                .any(|chars| chars.contains(&self.trigger))
+        Self::supports_on_type_formatting(&self.trigger, &capabilities.server_capabilities)
     }
 
     fn to_lsp(
@@ -3270,6 +3284,16 @@ impl InlayHints {
             })
             .unwrap_or(false)
     }
+
+    pub fn check_capabilities(capabilities: &ServerCapabilities) -> bool {
+        capabilities
+            .inlay_hint_provider
+            .as_ref()
+            .is_some_and(|inlay_hint_provider| match inlay_hint_provider {
+                lsp::OneOf::Left(enabled) => *enabled,
+                lsp::OneOf::Right(_) => true,
+            })
+    }
 }
 
 #[async_trait(?Send)]
@@ -3283,17 +3307,7 @@ impl LspCommand for InlayHints {
     }
 
     fn check_capabilities(&self, capabilities: AdapterServerCapabilities) -> bool {
-        let Some(inlay_hint_provider) = &capabilities.server_capabilities.inlay_hint_provider
-        else {
-            return false;
-        };
-        match inlay_hint_provider {
-            lsp::OneOf::Left(enabled) => *enabled,
-            lsp::OneOf::Right(inlay_hint_capabilities) => match inlay_hint_capabilities {
-                lsp::InlayHintServerCapabilities::Options(_) => true,
-                lsp::InlayHintServerCapabilities::RegistrationOptions(_) => false,
-            },
-        }
+        Self::check_capabilities(&capabilities.server_capabilities)
     }
 
     fn to_lsp(
@@ -4221,8 +4235,9 @@ impl LspCommand for GetDocumentColor {
         server_capabilities
             .server_capabilities
             .color_provider
+            .as_ref()
             .is_some_and(|capability| match capability {
-                lsp::ColorProviderCapability::Simple(supported) => supported,
+                lsp::ColorProviderCapability::Simple(supported) => *supported,
                 lsp::ColorProviderCapability::ColorProvider(..) => true,
                 lsp::ColorProviderCapability::Options(..) => true,
             })

@@ -21,7 +21,7 @@ use language::{
     point_from_lsp, point_to_lsp,
 };
 use lsp::{LanguageServer, LanguageServerBinary, LanguageServerId, LanguageServerName};
-use node_runtime::NodeRuntime;
+use node_runtime::{NodeRuntime, VersionCheck};
 use parking_lot::Mutex;
 use project::DisableAiSettings;
 use request::StatusNotification;
@@ -39,6 +39,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
+use sum_tree::Dimensions;
 use util::{ResultExt, fs::remove_matching};
 use workspace::Workspace;
 
@@ -239,7 +240,7 @@ impl RegisteredBuffer {
                         let new_snapshot = new_snapshot.clone();
                         async move {
                             new_snapshot
-                                .edits_since::<(PointUtf16, usize)>(&old_version)
+                                .edits_since::<Dimensions<PointUtf16, usize>>(&old_version)
                                 .map(|edit| {
                                     let edit_start = edit.new.start.0;
                                     let edit_end = edit_start + (edit.old.end.0 - edit.old.start.0);
@@ -1168,9 +1169,8 @@ async fn get_copilot_lsp(fs: Arc<dyn Fs>, node_runtime: NodeRuntime) -> anyhow::
     const SERVER_PATH: &str =
         "node_modules/@github/copilot-language-server/dist/language-server.js";
 
-    let latest_version = node_runtime
-        .npm_package_latest_version(PACKAGE_NAME)
-        .await?;
+    // pinning it: https://github.com/zed-industries/zed/issues/36093
+    const PINNED_VERSION: &str = "1.354";
     let server_path = paths::copilot_dir().join(SERVER_PATH);
 
     fs.create_dir(paths::copilot_dir()).await?;
@@ -1180,12 +1180,13 @@ async fn get_copilot_lsp(fs: Arc<dyn Fs>, node_runtime: NodeRuntime) -> anyhow::
             PACKAGE_NAME,
             &server_path,
             paths::copilot_dir(),
-            &latest_version,
+            &PINNED_VERSION,
+            VersionCheck::VersionMismatch,
         )
         .await;
     if should_install {
         node_runtime
-            .npm_install_packages(paths::copilot_dir(), &[(PACKAGE_NAME, &latest_version)])
+            .npm_install_packages(paths::copilot_dir(), &[(PACKAGE_NAME, &PINNED_VERSION)])
             .await?;
     }
 

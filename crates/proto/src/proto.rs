@@ -99,8 +99,8 @@ messages!(
     (GetHoverResponse, Background),
     (GetNotifications, Foreground),
     (GetNotificationsResponse, Foreground),
-    (GetPanicFiles, Background),
-    (GetPanicFilesResponse, Background),
+    (GetCrashFiles, Background),
+    (GetCrashFilesResponse, Background),
     (GetPathMetadata, Background),
     (GetPathMetadataResponse, Background),
     (GetPermalinkToLine, Foreground),
@@ -121,8 +121,6 @@ messages!(
     (GetImplementationResponse, Background),
     (GetLlmToken, Background),
     (GetLlmTokenResponse, Background),
-    (LanguageServerIdForName, Background),
-    (LanguageServerIdForNameResponse, Background),
     (OpenUnstagedDiff, Foreground),
     (OpenUnstagedDiffResponse, Foreground),
     (OpenUncommittedDiff, Foreground),
@@ -318,6 +316,8 @@ messages!(
     (PullWorkspaceDiagnostics, Background),
     (GetDefaultBranch, Background),
     (GetDefaultBranchResponse, Background),
+    (GitClone, Background),
+    (GitCloneResponse, Background)
 );
 
 request_messages!(
@@ -431,7 +431,6 @@ request_messages!(
     (UpdateWorktree, Ack),
     (UpdateRepository, Ack),
     (RemoveRepository, Ack),
-    (LanguageServerIdForName, LanguageServerIdForNameResponse),
     (LspExtExpandMacro, LspExtExpandMacroResponse),
     (LspExtOpenDocs, LspExtOpenDocsResponse),
     (LspExtRunnables, LspExtRunnablesResponse),
@@ -462,7 +461,7 @@ request_messages!(
     (ActivateToolchain, Ack),
     (ActiveToolchain, ActiveToolchainResponse),
     (GetPathMetadata, GetPathMetadataResponse),
-    (GetPanicFiles, GetPanicFilesResponse),
+    (GetCrashFiles, GetCrashFilesResponse),
     (CancelLanguageServerWork, Ack),
     (SyncExtensions, SyncExtensionsResponse),
     (InstallExtension, Ack),
@@ -487,6 +486,7 @@ request_messages!(
     (GetDocumentDiagnostics, GetDocumentDiagnosticsResponse),
     (PullWorkspaceDiagnostics, Ack),
     (GetDefaultBranch, GetDefaultBranchResponse),
+    (GitClone, GitCloneResponse)
 );
 
 entity_messages!(
@@ -588,7 +588,6 @@ entity_messages!(
     OpenServerSettings,
     GetPermalinkToLine,
     LanguageServerPromptRequest,
-    LanguageServerIdForName,
     GitGetBranches,
     UpdateGitBranch,
     ListToolchains,
@@ -619,7 +618,8 @@ entity_messages!(
     LogToDebugConsole,
     GetDocumentDiagnostics,
     PullWorkspaceDiagnostics,
-    GetDefaultBranch
+    GetDefaultBranch,
+    GitClone
 );
 
 entity_messages!(

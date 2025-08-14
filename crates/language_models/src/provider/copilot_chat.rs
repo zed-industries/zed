@@ -706,7 +706,8 @@ impl Render for ConfigurationView {
                             .child(svg().size_8().path(IconName::CopilotError.path()))
                     }
                     _ => {
-                        const LABEL: &str = "To use Zed's assistant with GitHub Copilot, you need to be logged in to GitHub. Note that your GitHub account must have an active Copilot Chat subscription.";
+                        const LABEL: &str = "To use Zed's agent with GitHub Copilot, you need to be logged in to GitHub. Note that your GitHub account must have an active Copilot Chat subscription.";
+
                         v_flex().gap_2().child(Label::new(LABEL)).child(
                             Button::new("sign_in", "Sign in to use GitHub Copilot")
                                 .icon_color(Color::Muted)

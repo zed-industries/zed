@@ -121,7 +121,15 @@ impl ApplicationMenu {
                                     menu.action(name, action)
                                 }
                                 OwnedMenuItem::Submenu(_) => menu,
+                                OwnedMenuItem::SystemMenu(_) => {
+                                    // A system menu doesn't make sense in this context, so ignore it
+                                    menu
+                                }
                             })
+                    }
+                    OwnedMenuItem::SystemMenu(_) => {
+                        // A system menu doesn't make sense in this context, so ignore it
+                        menu
                     }
                 })
         })

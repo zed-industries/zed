@@ -180,6 +180,7 @@ impl Focusable for BranchList {
 impl Render for BranchList {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
+            .key_context("GitBranchSelector")
             .w(self.width)
             .on_modifiers_changed(cx.listener(Self::handle_modifiers_changed))
             .child(self.picker.clone())
@@ -472,7 +473,7 @@ impl PickerDelegate for BranchListDelegate {
             && entry.is_new
         {
             Some(
-                IconButton::new("branch-from-default", IconName::GitBranchSmall)
+                IconButton::new("branch-from-default", IconName::GitBranchAlt)
                     .on_click(cx.listener(move |this, _, window, cx| {
                         this.delegate.set_selected_index(ix, window, cx);
                         this.delegate.confirm(true, window, cx);

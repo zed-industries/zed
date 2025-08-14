@@ -104,7 +104,13 @@ impl LspAdapter for YamlLspAdapter {
 
         let should_install_language_server = self
             .node
-            .should_install_npm_package(Self::PACKAGE_NAME, &server_path, &container_dir, &version)
+            .should_install_npm_package(
+                Self::PACKAGE_NAME,
+                &server_path,
+                &container_dir,
+                &version,
+                Default::default(),
+            )
             .await;
 
         if should_install_language_server {

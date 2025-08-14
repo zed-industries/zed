@@ -135,7 +135,7 @@ impl acp_old::Client for OldAcpClientDelegate {
         let response = cx
             .update(|cx| {
                 self.thread.borrow().update(cx, |thread, cx| {
-                    thread.request_tool_call_permission(tool_call, acp_options, cx)
+                    thread.request_tool_call_authorization(tool_call, acp_options, cx)
                 })
             })?
             .context("Failed to update thread")?
@@ -280,6 +280,7 @@ fn into_new_tool_call(id: acp::ToolCallId, request: acp_old::PushToolCallParams)
             .map(into_new_tool_call_location)
             .collect(),
         raw_input: None,
+        raw_output: None,
     }
 }
 
@@ -380,6 +381,7 @@ impl AcpConnection {
 
             let stdin = child.stdin.take().unwrap();
             let stdout = child.stdout.take().unwrap();
+            log::trace!("Spawned (pid: {})", child.id());
 
             let foreground_executor = cx.foreground_executor().clone();
 
@@ -463,7 +465,12 @@ impl AgentConnection for AcpConnection {
         })
     }
 
-    fn prompt(&self, params: acp::PromptRequest, cx: &mut App) -> Task<Result<()>> {
+    fn prompt(
+        &self,
+        _id: Option<acp_thread::UserMessageId>,
+        params: acp::PromptRequest,
+        cx: &mut App,
+    ) -> Task<Result<acp::PromptResponse>> {
         let chunks = params
             .prompt
             .into_iter()
@@ -483,7 +490,9 @@ impl AgentConnection for AcpConnection {
             .request_any(acp_old::SendUserMessageParams { chunks }.into_any());
         cx.foreground_executor().spawn(async move {
             task.await?;
-            anyhow::Ok(())
+            anyhow::Ok(acp::PromptResponse {
+                stop_reason: acp::StopReason::EndTurn,
+            })
         })
     }
 

@@ -118,7 +118,7 @@ use hover_links::{HoverLink, HoveredLinkState, InlayHighlight, find_file};
 use hover_popover::{HoverState, hide_hover};
 use indent_guides::ActiveIndentGuidesState;
 use inlay_hint_cache::{InlayHintCache, InlaySplice, InvalidationStrategy};
-use itertools::Itertools;
+use itertools::{Either, Itertools};
 use language::{
     AutoindentMode, BlockCommentConfig, BracketMatch, BracketPair, Buffer, BufferRow,
     BufferSnapshot, Capability, CharClassifier, CharKind, CodeLabel, CursorShape, DiagnosticEntry,
@@ -134,7 +134,7 @@ use language::{
 use linked_editing_ranges::refresh_linked_ranges;
 use lsp::{
     CodeActionKind, CompletionItemKind, CompletionTriggerKind, InsertTextFormat, InsertTextMode,
-    LanguageServerId, LanguageServerName,
+    LanguageServerId,
 };
 use lsp_colors::LspColorData;
 use markdown::Markdown;
@@ -249,6 +249,24 @@ pub type RenderDiffHunkControlsFn = Arc<
         &mut App,
     ) -> AnyElement,
 >;
+
+enum ReportEditorEvent {
+    Saved { auto_saved: bool },
+    EditorOpened,
+    ZetaTosClicked,
+    Closed,
+}
+
+impl ReportEditorEvent {
+    pub fn event_type(&self) -> &'static str {
+        match self {
+            Self::Saved { .. } => "Editor Saved",
+            Self::EditorOpened => "Editor Opened",
+            Self::ZetaTosClicked => "Edit Prediction Provider ToS Clicked",
+            Self::Closed => "Editor Closed",
+        }
+    }
+}
 
 struct InlineValueCache {
     enabled: bool,
@@ -1864,7 +1882,6 @@ impl Editor {
                                 editor.tasks_update_task =
                                     Some(editor.refresh_runnables(window, cx));
                             }
-                            editor.update_lsp_data(true, None, window, cx);
                         }
                         project::Event::SnippetEdit(id, snippet_edits) => {
                             if let Some(buffer) = editor.buffer.read(cx).buffer(*id) {
@@ -1884,6 +1901,11 @@ impl Editor {
                                             .ok();
                                     }
                                 }
+                            }
+                        }
+                        project::Event::LanguageServerBufferRegistered { buffer_id, .. } => {
+                            if editor.buffer().read(cx).buffer(*buffer_id).is_some() {
+                                editor.update_lsp_data(false, Some(*buffer_id), window, cx);
                             }
                         }
                         _ => {}
@@ -2321,7 +2343,7 @@ impl Editor {
         }
 
         if editor.mode.is_full() {
-            editor.report_editor_event("Editor Opened", None, cx);
+            editor.report_editor_event(ReportEditorEvent::EditorOpened, None, cx);
         }
 
         editor
@@ -2699,6 +2721,11 @@ impl Editor {
 
     pub fn set_completion_provider(&mut self, provider: Option<Rc<dyn CompletionProvider>>) {
         self.completion_provider = provider;
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn completion_provider(&self) -> Option<Rc<dyn CompletionProvider>> {
+        self.completion_provider.clone()
     }
 
     pub fn semantics_provider(&self) -> Option<Rc<dyn SemanticsProvider>> {
@@ -7756,8 +7783,14 @@ impl Editor {
         } else {
             None
         };
-        let is_move =
-            move_invalidation_row_range.is_some() || self.edit_predictions_hidden_for_vim_mode;
+        let supports_jump = self
+            .edit_prediction_provider
+            .as_ref()
+            .map(|provider| provider.provider.supports_jump_to_edit())
+            .unwrap_or(true);
+
+        let is_move = supports_jump
+            && (move_invalidation_row_range.is_some() || self.edit_predictions_hidden_for_vim_mode);
         let completion = if is_move {
             invalidation_row_range =
                 move_invalidation_row_range.unwrap_or(edit_start_row..edit_end_row);
@@ -8179,7 +8212,7 @@ impl Editor {
                 editor.set_breakpoint_context_menu(
                     row,
                     Some(position),
-                    event.down.position,
+                    event.position(),
                     window,
                     cx,
                 );
@@ -8346,7 +8379,11 @@ impl Editor {
         .icon_color(color)
         .toggle_state(is_active)
         .on_click(cx.listener(move |editor, e: &ClickEvent, window, cx| {
-            let quick_launch = e.down.button == MouseButton::Left;
+            let quick_launch = match e {
+                ClickEvent::Keyboard(_) => true,
+                ClickEvent::Mouse(e) => e.down.button == MouseButton::Left,
+            };
+
             window.focus(&editor.focus_handle(cx));
             editor.toggle_code_actions(
                 &ToggleCodeActions {
@@ -8358,7 +8395,7 @@ impl Editor {
             );
         }))
         .on_right_click(cx.listener(move |editor, event: &ClickEvent, window, cx| {
-            editor.set_breakpoint_context_menu(row, position, event.down.position, window, cx);
+            editor.set_breakpoint_context_menu(row, position, event.position(), window, cx);
         }))
     }
 
@@ -8791,8 +8828,12 @@ impl Editor {
             return None;
         }
 
-        let highlighted_edits =
-            crate::edit_prediction_edit_text(&snapshot, edits, edit_preview.as_ref()?, false, cx);
+        let highlighted_edits = if let Some(edit_preview) = edit_preview.as_ref() {
+            crate::edit_prediction_edit_text(&snapshot, edits, edit_preview, false, cx)
+        } else {
+            // Fallback for providers without edit_preview
+            crate::edit_prediction_fallback_text(edits, cx)
+        };
 
         let styled_text = highlighted_edits.to_styled_text(&style.text);
         let line_count = highlighted_edits.text.lines().count();
@@ -9060,6 +9101,18 @@ impl Editor {
         let editor_bg_color = cx.theme().colors().editor_background;
         editor_bg_color.blend(accent_color.opacity(0.6))
     }
+    fn get_prediction_provider_icon_name(
+        provider: &Option<RegisteredEditPredictionProvider>,
+    ) -> IconName {
+        match provider {
+            Some(provider) => match provider.provider.name() {
+                "copilot" => IconName::Copilot,
+                "supermaven" => IconName::Supermaven,
+                _ => IconName::ZedPredict,
+            },
+            None => IconName::ZedPredict,
+        }
+    }
 
     fn render_edit_prediction_cursor_popover(
         &self,
@@ -9072,6 +9125,7 @@ impl Editor {
         cx: &mut Context<Editor>,
     ) -> Option<AnyElement> {
         let provider = self.edit_prediction_provider.as_ref()?;
+        let provider_icon = Self::get_prediction_provider_icon_name(&self.edit_prediction_provider);
 
         if provider.provider.needs_terms_acceptance(cx) {
             return Some(
@@ -9088,7 +9142,7 @@ impl Editor {
                     .on_mouse_down(MouseButton::Left, |_, window, _| window.prevent_default())
                     .on_click(cx.listener(|this, _event, window, cx| {
                         cx.stop_propagation();
-                        this.report_editor_event("Edit Prediction Provider ToS Clicked", None, cx);
+                        this.report_editor_event(ReportEditorEvent::ZetaTosClicked, None, cx);
                         window.dispatch_action(
                             zed_actions::OpenZedPredictOnboarding.boxed_clone(),
                             cx,
@@ -9098,7 +9152,7 @@ impl Editor {
                         h_flex()
                             .flex_1()
                             .gap_2()
-                            .child(Icon::new(IconName::ZedPredict))
+                            .child(Icon::new(provider_icon))
                             .child(Label::new("Accept Terms of Service"))
                             .child(div().w_full())
                             .child(
@@ -9114,12 +9168,8 @@ impl Editor {
 
         let is_refreshing = provider.provider.is_refreshing(cx);
 
-        fn pending_completion_container() -> Div {
-            h_flex()
-                .h_full()
-                .flex_1()
-                .gap_2()
-                .child(Icon::new(IconName::ZedPredict))
+        fn pending_completion_container(icon: IconName) -> Div {
+            h_flex().h_full().flex_1().gap_2().child(Icon::new(icon))
         }
 
         let completion = match &self.active_edit_prediction {
@@ -9149,7 +9199,7 @@ impl Editor {
                                         Icon::new(IconName::ZedPredictUp)
                                     }
                                 }
-                                EditPrediction::Edit { .. } => Icon::new(IconName::ZedPredict),
+                                EditPrediction::Edit { .. } => Icon::new(provider_icon),
                             }))
                             .child(
                                 h_flex()
@@ -9216,15 +9266,15 @@ impl Editor {
                     cx,
                 )?,
 
-                None => {
-                    pending_completion_container().child(Label::new("...").size(LabelSize::Small))
-                }
+                None => pending_completion_container(provider_icon)
+                    .child(Label::new("...").size(LabelSize::Small)),
             },
 
-            None => pending_completion_container().child(Label::new("No Prediction")),
+            None => pending_completion_container(provider_icon)
+                .child(Label::new("...").size(LabelSize::Small)),
         };
 
-        let completion = if is_refreshing {
+        let completion = if is_refreshing || self.active_edit_prediction.is_none() {
             completion
                 .with_animation(
                     "loading-completion",
@@ -9324,23 +9374,35 @@ impl Editor {
                 .child(Icon::new(arrow).color(Color::Muted).size(IconSize::Small))
         }
 
+        let supports_jump = self
+            .edit_prediction_provider
+            .as_ref()
+            .map(|provider| provider.provider.supports_jump_to_edit())
+            .unwrap_or(true);
+
         match &completion.completion {
             EditPrediction::Move {
                 target, snapshot, ..
-            } => Some(
-                h_flex()
-                    .px_2()
-                    .gap_2()
-                    .flex_1()
-                    .child(
-                        if target.text_anchor.to_point(&snapshot).row > cursor_point.row {
-                            Icon::new(IconName::ZedPredictDown)
-                        } else {
-                            Icon::new(IconName::ZedPredictUp)
-                        },
-                    )
-                    .child(Label::new("Jump to Edit")),
-            ),
+            } => {
+                if !supports_jump {
+                    return None;
+                }
+
+                Some(
+                    h_flex()
+                        .px_2()
+                        .gap_2()
+                        .flex_1()
+                        .child(
+                            if target.text_anchor.to_point(&snapshot).row > cursor_point.row {
+                                Icon::new(IconName::ZedPredictDown)
+                            } else {
+                                Icon::new(IconName::ZedPredictUp)
+                            },
+                        )
+                        .child(Label::new("Jump to Edit")),
+                )
+            }
 
             EditPrediction::Edit {
                 edits,
@@ -9350,14 +9412,13 @@ impl Editor {
             } => {
                 let first_edit_row = edits.first()?.0.start.text_anchor.to_point(&snapshot).row;
 
-                let (highlighted_edits, has_more_lines) = crate::edit_prediction_edit_text(
-                    &snapshot,
-                    &edits,
-                    edit_preview.as_ref()?,
-                    true,
-                    cx,
-                )
-                .first_line_preview();
+                let (highlighted_edits, has_more_lines) =
+                    if let Some(edit_preview) = edit_preview.as_ref() {
+                        crate::edit_prediction_edit_text(&snapshot, &edits, edit_preview, true, cx)
+                            .first_line_preview()
+                    } else {
+                        crate::edit_prediction_fallback_text(&edits, cx).first_line_preview()
+                    };
 
                 let styled_text = gpui::StyledText::new(highlighted_edits.text)
                     .with_default_highlights(&style.text, highlighted_edits.highlights);
@@ -9368,11 +9429,13 @@ impl Editor {
                     .child(styled_text)
                     .when(has_more_lines, |parent| parent.child("…"));
 
-                let left = if first_edit_row != cursor_point.row {
+                let left = if supports_jump && first_edit_row != cursor_point.row {
                     render_relative_row_jump("", cursor_point.row, first_edit_row)
                         .into_any_element()
                 } else {
-                    Icon::new(IconName::ZedPredict).into_any_element()
+                    let icon_name =
+                        Editor::get_prediction_provider_icon_name(&self.edit_prediction_provider);
+                    Icon::new(icon_name).into_any_element()
                 };
 
                 Some(
@@ -12113,6 +12176,8 @@ impl Editor {
         let clipboard_text = Cow::Borrowed(text);
 
         self.transact(window, cx, |this, window, cx| {
+            let had_active_edit_prediction = this.has_active_edit_prediction();
+
             if let Some(mut clipboard_selections) = clipboard_selections {
                 let old_selections = this.selections.all::<usize>(cx);
                 let all_selections_were_entire_line =
@@ -12185,6 +12250,11 @@ impl Editor {
             } else {
                 this.insert(&clipboard_text, window, cx);
             }
+
+            let trigger_in_words =
+                this.show_edit_predictions_in_menu() || !had_active_edit_prediction;
+
+            this.trigger_completion_on_input(&text, trigger_in_words, window, cx);
         });
     }
 
@@ -14703,6 +14773,81 @@ impl Editor {
         }
     }
 
+    pub fn unwrap_syntax_node(
+        &mut self,
+        _: &UnwrapSyntaxNode,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.hide_mouse_cursor(HideMouseCursorOrigin::MovementAction, cx);
+
+        let buffer = self.buffer.read(cx).snapshot(cx);
+        let old_selections: Box<[_]> = self.selections.all::<usize>(cx).into();
+
+        let edits = old_selections
+            .iter()
+            // only consider the first selection for now
+            .take(1)
+            .map(|selection| {
+                // Only requires two branches once if-let-chains stabilize (#53667)
+                let selection_range = if !selection.is_empty() {
+                    selection.range()
+                } else if let Some((_, ancestor_range)) =
+                    buffer.syntax_ancestor(selection.start..selection.end)
+                {
+                    match ancestor_range {
+                        MultiOrSingleBufferOffsetRange::Single(range) => range,
+                        MultiOrSingleBufferOffsetRange::Multi(range) => range,
+                    }
+                } else {
+                    selection.range()
+                };
+
+                let mut new_range = selection_range.clone();
+                while let Some((_, ancestor_range)) = buffer.syntax_ancestor(new_range.clone()) {
+                    new_range = match ancestor_range {
+                        MultiOrSingleBufferOffsetRange::Single(range) => range,
+                        MultiOrSingleBufferOffsetRange::Multi(range) => range,
+                    };
+                    if new_range.start < selection_range.start
+                        || new_range.end > selection_range.end
+                    {
+                        break;
+                    }
+                }
+
+                (selection, selection_range, new_range)
+            })
+            .collect::<Vec<_>>();
+
+        self.transact(window, cx, |editor, window, cx| {
+            for (_, child, parent) in &edits {
+                let text = buffer.text_for_range(child.clone()).collect::<String>();
+                editor.replace_text_in_range(Some(parent.clone()), &text, window, cx);
+            }
+
+            editor.change_selections(
+                SelectionEffects::scroll(Autoscroll::fit()),
+                window,
+                cx,
+                |s| {
+                    s.select(
+                        edits
+                            .iter()
+                            .map(|(s, old, new)| Selection {
+                                id: s.id,
+                                start: new.start,
+                                end: new.start + old.len(),
+                                goal: SelectionGoal::None,
+                                reversed: s.reversed,
+                            })
+                            .collect(),
+                    );
+                },
+            );
+        });
+    }
+
     fn refresh_runnables(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Task<()> {
         if !EditorSettings::get_global(cx).gutter.runnables {
             self.clear_tasks();
@@ -15546,12 +15691,9 @@ impl Editor {
         };
         let head = self.selections.newest::<usize>(cx).head();
         let buffer = self.buffer.read(cx);
-        let (buffer, head) = if let Some(text_anchor) = buffer.text_anchor_for_position(head, cx) {
-            text_anchor
-        } else {
+        let Some((buffer, head)) = buffer.text_anchor_for_position(head, cx) else {
             return Task::ready(Ok(Navigated::No));
         };
-
         let Some(definitions) = provider.definitions(&buffer, head, kind, cx) else {
             return Task::ready(Ok(Navigated::No));
         };
@@ -15656,62 +15798,113 @@ impl Editor {
     pub(crate) fn navigate_to_hover_links(
         &mut self,
         kind: Option<GotoDefinitionKind>,
-        mut definitions: Vec<HoverLink>,
+        definitions: Vec<HoverLink>,
         split: bool,
         window: &mut Window,
         cx: &mut Context<Editor>,
     ) -> Task<Result<Navigated>> {
-        // If there is one definition, just open it directly
-        if definitions.len() == 1 {
-            let definition = definitions.pop().unwrap();
-
-            enum TargetTaskResult {
-                Location(Option<Location>),
-                AlreadyNavigated,
-            }
-
-            let target_task = match definition {
-                HoverLink::Text(link) => {
-                    Task::ready(anyhow::Ok(TargetTaskResult::Location(Some(link.target))))
-                }
+        // Separate out url and file links, we can only handle one of them at most or an arbitrary number of locations
+        let mut first_url_or_file = None;
+        let definitions: Vec<_> = definitions
+            .into_iter()
+            .filter_map(|def| match def {
+                HoverLink::Text(link) => Some(Task::ready(anyhow::Ok(Some(link.target)))),
                 HoverLink::InlayHint(lsp_location, server_id) => {
                     let computation =
                         self.compute_target_location(lsp_location, server_id, window, cx);
-                    cx.background_spawn(async move {
-                        let location = computation.await?;
-                        Ok(TargetTaskResult::Location(location))
-                    })
+                    Some(cx.background_spawn(computation))
                 }
                 HoverLink::Url(url) => {
-                    cx.open_url(&url);
-                    Task::ready(Ok(TargetTaskResult::AlreadyNavigated))
+                    first_url_or_file = Some(Either::Left(url));
+                    None
                 }
                 HoverLink::File(path) => {
-                    if let Some(workspace) = self.workspace() {
-                        cx.spawn_in(window, async move |_, cx| {
-                            workspace
-                                .update_in(cx, |workspace, window, cx| {
-                                    workspace.open_resolved_path(path, window, cx)
-                                })?
-                                .await
-                                .map(|_| TargetTaskResult::AlreadyNavigated)
-                        })
-                    } else {
-                        Task::ready(Ok(TargetTaskResult::Location(None)))
-                    }
+                    first_url_or_file = Some(Either::Right(path));
+                    None
                 }
-            };
-            cx.spawn_in(window, async move |editor, cx| {
-                let target = match target_task.await.context("target resolution task")? {
-                    TargetTaskResult::AlreadyNavigated => return Ok(Navigated::Yes),
-                    TargetTaskResult::Location(None) => return Ok(Navigated::No),
-                    TargetTaskResult::Location(Some(target)) => target,
+            })
+            .collect();
+
+        let workspace = self.workspace();
+
+        cx.spawn_in(window, async move |editor, acx| {
+            let mut locations: Vec<Location> = future::join_all(definitions)
+                .await
+                .into_iter()
+                .filter_map(|location| location.transpose())
+                .collect::<Result<_>>()
+                .context("location tasks")?;
+
+            if locations.len() > 1 {
+                let Some(workspace) = workspace else {
+                    return Ok(Navigated::No);
                 };
 
-                editor.update_in(cx, |editor, window, cx| {
-                    let Some(workspace) = editor.workspace() else {
-                        return Navigated::No;
-                    };
+                let tab_kind = match kind {
+                    Some(GotoDefinitionKind::Implementation) => "Implementations",
+                    Some(GotoDefinitionKind::Symbol) | None => "Definitions",
+                    Some(GotoDefinitionKind::Declaration) => "Declarations",
+                    Some(GotoDefinitionKind::Type) => "Types",
+                };
+                let title = editor
+                    .update_in(acx, |_, _, cx| {
+                        let target = locations
+                            .iter()
+                            .map(|location| {
+                                location
+                                    .buffer
+                                    .read(cx)
+                                    .text_for_range(location.range.clone())
+                                    .collect::<String>()
+                            })
+                            .join(", ");
+                        format!("{tab_kind} for {target}")
+                    })
+                    .context("buffer title")?;
+
+                let opened = workspace
+                    .update_in(acx, |workspace, window, cx| {
+                        Self::open_locations_in_multibuffer(
+                            workspace,
+                            locations,
+                            title,
+                            split,
+                            MultibufferSelectionMode::First,
+                            window,
+                            cx,
+                        )
+                    })
+                    .is_ok();
+
+                anyhow::Ok(Navigated::from_bool(opened))
+            } else if locations.is_empty() {
+                // If there is one definition, just open it directly
+                match first_url_or_file {
+                    Some(Either::Left(url)) => {
+                        acx.update(|_, cx| cx.open_url(&url))?;
+                        Ok(Navigated::Yes)
+                    }
+                    Some(Either::Right(path)) => {
+                        let Some(workspace) = workspace else {
+                            return Ok(Navigated::No);
+                        };
+
+                        workspace
+                            .update_in(acx, |workspace, window, cx| {
+                                workspace.open_resolved_path(path, window, cx)
+                            })?
+                            .await?;
+                        Ok(Navigated::Yes)
+                    }
+                    None => Ok(Navigated::No),
+                }
+            } else {
+                let Some(workspace) = workspace else {
+                    return Ok(Navigated::No);
+                };
+
+                let target = locations.pop().unwrap();
+                editor.update_in(acx, |editor, window, cx| {
                     let pane = workspace.read(cx).active_pane().clone();
 
                     let range = target.range.to_point(target.buffer.read(cx));
@@ -15752,81 +15945,8 @@ impl Editor {
                     }
                     Navigated::Yes
                 })
-            })
-        } else if !definitions.is_empty() {
-            cx.spawn_in(window, async move |editor, cx| {
-                let (title, location_tasks, workspace) = editor
-                    .update_in(cx, |editor, window, cx| {
-                        let tab_kind = match kind {
-                            Some(GotoDefinitionKind::Implementation) => "Implementations",
-                            _ => "Definitions",
-                        };
-                        let title = definitions
-                            .iter()
-                            .find_map(|definition| match definition {
-                                HoverLink::Text(link) => link.origin.as_ref().map(|origin| {
-                                    let buffer = origin.buffer.read(cx);
-                                    format!(
-                                        "{} for {}",
-                                        tab_kind,
-                                        buffer
-                                            .text_for_range(origin.range.clone())
-                                            .collect::<String>()
-                                    )
-                                }),
-                                HoverLink::InlayHint(_, _) => None,
-                                HoverLink::Url(_) => None,
-                                HoverLink::File(_) => None,
-                            })
-                            .unwrap_or(tab_kind.to_string());
-                        let location_tasks = definitions
-                            .into_iter()
-                            .map(|definition| match definition {
-                                HoverLink::Text(link) => Task::ready(Ok(Some(link.target))),
-                                HoverLink::InlayHint(lsp_location, server_id) => editor
-                                    .compute_target_location(lsp_location, server_id, window, cx),
-                                HoverLink::Url(_) => Task::ready(Ok(None)),
-                                HoverLink::File(_) => Task::ready(Ok(None)),
-                            })
-                            .collect::<Vec<_>>();
-                        (title, location_tasks, editor.workspace().clone())
-                    })
-                    .context("location tasks preparation")?;
-
-                let locations: Vec<Location> = future::join_all(location_tasks)
-                    .await
-                    .into_iter()
-                    .filter_map(|location| location.transpose())
-                    .collect::<Result<_>>()
-                    .context("location tasks")?;
-
-                if locations.is_empty() {
-                    return Ok(Navigated::No);
-                }
-
-                let Some(workspace) = workspace else {
-                    return Ok(Navigated::No);
-                };
-
-                let opened = workspace
-                    .update_in(cx, |workspace, window, cx| {
-                        Self::open_locations_in_multibuffer(
-                            workspace,
-                            locations,
-                            title,
-                            split,
-                            MultibufferSelectionMode::First,
-                            window,
-                            cx,
-                        )
-                    })
-                    .ok();
-
-                anyhow::Ok(Navigated::from_bool(opened.is_some()))
-            })
-        } else {
-            Task::ready(Ok(Navigated::No))
-        }
+            }
+        })
     }
 
     fn compute_target_location(
@@ -15846,7 +15966,7 @@ impl Editor {
                     let language_server_name = project
                         .language_server_statuses(cx)
                         .find(|(id, _)| server_id == *id)
-                        .map(|(_, status)| LanguageServerName::from(status.name.as_str()));
+                        .map(|(_, status)| status.name.clone());
                     language_server_name.map(|language_server_name| {
                         project.open_local_buffer_via_lsp(
                             lsp_location.uri.clone(),
@@ -15934,19 +16054,17 @@ impl Editor {
             }
 
             workspace.update_in(cx, |workspace, window, cx| {
-                let title = locations
-                    .first()
-                    .as_ref()
+                let target = locations
+                    .iter()
                     .map(|location| {
-                        let buffer = location.buffer.read(cx);
-                        format!(
-                            "References to `{}`",
-                            buffer
-                                .text_for_range(location.range.clone())
-                                .collect::<String>()
-                        )
+                        location
+                            .buffer
+                            .read(cx)
+                            .text_for_range(location.range.clone())
+                            .collect::<String>()
                     })
-                    .unwrap();
+                    .join(", ");
+                let title = format!("References to {target}");
                 Self::open_locations_in_multibuffer(
                     workspace,
                     locations,
@@ -20456,7 +20574,7 @@ impl Editor {
 
     fn report_editor_event(
         &self,
-        event_type: &'static str,
+        reported_event: ReportEditorEvent,
         file_extension: Option<String>,
         cx: &App,
     ) {
@@ -20490,15 +20608,30 @@ impl Editor {
             .show_edit_predictions;
 
         let project = project.read(cx);
-        telemetry::event!(
-            event_type,
-            file_extension,
-            vim_mode,
-            copilot_enabled,
-            copilot_enabled_for_language,
-            edit_predictions_provider,
-            is_via_ssh = project.is_via_ssh(),
-        );
+        let event_type = reported_event.event_type();
+
+        if let ReportEditorEvent::Saved { auto_saved } = reported_event {
+            telemetry::event!(
+                event_type,
+                type = if auto_saved {"autosave"} else {"manual"},
+                file_extension,
+                vim_mode,
+                copilot_enabled,
+                copilot_enabled_for_language,
+                edit_predictions_provider,
+                is_via_ssh = project.is_via_ssh(),
+            );
+        } else {
+            telemetry::event!(
+                event_type,
+                file_extension,
+                vim_mode,
+                copilot_enabled,
+                copilot_enabled_for_language,
+                edit_predictions_provider,
+                is_via_ssh = project.is_via_ssh(),
+            );
+        };
     }
 
     /// Copy the highlighted chunks to the clipboard as JSON. The format is an array of lines,
@@ -22184,7 +22317,6 @@ impl SemanticsProvider for Entity<Project> {
     }
 
     fn supports_inlay_hints(&self, buffer: &Entity<Buffer>, cx: &mut App) -> bool {
-        // TODO: make this work for remote projects
         self.update(cx, |project, cx| {
             if project
                 .active_debug_session(cx)
@@ -23186,6 +23318,33 @@ fn edit_prediction_edit_text(
         .collect::<Vec<_>>();
 
     edit_preview.highlight_edits(current_snapshot, &edits, include_deletions, cx)
+}
+
+fn edit_prediction_fallback_text(edits: &[(Range<Anchor>, String)], cx: &App) -> HighlightedText {
+    // Fallback for providers that don't provide edit_preview (like Copilot/Supermaven)
+    // Just show the raw edit text with basic styling
+    let mut text = String::new();
+    let mut highlights = Vec::new();
+
+    let insertion_highlight_style = HighlightStyle {
+        color: Some(cx.theme().colors().text),
+        ..Default::default()
+    };
+
+    for (_, edit_text) in edits {
+        let start_offset = text.len();
+        text.push_str(edit_text);
+        let end_offset = text.len();
+
+        if start_offset < end_offset {
+            highlights.push((start_offset..end_offset, insertion_highlight_style));
+        }
+    }
+
+    HighlightedText {
+        text: text.into(),
+        highlights,
+    }
 }
 
 pub fn diagnostic_style(severity: lsp::DiagnosticSeverity, colors: &StatusColors) -> Hsla {

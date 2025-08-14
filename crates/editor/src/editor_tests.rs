@@ -1902,6 +1902,51 @@ fn test_beginning_of_line_stop_at_indent(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn test_beginning_of_line_with_cursor_between_line_start_and_indent(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let move_to_beg = MoveToBeginningOfLine {
+        stop_at_soft_wraps: true,
+        stop_at_indent: true,
+    };
+
+    let editor = cx.add_window(|window, cx| {
+        let buffer = MultiBuffer::build_simple("    hello\nworld", cx);
+        build_editor(buffer, window, cx)
+    });
+
+    _ = editor.update(cx, |editor, window, cx| {
+        // test cursor between line_start and indent_start
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_display_ranges([
+                DisplayPoint::new(DisplayRow(0), 3)..DisplayPoint::new(DisplayRow(0), 3)
+            ]);
+        });
+
+        // cursor should move to line_start
+        editor.move_to_beginning_of_line(&move_to_beg, window, cx);
+        assert_eq!(
+            editor.selections.display_ranges(cx),
+            &[DisplayPoint::new(DisplayRow(0), 0)..DisplayPoint::new(DisplayRow(0), 0)]
+        );
+
+        // cursor should move to indent_start
+        editor.move_to_beginning_of_line(&move_to_beg, window, cx);
+        assert_eq!(
+            editor.selections.display_ranges(cx),
+            &[DisplayPoint::new(DisplayRow(0), 4)..DisplayPoint::new(DisplayRow(0), 4)]
+        );
+
+        // cursor should move to back to line_start
+        editor.move_to_beginning_of_line(&move_to_beg, window, cx);
+        assert_eq!(
+            editor.selections.display_ranges(cx),
+            &[DisplayPoint::new(DisplayRow(0), 0)..DisplayPoint::new(DisplayRow(0), 0)]
+        );
+    });
+}
+
+#[gpui::test]
 fn test_prev_next_word_boundary(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
@@ -7967,6 +8012,38 @@ async fn test_select_larger_smaller_syntax_node_for_string(cx: &mut TestAppConte
             cx,
         );
     });
+}
+
+#[gpui::test]
+async fn test_unwrap_syntax_node(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    let language = Arc::new(Language::new(
+        LanguageConfig::default(),
+        Some(tree_sitter_rust::LANGUAGE.into()),
+    ));
+
+    cx.update_buffer(|buffer, cx| {
+        buffer.set_language(Some(language), cx);
+    });
+
+    cx.set_state(
+        &r#"
+            use mod1::mod2::{«mod3ˇ», mod4};
+        "#
+        .unindent(),
+    );
+    cx.update_editor(|editor, window, cx| {
+        editor.unwrap_syntax_node(&UnwrapSyntaxNode, window, cx);
+    });
+    cx.assert_editor_state(
+        &r#"
+            use mod1::mod2::«mod3ˇ»;
+        "#
+        .unindent(),
+    );
 }
 
 #[gpui::test]
@@ -22424,7 +22501,7 @@ async fn test_invisible_worktree_servers(cx: &mut TestAppContext) {
     );
 
     cx.update(|_, cx| {
-        workspace::reload(&workspace::Reload::default(), cx);
+        workspace::reload(cx);
     });
     assert_language_servers_count(
         1,
