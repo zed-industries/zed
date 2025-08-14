@@ -86,7 +86,7 @@ reset_onboarding() {
     echo "  1. Start $APP_NAME - you should see the onboarding flow"
     echo "  2. When done testing, run: ./script/onboarding restore"
     echo ""
-    echo -e "${YELLOW}Note: All your settings, projects, and history are safely preserved in the backup.${NC}"
+    echo -e "${YELLOW}Note: All your workspace data is safely preserved in the backup.${NC}"
 }
 
 restore_onboarding() {
