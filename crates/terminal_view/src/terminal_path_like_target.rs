@@ -507,15 +507,11 @@ mod tests {
             return;
         };
 
-        match open_target {
-            OpenTarget::File(path, _) | OpenTarget::Worktree(path, _) => {
-                assert_eq!(
-                    path.path.as_path(),
-                    Path::new(tooltip),
-                    "Open target path mismatch at {file}:{line}:"
-                );
-            }
-        }
+        assert_eq!(
+            open_target.path().path.as_path(),
+            Path::new(tooltip),
+            "Open target path mismatch at {file}:{line}:"
+        );
     }
 
     macro_rules! none_or_some {
