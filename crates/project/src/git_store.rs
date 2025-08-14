@@ -2349,7 +2349,7 @@ impl GitStore {
                         return None;
                     };
 
-                    let mut paths = vec![];
+                    let mut paths = Vec::new();
                     // All paths prefixed by a given repo will constitute a continuous range.
                     while let Some(path) = entries.get(ix)
                         && let Some(repo_path) =
@@ -2358,7 +2358,11 @@ impl GitStore {
                         paths.push((repo_path, ix));
                         ix += 1;
                     }
-                    Some((repo, paths))
+                    if paths.is_empty() {
+                        None
+                    } else {
+                        Some((repo, paths))
+                    }
                 });
                 tasks.push_back(task);
             }
@@ -4569,6 +4573,9 @@ impl Repository {
                 };
 
                 let paths = changed_paths.iter().cloned().collect::<Vec<_>>();
+                if paths.is_empty() {
+                    return Ok(());
+                }
                 let statuses = backend.status(&paths).await?;
 
                 let changed_path_statuses = cx
