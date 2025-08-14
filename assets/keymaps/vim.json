@@ -386,6 +386,9 @@
       "ctrl-[": "editor::Cancel",
       ";": "vim::HelixCollapseSelection",
       ":": "command_palette::Toggle",
+      "m": "vim::PushHelixMatch",
+      "]": ["vim::PushHelixNext", { "around": true }],
+      "[": ["vim::PushHelixPrevious", { "around": true }],
       "left": "vim::WrappingLeft",
       "right": "vim::WrappingRight",
       "h": "vim::WrappingLeft",
@@ -455,15 +458,18 @@
       "space c": "editor::ToggleComments",
       "space y": "editor::Copy",
       "space p": "editor::Paste",
-      // Match mode
-      "m m": "vim::Matching",
-      "m i w": ["workspace::SendKeystrokes", "v i w"],
       "shift-u": "editor::Redo",
       "ctrl-c": "editor::ToggleComments",
       "d": "vim::HelixDelete",
       "c": "vim::Substitute",
       "shift-c": "editor::AddSelectionBelow",
       "alt-shift-c": "editor::AddSelectionAbove"
+    }
+  },
+  {
+    "context": "vim_operator == helix_m",
+    "bindings": {
+      "m": "vim::Matching"
     }
   },
   {
@@ -526,7 +532,7 @@
     }
   },
   {
-    "context": "vim_operator == a || vim_operator == i || vim_operator == cs",
+    "context": "vim_operator == a || vim_operator == i || vim_operator == cs || vim_operator == helix_next || vim_operator == helix_previous",
     "bindings": {
       "w": "vim::Word",
       "shift-w": ["vim::Word", { "ignore_punctuation": true }],
