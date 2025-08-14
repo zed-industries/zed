@@ -17,8 +17,8 @@ use git::{
 };
 use git_panel_settings::GitPanelSettings;
 use gpui::{
-    Action, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, SharedString,TextStyle,
-    Window, actions,
+    Action, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, SharedString,
+    TextStyle, Window, actions,
 };
 use menu::{Cancel, Confirm};
 use onboarding::GitOnboardingModal;
