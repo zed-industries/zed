@@ -1,4 +1,5 @@
 mod completion_provider;
+mod entry_view_state;
 mod message_editor;
 mod model_selector;
 mod model_selector_popover;
