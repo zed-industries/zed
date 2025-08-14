@@ -16054,19 +16054,17 @@ impl Editor {
             }
 
             workspace.update_in(cx, |workspace, window, cx| {
-                let title = locations
-                    .first()
-                    .as_ref()
+                let target = locations
+                    .iter()
                     .map(|location| {
-                        let buffer = location.buffer.read(cx);
-                        format!(
-                            "References to `{}`",
-                            buffer
-                                .text_for_range(location.range.clone())
-                                .collect::<String>()
-                        )
+                        location
+                            .buffer
+                            .read(cx)
+                            .text_for_range(location.range.clone())
+                            .collect::<String>()
                     })
-                    .unwrap();
+                    .join(", ");
+                let title = format!("References to {target}");
                 Self::open_locations_in_multibuffer(
                     workspace,
                     locations,
