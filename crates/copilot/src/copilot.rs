@@ -21,7 +21,7 @@ use language::{
     point_from_lsp, point_to_lsp,
 };
 use lsp::{LanguageServer, LanguageServerBinary, LanguageServerId, LanguageServerName};
-use node_runtime::{NodeRuntime, VersionCheck};
+use node_runtime::{NodeRuntime, VersionStrategy};
 use parking_lot::Mutex;
 use project::DisableAiSettings;
 use request::StatusNotification;
@@ -1169,8 +1169,9 @@ async fn get_copilot_lsp(fs: Arc<dyn Fs>, node_runtime: NodeRuntime) -> anyhow::
     const SERVER_PATH: &str =
         "node_modules/@github/copilot-language-server/dist/language-server.js";
 
-    // pinning it: https://github.com/zed-industries/zed/issues/36093
-    const PINNED_VERSION: &str = "1.354";
+    let latest_version = node_runtime
+        .npm_package_latest_version(PACKAGE_NAME)
+        .await?;
     let server_path = paths::copilot_dir().join(SERVER_PATH);
 
     fs.create_dir(paths::copilot_dir()).await?;
@@ -1180,13 +1181,12 @@ async fn get_copilot_lsp(fs: Arc<dyn Fs>, node_runtime: NodeRuntime) -> anyhow::
             PACKAGE_NAME,
             &server_path,
             paths::copilot_dir(),
-            &PINNED_VERSION,
-            VersionCheck::VersionMismatch,
+            VersionStrategy::Latest(&latest_version),
         )
         .await;
     if should_install {
         node_runtime
-            .npm_install_packages(paths::copilot_dir(), &[(PACKAGE_NAME, &PINNED_VERSION)])
+            .npm_install_packages(paths::copilot_dir(), &[(PACKAGE_NAME, &latest_version)])
             .await?;
     }
 
