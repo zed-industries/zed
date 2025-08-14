@@ -21,6 +21,8 @@ const ANSI_MAGENTA: &str = "\x1b[35m";
 
 /// Whether stdout output is enabled.
 static mut ENABLED_SINKS_STDOUT: bool = false;
+/// Whether stderr output is enabled.
+static mut ENABLED_SINKS_STDERR: bool = false;
 
 /// Is Some(file) if file output is enabled.
 static ENABLED_SINKS_FILE: Mutex<Option<std::fs::File>> = Mutex::new(None);
@@ -42,6 +44,12 @@ pub struct Record<'a> {
 pub fn init_output_stdout() {
     unsafe {
         ENABLED_SINKS_STDOUT = true;
+    }
+}
+
+pub fn init_output_stderr() {
+    unsafe {
+        ENABLED_SINKS_STDERR = true;
     }
 }
 
@@ -102,6 +110,21 @@ static LEVEL_ANSI_COLORS: [&str; 6] = [
 pub fn submit(record: Record) {
     if unsafe { ENABLED_SINKS_STDOUT } {
         let mut stdout = std::io::stdout().lock();
+        _ = writeln!(
+            &mut stdout,
+            "{} {ANSI_BOLD}{}{}{ANSI_RESET} {} {}",
+            chrono::Local::now().format("%Y-%m-%dT%H:%M:%S%:z"),
+            LEVEL_ANSI_COLORS[record.level as usize],
+            LEVEL_OUTPUT_STRINGS[record.level as usize],
+            SourceFmt {
+                scope: record.scope,
+                module_path: record.module_path,
+                ansi: true,
+            },
+            record.message
+        );
+    } else if unsafe { ENABLED_SINKS_STDERR } {
+        let mut stdout = std::io::stderr().lock();
         _ = writeln!(
             &mut stdout,
             "{} {ANSI_BOLD}{}{}{ANSI_RESET} {} {}",

@@ -1,4 +1,3 @@
-mod billing_subscription_tests;
 mod buffer_tests;
 mod channel_tests;
 mod contributor_tests;

@@ -121,7 +121,7 @@ smallvec.workspace = true
 smol.workspace = true
 strum.workspace = true
 sum_tree.workspace = true
-taffy = "=0.8.3"
+taffy = "=0.9.0"
 thiserror.workspace = true
 util.workspace = true
 uuid.workspace = true
@@ -216,10 +216,6 @@ xim = { git = "https://github.com/XDeme1/xim-rs", rev = "d50d461764c2213655cd9cf
 x11-clipboard = { version = "0.9.3", optional = true }
 
 [target.'cfg(target_os = "windows")'.dependencies]
-blade-util.workspace = true
-bytemuck = "1"
-blade-graphics.workspace = true
-blade-macros.workspace = true
 flume = "0.11"
 rand.workspace = true
 windows.workspace = true
@@ -240,7 +236,6 @@ util = { workspace = true, features = ["test-support"] }
 
 [target.'cfg(target_os = "windows")'.build-dependencies]
 embed-resource = "3.0"
-naga.workspace = true
 
 [target.'cfg(target_os = "macos")'.build-dependencies]
 bindgen = "0.71"
@@ -288,6 +283,10 @@ name = "svg"
 path = "examples/svg/svg.rs"
 
 [[example]]
+name = "tab_stop"
+path = "examples/tab_stop.rs"
+
+[[example]]
 name = "text"
 path = "examples/text.rs"
 
@@ -306,3 +305,7 @@ path = "examples/uniform_list.rs"
 [[example]]
 name = "window_shadow"
 path = "examples/window_shadow.rs"
+
+[[example]]
+name = "grid_layout"
+path = "examples/grid_layout.rs"

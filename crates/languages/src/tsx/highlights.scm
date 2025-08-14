@@ -146,6 +146,7 @@
   "&&="
   "||="
   "??="
+  "..."
 ] @operator
 
 (regex "/" @string.regex)

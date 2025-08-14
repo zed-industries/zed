@@ -95,7 +95,7 @@ impl RenderOnce for Disclosure {
 
 impl Component for Disclosure {
     fn scope() -> ComponentScope {
-        ComponentScope::Navigation
+        ComponentScope::Input
     }
 
     fn description() -> Option<&'static str> {

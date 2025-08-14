@@ -177,9 +177,9 @@ impl ProjectDiagnosticsEditor {
                 }
                 project::Event::DiagnosticsUpdated {
                     language_server_id,
-                    path,
+                    paths,
                 } => {
-                    this.paths_to_update.insert(path.clone());
+                    this.paths_to_update.extend(paths.clone());
                     let project = project.clone();
                     this.diagnostic_summary_update = cx.spawn(async move |this, cx| {
                         cx.background_executor()
@@ -193,9 +193,9 @@ impl ProjectDiagnosticsEditor {
                     cx.emit(EditorEvent::TitleChanged);
 
                     if this.editor.focus_handle(cx).contains_focused(window, cx) || this.focus_handle.contains_focused(window, cx) {
-                        log::debug!("diagnostics updated for server {language_server_id}, path {path:?}. recording change");
+                        log::debug!("diagnostics updated for server {language_server_id}, paths {paths:?}. recording change");
                     } else {
-                        log::debug!("diagnostics updated for server {language_server_id}, path {path:?}. updating excerpts");
+                        log::debug!("diagnostics updated for server {language_server_id}, paths {paths:?}. updating excerpts");
                         this.update_stale_excerpts(window, cx);
                     }
                 }

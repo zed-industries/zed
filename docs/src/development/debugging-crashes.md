@@ -6,6 +6,7 @@ When an app crashes,
 
 - macOS creates a `.ips` file in `~/Library/Logs/DiagnosticReports`. You can view these using the built in Console app (`cmd-space Console`) under "Crash Reports".
 - Linux creates a core dump. See the [man pages](https://man7.org/linux/man-pages/man5/core.5.html) for pointers to how your system might be configured to manage core dumps.
+- Windows doesn't create crash reports by default, but can be configured to create "minidump" memory dumps upon applications crashing.
 
 If you have enabled Zed's telemetry these will be uploaded to us when you restart the app. They end up in a [Slack channel (internal only)](https://zed-industries.slack.com/archives/C04S6T1T7TQ).
 

@@ -246,6 +246,8 @@ pub struct RepositorySnapshot {
     pub head_commit: Option<CommitDetails>,
     pub scan_id: u64,
     pub merge: MergeDetails,
+    pub remote_origin_url: Option<String>,
+    pub remote_upstream_url: Option<String>,
 }
 
 type JobId = u64;
@@ -412,6 +414,7 @@ impl GitStore {
     pub fn init(client: &AnyProtoClient) {
         client.add_entity_request_handler(Self::handle_get_remotes);
         client.add_entity_request_handler(Self::handle_get_branches);
+        client.add_entity_request_handler(Self::handle_get_default_branch);
         client.add_entity_request_handler(Self::handle_change_branch);
         client.add_entity_request_handler(Self::handle_create_branch);
         client.add_entity_request_handler(Self::handle_git_init);
@@ -439,6 +442,7 @@ impl GitStore {
         client.add_entity_request_handler(Self::handle_blame_buffer);
         client.add_entity_message_handler(Self::handle_update_repository);
         client.add_entity_message_handler(Self::handle_remove_repository);
+        client.add_entity_request_handler(Self::handle_git_clone);
     }
 
     pub fn is_local(&self) -> bool {
@@ -1462,6 +1466,45 @@ impl GitStore {
         }
     }
 
+    pub fn git_clone(
+        &self,
+        repo: String,
+        path: impl Into<Arc<std::path::Path>>,
+        cx: &App,
+    ) -> Task<Result<()>> {
+        let path = path.into();
+        match &self.state {
+            GitStoreState::Local { fs, .. } => {
+                let fs = fs.clone();
+                cx.background_executor()
+                    .spawn(async move { fs.git_clone(&repo, &path).await })
+            }
+            GitStoreState::Ssh {
+                upstream_client,
+                upstream_project_id,
+                ..
+            } => {
+                let request = upstream_client.request(proto::GitClone {
+                    project_id: upstream_project_id.0,
+                    abs_path: path.to_string_lossy().to_string(),
+                    remote_repo: repo,
+                });
+
+                cx.background_spawn(async move {
+                    let result = request.await?;
+
+                    match result.success {
+                        true => Ok(()),
+                        false => Err(anyhow!("Git Clone failed")),
+                    }
+                })
+            }
+            GitStoreState::Remote { .. } => {
+                Task::ready(Err(anyhow!("Git Clone isn't supported for remote users")))
+            }
+        }
+    }
+
     async fn handle_update_repository(
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::UpdateRepository>,
@@ -1546,6 +1589,22 @@ impl GitStore {
             .await?;
 
         Ok(proto::Ack {})
+    }
+
+    async fn handle_git_clone(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::GitClone>,
+        cx: AsyncApp,
+    ) -> Result<proto::GitCloneResponse> {
+        let path: Arc<Path> = PathBuf::from(envelope.payload.abs_path).into();
+        let repo_name = envelope.payload.remote_repo;
+        let result = cx
+            .update(|cx| this.read(cx).git_clone(repo_name, path, cx))?
+            .await;
+
+        Ok(proto::GitCloneResponse {
+            success: result.is_ok(),
+        })
     }
 
     async fn handle_fetch(
@@ -1835,6 +1894,23 @@ impl GitStore {
                 .map(|branch| branch_to_proto(&branch))
                 .collect::<Vec<_>>(),
         })
+    }
+    async fn handle_get_default_branch(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::GetDefaultBranch>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::GetDefaultBranchResponse> {
+        let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
+        let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
+
+        let branch = repository_handle
+            .update(&mut cx, |repository_handle, _| {
+                repository_handle.default_branch()
+            })?
+            .await??
+            .map(Into::into);
+
+        Ok(proto::GetDefaultBranchResponse { branch })
     }
     async fn handle_create_branch(
         this: Entity<Self>,
@@ -2673,6 +2749,8 @@ impl RepositorySnapshot {
             head_commit: None,
             scan_id: 0,
             merge: Default::default(),
+            remote_origin_url: None,
+            remote_upstream_url: None,
         }
     }
 
@@ -4025,6 +4103,25 @@ impl Repository {
         })
     }
 
+    pub fn default_branch(&mut self) -> oneshot::Receiver<Result<Option<SharedString>>> {
+        let id = self.id;
+        self.send_job(None, move |repo, _| async move {
+            match repo {
+                RepositoryState::Local { backend, .. } => backend.default_branch().await,
+                RepositoryState::Remote { project_id, client } => {
+                    let response = client
+                        .request(proto::GetDefaultBranch {
+                            project_id: project_id.0,
+                            repository_id: id.to_proto(),
+                        })
+                        .await?;
+
+                    anyhow::Ok(response.branch.map(SharedString::from))
+                }
+            }
+        })
+    }
+
     pub fn diff(&mut self, diff_type: DiffType, _cx: &App) -> oneshot::Receiver<Result<String>> {
         let id = self.id;
         self.send_job(None, move |repo, _cx| async move {
@@ -4799,6 +4896,10 @@ async fn compute_snapshot(
         None => None,
     };
 
+    // Used by edit prediction data collection
+    let remote_origin_url = backend.remote_url("origin");
+    let remote_upstream_url = backend.remote_url("upstream");
+
     let snapshot = RepositorySnapshot {
         id,
         statuses_by_path,
@@ -4807,6 +4908,8 @@ async fn compute_snapshot(
         branch,
         head_commit,
         merge: merge_details,
+        remote_origin_url,
+        remote_upstream_url,
     };
 
     Ok((snapshot, events))

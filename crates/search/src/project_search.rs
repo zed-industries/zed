@@ -355,8 +355,9 @@ impl ProjectSearch {
 
                 while let Some(new_ranges) = new_ranges.next().await {
                     project_search
-                        .update(cx, |project_search, _| {
+                        .update(cx, |project_search, cx| {
                             project_search.match_ranges.extend(new_ranges);
+                            cx.notify();
                         })
                         .ok()?;
                 }
@@ -2267,7 +2268,7 @@ impl Render for ProjectSearchBar {
                         .min_w_64()
                         .gap_1()
                         .child(
-                            IconButton::new("project-search-opened-only", IconName::FileSearch)
+                            IconButton::new("project-search-opened-only", IconName::FolderSearch)
                                 .shape(IconButtonShape::Square)
                                 .toggle_state(self.is_opened_only_enabled(cx))
                                 .tooltip(Tooltip::text("Only Search Open Files"))

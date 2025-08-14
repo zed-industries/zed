@@ -62,7 +62,7 @@ impl Vim {
         cx: &mut Context<Self>,
         mut is_boundary: impl FnMut(char, char, &CharClassifier) -> bool,
     ) {
-        self.update_editor(window, cx, |_, editor, window, cx| {
+        self.update_editor(cx, |_, editor, cx| {
             editor.change_selections(Default::default(), window, cx, |s| {
                 s.move_with(|map, selection| {
                     let times = times.unwrap_or(1);
@@ -115,7 +115,7 @@ impl Vim {
         cx: &mut Context<Self>,
         mut is_boundary: impl FnMut(char, char, &CharClassifier) -> bool,
     ) {
-        self.update_editor(window, cx, |_, editor, window, cx| {
+        self.update_editor(cx, |_, editor, cx| {
             editor.change_selections(Default::default(), window, cx, |s| {
                 s.move_with(|map, selection| {
                     let times = times.unwrap_or(1);
@@ -175,7 +175,7 @@ impl Vim {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.update_editor(window, cx, |_, editor, window, cx| {
+        self.update_editor(cx, |_, editor, cx| {
             let text_layout_details = editor.text_layout_details(window);
             editor.change_selections(Default::default(), window, cx, |s| {
                 s.move_with(|map, selection| {
@@ -253,7 +253,7 @@ impl Vim {
                 })
             }
             Motion::FindForward { .. } => {
-                self.update_editor(window, cx, |_, editor, window, cx| {
+                self.update_editor(cx, |_, editor, cx| {
                     let text_layout_details = editor.text_layout_details(window);
                     editor.change_selections(Default::default(), window, cx, |s| {
                         s.move_with(|map, selection| {
@@ -280,7 +280,7 @@ impl Vim {
                 });
             }
             Motion::FindBackward { .. } => {
-                self.update_editor(window, cx, |_, editor, window, cx| {
+                self.update_editor(cx, |_, editor, cx| {
                     let text_layout_details = editor.text_layout_details(window);
                     editor.change_selections(Default::default(), window, cx, |s| {
                         s.move_with(|map, selection| {
@@ -312,7 +312,7 @@ impl Vim {
 
     fn helix_insert(&mut self, _: &HelixInsert, window: &mut Window, cx: &mut Context<Self>) {
         self.start_recording(cx);
-        self.update_editor(window, cx, |_, editor, window, cx| {
+        self.update_editor(cx, |_, editor, cx| {
             editor.change_selections(Default::default(), window, cx, |s| {
                 s.move_with(|_map, selection| {
                     // In helix normal mode, move cursor to start of selection and collapse
@@ -328,7 +328,7 @@ impl Vim {
     fn helix_append(&mut self, _: &HelixAppend, window: &mut Window, cx: &mut Context<Self>) {
         self.start_recording(cx);
         self.switch_mode(Mode::Insert, false, window, cx);
-        self.update_editor(window, cx, |_, editor, window, cx| {
+        self.update_editor(cx, |_, editor, cx| {
             editor.change_selections(Default::default(), window, cx, |s| {
                 s.move_with(|map, selection| {
                     let point = if selection.is_empty() {
@@ -343,7 +343,7 @@ impl Vim {
     }
 
     pub fn helix_replace(&mut self, text: &str, window: &mut Window, cx: &mut Context<Self>) {
-        self.update_editor(window, cx, |_, editor, window, cx| {
+        self.update_editor(cx, |_, editor, cx| {
             editor.transact(window, cx, |editor, window, cx| {
                 let (map, selections) = editor.selections.all_display(cx);
 

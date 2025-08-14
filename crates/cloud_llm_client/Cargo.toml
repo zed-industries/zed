@@ -1,0 +1,23 @@
+[package]
+name = "cloud_llm_client"
+version = "0.1.0"
+publish.workspace = true
+edition.workspace = true
+license = "Apache-2.0"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/cloud_llm_client.rs"
+
+[dependencies]
+anyhow.workspace = true
+serde = { workspace = true, features = ["derive", "rc"] }
+serde_json.workspace = true
+strum = { workspace = true, features = ["derive"] }
+uuid = { workspace = true, features = ["serde"] }
+workspace-hack.workspace = true
+
+[dev-dependencies]
+pretty_assertions.workspace = true
