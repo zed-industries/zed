@@ -912,7 +912,7 @@ fn register_actions(
             }
         })
         .register_action(|workspace, _: &CaptureAudio, window, cx| {
-            capture_audio(workspace, window, cx); // TODO move to livekit_client
+            capture_audio(workspace, window, cx);
         });
 
     if workspace.project().read(cx).is_via_ssh() {
@@ -1824,9 +1824,20 @@ fn open_settings_file(
 }
 
 fn capture_audio(workspace: &mut Workspace, _: &mut Window, cx: &mut Context<Workspace>) {
+    #[derive(Default)]
+    enum State {
+        Recording(livekit_client::CaptureInput),
+        Failed(String),
+        Finished(PathBuf),
+        // Used during state switch. Should never occur naturally.
+        #[default]
+        Invalid,
+    }
+
     struct CaptureAudioNotification {
         focus_handle: gpui::FocusHandle,
         start_time: Instant,
+        state: State,
     }
 
     impl gpui::EventEmitter<DismissEvent> for CaptureAudioNotification {}
@@ -1843,20 +1854,21 @@ fn capture_audio(workspace: &mut Workspace, _: &mut Window, cx: &mut Context<Wor
     impl Render for CaptureAudioNotification {
         fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
             let elapsed = self.start_time.elapsed().as_secs();
-            let message = if elapsed < AUDIO_RECORDING_TIME_SECS {
-                format!(
-                    "Recording audio for {} seconds",
-                    AUDIO_RECORDING_TIME_SECS - elapsed
-                )
-            } else {
-                "Audio recorded to /file".to_string() // TODO print the filepath
+            let message = match &self.state {
+                State::Recording(capture) => format!(
+                    "Recording {} seconds of audio from input: '{}'",
+                    AUDIO_RECORDING_TIME_SECS - elapsed,
+                    capture.name,
+                ),
+                State::Failed(e) => format!("Error capturing audio: {e}"),
+                State::Finished(path) => format!("Audio recorded to {}", path.display()),
+                State::Invalid => "Error invalid state".to_string(),
             };
 
             NotificationFrame::new()
                 .with_title(Some("Recording Audio"))
                 .show_suppress_button(false)
-                .on_close(cx.listener(|this, _, _, cx| {
-                    this.cancel();
+                .on_close(cx.listener(|_, _, _, cx| {
                     cx.emit(DismissEvent);
                 }))
                 .with_content(message)
@@ -1864,8 +1876,16 @@ fn capture_audio(workspace: &mut Workspace, _: &mut Window, cx: &mut Context<Wor
     }
 
     impl CaptureAudioNotification {
-        fn cancel(&self) {
-            // TODO Implement audio recording cancellation logic here
+        fn finish(&mut self) {
+            let state = std::mem::take(&mut self.state);
+            self.state = if let State::Recording(capture) = state {
+                match capture.finish() {
+                    Ok(path) => State::Finished(path),
+                    Err(e) => State::Failed(e.to_string()),
+                }
+            } else {
+                state
+            };
         }
 
         fn new(cx: &mut Context<Self>) -> Self {
@@ -1877,14 +1897,24 @@ fn capture_audio(workspace: &mut Workspace, _: &mut Window, cx: &mut Context<Wor
                     })?;
                 }
 
+                this.update(cx, |this, cx| {
+                    this.finish();
+                    cx.notify();
+                })?;
+
                 anyhow::Ok(())
             })
             .detach();
 
-            // TODO: Implement the audio capturing
+            let state = match livekit_client::CaptureInput::start() {
+                Ok(capture_input) => State::Recording(capture_input),
+                Err(err) => State::Failed(format!("Error starting audio capture: {}", err)),
+            };
+
             Self {
                 focus_handle: cx.focus_handle(),
                 start_time: Instant::now(),
+                state,
             }
         }
     }

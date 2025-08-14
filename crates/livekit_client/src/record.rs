@@ -1,8 +1,7 @@
 use std::{
     env,
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{Arc, Mutex},
-    thread,
     time::Duration,
 };
 
@@ -11,22 +10,38 @@ use cpal::traits::{DeviceTrait, StreamTrait};
 use rodio::{buffer::SamplesBuffer, conversions::SampleTypeConverter};
 use util::ResultExt;
 
-use crate::livekit_client::playback::{default_device, get_sample_data};
+pub struct CaptureInput {
+    pub name: String,
+    config: cpal::SupportedStreamConfig,
+    samples: Arc<Mutex<Vec<i16>>>,
+    _stream: cpal::Stream,
+}
 
-pub fn capture_input() -> Result<()> {
-    let (device, config) = default_device(true)?;
-    let name = device.name().unwrap_or("<unknown>".to_string());
-    log::info!("Using microphone: {}", name);
+impl CaptureInput {
+    pub fn start() -> anyhow::Result<Self> {
+        let (device, config) = crate::default_device(true)?;
+        let name = device.name().unwrap_or("<unknown>".to_string());
+        log::info!("Using microphone: {}", name);
 
-    let samples = Arc::new(Mutex::new(Vec::new()));
-    let stream = start_capture(device, config.clone(), samples.clone());
-    thread::sleep(Duration::from_secs(10));
-    drop(stream);
+        let samples = Arc::new(Mutex::new(Vec::new()));
+        let stream = start_capture(device, config.clone(), samples.clone())?;
 
-    let mut path = env::current_dir().context("Could not get current dir")?;
-    path.push(&format!("test_recording_{name}.wav"));
-    log::info!("Test recording written to: {}", path.display());
-    write_out(samples, config, path)
+        Ok(Self {
+            name,
+            _stream: stream,
+            config,
+            samples,
+        })
+    }
+
+    pub fn finish(self) -> Result<PathBuf> {
+        let name = self.name;
+        let mut path = env::current_dir().context("Could not get current dir")?;
+        path.push(&format!("test_recording_{name}.wav"));
+        log::info!("Test recording written to: {}", path.display());
+        write_out(self.samples, self.config, &path)?;
+        Ok(path)
+    }
 }
 
 fn start_capture(
@@ -39,7 +54,7 @@ fn start_capture(
             &config.config(),
             config.sample_format(),
             move |data, _: &_| {
-                let data = get_sample_data(config.sample_format(), data).log_err();
+                let data = crate::get_sample_data(config.sample_format(), data).log_err();
                 let Some(data) = data else {
                     return;
                 };
@@ -60,16 +75,14 @@ fn start_capture(
 fn write_out(
     samples: Arc<Mutex<Vec<i16>>>,
     config: cpal::SupportedStreamConfig,
-    path: PathBuf,
+    path: &Path,
 ) -> Result<()> {
     let samples = std::mem::take(
         &mut *samples
             .try_lock()
             .expect("Stream has ended, callback cant hold the lock"),
     );
-    let samples: Vec<f32> = SampleTypeConverter::<_, f32>::new(samples.into_iter())
-        .into_iter()
-        .collect();
+    let samples: Vec<f32> = SampleTypeConverter::<_, f32>::new(samples.into_iter()).collect();
     let mut samples = SamplesBuffer::new(config.channels(), config.sample_rate().0, samples);
     match rodio::output_to_wav(&mut samples, path) {
         Ok(_) => Ok(()),

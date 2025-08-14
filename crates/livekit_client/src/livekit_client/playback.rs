@@ -1,7 +1,6 @@
 use anyhow::{Context as _, Result};
 
-use cpal::traits::{DeviceTrait, HostTrait, StreamTrait as _};
-use cpal::{Data, FromSample, I24, SampleFormat, SizedSample};
+use cpal::traits::{DeviceTrait, StreamTrait as _};
 use futures::channel::mpsc::UnboundedSender;
 use futures::{Stream, StreamExt as _};
 use gpui::{
@@ -166,7 +165,7 @@ impl AudioStack {
     ) -> Result<()> {
         loop {
             let mut device_change_listener = DeviceChangeListener::new(false)?;
-            let (output_device, output_config) = default_device(false)?;
+            let (output_device, output_config) = crate::default_device(false)?;
             let (end_on_drop_tx, end_on_drop_rx) = std::sync::mpsc::channel::<()>();
             let mixer = mixer.clone();
             let apm = apm.clone();
@@ -238,7 +237,7 @@ impl AudioStack {
     ) -> Result<()> {
         loop {
             let mut device_change_listener = DeviceChangeListener::new(true)?;
-            let (device, config) = default_device(true)?;
+            let (device, config) = crate::default_device(true)?;
             let (end_on_drop_tx, end_on_drop_rx) = std::sync::mpsc::channel::<()>();
             let apm = apm.clone();
             let frame_tx = frame_tx.clone();
@@ -261,7 +260,8 @@ impl AudioStack {
                             &config.config(),
                             config.sample_format(),
                             move |data, _: &_| {
-                                let data = get_sample_data(config.sample_format(), data).log_err();
+                                let data =
+                                    crate::get_sample_data(config.sample_format(), data).log_err();
                                 let Some(data) = data else {
                                     return;
                                 };
@@ -321,36 +321,6 @@ impl AudioStack {
     }
 }
 
-pub(super) fn convert_sample_data<
-    TSource: SizedSample,
-    TDest: SizedSample + FromSample<TSource>,
->(
-    data: &Data,
-) -> Vec<TDest> {
-    data.as_slice::<TSource>()
-        .unwrap()
-        .iter()
-        .map(|e| e.to_sample::<TDest>())
-        .collect()
-}
-
-pub(super) fn get_sample_data(sample_format: SampleFormat, data: &Data) -> Result<Vec<i16>> {
-    match sample_format {
-        SampleFormat::I8 => Ok(convert_sample_data::<i8, i16>(data)),
-        SampleFormat::I16 => Ok(data.as_slice::<i16>().unwrap().to_vec()),
-        SampleFormat::I24 => Ok(convert_sample_data::<I24, i16>(data)),
-        SampleFormat::I32 => Ok(convert_sample_data::<i32, i16>(data)),
-        SampleFormat::I64 => Ok(convert_sample_data::<i64, i16>(data)),
-        SampleFormat::U8 => Ok(convert_sample_data::<u8, i16>(data)),
-        SampleFormat::U16 => Ok(convert_sample_data::<u16, i16>(data)),
-        SampleFormat::U32 => Ok(convert_sample_data::<u32, i16>(data)),
-        SampleFormat::U64 => Ok(convert_sample_data::<u64, i16>(data)),
-        SampleFormat::F32 => Ok(convert_sample_data::<f32, i16>(data)),
-        SampleFormat::F64 => Ok(convert_sample_data::<f64, i16>(data)),
-        _ => anyhow::bail!("Unsupported sample format"),
-    }
-}
-
 use super::LocalVideoTrack;
 
 pub enum AudioStream {
@@ -393,27 +363,6 @@ pub(crate) async fn capture_local_video_track(
         )),
         capture_stream,
     ))
-}
-
-pub(super) fn default_device(input: bool) -> Result<(cpal::Device, cpal::SupportedStreamConfig)> {
-    let device;
-    let config;
-    if input {
-        device = cpal::default_host()
-            .default_input_device()
-            .context("no audio input device available")?;
-        config = device
-            .default_input_config()
-            .context("failed to get default input config")?;
-    } else {
-        device = cpal::default_host()
-            .default_output_device()
-            .context("no audio output device available")?;
-        config = device
-            .default_output_config()
-            .context("failed to get default output config")?;
-    }
-    Ok((device, config))
 }
 
 #[derive(Clone)]

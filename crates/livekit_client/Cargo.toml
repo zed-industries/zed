@@ -17,7 +17,6 @@ doctest = false
 name = "test_app"
 
 [features]
-record-microphone = []
 test-support = ["collections/test-support", "gpui/test-support"]
 
 [dependencies]
