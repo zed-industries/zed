@@ -40,11 +40,6 @@ impl Render for ToolbarControls {
                 if let Some(editor) = editor.upgrade() {
                     let diagnostics = editor.read(cx);
                     include_warnings = diagnostics.include_warnings;
-                    // TODO: How to calculate this for the
-                    // `BufferDiagnosticsEditor`? Should we simply keep track if
-                    // there are any updates to the diagnostics for the path and
-                    // mark that instead of automatically updating?
-                    has_stale_excerpts = false;
                     is_updating = diagnostics.update_excerpts_task.is_some()
                         || diagnostics
                             .project

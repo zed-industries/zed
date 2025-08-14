@@ -7129,14 +7129,28 @@ impl LspStore {
         project_path: &ProjectPath,
         _: &App,
     ) -> DiagnosticSummary {
-        // TODO: If there's multiple `DiagnosticSummary` but for
-        // different language servers, which one should be returned?
-        self.diagnostic_summaries
+        if let Some(summaries) = self
+            .diagnostic_summaries
             .get(&project_path.worktree_id)
             .and_then(|map| map.get(&project_path.path))
-            .and_then(|summaries| summaries.iter().next())
-            .map(|(_language_server_id, summary)| summary.clone())
-            .unwrap_or_default()
+        {
+            let (error_count, warning_count) = summaries.iter().fold(
+                (0, 0),
+                |(error_count, warning_count), (_language_server_id, summary)| {
+                    (
+                        error_count + summary.error_count,
+                        warning_count + summary.warning_count,
+                    )
+                },
+            );
+
+            DiagnosticSummary {
+                error_count,
+                warning_count,
+            }
+        } else {
+            DiagnosticSummary::default()
+        }
     }
 
     pub fn diagnostic_summaries<'a>(

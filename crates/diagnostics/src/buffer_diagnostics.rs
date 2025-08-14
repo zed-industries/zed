@@ -27,7 +27,7 @@ use std::{
 };
 use text::{Anchor, BufferSnapshot, OffsetRangeExt};
 use ui::{Button, ButtonStyle, Icon, IconName, Label, Tooltip, h_flex, prelude::*};
-use util::{ResultExt, paths::PathExt};
+use util::paths::PathExt;
 use workspace::{
     ItemHandle, ItemNavHistory, ToolbarItemLocation, Workspace,
     item::{BreadcrumbText, Item, ItemEvent, TabContentParams},
@@ -80,9 +80,10 @@ pub(crate) struct BufferDiagnosticsEditor {
 impl BufferDiagnosticsEditor {
     /// Creates new instance of the `BufferDiagnosticsEditor` which can then be
     /// displayed by adding it to a pane.
-    fn new(
+    pub fn new(
         project_path: ProjectPath,
         project_handle: Entity<Project>,
+        buffer: Option<Entity<Buffer>>,
         include_warnings: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -188,14 +189,14 @@ impl BufferDiagnosticsEditor {
 
         let diagnostics = vec![];
         let update_excerpts_task = None;
-        let buffer_diagnostics_editor = Self {
+        let mut buffer_diagnostics_editor = Self {
             project: project_handle,
             focus_handle,
             editor,
             diagnostics,
             blocks: Default::default(),
             multibuffer,
-            buffer: None,
+            buffer,
             project_path,
             summary,
             include_warnings,
@@ -203,23 +204,7 @@ impl BufferDiagnosticsEditor {
             _subscription: project_event_subscription,
         };
 
-        let project = buffer_diagnostics_editor.project.clone();
-        let project_path = buffer_diagnostics_editor.project_path.clone();
-
-        cx.spawn_in(window, async move |editor, cx| {
-            let buffer = project
-                .update(cx, |project, cx| project.open_buffer(project_path, cx))?
-                .await
-                .log_err();
-
-            editor.update_in(cx, |editor, window, cx| {
-                editor.buffer = buffer;
-                editor.update_all_diagnostics(window, cx);
-                cx.notify();
-            })
-        })
-        .detach();
-
+        buffer_diagnostics_editor.update_all_diagnostics(window, cx);
         buffer_diagnostics_editor
     }
 
@@ -233,9 +218,8 @@ impl BufferDiagnosticsEditor {
         // finding the project path for the buffer.
         // If there's no active editor with a project path, avoiding deploying
         // the buffer diagnostics view.
-        if let Some(project_path) = workspace
-            .active_item_as::<Editor>(cx)
-            .map_or(None, |editor| editor.project_path(cx))
+        if let Some(editor) = workspace.active_item_as::<Editor>(cx)
+            && let Some(project_path) = editor.project_path(cx)
         {
             // Check if there's already a `BufferDiagnosticsEditor` tab for this
             // same path, and if so, focus on that one instead of creating a new
@@ -256,6 +240,7 @@ impl BufferDiagnosticsEditor {
                     Self::new(
                         project_path,
                         workspace.project().clone(),
+                        editor.read(cx).buffer().read(cx).as_singleton(),
                         include_warnings,
                         window,
                         cx,
@@ -514,6 +499,11 @@ impl BufferDiagnosticsEditor {
                     }
                 }
 
+                // Cloning the blocks before moving ownership so these can later
+                // be used to set the block contents for testing purposes.
+                #[cfg(test)]
+                let cloned_blocks = blocks.clone();
+
                 // Build new diagnostic blocks to be added to the editor's
                 // display map for the new diagnostics. Update the `blocks`
                 // property before finishing, to ensure the blocks are removed
@@ -541,6 +531,30 @@ impl BufferDiagnosticsEditor {
                         display_map.insert_blocks(editor_blocks, cx)
                     })
                 });
+
+                // In order to be able to verify which diagnostic blocks are
+                // rendered in the editor, the `set_block_content_for_tests`
+                // function must be used, so that the
+                // `editor::test::editor_content_with_blocks` function can then
+                // be called to fetch these blocks.
+                #[cfg(test)]
+                {
+                    for (block_id, block) in block_ids.iter().zip(cloned_blocks.iter()) {
+                        let markdown = block.markdown.clone();
+                        editor::test::set_block_content_for_tests(
+                            &buffer_diagnostics_editor.editor,
+                            *block_id,
+                            cx,
+                            move |cx| {
+                                markdown::MarkdownElement::rendered_text(
+                                    markdown.clone(),
+                                    cx,
+                                    editor::hover_popover::diagnostics_markdown_style,
+                                )
+                            },
+                        );
+                    }
+                }
 
                 buffer_diagnostics_editor.blocks = block_ids;
                 cx.notify()
@@ -612,6 +626,16 @@ impl BufferDiagnosticsEditor {
             false => DiagnosticSeverity::Error,
         }
     }
+
+    #[cfg(test)]
+    pub fn editor(&self) -> &Entity<Editor> {
+        &self.editor
+    }
+
+    #[cfg(test)]
+    pub fn summary(&self) -> &DiagnosticSummary {
+        &self.summary
+    }
 }
 
 impl Focusable for BufferDiagnosticsEditor {
@@ -676,6 +700,7 @@ impl Item for BufferDiagnosticsEditor {
             BufferDiagnosticsEditor::new(
                 self.project_path.clone(),
                 self.project.clone(),
+                self.buffer.clone(),
                 self.include_warnings,
                 window,
                 cx,
