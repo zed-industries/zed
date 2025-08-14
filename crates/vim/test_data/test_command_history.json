@@ -1,0 +1,18 @@
+{"Put":{"state":"The quick\nbrown fox\nˇjumps over\nthe lazy dog\n"}}
+{"Key":":"}
+{"Key":"s"}
+{"Key":"/"}
+{"Key":"o"}
+{"Key":"/"}
+{"Key":"a"}
+{"Key":"enter"}
+{"Get":{"state":"The quick\nbrown fox\nˇjumps aver\nthe lazy dog\n","mode":"Normal"}}
+{"Key":"u"}
+{"Key":"^"}
+{"Get":{"state":"The quick\nbrown fox\nˇjumps over\nthe lazy dog\n","mode":"Normal"}}
+{"Key":":"}
+{"Key":"up"}
+{"Key":"backspace"}
+{"Key":"e"}
+{"Key":"enter"}
+{"Get":{"state":"The quick\nbrown fox\nˇjumps ever\nthe lazy dog\n","mode":"Normal"}}
