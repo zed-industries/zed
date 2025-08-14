@@ -171,6 +171,10 @@ impl MessageEditor {
                                     annotations: None,
                                     data: mention_image.data.to_string(),
                                     mime_type: mention_image.format.mime_type().into(),
+                                    uri: mention_image
+                                        .abs_path
+                                        .as_ref()
+                                        .map(|path| format!("file://{}", path.display())),
                                 })
                             }
                         };
@@ -410,8 +414,7 @@ impl MessageEditor {
                 }
                 acp::ContentBlock::Image(content) => {
                     let start = text.len();
-                    // todo round-trip the image's path
-                    let _ = write!(&mut text, "Image");
+                    text.push_str("image");
                     let end = text.len();
                     images.push((start..end, content));
                 }
@@ -449,11 +452,25 @@ impl MessageEditor {
                 continue;
             };
             let anchor = snapshot.anchor_before(range.start);
+            let abs_path = content
+                .uri
+                .as_ref()
+                .and_then(|uri| uri.strip_prefix("file://").map(|s| Path::new(s).into()));
+
+            let name = content
+                .uri
+                .as_ref()
+                .and_then(|uri| {
+                    uri.strip_prefix("file://")
+                        .and_then(|path| Path::new(path).file_name())
+                })
+                .map(|name| name.to_string_lossy().to_string())
+                .unwrap_or("Image".to_owned());
             let crease_id = crate::context_picker::insert_crease_for_mention(
                 anchor.excerpt_id,
                 anchor.text_anchor,
                 range.end - range.start,
-                "Image".into(),
+                name.into(),
                 IconName::Image.path().into(),
                 self.editor.clone(),
                 window,
@@ -465,7 +482,7 @@ impl MessageEditor {
                 self.mention_set.lock().insert_image(
                     crease_id,
                     Task::ready(Ok(MentionImage {
-                        abs_path: None,
+                        abs_path,
                         data,
                         format,
                     }))
