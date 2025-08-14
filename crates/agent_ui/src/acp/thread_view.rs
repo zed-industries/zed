@@ -2988,7 +2988,6 @@ impl AcpThreadView {
         self.entry_view_state.settings_changed(cx);
     }
 
-    // FIXME needs an update
     pub(crate) fn insert_dragged_files(
         &self,
         paths: Vec<project::ProjectPath>,

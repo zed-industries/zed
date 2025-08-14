@@ -457,7 +457,6 @@ impl ContentBlock {
     }
 
     fn image_md(_image: &acp::ImageContent) -> String {
-        // FIXME
         "`Image`".into()
     }
 
