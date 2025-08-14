@@ -557,7 +557,7 @@ impl ChannelStore {
         };
         cx.background_spawn(async move {
             task.await.map_err(|error| {
-                anyhow!("{error}").context(format!("failed to open channel {resource_name}"))
+                anyhow!(error).context(format!("failed to open channel {resource_name}"))
             })
         })
     }

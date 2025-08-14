@@ -1,5 +1,5 @@
 use crate::*;
-use anyhow::Context as _;
+use anyhow::{Context as _, anyhow, bail};
 use dap::{DebugRequest, StartDebuggingRequestArguments, adapters::DebugTaskDefinition};
 use fs::RemoveOptions;
 use futures::{StreamExt, TryStreamExt};
@@ -24,7 +24,7 @@ use util::{ResultExt, maybe};
 
 #[derive(Default)]
 pub(crate) struct PythonDebugAdapter {
-    debugpy_whl_base_path: OnceCell<Result<Arc<Path>, String>>,
+    debugpy_whl_base_path: OnceCell<Arc<Path>>,
 }
 
 impl PythonDebugAdapter {
@@ -91,13 +91,13 @@ impl PythonDebugAdapter {
         })
     }
 
-    async fn fetch_wheel(delegate: &Arc<dyn DapDelegate>) -> Result<Arc<Path>, String> {
+    async fn fetch_wheel(delegate: &Arc<dyn DapDelegate>) -> Result<Arc<Path>> {
         let system_python = Self::system_python_name(delegate)
             .await
-            .ok_or_else(|| String::from("Could not find a Python installation"))?;
+            .ok_or_else(|| anyhow!("Could not find a Python installation"))?;
         let command: &OsStr = system_python.as_ref();
         let download_dir = debug_adapters_dir().join(Self::ADAPTER_NAME).join("wheels");
-        std::fs::create_dir_all(&download_dir).map_err(|e| e.to_string())?;
+        std::fs::create_dir_all(&download_dir)?;
         let installation_succeeded = util::command::new_smol_command(command)
             .args([
                 "-m",
@@ -109,32 +109,27 @@ impl PythonDebugAdapter {
                 download_dir.to_string_lossy().as_ref(),
             ])
             .output()
-            .await
-            .map_err(|e| format!("{e}"))?
+            .await?
             .status
             .success();
         if !installation_succeeded {
-            return Err("debugpy installation failed".into());
+            bail!("debugpy installation failed");
         }
 
-        let wheel_path = std::fs::read_dir(&download_dir)
-            .map_err(|e| e.to_string())?
+        let wheel_path = std::fs::read_dir(&download_dir)?
             .find_map(|entry| {
                 entry.ok().filter(|e| {
                     e.file_type().is_ok_and(|typ| typ.is_file())
                         && Path::new(&e.file_name()).extension() == Some("whl".as_ref())
                 })
             })
-            .ok_or_else(|| String::from("Did not find a .whl in {download_dir}"))?;
+            .ok_or_else(|| anyhow!("Did not find a .whl in {download_dir:?}"))?;
 
         util::archive::extract_zip(
             &debug_adapters_dir().join(Self::ADAPTER_NAME),
-            File::open(&wheel_path.path())
-                .await
-                .map_err(|e| e.to_string())?,
+            File::open(&wheel_path.path()).await?,
         )
-        .await
-        .map_err(|e| e.to_string())?;
+        .await?;
 
         Ok(Arc::from(wheel_path.path()))
     }
@@ -198,20 +193,17 @@ impl PythonDebugAdapter {
         .await;
     }
 
-    async fn fetch_debugpy_whl(
-        &self,
-        delegate: &Arc<dyn DapDelegate>,
-    ) -> Result<Arc<Path>, String> {
+    async fn fetch_debugpy_whl(&self, delegate: &Arc<dyn DapDelegate>) -> Arc<Path> {
         self.debugpy_whl_base_path
             .get_or_init(|| async move {
                 Self::maybe_fetch_new_wheel(delegate).await;
-                Ok(Arc::from(
+                Arc::from(
                     debug_adapters_dir()
                         .join(Self::ADAPTER_NAME)
                         .join("debugpy")
                         .join("adapter")
                         .as_ref(),
-                ))
+                )
             })
             .await
             .clone()
@@ -704,10 +696,7 @@ impl DebugAdapter for PythonDebugAdapter {
             )
             .await;
 
-        let debugpy_path = self
-            .fetch_debugpy_whl(delegate)
-            .await
-            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        let debugpy_path = self.fetch_debugpy_whl(delegate).await;
         if let Some(toolchain) = &toolchain {
             log::debug!(
                 "Found debugpy in toolchain environment: {}",
