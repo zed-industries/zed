@@ -1,5 +1,5 @@
 use crate::{Project, ProjectPath};
-use anyhow::{Context as _, Result};
+use anyhow::Result;
 use collections::HashMap;
 use gpui::{App, AppContext as _, Context, Entity, Task, WeakEntity};
 use itertools::Itertools;
@@ -9,7 +9,6 @@ use settings::{Settings, SettingsLocation};
 use smol::channel::bounded;
 use std::{
     borrow::Cow,
-    env::{self},
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -18,10 +17,7 @@ use terminal::{
     TaskState, TaskStatus, Terminal, TerminalBuilder,
     terminal_settings::{self, ActivateScript, TerminalSettings, VenvSettings},
 };
-use util::{
-    ResultExt,
-    paths::{PathStyle, RemotePathBuf},
-};
+use util::paths::{PathStyle, RemotePathBuf};
 
 pub struct Terminals {
     pub(crate) local_handles: Vec<WeakEntity<terminal::Terminal>>,
@@ -182,7 +178,6 @@ impl Project {
                     Some((&command, &args)),
                     path.as_deref(),
                     env,
-                    None,
                     path_style,
                 );
                 let mut command = std::process::Command::new(command);
@@ -256,19 +251,8 @@ impl Project {
 
         let local_path = if is_ssh_terminal { None } else { path.clone() };
 
-        let mut python_venv_activate_command = Task::ready(None);
-
         let (spawn_task, shell) = match kind {
             TerminalKind::Shell(_) => {
-                if let Some(python_venv_directory) = &python_venv_directory {
-                    python_venv_activate_command = this.python_activate_command(
-                        python_venv_directory,
-                        &settings.detect_venv,
-                        &settings.shell,
-                        cx,
-                    );
-                }
-
                 match ssh_details {
                     Some(SshDetails {
                         host,
@@ -285,14 +269,8 @@ impl Project {
                         env.entry("TERM".to_string())
                             .or_insert_with(|| "xterm-256color".to_string());
 
-                        let (program, args) = wrap_for_ssh(
-                            &ssh_command,
-                            None,
-                            path.as_deref(),
-                            env,
-                            None,
-                            path_style,
-                        );
+                        let (program, args) =
+                            wrap_for_ssh(&ssh_command, None, path.as_deref(), env, path_style);
                         env = HashMap::default();
                         if let Some(envs) = envs {
                             env.extend(envs);
@@ -325,13 +303,6 @@ impl Project {
 
                 env.extend(spawn_task.env);
 
-                if let Some(venv_path) = &python_venv_directory {
-                    env.insert(
-                        "VIRTUAL_ENV".to_string(),
-                        venv_path.to_string_lossy().to_string(),
-                    );
-                }
-
                 match ssh_details {
                     Some(SshDetails {
                         host,
@@ -342,6 +313,7 @@ impl Project {
                         log::debug!("Connecting to a remote server: {ssh_command:?}");
                         env.entry("TERM".to_string())
                             .or_insert_with(|| "xterm-256color".to_string());
+
                         let (program, args) = wrap_for_ssh(
                             &ssh_command,
                             spawn_task
@@ -350,7 +322,6 @@ impl Project {
                                 .map(|command| (command, &spawn_task.args)),
                             path.as_deref(),
                             env,
-                            python_venv_directory.as_deref(),
                             path_style,
                         );
                         env = HashMap::default();
@@ -367,10 +338,6 @@ impl Project {
                         )
                     }
                     None => {
-                        if let Some(venv_path) = &python_venv_directory {
-                            add_environment_path(&mut env, &venv_path.join("bin")).log_err();
-                        }
-
                         let shell = if let Some(program) = spawn_task.command {
                             Shell::WithArguments {
                                 program,
@@ -385,6 +352,15 @@ impl Project {
                 }
             }
         };
+
+        let python_venv_activate_command = if let Some(python_venv_directory) =
+            &python_venv_directory
+        {
+            this.python_activate_command(python_venv_directory, &settings.detect_venv, &shell, cx)
+        } else {
+            Task::ready(None)
+        };
+
         TerminalBuilder::new(
             local_path.map(|path| path.to_path_buf()),
             python_venv_directory,
@@ -646,7 +622,6 @@ pub fn wrap_for_ssh(
     command: Option<(&String, &Vec<String>)>,
     path: Option<&Path>,
     env: HashMap<String, String>,
-    venv_directory: Option<&Path>,
     path_style: PathStyle,
 ) -> (String, Vec<String>) {
     let to_run = if let Some((command, args)) = command {
@@ -665,13 +640,7 @@ pub fn wrap_for_ssh(
     let mut env_changes = String::new();
     for (k, v) in env.iter() {
         if let Some((k, v)) = shlex::try_quote(k).ok().zip(shlex::try_quote(v).ok()) {
-            env_changes.push_str(&format!("{}={} ", k, v));
-        }
-    }
-    if let Some(venv_directory) = venv_directory {
-        if let Ok(str) = shlex::try_quote(venv_directory.to_string_lossy().as_ref()) {
-            let path = RemotePathBuf::new(PathBuf::from(str.to_string()), path_style).to_string();
-            env_changes.push_str(&format!("PATH={}:$PATH ", path));
+            env_changes.push_str(&format!("{k}={v} "));
         }
     }
 
@@ -701,58 +670,4 @@ pub fn wrap_for_ssh(
     args.push("-t".to_string());
     args.push(shell_invocation);
     (program, args)
-}
-
-fn add_environment_path(env: &mut HashMap<String, String>, new_path: &Path) -> Result<()> {
-    let mut env_paths = vec![new_path.to_path_buf()];
-    if let Some(path) = env.get("PATH").or(env::var("PATH").ok().as_ref()) {
-        let mut paths = std::env::split_paths(&path).collect::<Vec<_>>();
-        env_paths.append(&mut paths);
-    }
-
-    let paths = std::env::join_paths(env_paths).context("failed to create PATH env variable")?;
-    env.insert("PATH".to_string(), paths.to_string_lossy().to_string());
-
-    Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use collections::HashMap;
-
-    #[test]
-    fn test_add_environment_path_with_existing_path() {
-        let tmp_path = std::path::PathBuf::from("/tmp/new");
-        let mut env = HashMap::default();
-        let old_path = if cfg!(windows) {
-            "/usr/bin;/usr/local/bin"
-        } else {
-            "/usr/bin:/usr/local/bin"
-        };
-        env.insert("PATH".to_string(), old_path.to_string());
-        env.insert("OTHER".to_string(), "aaa".to_string());
-
-        super::add_environment_path(&mut env, &tmp_path).unwrap();
-        if cfg!(windows) {
-            assert_eq!(env.get("PATH").unwrap(), &format!("/tmp/new;{}", old_path));
-        } else {
-            assert_eq!(env.get("PATH").unwrap(), &format!("/tmp/new:{}", old_path));
-        }
-        assert_eq!(env.get("OTHER").unwrap(), "aaa");
-    }
-
-    #[test]
-    fn test_add_environment_path_with_empty_path() {
-        let tmp_path = std::path::PathBuf::from("/tmp/new");
-        let mut env = HashMap::default();
-        env.insert("OTHER".to_string(), "aaa".to_string());
-        let os_path = std::env::var("PATH").unwrap();
-        super::add_environment_path(&mut env, &tmp_path).unwrap();
-        if cfg!(windows) {
-            assert_eq!(env.get("PATH").unwrap(), &format!("/tmp/new;{}", os_path));
-        } else {
-            assert_eq!(env.get("PATH").unwrap(), &format!("/tmp/new:{}", os_path));
-        }
-        assert_eq!(env.get("OTHER").unwrap(), "aaa");
-    }
 }

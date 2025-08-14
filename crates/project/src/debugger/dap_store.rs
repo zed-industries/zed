@@ -287,7 +287,6 @@ impl DapStore {
                             .map(|command| (command, &binary.arguments)),
                         binary.cwd.as_deref(),
                         binary.envs,
-                        None,
                         path_style,
                     );
 
