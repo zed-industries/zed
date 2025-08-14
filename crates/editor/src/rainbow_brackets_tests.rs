@@ -295,7 +295,7 @@ async fn test_rust_rainbow_brackets(cx: &mut TestAppContext) {
     .with_brackets_query(indoc! {r#"
         ; Rainbow bracket scopes for common Rust constructs
         [(block) (match_block) (use_list) (field_initializer_list)] @rainbow.scope
-        
+
         ; Rainbow brackets - actual bracket characters
         ["{" "}" "(" ")" "[" "]"] @rainbow.bracket
         "#})
@@ -317,7 +317,7 @@ async fn test_rust_rainbow_brackets(cx: &mut TestAppContext) {
         let multi_buffer = editor.buffer().read(cx).snapshot(cx);
         multi_buffer.as_singleton().unwrap().2.clone()
     });
-    
+
     let highlights = compute_rainbow_brackets_for_range(&buffer, 0..buffer.len());
 
     // With proper tree-sitter setup, we should get highlights
@@ -325,8 +325,11 @@ async fn test_rust_rainbow_brackets(cx: &mut TestAppContext) {
     let highlights = highlights.unwrap();
 
     // Verify we have some levels
-    assert!(!highlights.is_empty(), "Should have at least one level of brackets");
-    
+    assert!(
+        !highlights.is_empty(),
+        "Should have at least one level of brackets"
+    );
+
     // Verify structure is correct
     for (level, ranges) in highlights {
         assert!(level < 10, "Level {} should be < 10", level);
