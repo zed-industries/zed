@@ -1540,6 +1540,7 @@ mod tests {
     use settings::SettingsStore;
     use smol::stream::StreamExt as _;
     use std::{
+        any::Any,
         cell::RefCell,
         path::Path,
         rc::Rc,
@@ -2283,6 +2284,10 @@ mod tests {
             Some(Rc::new(FakeAgentSessionEditor {
                 _session_id: session_id.clone(),
             }))
+        }
+
+        fn as_any(&self) -> &dyn Any {
+            self
         }
     }
 

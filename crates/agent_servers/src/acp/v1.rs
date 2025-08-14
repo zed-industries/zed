@@ -3,9 +3,9 @@ use anyhow::anyhow;
 use collections::HashMap;
 use futures::channel::oneshot;
 use project::Project;
-use std::cell::RefCell;
 use std::path::Path;
 use std::rc::Rc;
+use std::{any::Any, cell::RefCell};
 
 use anyhow::{Context as _, Result};
 use gpui::{App, AppContext as _, AsyncApp, Entity, Task, WeakEntity};
@@ -190,6 +190,10 @@ impl AgentConnection for AcpConnection {
         cx.foreground_executor()
             .spawn(async move { conn.cancel(params).await })
             .detach();
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
     }
 }
 

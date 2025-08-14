@@ -2,10 +2,10 @@ use crate::{ContextServerRegistry, SystemPromptTemplate, Template, Templates};
 use acp_thread::{MentionUri, UserMessageId};
 use action_log::ActionLog;
 use agent_client_protocol as acp;
-use agent_settings::{AgentProfileId, AgentSettings};
+use agent_settings::{AgentProfileId, AgentSettings, CompletionMode};
 use anyhow::{Context as _, Result, anyhow};
 use assistant_tool::adapt_schema_to_format;
-use cloud_llm_client::{CompletionIntent, CompletionMode};
+use cloud_llm_client::CompletionIntent;
 use collections::IndexMap;
 use fs::Fs;
 use futures::{
@@ -417,7 +417,7 @@ pub struct Thread {
     profile_id: AgentProfileId,
     project_context: Rc<RefCell<ProjectContext>>,
     templates: Arc<Templates>,
-    pub selected_model: Arc<dyn LanguageModel>,
+    model: Arc<dyn LanguageModel>,
     project: Entity<Project>,
     action_log: Entity<ActionLog>,
 }
@@ -429,7 +429,7 @@ impl Thread {
         context_server_registry: Entity<ContextServerRegistry>,
         action_log: Entity<ActionLog>,
         templates: Arc<Templates>,
-        default_model: Arc<dyn LanguageModel>,
+        model: Arc<dyn LanguageModel>,
         cx: &mut Context<Self>,
     ) -> Self {
         let profile_id = AgentSettings::get_global(cx).default_profile.clone();
@@ -443,7 +443,7 @@ impl Thread {
             profile_id,
             project_context,
             templates,
-            selected_model: default_model,
+            model,
             project,
             action_log,
         }
@@ -457,7 +457,19 @@ impl Thread {
         &self.action_log
     }
 
-    pub fn set_mode(&mut self, mode: CompletionMode) {
+    pub fn model(&self) -> &Arc<dyn LanguageModel> {
+        &self.model
+    }
+
+    pub fn set_model(&mut self, model: Arc<dyn LanguageModel>) {
+        self.model = model;
+    }
+
+    pub fn completion_mode(&self) -> CompletionMode {
+        self.completion_mode
+    }
+
+    pub fn set_completion_mode(&mut self, mode: CompletionMode) {
         self.completion_mode = mode;
     }
 
@@ -511,7 +523,7 @@ impl Thread {
     where
         T: Into<UserMessageContent>,
     {
-        let model = self.selected_model.clone();
+        let model = self.model.clone();
         let content = content.into_iter().map(Into::into).collect::<Vec<_>>();
         log::info!("Thread::send called with model: {:?}", model.name());
         log::debug!("Thread::send content: {:?}", content);
@@ -678,10 +690,10 @@ impl Thread {
     fn handle_text_event(
         &mut self,
         new_text: String,
-        events_stream: &AgentResponseEventStream,
+        event_stream: &AgentResponseEventStream,
         cx: &mut Context<Self>,
     ) {
-        events_stream.send_text(&new_text);
+        event_stream.send_text(&new_text);
 
         let last_message = self.pending_message();
         if let Some(AgentMessageContent::Text(text)) = last_message.content.last_mut() {
@@ -798,7 +810,7 @@ impl Thread {
             status: Some(acp::ToolCallStatus::InProgress),
             ..Default::default()
         });
-        let supports_images = self.selected_model.supports_images();
+        let supports_images = self.model.supports_images();
         let tool_result = tool.run(tool_use.input, tool_event_stream, cx);
         Some(cx.foreground_executor().spawn(async move {
             let tool_result = tool_result.await.and_then(|output| {
@@ -902,7 +914,7 @@ impl Thread {
                         name: tool_name,
                         description: tool.description().to_string(),
                         input_schema: tool
-                            .input_schema(self.selected_model.tool_input_format())
+                            .input_schema(self.model.tool_input_format())
                             .log_err()?,
                     })
                 })
@@ -914,15 +926,15 @@ impl Thread {
         log::info!("Request includes {} tools", tools.len());
 
         let request = LanguageModelRequest {
-            thread_id: None,
-            prompt_id: None,
+            thread_id: None, // todo!(fix)
+            prompt_id: None, // todo!(fix)
             intent: Some(completion_intent),
-            mode: Some(self.completion_mode),
+            mode: Some(self.completion_mode.into()),
             messages,
             tools,
             tool_choice: None,
             stop: Vec::new(),
-            temperature: None,
+            temperature: None, // todo!("fix")
             thinking_allowed: true,
         };
 
@@ -935,7 +947,7 @@ impl Thread {
             .profiles
             .get(&self.profile_id)
             .context("profile not found")?;
-        let provider_id = self.selected_model.provider_id();
+        let provider_id = self.model.provider_id();
 
         Ok(self
             .tools

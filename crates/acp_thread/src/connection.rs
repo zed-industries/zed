@@ -4,7 +4,7 @@ use anyhow::Result;
 use collections::IndexMap;
 use gpui::{AsyncApp, Entity, SharedString, Task};
 use project::Project;
-use std::{error::Error, fmt, path::Path, rc::Rc, sync::Arc};
+use std::{any::Any, error::Error, fmt, path::Path, rc::Rc, sync::Arc};
 use ui::{App, IconName};
 use uuid::Uuid;
 
@@ -52,6 +52,14 @@ pub trait AgentConnection {
     /// This allows sharing the selector in UI components.
     fn model_selector(&self) -> Option<Rc<dyn AgentModelSelector>> {
         None
+    }
+
+    fn as_any(&self) -> &dyn Any;
+}
+
+impl dyn AgentConnection {
+    pub fn downcast<T: 'static + AgentConnection + Sized>(&self) -> Option<&T> {
+        self.as_any().downcast_ref()
     }
 }
 

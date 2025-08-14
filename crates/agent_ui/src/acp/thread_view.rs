@@ -7,7 +7,7 @@ use action_log::ActionLog;
 use agent::{TextThreadStore, ThreadStore};
 use agent_client_protocol as acp;
 use agent_servers::AgentServer;
-use agent_settings::{AgentSettings, NotifyWhenAgentWaiting};
+use agent_settings::{AgentSettings, CompletionMode, NotifyWhenAgentWaiting};
 use audio::{Audio, Sound};
 use buffer_diff::BufferDiff;
 use collections::{HashMap, HashSet};
@@ -55,9 +55,10 @@ use crate::acp::completion_provider::{ContextPickerCompletionProvider, MentionSe
 use crate::acp::message_history::MessageHistory;
 use crate::agent_diff::AgentDiff;
 use crate::message_editor::{MAX_EDITOR_LINES, MIN_EDITOR_LINES};
-use crate::ui::{AgentNotification, AgentNotificationEvent};
+use crate::ui::{AgentNotification, AgentNotificationEvent, BurnModeTooltip};
 use crate::{
     AgentDiffPane, AgentPanel, ExpandMessageEditor, Follow, KeepAll, OpenAgentDiff, RejectAll,
+    ToggleBurnMode,
 };
 
 const RESPONSE_PADDING_X: Pixels = px(19.);
@@ -2622,7 +2623,12 @@ impl AcpThreadView {
                 h_flex()
                     .flex_none()
                     .justify_between()
-                    .child(self.render_follow_toggle(cx))
+                    .child(
+                        h_flex()
+                            .gap_1()
+                            .child(self.render_follow_toggle(cx))
+                            .children(self.render_burn_mode_toggle(cx)),
+                    )
                     .child(
                         h_flex()
                             .gap_1()
@@ -2631,6 +2637,64 @@ impl AcpThreadView {
                     ),
             )
             .into_any()
+    }
+
+    fn as_native_thread(&self, cx: &App) -> Option<Entity<agent2::Thread>> {
+        let acp_thread = self.thread()?.read(cx);
+        let connection = acp_thread.connection().as_ref();
+        let connection = connection.downcast::<agent2::NativeAgentConnection>()?;
+        connection.thread(acp_thread.session_id(), cx)
+    }
+
+    fn toggle_burn_mode(
+        &mut self,
+        _: &ToggleBurnMode,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(thread) = self.as_native_thread(cx) else {
+            return;
+        };
+
+        thread.update(cx, |thread, _cx| {
+            let current_mode = thread.completion_mode();
+            thread.set_completion_mode(match current_mode {
+                CompletionMode::Burn => CompletionMode::Normal,
+                CompletionMode::Normal => CompletionMode::Burn,
+            });
+        });
+    }
+
+    fn render_burn_mode_toggle(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let thread = self.as_native_thread(cx)?.read(cx);
+
+        if !thread.model().supports_burn_mode() {
+            return None;
+        }
+
+        let active_completion_mode = thread.completion_mode();
+        let burn_mode_enabled = active_completion_mode == CompletionMode::Burn;
+        let icon = if burn_mode_enabled {
+            IconName::ZedBurnModeOn
+        } else {
+            IconName::ZedBurnMode
+        };
+
+        Some(
+            IconButton::new("burn-mode", icon)
+                .icon_size(IconSize::Small)
+                .icon_color(Color::Muted)
+                .toggle_state(burn_mode_enabled)
+                .selected_icon_color(Color::Error)
+                .on_click(cx.listener(|this, _event, window, cx| {
+                    this.toggle_burn_mode(&ToggleBurnMode, window, cx);
+                }))
+                .tooltip(move |_window, cx| {
+                    cx.new(|_| BurnModeTooltip::new().selected(burn_mode_enabled))
+                        .into()
+                })
+                .into_any_element(),
+        )
     }
 
     fn render_send_button(&self, cx: &mut Context<Self>) -> AnyElement {
@@ -3246,6 +3310,7 @@ impl Render for AcpThreadView {
             .on_action(cx.listener(Self::previous_history_message))
             .on_action(cx.listener(Self::next_history_message))
             .on_action(cx.listener(Self::open_agent_diff))
+            .on_action(cx.listener(Self::toggle_burn_mode))
             .bg(cx.theme().colors().panel_background)
             .child(match &self.thread_state {
                 ThreadState::Unauthenticated { connection } => v_flex()
@@ -3541,6 +3606,8 @@ fn terminal_command_markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
 
 #[cfg(test)]
 mod tests {
+    use std::any::Any;
+
     use agent::{TextThreadStore, ThreadStore};
     use agent_client_protocol::SessionId;
     use editor::EditorSettings;
@@ -3848,6 +3915,10 @@ mod tests {
         fn cancel(&self, _session_id: &acp::SessionId, _cx: &mut App) {
             unimplemented!()
         }
+
+        fn as_any(&self) -> &dyn Any {
+            self
+        }
     }
 
     #[derive(Clone)]
@@ -3896,6 +3967,10 @@ mod tests {
 
         fn cancel(&self, _session_id: &acp::SessionId, _cx: &mut App) {
             unimplemented!()
+        }
+
+        fn as_any(&self) -> &dyn Any {
+            self
         }
     }
 

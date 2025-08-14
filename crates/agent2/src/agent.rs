@@ -1,9 +1,8 @@
-use crate::{AgentResponseEvent, Thread, templates::Templates};
 use crate::{
-    ContextServerRegistry, CopyPathTool, CreateDirectoryTool, DeletePathTool, DiagnosticsTool,
-    EditFileTool, FetchTool, FindPathTool, GrepTool, ListDirectoryTool, MovePathTool, NowTool,
-    OpenTool, ReadFileTool, TerminalTool, ThinkingTool, ToolCallAuthorization, UserMessageContent,
-    WebSearchTool,
+    AgentResponseEvent, ContextServerRegistry, CopyPathTool, CreateDirectoryTool, DeletePathTool,
+    DiagnosticsTool, EditFileTool, FetchTool, FindPathTool, GrepTool, ListDirectoryTool,
+    MovePathTool, NowTool, OpenTool, ReadFileTool, TerminalTool, ThinkingTool, Thread,
+    ToolCallAuthorization, UserMessageContent, WebSearchTool, templates::Templates,
 };
 use acp_thread::AgentModelSelector;
 use agent_client_protocol as acp;
@@ -21,6 +20,7 @@ use prompt_store::{
     ProjectContext, PromptId, PromptStore, RulesFileContext, UserRulesContext, WorktreeContext,
 };
 use settings::update_settings_file;
+use std::any::Any;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::Path;
@@ -426,9 +426,9 @@ impl NativeAgent {
         self.models.refresh_list(cx);
         for session in self.sessions.values_mut() {
             session.thread.update(cx, |thread, _| {
-                let model_id = LanguageModels::model_id(&thread.selected_model);
+                let model_id = LanguageModels::model_id(&thread.model());
                 if let Some(model) = self.models.model_from_id(&model_id) {
-                    thread.selected_model = model.clone();
+                    thread.set_model(model.clone());
                 }
             });
         }
@@ -438,6 +438,16 @@ impl NativeAgent {
 /// Wrapper struct that implements the AgentConnection trait
 #[derive(Clone)]
 pub struct NativeAgentConnection(pub Entity<NativeAgent>);
+
+impl NativeAgentConnection {
+    pub fn thread(&self, session_id: &acp::SessionId, cx: &App) -> Option<Entity<Thread>> {
+        self.0
+            .read(cx)
+            .sessions
+            .get(session_id)
+            .map(|session| session.thread.clone())
+    }
+}
 
 impl AgentModelSelector for NativeAgentConnection {
     fn list_models(&self, cx: &mut App) -> Task<Result<acp_thread::AgentModelList>> {
@@ -472,7 +482,7 @@ impl AgentModelSelector for NativeAgentConnection {
         };
 
         thread.update(cx, |thread, _cx| {
-            thread.selected_model = model.clone();
+            thread.set_model(model.clone());
         });
 
         update_settings_file::<AgentSettings>(
@@ -502,7 +512,7 @@ impl AgentModelSelector for NativeAgentConnection {
         else {
             return Task::ready(Err(anyhow!("Session not found")));
         };
-        let model = thread.read(cx).selected_model.clone();
+        let model = thread.read(cx).model().clone();
         let Some(provider) = LanguageModelRegistry::read_global(cx).provider(&model.provider_id())
         else {
             return Task::ready(Err(anyhow!("Provider not found")));
@@ -674,7 +684,7 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
 
             // Get model using the ModelSelector capability (always available for agent2)
             // Get the selected model from the thread directly
-            let model = thread.read_with(cx, |thread, _| thread.selected_model.clone())?;
+            let model = thread.read_with(cx, |thread, _| thread.model().clone())?;
 
             // Send to thread
             log::info!("Sending message to thread with model: {:?}", model.name());
@@ -785,6 +795,10 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
                 .get(session_id)
                 .map(|session| Rc::new(NativeAgentSessionEditor(session.thread.clone())) as _)
         })
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
     }
 }
 
@@ -961,7 +975,7 @@ mod tests {
         agent.read_with(cx, |agent, _| {
             let session = agent.sessions.get(&session_id).unwrap();
             session.thread.read_with(cx, |thread, _| {
-                assert_eq!(thread.selected_model.id().0, "fake");
+                assert_eq!(thread.model.id().0, "fake");
             });
         });
 
