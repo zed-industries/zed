@@ -15049,8 +15049,10 @@ dependencies = [
  "ui",
  "ui_input",
  "util",
+ "vim",
  "workspace",
  "workspace-hack",
+ "zed_actions",
 ]
 
 [[package]]

@@ -140,6 +140,7 @@ pub enum IconName {
     Image,
     Indicator,
     Info,
+    Json,
     Keyboard,
     Library,
     LineHeight,
