@@ -13,7 +13,7 @@ use anyhow::{Result, anyhow};
 use collections::HashSet;
 pub use completion_provider::ContextPickerCompletionProvider;
 use editor::display_map::{Crease, CreaseId, CreaseMetadata, FoldId};
-use editor::{Anchor, AnchorRangeExt as _, Editor, ExcerptId, FoldPlaceholder, ToOffset};
+use editor::{Anchor, Editor, ExcerptId, FoldPlaceholder, ToOffset};
 use fetch_context_picker::FetchContextPicker;
 use file_context_picker::FileContextPicker;
 use file_context_picker::render_file_context_entry;

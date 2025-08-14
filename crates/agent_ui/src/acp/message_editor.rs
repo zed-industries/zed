@@ -1,6 +1,9 @@
-use crate::acp::completion_provider::{ContextPickerCompletionProvider, MentionImage, MentionSet};
-use acp_thread::MentionUri;
-use agent::{TextThreadStore, ThreadStore};
+use crate::{
+    acp::completion_provider::{ContextPickerCompletionProvider, MentionImage, MentionSet},
+    context_picker::fetch_context_picker::fetch_url_content,
+};
+use acp_thread::{MentionUri, selection_name};
+use agent::{TextThreadStore, ThreadId, ThreadStore};
 use agent_client_protocol as acp;
 use anyhow::Result;
 use collections::HashSet;
@@ -10,23 +13,30 @@ use editor::{
     actions::Paste,
     display_map::{Crease, CreaseId, FoldId},
 };
-use futures::FutureExt as _;
+use futures::{FutureExt as _, TryFutureExt as _};
 use gpui::{
-    AppContext, ClipboardEntry, Context, Empty, Entity, EventEmitter, FocusHandle, Focusable,
-    Image, ImageFormat, Task, TextStyle, WeakEntity,
+    AppContext, ClipboardEntry, Context, Entity, EventEmitter, FocusHandle, Focusable, Image,
+    ImageFormat, Task, TextStyle, WeakEntity,
 };
+use http_client::HttpClientWithUrl;
 use language::{Buffer, Language};
 use language_model::LanguageModelImage;
-use parking_lot::Mutex;
 use project::{CompletionIntent, Project};
 use settings::Settings;
-use std::{fmt::Write, ops::Range, path::Path, rc::Rc, sync::Arc};
+use std::{
+    fmt::Write,
+    ops::Range,
+    path::{Path, PathBuf},
+    rc::Rc,
+    sync::Arc,
+};
+use text::OffsetRangeExt;
 use theme::ThemeSettings;
 use ui::{
-    ActiveTheme, AnyElement, App, ButtonCommon, ButtonLike, ButtonStyle, Color, Element as _, Icon,
-    IconName, IconSize, InteractiveElement, IntoElement, Label, LabelCommon, LabelSize,
-    ParentElement, Render, SelectableButton, SharedString, Styled, TextSize, TintColor, Toggleable,
-    Window, div, h_flex,
+    ActiveTheme, AnyElement, App, ButtonCommon, ButtonLike, ButtonStyle, Color, Icon, IconName,
+    IconSize, InteractiveElement, IntoElement, Label, LabelCommon, LabelSize, ParentElement,
+    Render, SelectableButton, SharedString, Styled, TextSize, TintColor, Toggleable, Window, div,
+    h_flex,
 };
 use util::ResultExt;
 use workspace::{Workspace, notifications::NotifyResultExt as _};
@@ -35,11 +45,12 @@ use zed_actions::agent::Chat;
 use super::completion_provider::Mention;
 
 pub struct MessageEditor {
-    editor: Entity<Editor>,
+    // todo!() this shoul dnot be pub
+    pub(crate) editor: Entity<Editor>,
+    pub(crate) mention_set: MentionSet,
     project: Entity<Project>,
     thread_store: Entity<ThreadStore>,
     text_thread_store: Entity<TextThreadStore>,
-    mention_set: Arc<Mutex<MentionSet>>,
 }
 
 pub enum MessageEditorEvent {
@@ -66,8 +77,13 @@ impl MessageEditor {
             },
             None,
         );
-
-        let mention_set = Arc::new(Mutex::new(MentionSet::default()));
+        let completion_provider = ContextPickerCompletionProvider::new(
+            workspace,
+            thread_store.downgrade(),
+            text_thread_store.downgrade(),
+            cx.weak_entity(),
+        );
+        let mention_set = MentionSet::default();
         let editor = cx.new(|cx| {
             let buffer = cx.new(|cx| Buffer::local("", cx).with_language(Arc::new(language), cx));
             let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
@@ -77,13 +93,7 @@ impl MessageEditor {
             editor.set_show_indent_guides(false, cx);
             editor.set_soft_wrap();
             editor.set_use_modal_editing(true);
-            editor.set_completion_provider(Some(Rc::new(ContextPickerCompletionProvider::new(
-                mention_set.clone(),
-                workspace,
-                thread_store.downgrade(),
-                text_thread_store.downgrade(),
-                cx.weak_entity(),
-            ))));
+            editor.set_completion_provider(Some(Rc::new(completion_provider)));
             editor.set_context_menu_options(ContextMenuOptions {
                 min_entries_visible: 12,
                 max_entries_visible: 12,
@@ -105,12 +115,188 @@ impl MessageEditor {
         self.editor.read(cx).is_empty(cx)
     }
 
+    pub fn mentioned_path_and_threads(&self, _: &App) -> (HashSet<PathBuf>, HashSet<ThreadId>) {
+        let mut excluded_paths = HashSet::default();
+        let mut excluded_threads = HashSet::default();
+
+        for uri in self.mention_set.uri_by_crease_id.values() {
+            match uri {
+                MentionUri::File { abs_path, .. } => {
+                    excluded_paths.insert(abs_path.clone());
+                }
+                MentionUri::Thread { id, .. } => {
+                    excluded_threads.insert(id.clone());
+                }
+                _ => {}
+            }
+        }
+
+        (excluded_paths, excluded_threads)
+    }
+
+    pub fn confirm_completion(
+        &mut self,
+        crease_text: SharedString,
+        start: text::Anchor,
+        content_len: usize,
+        mention_uri: MentionUri,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let snapshot = self
+            .editor
+            .update(cx, |editor, cx| editor.snapshot(window, cx));
+        let Some((excerpt_id, _, _)) = snapshot.buffer_snapshot.as_singleton() else {
+            return;
+        };
+
+        if let Some(crease_id) = crate::context_picker::insert_crease_for_mention(
+            *excerpt_id,
+            start,
+            content_len,
+            crease_text.clone(),
+            mention_uri.icon_path(cx),
+            self.editor.clone(),
+            window,
+            cx,
+        ) {
+            self.mention_set.insert_uri(crease_id, mention_uri.clone());
+        }
+    }
+
+    pub fn confirm_mention_for_fetch(
+        &mut self,
+        new_text: String,
+        source_range: Range<text::Anchor>,
+        url: url::Url,
+        http_client: Arc<HttpClientWithUrl>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let mention_uri = MentionUri::Fetch { url: url.clone() };
+        let icon_path = mention_uri.icon_path(cx);
+
+        let start = source_range.start;
+        let content_len = new_text.len() - 1;
+
+        let snapshot = self
+            .editor
+            .update(cx, |editor, cx| editor.snapshot(window, cx));
+        let Some((&excerpt_id, _, _)) = snapshot.buffer_snapshot.as_singleton() else {
+            return;
+        };
+
+        let Some(crease_id) = crate::context_picker::insert_crease_for_mention(
+            excerpt_id,
+            start,
+            content_len,
+            url.to_string().into(),
+            icon_path,
+            self.editor.clone(),
+            window,
+            cx,
+        ) else {
+            return;
+        };
+
+        let http_client = http_client.clone();
+        let source_range = source_range.clone();
+
+        let url_string = url.to_string();
+        let fetch = cx
+            .background_executor()
+            .spawn(async move {
+                fetch_url_content(http_client, url_string)
+                    .map_err(|e| e.to_string())
+                    .await
+            })
+            .shared();
+        self.mention_set.add_fetch_result(url, fetch.clone());
+
+        cx.spawn_in(window, async move |this, cx| {
+            let fetch = fetch.await.notify_async_err(cx);
+            this.update(cx, |this, cx| {
+                if fetch.is_some() {
+                    this.mention_set.insert_uri(crease_id, mention_uri.clone());
+                } else {
+                    // Remove crease if we failed to fetch
+                    this.editor.update(cx, |editor, cx| {
+                        let snapshot = editor.buffer().read(cx).snapshot(cx);
+                        let Some(anchor) =
+                            snapshot.anchor_in_excerpt(excerpt_id, source_range.start)
+                        else {
+                            return;
+                        };
+                        editor.display_map.update(cx, |display_map, cx| {
+                            display_map.unfold_intersecting(vec![anchor..anchor], true, cx);
+                        });
+                        editor.remove_creases([crease_id], cx);
+                    });
+                }
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    pub fn confirm_mention_for_selection(
+        &mut self,
+        source_range: Range<text::Anchor>,
+        selections: Vec<(Entity<Buffer>, Range<text::Anchor>, Range<usize>)>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let snapshot = self.editor.read(cx).buffer().read(cx).snapshot(cx);
+        let Some((&excerpt_id, _, _)) = snapshot.as_singleton() else {
+            return;
+        };
+        let Some(start) = snapshot.anchor_in_excerpt(excerpt_id, source_range.start) else {
+            return;
+        };
+
+        let offset = start.to_offset(&snapshot);
+
+        for (buffer, selection_range, range_to_fold) in selections {
+            let range = snapshot.anchor_after(offset + range_to_fold.start)
+                ..snapshot.anchor_after(offset + range_to_fold.end);
+
+            let path = buffer
+                .read(cx)
+                .file()
+                .map_or(PathBuf::from("untitled"), |file| file.path().to_path_buf());
+            let snapshot = buffer.read(cx).snapshot();
+
+            let point_range = selection_range.to_point(&snapshot);
+            let line_range = point_range.start.row..point_range.end.row;
+
+            let uri = MentionUri::Selection {
+                path: path.clone(),
+                line_range: line_range.clone(),
+            };
+            let crease = crate::context_picker::crease_for_mention(
+                selection_name(&path, &line_range).into(),
+                uri.icon_path(cx),
+                range,
+                self.editor.downgrade(),
+            );
+
+            let crease_id = self.editor.update(cx, |editor, cx| {
+                let crease_ids = editor.insert_creases(vec![crease.clone()], cx);
+                editor.fold_creases(vec![crease], false, window, cx);
+                crease_ids.first().unwrap().clone()
+            });
+
+            self.mention_set
+                .insert_uri(crease_id, MentionUri::Selection { path, line_range });
+        }
+    }
+
     pub fn contents(
         &self,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<Vec<acp::ContentBlock>>> {
-        let contents = self.mention_set.lock().contents(
+        let contents = self.mention_set.contents(
             self.project.clone(),
             self.thread_store.clone(),
             self.text_thread_store.clone(),
@@ -187,7 +373,7 @@ impl MessageEditor {
     pub fn clear(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.editor.update(cx, |editor, cx| {
             editor.clear(window, cx);
-            editor.remove_creases(self.mention_set.lock().drain(), cx)
+            editor.remove_creases(self.mention_set.drain(), cx)
         });
     }
 
@@ -256,9 +442,6 @@ impl MessageEditor {
         cx: &mut Context<Self>,
     ) {
         let buffer = self.editor.read(cx).buffer().clone();
-        let Some((&excerpt_id, _, _)) = buffer.read(cx).snapshot(cx).as_singleton() else {
-            return;
-        };
         let Some(buffer) = buffer.read(cx).as_singleton() else {
             return;
         };
@@ -281,10 +464,8 @@ impl MessageEditor {
                 &path_prefix,
                 false,
                 entry.is_dir(),
-                excerpt_id,
                 anchor..anchor,
-                self.editor.clone(),
-                self.mention_set.clone(),
+                cx.weak_entity(),
                 self.project.clone(),
                 cx,
             ) else {
@@ -365,7 +546,7 @@ impl MessageEditor {
             })
             .detach();
 
-            self.mention_set.lock().insert_image(crease_id, task);
+            self.mention_set.insert_image(crease_id, task);
         });
     }
 
@@ -419,7 +600,7 @@ impl MessageEditor {
             editor.buffer().read(cx).snapshot(cx)
         });
 
-        self.mention_set.lock().clear();
+        self.mention_set.clear();
         for (range, mention_uri) in mentions {
             let anchor = snapshot.anchor_before(range.start);
             let crease_id = crate::context_picker::insert_crease_for_mention(
@@ -434,7 +615,7 @@ impl MessageEditor {
             );
 
             if let Some(crease_id) = crease_id {
-                self.mention_set.lock().insert_uri(crease_id, mention_uri);
+                self.mention_set.insert_uri(crease_id, mention_uri);
             }
         }
         for (range, content) in images {
@@ -469,7 +650,7 @@ impl MessageEditor {
             let data: SharedString = content.data.to_string().into();
 
             if let Some(crease_id) = crease_id {
-                self.mention_set.lock().insert_image(
+                self.mention_set.insert_image(
                     crease_id,
                     Task::ready(Ok(MentionImage {
                         abs_path,
