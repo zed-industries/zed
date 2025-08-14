@@ -456,7 +456,8 @@ impl ContentBlock {
     }
 
     fn image_md(_image: &acp::ImageContent) -> String {
-        "[Image](zed:///agent/image)".into()
+        // FIXME
+        "`Image`".into()
     }
 
     fn to_markdown<'a>(&'a self, cx: &'a App) -> &'a str {

@@ -171,7 +171,6 @@ impl UserMessage {
                         MentionUri::Fetch { url } => {
                             write!(&mut fetch_context, "\nFetch: {}\n\n{}", url, content).ok();
                         }
-                        MentionUri::Image => {}
                     }
 
                     language_model::MessageContent::Text(uri.as_link().to_string())

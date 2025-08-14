@@ -1,3 +1,4 @@
+use std::ffi::OsStr;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -11,10 +12,11 @@ use editor::{CompletionProvider, Editor, ExcerptId, ToOffset as _};
 use file_icons::FileIcons;
 use futures::future::try_join_all;
 use fuzzy::{StringMatch, StringMatchCandidate};
-use gpui::{App, Entity, Image, ImageFormat, ImageId, Task, WeakEntity};
+use gpui::{App, Entity, ImageFormat, Img, Task, WeakEntity};
 use http_client::HttpClientWithUrl;
 use itertools::Itertools as _;
 use language::{Buffer, CodeLabel, HighlightId};
+use language_model::LanguageModelImage;
 use lsp::CompletionContext;
 use parking_lot::Mutex;
 use project::{
@@ -25,7 +27,6 @@ use rope::Point;
 use text::{Anchor, OffsetRangeExt as _, ToPoint as _};
 use ui::prelude::*;
 use url::Url;
-use util::debug_panic;
 use workspace::Workspace;
 use workspace::notifications::NotifyResultExt;
 
@@ -109,21 +110,58 @@ impl MentionSet {
             .map(|(&crease_id, uri)| {
                 match uri {
                     MentionUri::File(path) => {
+                        // FIXME
+                        // - images
+                        // - directories
                         let uri = uri.clone();
                         let path = path.to_path_buf();
-                        let buffer_task = project.update(cx, |project, cx| {
-                            let path = project
-                                .find_project_path(path, cx)
-                                .context("Failed to find project path")?;
-                            anyhow::Ok(project.open_buffer(path, cx))
-                        });
+                        let extension = path.extension().and_then(OsStr::to_str).unwrap_or("");
 
-                        cx.spawn(async move |cx| {
-                            let buffer = buffer_task?.await?;
-                            let content = buffer.read_with(cx, |buffer, _cx| buffer.text())?;
+                        if Img::extensions().contains(&extension) && !extension.contains("svg") {
+                            let open_image_task = project.update(cx, |project, cx| {
+                                let path = project
+                                    .find_project_path(&path, cx)
+                                    .context("Failed to find project path")?;
+                                anyhow::Ok(project.open_image(path, cx))
+                            });
 
-                            anyhow::Ok((crease_id, Mention::Text { uri, content }))
-                        })
+                            cx.spawn(async move |cx| {
+                                let image_item = open_image_task?.await?;
+                                let (image, format) = image_item.update(cx, |image_item, cx| {
+                                    let format = image_item.image.format;
+                                    (
+                                        LanguageModelImage::from_image(
+                                            image_item.image.clone(),
+                                            cx,
+                                        ),
+                                        format,
+                                    )
+                                })?;
+                                let image = image.await.context("Converting image")?;
+
+                                anyhow::Ok((
+                                    crease_id,
+                                    Mention::Image(MentionImage {
+                                        abs_path: Some(path.as_path().into()),
+                                        data: image.source,
+                                        format,
+                                    }),
+                                ))
+                            })
+                        } else {
+                            let buffer_task = project.update(cx, |project, cx| {
+                                let path = project
+                                    .find_project_path(path, cx)
+                                    .context("Failed to find project path")?;
+                                anyhow::Ok(project.open_buffer(path, cx))
+                            });
+                            cx.spawn(async move |cx| {
+                                let buffer = buffer_task?.await?;
+                                let content = buffer.read_with(cx, |buffer, _cx| buffer.text())?;
+
+                                anyhow::Ok((crease_id, Mention::Text { uri, content }))
+                            })
+                        }
                     }
                     MentionUri::Symbol {
                         path, line_range, ..
@@ -207,16 +245,6 @@ impl MentionSet {
                             Mention::Text {
                                 uri: uri.clone(),
                                 content: content.clone(),
-                            },
-                        )))
-                    }
-                    MentionUri::Image => {
-                        debug_panic!("MentionUri::Image should not be added to mention set");
-                        Task::ready(Ok((
-                            crease_id,
-                            Mention::Text {
-                                uri: uri.clone(),
-                                content: String::new(),
                             },
                         )))
                     }

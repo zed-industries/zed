@@ -5,10 +5,10 @@ use acp_thread::{
 use acp_thread::{AgentConnection, Plan};
 use action_log::ActionLog;
 use agent::{TextThreadStore, ThreadStore};
-use agent_client_protocol::{self as acp, BlobResourceContents};
+use agent_client_protocol::{self as acp};
 use agent_servers::AgentServer;
 use agent_settings::{AgentSettings, NotifyWhenAgentWaiting};
-use anyhow::{Context as _, Result};
+use anyhow::Context as _;
 use audio::{Audio, Sound};
 use buffer_diff::BufferDiff;
 use collections::{HashMap, HashSet};
@@ -50,6 +50,7 @@ use ui::{
     Tooltip, prelude::*,
 };
 use util::{ResultExt, size::format_file_size, time::duration_alt_display};
+use workspace::notifications::NotifyResultExt;
 use workspace::{CollaboratorId, Workspace};
 use zed_actions::agent::{Chat, NextHistoryMessage, PreviousHistoryMessage, ToggleModelSelector};
 use zed_actions::assistant::OpenRulesLibrary;
@@ -2863,7 +2864,6 @@ impl AcpThreadView {
                 MentionUri::Fetch { url } => {
                     cx.open_url(url.as_str());
                 }
-                MentionUri::Image => {}
             })
         } else {
             cx.open_url(&url);
@@ -3595,10 +3595,6 @@ fn terminal_command_markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
     }
 }
 
-// this will be called;
-// - in the paste handler (in this file)
-// - in the completion thingy for if it's an image
-// FIXME report errors
 fn insert_image(
     excerpt_id: ExcerptId,
     crease_start: text::Anchor,
@@ -3623,19 +3619,32 @@ fn insert_image(
     ) else {
         return;
     };
-    editor.update(cx, |editor, cx| {
+    editor.update(cx, |_editor, cx| {
         let format = image.format;
         let convert = LanguageModelImage::from_image(image, cx);
-        cx.spawn(async move |editor, cx| {
-            match convert.await {
-                Some(image) => {
-                    mention_set
-                        .lock()
-                        .insert_image(crease_id, abs_path, image.source, format);
-                }
-                None => {
-                    // FIXME workspace notify
-                }
+        cx.spawn_in(window, async move |editor, cx| {
+            if let Some(image) = convert
+                .await
+                .context("Failed to convert image")
+                .notify_async_err(cx)
+            {
+                mention_set
+                    .lock()
+                    .insert_image(crease_id, abs_path, image.source, format);
+            } else {
+                editor
+                    .update(cx, |editor, cx| {
+                        let snapshot = editor.buffer().read(cx).snapshot(cx);
+                        let Some(anchor) = snapshot.anchor_in_excerpt(excerpt_id, crease_start)
+                        else {
+                            return;
+                        };
+                        editor.display_map.update(cx, |display_map, cx| {
+                            display_map.unfold_intersecting(vec![anchor..anchor], true, cx);
+                        });
+                        editor.remove_creases([crease_id], cx);
+                    })
+                    .ok();
             }
         })
         .detach();
