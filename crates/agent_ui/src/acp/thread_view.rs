@@ -5,9 +5,10 @@ use acp_thread::{
 use acp_thread::{AgentConnection, Plan};
 use action_log::ActionLog;
 use agent::{TextThreadStore, ThreadStore};
-use agent_client_protocol as acp;
+use agent_client_protocol::{self as acp};
 use agent_servers::AgentServer;
 use agent_settings::{AgentSettings, NotifyWhenAgentWaiting};
+use anyhow::bail;
 use audio::{Audio, Sound};
 use buffer_diff::BufferDiff;
 use collections::{HashMap, HashSet};
@@ -2360,7 +2361,7 @@ impl AcpThreadView {
                 window,
                 cx,
             );
-            editor.set_message(&chunks, window, cx);
+            editor.set_message(chunks, window, cx);
             editor
         });
         let subscription =
@@ -2725,7 +2726,7 @@ impl AcpThreadView {
                 let project = workspace.project().clone();
 
                 if !project.read(cx).is_local() {
-                    anyhow::bail!("failed to open active thread as markdown in remote project");
+                    bail!("failed to open active thread as markdown in remote project");
                 }
 
                 let buffer = project.update(cx, |project, cx| {
@@ -2990,12 +2991,13 @@ impl AcpThreadView {
     pub(crate) fn insert_dragged_files(
         &self,
         paths: Vec<project::ProjectPath>,
-        _added_worktrees: Vec<Entity<project::Worktree>>,
+        added_worktrees: Vec<Entity<project::Worktree>>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         self.message_editor.update(cx, |message_editor, cx| {
             message_editor.insert_dragged_files(paths, window, cx);
+            drop(added_worktrees);
         })
     }
 }
