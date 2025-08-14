@@ -1,5 +1,6 @@
 use fuzzy::StringMatchCandidate;
 
+use chrono;
 use git::stash::StashEntry;
 use gpui::{
     Action, AnyElement, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
@@ -9,8 +10,8 @@ use gpui::{
 use picker::{Picker, PickerDelegate, PickerEditorPosition};
 use project::git_store::{Repository, RepositoryEvent};
 use std::sync::Arc;
-use time::OffsetDateTime;
-use time_format::format_local_timestamp;
+use time::{OffsetDateTime, UtcOffset};
+use time_format;
 use ui::{HighlightedLabel, KeyBinding, ListItem, ListItemSpacing, Tooltip, prelude::*};
 use util::ResultExt;
 use workspace::notifications::DetachAndPromptErr;
@@ -417,11 +418,17 @@ impl PickerDelegate for StashListDelegate {
         .size(LabelSize::Small)
         .color(Color::Muted);
 
-        let absolute_timestamp = format_local_timestamp(
-            OffsetDateTime::from_unix_timestamp(entry_match.entry.timestamp)
-                .unwrap_or(OffsetDateTime::now_utc()),
+        let timestamp = OffsetDateTime::from_unix_timestamp(entry_match.entry.timestamp)
+            .unwrap_or(OffsetDateTime::now_utc());
+        let timezone =
+            UtcOffset::from_whole_seconds(chrono::Local::now().offset().local_minus_utc())
+                .unwrap_or(UtcOffset::UTC);
+
+        let absolute_timestamp = time_format::format_localized_timestamp(
+            timestamp,
             OffsetDateTime::now_utc(),
-            time_format::TimestampFormat::MediumAbsolute,
+            timezone,
+            time_format::TimestampFormat::EnhancedAbsolute,
         );
         let tooltip_text = format!(
             "stash@{{{}}} created {}",
