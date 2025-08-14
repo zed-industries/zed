@@ -5,7 +5,7 @@ use futures::StreamExt;
 use gpui::AsyncApp;
 use language::{LanguageName, LanguageToolchainStore, LspAdapter, LspAdapterDelegate};
 use lsp::{LanguageServerBinary, LanguageServerName};
-use node_runtime::NodeRuntime;
+use node_runtime::{NodeRuntime, VersionStrategy};
 use project::{Fs, lsp_store::language_server_settings};
 use serde_json::{Value, json};
 use smol::fs;
@@ -112,8 +112,7 @@ impl LspAdapter for TailwindLspAdapter {
                 Self::PACKAGE_NAME,
                 &server_path,
                 &container_dir,
-                &version,
-                Default::default(),
+                VersionStrategy::Latest(version),
             )
             .await;
 
