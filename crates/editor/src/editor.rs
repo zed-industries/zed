@@ -15879,6 +15879,8 @@ impl Editor {
                                     .text_for_range(location.range.clone())
                                     .collect::<String>()
                             })
+                            .unique()
+                            .take(3)
                             .join(", ");
                         format!("{tab_kind} for {target}")
                     })
@@ -16085,6 +16087,8 @@ impl Editor {
                             .text_for_range(location.range.clone())
                             .collect::<String>()
                     })
+                    .unique()
+                    .take(3)
                     .join(", ");
                 let title = format!("References to {target}");
                 Self::open_locations_in_multibuffer(
