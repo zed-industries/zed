@@ -1,9 +1,10 @@
 use crate::Editor;
-use gpui::{Context, HighlightStyle, Hsla, Window};
+use gpui::{Context, HighlightStyle, Window};
 use language::{Bias, BufferSnapshot};
 use std::collections::HashMap;
 use std::ops::Range;
 use text::ToOffset;
+use theme::ActiveTheme;
 
 /// Compute rainbow bracket highlights for the visible range
 pub fn compute_rainbow_brackets_for_range(
@@ -153,6 +154,9 @@ pub fn refresh_rainbow_bracket_highlights(
         if let Some(highlights_by_level) =
             compute_rainbow_brackets_for_range(buffer_snapshot, start_offset..end_offset)
         {
+            // Use Theme's accent colors for rainbow brackets
+            let accent_colors = cx.theme().accents().clone();
+
             // Apply highlights by level
             for (level, ranges) in highlights_by_level {
                 // Convert text ranges to multi-buffer anchors
@@ -165,19 +169,11 @@ pub fn refresh_rainbow_bracket_highlights(
                     })
                     .collect();
 
-                // Use text highlighting instead of background highlighting
-                // Create a unique type for each level to avoid conflicts
-                let style = match level {
-                    0 => get_rainbow_style_0(),
-                    1 => get_rainbow_style_1(),
-                    2 => get_rainbow_style_2(),
-                    3 => get_rainbow_style_3(),
-                    4 => get_rainbow_style_4(),
-                    5 => get_rainbow_style_5(),
-                    6 => get_rainbow_style_6(),
-                    7 => get_rainbow_style_7(),
-                    8 => get_rainbow_style_8(),
-                    _ => get_rainbow_style_9(),
+                // Get color from theme accents based on level
+                let color = accent_colors.color_for_index(level as u32);
+                let style = HighlightStyle {
+                    color: Some(color),
+                    ..Default::default()
                 };
 
                 match level {
@@ -208,86 +204,6 @@ fn clear_current_rainbow_highlights(editor: &mut Editor, cx: &mut Context<Editor
     editor.clear_highlights::<RainbowLevel7>(cx);
     editor.clear_highlights::<RainbowLevel8>(cx);
     editor.clear_highlights::<RainbowLevel9>(cx);
-}
-
-// TODO! Make it configurable from settings
-fn get_rainbow_style_0() -> HighlightStyle {
-    HighlightStyle {
-        color: Some(hsla(0.0, 0.8, 0.6, 1.0)), // Red
-        ..Default::default()
-    }
-}
-
-fn get_rainbow_style_1() -> HighlightStyle {
-    HighlightStyle {
-        color: Some(hsla(30.0, 0.8, 0.6, 1.0)), // Orange
-        ..Default::default()
-    }
-}
-
-fn get_rainbow_style_2() -> HighlightStyle {
-    HighlightStyle {
-        color: Some(hsla(60.0, 0.8, 0.6, 1.0)), // Yellow
-        ..Default::default()
-    }
-}
-
-fn get_rainbow_style_3() -> HighlightStyle {
-    HighlightStyle {
-        color: Some(hsla(120.0, 0.8, 0.6, 1.0)), // Green
-        ..Default::default()
-    }
-}
-
-fn get_rainbow_style_4() -> HighlightStyle {
-    HighlightStyle {
-        color: Some(hsla(180.0, 0.8, 0.6, 1.0)), // Cyan
-        ..Default::default()
-    }
-}
-
-fn get_rainbow_style_5() -> HighlightStyle {
-    HighlightStyle {
-        color: Some(hsla(240.0, 0.8, 0.6, 1.0)), // Blue
-        ..Default::default()
-    }
-}
-
-fn get_rainbow_style_6() -> HighlightStyle {
-    HighlightStyle {
-        color: Some(hsla(270.0, 0.8, 0.6, 1.0)), // Purple
-        ..Default::default()
-    }
-}
-
-fn get_rainbow_style_7() -> HighlightStyle {
-    HighlightStyle {
-        color: Some(hsla(0.0, 0.8, 0.6, 1.0)), // Red (repeat)
-        ..Default::default()
-    }
-}
-
-fn get_rainbow_style_8() -> HighlightStyle {
-    HighlightStyle {
-        color: Some(hsla(30.0, 0.8, 0.6, 1.0)), // Orange (repeat)
-        ..Default::default()
-    }
-}
-
-fn get_rainbow_style_9() -> HighlightStyle {
-    HighlightStyle {
-        color: Some(hsla(60.0, 0.8, 0.6, 1.0)), // Yellow (repeat)
-        ..Default::default()
-    }
-}
-
-fn hsla(hue: f32, saturation: f32, lightness: f32, alpha: f32) -> Hsla {
-    Hsla {
-        h: hue / 360.0,
-        s: saturation,
-        l: lightness,
-        a: alpha,
-    }
 }
 
 // Marker types for different rainbow levels
