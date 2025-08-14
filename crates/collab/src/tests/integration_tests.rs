@@ -5185,10 +5185,15 @@ async fn test_project_search(
             SearchResult::Buffer { buffer, ranges } => {
                 results.entry(buffer).or_insert(ranges);
             }
-            SearchResult::LimitReached => {
-                panic!(
+            SearchResult::Finished {
+                limit_reached,
+                any_file_matched_pattern,
+            } => {
+                assert!(
+                    !limit_reached,
                     "Unexpectedly reached search limit in tests. If you do want to assert limit-reached, change this panic call."
-                )
+                );
+                assert!(any_file_matched_pattern);
             }
         };
     }
