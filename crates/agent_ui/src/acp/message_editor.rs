@@ -1,46 +1,35 @@
-use crate::acp::completion_provider::ContextPickerCompletionProvider;
-use crate::acp::completion_provider::MentionImage;
-use crate::acp::completion_provider::MentionSet;
+use crate::acp::completion_provider::{ContextPickerCompletionProvider, MentionImage, MentionSet};
 use acp_thread::MentionUri;
-use agent::TextThreadStore;
-use agent::ThreadStore;
+use agent::{TextThreadStore, ThreadStore};
 use agent_client_protocol as acp;
 use anyhow::Result;
 use collections::HashSet;
-use editor::ExcerptId;
-use editor::actions::Paste;
-use editor::display_map::CreaseId;
 use editor::{
-    AnchorRangeExt, ContextMenuOptions, ContextMenuPlacement, Editor, EditorElement, EditorMode,
-    EditorStyle, MultiBuffer,
+    Anchor, AnchorRangeExt, ContextMenuOptions, ContextMenuPlacement, Editor, EditorElement,
+    EditorMode, EditorStyle, ExcerptId, FoldPlaceholder, MultiBuffer, ToOffset,
+    actions::Paste,
+    display_map::{Crease, CreaseId, FoldId},
 };
 use futures::FutureExt as _;
-use gpui::ClipboardEntry;
-use gpui::Image;
-use gpui::ImageFormat;
 use gpui::{
-    AppContext, Context, Entity, EventEmitter, FocusHandle, Focusable, Task, TextStyle, WeakEntity,
+    AppContext, ClipboardEntry, Context, Empty, Entity, EventEmitter, FocusHandle, Focusable,
+    Image, ImageFormat, Task, TextStyle, WeakEntity,
 };
-use language::Buffer;
-use language::Language;
+use language::{Buffer, Language};
 use language_model::LanguageModelImage;
 use parking_lot::Mutex;
 use project::{CompletionIntent, Project};
 use settings::Settings;
-use std::fmt::Write;
-use std::path::Path;
-use std::rc::Rc;
-use std::sync::Arc;
+use std::{fmt::Write, ops::Range, path::Path, rc::Rc, sync::Arc};
 use theme::ThemeSettings;
-use ui::IconName;
-use ui::SharedString;
 use ui::{
-    ActiveTheme, App, InteractiveElement, IntoElement, ParentElement, Render, Styled, TextSize,
-    Window, div,
+    ActiveTheme, AnyElement, App, ButtonCommon, ButtonLike, ButtonStyle, Color, Element as _, Icon,
+    IconName, IconSize, InteractiveElement, IntoElement, Label, LabelCommon, LabelSize,
+    ParentElement, Render, SelectableButton, SharedString, Styled, TextSize, TintColor, Toggleable,
+    Window, div, h_flex,
 };
 use util::ResultExt;
-use workspace::Workspace;
-use workspace::notifications::NotifyResultExt as _;
+use workspace::{Workspace, notifications::NotifyResultExt as _};
 use zed_actions::agent::Chat;
 
 use super::completion_provider::Mention;
@@ -331,6 +320,7 @@ impl MessageEditor {
             excerpt_id,
             crease_start,
             content_len,
+            abs_path.clone(),
             self.editor.clone(),
             window,
             cx,
@@ -550,20 +540,78 @@ pub(crate) fn insert_crease_for_image(
     excerpt_id: ExcerptId,
     anchor: text::Anchor,
     content_len: usize,
+    abs_path: Option<Arc<Path>>,
     editor: Entity<Editor>,
     window: &mut Window,
     cx: &mut App,
 ) -> Option<CreaseId> {
-    crate::context_picker::insert_crease_for_mention(
-        excerpt_id,
-        anchor,
-        content_len,
-        "Image".into(),
-        IconName::Image.path().into(),
-        editor,
-        window,
-        cx,
-    )
+    let crease_label = abs_path
+        .as_ref()
+        .and_then(|path| path.file_name())
+        .map(|name| name.to_string_lossy().to_string().into())
+        .unwrap_or(SharedString::from("Image"));
+
+    editor.update(cx, |editor, cx| {
+        let snapshot = editor.buffer().read(cx).snapshot(cx);
+
+        let start = snapshot.anchor_in_excerpt(excerpt_id, anchor)?;
+
+        let start = start.bias_right(&snapshot);
+        let end = snapshot.anchor_before(start.to_offset(&snapshot) + content_len);
+
+        let placeholder = FoldPlaceholder {
+            render: render_image_fold_icon_button(crease_label, cx.weak_entity()),
+            merge_adjacent: false,
+            ..Default::default()
+        };
+
+        let crease = Crease::Inline {
+            range: start..end,
+            placeholder,
+            render_toggle: None,
+            render_trailer: None,
+            metadata: None,
+        };
+
+        let ids = editor.insert_creases(vec![crease.clone()], cx);
+        editor.fold_creases(vec![crease], false, window, cx);
+
+        Some(ids[0])
+    })
+}
+
+fn render_image_fold_icon_button(
+    label: SharedString,
+    editor: WeakEntity<Editor>,
+) -> Arc<dyn Send + Sync + Fn(FoldId, Range<Anchor>, &mut App) -> AnyElement> {
+    Arc::new({
+        move |fold_id, fold_range, cx| {
+            let is_in_text_selection = editor
+                .update(cx, |editor, cx| editor.is_range_selected(&fold_range, cx))
+                .unwrap_or_default();
+
+            ButtonLike::new(fold_id)
+                .style(ButtonStyle::Filled)
+                .selected_style(ButtonStyle::Tinted(TintColor::Accent))
+                .toggle_state(is_in_text_selection)
+                .child(
+                    h_flex()
+                        .gap_1()
+                        .child(
+                            Icon::new(IconName::Image)
+                                .size(IconSize::XSmall)
+                                .color(Color::Muted),
+                        )
+                        .child(
+                            Label::new(label.clone())
+                                .size(LabelSize::Small)
+                                .buffer_font(cx)
+                                .single_line(),
+                        ),
+                )
+                .into_any_element()
+        }
+    })
 }
 
 #[cfg(test)]
