@@ -5,6 +5,7 @@ use std::{
     fmt,
     ops::Range,
     path::{Path, PathBuf},
+    str::FromStr,
 };
 use url::Url;
 
@@ -182,6 +183,14 @@ impl MentionUri {
             }
             MentionUri::Fetch { url } => url.clone(),
         }
+    }
+}
+
+impl FromStr for MentionUri {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> anyhow::Result<Self> {
+        Self::parse(s)
     }
 }
 

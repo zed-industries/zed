@@ -48,7 +48,7 @@ use crate::context_picker::{
     available_context_picker_entries, recent_context_picker_entries, selection_ranges,
 };
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MentionImage {
     pub abs_path: Option<Arc<Path>>,
     pub data: SharedString,
@@ -263,7 +263,7 @@ impl MentionSet {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum Mention {
     Text { uri: MentionUri, content: String },
     Image(MentionImage),
@@ -1245,556 +1245,560 @@ impl MentionCompletion {
     }
 }
 
-// #[cfg(test)]
-// mod tests {
-//     use super::*;
-//     use editor::AnchorRangeExt;
-//     use gpui::{EventEmitter, FocusHandle, Focusable, TestAppContext, VisualTestContext};
-//     use project::{Project, ProjectPath};
-//     use serde_json::json;
-//     use settings::SettingsStore;
-//     use smol::stream::StreamExt as _;
-//     use std::{ops::Deref, rc::Rc};
-//     use util::path;
-//     use workspace::{AppState, Item};
-//
-//     #[test]
-//     fn test_mention_completion_parse() {
-//         assert_eq!(MentionCompletion::try_parse("Lorem Ipsum", 0), None);
-//
-//         assert_eq!(
-//             MentionCompletion::try_parse("Lorem @", 0),
-//             Some(MentionCompletion {
-//                 source_range: 6..7,
-//                 mode: None,
-//                 argument: None,
-//             })
-//         );
-//
-//         assert_eq!(
-//             MentionCompletion::try_parse("Lorem @file", 0),
-//             Some(MentionCompletion {
-//                 source_range: 6..11,
-//                 mode: Some(ContextPickerMode::File),
-//                 argument: None,
-//             })
-//         );
-//
-//         assert_eq!(
-//             MentionCompletion::try_parse("Lorem @file ", 0),
-//             Some(MentionCompletion {
-//                 source_range: 6..12,
-//                 mode: Some(ContextPickerMode::File),
-//                 argument: None,
-//             })
-//         );
-//
-//         assert_eq!(
-//             MentionCompletion::try_parse("Lorem @file main.rs", 0),
-//             Some(MentionCompletion {
-//                 source_range: 6..19,
-//                 mode: Some(ContextPickerMode::File),
-//                 argument: Some("main.rs".to_string()),
-//             })
-//         );
-//
-//         assert_eq!(
-//             MentionCompletion::try_parse("Lorem @file main.rs ", 0),
-//             Some(MentionCompletion {
-//                 source_range: 6..19,
-//                 mode: Some(ContextPickerMode::File),
-//                 argument: Some("main.rs".to_string()),
-//             })
-//         );
-//
-//         assert_eq!(
-//             MentionCompletion::try_parse("Lorem @file main.rs Ipsum", 0),
-//             Some(MentionCompletion {
-//                 source_range: 6..19,
-//                 mode: Some(ContextPickerMode::File),
-//                 argument: Some("main.rs".to_string()),
-//             })
-//         );
-//
-//         assert_eq!(
-//             MentionCompletion::try_parse("Lorem @main", 0),
-//             Some(MentionCompletion {
-//                 source_range: 6..11,
-//                 mode: None,
-//                 argument: Some("main".to_string()),
-//             })
-//         );
-//
-//         assert_eq!(MentionCompletion::try_parse("test@", 0), None);
-//     }
-//
-//     struct AtMentionEditor(Entity<Editor>);
-//
-//     impl Item for AtMentionEditor {
-//         type Event = ();
-//
-//         fn include_in_nav_history() -> bool {
-//             false
-//         }
-//
-//         fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
-//             "Test".into()
-//         }
-//     }
-//
-//     impl EventEmitter<()> for AtMentionEditor {}
-//
-//     impl Focusable for AtMentionEditor {
-//         fn focus_handle(&self, cx: &App) -> FocusHandle {
-//             self.0.read(cx).focus_handle(cx).clone()
-//         }
-//     }
-//
-//     impl Render for AtMentionEditor {
-//         fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-//             self.0.clone().into_any_element()
-//         }
-//     }
-//
-//     #[gpui::test]
-//     async fn test_context_completion_provider(cx: &mut TestAppContext) {
-//         init_test(cx);
-//
-//         let app_state = cx.update(AppState::test);
-//
-//         cx.update(|cx| {
-//             language::init(cx);
-//             editor::init(cx);
-//             workspace::init(app_state.clone(), cx);
-//             Project::init_settings(cx);
-//         });
-//
-//         app_state
-//             .fs
-//             .as_fake()
-//             .insert_tree(
-//                 path!("/dir"),
-//                 json!({
-//                     "editor": "",
-//                     "a": {
-//                         "one.txt": "1",
-//                         "two.txt": "2",
-//                         "three.txt": "3",
-//                         "four.txt": "4"
-//                     },
-//                     "b": {
-//                         "five.txt": "5",
-//                         "six.txt": "6",
-//                         "seven.txt": "7",
-//                         "eight.txt": "8",
-//                     }
-//                 }),
-//             )
-//             .await;
-//
-//         let project = Project::test(app_state.fs.clone(), [path!("/dir").as_ref()], cx).await;
-//         let window = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
-//         let workspace = window.root(cx).unwrap();
-//
-//         let worktree = project.update(cx, |project, cx| {
-//             let mut worktrees = project.worktrees(cx).collect::<Vec<_>>();
-//             assert_eq!(worktrees.len(), 1);
-//             worktrees.pop().unwrap()
-//         });
-//         let worktree_id = worktree.read_with(cx, |worktree, _| worktree.id());
-//
-//         let mut cx = VisualTestContext::from_window(*window.deref(), cx);
-//
-//         let paths = vec![
-//             path!("a/one.txt"),
-//             path!("a/two.txt"),
-//             path!("a/three.txt"),
-//             path!("a/four.txt"),
-//             path!("b/five.txt"),
-//             path!("b/six.txt"),
-//             path!("b/seven.txt"),
-//             path!("b/eight.txt"),
-//         ];
-//
-//         let mut opened_editors = Vec::new();
-//         for path in paths {
-//             let buffer = workspace
-//                 .update_in(&mut cx, |workspace, window, cx| {
-//                     workspace.open_path(
-//                         ProjectPath {
-//                             worktree_id,
-//                             path: Path::new(path).into(),
-//                         },
-//                         None,
-//                         false,
-//                         window,
-//                         cx,
-//                     )
-//                 })
-//                 .await
-//                 .unwrap();
-//             opened_editors.push(buffer);
-//         }
-//
-//         let editor = workspace.update_in(&mut cx, |workspace, window, cx| {
-//             let editor = cx.new(|cx| {
-//                 Editor::new(
-//                     editor::EditorMode::full(),
-//                     multi_buffer::MultiBuffer::build_simple("", cx),
-//                     None,
-//                     window,
-//                     cx,
-//                 )
-//             });
-//             workspace.active_pane().update(cx, |pane, cx| {
-//                 pane.add_item(
-//                     Box::new(cx.new(|_| AtMentionEditor(editor.clone()))),
-//                     true,
-//                     true,
-//                     None,
-//                     window,
-//                     cx,
-//                 );
-//             });
-//             editor
-//         });
-//
-//         let mention_set = Arc::new(Mutex::new(MentionSet::default()));
-//
-//         let thread_store = cx.new(|cx| ThreadStore::fake(project.clone(), cx));
-//         let text_thread_store = cx.new(|cx| TextThreadStore::fake(project.clone(), cx));
-//
-//         let editor_entity = editor.downgrade();
-//         editor.update_in(&mut cx, |editor, window, cx| {
-//             window.focus(&editor.focus_handle(cx));
-//             editor.set_completion_provider(Some(Rc::new(ContextPickerCompletionProvider::new(
-//                 mention_set.clone(),
-//                 workspace.downgrade(),
-//                 thread_store.downgrade(),
-//                 text_thread_store.downgrade(),
-//                 editor_entity,
-//             ))));
-//         });
-//
-//         cx.simulate_input("Lorem ");
-//
-//         editor.update(&mut cx, |editor, cx| {
-//             assert_eq!(editor.text(cx), "Lorem ");
-//             assert!(!editor.has_visible_completions_menu());
-//         });
-//
-//         cx.simulate_input("@");
-//
-//         editor.update(&mut cx, |editor, cx| {
-//             assert_eq!(editor.text(cx), "Lorem @");
-//             assert!(editor.has_visible_completions_menu());
-//             assert_eq!(
-//                 current_completion_labels(editor),
-//                 &[
-//                     "eight.txt dir/b/",
-//                     "seven.txt dir/b/",
-//                     "six.txt dir/b/",
-//                     "five.txt dir/b/",
-//                     "Files & Directories",
-//                     "Symbols",
-//                     "Threads",
-//                     "Fetch"
-//                 ]
-//             );
-//         });
-//
-//         // Select and confirm "File"
-//         editor.update_in(&mut cx, |editor, window, cx| {
-//             assert!(editor.has_visible_completions_menu());
-//             editor.context_menu_next(&editor::actions::ContextMenuNext, window, cx);
-//             editor.context_menu_next(&editor::actions::ContextMenuNext, window, cx);
-//             editor.context_menu_next(&editor::actions::ContextMenuNext, window, cx);
-//             editor.context_menu_next(&editor::actions::ContextMenuNext, window, cx);
-//             editor.confirm_completion(&editor::actions::ConfirmCompletion::default(), window, cx);
-//         });
-//
-//         cx.run_until_parked();
-//
-//         editor.update(&mut cx, |editor, cx| {
-//             assert_eq!(editor.text(cx), "Lorem @file ");
-//             assert!(editor.has_visible_completions_menu());
-//         });
-//
-//         cx.simulate_input("one");
-//
-//         editor.update(&mut cx, |editor, cx| {
-//             assert_eq!(editor.text(cx), "Lorem @file one");
-//             assert!(editor.has_visible_completions_menu());
-//             assert_eq!(current_completion_labels(editor), vec!["one.txt dir/a/"]);
-//         });
-//
-//         editor.update_in(&mut cx, |editor, window, cx| {
-//             assert!(editor.has_visible_completions_menu());
-//             editor.confirm_completion(&editor::actions::ConfirmCompletion::default(), window, cx);
-//         });
-//
-//         editor.update(&mut cx, |editor, cx| {
-//             assert_eq!(editor.text(cx), "Lorem [@one.txt](file:///dir/a/one.txt) ");
-//             assert!(!editor.has_visible_completions_menu());
-//             assert_eq!(
-//                 fold_ranges(editor, cx),
-//                 vec![Point::new(0, 6)..Point::new(0, 39)]
-//             );
-//         });
-//
-//         let contents = cx
-//             .update(|window, cx| {
-//                 mention_set.lock().contents(
-//                     project.clone(),
-//                     thread_store.clone(),
-//                     text_thread_store.clone(),
-//                     window,
-//                     cx,
-//                 )
-//             })
-//             .await
-//             .unwrap()
-//             .into_values()
-//             .collect::<Vec<_>>();
-//
-//         assert_eq!(contents.len(), 1);
-//         assert_eq!(contents[0].content, "1");
-//         assert_eq!(
-//             contents[0].uri.to_uri().to_string(),
-//             "file:///dir/a/one.txt"
-//         );
-//
-//         cx.simulate_input(" ");
-//
-//         editor.update(&mut cx, |editor, cx| {
-//             assert_eq!(editor.text(cx), "Lorem [@one.txt](file:///dir/a/one.txt)  ");
-//             assert!(!editor.has_visible_completions_menu());
-//             assert_eq!(
-//                 fold_ranges(editor, cx),
-//                 vec![Point::new(0, 6)..Point::new(0, 39)]
-//             );
-//         });
-//
-//         cx.simulate_input("Ipsum ");
-//
-//         editor.update(&mut cx, |editor, cx| {
-//             assert_eq!(
-//                 editor.text(cx),
-//                 "Lorem [@one.txt](file:///dir/a/one.txt)  Ipsum ",
-//             );
-//             assert!(!editor.has_visible_completions_menu());
-//             assert_eq!(
-//                 fold_ranges(editor, cx),
-//                 vec![Point::new(0, 6)..Point::new(0, 39)]
-//             );
-//         });
-//
-//         cx.simulate_input("@file ");
-//
-//         editor.update(&mut cx, |editor, cx| {
-//             assert_eq!(
-//                 editor.text(cx),
-//                 "Lorem [@one.txt](file:///dir/a/one.txt)  Ipsum @file ",
-//             );
-//             assert!(editor.has_visible_completions_menu());
-//             assert_eq!(
-//                 fold_ranges(editor, cx),
-//                 vec![Point::new(0, 6)..Point::new(0, 39)]
-//             );
-//         });
-//
-//         editor.update_in(&mut cx, |editor, window, cx| {
-//             editor.confirm_completion(&editor::actions::ConfirmCompletion::default(), window, cx);
-//         });
-//
-//         cx.run_until_parked();
-//
-//         let contents = cx
-//             .update(|window, cx| {
-//                 mention_set.lock().contents(
-//                     project.clone(),
-//                     thread_store.clone(),
-//                     text_thread_store.clone(),
-//                     window,
-//                     cx,
-//                 )
-//             })
-//             .await
-//             .unwrap()
-//             .into_values()
-//             .collect::<Vec<_>>();
-//
-//         assert_eq!(contents.len(), 2);
-//         let new_mention = contents
-//             .iter()
-//             .find(|mention| mention.uri.to_uri().to_string() == "file:///dir/b/eight.txt")
-//             .unwrap();
-//         assert_eq!(new_mention.content, "8");
-//
-//         editor.update(&mut cx, |editor, cx| {
-//             assert_eq!(
-//                 editor.text(cx),
-//                 "Lorem [@one.txt](file:///dir/a/one.txt)  Ipsum [@eight.txt](file:///dir/b/eight.txt) "
-//             );
-//             assert!(!editor.has_visible_completions_menu());
-//             assert_eq!(
-//                 fold_ranges(editor, cx),
-//                 vec![
-//                     Point::new(0, 6)..Point::new(0, 39),
-//                     Point::new(0, 47)..Point::new(0, 84)
-//                 ]
-//             );
-//         });
-//
-//         let plain_text_language = Arc::new(language::Language::new(
-//             language::LanguageConfig {
-//                 name: "Plain Text".into(),
-//                 matcher: language::LanguageMatcher {
-//                     path_suffixes: vec!["txt".to_string()],
-//                     ..Default::default()
-//                 },
-//                 ..Default::default()
-//             },
-//             None,
-//         ));
-//
-//         // Register the language and fake LSP
-//         let language_registry = project.read_with(&cx, |project, _| project.languages().clone());
-//         language_registry.add(plain_text_language);
-//
-//         let mut fake_language_servers = language_registry.register_fake_lsp(
-//             "Plain Text",
-//             language::FakeLspAdapter {
-//                 capabilities: lsp::ServerCapabilities {
-//                     workspace_symbol_provider: Some(lsp::OneOf::Left(true)),
-//                     ..Default::default()
-//                 },
-//                 ..Default::default()
-//             },
-//         );
-//
-//         // Open the buffer to trigger LSP initialization
-//         let buffer = project
-//             .update(&mut cx, |project, cx| {
-//                 project.open_local_buffer(path!("/dir/a/one.txt"), cx)
-//             })
-//             .await
-//             .unwrap();
-//
-//         // Register the buffer with language servers
-//         let _handle = project.update(&mut cx, |project, cx| {
-//             project.register_buffer_with_language_servers(&buffer, cx)
-//         });
-//
-//         cx.run_until_parked();
-//
-//         let fake_language_server = fake_language_servers.next().await.unwrap();
-//         fake_language_server.set_request_handler::<lsp::WorkspaceSymbolRequest, _, _>(
-//             |_, _| async move {
-//                 Ok(Some(lsp::WorkspaceSymbolResponse::Flat(vec![
-//                     #[allow(deprecated)]
-//                     lsp::SymbolInformation {
-//                         name: "MySymbol".into(),
-//                         location: lsp::Location {
-//                             uri: lsp::Url::from_file_path(path!("/dir/a/one.txt")).unwrap(),
-//                             range: lsp::Range::new(
-//                                 lsp::Position::new(0, 0),
-//                                 lsp::Position::new(0, 1),
-//                             ),
-//                         },
-//                         kind: lsp::SymbolKind::CONSTANT,
-//                         tags: None,
-//                         container_name: None,
-//                         deprecated: None,
-//                     },
-//                 ])))
-//             },
-//         );
-//
-//         cx.simulate_input("@symbol ");
-//
-//         editor.update(&mut cx, |editor, cx| {
-//             assert_eq!(
-//                 editor.text(cx),
-//                 "Lorem [@one.txt](file:///dir/a/one.txt)  Ipsum [@eight.txt](file:///dir/b/eight.txt) @symbol "
-//             );
-//             assert!(editor.has_visible_completions_menu());
-//             assert_eq!(
-//                 current_completion_labels(editor),
-//                 &[
-//                     "MySymbol",
-//                 ]
-//             );
-//         });
-//
-//         editor.update_in(&mut cx, |editor, window, cx| {
-//             editor.confirm_completion(&editor::actions::ConfirmCompletion::default(), window, cx);
-//         });
-//
-//         let contents = cx
-//             .update(|window, cx| {
-//                 mention_set.lock().contents(
-//                     project.clone(),
-//                     thread_store,
-//                     text_thread_store,
-//                     window,
-//                     cx,
-//                 )
-//             })
-//             .await
-//             .unwrap()
-//             .into_values()
-//             .collect::<Vec<_>>();
-//
-//         assert_eq!(contents.len(), 3);
-//         let new_mention = contents
-//             .iter()
-//             .find(|mention| {
-//                 mention.uri.to_uri().to_string() == "file:///dir/a/one.txt?symbol=MySymbol#L1:1"
-//             })
-//             .unwrap();
-//         assert_eq!(new_mention.content, "1");
-//
-//         cx.run_until_parked();
-//
-//         editor.read_with(&mut cx, |editor, cx| {
-//             assert_eq!(
-//                 editor.text(cx),
-//                 "Lorem [@one.txt](file:///dir/a/one.txt)  Ipsum [@eight.txt](file:///dir/b/eight.txt) [@MySymbol](file:///dir/a/one.txt?symbol=MySymbol#L1:1) "
-//             );
-//         });
-//     }
-//
-//     fn fold_ranges(editor: &Editor, cx: &mut App) -> Vec<Range<Point>> {
-//         let snapshot = editor.buffer().read(cx).snapshot(cx);
-//         editor.display_map.update(cx, |display_map, cx| {
-//             display_map
-//                 .snapshot(cx)
-//                 .folds_in_range(0..snapshot.len())
-//                 .map(|fold| fold.range.to_point(&snapshot))
-//                 .collect()
-//         })
-//     }
-//
-//     fn current_completion_labels(editor: &Editor) -> Vec<String> {
-//         let completions = editor.current_completions().expect("Missing completions");
-//         completions
-//             .into_iter()
-//             .map(|completion| completion.label.text.to_string())
-//             .collect::<Vec<_>>()
-//     }
-//
-//     pub(crate) fn init_test(cx: &mut TestAppContext) {
-//         cx.update(|cx| {
-//             let store = SettingsStore::test(cx);
-//             cx.set_global(store);
-//             theme::init(theme::LoadThemes::JustBase, cx);
-//             client::init_settings(cx);
-//             language::init(cx);
-//             Project::init_settings(cx);
-//             workspace::init_settings(cx);
-//             editor::init_settings(cx);
-//         });
-//     }
-// }
-//
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use editor::AnchorRangeExt;
+    use gpui::{EventEmitter, FocusHandle, Focusable, TestAppContext, VisualTestContext};
+    use project::{Project, ProjectPath};
+    use serde_json::json;
+    use settings::SettingsStore;
+    use smol::stream::StreamExt as _;
+    use std::{ops::Deref, rc::Rc};
+    use util::path;
+    use workspace::{AppState, Item};
+
+    #[test]
+    fn test_mention_completion_parse() {
+        assert_eq!(MentionCompletion::try_parse("Lorem Ipsum", 0), None);
+
+        assert_eq!(
+            MentionCompletion::try_parse("Lorem @", 0),
+            Some(MentionCompletion {
+                source_range: 6..7,
+                mode: None,
+                argument: None,
+            })
+        );
+
+        assert_eq!(
+            MentionCompletion::try_parse("Lorem @file", 0),
+            Some(MentionCompletion {
+                source_range: 6..11,
+                mode: Some(ContextPickerMode::File),
+                argument: None,
+            })
+        );
+
+        assert_eq!(
+            MentionCompletion::try_parse("Lorem @file ", 0),
+            Some(MentionCompletion {
+                source_range: 6..12,
+                mode: Some(ContextPickerMode::File),
+                argument: None,
+            })
+        );
+
+        assert_eq!(
+            MentionCompletion::try_parse("Lorem @file main.rs", 0),
+            Some(MentionCompletion {
+                source_range: 6..19,
+                mode: Some(ContextPickerMode::File),
+                argument: Some("main.rs".to_string()),
+            })
+        );
+
+        assert_eq!(
+            MentionCompletion::try_parse("Lorem @file main.rs ", 0),
+            Some(MentionCompletion {
+                source_range: 6..19,
+                mode: Some(ContextPickerMode::File),
+                argument: Some("main.rs".to_string()),
+            })
+        );
+
+        assert_eq!(
+            MentionCompletion::try_parse("Lorem @file main.rs Ipsum", 0),
+            Some(MentionCompletion {
+                source_range: 6..19,
+                mode: Some(ContextPickerMode::File),
+                argument: Some("main.rs".to_string()),
+            })
+        );
+
+        assert_eq!(
+            MentionCompletion::try_parse("Lorem @main", 0),
+            Some(MentionCompletion {
+                source_range: 6..11,
+                mode: None,
+                argument: Some("main".to_string()),
+            })
+        );
+
+        assert_eq!(MentionCompletion::try_parse("test@", 0), None);
+    }
+
+    struct AtMentionEditor(Entity<Editor>);
+
+    impl Item for AtMentionEditor {
+        type Event = ();
+
+        fn include_in_nav_history() -> bool {
+            false
+        }
+
+        fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
+            "Test".into()
+        }
+    }
+
+    impl EventEmitter<()> for AtMentionEditor {}
+
+    impl Focusable for AtMentionEditor {
+        fn focus_handle(&self, cx: &App) -> FocusHandle {
+            self.0.read(cx).focus_handle(cx).clone()
+        }
+    }
+
+    impl Render for AtMentionEditor {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            self.0.clone().into_any_element()
+        }
+    }
+
+    #[gpui::test]
+    async fn test_context_completion_provider(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let app_state = cx.update(AppState::test);
+
+        cx.update(|cx| {
+            language::init(cx);
+            editor::init(cx);
+            workspace::init(app_state.clone(), cx);
+            Project::init_settings(cx);
+        });
+
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(
+                path!("/dir"),
+                json!({
+                    "editor": "",
+                    "a": {
+                        "one.txt": "1",
+                        "two.txt": "2",
+                        "three.txt": "3",
+                        "four.txt": "4"
+                    },
+                    "b": {
+                        "five.txt": "5",
+                        "six.txt": "6",
+                        "seven.txt": "7",
+                        "eight.txt": "8",
+                    }
+                }),
+            )
+            .await;
+
+        let project = Project::test(app_state.fs.clone(), [path!("/dir").as_ref()], cx).await;
+        let window = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let workspace = window.root(cx).unwrap();
+
+        let worktree = project.update(cx, |project, cx| {
+            let mut worktrees = project.worktrees(cx).collect::<Vec<_>>();
+            assert_eq!(worktrees.len(), 1);
+            worktrees.pop().unwrap()
+        });
+        let worktree_id = worktree.read_with(cx, |worktree, _| worktree.id());
+
+        let mut cx = VisualTestContext::from_window(*window.deref(), cx);
+
+        let paths = vec![
+            path!("a/one.txt"),
+            path!("a/two.txt"),
+            path!("a/three.txt"),
+            path!("a/four.txt"),
+            path!("b/five.txt"),
+            path!("b/six.txt"),
+            path!("b/seven.txt"),
+            path!("b/eight.txt"),
+        ];
+
+        let mut opened_editors = Vec::new();
+        for path in paths {
+            let buffer = workspace
+                .update_in(&mut cx, |workspace, window, cx| {
+                    workspace.open_path(
+                        ProjectPath {
+                            worktree_id,
+                            path: Path::new(path).into(),
+                        },
+                        None,
+                        false,
+                        window,
+                        cx,
+                    )
+                })
+                .await
+                .unwrap();
+            opened_editors.push(buffer);
+        }
+
+        let editor = workspace.update_in(&mut cx, |workspace, window, cx| {
+            let editor = cx.new(|cx| {
+                Editor::new(
+                    editor::EditorMode::full(),
+                    multi_buffer::MultiBuffer::build_simple("", cx),
+                    None,
+                    window,
+                    cx,
+                )
+            });
+            workspace.active_pane().update(cx, |pane, cx| {
+                pane.add_item(
+                    Box::new(cx.new(|_| AtMentionEditor(editor.clone()))),
+                    true,
+                    true,
+                    None,
+                    window,
+                    cx,
+                );
+            });
+            editor
+        });
+
+        let mention_set = Arc::new(Mutex::new(MentionSet::default()));
+
+        let thread_store = cx.new(|cx| ThreadStore::fake(project.clone(), cx));
+        let text_thread_store = cx.new(|cx| TextThreadStore::fake(project.clone(), cx));
+
+        let editor_entity = editor.downgrade();
+        editor.update_in(&mut cx, |editor, window, cx| {
+            window.focus(&editor.focus_handle(cx));
+            editor.set_completion_provider(Some(Rc::new(ContextPickerCompletionProvider::new(
+                mention_set.clone(),
+                workspace.downgrade(),
+                thread_store.downgrade(),
+                text_thread_store.downgrade(),
+                editor_entity,
+            ))));
+        });
+
+        cx.simulate_input("Lorem ");
+
+        editor.update(&mut cx, |editor, cx| {
+            assert_eq!(editor.text(cx), "Lorem ");
+            assert!(!editor.has_visible_completions_menu());
+        });
+
+        cx.simulate_input("@");
+
+        editor.update(&mut cx, |editor, cx| {
+            assert_eq!(editor.text(cx), "Lorem @");
+            assert!(editor.has_visible_completions_menu());
+            assert_eq!(
+                current_completion_labels(editor),
+                &[
+                    "eight.txt dir/b/",
+                    "seven.txt dir/b/",
+                    "six.txt dir/b/",
+                    "five.txt dir/b/",
+                    "Files & Directories",
+                    "Symbols",
+                    "Threads",
+                    "Fetch"
+                ]
+            );
+        });
+
+        // Select and confirm "File"
+        editor.update_in(&mut cx, |editor, window, cx| {
+            assert!(editor.has_visible_completions_menu());
+            editor.context_menu_next(&editor::actions::ContextMenuNext, window, cx);
+            editor.context_menu_next(&editor::actions::ContextMenuNext, window, cx);
+            editor.context_menu_next(&editor::actions::ContextMenuNext, window, cx);
+            editor.context_menu_next(&editor::actions::ContextMenuNext, window, cx);
+            editor.confirm_completion(&editor::actions::ConfirmCompletion::default(), window, cx);
+        });
+
+        cx.run_until_parked();
+
+        editor.update(&mut cx, |editor, cx| {
+            assert_eq!(editor.text(cx), "Lorem @file ");
+            assert!(editor.has_visible_completions_menu());
+        });
+
+        cx.simulate_input("one");
+
+        editor.update(&mut cx, |editor, cx| {
+            assert_eq!(editor.text(cx), "Lorem @file one");
+            assert!(editor.has_visible_completions_menu());
+            assert_eq!(current_completion_labels(editor), vec!["one.txt dir/a/"]);
+        });
+
+        editor.update_in(&mut cx, |editor, window, cx| {
+            assert!(editor.has_visible_completions_menu());
+            editor.confirm_completion(&editor::actions::ConfirmCompletion::default(), window, cx);
+        });
+
+        editor.update(&mut cx, |editor, cx| {
+            assert_eq!(editor.text(cx), "Lorem [@one.txt](file:///dir/a/one.txt) ");
+            assert!(!editor.has_visible_completions_menu());
+            assert_eq!(
+                fold_ranges(editor, cx),
+                vec![Point::new(0, 6)..Point::new(0, 39)]
+            );
+        });
+
+        let contents = cx
+            .update(|window, cx| {
+                mention_set.lock().contents(
+                    project.clone(),
+                    thread_store.clone(),
+                    text_thread_store.clone(),
+                    window,
+                    cx,
+                )
+            })
+            .await
+            .unwrap()
+            .into_values()
+            .collect::<Vec<_>>();
+
+        pretty_assertions::assert_eq!(
+            contents,
+            [Mention::Text {
+                content: "1".into(),
+                uri: "file:///dir/a/one.txt".parse().unwrap()
+            }]
+        );
+
+        cx.simulate_input(" ");
+
+        editor.update(&mut cx, |editor, cx| {
+            assert_eq!(editor.text(cx), "Lorem [@one.txt](file:///dir/a/one.txt)  ");
+            assert!(!editor.has_visible_completions_menu());
+            assert_eq!(
+                fold_ranges(editor, cx),
+                vec![Point::new(0, 6)..Point::new(0, 39)]
+            );
+        });
+
+        cx.simulate_input("Ipsum ");
+
+        editor.update(&mut cx, |editor, cx| {
+            assert_eq!(
+                editor.text(cx),
+                "Lorem [@one.txt](file:///dir/a/one.txt)  Ipsum ",
+            );
+            assert!(!editor.has_visible_completions_menu());
+            assert_eq!(
+                fold_ranges(editor, cx),
+                vec![Point::new(0, 6)..Point::new(0, 39)]
+            );
+        });
+
+        cx.simulate_input("@file ");
+
+        editor.update(&mut cx, |editor, cx| {
+            assert_eq!(
+                editor.text(cx),
+                "Lorem [@one.txt](file:///dir/a/one.txt)  Ipsum @file ",
+            );
+            assert!(editor.has_visible_completions_menu());
+            assert_eq!(
+                fold_ranges(editor, cx),
+                vec![Point::new(0, 6)..Point::new(0, 39)]
+            );
+        });
+
+        editor.update_in(&mut cx, |editor, window, cx| {
+            editor.confirm_completion(&editor::actions::ConfirmCompletion::default(), window, cx);
+        });
+
+        cx.run_until_parked();
+
+        let contents = cx
+            .update(|window, cx| {
+                mention_set.lock().contents(
+                    project.clone(),
+                    thread_store.clone(),
+                    text_thread_store.clone(),
+                    window,
+                    cx,
+                )
+            })
+            .await
+            .unwrap()
+            .into_values()
+            .collect::<Vec<_>>();
+
+        assert_eq!(contents.len(), 2);
+        pretty_assertions::assert_eq!(
+            contents[1],
+            Mention::Text {
+                content: "8".to_string(),
+                uri: "file:///dir/b/eight.txt".parse().unwrap(),
+            }
+        );
+
+        editor.update(&mut cx, |editor, cx| {
+            assert_eq!(
+                editor.text(cx),
+                "Lorem [@one.txt](file:///dir/a/one.txt)  Ipsum [@eight.txt](file:///dir/b/eight.txt) "
+            );
+            assert!(!editor.has_visible_completions_menu());
+            assert_eq!(
+                fold_ranges(editor, cx),
+                vec![
+                    Point::new(0, 6)..Point::new(0, 39),
+                    Point::new(0, 47)..Point::new(0, 84)
+                ]
+            );
+        });
+
+        let plain_text_language = Arc::new(language::Language::new(
+            language::LanguageConfig {
+                name: "Plain Text".into(),
+                matcher: language::LanguageMatcher {
+                    path_suffixes: vec!["txt".to_string()],
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            None,
+        ));
+
+        // Register the language and fake LSP
+        let language_registry = project.read_with(&cx, |project, _| project.languages().clone());
+        language_registry.add(plain_text_language);
+
+        let mut fake_language_servers = language_registry.register_fake_lsp(
+            "Plain Text",
+            language::FakeLspAdapter {
+                capabilities: lsp::ServerCapabilities {
+                    workspace_symbol_provider: Some(lsp::OneOf::Left(true)),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        );
+
+        // Open the buffer to trigger LSP initialization
+        let buffer = project
+            .update(&mut cx, |project, cx| {
+                project.open_local_buffer(path!("/dir/a/one.txt"), cx)
+            })
+            .await
+            .unwrap();
+
+        // Register the buffer with language servers
+        let _handle = project.update(&mut cx, |project, cx| {
+            project.register_buffer_with_language_servers(&buffer, cx)
+        });
+
+        cx.run_until_parked();
+
+        let fake_language_server = fake_language_servers.next().await.unwrap();
+        fake_language_server.set_request_handler::<lsp::WorkspaceSymbolRequest, _, _>(
+            |_, _| async move {
+                Ok(Some(lsp::WorkspaceSymbolResponse::Flat(vec![
+                    #[allow(deprecated)]
+                    lsp::SymbolInformation {
+                        name: "MySymbol".into(),
+                        location: lsp::Location {
+                            uri: lsp::Url::from_file_path(path!("/dir/a/one.txt")).unwrap(),
+                            range: lsp::Range::new(
+                                lsp::Position::new(0, 0),
+                                lsp::Position::new(0, 1),
+                            ),
+                        },
+                        kind: lsp::SymbolKind::CONSTANT,
+                        tags: None,
+                        container_name: None,
+                        deprecated: None,
+                    },
+                ])))
+            },
+        );
+
+        cx.simulate_input("@symbol ");
+
+        editor.update(&mut cx, |editor, cx| {
+            assert_eq!(
+                editor.text(cx),
+                "Lorem [@one.txt](file:///dir/a/one.txt)  Ipsum [@eight.txt](file:///dir/b/eight.txt) @symbol "
+            );
+            assert!(editor.has_visible_completions_menu());
+            assert_eq!(
+                current_completion_labels(editor),
+                &[
+                    "MySymbol",
+                ]
+            );
+        });
+
+        editor.update_in(&mut cx, |editor, window, cx| {
+            editor.confirm_completion(&editor::actions::ConfirmCompletion::default(), window, cx);
+        });
+
+        let contents = cx
+            .update(|window, cx| {
+                mention_set.lock().contents(
+                    project.clone(),
+                    thread_store,
+                    text_thread_store,
+                    window,
+                    cx,
+                )
+            })
+            .await
+            .unwrap()
+            .into_values()
+            .collect::<Vec<_>>();
+
+        assert_eq!(contents.len(), 3);
+        pretty_assertions::assert_eq!(
+            contents[2],
+            Mention::Text {
+                content: "1".into(),
+                uri: "file:///dir/a/one.txt?symbol=MySymbol#L1:1"
+                    .parse()
+                    .unwrap(),
+            }
+        );
+
+        cx.run_until_parked();
+
+        editor.read_with(&mut cx, |editor, cx| {
+            assert_eq!(
+                editor.text(cx),
+                "Lorem [@one.txt](file:///dir/a/one.txt)  Ipsum [@eight.txt](file:///dir/b/eight.txt) [@MySymbol](file:///dir/a/one.txt?symbol=MySymbol#L1:1) "
+            );
+        });
+    }
+
+    fn fold_ranges(editor: &Editor, cx: &mut App) -> Vec<Range<Point>> {
+        let snapshot = editor.buffer().read(cx).snapshot(cx);
+        editor.display_map.update(cx, |display_map, cx| {
+            display_map
+                .snapshot(cx)
+                .folds_in_range(0..snapshot.len())
+                .map(|fold| fold.range.to_point(&snapshot))
+                .collect()
+        })
+    }
+
+    fn current_completion_labels(editor: &Editor) -> Vec<String> {
+        let completions = editor.current_completions().expect("Missing completions");
+        completions
+            .into_iter()
+            .map(|completion| completion.label.text.to_string())
+            .collect::<Vec<_>>()
+    }
+
+    pub(crate) fn init_test(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let store = SettingsStore::test(cx);
+            cx.set_global(store);
+            theme::init(theme::LoadThemes::JustBase, cx);
+            client::init_settings(cx);
+            language::init(cx);
+            Project::init_settings(cx);
+            workspace::init_settings(cx);
+            editor::init_settings(cx);
+        });
+    }
+}
