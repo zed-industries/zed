@@ -6401,7 +6401,7 @@ async fn test_split_selection_into_lines(cx: &mut TestAppContext) {
     fn test(cx: &mut EditorTestContext, initial_state: &'static str, expected_state: &'static str) {
         cx.set_state(initial_state);
         cx.update_editor(|e, window, cx| {
-            e.split_selection_into_lines(&SplitSelectionIntoLines, window, cx)
+            e.split_selection_into_lines(&Default::default(), window, cx)
         });
         cx.assert_editor_state(expected_state);
     }
@@ -6489,7 +6489,7 @@ async fn test_split_selection_into_lines_interacting_with_creases(cx: &mut TestA
                 DisplayPoint::new(DisplayRow(4), 4)..DisplayPoint::new(DisplayRow(4), 4),
             ])
         });
-        editor.split_selection_into_lines(&SplitSelectionIntoLines, window, cx);
+        editor.split_selection_into_lines(&Default::default(), window, cx);
         assert_eq!(
             editor.display_text(cx),
             "aaaaa\nbbbbb\nccc⋯eeee\nfffff\nggggg\n⋯i"
@@ -6505,7 +6505,7 @@ async fn test_split_selection_into_lines_interacting_with_creases(cx: &mut TestA
                 DisplayPoint::new(DisplayRow(5), 0)..DisplayPoint::new(DisplayRow(0), 1)
             ])
         });
-        editor.split_selection_into_lines(&SplitSelectionIntoLines, window, cx);
+        editor.split_selection_into_lines(&Default::default(), window, cx);
         assert_eq!(
             editor.display_text(cx),
             "aaaaa\nbbbbb\nccccc\nddddd\neeeee\nfffff\nggggg\nhhhhh\niiiii"

@@ -407,6 +407,7 @@
       "g w": "vim::PushRewrap",
       "insert": "vim::InsertBefore",
       "alt-.": "vim::RepeatFind",
+      "alt-s": ["editor::SplitSelectionIntoLines", { "keep_selections": true }],
       // tree-sitter related commands
       "[ x": "editor::SelectLargerSyntaxNode",
       "] x": "editor::SelectSmallerSyntaxNode",
