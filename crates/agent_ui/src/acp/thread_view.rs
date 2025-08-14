@@ -1,6 +1,6 @@
 use acp_thread::{
     AcpThread, AcpThreadEvent, AgentThreadEntry, AssistantMessage, AssistantMessageChunk,
-    LoadError, MentionUri, ThreadStatus, ToolCall, ToolCallContent, ToolCallStatus,
+    LoadError, MentionUri, ThreadStatus, ToolCall, ToolCallContent, ToolCallStatus, UserMessageId,
 };
 use acp_thread::{AgentConnection, Plan};
 use action_log::ActionLog;
@@ -921,6 +921,16 @@ impl AcpThreadView {
         cx.notify();
     }
 
+    fn rewind(&mut self, message_id: &UserMessageId, cx: &mut Context<Self>) {
+        let Some(thread) = self.thread() else {
+            return;
+        };
+        thread
+            .update(cx, |thread, cx| thread.rewind(message_id.clone(), cx))
+            .detach_and_log_err(cx);
+        cx.notify();
+    }
+
     fn render_entry(
         &self,
         index: usize,
@@ -931,8 +941,23 @@ impl AcpThreadView {
     ) -> AnyElement {
         let primary = match &entry {
             AgentThreadEntry::UserMessage(message) => div()
+                .id(("user_message", index))
                 .py_4()
                 .px_2()
+                .children(message.id.clone().and_then(|message_id| {
+                    message.checkpoint.as_ref()?;
+
+                    Some(
+                        Button::new("restore-checkpoint", "Restore Checkpoint")
+                            .icon(IconName::Undo)
+                            .icon_size(IconSize::XSmall)
+                            .icon_position(IconPosition::Start)
+                            .label_size(LabelSize::XSmall)
+                            .on_click(cx.listener(move |this, _, _window, cx| {
+                                this.rewind(&message_id, cx);
+                            })),
+                    )
+                }))
                 .child(
                     v_flex()
                         .p_3()
