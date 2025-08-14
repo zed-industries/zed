@@ -508,7 +508,7 @@ mod tests {
         };
 
         assert_eq!(
-            open_target.path().path.as_path(),
+            open_target.path().path,
             Path::new(tooltip),
             "Open target path mismatch at {file}:{line}:"
         );
