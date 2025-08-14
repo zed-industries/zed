@@ -49,7 +49,7 @@ use crate::context_picker::{
     available_context_picker_entries, recent_context_picker_entries, selection_ranges,
 };
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MentionImage {
     pub abs_path: Option<Arc<Path>>,
     pub data: SharedString,
@@ -60,7 +60,7 @@ pub struct MentionImage {
 pub struct MentionSet {
     uri_by_crease_id: HashMap<CreaseId, MentionUri>,
     fetch_results: HashMap<Url, Shared<Task<Result<String, String>>>>,
-    images: HashMap<CreaseId, MentionImage>,
+    images: HashMap<CreaseId, Shared<Task<Result<MentionImage, String>>>>,
 }
 
 impl MentionSet {
@@ -75,18 +75,9 @@ impl MentionSet {
     pub fn insert_image(
         &mut self,
         crease_id: CreaseId,
-        abs_path: Option<Arc<Path>>,
-        data: SharedString,
-        format: ImageFormat,
+        task: Shared<Task<Result<MentionImage, String>>>,
     ) {
-        self.images.insert(
-            crease_id,
-            MentionImage {
-                abs_path,
-                data,
-                format,
-            },
-        );
+        self.images.insert(crease_id, task);
     }
 
     pub fn drain(&mut self) -> impl Iterator<Item = CreaseId> {
@@ -111,9 +102,6 @@ impl MentionSet {
             .map(|(&crease_id, uri)| {
                 match uri {
                     MentionUri::File(path) => {
-                        // FIXME
-                        // - images
-                        // - directories
                         let uri = uri.clone();
                         let path = path.to_path_buf();
                         let extension = path.extension().and_then(OsStr::to_str).unwrap_or("");
@@ -128,7 +116,7 @@ impl MentionSet {
 
                             cx.spawn(async move |cx| {
                                 let image_item = open_image_task?.await?;
-                                let (image, format) = image_item.update(cx, |image_item, cx| {
+                                let (data, format) = image_item.update(cx, |image_item, cx| {
                                     let format = image_item.image.format;
                                     (
                                         LanguageModelImage::from_image(
@@ -138,13 +126,19 @@ impl MentionSet {
                                         format,
                                     )
                                 })?;
-                                let image = image.await.context("Converting image")?;
+                                let data = cx.spawn(async move |_| {
+                                    if let Some(data) = data.await {
+                                        Ok(data.source)
+                                    } else {
+                                        anyhow::bail!("Failed to convert image")
+                                    }
+                                });
 
                                 anyhow::Ok((
                                     crease_id,
                                     Mention::Image(MentionImage {
                                         abs_path: Some(path.as_path().into()),
-                                        data: image.source,
+                                        data: data.await?,
                                         format,
                                     }),
                                 ))
@@ -257,7 +251,14 @@ impl MentionSet {
             .collect::<Vec<_>>();
 
         contents.extend(self.images.iter().map(|(crease_id, image)| {
-            Task::ready(Ok((*crease_id, Mention::Image(image.clone()))))
+            let crease_id = *crease_id;
+            let image = image.clone();
+            cx.spawn(async move |_| {
+                Ok((
+                    crease_id,
+                    Mention::Image(image.await.map_err(|e| anyhow::anyhow!("{e}"))?),
+                ))
+            })
         }));
 
         cx.spawn(async move |_cx| {
@@ -267,7 +268,7 @@ impl MentionSet {
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Eq, PartialEq)]
 pub enum Mention {
     Text { uri: MentionUri, content: String },
     Image(MentionImage),

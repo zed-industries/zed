@@ -8,7 +8,7 @@ use agent::{TextThreadStore, ThreadStore};
 use agent_client_protocol::{self as acp};
 use agent_servers::AgentServer;
 use agent_settings::{AgentSettings, NotifyWhenAgentWaiting};
-use anyhow::Context as _;
+use anyhow::bail;
 use audio::{Audio, Sound};
 use buffer_diff::BufferDiff;
 use collections::{HashMap, HashSet};
@@ -19,6 +19,7 @@ use editor::{
     EditorStyle, ExcerptId, MinimapVisibility, MultiBuffer, PathKey, SelectionEffects,
 };
 use file_icons::FileIcons;
+use futures::FutureExt;
 use gpui::{
     Action, Animation, AnimationExt, App, BorderStyle, ClipboardEntry, EdgesRefinement, Empty,
     Entity, EntityId, FocusHandle, Focusable, Hsla, Image, Length, ListOffset, ListState,
@@ -483,7 +484,7 @@ impl AcpThreadView {
                                 }) => {
                                     acp::ContentBlock::Image(acp::ImageContent {
                                         annotations: None,
-                                        // FIXME can we drain mentions here to avoid this allocation?
+                                        // TODO can we drain mentions here to avoid this allocation?
                                         data: data.to_string(),
                                         mime_type: format.mime_type().into(),
                                     })
@@ -2957,7 +2958,7 @@ impl AcpThreadView {
                 let project = workspace.project().clone();
 
                 if !project.read(cx).is_local() {
-                    anyhow::bail!("failed to open active thread as markdown in remote project");
+                    bail!("failed to open active thread as markdown in remote project");
                 }
 
                 let buffer = project.update(cx, |project, cx| {
@@ -3606,7 +3607,6 @@ fn insert_image(
     window: &mut Window,
     cx: &mut App,
 ) {
-    // FIXME
     let Some(crease_id) = insert_crease_for_mention(
         excerpt_id,
         crease_start,
@@ -3622,32 +3622,41 @@ fn insert_image(
     editor.update(cx, |_editor, cx| {
         let format = image.format;
         let convert = LanguageModelImage::from_image(image, cx);
-        cx.spawn_in(window, async move |editor, cx| {
-            if let Some(image) = convert
-                .await
-                .context("Failed to convert image")
-                .notify_async_err(cx)
-            {
-                mention_set
-                    .lock()
-                    .insert_image(crease_id, abs_path, image.source, format);
-            } else {
-                editor
-                    .update(cx, |editor, cx| {
-                        let snapshot = editor.buffer().read(cx).snapshot(cx);
-                        let Some(anchor) = snapshot.anchor_in_excerpt(excerpt_id, crease_start)
-                        else {
-                            return;
-                        };
-                        editor.display_map.update(cx, |display_map, cx| {
-                            display_map.unfold_intersecting(vec![anchor..anchor], true, cx);
-                        });
-                        editor.remove_creases([crease_id], cx);
+
+        let task = cx
+            .spawn_in(window, async move |editor, cx| {
+                if let Some(image) = convert.await {
+                    Ok(MentionImage {
+                        abs_path,
+                        data: image.source,
+                        format,
                     })
-                    .ok();
-            }
+                } else {
+                    editor
+                        .update(cx, |editor, cx| {
+                            let snapshot = editor.buffer().read(cx).snapshot(cx);
+                            let Some(anchor) = snapshot.anchor_in_excerpt(excerpt_id, crease_start)
+                            else {
+                                return;
+                            };
+                            editor.display_map.update(cx, |display_map, cx| {
+                                display_map.unfold_intersecting(vec![anchor..anchor], true, cx);
+                            });
+                            editor.remove_creases([crease_id], cx);
+                        })
+                        .ok();
+                    Err("Failed to convert image".to_string())
+                }
+            })
+            .shared();
+
+        cx.spawn_in(window, {
+            let task = task.clone();
+            async move |_, cx| task.clone().await.notify_async_err(cx)
         })
         .detach();
+
+        mention_set.lock().insert_image(crease_id, task);
     });
 }
 
