@@ -3145,6 +3145,19 @@ fn normalized_ctx_eq(
             normalized_ctx_eq(a_parent, b_parent) && normalized_ctx_eq(a_child, b_child)
         }
         (Not(a_expr), Not(b_expr)) => normalized_ctx_eq(a_expr, b_expr),
+        // Handle double negation: !(!a) == a
+        (Not(a_expr), b) if matches!(a_expr.as_ref(), Not(_)) => {
+            let Not(a_inner) = a_expr.as_ref() else {
+                unreachable!();
+            };
+            normalized_ctx_eq(b, a_inner)
+        }
+        (a, Not(b_expr)) if matches!(b_expr.as_ref(), Not(_)) => {
+            let Not(b_inner) = b_expr.as_ref() else {
+                unreachable!();
+            };
+            normalized_ctx_eq(a, b_inner)
+        }
         (And(a_left, a_right), And(b_left, b_right))
             if matches!(a_left.as_ref(), And(_, _))
                 || matches!(a_right.as_ref(), And(_, _))
@@ -3469,7 +3482,19 @@ mod tests {
         assert!(!cmp("a && b && c", "a && b"));
         assert!(!cmp("a || b || c", "a || b"));
         assert!(!cmp("(a && b) || c", "a && (b || c)"));
-        assert!(!cmp("!(!a)", "a")); // Double negation is not simplified in parsing
+        assert!(cmp("!(!a)", "a")); // Double negation is now handled
+        assert!(cmp("a", "!(!a)")); // Works both ways
+        assert!(cmp("!(!(!a))", "!a")); // Triple negation
+        assert!(cmp("!(!(!(!a)))", "a")); // Quadruple negation
         assert!(!cmp("a > b > c", "a > c")); // Can't skip middle element in chain
+
+        // Double negation with complex expressions
+        assert!(cmp("!(!(a && b))", "a && b"));
+        assert!(cmp("!(!(a || b))", "a || b"));
+        assert!(cmp("!(!(a > b))", "a > b"));
+        assert!(cmp("!(!a) && b", "a && b"));
+        assert!(cmp("!(!a) || b", "a || b"));
+        assert!(cmp("!(!(a && b)) || c", "(a && b) || c"));
+        assert!(cmp("!(!(a && b)) || c", "(b && a) || c")); // Combines double negation and commutativity
     }
 }
