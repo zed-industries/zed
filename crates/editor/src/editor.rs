@@ -15842,19 +15842,23 @@ impl Editor {
 
                 let tab_kind = match kind {
                     Some(GotoDefinitionKind::Implementation) => "Implementations",
-                    _ => "Definitions",
+                    Some(GotoDefinitionKind::Symbol) | None => "Definitions",
+                    Some(GotoDefinitionKind::Declaration) => "Declarations",
+                    Some(GotoDefinitionKind::Type) => "Types",
                 };
                 let title = editor
                     .update_in(acx, |_, _, cx| {
-                        let origin = locations.first().unwrap();
-                        let buffer = origin.buffer.read(cx);
-                        format!(
-                            "{} for {}",
-                            tab_kind,
-                            buffer
-                                .text_for_range(origin.range.clone())
-                                .collect::<String>()
-                        )
+                        let target = locations
+                            .iter()
+                            .map(|location| {
+                                location
+                                    .buffer
+                                    .read(cx)
+                                    .text_for_range(location.range.clone())
+                                    .collect::<String>()
+                            })
+                            .join(", ");
+                        format!("{tab_kind} for {target}")
                     })
                     .context("buffer title")?;
 
@@ -16050,19 +16054,17 @@ impl Editor {
             }
 
             workspace.update_in(cx, |workspace, window, cx| {
-                let title = locations
-                    .first()
-                    .as_ref()
+                let target = locations
+                    .iter()
                     .map(|location| {
-                        let buffer = location.buffer.read(cx);
-                        format!(
-                            "References to `{}`",
-                            buffer
-                                .text_for_range(location.range.clone())
-                                .collect::<String>()
-                        )
+                        location
+                            .buffer
+                            .read(cx)
+                            .text_for_range(location.range.clone())
+                            .collect::<String>()
                     })
-                    .unwrap();
+                    .join(", ");
+                let title = format!("References to {target}");
                 Self::open_locations_in_multibuffer(
                     workspace,
                     locations,
