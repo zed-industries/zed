@@ -721,7 +721,7 @@ fn render_popular_settings_section(
                 .items_start()
                 .justify_between()
                 .child(
-                    v_flex().child(Label::new("Mini Map")).child(
+                    v_flex().child(Label::new("Minimap")).child(
                         Label::new("See a high-level overview of your source code.")
                             .color(Color::Muted),
                     ),

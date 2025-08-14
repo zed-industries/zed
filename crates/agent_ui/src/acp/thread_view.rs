@@ -4,13 +4,15 @@ use acp_thread::{
 };
 use acp_thread::{AgentConnection, Plan};
 use action_log::ActionLog;
+use agent::{TextThreadStore, ThreadStore};
 use agent_client_protocol as acp;
 use agent_servers::AgentServer;
 use agent_settings::{AgentSettings, NotifyWhenAgentWaiting};
 use audio::{Audio, Sound};
 use buffer_diff::BufferDiff;
 use collections::{HashMap, HashSet};
-use editor::{Editor, EditorMode, MinimapVisibility, MultiBuffer, PathKey};
+use editor::scroll::Autoscroll;
+use editor::{Editor, EditorMode, MinimapVisibility, MultiBuffer, PathKey, SelectionEffects};
 use file_icons::FileIcons;
 use gpui::{
     Action, Animation, AnimationExt, App, BorderStyle, ClickEvent, EdgesRefinement, Empty, Entity,
@@ -23,6 +25,7 @@ use language::Buffer;
 use language::language_settings::SoftWrap;
 use markdown::{HeadingLevelStyles, Markdown, MarkdownElement, MarkdownStyle};
 use project::Project;
+use prompt_store::PromptId;
 use rope::Point;
 use settings::{Settings as _, SettingsStore};
 use std::{collections::BTreeMap, process::ExitStatus, rc::Rc, time::Duration};
@@ -36,6 +39,7 @@ use ui::{
 use util::{ResultExt, size::format_file_size, time::duration_alt_display};
 use workspace::{CollaboratorId, Workspace};
 use zed_actions::agent::{Chat, ToggleModelSelector};
+use zed_actions::assistant::OpenRulesLibrary;
 
 use crate::acp::AcpModelSelectorPopover;
 use crate::acp::message_editor::{MessageEditor, MessageEditorEvent};
@@ -54,6 +58,8 @@ pub struct AcpThreadView {
     agent: Rc<dyn AgentServer>,
     workspace: WeakEntity<Workspace>,
     project: Entity<Project>,
+    thread_store: Entity<ThreadStore>,
+    text_thread_store: Entity<TextThreadStore>,
     thread_state: ThreadState,
     diff_editors: HashMap<EntityId, Entity<Editor>>,
     terminal_views: HashMap<EntityId, Entity<TerminalView>>,
@@ -105,6 +111,8 @@ impl AcpThreadView {
         agent: Rc<dyn AgentServer>,
         workspace: WeakEntity<Workspace>,
         project: Entity<Project>,
+        thread_store: Entity<ThreadStore>,
+        text_thread_store: Entity<TextThreadStore>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -112,6 +120,8 @@ impl AcpThreadView {
             MessageEditor::new(
                 workspace.clone(),
                 project.clone(),
+                thread_store.clone(),
+                text_thread_store.clone(),
                 editor::EditorMode::AutoHeight {
                     min_lines: MIN_EDITOR_LINES,
                     max_lines: Some(MAX_EDITOR_LINES),
@@ -132,6 +142,8 @@ impl AcpThreadView {
             agent: agent.clone(),
             workspace: workspace.clone(),
             project: project.clone(),
+            thread_store,
+            text_thread_store,
             thread_state: Self::initial_state(agent, workspace, project, window, cx),
             message_editor,
             model_selector: None,
@@ -357,7 +369,7 @@ impl AcpThreadView {
     fn send(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let contents = self
             .message_editor
-            .update(cx, |message_editor, cx| message_editor.contents(cx));
+            .update(cx, |message_editor, cx| message_editor.contents(window, cx));
         self.send_impl(contents, window, cx)
     }
 
@@ -424,7 +436,7 @@ impl AcpThreadView {
 
         let contents = editing_message
             .editor
-            .update(cx, |message_editor, cx| message_editor.contents(cx));
+            .update(cx, |message_editor, cx| message_editor.contents(window, cx));
         let task = cx.foreground_executor().spawn(async move {
             rewind.await?;
             contents.await
@@ -2430,6 +2442,8 @@ impl AcpThreadView {
             let mut editor = MessageEditor::new(
                 self.workspace.clone(),
                 self.project.clone(),
+                self.thread_store.clone(),
+                self.text_thread_store.clone(),
                 editor::EditorMode::AutoHeight {
                     min_lines: 1,
                     max_lines: None,
@@ -2622,10 +2636,10 @@ impl AcpThreadView {
 
         if let Some(mention) = MentionUri::parse(&url).log_err() {
             workspace.update(cx, |workspace, cx| match mention {
-                MentionUri::File(path) => {
+                MentionUri::File { abs_path, .. } => {
                     let project = workspace.project();
                     let Some((path, entry)) = project.update(cx, |project, cx| {
-                        let path = project.find_project_path(path, cx)?;
+                        let path = project.find_project_path(abs_path, cx)?;
                         let entry = project.entry_for_path(&path, cx)?;
                         Some((path, entry))
                     }) else {
@@ -2642,9 +2656,72 @@ impl AcpThreadView {
                             .detach_and_log_err(cx);
                     }
                 }
-                _ => {
-                    // TODO
-                    unimplemented!()
+                MentionUri::Symbol {
+                    path, line_range, ..
+                }
+                | MentionUri::Selection { path, line_range } => {
+                    let project = workspace.project();
+                    let Some((path, _)) = project.update(cx, |project, cx| {
+                        let path = project.find_project_path(path, cx)?;
+                        let entry = project.entry_for_path(&path, cx)?;
+                        Some((path, entry))
+                    }) else {
+                        return;
+                    };
+
+                    let item = workspace.open_path(path, None, true, window, cx);
+                    window
+                        .spawn(cx, async move |cx| {
+                            let Some(editor) = item.await?.downcast::<Editor>() else {
+                                return Ok(());
+                            };
+                            let range =
+                                Point::new(line_range.start, 0)..Point::new(line_range.start, 0);
+                            editor
+                                .update_in(cx, |editor, window, cx| {
+                                    editor.change_selections(
+                                        SelectionEffects::scroll(Autoscroll::center()),
+                                        window,
+                                        cx,
+                                        |s| s.select_ranges(vec![range]),
+                                    );
+                                })
+                                .ok();
+                            anyhow::Ok(())
+                        })
+                        .detach_and_log_err(cx);
+                }
+                MentionUri::Thread { id, .. } => {
+                    if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
+                        panel.update(cx, |panel, cx| {
+                            panel
+                                .open_thread_by_id(&id, window, cx)
+                                .detach_and_log_err(cx)
+                        });
+                    }
+                }
+                MentionUri::TextThread { path, .. } => {
+                    if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
+                        panel.update(cx, |panel, cx| {
+                            panel
+                                .open_saved_prompt_editor(path.as_path().into(), window, cx)
+                                .detach_and_log_err(cx);
+                        });
+                    }
+                }
+                MentionUri::Rule { id, .. } => {
+                    let PromptId::User { uuid } = id else {
+                        return;
+                    };
+                    window.dispatch_action(
+                        Box::new(OpenRulesLibrary {
+                            prompt_to_select: Some(uuid.0),
+                        }),
+                        cx,
+                    )
+                }
+                MentionUri::Fetch { url } => {
+                    cx.open_url(url.as_str());
                 }
             })
         } else {
@@ -3330,6 +3407,7 @@ fn terminal_command_markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
 pub(crate) mod tests {
     use std::{path::Path, sync::Arc};
 
+    use agent::{TextThreadStore, ThreadStore};
     use agent_client_protocol::SessionId;
     use editor::EditorSettings;
     use fs::FakeFs;
@@ -3459,9 +3537,22 @@ pub(crate) mod tests {
         let (workspace, cx) =
             cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
+        let thread_store =
+            cx.update(|_window, cx| cx.new(|cx| ThreadStore::fake(project.clone(), cx)));
+        let text_thread_store =
+            cx.update(|_window, cx| cx.new(|cx| TextThreadStore::fake(project.clone(), cx)));
+
         let thread_view = cx.update(|window, cx| {
             cx.new(|cx| {
-                AcpThreadView::new(Rc::new(agent), workspace.downgrade(), project, window, cx)
+                AcpThreadView::new(
+                    Rc::new(agent),
+                    workspace.downgrade(),
+                    project,
+                    thread_store.clone(),
+                    text_thread_store.clone(),
+                    window,
+                    cx,
+                )
             })
         });
         cx.run_until_parked();

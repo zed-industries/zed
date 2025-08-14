@@ -1,6 +1,8 @@
 use crate::acp::completion_provider::ContextPickerCompletionProvider;
 use crate::acp::completion_provider::MentionSet;
 use acp_thread::MentionUri;
+use agent::TextThreadStore;
+use agent::ThreadStore;
 use agent_client_protocol as acp;
 use anyhow::Result;
 use collections::HashSet;
@@ -8,7 +10,6 @@ use editor::{
     AnchorRangeExt, ContextMenuOptions, ContextMenuPlacement, Editor, EditorElement, EditorMode,
     EditorStyle, MultiBuffer,
 };
-use file_icons::FileIcons;
 use gpui::{
     AppContext, Context, Entity, EventEmitter, FocusHandle, Focusable, Task, TextStyle, WeakEntity,
 };
@@ -17,13 +18,13 @@ use language::Language;
 use parking_lot::Mutex;
 use project::{CompletionIntent, Project};
 use settings::Settings;
-use std::path::Path;
+use std::fmt::Write;
 use std::rc::Rc;
 use std::sync::Arc;
 use theme::ThemeSettings;
 use ui::{
-    ActiveTheme, App, IconName, InteractiveElement, IntoElement, ParentElement, Render,
-    SharedString, Styled, TextSize, Window, div,
+    ActiveTheme, App, InteractiveElement, IntoElement, ParentElement, Render, Styled, TextSize,
+    Window, div,
 };
 use util::ResultExt;
 use workspace::Workspace;
@@ -32,6 +33,8 @@ use zed_actions::agent::Chat;
 pub struct MessageEditor {
     editor: Entity<Editor>,
     project: Entity<Project>,
+    thread_store: Entity<ThreadStore>,
+    text_thread_store: Entity<TextThreadStore>,
     mention_set: Arc<Mutex<MentionSet>>,
 }
 
@@ -46,6 +49,8 @@ impl MessageEditor {
     pub fn new(
         workspace: WeakEntity<Workspace>,
         project: Entity<Project>,
+        thread_store: Entity<ThreadStore>,
+        text_thread_store: Entity<TextThreadStore>,
         mode: EditorMode,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -71,6 +76,8 @@ impl MessageEditor {
             editor.set_completion_provider(Some(Rc::new(ContextPickerCompletionProvider::new(
                 mention_set.clone(),
                 workspace,
+                thread_store.downgrade(),
+                text_thread_store.downgrade(),
                 cx.weak_entity(),
             ))));
             editor.set_context_menu_options(ContextMenuOptions {
@@ -85,6 +92,8 @@ impl MessageEditor {
             editor,
             project,
             mention_set,
+            thread_store,
+            text_thread_store,
         }
     }
 
@@ -92,8 +101,18 @@ impl MessageEditor {
         self.editor.read(cx).is_empty(cx)
     }
 
-    pub fn contents(&self, cx: &mut Context<Self>) -> Task<Result<Vec<acp::ContentBlock>>> {
-        let contents = self.mention_set.lock().contents(self.project.clone(), cx);
+    pub fn contents(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Vec<acp::ContentBlock>>> {
+        let contents = self.mention_set.lock().contents(
+            self.project.clone(),
+            self.thread_store.clone(),
+            self.text_thread_store.clone(),
+            window,
+            cx,
+        );
         let editor = self.editor.clone();
 
         cx.spawn(async move |_, cx| {
@@ -122,7 +141,7 @@ impl MessageEditor {
                                     acp::TextResourceContents {
                                         mime_type: None,
                                         text: mention.content.clone(),
-                                        uri: mention.uri.to_uri(),
+                                        uri: mention.uri.to_uri().to_string(),
                                     },
                                 ),
                             }));
@@ -185,7 +204,7 @@ impl MessageEditor {
                 .unwrap_or(path.path.as_os_str())
                 .display()
                 .to_string();
-            let completion = ContextPickerCompletionProvider::completion_for_path(
+            let Some(completion) = ContextPickerCompletionProvider::completion_for_path(
                 path,
                 &path_prefix,
                 false,
@@ -196,7 +215,9 @@ impl MessageEditor {
                 self.mention_set.clone(),
                 self.project.clone(),
                 cx,
-            );
+            ) else {
+                continue;
+            };
 
             self.editor.update(cx, |message_editor, cx| {
                 message_editor.edit(
@@ -238,27 +259,11 @@ impl MessageEditor {
                     resource: acp::EmbeddedResourceResource::TextResourceContents(resource),
                     ..
                 }) => {
-                    if let Some(ref mention @ MentionUri::File(ref abs_path)) =
-                        MentionUri::parse(&resource.uri).log_err()
-                    {
-                        let project_path = self
-                            .project
-                            .read(cx)
-                            .project_path_for_absolute_path(&abs_path, cx);
+                    if let Some(mention_uri) = MentionUri::parse(&resource.uri).log_err() {
                         let start = text.len();
-                        let content = mention.to_uri();
-                        text.push_str(&content);
+                        write!(&mut text, "{}", mention_uri.as_link()).ok();
                         let end = text.len();
-                        if let Some(project_path) = project_path {
-                            let filename: SharedString = project_path
-                                .path
-                                .file_name()
-                                .unwrap_or_default()
-                                .to_string_lossy()
-                                .to_string()
-                                .into();
-                            mentions.push((start..end, project_path, filename));
-                        }
+                        mentions.push((start..end, mention_uri));
                     }
                 }
                 acp::ContentBlock::Image(_)
@@ -274,31 +279,21 @@ impl MessageEditor {
         });
 
         self.mention_set.lock().clear();
-        for (range, project_path, filename) in mentions {
-            let crease_icon_path = if project_path.path.is_dir() {
-                FileIcons::get_folder_icon(false, cx)
-                    .unwrap_or_else(|| IconName::Folder.path().into())
-            } else {
-                FileIcons::get_icon(Path::new(project_path.path.as_ref()), cx)
-                    .unwrap_or_else(|| IconName::File.path().into())
-            };
-
+        for (range, mention_uri) in mentions {
             let anchor = snapshot.anchor_before(range.start);
-            if let Some(project_path) = self.project.read(cx).absolute_path(&project_path, cx) {
-                let crease_id = crate::context_picker::insert_crease_for_mention(
-                    anchor.excerpt_id,
-                    anchor.text_anchor,
-                    range.end - range.start,
-                    filename,
-                    crease_icon_path,
-                    self.editor.clone(),
-                    window,
-                    cx,
-                );
+            let crease_id = crate::context_picker::insert_crease_for_mention(
+                anchor.excerpt_id,
+                anchor.text_anchor,
+                range.end - range.start,
+                mention_uri.name().into(),
+                mention_uri.icon_path(cx),
+                self.editor.clone(),
+                window,
+                cx,
+            );
 
-                if let Some(crease_id) = crease_id {
-                    self.mention_set.lock().insert(crease_id, project_path);
-                }
+            if let Some(crease_id) = crease_id {
+                self.mention_set.lock().insert(crease_id, mention_uri);
             }
         }
         cx.notify();
@@ -360,6 +355,7 @@ impl Render for MessageEditor {
 mod tests {
     use std::path::Path;
 
+    use agent::{TextThreadStore, ThreadStore};
     use agent_client_protocol as acp;
     use editor::EditorMode;
     use fs::FakeFs;
@@ -383,11 +379,16 @@ mod tests {
         let (workspace, cx) =
             cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
+        let thread_store = cx.new(|cx| ThreadStore::fake(project.clone(), cx));
+        let text_thread_store = cx.new(|cx| TextThreadStore::fake(project.clone(), cx));
+
         let message_editor = cx.update(|window, cx| {
             cx.new(|cx| {
                 MessageEditor::new(
                     workspace.downgrade(),
                     project.clone(),
+                    thread_store.clone(),
+                    text_thread_store.clone(),
                     EditorMode::AutoHeight {
                         min_lines: 1,
                         max_lines: None,
@@ -456,8 +457,8 @@ mod tests {
         });
 
         let content = message_editor
-            .update_in(cx, |message_editor, _window, cx| {
-                message_editor.contents(cx)
+            .update_in(cx, |message_editor, window, cx| {
+                message_editor.contents(window, cx)
             })
             .await
             .unwrap();
