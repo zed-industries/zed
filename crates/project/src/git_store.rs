@@ -4338,7 +4338,8 @@ impl Repository {
                     bail!("not a local repository")
                 };
                 let (snapshot, events) = this
-                    .read_with(&mut cx, |this, _| {
+                    .update(&mut cx, |this, _| {
+                        this.paths_needing_status_update.clear();
                         compute_snapshot(
                             this.id,
                             this.work_directory_abs_path.clone(),
