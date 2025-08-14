@@ -237,40 +237,43 @@ where
     }
 }
 
-// impl<S: ScrollbarVisibilitySetting, T: ScrollableHandle> UniformListDecoration
-//     for ScrollbarState<S, T>
-// {
-//     fn compute(
-//         &self,
-//         visible_range: Range<usize>,
-//         bounds: Bounds<Pixels>,
-//         scroll_offset: Point<Pixels>,
-//         item_height: Pixels,
-//         item_count: usize,
-//         window: &mut Window,
-//         cx: &mut App,
-//     ) -> gpui::AnyElement {
-//         let element = ScrollbarElement::new(self);
-//     }
-// }
+impl<S: ScrollbarVisibilitySetting, T: ScrollableHandle> UniformListDecoration
+    for ScrollbarStateWrapper<S, T>
+{
+    fn compute(
+        &self,
+        _visible_range: Range<usize>,
+        _bounds: Bounds<Pixels>,
+        _scroll_offset: Point<Pixels>,
+        _item_height: Pixels,
+        _item_count: usize,
+        _window: &mut Window,
+        _cx: &mut App,
+    ) -> gpui::AnyElement {
+        ScrollbarElement {
+            state: self.0.clone(),
+        }
+        .into_any()
+    }
+}
 
-// impl WithScrollbar for UniformList {
-//     type Output = Self;
+impl WithScrollbar for UniformList {
+    type Output = Self;
 
-//     fn custom_scrollbars<S, T>(
-//         self,
-//         config: Scrollbars<S, T>,
-//         window: &mut Window,
-//         cx: &mut App,
-//     ) -> Self::Output
-//     where
-//         S: ScrollbarVisibilitySetting,
-//         T: ScrollableHandle,
-//     {
-//         let scrollbar = get_scrollbar_state(config, std::panic::Location::caller(), window, cx);
-//         self.with_decoration(scrollbar)
-//     }
-// }
+    fn custom_scrollbars<S, T>(
+        self,
+        config: Scrollbars<S, T>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Self::Output
+    where
+        S: ScrollbarVisibilitySetting,
+        T: ScrollableHandle,
+    {
+        let scrollbar = get_scrollbar_state(config, std::panic::Location::caller(), window, cx);
+        self.with_decoration(scrollbar)
+    }
+}
 
 #[derive(PartialEq, Eq)]
 pub enum ScrollAxes {
@@ -566,6 +569,16 @@ impl<S: ScrollbarVisibilitySetting, T: ScrollableHandle> ScrollbarState<S, T> {
 
     fn scroll_handle(&self) -> &T {
         &self.scroll_handle
+    }
+
+    fn set_offset(&mut self, offset: Point<Pixels>, cx: &mut Context<Self>) {
+        if self.scroll_handle.offset() != offset {
+            self.scroll_handle.set_offset(offset);
+            self.notify_parent(cx);
+        }
+
+        // We always want to show scrollbars in cases where the offset is updated.
+        self.show_scrollbars(cx);
     }
 
     fn is_dragging(&self) -> bool {
@@ -1044,7 +1057,7 @@ impl<S: ScrollbarVisibilitySetting, T: ScrollableHandle> Element for ScrollbarEl
                         if thumb_bounds.contains(&event.position) {
                             let offset =
                                 event.position.along(*axis) - thumb_bounds.origin.along(*axis);
-                            state.set_dragging(*axis, offset, cx)
+                            state.set_dragging(*axis, offset, cx);
                         } else {
                             let scroll_handle = state.scroll_handle();
                             let click_offset = scrollbar_layout.compute_click_offset(
@@ -1052,12 +1065,13 @@ impl<S: ScrollbarVisibilitySetting, T: ScrollableHandle> Element for ScrollbarEl
                                 scroll_handle.max_offset(),
                                 ScrollbarMouseEvent::TrackClick,
                             );
-                            scroll_handle.set_offset(
+                            state.set_offset(
                                 scroll_handle.offset().apply_along(*axis, |_| click_offset),
+                                cx,
                             );
+                        };
 
-                            cx.stop_propagation();
-                        }
+                        cx.stop_propagation();
                     });
                 }
             });
@@ -1071,10 +1085,14 @@ impl<S: ScrollbarVisibilitySetting, T: ScrollableHandle> Element for ScrollbarEl
                     {
                         let scroll_handle = state.read(cx).scroll_handle();
                         let current_offset = scroll_handle.offset();
-                        scroll_handle.set_offset(
-                            current_offset + event.delta.pixel_delta(window.line_height()),
-                        );
-                        state.update(cx, |state, cx| state.show_scrollbars(cx));
+                        state.update(cx, |state, cx| {
+                            state.set_offset(
+                                current_offset + event.delta.pixel_delta(window.line_height()),
+                                cx,
+                            );
+                            state.show_scrollbars(cx);
+                            cx.stop_propagation();
+                        });
                     }
                 }
             });
@@ -1096,13 +1114,10 @@ impl<S: ScrollbarVisibilitySetting, T: ScrollableHandle> Element for ScrollbarEl
                                     scroll_handle.max_offset(),
                                     ScrollbarMouseEvent::ThumbDrag(drag_state),
                                 );
-                                scroll_handle.set_offset(
-                                    scroll_handle.offset().apply_along(axis, |_| drag_offset),
-                                );
+                                let new_offset =
+                                    scroll_handle.offset().apply_along(axis, |_| drag_offset);
 
-                                // todo! Needed?
-                                window.refresh();
-                                state.update(cx, |state, cx| state.notify_parent(cx));
+                                state.update(cx, |state, cx| state.set_offset(new_offset, cx));
                                 cx.stop_propagation();
                             }
                         }
@@ -1133,7 +1148,6 @@ impl<S: ScrollbarVisibilitySetting, T: ScrollableHandle> Element for ScrollbarEl
                     state.update(cx, |state, cx| {
                         if state.is_dragging() {
                             state.scroll_handle().drag_ended();
-                            state.notify_parent(cx);
                         }
 
                         if !state.parent_hovered(&event.position) {
