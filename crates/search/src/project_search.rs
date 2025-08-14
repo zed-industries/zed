@@ -8,7 +8,7 @@ use crate::{
     },
 };
 use anyhow::Context as _;
-use collections::{HashMap, HashSet};
+use collections::HashMap;
 use editor::{
     Anchor, Editor, EditorEvent, EditorSettings, MAX_TAB_TITLE_LEN, MultiBuffer, SelectionEffects,
     actions::{Backtab, SelectAll, Tab},
@@ -212,7 +212,7 @@ pub struct ProjectSearchView {
     replacement_editor: Entity<Editor>,
     results_editor: Entity<Editor>,
     search_options: SearchOptions,
-    panels_with_errors: HashSet<InputPanel>,
+    panels_with_errors: HashMap<InputPanel, String>,
     active_match_index: Option<usize>,
     search_id: usize,
     included_files_editor: Entity<Editor>,
@@ -222,7 +222,6 @@ pub struct ProjectSearchView {
     included_opened_only: bool,
     regex_language: Option<Arc<Language>>,
     _subscriptions: Vec<Subscription>,
-    query_error: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -883,7 +882,7 @@ impl ProjectSearchView {
             query_editor,
             results_editor,
             search_options: options,
-            panels_with_errors: HashSet::default(),
+            panels_with_errors: HashMap::default(),
             active_match_index: None,
             included_files_editor,
             excluded_files_editor,
@@ -892,7 +891,6 @@ impl ProjectSearchView {
             included_opened_only: false,
             regex_language: None,
             _subscriptions: subscriptions,
-            query_error: None,
         };
         this.entity_changed(window, cx);
         this
@@ -1156,14 +1154,16 @@ impl ProjectSearchView {
                     Ok(included_files) => {
                         let should_unmark_error =
                             self.panels_with_errors.remove(&InputPanel::Include);
-                        if should_unmark_error {
+                        if should_unmark_error.is_some() {
                             cx.notify();
                         }
                         included_files
                     }
-                    Err(_e) => {
-                        let should_mark_error = self.panels_with_errors.insert(InputPanel::Include);
-                        if should_mark_error {
+                    Err(e) => {
+                        let should_mark_error = self
+                            .panels_with_errors
+                            .insert(InputPanel::Include, e.to_string());
+                        if should_mark_error.is_none() {
                             cx.notify();
                         }
                         PathMatcher::default()
@@ -1178,15 +1178,17 @@ impl ProjectSearchView {
                     Ok(excluded_files) => {
                         let should_unmark_error =
                             self.panels_with_errors.remove(&InputPanel::Exclude);
-                        if should_unmark_error {
+                        if should_unmark_error.is_some() {
                             cx.notify();
                         }
 
                         excluded_files
                     }
-                    Err(_e) => {
-                        let should_mark_error = self.panels_with_errors.insert(InputPanel::Exclude);
-                        if should_mark_error {
+                    Err(e) => {
+                        let should_mark_error = self
+                            .panels_with_errors
+                            .insert(InputPanel::Exclude, e.to_string());
+                        if should_mark_error.is_none() {
                             cx.notify();
                         }
                         PathMatcher::default()
@@ -1223,19 +1225,19 @@ impl ProjectSearchView {
             ) {
                 Ok(query) => {
                     let should_unmark_error = self.panels_with_errors.remove(&InputPanel::Query);
-                    if should_unmark_error {
+                    if should_unmark_error.is_some() {
                         cx.notify();
                     }
-                    self.query_error = None;
 
                     Some(query)
                 }
                 Err(e) => {
-                    let should_mark_error = self.panels_with_errors.insert(InputPanel::Query);
-                    if should_mark_error {
+                    let should_mark_error = self
+                        .panels_with_errors
+                        .insert(InputPanel::Query, e.to_string());
+                    if should_mark_error.is_none() {
                         cx.notify();
                     }
-                    self.query_error = Some(e.to_string());
 
                     None
                 }
@@ -1253,15 +1255,17 @@ impl ProjectSearchView {
             ) {
                 Ok(query) => {
                     let should_unmark_error = self.panels_with_errors.remove(&InputPanel::Query);
-                    if should_unmark_error {
+                    if should_unmark_error.is_some() {
                         cx.notify();
                     }
 
                     Some(query)
                 }
-                Err(_e) => {
-                    let should_mark_error = self.panels_with_errors.insert(InputPanel::Query);
-                    if should_mark_error {
+                Err(e) => {
+                    let should_mark_error = self
+                        .panels_with_errors
+                        .insert(InputPanel::Query, e.to_string());
+                    if should_mark_error.is_none() {
                         cx.notify();
                     }
 
@@ -1516,7 +1520,7 @@ impl ProjectSearchView {
     }
 
     fn border_color_for(&self, panel: InputPanel, cx: &App) -> Hsla {
-        if self.panels_with_errors.contains(&panel) {
+        if self.panels_with_errors.contains_key(&panel) {
             Color::Error.color(cx)
         } else {
             cx.theme().colors().border
@@ -1920,18 +1924,13 @@ impl Render for ProjectSearchBar {
         let container_width = window.viewport_size().width;
         let input_width = SearchInputWidth::calc_width(container_width);
 
-        enum BaseStyle {
-            SingleInput,
-            MultipleInputs,
-        }
-
-        let input_base_styles = |base_style: BaseStyle, panel: InputPanel| {
-            input_base_styles(search.border_color_for(panel, cx), |div| match base_style {
-                BaseStyle::SingleInput => div.w(input_width),
-                BaseStyle::MultipleInputs => div.flex_grow(),
+        let input_base_styles = |panel: InputPanel| {
+            input_base_styles(search.border_color_for(panel, cx), |div| match panel {
+                InputPanel::Query | InputPanel::Replacement => div.w(input_width),
+                InputPanel::Include | InputPanel::Exclude => div.flex_grow(),
             })
         };
-
+        let theme_colors = cx.theme().colors();
         let project_search = search.entity.read(cx);
         let limit_reached = project_search.limit_reached;
 
@@ -1961,7 +1960,7 @@ impl Render for ProjectSearchBar {
             })
             .unwrap_or_else(|| "0/0".to_string());
 
-        let query_column = input_base_styles(BaseStyle::SingleInput, InputPanel::Query)
+        let query_column = input_base_styles(InputPanel::Query)
             .on_action(cx.listener(|this, action, window, cx| this.confirm(action, window, cx)))
             .on_action(cx.listener(|this, action, window, cx| {
                 this.previous_history_query(action, window, cx)
@@ -2045,7 +2044,7 @@ impl Render for ProjectSearchBar {
             .pl_2()
             .ml_2()
             .border_l_1()
-            .border_color(cx.theme().colors().border_variant)
+            .border_color(theme_colors.border_variant)
             .child(render_action_button(
                 "project-search-nav-button",
                 IconName::ChevronLeft,
@@ -2088,7 +2087,7 @@ impl Render for ProjectSearchBar {
             .child(h_flex().min_w_64().child(mode_column).child(matches_column));
 
         let replace_line = search.replace_enabled.then(|| {
-            let replace_column = input_base_styles(BaseStyle::SingleInput, InputPanel::Replacement)
+            let replace_column = input_base_styles(InputPanel::Replacement)
                 .child(render_text_input(&search.replacement_editor, None, cx));
 
             let focus_handle = search.replacement_editor.read(cx).focus_handle(cx);
@@ -2121,7 +2120,7 @@ impl Render for ProjectSearchBar {
         });
 
         let filter_line = search.filters_enabled.then(|| {
-            let include = input_base_styles(BaseStyle::MultipleInputs, InputPanel::Include)
+            let include = input_base_styles(InputPanel::Include)
                 .on_action(cx.listener(|this, action, window, cx| {
                     this.previous_history_query(action, window, cx)
                 }))
@@ -2129,7 +2128,7 @@ impl Render for ProjectSearchBar {
                     this.next_history_query(action, window, cx)
                 }))
                 .child(render_text_input(&search.included_files_editor, None, cx));
-            let exclude = input_base_styles(BaseStyle::MultipleInputs, InputPanel::Exclude)
+            let exclude = input_base_styles(InputPanel::Exclude)
                 .on_action(cx.listener(|this, action, window, cx| {
                     this.previous_history_query(action, window, cx)
                 }))
@@ -2183,13 +2182,28 @@ impl Render for ProjectSearchBar {
             key_context.add("in_replace");
         }
 
-        let query_error_line = search.query_error.as_ref().map(|error| {
-            Label::new(error)
-                .size(LabelSize::Small)
-                .color(Color::Error)
-                .mt_neg_1()
-                .ml_2()
-        });
+        let query_error_line = search
+            .panels_with_errors
+            .get(&InputPanel::Query)
+            .map(|error| {
+                Label::new(error)
+                    .size(LabelSize::Small)
+                    .color(Color::Error)
+                    .mt_neg_1()
+                    .ml_2()
+            });
+
+        let filter_error_line = search
+            .panels_with_errors
+            .get(&InputPanel::Include)
+            .or_else(|| search.panels_with_errors.get(&InputPanel::Exclude))
+            .map(|error| {
+                Label::new(error)
+                    .size(LabelSize::Small)
+                    .color(Color::Error)
+                    .mt_neg_1()
+                    .ml_2()
+            });
 
         v_flex()
             .gap_2()
@@ -2239,6 +2253,7 @@ impl Render for ProjectSearchBar {
             .children(query_error_line)
             .children(replace_line)
             .children(filter_line)
+            .children(filter_error_line)
     }
 }
 
