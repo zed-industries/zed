@@ -1,4 +1,4 @@
-л ра[package]
+[package]
 name = "language_models"
 version = "0.1.0"
 edition.workspace = true
