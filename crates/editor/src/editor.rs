@@ -15842,19 +15842,23 @@ impl Editor {
 
                 let tab_kind = match kind {
                     Some(GotoDefinitionKind::Implementation) => "Implementations",
-                    _ => "Definitions",
+                    Some(GotoDefinitionKind::Symbol) | None => "Definitions",
+                    Some(GotoDefinitionKind::Declaration) => "Declarations",
+                    Some(GotoDefinitionKind::Type) => "Types",
                 };
                 let title = editor
                     .update_in(acx, |_, _, cx| {
-                        let origin = locations.first().unwrap();
-                        let buffer = origin.buffer.read(cx);
-                        format!(
-                            "{} for {}",
-                            tab_kind,
-                            buffer
-                                .text_for_range(origin.range.clone())
-                                .collect::<String>()
-                        )
+                        let target = locations
+                            .iter()
+                            .map(|location| {
+                                location
+                                    .buffer
+                                    .read(cx)
+                                    .text_for_range(location.range.clone())
+                                    .collect::<String>()
+                            })
+                            .join(", ");
+                        format!("{tab_kind} for {target}")
                     })
                     .context("buffer title")?;
 
