@@ -113,13 +113,14 @@ fn init_logging_server(log_file_path: PathBuf) -> Result<Receiver<Vec<u8>>> {
 
 fn init_panic_hook(session_id: String) {
     std::panic::set_hook(Box::new(move |info| {
-        crashes::handle_panic();
         let payload = info
             .payload()
             .downcast_ref::<&str>()
             .map(|s| s.to_string())
             .or_else(|| info.payload().downcast_ref::<String>().cloned())
             .unwrap_or_else(|| "Box<Any>".to_string());
+
+        crashes::handle_panic(payload.clone(), info.location());
 
         let backtrace = backtrace::Backtrace::new();
         let mut backtrace = backtrace

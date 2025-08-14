@@ -51,10 +51,6 @@ pub fn init_panic_hook(
                 thread::yield_now();
             }
         }
-        crashes::handle_panic();
-
-        let thread = thread::current();
-        let thread_name = thread.name().unwrap_or("<unnamed>");
 
         let payload = info
             .payload()
@@ -62,6 +58,11 @@ pub fn init_panic_hook(
             .map(|s| s.to_string())
             .or_else(|| info.payload().downcast_ref::<String>().cloned())
             .unwrap_or_else(|| "Box<Any>".to_string());
+
+        crashes::handle_panic(payload.clone(), info.location());
+
+        let thread = thread::current();
+        let thread_name = thread.name().unwrap_or("<unnamed>");
 
         if *release_channel::RELEASE_CHANNEL == ReleaseChannel::Dev {
             let location = info.location().unwrap();
