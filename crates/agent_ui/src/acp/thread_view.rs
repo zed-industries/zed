@@ -67,6 +67,7 @@ const RESPONSE_PADDING_X: Pixels = px(19.);
 
 enum ThreadError {
     PaymentRequired,
+    ModelRequestLimitReached(cloud_llm_client::Plan),
     Other(SharedString),
 }
 
@@ -74,6 +75,10 @@ impl ThreadError {
     fn from_err(error: anyhow::Error) -> Self {
         if error.is::<language_model::PaymentRequiredError>() {
             Self::PaymentRequired
+        } else if let Some(error) =
+            error.downcast_ref::<language_model::ModelRequestLimitReachedError>()
+        {
+            Self::ModelRequestLimitReached(error.plan)
         } else {
             Self::Other(error.to_string().into())
         }
@@ -3315,11 +3320,21 @@ impl AcpThreadView {
 }
 
 impl AcpThreadView {
-    fn render_thread_error(&self, cx: &mut Context<'_, Self>) -> Option<Callout> {
-        Some(match self.thread_error.as_ref()? {
+    fn render_thread_error(&self, cx: &mut Context<'_, Self>) -> Option<Div> {
+        let content = match self.thread_error.as_ref()? {
             ThreadError::PaymentRequired => self.render_payment_required_error(cx),
+            ThreadError::ModelRequestLimitReached(plan) => {
+                self.render_model_request_limit_reached_error(*plan, cx)
+            }
             ThreadError::Other(error) => self.render_any_thread_error(error.clone(), cx),
-        })
+        };
+
+        Some(
+            div()
+                .border_t_1()
+                .border_color(cx.theme().colors().border)
+                .child(content),
+        )
     }
 
     fn render_any_thread_error(&self, error: SharedString, cx: &mut Context<'_, Self>) -> Callout {
@@ -3350,6 +3365,32 @@ impl AcpThreadView {
             .description(ERROR_MESSAGE)
             .tertiary_action(self.upgrade_button(cx))
             .secondary_action(self.create_copy_button(ERROR_MESSAGE))
+            .primary_action(self.dismiss_error_button(cx))
+            .bg_color(self.error_callout_bg(cx))
+    }
+
+    fn render_model_request_limit_reached_error(
+        &self,
+        plan: cloud_llm_client::Plan,
+        cx: &mut Context<Self>,
+    ) -> Callout {
+        let error_message = match plan {
+            cloud_llm_client::Plan::ZedPro => "Upgrade to usage-based billing for more prompts.",
+            cloud_llm_client::Plan::ZedProTrial | cloud_llm_client::Plan::ZedFree => {
+                "Upgrade to Zed Pro for more prompts."
+            }
+        };
+
+        let icon = Icon::new(IconName::XCircle)
+            .size(IconSize::Small)
+            .color(Color::Error);
+
+        Callout::new()
+            .icon(icon)
+            .title("Model Prompt Limit Reached")
+            .description(error_message)
+            .tertiary_action(self.upgrade_button(cx))
+            .secondary_action(self.create_copy_button(error_message))
             .primary_action(self.dismiss_error_button(cx))
             .bg_color(self.error_callout_bg(cx))
     }
