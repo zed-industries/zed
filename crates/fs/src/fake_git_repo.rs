@@ -15,6 +15,7 @@ use ignore::gitignore::GitignoreBuilder;
 use rope::Rope;
 use smol::future::FutureExt as _;
 use std::{path::PathBuf, sync::Arc};
+use util::rel_path::RelPath;
 
 #[derive(Clone)]
 pub struct FakeGitRepository {
@@ -222,7 +223,10 @@ impl GitRepository for FakeGitRepository {
                     .read_file_sync(path)
                     .ok()
                     .map(|content| String::from_utf8(content).unwrap())?;
-                Some((repo_path.into(), (content, is_ignored)))
+                Some((
+                    RepoPath::from(&RelPath::new(repo_path)),
+                    (content, is_ignored),
+                ))
             })
             .collect();
 

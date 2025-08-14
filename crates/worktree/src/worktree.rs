@@ -5217,7 +5217,7 @@ impl<'a> sum_tree::Dimension<'a, EntrySummary> for TraversalProgress<'a> {
 impl Default for TraversalProgress<'_> {
     fn default() -> Self {
         Self {
-            max_path: Path::new(""),
+            max_path: RelPath::new(""),
             count: 0,
             non_ignored_count: 0,
             file_count: 0,

@@ -1,9 +1,12 @@
 use std::{
     borrow::Cow,
     ffi::OsStr,
-    path::{Display, Path, PathBuf},
+    os::unix::ffi::OsStrExt,
+    path::{Path, PathBuf},
     sync::Arc,
 };
+
+use anyhow::{Result, bail};
 
 #[repr(transparent)]
 #[derive(PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -50,6 +53,36 @@ impl RelPath {
             .ok_or_else(|| ())
     }
 
+    pub fn from_path(relative_path: &Path) -> Result<&Self> {
+        use std::path::Component;
+        match relative_path.components().next() {
+            Some(Component::Prefix(_)) => bail!(
+                "path `{}` should be relative, not a windows prefix",
+                relative_path.to_string_lossy()
+            ),
+            Some(Component::RootDir) => {
+                bail!(
+                    "path `{}` should be relative",
+                    relative_path.to_string_lossy()
+                )
+            }
+            Some(Component::CurDir) => {
+                bail!(
+                    "path `{}` should not start with `.`",
+                    relative_path.to_string_lossy()
+                )
+            }
+            Some(Component::ParentDir) => {
+                bail!(
+                    "path `{}` should not start with `..`",
+                    relative_path.to_string_lossy()
+                )
+            }
+            None => bail!("relative path should not be empty"),
+            _ => Ok(Self::new(relative_path.as_os_str().as_bytes())),
+        }
+    }
+
     pub fn append_to_abs_path(&self, abs_path: &Path) -> PathBuf {
         // TODO: implement this differently
         let mut result = abs_path.to_path_buf();
@@ -79,7 +112,9 @@ impl RelPath {
         }
         #[cfg(not(target_os = "windows"))]
         {
-            Cow::Borrowed(self.0.as_os_str())
+            use std::os::unix::ffi::OsStrExt;
+
+            Cow::Borrowed(OsStr::from_bytes(&self.0))
         }
     }
 }

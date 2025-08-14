@@ -774,7 +774,7 @@ impl GitRepository for RealGitRepository {
                 .current_dir(&working_directory?)
                 .envs(env.iter())
                 .args(["checkout", &commit, "--"])
-                .args(paths.iter().map(|path| path.as_ref()))
+                .args(paths.iter().map(|path| path.to_unix_style()))
                 .output()
                 .await?;
             anyhow::ensure!(
@@ -796,13 +796,14 @@ impl GitRepository for RealGitRepository {
             .spawn(async move {
                 fn logic(repo: &git2::Repository, path: &RepoPath) -> Result<Option<String>> {
                     // This check is required because index.get_path() unwraps internally :(
-                    check_path_to_repo_path_errors(path)?;
+                    // TODO: move this function to where we instantiate the repopaths
+                    // check_path_to_repo_path_errors(path)?;
 
                     let mut index = repo.index()?;
                     index.read(false)?;
 
                     const STAGE_NORMAL: i32 = 0;
-                    let oid = match index.get_path(path, STAGE_NORMAL) {
+                    let oid = match index.get_path(Path::new(&path.to_unix_style()), STAGE_NORMAL) {
                         Some(entry) if entry.mode != GIT_MODE_SYMLINK => entry.id,
                         _ => return Ok(None),
                     };
@@ -826,7 +827,7 @@ impl GitRepository for RealGitRepository {
             .spawn(async move {
                 let repo = repo.lock();
                 let head = repo.head().ok()?.peel_to_tree().log_err()?;
-                let entry = head.get_path(&path).ok()?;
+                let entry = head.get_path(Path::new(&path.as_os_str())).ok()?;
                 if entry.filemode() == i32::from(git2::FileMode::Link) {
                     return None;
                 }
@@ -1193,7 +1194,7 @@ impl GitRepository for RealGitRepository {
                         .current_dir(&working_directory?)
                         .envs(env.iter())
                         .args(["reset", "--quiet", "--"])
-                        .args(paths.iter().map(|p| p.as_ref()))
+                        .args(paths.iter().map(|p| p.to_unix_style()))
                         .output()
                         .await?;
 
@@ -1222,7 +1223,7 @@ impl GitRepository for RealGitRepository {
                     .args(["stash", "push", "--quiet"])
                     .arg("--include-untracked");
 
-                cmd.args(paths.iter().map(|p| p.as_ref()));
+                cmd.args(paths.iter().map(|p| p.to_unix_style()));
 
                 let output = cmd.output().await?;
 
@@ -2056,35 +2057,6 @@ fn parse_upstream_track(upstream_track: &str) -> Result<UpstreamTracking> {
         ahead,
         behind,
     }))
-}
-
-fn check_path_to_repo_path_errors(relative_file_path: &Path) -> Result<()> {
-    match relative_file_path.components().next() {
-        None => anyhow::bail!("repo path should not be empty"),
-        Some(Component::Prefix(_)) => anyhow::bail!(
-            "repo path `{}` should be relative, not a windows prefix",
-            relative_file_path.to_string_lossy()
-        ),
-        Some(Component::RootDir) => {
-            anyhow::bail!(
-                "repo path `{}` should be relative",
-                relative_file_path.to_string_lossy()
-            )
-        }
-        Some(Component::CurDir) => {
-            anyhow::bail!(
-                "repo path `{}` should not start with `.`",
-                relative_file_path.to_string_lossy()
-            )
-        }
-        Some(Component::ParentDir) => {
-            anyhow::bail!(
-                "repo path `{}` should not start with `..`",
-                relative_file_path.to_string_lossy()
-            )
-        }
-        _ => Ok(()),
-    }
 }
 
 fn checkpoint_author_envs() -> HashMap<String, String> {
