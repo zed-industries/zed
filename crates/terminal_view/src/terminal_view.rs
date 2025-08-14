@@ -1,3 +1,4 @@
+mod color_contrast;
 mod persistence;
 pub mod terminal_element;
 pub mod terminal_panel;
@@ -24,11 +25,11 @@ use terminal::{
     TaskStatus, Terminal, TerminalBounds, ToggleViMode,
     alacritty_terminal::{
         index::Point,
-        term::{TermMode, search::RegexSearch},
+        term::{TermMode, point_to_viewport, search::RegexSearch},
     },
     terminal_settings::{self, CursorShape, TerminalBlink, TerminalSettings, WorkingDirectory},
 };
-use terminal_element::{TerminalElement, is_blank};
+use terminal_element::TerminalElement;
 use terminal_panel::TerminalPanel;
 use terminal_scrollbar::TerminalScrollHandle;
 use terminal_slash_command::TerminalSlashCommand;
@@ -63,8 +64,8 @@ use std::{
 };
 
 const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(500);
-
 const GIT_DIFF_PATH_PREFIXES: &[&str] = &["a", "b"];
+const TERMINAL_SCROLLBAR_WIDTH: Pixels = px(12.);
 
 /// Event to transmit the scroll from the element to the view
 #[derive(Clone, Debug, PartialEq)]
@@ -429,6 +430,7 @@ impl TerminalView {
 
     fn settings_changed(&mut self, cx: &mut Context<Self>) {
         let settings = TerminalSettings::get_global(cx);
+        let breadcrumb_visibility_changed = self.show_breadcrumbs != settings.toolbar.breadcrumbs;
         self.show_breadcrumbs = settings.toolbar.breadcrumbs;
 
         let new_cursor_shape = settings.cursor_shape.unwrap_or_default();
@@ -440,6 +442,9 @@ impl TerminalView {
             });
         }
 
+        if breadcrumb_visibility_changed {
+            cx.emit(ItemEvent::UpdateBreadcrumbs);
+        }
         cx.notify();
     }
 
@@ -496,25 +501,14 @@ impl TerminalView {
         };
 
         let line_height = terminal.last_content().terminal_bounds.line_height;
-        let mut terminal_lines = terminal.total_lines();
         let viewport_lines = terminal.viewport_lines();
-        if terminal.total_lines() == terminal.viewport_lines() {
-            let mut last_line = None;
-            for cell in terminal.last_content.cells.iter().rev() {
-                if !is_blank(cell) {
-                    break;
-                }
-
-                let last_line = last_line.get_or_insert(cell.point.line);
-                if *last_line != cell.point.line {
-                    terminal_lines -= 1;
-                }
-                *last_line = cell.point.line;
-            }
-        }
-
+        let cursor = point_to_viewport(
+            terminal.last_content.display_offset,
+            terminal.last_content.cursor.point,
+        )
+        .unwrap_or_default();
         let max_scroll_top_in_lines =
-            (block.height as usize).saturating_sub(viewport_lines.saturating_sub(terminal_lines));
+            (block.height as usize).saturating_sub(viewport_lines.saturating_sub(cursor.line + 1));
 
         max_scroll_top_in_lines as f32 * line_height
     }
@@ -714,7 +708,7 @@ impl TerminalView {
 
     ///Attempt to paste the clipboard into the terminal
     fn copy(&mut self, _: &Copy, _: &mut Window, cx: &mut Context<Self>) {
-        self.terminal.update(cx, |term, _| term.copy());
+        self.terminal.update(cx, |term, _| term.copy(None));
         cx.notify();
     }
 
@@ -962,13 +956,12 @@ impl TerminalView {
                 .on_scroll_wheel(cx.listener(|_, _, _window, cx| {
                     cx.notify();
                 }))
-                .h_full()
                 .absolute()
-                .right_1()
-                .top_1()
+                .top_0()
                 .bottom_0()
-                .w(px(12.))
-                .cursor_default()
+                .right_0()
+                .h_full()
+                .w(TERMINAL_SCROLLBAR_WIDTH)
                 .children(Scrollbar::vertical(self.scrollbar_state.clone())),
         )
     }
@@ -1502,6 +1495,16 @@ impl Render for TerminalView {
 
         let focused = self.focus_handle.is_focused(window);
 
+        // Always calculate scrollbar width to prevent layout shift
+        let scrollbar_width = if Self::should_show_scrollbar(cx)
+            && self.content_mode(window, cx).is_scrollable()
+            && self.terminal.read(cx).total_lines() > self.terminal.read(cx).viewport_lines()
+        {
+            TERMINAL_SCROLLBAR_WIDTH
+        } else {
+            px(0.)
+        };
+
         div()
             .id("terminal-view")
             .size_full()
@@ -1551,6 +1554,8 @@ impl Render for TerminalView {
                 // TODO: Oddly this wrapper div is needed for TerminalElement to not steal events from the context menu
                 div()
                     .size_full()
+                    .bg(cx.theme().colors().editor_background)
+                    .when(scrollbar_width > px(0.), |div| div.pr(scrollbar_width))
                     .child(TerminalElement::new(
                         terminal_handle,
                         terminal_view_handle,
@@ -1597,7 +1602,7 @@ impl Item for TerminalView {
         let (icon, icon_color, rerun_button) = match terminal.task() {
             Some(terminal_task) => match &terminal_task.status {
                 TaskStatus::Running => (
-                    IconName::Play,
+                    IconName::PlayFilled,
                     Color::Disabled,
                     TerminalView::rerun_button(&terminal_task),
                 ),
@@ -1660,7 +1665,6 @@ impl Item for TerminalView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<Entity<Self>> {
-        let window_handle = window.window_handle();
         let terminal = self
             .project
             .update(cx, |project, cx| {
@@ -1672,7 +1676,6 @@ impl Item for TerminalView {
                 project.create_terminal_with_venv(
                     TerminalKind::Shell(working_directory),
                     python_venv_directory,
-                    window_handle,
                     cx,
                 )
             })
@@ -1808,7 +1811,6 @@ impl SerializableItem for TerminalView {
         window: &mut Window,
         cx: &mut App,
     ) -> Task<anyhow::Result<Entity<Self>>> {
-        let window_handle = window.window_handle();
         window.spawn(cx, async move |cx| {
             let cwd = cx
                 .update(|_window, cx| {
@@ -1832,7 +1834,7 @@ impl SerializableItem for TerminalView {
 
             let terminal = project
                 .update(cx, |project, cx| {
-                    project.create_terminal(TerminalKind::Shell(cwd), window_handle, cx)
+                    project.create_terminal(TerminalKind::Shell(cwd), cx)
                 })?
                 .await?;
             cx.update(|window, cx| {
@@ -1867,7 +1869,7 @@ impl SearchableItem for TerminalView {
 
     /// Clear stored matches
     fn clear_matches(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
-        self.terminal().update(cx, |term, _| term.matches.clear())
+        self.terminal().update(cx, |term, _| term.clear_matches())
     }
 
     /// Store matches returned from find_matches somewhere for rendering

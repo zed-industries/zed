@@ -138,6 +138,27 @@ impl ContextStore {
         })
     }
 
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn fake(project: Entity<Project>, cx: &mut Context<Self>) -> Self {
+        Self {
+            contexts: Default::default(),
+            contexts_metadata: Default::default(),
+            context_server_slash_command_ids: Default::default(),
+            host_contexts: Default::default(),
+            fs: project.read(cx).fs().clone(),
+            languages: project.read(cx).languages().clone(),
+            slash_commands: Arc::default(),
+            telemetry: project.read(cx).client().telemetry().clone(),
+            _watch_updates: Task::ready(None),
+            client: project.read(cx).client(),
+            project,
+            project_is_shared: false,
+            client_subscription: None,
+            _project_subscriptions: Default::default(),
+            prompt_builder: Arc::new(PromptBuilder::new(None).unwrap()),
+        }
+    }
+
     async fn handle_advertise_contexts(
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::AdvertiseContexts>,
@@ -767,6 +788,11 @@ impl ContextStore {
     fn reload(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
         let fs = self.fs.clone();
         cx.spawn(async move |this, cx| {
+            pub static ZED_STATELESS: LazyLock<bool> =
+                LazyLock::new(|| std::env::var("ZED_STATELESS").map_or(false, |v| !v.is_empty()));
+            if *ZED_STATELESS {
+                return Ok(());
+            }
             fs.create_dir(contexts_dir()).await?;
 
             let mut paths = fs.read_dir(contexts_dir()).await?;

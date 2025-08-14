@@ -25,9 +25,14 @@ fn preprocess_json_schema(json: &mut Value) -> Result<()> {
     // `additionalProperties` defaults to `false` unless explicitly specified.
     // This prevents models from hallucinating tool parameters.
     if let Value::Object(obj) = json {
-        if let Some(Value::String(type_str)) = obj.get("type") {
-            if type_str == "object" && !obj.contains_key("additionalProperties") {
+        if matches!(obj.get("type"), Some(Value::String(s)) if s == "object") {
+            if !obj.contains_key("additionalProperties") {
                 obj.insert("additionalProperties".to_string(), Value::Bool(false));
+            }
+
+            // OpenAI API requires non-missing `properties`
+            if !obj.contains_key("properties") {
+                obj.insert("properties".to_string(), Value::Object(Default::default()));
             }
         }
     }

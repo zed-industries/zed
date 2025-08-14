@@ -5,6 +5,7 @@ pub mod fs;
 pub mod markdown;
 pub mod paths;
 pub mod redact;
+pub mod schemars;
 pub mod serde;
 pub mod shell_env;
 pub mod size;
@@ -668,9 +669,12 @@ where
     let file = caller.file();
     #[cfg(target_os = "windows")]
     let file = caller.file().replace('\\', "/");
-    // In this codebase, the first segment of the file path is
-    // the 'crates' folder, followed by the crate name.
-    let target = file.split('/').nth(1);
+    // In this codebase all crates reside in a `crates` directory,
+    // so discard the prefix up to that segment to find the crate name
+    let target = file
+        .split_once("crates/")
+        .and_then(|(_, s)| s.split_once('/'))
+        .map(|(p, _)| p);
 
     log::logger().log(
         &log::Record::builder()
@@ -883,10 +887,10 @@ macro_rules! maybe {
         (|| $block)()
     };
     (async $block:block) => {
-        (|| async $block)()
+        (async || $block)()
     };
     (async move $block:block) => {
-        (|| async move $block)()
+        (async move || $block)()
     };
 }
 
@@ -1094,52 +1098,6 @@ mod tests {
 
         extend_sorted(&mut vec, vec![1000, 19, 17, 9, 5], 8, |a, b| b.cmp(a));
         assert_eq!(vec, &[1000, 101, 21, 19, 17, 13, 9, 8]);
-    }
-
-    #[test]
-    fn test_get_shell_safe_zed_path_with_spaces() {
-        // Test that shlex::try_quote handles paths with spaces correctly
-        let path_with_spaces = "/Applications/Zed Nightly.app/Contents/MacOS/zed";
-        let quoted = shlex::try_quote(path_with_spaces).unwrap();
-
-        // The quoted path should be properly escaped for shell use
-        assert!(quoted.contains(path_with_spaces));
-
-        // When used in a shell command, it should not be split at spaces
-        let command = format!("sh -c '{} --printenv'", quoted);
-        println!("Command would be: {}", command);
-
-        // Test that shlex can parse it back correctly
-        let parsed = shlex::split(&format!("{} --printenv", quoted)).unwrap();
-        assert_eq!(parsed.len(), 2);
-        assert_eq!(parsed[0], path_with_spaces);
-        assert_eq!(parsed[1], "--printenv");
-    }
-
-    #[test]
-    fn test_shell_command_construction_with_quoted_path() {
-        // Test the specific pattern used in shell_env.rs to ensure proper quoting
-        let path_with_spaces = "/Applications/Zed Nightly.app/Contents/MacOS/zed";
-        let quoted_path = shlex::try_quote(path_with_spaces).unwrap();
-
-        // This should be: '/Applications/Zed Nightly.app/Contents/MacOS/zed'
-        assert_eq!(
-            quoted_path,
-            "'/Applications/Zed Nightly.app/Contents/MacOS/zed'"
-        );
-
-        // Test the command construction pattern from shell_env.rs
-        // The fixed version should use double quotes around the entire sh -c argument
-        let env_fd = 0;
-        let command = format!("sh -c \"{} --printenv >&{}\";", quoted_path, env_fd);
-
-        // This should produce: sh -c "'/Applications/Zed Nightly.app/Contents/MacOS/zed' --printenv >&0";
-        let expected =
-            "sh -c \"'/Applications/Zed Nightly.app/Contents/MacOS/zed' --printenv >&0\";";
-        assert_eq!(command, expected);
-
-        // The command should not contain the problematic double single-quote pattern
-        assert!(!command.contains("''"));
     }
 
     #[test]

@@ -21,10 +21,12 @@ use language::{
     point_from_lsp, point_to_lsp,
 };
 use lsp::{LanguageServer, LanguageServerBinary, LanguageServerId, LanguageServerName};
-use node_runtime::NodeRuntime;
+use node_runtime::{NodeRuntime, VersionCheck};
 use parking_lot::Mutex;
+use project::DisableAiSettings;
 use request::StatusNotification;
 use serde_json::json;
+use settings::Settings;
 use settings::SettingsStore;
 use sign_in::{reinstall_and_sign_in_within_workspace, sign_out_within_workspace};
 use std::collections::hash_map::Entry;
@@ -37,6 +39,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
+use sum_tree::Dimensions;
 use util::{ResultExt, fs::remove_matching};
 use workspace::Workspace;
 
@@ -83,37 +86,13 @@ pub fn init(
         move |cx| Copilot::start(new_server_id, fs, node_runtime, cx)
     });
     Copilot::set_global(copilot.clone(), cx);
-    cx.observe(&copilot, |handle, cx| {
-        let copilot_action_types = [
-            TypeId::of::<Suggest>(),
-            TypeId::of::<NextSuggestion>(),
-            TypeId::of::<PreviousSuggestion>(),
-            TypeId::of::<Reinstall>(),
-        ];
-        let copilot_auth_action_types = [TypeId::of::<SignOut>()];
-        let copilot_no_auth_action_types = [TypeId::of::<SignIn>()];
-        let status = handle.read(cx).status();
-        let filter = CommandPaletteFilter::global_mut(cx);
-
-        match status {
-            Status::Disabled => {
-                filter.hide_action_types(&copilot_action_types);
-                filter.hide_action_types(&copilot_auth_action_types);
-                filter.hide_action_types(&copilot_no_auth_action_types);
-            }
-            Status::Authorized => {
-                filter.hide_action_types(&copilot_no_auth_action_types);
-                filter.show_action_types(
-                    copilot_action_types
-                        .iter()
-                        .chain(&copilot_auth_action_types),
-                );
-            }
-            _ => {
-                filter.hide_action_types(&copilot_action_types);
-                filter.hide_action_types(&copilot_auth_action_types);
-                filter.show_action_types(copilot_no_auth_action_types.iter());
-            }
+    cx.observe(&copilot, |copilot, cx| {
+        copilot.update(cx, |copilot, cx| copilot.update_action_visibilities(cx));
+    })
+    .detach();
+    cx.observe_global::<SettingsStore>(|cx| {
+        if let Some(copilot) = Copilot::global(cx) {
+            copilot.update(cx, |copilot, cx| copilot.update_action_visibilities(cx));
         }
     })
     .detach();
@@ -209,8 +188,14 @@ impl Status {
         matches!(self, Status::Authorized)
     }
 
-    pub fn is_disabled(&self) -> bool {
-        matches!(self, Status::Disabled)
+    pub fn is_configured(&self) -> bool {
+        matches!(
+            self,
+            Status::Starting { .. }
+                | Status::Error(_)
+                | Status::SigningIn { .. }
+                | Status::Authorized
+        )
     }
 }
 
@@ -255,7 +240,7 @@ impl RegisteredBuffer {
                         let new_snapshot = new_snapshot.clone();
                         async move {
                             new_snapshot
-                                .edits_since::<(PointUtf16, usize)>(&old_version)
+                                .edits_since::<Dimensions<PointUtf16, usize>>(&old_version)
                                 .map(|edit| {
                                     let edit_start = edit.new.start.0;
                                     let edit_end = edit_start + (edit.old.end.0 - edit.old.start.0);
@@ -1115,6 +1100,44 @@ impl Copilot {
             cx.notify();
         }
     }
+
+    fn update_action_visibilities(&self, cx: &mut App) {
+        let signed_in_actions = [
+            TypeId::of::<Suggest>(),
+            TypeId::of::<NextSuggestion>(),
+            TypeId::of::<PreviousSuggestion>(),
+            TypeId::of::<Reinstall>(),
+        ];
+        let auth_actions = [TypeId::of::<SignOut>()];
+        let no_auth_actions = [TypeId::of::<SignIn>()];
+        let status = self.status();
+
+        let is_ai_disabled = DisableAiSettings::get_global(cx).disable_ai;
+        let filter = CommandPaletteFilter::global_mut(cx);
+
+        if is_ai_disabled {
+            filter.hide_action_types(&signed_in_actions);
+            filter.hide_action_types(&auth_actions);
+            filter.hide_action_types(&no_auth_actions);
+        } else {
+            match status {
+                Status::Disabled => {
+                    filter.hide_action_types(&signed_in_actions);
+                    filter.hide_action_types(&auth_actions);
+                    filter.hide_action_types(&no_auth_actions);
+                }
+                Status::Authorized => {
+                    filter.hide_action_types(&no_auth_actions);
+                    filter.show_action_types(signed_in_actions.iter().chain(&auth_actions));
+                }
+                _ => {
+                    filter.hide_action_types(&signed_in_actions);
+                    filter.hide_action_types(&auth_actions);
+                    filter.show_action_types(no_auth_actions.iter());
+                }
+            }
+        }
+    }
 }
 
 fn id_for_language(language: Option<&Arc<Language>>) -> String {
@@ -1146,9 +1169,8 @@ async fn get_copilot_lsp(fs: Arc<dyn Fs>, node_runtime: NodeRuntime) -> anyhow::
     const SERVER_PATH: &str =
         "node_modules/@github/copilot-language-server/dist/language-server.js";
 
-    let latest_version = node_runtime
-        .npm_package_latest_version(PACKAGE_NAME)
-        .await?;
+    // pinning it: https://github.com/zed-industries/zed/issues/36093
+    const PINNED_VERSION: &str = "1.354";
     let server_path = paths::copilot_dir().join(SERVER_PATH);
 
     fs.create_dir(paths::copilot_dir()).await?;
@@ -1158,12 +1180,13 @@ async fn get_copilot_lsp(fs: Arc<dyn Fs>, node_runtime: NodeRuntime) -> anyhow::
             PACKAGE_NAME,
             &server_path,
             paths::copilot_dir(),
-            &latest_version,
+            &PINNED_VERSION,
+            VersionCheck::VersionMismatch,
         )
         .await;
     if should_install {
         node_runtime
-            .npm_install_packages(paths::copilot_dir(), &[(PACKAGE_NAME, &latest_version)])
+            .npm_install_packages(paths::copilot_dir(), &[(PACKAGE_NAME, &PINNED_VERSION)])
             .await?;
     }
 

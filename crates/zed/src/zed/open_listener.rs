@@ -12,9 +12,11 @@ use futures::channel::mpsc::{UnboundedReceiver, UnboundedSender};
 use futures::channel::{mpsc, oneshot};
 use futures::future::join_all;
 use futures::{FutureExt, SinkExt, StreamExt};
-use git_ui::diff_view::DiffView;
+use git_ui::file_diff_view::FileDiffView;
 use gpui::{App, AsyncApp, Global, WindowHandle};
 use language::Point;
+use onboarding::FIRST_OPEN;
+use onboarding::show_onboarding_view;
 use recent_projects::{SshSettings, open_ssh_project};
 use remote::SshConnectionOptions;
 use settings::Settings;
@@ -24,19 +26,25 @@ use std::thread;
 use std::time::Duration;
 use util::ResultExt;
 use util::paths::PathWithPosition;
-use welcome::{FIRST_OPEN, show_welcome_view};
 use workspace::item::ItemHandle;
 use workspace::{AppState, OpenOptions, SerializedWorkspaceLocation, Workspace};
 
 #[derive(Default, Debug)]
 pub struct OpenRequest {
-    pub cli_connection: Option<(mpsc::Receiver<CliRequest>, IpcSender<CliResponse>)>,
+    pub kind: Option<OpenRequestKind>,
     pub open_paths: Vec<String>,
     pub diff_paths: Vec<[String; 2]>,
     pub open_channel_notes: Vec<(u64, Option<String>)>,
     pub join_channel: Option<u64>,
     pub ssh_connection: Option<SshConnectionOptions>,
-    pub dock_menu_action: Option<usize>,
+}
+
+#[derive(Debug)]
+pub enum OpenRequestKind {
+    CliConnection((mpsc::Receiver<CliRequest>, IpcSender<CliResponse>)),
+    Extension { extension_id: String },
+    AgentPanel,
+    DockMenuAction { index: usize },
 }
 
 impl OpenRequest {
@@ -44,9 +52,11 @@ impl OpenRequest {
         let mut this = Self::default();
         for url in request.urls {
             if let Some(server_name) = url.strip_prefix("zed-cli://") {
-                this.cli_connection = Some(connect_to_cli(server_name)?);
+                this.kind = Some(OpenRequestKind::CliConnection(connect_to_cli(server_name)?));
             } else if let Some(action_index) = url.strip_prefix("zed-dock-action://") {
-                this.dock_menu_action = Some(action_index.parse()?);
+                this.kind = Some(OpenRequestKind::DockMenuAction {
+                    index: action_index.parse()?,
+                });
             } else if let Some(file) = url.strip_prefix("file://") {
                 this.parse_file_path(file)
             } else if let Some(file) = url.strip_prefix("zed://file") {
@@ -54,6 +64,12 @@ impl OpenRequest {
             } else if let Some(file) = url.strip_prefix("zed://ssh") {
                 let ssh_url = "ssh:/".to_string() + file;
                 this.parse_ssh_file_path(&ssh_url, cx)?
+            } else if let Some(extension_id) = url.strip_prefix("zed://extension/") {
+                this.kind = Some(OpenRequestKind::Extension {
+                    extension_id: extension_id.to_string(),
+                });
+            } else if url == "zed://agent" {
+                this.kind = Some(OpenRequestKind::AgentPanel);
             } else if url.starts_with("ssh://") {
                 this.parse_ssh_file_path(&url, cx)?
             } else if let Some(request_path) = parse_zed_link(&url, cx) {
@@ -247,7 +263,7 @@ pub async fn open_paths_with_positions(
         let old_path = Path::new(&diff_pair[0]).canonicalize()?;
         let new_path = Path::new(&diff_pair[1]).canonicalize()?;
         if let Ok(diff_view) = workspace.update(cx, |workspace, window, cx| {
-            DiffView::open(old_path, new_path, workspace, window, cx)
+            FileDiffView::open(old_path, new_path, workspace, window, cx)
         }) {
             if let Some(diff_view) = diff_view.await.log_err() {
                 items.push(Some(Ok(Box::new(diff_view))))
@@ -363,7 +379,7 @@ async fn open_workspaces(
     if grouped_locations.is_empty() {
         // If we have no paths to open, show the welcome screen if this is the first launch
         if matches!(KEY_VALUE_STORE.read_kvp(FIRST_OPEN), Ok(None)) {
-            cx.update(|cx| show_welcome_view(app_state, cx).detach())
+            cx.update(|cx| show_onboarding_view(app_state, cx).detach())
                 .log_err();
         }
         // If not the first launch, show an empty window with empty editor

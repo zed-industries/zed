@@ -1,12 +1,10 @@
 use std::ops::{Deref, DerefMut};
 
 use editor::test::editor_lsp_test_context::EditorLspTestContext;
-use gpui::{Context, Entity, SemanticVersion, UpdateGlobal, actions};
+use gpui::{Context, Entity, SemanticVersion, UpdateGlobal};
 use search::{BufferSearchBar, project_search::ProjectSearchBar};
 
 use crate::{state::Operator, *};
-
-actions!(agent, [Chat]);
 
 pub struct VimTestContext {
     cx: EditorLspTestContext,
@@ -17,6 +15,7 @@ impl VimTestContext {
         if cx.has_global::<VimGlobals>() {
             return;
         }
+        env_logger::try_init().ok();
         cx.update(|cx| {
             let settings = SettingsStore::test(cx);
             cx.set_global(settings);

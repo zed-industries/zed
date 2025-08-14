@@ -26,7 +26,7 @@ CREATE UNIQUE INDEX "index_users_on_github_user_id" ON "users" ("github_user_id"
 
 CREATE TABLE "access_tokens" (
     "id" INTEGER PRIMARY KEY AUTOINCREMENT,
-    "user_id" INTEGER REFERENCES users (id),
+    "user_id" INTEGER REFERENCES users (id) ON DELETE CASCADE,
     "impersonated_user_id" INTEGER REFERENCES users (id),
     "hash" VARCHAR(128)
 );
@@ -173,6 +173,7 @@ CREATE TABLE "language_servers" (
     "id" INTEGER NOT NULL,
     "project_id" INTEGER NOT NULL REFERENCES projects (id) ON DELETE CASCADE,
     "name" VARCHAR NOT NULL,
+    "capabilities" TEXT NOT NULL,
     PRIMARY KEY (project_id, id)
 );
 

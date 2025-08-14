@@ -14,6 +14,15 @@
       "(" @context
       ")" @context)) @item
 
+(generator_function_declaration
+    "async"? @context
+    "function" @context
+    "*" @context
+    name: (_) @name
+    parameters: (formal_parameters
+      "(" @context
+      ")" @context)) @item
+
 (interface_declaration
     "interface" @context
     name: (_) @name) @item
@@ -22,12 +31,16 @@
     (export_statement
         (lexical_declaration
             ["let" "const"] @context
+            ; Multiple names may be exported - @item is on the declarator to keep
+            ; ranges distinct.
             (variable_declarator
                 name: (_) @name) @item)))
 
 (program
     (lexical_declaration
         ["let" "const"] @context
+        ; Multiple names may be defined - @item is on the declarator to keep
+        ; ranges distinct.
         (variable_declarator
             name: (_) @name) @item))
 

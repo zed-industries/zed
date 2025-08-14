@@ -663,7 +663,9 @@ pub fn into_anthropic(
         } else {
             Some(anthropic::StringOrContents::String(system_message))
         },
-        thinking: if let AnthropicModelMode::Thinking { budget_tokens } = mode {
+        thinking: if request.thinking_allowed
+            && let AnthropicModelMode::Thinking { budget_tokens } = mode
+        {
             Some(anthropic::Thinking::Enabled { budget_tokens })
         } else {
             None
@@ -1010,7 +1012,7 @@ impl Render for ConfigurationView {
             v_flex()
                 .size_full()
                 .on_action(cx.listener(Self::save_api_key))
-                .child(Label::new("To use Zed's assistant with Anthropic, you need to add an API key. Follow these steps:"))
+                .child(Label::new("To use Zed's agent with Anthropic, you need to add an API key. Follow these steps:"))
                 .child(
                     List::new()
                         .child(
@@ -1108,6 +1110,7 @@ mod tests {
             temperature: None,
             tools: vec![],
             tool_choice: None,
+            thinking_allowed: true,
         };
 
         let anthropic_request = into_anthropic(

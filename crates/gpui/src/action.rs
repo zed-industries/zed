@@ -225,6 +225,7 @@ pub(crate) struct ActionRegistry {
     all_names: Vec<&'static str>, // So we can return a static slice.
     deprecated_aliases: HashMap<&'static str, &'static str>, // deprecated name -> preferred name
     deprecation_messages: HashMap<&'static str, &'static str>, // action name -> deprecation message
+    documentation: HashMap<&'static str, &'static str>, // action name -> documentation
 }
 
 impl Default for ActionRegistry {
@@ -232,6 +233,7 @@ impl Default for ActionRegistry {
         let mut this = ActionRegistry {
             by_name: Default::default(),
             names_by_type_id: Default::default(),
+            documentation: Default::default(),
             all_names: Default::default(),
             deprecated_aliases: Default::default(),
             deprecation_messages: Default::default(),
@@ -327,6 +329,9 @@ impl ActionRegistry {
         if let Some(deprecation_msg) = action.deprecation_message {
             self.deprecation_messages.insert(name, deprecation_msg);
         }
+        if let Some(documentation) = action.documentation {
+            self.documentation.insert(name, documentation);
+        }
     }
 
     /// Construct an action based on its name and optional JSON parameters sourced from the keymap.
@@ -388,18 +393,20 @@ impl ActionRegistry {
     pub fn deprecation_messages(&self) -> &HashMap<&'static str, &'static str> {
         &self.deprecation_messages
     }
+
+    pub fn documentation(&self) -> &HashMap<&'static str, &'static str> {
+        &self.documentation
+    }
 }
 
 /// Generate a list of all the registered actions.
 /// Useful for transforming the list of available actions into a
 /// format suited for static analysis such as in validating keymaps, or
 /// generating documentation.
-pub fn generate_list_of_all_registered_actions() -> Vec<MacroActionData> {
-    let mut actions = Vec::new();
-    for builder in inventory::iter::<MacroActionBuilder> {
-        actions.push(builder.0());
-    }
-    actions
+pub fn generate_list_of_all_registered_actions() -> impl Iterator<Item = MacroActionData> {
+    inventory::iter::<MacroActionBuilder>
+        .into_iter()
+        .map(|builder| builder.0())
 }
 
 mod no_action {

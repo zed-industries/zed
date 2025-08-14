@@ -130,6 +130,13 @@ fn parse_path_with_position(argument_str: &str) -> anyhow::Result<String> {
 }
 
 fn main() -> Result<()> {
+    #[cfg(all(not(debug_assertions), target_os = "windows"))]
+    unsafe {
+        use ::windows::Win32::System::Console::{ATTACH_PARENT_PROCESS, AttachConsole};
+
+        let _ = AttachConsole(ATTACH_PARENT_PROCESS);
+    }
+
     #[cfg(unix)]
     util::prevent_root_execution();
 
@@ -308,19 +315,19 @@ fn main() -> Result<()> {
     });
 
     let stdin_pipe_handle: Option<JoinHandle<anyhow::Result<()>>> =
-        stdin_tmp_file.map(|tmp_file| {
+        stdin_tmp_file.map(|mut tmp_file| {
             thread::spawn(move || {
-                let stdin = std::io::stdin().lock();
-                if io::IsTerminal::is_terminal(&stdin) {
-                    return Ok(());
+                let mut stdin = std::io::stdin().lock();
+                if !io::IsTerminal::is_terminal(&stdin) {
+                    io::copy(&mut stdin, &mut tmp_file)?;
                 }
-                return pipe_to_tmp(stdin, tmp_file);
+                Ok(())
             })
         });
 
-    let anonymous_fd_pipe_handles: Vec<JoinHandle<anyhow::Result<()>>> = anonymous_fd_tmp_files
+    let anonymous_fd_pipe_handles: Vec<_> = anonymous_fd_tmp_files
         .into_iter()
-        .map(|(file, tmp_file)| thread::spawn(move || pipe_to_tmp(file, tmp_file)))
+        .map(|(mut file, mut tmp_file)| thread::spawn(move || io::copy(&mut file, &mut tmp_file)))
         .collect();
 
     if args.foreground {
@@ -339,22 +346,6 @@ fn main() -> Result<()> {
     if let Some(exit_status) = exit_status.lock().take() {
         std::process::exit(exit_status);
     }
-    Ok(())
-}
-
-fn pipe_to_tmp(mut src: impl io::Read, mut dest: fs::File) -> Result<()> {
-    let mut buffer = [0; 8 * 1024];
-    loop {
-        let bytes_read = match src.read(&mut buffer) {
-            Err(err) if err.kind() == io::ErrorKind::Interrupted => continue,
-            res => res?,
-        };
-        if bytes_read == 0 {
-            break;
-        }
-        io::Write::write_all(&mut dest, &buffer[..bytes_read])?;
-    }
-    io::Write::flush(&mut dest)?;
     Ok(())
 }
 
@@ -409,7 +400,6 @@ mod linux {
         os::unix::net::{SocketAddr, UnixDatagram},
         path::{Path, PathBuf},
         process::{self, ExitStatus},
-        sync::LazyLock,
         thread,
         time::Duration,
     };
@@ -419,9 +409,6 @@ mod linux {
     use fork::Fork;
 
     use crate::{Detect, InstalledApp};
-
-    static RELEASE_CHANNEL: LazyLock<String> =
-        LazyLock::new(|| include_str!("../../zed/RELEASE_CHANNEL").trim().to_string());
 
     struct App(PathBuf);
 
@@ -453,10 +440,10 @@ mod linux {
         fn zed_version_string(&self) -> String {
             format!(
                 "Zed {}{}{} – {}",
-                if *RELEASE_CHANNEL == "stable" {
+                if *release_channel::RELEASE_CHANNEL_NAME == "stable" {
                     "".to_string()
                 } else {
-                    format!("{} ", *RELEASE_CHANNEL)
+                    format!("{} ", *release_channel::RELEASE_CHANNEL_NAME)
                 },
                 option_env!("RELEASE_VERSION").unwrap_or_default(),
                 match option_env!("ZED_COMMIT_SHA") {
@@ -468,7 +455,10 @@ mod linux {
         }
 
         fn launch(&self, ipc_url: String) -> anyhow::Result<()> {
-            let sock_path = paths::data_dir().join(format!("zed-{}.sock", *RELEASE_CHANNEL));
+            let sock_path = paths::data_dir().join(format!(
+                "zed-{}.sock",
+                *release_channel::RELEASE_CHANNEL_NAME
+            ));
             let sock = UnixDatagram::unbound()?;
             if sock.connect(&sock_path).is_err() {
                 self.boot_background(ipc_url)?;
@@ -967,17 +957,14 @@ mod mac_os {
     ) -> Result<()> {
         use anyhow::bail;
 
-        let app_id_prompt = format!("id of app \"{}\"", channel.display_name());
-        let app_id_output = Command::new("osascript")
+        let app_path_prompt = format!(
+            "POSIX path of (path to application \"{}\")",
+            channel.display_name()
+        );
+        let app_path_output = Command::new("osascript")
             .arg("-e")
-            .arg(&app_id_prompt)
+            .arg(&app_path_prompt)
             .output()?;
-        if !app_id_output.status.success() {
-            bail!("Could not determine app id for {}", channel.display_name());
-        }
-        let app_name = String::from_utf8(app_id_output.stdout)?.trim().to_owned();
-        let app_path_prompt = format!("kMDItemCFBundleIdentifier == '{app_name}'");
-        let app_path_output = Command::new("mdfind").arg(app_path_prompt).output()?;
         if !app_path_output.status.success() {
             bail!(
                 "Could not determine app path for {}",

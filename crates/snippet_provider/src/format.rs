@@ -3,6 +3,7 @@ use schemars::{JsonSchema, json_schema};
 use serde::Deserialize;
 use serde_json_lenient::Value;
 use std::borrow::Cow;
+use util::schemars::DefaultDenyUnknownFields;
 
 #[derive(Deserialize)]
 pub struct VsSnippetsFile {
@@ -13,6 +14,7 @@ pub struct VsSnippetsFile {
 impl VsSnippetsFile {
     pub fn generate_json_schema() -> Value {
         let schema = schemars::generate::SchemaSettings::draft2019_09()
+            .with_transform(DefaultDenyUnknownFields)
             .into_generator()
             .root_schema_for::<Self>();
 

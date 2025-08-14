@@ -18,9 +18,10 @@ use git::{
 use git2::RepositoryInitOptions;
 use gpui::{App, BackgroundExecutor, SemanticVersion, UpdateGlobal};
 use http_client::Url;
+use itertools::Itertools;
 use language::{
-    Diagnostic, DiagnosticEntry, DiagnosticSet, DiskState, FakeLspAdapter, LanguageConfig,
-    LanguageMatcher, LanguageName, LineEnding, OffsetRangeExt, Point, ToPoint,
+    Diagnostic, DiagnosticEntry, DiagnosticSet, DiagnosticSourceKind, DiskState, FakeLspAdapter,
+    LanguageConfig, LanguageMatcher, LanguageName, LineEnding, OffsetRangeExt, Point, ToPoint,
     language_settings::{AllLanguageSettings, LanguageSettingsContent, language_settings},
     tree_sitter_rust, tree_sitter_typescript,
 };
@@ -568,7 +569,7 @@ async fn test_fallback_to_single_worktree_tasks(cx: &mut gpui::TestAppContext) {
             .into_iter()
             .map(|(source_kind, task)| {
                 let resolved = task.resolved;
-                (source_kind, resolved.command)
+                (source_kind, resolved.command.unwrap())
             })
             .collect::<Vec<_>>(),
         vec![(
@@ -1100,7 +1101,7 @@ async fn test_reporting_fs_changes_to_language_servers(cx: &mut gpui::TestAppCon
     let fake_server = fake_servers.next().await.unwrap();
     let (server_id, server_name) = lsp_store.read_with(cx, |lsp_store, _| {
         let (id, status) = lsp_store.language_server_statuses().next().unwrap();
-        (id, LanguageServerName::from(status.name.as_str()))
+        (id, status.name.clone())
     });
 
     // Simulate jumping to a definition in a dependency outside of the worktree.
@@ -1618,7 +1619,7 @@ async fn test_disk_based_diagnostics_progress(cx: &mut gpui::TestAppContext) {
         events.next().await.unwrap(),
         Event::DiagnosticsUpdated {
             language_server_id: LanguageServerId(0),
-            path: (worktree_id, Path::new("a.rs")).into()
+            paths: vec![(worktree_id, Path::new("a.rs")).into()],
         }
     );
 
@@ -1666,7 +1667,7 @@ async fn test_disk_based_diagnostics_progress(cx: &mut gpui::TestAppContext) {
         events.next().await.unwrap(),
         Event::DiagnosticsUpdated {
             language_server_id: LanguageServerId(0),
-            path: (worktree_id, Path::new("a.rs")).into()
+            paths: vec![(worktree_id, Path::new("a.rs")).into()],
         }
     );
 
@@ -1698,7 +1699,7 @@ async fn test_restarting_server_with_diagnostics_running(cx: &mut gpui::TestAppC
             name: "the-language-server",
             disk_based_diagnostics_sources: vec!["disk".into()],
             disk_based_diagnostics_progress_token: Some(progress_token.into()),
-            ..Default::default()
+            ..FakeLspAdapter::default()
         },
     );
 
@@ -1710,6 +1711,7 @@ async fn test_restarting_server_with_diagnostics_running(cx: &mut gpui::TestAppC
         })
         .await
         .unwrap();
+    let buffer_id = buffer.read_with(cx, |buffer, _| buffer.remote_id());
     // Simulate diagnostics starting to update.
     let fake_server = fake_servers.next().await.unwrap();
     fake_server.start_progress(progress_token).await;
@@ -1736,6 +1738,14 @@ async fn test_restarting_server_with_diagnostics_running(cx: &mut gpui::TestAppC
     );
     assert_eq!(events.next().await.unwrap(), Event::RefreshInlayHints);
     fake_server.start_progress(progress_token).await;
+    assert_eq!(
+        events.next().await.unwrap(),
+        Event::LanguageServerBufferRegistered {
+            server_id: LanguageServerId(1),
+            buffer_id,
+            buffer_abs_path: PathBuf::from(path!("/dir/a.rs")),
+        }
+    );
     assert_eq!(
         events.next().await.unwrap(),
         Event::DiskBasedDiagnosticsStarted {

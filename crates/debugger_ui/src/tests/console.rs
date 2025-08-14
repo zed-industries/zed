@@ -232,7 +232,6 @@ async fn test_escape_code_processing(executor: BackgroundExecutor, cx: &mut Test
             location_reference: None,
         }))
         .await;
-    // [crates/debugger_ui/src/session/running/console.rs:147:9] &to_insert = "Could not read source map for file:///Users/cole/roles-at/node_modules/.pnpm/typescript@5.7.3/node_modules/typescript/lib/typescript.js: ENOENT: no such file or directory, open '/Users/cole/roles-at/node_modules/.pnpm/typescript@5.7.3/node_modules/typescript/lib/typescript.js.map'\n"
     client
         .fake_event(dap::messages::Events::Output(dap::OutputEvent {
             category: None,
@@ -260,7 +259,6 @@ async fn test_escape_code_processing(executor: BackgroundExecutor, cx: &mut Test
         }))
         .await;
 
-    // introduce some background highlight
     client
         .fake_event(dap::messages::Events::Output(dap::OutputEvent {
             category: None,
@@ -274,7 +272,6 @@ async fn test_escape_code_processing(executor: BackgroundExecutor, cx: &mut Test
             location_reference: None,
         }))
         .await;
-    // another random line
     client
         .fake_event(dap::messages::Events::Output(dap::OutputEvent {
             category: None,
@@ -294,6 +291,11 @@ async fn test_escape_code_processing(executor: BackgroundExecutor, cx: &mut Test
     let _running_state =
         active_debug_session_panel(workspace, cx).update_in(cx, |item, window, cx| {
             cx.focus_self(window);
+            item.running_state().update(cx, |this, cx| {
+                this.console()
+                    .update(cx, |this, cx| this.update_output(window, cx));
+            });
+
             item.running_state().clone()
         });
 

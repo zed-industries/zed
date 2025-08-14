@@ -19,8 +19,8 @@ path = "src/explorer.rs"
 
 [dependencies]
 agent.workspace = true
-agent_ui.workspace = true
 agent_settings.workspace = true
+agent_ui.workspace = true
 anyhow.workspace = true
 assistant_tool.workspace = true
 assistant_tools.workspace = true
@@ -29,6 +29,7 @@ buffer_diff.workspace = true
 chrono.workspace = true
 clap.workspace = true
 client.workspace = true
+cloud_llm_client.workspace = true
 collections.workspace = true
 debug_adapter_extension.workspace = true
 dirs.workspace = true
@@ -68,4 +69,3 @@ util.workspace = true
 uuid.workspace = true
 watch.workspace = true
 workspace-hack.workspace = true
-zed_llm_client.workspace = true

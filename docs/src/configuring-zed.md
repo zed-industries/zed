@@ -294,11 +294,11 @@ Define extensions which should be installed (`true`) or never installed (`false`
 
 - Description: The name of a font to use for rendering text in the editor.
 - Setting: `buffer_font_family`
-- Default: `Zed Plex Mono`
+- Default: `.ZedMono`. This currently aliases to [Lilex](https://lilex.myrt.co).
 
 **Options**
 
-The name of any font family installed on the user's system
+The name of any font family installed on the user's system, or `".ZedMono"`.
 
 ## Buffer Font Features
 
@@ -637,6 +637,12 @@ List of `string` values
 
 ```json
 "snippet_sort_order": "bottom"
+```
+
+4. Do not show snippets in the completion list at all:
+
+```json
+"snippet_sort_order": "none"
 ```
 
 ## Editor Scrollbar
@@ -1218,13 +1224,16 @@ or
 
 ### Drag And Drop Selection
 
-- Description: Whether to allow drag and drop text selection in buffer.
+- Description: Whether to allow drag and drop text selection in buffer. `delay` is the milliseconds that must elapse before drag and drop is allowed. Otherwise, a new text selection is created.
 - Setting: `drag_and_drop_selection`
-- Default: `true`
+- Default:
 
-**Options**
-
-`boolean` values
+```json
+"drag_and_drop_selection": {
+  "enabled": true,
+  "delay": 300
+}
+```
 
 ## Editor Toolbar
 
@@ -1265,6 +1274,18 @@ Each option controls displaying of a particular toolbar element. If all elements
 **Options**
 
 `boolean` values
+
+## Status Bar
+
+- Description: Control various elements in the status bar. Note that some items in the status bar have their own settings set elsewhere.
+- Setting: `status_bar`
+- Default:
+
+```json
+"status_bar": {
+  "active_language_button": true,
+},
+```
 
 ## LSP
 
@@ -1786,7 +1807,6 @@ Example:
 {
   "git": {
     "inline_blame": {
-      "enabled": true,
       "delay_ms": 500
     }
   }
@@ -1799,7 +1819,6 @@ Example:
 {
   "git": {
     "inline_blame": {
-      "enabled": true,
       "show_commit_summary": true
     }
   }
@@ -1812,8 +1831,19 @@ Example:
 {
   "git": {
     "inline_blame": {
-      "enabled": true,
       "min_column": 80
+    }
+  }
+}
+```
+
+5. Set the padding between the end of the line and the inline blame hint, in ems:
+
+```json
+{
+  "git": {
+    "inline_blame": {
+      "padding": 10
     }
   }
 }
@@ -2579,6 +2609,7 @@ List of `integer` column numbers
     "font_features": null,
     "font_size": null,
     "line_height": "comfortable",
+    "minimum_contrast": 45,
     "option_as_meta": false,
     "button": true,
     "shell": "system",
@@ -2685,6 +2716,54 @@ List of `integer` column numbers
 {
   "terminal": {
     "copy_on_select": true
+  }
+}
+```
+
+### Terminal: Cursor Shape
+
+- Description: Whether or not selecting text in the terminal will automatically copy to the system clipboard.
+- Setting: `cursor_shape`
+- Default: `null` (defaults to block)
+
+**Options**
+
+1. A block that surrounds the following character
+
+```json
+{
+  "terminal": {
+    "cursor_shape": "block"
+  }
+}
+```
+
+2. A vertical bar
+
+```json
+{
+  "terminal": {
+    "cursor_shape": "bar"
+  }
+}
+```
+
+3. An underline / underscore that runs along the following character
+
+```json
+{
+  "terminal": {
+    "cursor_shape": "underline"
+  }
+}
+```
+
+4. A box drawn around the following character
+
+```json
+{
+  "terminal": {
+    "cursor_shape": "hollow"
   }
 }
 ```
@@ -2822,6 +2901,30 @@ See Buffer Font Features
     "line_height": {
       "custom": 2
     }
+  }
+}
+```
+
+### Terminal: Minimum Contrast
+
+- Description: Controls the minimum contrast between foreground and background colors in the terminal. Uses the APCA (Accessible Perceptual Contrast Algorithm) for color adjustments. Set this to 0 to disable this feature.
+- Setting: `minimum_contrast`
+- Default: `45`
+
+**Options**
+
+`integer` values from 0 to 106. Common recommended values:
+
+- `0`: No contrast adjustment
+- `45`: Minimum for large fluent text (default)
+- `60`: Minimum for other content text
+- `75`: Minimum for body text
+- `90`: Preferred for body text
+
+```json
+{
+  "terminal": {
+    "minimum_contrast": 45
   }
 }
 ```
@@ -3092,8 +3195,14 @@ Run the `theme selector: toggle` action in the command palette to see a current 
 
 ## Vim
 
-- Description: Whether or not to enable vim mode (work in progress).
+- Description: Whether or not to enable vim mode. See the [Vim documentation](./vim.md) for more details on configuration.
 - Setting: `vim_mode`
+- Default: `false`
+
+## Helix Mode
+
+- Description: Whether or not to enable Helix mode. Enabling `helix_mode` also enables `vim_mode`. See the [Helix documentation](./helix.md) for more details.
+- Setting: `helix_mode`
 - Default: `false`
 
 ## Project Panel
@@ -3122,7 +3231,8 @@ Run the `theme selector: toggle` action in the command palette to see a current 
     "indent_guides": {
       "show": "always"
     },
-    "hide_root": false
+    "hide_root": false,
+    "starts_open": true
   }
 }
 ```
@@ -3333,26 +3443,7 @@ Run the `theme selector: toggle` action in the command palette to see a current 
 
 ## Agent
 
-- Description: Customize agent behavior
-- Setting: `agent`
-- Default:
-
-```json
-"agent": {
-  "version": "2",
-  "enabled": true,
-  "button": true,
-  "dock": "right",
-  "default_width": 640,
-  "default_height": 320,
-  "default_view": "thread",
-  "default_model": {
-    "provider": "zed.dev",
-    "model": "claude-sonnet-4"
-  },
-  "single_file_review": true,
-}
-```
+Visit [the Configuration page](./ai/configuration.md) under the AI section to learn more about all the agent-related settings.
 
 ## Outline Panel
 
@@ -3420,11 +3511,11 @@ Float values between `0.0` and `0.9`, where:
 
 - Description: The name of the font to use for text in the UI.
 - Setting: `ui_font_family`
-- Default: `Zed Plex Sans`
+- Default: `.ZedSans`. This currently aliases to [IBM Plex](https://www.ibm.com/plex/).
 
 **Options**
 
-The name of any font family installed on the system.
+The name of any font family installed on the system, `".ZedSans"` to use the Zed-provided default, or `".SystemUIFont"` to use the system's default UI font (on macOS and Windows).
 
 ## UI Font Features
 
@@ -3512,7 +3603,7 @@ For example, to use `Nerd Font` as a fallback, add the following to your setting
   "soft_wrap": "none",
 
   "buffer_font_size": 18,
-  "buffer_font_family": "Zed Plex Mono",
+  "buffer_font_family": ".ZedMono",
 
   "autosave": "on_focus_change",
   "format_on_save": "off",

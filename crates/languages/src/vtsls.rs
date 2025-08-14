@@ -2,7 +2,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 use collections::HashMap;
 use gpui::AsyncApp;
-use language::{LanguageToolchainStore, LspAdapter, LspAdapterDelegate};
+use language::{LanguageName, LanguageToolchainStore, LspAdapter, LspAdapterDelegate};
 use lsp::{CodeActionKind, LanguageServerBinary, LanguageServerName};
 use node_runtime::NodeRuntime;
 use project::{Fs, lsp_store::language_server_settings};
@@ -116,6 +116,7 @@ impl LspAdapter for VtslsLspAdapter {
                 &server_path,
                 &container_dir,
                 &latest_version.server_version,
+                Default::default(),
             )
             .await
         {
@@ -129,6 +130,7 @@ impl LspAdapter for VtslsLspAdapter {
                 &container_dir.join(Self::TYPESCRIPT_TSDK_PATH),
                 &container_dir,
                 &latest_version.typescript_version,
+                Default::default(),
             )
             .await
         {
@@ -273,11 +275,11 @@ impl LspAdapter for VtslsLspAdapter {
         Ok(default_workspace_configuration)
     }
 
-    fn language_ids(&self) -> HashMap<String, String> {
+    fn language_ids(&self) -> HashMap<LanguageName, String> {
         HashMap::from_iter([
-            ("TypeScript".into(), "typescript".into()),
-            ("JavaScript".into(), "javascript".into()),
-            ("TSX".into(), "typescriptreact".into()),
+            (LanguageName::new("TypeScript"), "typescript".into()),
+            (LanguageName::new("JavaScript"), "javascript".into()),
+            (LanguageName::new("TSX"), "typescriptreact".into()),
         ])
     }
 }

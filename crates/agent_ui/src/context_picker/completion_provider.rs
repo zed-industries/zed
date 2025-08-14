@@ -35,7 +35,7 @@ use super::symbol_context_picker::search_symbols;
 use super::thread_context_picker::{ThreadContextEntry, ThreadMatch, search_threads};
 use super::{
     ContextPickerAction, ContextPickerEntry, ContextPickerMode, MentionLink, RecentEntry,
-    available_context_picker_entries, recent_context_picker_entries, selection_ranges,
+    available_context_picker_entries, recent_context_picker_entries_with_store, selection_ranges,
 };
 use crate::message_editor::ContextCreasesAddon;
 
@@ -371,7 +371,7 @@ impl ContextPickerCompletionProvider {
                                                 line_range.end.row + 1
                                             )
                                             .into(),
-                                            IconName::Context.path().into(),
+                                            IconName::Reader.path().into(),
                                             range,
                                             editor.downgrade(),
                                         );
@@ -423,7 +423,7 @@ impl ContextPickerCompletionProvider {
         let icon_for_completion = if recent {
             IconName::HistoryRerun
         } else {
-            IconName::MessageBubbles
+            IconName::Thread
         };
         let new_text = format!("{} ", MentionLink::for_thread(&thread_entry));
         let new_text_len = new_text.len();
@@ -436,7 +436,7 @@ impl ContextPickerCompletionProvider {
             source: project::CompletionSource::Custom,
             icon_path: Some(icon_for_completion.path().into()),
             confirm: Some(confirm_completion_callback(
-                IconName::MessageBubbles.path().into(),
+                IconName::Thread.path().into(),
                 thread_entry.title().clone(),
                 excerpt_id,
                 source_range.start,
@@ -539,10 +539,10 @@ impl ContextPickerCompletionProvider {
             label: CodeLabel::plain(url_to_fetch.to_string(), None),
             documentation: None,
             source: project::CompletionSource::Custom,
-            icon_path: Some(IconName::Globe.path().into()),
+            icon_path: Some(IconName::ToolWeb.path().into()),
             insert_text_mode: None,
             confirm: Some(confirm_completion_callback(
-                IconName::Globe.path().into(),
+                IconName::ToolWeb.path().into(),
                 url_to_fetch.clone(),
                 excerpt_id,
                 source_range.start,
@@ -686,6 +686,7 @@ impl ContextPickerCompletionProvider {
         let mut label = CodeLabel::plain(symbol.name.clone(), None);
         label.push_str(" ", None);
         label.push_str(&file_name, comment_id);
+        label.push_str(&format!(" L{}", symbol.range.start.0.row + 1), comment_id);
 
         let new_text = format!("{} ", MentionLink::for_symbol(&symbol.name, &full_path));
         let new_text_len = new_text.len();
@@ -786,7 +787,7 @@ impl CompletionProvider for ContextPickerCompletionProvider {
             .and_then(|b| b.read(cx).file())
             .map(|file| ProjectPath::from_file(file.as_ref(), cx));
 
-        let recent_entries = recent_context_picker_entries(
+        let recent_entries = recent_context_picker_entries_with_store(
             context_store.clone(),
             thread_store.clone(),
             text_thread_store.clone(),

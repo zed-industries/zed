@@ -8,9 +8,6 @@ Zed implements the client side of the protocol, and various _debug adapters_ imp
 This protocol enables features like setting breakpoints, stepping through code, inspecting variables,
 and more, in a consistent manner across different programming languages and runtime environments.
 
-> We currently offer onboarding support for users. We are eager to hear from you if you encounter any issues or have suggestions for improvement for our debugging experience.
-> You can schedule a call via [Cal.com](https://cal.com/team/zed-research/debugger)
-
 ## Supported Languages
 
 To debug code written in a specific language, Zed needs to find a debug adapter for that language. Some debug adapters are provided by Zed without additional setup, and some are provided by [language extensions](./extensions/debugger-extensions.md). The following languages currently have debug adapters available:
@@ -180,8 +177,8 @@ The debug adapter will then stop whenever an exception of a given kind occurs. W
 ### Stepping granularity
 
 - Description: The Step granularity that the debugger will use
-- Default: line
-- Setting: debugger.stepping_granularity
+- Default: `line`
+- Setting: `debugger.stepping_granularity`
 
 **Options**
 
@@ -220,8 +217,8 @@ The debug adapter will then stop whenever an exception of a given kind occurs. W
 ### Save Breakpoints
 
 - Description: Whether the breakpoints should be saved across Zed sessions.
-- Default: true
-- Setting: debugger.save_breakpoints
+- Default: `true`
+- Setting: `debugger.save_breakpoints`
 
 **Options**
 
@@ -238,8 +235,8 @@ The debug adapter will then stop whenever an exception of a given kind occurs. W
 ### Button
 
 - Description: Whether the button should be displayed in the debugger toolbar.
-- Default: true
-- Setting: debugger.show_button
+- Default: `true`
+- Setting: `debugger.show_button`
 
 **Options**
 
@@ -256,8 +253,8 @@ The debug adapter will then stop whenever an exception of a given kind occurs. W
 ### Timeout
 
 - Description: Time in milliseconds until timeout error when connecting to a TCP debug adapter.
-- Default: 2000
-- Setting: debugger.timeout
+- Default: `2000`
+- Setting: `debugger.timeout`
 
 **Options**
 
@@ -270,6 +267,24 @@ The debug adapter will then stop whenever an exception of a given kind occurs. W
   }
 }
 ```
+
+### Inline Values
+
+- Description: Whether to enable editor inlay hints showing the values of variables in your code during debugging sessions.
+- Default: `true`
+- Setting: `inlay_hints.show_value_hints`
+
+**Options**
+
+```json
+{
+  "inlay_hints": {
+    "show_value_hints": false
+  }
+}
+```
+
+Inline value hints can also be toggled from the Editor Controls menu in the editor toolbar.
 
 ### Log Dap Communications
 

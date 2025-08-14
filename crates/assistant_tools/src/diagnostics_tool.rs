@@ -1,6 +1,7 @@
 use crate::schema::json_schema_for;
+use action_log::ActionLog;
 use anyhow::{Result, anyhow};
-use assistant_tool::{ActionLog, Tool, ToolResult};
+use assistant_tool::{Tool, ToolResult};
 use gpui::{AnyWindowHandle, App, Entity, Task};
 use language::{DiagnosticSeverity, OffsetRangeExt};
 use language_model::{LanguageModel, LanguageModelRequest, LanguageModelToolSchemaFormat};
@@ -46,7 +47,7 @@ impl Tool for DiagnosticsTool {
         "diagnostics".into()
     }
 
-    fn needs_confirmation(&self, _: &serde_json::Value, _: &App) -> bool {
+    fn needs_confirmation(&self, _: &serde_json::Value, _: &Entity<Project>, _: &App) -> bool {
         false
     }
 
@@ -59,7 +60,7 @@ impl Tool for DiagnosticsTool {
     }
 
     fn icon(&self) -> IconName {
-        IconName::XCircle
+        IconName::ToolDiagnostics
     }
 
     fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> Result<serde_json::Value> {
@@ -85,7 +86,7 @@ impl Tool for DiagnosticsTool {
         input: serde_json::Value,
         _request: Arc<LanguageModelRequest>,
         project: Entity<Project>,
-        action_log: Entity<ActionLog>,
+        _action_log: Entity<ActionLog>,
         _model: Arc<dyn LanguageModel>,
         _window: Option<AnyWindowHandle>,
         cx: &mut App,
@@ -157,10 +158,6 @@ impl Tool for DiagnosticsTool {
                         ));
                     }
                 }
-
-                action_log.update(cx, |action_log, _cx| {
-                    action_log.checked_project_diagnostics();
-                });
 
                 if has_diagnostics {
                     Task::ready(Ok(output.into())).into()

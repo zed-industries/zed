@@ -1,7 +1,7 @@
 use crate::{
     Anchor, Autoscroll, Editor, EditorEvent, EditorSettings, ExcerptId, ExcerptRange, FormatTarget,
-    MultiBuffer, MultiBufferSnapshot, NavigationData, SearchWithinRange, SelectionEffects,
-    ToPoint as _,
+    MultiBuffer, MultiBufferSnapshot, NavigationData, ReportEditorEvent, SearchWithinRange,
+    SelectionEffects, ToPoint as _,
     display_map::HighlightKey,
     editor_settings::SeedQuerySetting,
     persistence::{DB, SerializedEditor},
@@ -776,6 +776,10 @@ impl Item for Editor {
         }
     }
 
+    fn on_removed(&self, cx: &App) {
+        self.report_editor_event(ReportEditorEvent::Closed, None, cx);
+    }
+
     fn deactivated(&mut self, _: &mut Window, cx: &mut Context<Self>) {
         let selection = self.selections.newest_anchor();
         self.push_to_nav_history(selection.head(), None, true, false, cx);
@@ -813,7 +817,13 @@ impl Item for Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
-        self.report_editor_event("Editor Saved", None, cx);
+        // Add meta data tracking # of auto saves
+        if options.autosave {
+            self.report_editor_event(ReportEditorEvent::Saved { auto_saved: true }, None, cx);
+        } else {
+            self.report_editor_event(ReportEditorEvent::Saved { auto_saved: false }, None, cx);
+        }
+
         let buffers = self.buffer().clone().read(cx).all_buffers();
         let buffers = buffers
             .into_iter()
@@ -890,7 +900,11 @@ impl Item for Editor {
             .path
             .extension()
             .map(|a| a.to_string_lossy().to_string());
-        self.report_editor_event("Editor Saved", file_extension, cx);
+        self.report_editor_event(
+            ReportEditorEvent::Saved { auto_saved: false },
+            file_extension,
+            cx,
+        );
 
         project.update(cx, |project, cx| project.save_buffer_as(buffer, path, cx))
     }
@@ -991,12 +1005,16 @@ impl Item for Editor {
     ) {
         self.workspace = Some((workspace.weak_handle(), workspace.database_id()));
         if let Some(workspace) = &workspace.weak_handle().upgrade() {
-            cx.subscribe(&workspace, |editor, _, event: &workspace::Event, _cx| {
-                if matches!(event, workspace::Event::ModalOpened) {
-                    editor.mouse_context_menu.take();
-                    editor.inline_blame_popover.take();
-                }
-            })
+            cx.subscribe(
+                &workspace,
+                |editor, _, event: &workspace::Event, _cx| match event {
+                    workspace::Event::ModalOpened => {
+                        editor.mouse_context_menu.take();
+                        editor.inline_blame_popover.take();
+                    }
+                    _ => {}
+                },
+            )
             .detach();
         }
     }
@@ -1015,6 +1033,10 @@ impl Item for Editor {
             }
 
             EditorEvent::SelectionsChanged { local } if *local => {
+                f(ItemEvent::UpdateBreadcrumbs);
+            }
+
+            EditorEvent::BreadcrumbsChanged => {
                 f(ItemEvent::UpdateBreadcrumbs);
             }
 
@@ -1220,7 +1242,20 @@ impl SerializableItem for Editor {
                 abs_path: None,
                 contents: None,
                 ..
-            } => Task::ready(Err(anyhow!("No path or contents found for buffer"))),
+            } => window.spawn(cx, async move |cx| {
+                let buffer = project
+                    .update(cx, |project, cx| project.create_buffer(cx))?
+                    .await?;
+
+                cx.update(|window, cx| {
+                    cx.new(|cx| {
+                        let mut editor = Editor::for_buffer(buffer, Some(project), window, cx);
+
+                        editor.read_metadata_from_db(item_id, workspace_id, window, cx);
+                        editor
+                    })
+                })
+            }),
         }
     }
 
@@ -1607,23 +1642,9 @@ impl SearchableItem for Editor {
         let text = self.buffer.read(cx);
         let text = text.snapshot(cx);
         let mut edits = vec![];
-        let mut last_point: Option<Point> = None;
 
         for m in matches {
-            let point = m.start.to_point(&text);
             let text = text.text_for_range(m.clone()).collect::<Vec<_>>();
-
-            // Check if the row for the current match is different from the last
-            // match. If that's not the case and we're still replacing matches
-            // in the same row/line, skip this match if the `one_match_per_line`
-            // option is enabled.
-            if last_point.is_none() {
-                last_point = Some(point);
-            } else if last_point.is_some() && point.row != last_point.unwrap().row {
-                last_point = Some(point);
-            } else if query.one_match_per_line().is_some_and(|enabled| enabled) {
-                continue;
-            }
 
             let text: Cow<_> = if text.len() == 1 {
                 text.first().cloned().unwrap().into()
@@ -1820,7 +1841,7 @@ pub fn entry_diagnostic_aware_icon_name_and_color(
     diagnostic_severity: Option<DiagnosticSeverity>,
 ) -> Option<(IconName, Color)> {
     match diagnostic_severity {
-        Some(DiagnosticSeverity::ERROR) => Some((IconName::X, Color::Error)),
+        Some(DiagnosticSeverity::ERROR) => Some((IconName::Close, Color::Error)),
         Some(DiagnosticSeverity::WARNING) => Some((IconName::Triangle, Color::Warning)),
         _ => None,
     }
@@ -2104,6 +2125,39 @@ mod tests {
             deserialized.update(cx, |editor, cx| {
                 assert_eq!(editor.text(cx), "fn main() {}");
                 assert!(editor.has_conflict(cx)); // The editor should have a conflict
+            });
+        }
+
+        // Test case 5: Deserialize with no path, no content, no language, and no old mtime (new, empty, unsaved buffer)
+        {
+            let project = Project::test(fs.clone(), [path!("/file.rs").as_ref()], cx).await;
+            let (workspace, cx) =
+                cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+            let workspace_id = workspace::WORKSPACE_DB.next_id().await.unwrap();
+
+            let item_id = 10000 as ItemId;
+            let serialized_editor = SerializedEditor {
+                abs_path: None,
+                contents: None,
+                language: None,
+                mtime: None,
+            };
+
+            DB.save_serialized_editor(item_id, workspace_id, serialized_editor)
+                .await
+                .unwrap();
+
+            let deserialized =
+                deserialize_editor(item_id, workspace_id, workspace, project, cx).await;
+
+            deserialized.update(cx, |editor, cx| {
+                assert_eq!(editor.text(cx), "");
+                assert!(!editor.is_dirty(cx));
+                assert!(!editor.has_conflict(cx));
+
+                let buffer = editor.buffer().read(cx).as_singleton().unwrap().read(cx);
+                assert!(buffer.file().is_none());
             });
         }
     }

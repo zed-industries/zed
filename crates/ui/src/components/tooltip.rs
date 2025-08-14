@@ -1,3 +1,5 @@
+use std::rc::Rc;
+
 use gpui::{Action, AnyElement, AnyView, AppContext as _, FocusHandle, IntoElement, Render};
 use settings::Settings;
 use theme::ThemeSettings;
@@ -7,15 +9,36 @@ use crate::{Color, KeyBinding, Label, LabelSize, StyledExt, h_flex, v_flex};
 
 #[derive(RegisterComponent)]
 pub struct Tooltip {
-    title: SharedString,
+    title: Title,
     meta: Option<SharedString>,
     key_binding: Option<KeyBinding>,
+}
+
+#[derive(Clone, IntoElement)]
+enum Title {
+    Str(SharedString),
+    Callback(Rc<dyn Fn(&mut Window, &mut App) -> AnyElement>),
+}
+
+impl From<SharedString> for Title {
+    fn from(value: SharedString) -> Self {
+        Title::Str(value)
+    }
+}
+
+impl RenderOnce for Title {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl gpui::IntoElement {
+        match self {
+            Title::Str(title) => title.into_any_element(),
+            Title::Callback(element) => element(window, cx),
+        }
+    }
 }
 
 impl Tooltip {
     pub fn simple(title: impl Into<SharedString>, cx: &mut App) -> AnyView {
         cx.new(|_| Self {
-            title: title.into(),
+            title: Title::Str(title.into()),
             meta: None,
             key_binding: None,
         })
@@ -26,7 +49,7 @@ impl Tooltip {
         let title = title.into();
         move |_, cx| {
             cx.new(|_| Self {
-                title: title.clone(),
+                title: title.clone().into(),
                 meta: None,
                 key_binding: None,
             })
@@ -34,15 +57,15 @@ impl Tooltip {
         }
     }
 
-    pub fn for_action_title<Title: Into<SharedString>>(
-        title: Title,
+    pub fn for_action_title<T: Into<SharedString>>(
+        title: T,
         action: &dyn Action,
-    ) -> impl Fn(&mut Window, &mut App) -> AnyView + use<Title> {
+    ) -> impl Fn(&mut Window, &mut App) -> AnyView + use<T> {
         let title = title.into();
         let action = action.boxed_clone();
         move |window, cx| {
             cx.new(|cx| Self {
-                title: title.clone(),
+                title: Title::Str(title.clone()),
                 meta: None,
                 key_binding: KeyBinding::for_action(action.as_ref(), window, cx),
             })
@@ -60,7 +83,7 @@ impl Tooltip {
         let focus_handle = focus_handle.clone();
         move |window, cx| {
             cx.new(|cx| Self {
-                title: title.clone(),
+                title: Title::Str(title.clone()),
                 meta: None,
                 key_binding: KeyBinding::for_action_in(action.as_ref(), &focus_handle, window, cx),
             })
@@ -75,7 +98,7 @@ impl Tooltip {
         cx: &mut App,
     ) -> AnyView {
         cx.new(|cx| Self {
-            title: title.into(),
+            title: Title::Str(title.into()),
             meta: None,
             key_binding: KeyBinding::for_action(action, window, cx),
         })
@@ -90,7 +113,7 @@ impl Tooltip {
         cx: &mut App,
     ) -> AnyView {
         cx.new(|cx| Self {
-            title: title.into(),
+            title: title.into().into(),
             meta: None,
             key_binding: KeyBinding::for_action_in(action, focus_handle, window, cx),
         })
@@ -105,7 +128,7 @@ impl Tooltip {
         cx: &mut App,
     ) -> AnyView {
         cx.new(|cx| Self {
-            title: title.into(),
+            title: title.into().into(),
             meta: Some(meta.into()),
             key_binding: action.and_then(|action| KeyBinding::for_action(action, window, cx)),
         })
@@ -121,7 +144,7 @@ impl Tooltip {
         cx: &mut App,
     ) -> AnyView {
         cx.new(|cx| Self {
-            title: title.into(),
+            title: title.into().into(),
             meta: Some(meta.into()),
             key_binding: action
                 .and_then(|action| KeyBinding::for_action_in(action, focus_handle, window, cx)),
@@ -131,9 +154,32 @@ impl Tooltip {
 
     pub fn new(title: impl Into<SharedString>) -> Self {
         Self {
-            title: title.into(),
+            title: title.into().into(),
             meta: None,
             key_binding: None,
+        }
+    }
+
+    pub fn new_element(title: impl Fn(&mut Window, &mut App) -> AnyElement + 'static) -> Self {
+        Self {
+            title: Title::Callback(Rc::new(title)),
+            meta: None,
+            key_binding: None,
+        }
+    }
+
+    pub fn element(
+        title: impl Fn(&mut Window, &mut App) -> AnyElement + 'static,
+    ) -> impl Fn(&mut Window, &mut App) -> AnyView {
+        let title = Title::Callback(Rc::new(title));
+        move |_, cx| {
+            let title = title.clone();
+            cx.new(|_| Self {
+                title: title,
+                meta: None,
+                key_binding: None,
+            })
+            .into()
         }
     }
 
@@ -228,7 +274,7 @@ impl Render for LinkPreview {
 
 impl Component for Tooltip {
     fn scope() -> ComponentScope {
-        ComponentScope::None
+        ComponentScope::DataDisplay
     }
 
     fn description() -> Option<&'static str> {

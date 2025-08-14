@@ -49,6 +49,7 @@ pub struct TerminalSettings {
     pub max_scroll_history_lines: Option<usize>,
     pub toolbar: Toolbar,
     pub scrollbar: ScrollbarSettings,
+    pub minimum_contrast: f32,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -94,12 +95,14 @@ pub enum VenvSettings {
         /// to the current working directory. We recommend overriding this
         /// in your project's settings, rather than globally.
         activate_script: Option<ActivateScript>,
+        venv_name: Option<String>,
         directories: Option<Vec<PathBuf>>,
     },
 }
 
 pub struct VenvSettingsContent<'a> {
     pub activate_script: ActivateScript,
+    pub venv_name: &'a str,
     pub directories: &'a [PathBuf],
 }
 
@@ -109,16 +112,18 @@ impl VenvSettings {
             VenvSettings::Off => None,
             VenvSettings::On {
                 activate_script,
+                venv_name,
                 directories,
             } => Some(VenvSettingsContent {
                 activate_script: activate_script.unwrap_or(ActivateScript::Default),
+                venv_name: venv_name.as_deref().unwrap_or(""),
                 directories: directories.as_deref().unwrap_or(&[]),
             }),
         }
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ActivateScript {
     #[default]
@@ -127,6 +132,7 @@ pub enum ActivateScript {
     Fish,
     Nushell,
     PowerShell,
+    Pyenv,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
@@ -229,6 +235,21 @@ pub struct TerminalSettingsContent {
     pub toolbar: Option<ToolbarContent>,
     /// Scrollbar-related settings
     pub scrollbar: Option<ScrollbarSettingsContent>,
+    /// The minimum APCA perceptual contrast between foreground and background colors.
+    ///
+    /// APCA (Accessible Perceptual Contrast Algorithm) is more accurate than WCAG 2.x,
+    /// especially for dark mode. Values range from 0 to 106.
+    ///
+    /// Based on APCA Readability Criterion (ARC) Bronze Simple Mode:
+    /// https://readtech.org/ARC/tests/bronze-simple-mode/
+    /// - 0: No contrast adjustment
+    /// - 45: Minimum for large fluent text (36px+)
+    /// - 60: Minimum for other content text
+    /// - 75: Minimum for body text
+    /// - 90: Preferred for body text
+    ///
+    /// Default: 45
+    pub minimum_contrast: Option<f32>,
 }
 
 impl settings::Settings for TerminalSettings {
@@ -237,7 +258,18 @@ impl settings::Settings for TerminalSettings {
     type FileContent = TerminalSettingsContent;
 
     fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> anyhow::Result<Self> {
-        sources.json_merge()
+        let settings: Self = sources.json_merge()?;
+
+        // Validate minimum_contrast for APCA
+        if settings.minimum_contrast < 0.0 || settings.minimum_contrast > 106.0 {
+            anyhow::bail!(
+                "terminal.minimum_contrast must be between 0 and 106, but got {}. \
+                APCA values: 0 = no adjustment, 75 = recommended for body text, 106 = maximum contrast.",
+                settings.minimum_contrast
+            );
+        }
+
+        Ok(settings)
     }
 
     fn import_from_vscode(vscode: &settings::VsCodeSettings, current: &mut Self::FileContent) {
