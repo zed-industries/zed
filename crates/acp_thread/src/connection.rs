@@ -36,6 +36,14 @@ pub trait AgentConnection {
         cx: &mut App,
     ) -> Task<Result<acp::PromptResponse>>;
 
+    fn resume(
+        &self,
+        _session_id: &acp::SessionId,
+        _cx: &mut App,
+    ) -> Option<Rc<dyn AgentSessionResume>> {
+        None
+    }
+
     fn cancel(&self, session_id: &acp::SessionId, cx: &mut App);
 
     fn session_editor(
@@ -54,17 +62,21 @@ pub trait AgentConnection {
         None
     }
 
-    fn as_any(&self) -> &dyn Any;
+    fn into_any(self: Rc<Self>) -> Rc<dyn Any>;
 }
 
 impl dyn AgentConnection {
-    pub fn downcast<T: 'static + AgentConnection + Sized>(&self) -> Option<&T> {
-        self.as_any().downcast_ref()
+    pub fn downcast<T: 'static + AgentConnection + Sized>(self: Rc<Self>) -> Option<Rc<T>> {
+        self.into_any().downcast().ok()
     }
 }
 
 pub trait AgentSessionEditor {
     fn truncate(&self, message_id: UserMessageId, cx: &mut App) -> Task<Result<()>>;
+}
+
+pub trait AgentSessionResume {
+    fn run(&self, cx: &mut App) -> Task<Result<acp::PromptResponse>>;
 }
 
 #[derive(Debug)]

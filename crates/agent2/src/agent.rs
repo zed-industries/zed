@@ -10,6 +10,7 @@ use agent_settings::AgentSettings;
 use anyhow::{Context as _, Result, anyhow};
 use collections::{HashSet, IndexMap};
 use fs::Fs;
+use futures::channel::mpsc;
 use futures::{StreamExt, future};
 use gpui::{
     App, AppContext, AsyncApp, Context, Entity, SharedString, Subscription, Task, WeakEntity,
@@ -447,6 +448,114 @@ impl NativeAgentConnection {
             .get(session_id)
             .map(|session| session.thread.clone())
     }
+
+    fn run_turn(
+        &self,
+        session_id: acp::SessionId,
+        cx: &mut App,
+        f: impl 'static
+        + FnOnce(
+            Entity<Thread>,
+            &mut App,
+        ) -> Result<mpsc::UnboundedReceiver<Result<AgentResponseEvent>>>,
+    ) -> Task<Result<acp::PromptResponse>> {
+        let Some((thread, acp_thread)) = self.0.update(cx, |agent, _cx| {
+            agent
+                .sessions
+                .get_mut(&session_id)
+                .map(|s| (s.thread.clone(), s.acp_thread.clone()))
+        }) else {
+            return Task::ready(Err(anyhow!("Session not found")));
+        };
+        log::debug!("Found session for: {}", session_id);
+
+        let mut response_stream = match f(thread, cx) {
+            Ok(stream) => stream,
+            Err(err) => return Task::ready(Err(err)),
+        };
+        cx.spawn(async move |cx| {
+            // Handle response stream and forward to session.acp_thread
+            while let Some(result) = response_stream.next().await {
+                match result {
+                    Ok(event) => {
+                        log::trace!("Received completion event: {:?}", event);
+
+                        match event {
+                            AgentResponseEvent::Text(text) => {
+                                acp_thread.update(cx, |thread, cx| {
+                                    thread.push_assistant_content_block(
+                                        acp::ContentBlock::Text(acp::TextContent {
+                                            text,
+                                            annotations: None,
+                                        }),
+                                        false,
+                                        cx,
+                                    )
+                                })?;
+                            }
+                            AgentResponseEvent::Thinking(text) => {
+                                acp_thread.update(cx, |thread, cx| {
+                                    thread.push_assistant_content_block(
+                                        acp::ContentBlock::Text(acp::TextContent {
+                                            text,
+                                            annotations: None,
+                                        }),
+                                        true,
+                                        cx,
+                                    )
+                                })?;
+                            }
+                            AgentResponseEvent::ToolCallAuthorization(ToolCallAuthorization {
+                                tool_call,
+                                options,
+                                response,
+                            }) => {
+                                let recv = acp_thread.update(cx, |thread, cx| {
+                                    thread.request_tool_call_authorization(tool_call, options, cx)
+                                })?;
+                                cx.background_spawn(async move {
+                                    if let Some(option) = recv
+                                        .await
+                                        .context("authorization sender was dropped")
+                                        .log_err()
+                                    {
+                                        response
+                                            .send(option)
+                                            .map(|_| anyhow!("authorization receiver was dropped"))
+                                            .log_err();
+                                    }
+                                })
+                                .detach();
+                            }
+                            AgentResponseEvent::ToolCall(tool_call) => {
+                                acp_thread.update(cx, |thread, cx| {
+                                    thread.upsert_tool_call(tool_call, cx)
+                                })?;
+                            }
+                            AgentResponseEvent::ToolCallUpdate(update) => {
+                                acp_thread.update(cx, |thread, cx| {
+                                    thread.update_tool_call(update, cx)
+                                })??;
+                            }
+                            AgentResponseEvent::Stop(stop_reason) => {
+                                log::debug!("Assistant message complete: {:?}", stop_reason);
+                                return Ok(acp::PromptResponse { stop_reason });
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        log::error!("Error in model response stream: {:?}", e);
+                        return Err(e.into());
+                    }
+                }
+            }
+
+            log::info!("Response stream completed");
+            anyhow::Ok(acp::PromptResponse {
+                stop_reason: acp::StopReason::EndTurn,
+            })
+        })
+    }
 }
 
 impl AgentModelSelector for NativeAgentConnection {
@@ -654,25 +763,10 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
     ) -> Task<Result<acp::PromptResponse>> {
         let id = id.expect("UserMessageId is required");
         let session_id = params.session_id.clone();
-        let agent = self.0.clone();
         log::info!("Received prompt request for session: {}", session_id);
         log::debug!("Prompt blocks count: {}", params.prompt.len());
 
-        cx.spawn(async move |cx| {
-            // Get session
-            let (thread, acp_thread) = agent
-                .update(cx, |agent, _| {
-                    agent
-                        .sessions
-                        .get_mut(&session_id)
-                        .map(|s| (s.thread.clone(), s.acp_thread.clone()))
-                })?
-                .ok_or_else(|| {
-                    log::error!("Session not found: {}", session_id);
-                    anyhow::anyhow!("Session not found")
-                })?;
-            log::debug!("Found session for: {}", session_id);
-
+        self.run_turn(session_id, cx, |thread, cx| {
             let content: Vec<UserMessageContent> = params
                 .prompt
                 .into_iter()
@@ -682,96 +776,25 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
             log::debug!("Message id: {:?}", id);
             log::debug!("Message content: {:?}", content);
 
-            // Get model using the ModelSelector capability (always available for agent2)
-            // Get the selected model from the thread directly
-            let model = thread.read_with(cx, |thread, _| thread.model().clone())?;
-
-            // Send to thread
-            log::info!("Sending message to thread with model: {:?}", model.name());
-            let mut response_stream =
-                thread.update(cx, |thread, cx| thread.send(id, content, cx))?;
-
-            // Handle response stream and forward to session.acp_thread
-            while let Some(result) = response_stream.next().await {
-                match result {
-                    Ok(event) => {
-                        log::trace!("Received completion event: {:?}", event);
-
-                        match event {
-                            AgentResponseEvent::Text(text) => {
-                                acp_thread.update(cx, |thread, cx| {
-                                    thread.push_assistant_content_block(
-                                        acp::ContentBlock::Text(acp::TextContent {
-                                            text,
-                                            annotations: None,
-                                        }),
-                                        false,
-                                        cx,
-                                    )
-                                })?;
-                            }
-                            AgentResponseEvent::Thinking(text) => {
-                                acp_thread.update(cx, |thread, cx| {
-                                    thread.push_assistant_content_block(
-                                        acp::ContentBlock::Text(acp::TextContent {
-                                            text,
-                                            annotations: None,
-                                        }),
-                                        true,
-                                        cx,
-                                    )
-                                })?;
-                            }
-                            AgentResponseEvent::ToolCallAuthorization(ToolCallAuthorization {
-                                tool_call,
-                                options,
-                                response,
-                            }) => {
-                                let recv = acp_thread.update(cx, |thread, cx| {
-                                    thread.request_tool_call_authorization(tool_call, options, cx)
-                                })?;
-                                cx.background_spawn(async move {
-                                    if let Some(option) = recv
-                                        .await
-                                        .context("authorization sender was dropped")
-                                        .log_err()
-                                    {
-                                        response
-                                            .send(option)
-                                            .map(|_| anyhow!("authorization receiver was dropped"))
-                                            .log_err();
-                                    }
-                                })
-                                .detach();
-                            }
-                            AgentResponseEvent::ToolCall(tool_call) => {
-                                acp_thread.update(cx, |thread, cx| {
-                                    thread.upsert_tool_call(tool_call, cx)
-                                })?;
-                            }
-                            AgentResponseEvent::ToolCallUpdate(update) => {
-                                acp_thread.update(cx, |thread, cx| {
-                                    thread.update_tool_call(update, cx)
-                                })??;
-                            }
-                            AgentResponseEvent::Stop(stop_reason) => {
-                                log::debug!("Assistant message complete: {:?}", stop_reason);
-                                return Ok(acp::PromptResponse { stop_reason });
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        log::error!("Error in model response stream: {:?}", e);
-                        return Err(e.into());
-                    }
-                }
-            }
-
-            log::info!("Response stream completed");
-            anyhow::Ok(acp::PromptResponse {
-                stop_reason: acp::StopReason::EndTurn,
-            })
+            Ok(thread.update(cx, |thread, cx| {
+                log::info!(
+                    "Sending message to thread with model: {:?}",
+                    thread.model().name()
+                );
+                thread.send(id, content, cx)
+            }))
         })
+    }
+
+    fn resume(
+        &self,
+        session_id: &acp::SessionId,
+        _cx: &mut App,
+    ) -> Option<Rc<dyn acp_thread::AgentSessionResume>> {
+        Some(Rc::new(NativeAgentSessionResume {
+            connection: self.clone(),
+            session_id: session_id.clone(),
+        }) as _)
     }
 
     fn cancel(&self, session_id: &acp::SessionId, cx: &mut App) {
@@ -796,7 +819,7 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
         })
     }
 
-    fn as_any(&self) -> &dyn Any {
+    fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
         self
     }
 }
@@ -806,6 +829,20 @@ struct NativeAgentSessionEditor(Entity<Thread>);
 impl acp_thread::AgentSessionEditor for NativeAgentSessionEditor {
     fn truncate(&self, message_id: acp_thread::UserMessageId, cx: &mut App) -> Task<Result<()>> {
         Task::ready(self.0.update(cx, |thread, _cx| thread.truncate(message_id)))
+    }
+}
+
+struct NativeAgentSessionResume {
+    connection: NativeAgentConnection,
+    session_id: acp::SessionId,
+}
+
+impl acp_thread::AgentSessionResume for NativeAgentSessionResume {
+    fn run(&self, cx: &mut App) -> Task<Result<acp::PromptResponse>> {
+        self.connection
+            .run_turn(self.session_id.clone(), cx, |thread, cx| {
+                thread.update(cx, |thread, cx| thread.resume(cx))
+            })
     }
 }
 

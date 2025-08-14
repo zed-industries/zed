@@ -5,7 +5,7 @@ use agent_client_protocol as acp;
 use agent_settings::{AgentProfileId, AgentSettings, CompletionMode};
 use anyhow::{Context as _, Result, anyhow};
 use assistant_tool::adapt_schema_to_format;
-use cloud_llm_client::CompletionIntent;
+use cloud_llm_client::{CompletionIntent, CompletionRequestStatus};
 use collections::IndexMap;
 use fs::Fs;
 use futures::{
@@ -14,10 +14,10 @@ use futures::{
 };
 use gpui::{App, Context, Entity, SharedString, Task};
 use language_model::{
-    LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelImage,
-    LanguageModelProviderId, LanguageModelRequest, LanguageModelRequestMessage,
-    LanguageModelRequestTool, LanguageModelToolResult, LanguageModelToolResultContent,
-    LanguageModelToolSchemaFormat, LanguageModelToolUse, LanguageModelToolUseId, Role, StopReason,
+    LanguageModel, LanguageModelCompletionEvent, LanguageModelImage, LanguageModelProviderId,
+    LanguageModelRequest, LanguageModelRequestMessage, LanguageModelRequestTool,
+    LanguageModelToolResult, LanguageModelToolResultContent, LanguageModelToolSchemaFormat,
+    LanguageModelToolUse, LanguageModelToolUseId, Role, StopReason,
 };
 use project::Project;
 use prompt_store::ProjectContext;
@@ -373,6 +373,7 @@ impl AgentMessage {
 pub struct AgentMessage {
     pub content: Vec<AgentMessageContent>,
     pub tool_results: IndexMap<LanguageModelToolUseId, LanguageModelToolResult>,
+    pub tool_use_limit_reached: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -511,122 +512,156 @@ impl Thread {
         Ok(())
     }
 
+    pub fn resume(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> Result<mpsc::UnboundedReceiver<Result<AgentResponseEvent>>> {
+        anyhow::ensure!(
+            matches!(
+                self.messages.last(),
+                Some(Message::Agent(AgentMessage {
+                    tool_use_limit_reached: true,
+                    ..
+                }))
+            ),
+            "can only resume after tool use limit is reached"
+        );
+
+        log::info!("Thread::resume called with model: {:?}", self.model.name());
+        Ok(self.run_turn(cx))
+    }
+
     /// Sending a message results in the model streaming a response, which could include tool calls.
     /// After calling tools, the model will stops and waits for any outstanding tool calls to be completed and their results sent.
     /// The returned channel will report all the occurrences in which the model stops before erroring or ending its turn.
     pub fn send<T>(
         &mut self,
-        message_id: UserMessageId,
+        id: UserMessageId,
         content: impl IntoIterator<Item = T>,
         cx: &mut Context<Self>,
     ) -> mpsc::UnboundedReceiver<Result<AgentResponseEvent>>
     where
         T: Into<UserMessageContent>,
     {
-        let model = self.model.clone();
+        log::info!("Thread::send called with model: {:?}", self.model.name());
+
         let content = content.into_iter().map(Into::into).collect::<Vec<_>>();
-        log::info!("Thread::send called with model: {:?}", model.name());
         log::debug!("Thread::send content: {:?}", content);
 
+        self.messages
+            .push(Message::User(UserMessage { id, content }));
         cx.notify();
+
+        log::info!("Total messages in thread: {}", self.messages.len());
+        self.run_turn(cx)
+    }
+
+    fn run_turn(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> mpsc::UnboundedReceiver<Result<AgentResponseEvent>> {
+        let model = self.model.clone();
         let (events_tx, events_rx) = mpsc::unbounded::<Result<AgentResponseEvent>>();
         let event_stream = AgentResponseEventStream(events_tx);
+        let message_ix = self.messages.len();
+        self.running_turn = Some(cx.spawn(async move |this, cx| {
+            log::info!("Starting agent turn execution");
+            let turn_result: Result<()> = async {
+                let mut completion_intent = CompletionIntent::UserPrompt;
+                loop {
+                    log::debug!(
+                        "Building completion request with intent: {:?}",
+                        completion_intent
+                    );
+                    let request = this.update(cx, |this, cx| {
+                        this.build_completion_request(completion_intent, cx)
+                    })?;
 
-        self.messages.push(Message::User(UserMessage {
-            id: message_id.clone(),
-            content,
+                    log::info!("Calling model.stream_completion");
+                    let mut events = model.stream_completion(request, cx).await?;
+                    log::debug!("Stream completion started successfully");
+
+                    let mut tool_use_limit_reached = false;
+                    let mut tool_uses = FuturesUnordered::new();
+                    while let Some(event) = events.next().await {
+                        match event? {
+                            LanguageModelCompletionEvent::StatusUpdate(
+                                CompletionRequestStatus::ToolUseLimitReached,
+                            ) => {
+                                tool_use_limit_reached = true;
+                            }
+                            LanguageModelCompletionEvent::Stop(reason) => {
+                                event_stream.send_stop(reason);
+                                if reason == StopReason::Refusal {
+                                    this.update(cx, |this, _cx| {
+                                        this.flush_pending_message();
+                                        this.messages.truncate(message_ix);
+                                    })?;
+                                    return Ok(());
+                                }
+                            }
+                            event => {
+                                log::trace!("Received completion event: {:?}", event);
+                                this.update(cx, |this, cx| {
+                                    tool_uses.extend(this.handle_streamed_completion_event(
+                                        event,
+                                        &event_stream,
+                                        cx,
+                                    ));
+                                })
+                                .ok();
+                            }
+                        }
+                    }
+
+                    if tool_uses.is_empty() {
+                        log::info!("No tool uses found, completing turn");
+                        return Ok(());
+                    }
+                    log::info!("Found {} tool uses to execute", tool_uses.len());
+
+                    while let Some(tool_result) = tool_uses.next().await {
+                        log::info!("Tool finished {:?}", tool_result);
+
+                        event_stream.update_tool_call_fields(
+                            &tool_result.tool_use_id,
+                            acp::ToolCallUpdateFields {
+                                status: Some(if tool_result.is_error {
+                                    acp::ToolCallStatus::Failed
+                                } else {
+                                    acp::ToolCallStatus::Completed
+                                }),
+                                raw_output: tool_result.output.clone(),
+                                ..Default::default()
+                            },
+                        );
+                        this.update(cx, |this, _cx| {
+                            this.pending_message()
+                                .tool_results
+                                .insert(tool_result.tool_use_id.clone(), tool_result);
+                        })
+                        .ok();
+                    }
+
+                    if tool_use_limit_reached {
+                        // todo!("write a test")
+                        return Err(language_model::ToolUseLimitReachedError.into());
+                    }
+
+                    this.update(cx, |this, _| this.flush_pending_message())?;
+                    completion_intent = CompletionIntent::ToolResults;
+                }
+            }
+            .await;
+
+            this.update(cx, |this, _| this.flush_pending_message()).ok();
+            if let Err(error) = turn_result {
+                log::error!("Turn execution failed: {:?}", error);
+                event_stream.send_error(error);
+            } else {
+                log::info!("Turn execution completed successfully");
+            }
         }));
-        log::info!("Total messages in thread: {}", self.messages.len());
-
-        // event_stream.send_error(LanguageModelCompletionError::PromptTooLarge {
-        //     tokens: Some(200_000),
-        // });
-        event_stream.send_error(language_model::PaymentRequiredError);
-
-        // self.running_turn = Some(cx.spawn(async move |this, cx| {
-        //     log::info!("Starting agent turn execution");
-        //     let turn_result = async {
-        //         let mut completion_intent = CompletionIntent::UserPrompt;
-        //         loop {
-        //             log::debug!(
-        //                 "Building completion request with intent: {:?}",
-        //                 completion_intent
-        //             );
-        //             let request = this.update(cx, |this, cx| {
-        //                 this.build_completion_request(completion_intent, cx)
-        //             })?;
-
-        //             log::info!("Calling model.stream_completion");
-        //             let mut events = model.stream_completion(request, cx).await?;
-        //             log::debug!("Stream completion started successfully");
-
-        //             let mut tool_uses = FuturesUnordered::new();
-        //             while let Some(event) = events.next().await {
-        //                 match event? {
-        //                     LanguageModelCompletionEvent::Stop(reason) => {
-        //                         event_stream.send_stop(reason);
-        //                         if reason == StopReason::Refusal {
-        //                             this.update(cx, |this, _cx| this.truncate(message_id))??;
-        //                             return Ok(());
-        //                         }
-        //                     }
-        //                     event => {
-        //                         log::trace!("Received completion event: {:?}", event);
-        //                         this.update(cx, |this, cx| {
-        //                             tool_uses.extend(this.handle_streamed_completion_event(
-        //                                 event,
-        //                                 &event_stream,
-        //                                 cx,
-        //                             ));
-        //                         })
-        //                         .ok();
-        //                     }
-        //                 }
-        //             }
-
-        //             if tool_uses.is_empty() {
-        //                 log::info!("No tool uses found, completing turn");
-        //                 return Ok(());
-        //             }
-        //             log::info!("Found {} tool uses to execute", tool_uses.len());
-
-        //             while let Some(tool_result) = tool_uses.next().await {
-        //                 log::info!("Tool finished {:?}", tool_result);
-
-        //                 event_stream.update_tool_call_fields(
-        //                     &tool_result.tool_use_id,
-        //                     acp::ToolCallUpdateFields {
-        //                         status: Some(if tool_result.is_error {
-        //                             acp::ToolCallStatus::Failed
-        //                         } else {
-        //                             acp::ToolCallStatus::Completed
-        //                         }),
-        //                         raw_output: tool_result.output.clone(),
-        //                         ..Default::default()
-        //                     },
-        //                 );
-        //                 this.update(cx, |this, _cx| {
-        //                     this.pending_message()
-        //                         .tool_results
-        //                         .insert(tool_result.tool_use_id.clone(), tool_result);
-        //                 })
-        //                 .ok();
-        //             }
-
-        //             this.update(cx, |this, _| this.flush_pending_message())?;
-        //             completion_intent = CompletionIntent::ToolResults;
-        //         }
-        //     }
-        //     .await;
-
-        //     this.update(cx, |this, _| this.flush_pending_message()).ok();
-        //     if let Err(error) = turn_result {
-        //         log::error!("Turn execution failed: {:?}", error);
-        //         event_stream.send_error(error);
-        //     } else {
-        //         log::info!("Turn execution completed successfully");
-        //     }
-        // }));
         events_rx
     }
 

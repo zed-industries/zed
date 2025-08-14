@@ -12,8 +12,8 @@ use gpui::{
 };
 use indoc::indoc;
 use language_model::{
-    LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelId,
-    LanguageModelRegistry, LanguageModelToolResult, LanguageModelToolUse, Role, StopReason,
+    LanguageModel, LanguageModelCompletionEvent, LanguageModelId, LanguageModelRegistry,
+    LanguageModelToolResult, LanguageModelToolUse, Role, StopReason,
     fake_provider::FakeLanguageModel,
 };
 use project::Project;

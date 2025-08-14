@@ -508,7 +508,7 @@ impl AgentConnection for AcpConnection {
             .detach_and_log_err(cx)
     }
 
-    fn as_any(&self) -> &dyn Any {
+    fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
         self
     }
 }

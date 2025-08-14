@@ -291,7 +291,7 @@ impl AgentConnection for ClaudeAgentConnection {
             .log_err();
     }
 
-    fn as_any(&self) -> &dyn Any {
+    fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
         self
     }
 }

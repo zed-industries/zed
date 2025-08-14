@@ -18,7 +18,6 @@ use editor::{
     EditorStyle, MinimapVisibility, MultiBuffer, PathKey, SelectionEffects,
 };
 use file_icons::FileIcons;
-use futures::future::Shared;
 use gpui::{
     Action, Animation, AnimationExt, App, BorderStyle, ClipboardItem, EdgesRefinement, Empty,
     Entity, EntityId, FocusHandle, Focusable, Hsla, Length, ListOffset, ListState, MouseButton,
@@ -44,8 +43,8 @@ use terminal_view::TerminalView;
 use text::{Anchor, BufferSnapshot};
 use theme::ThemeSettings;
 use ui::{
-    Callout, Disclosure, Divider, DividerColor, KeyBinding, PopoverMenuHandle, Scrollbar,
-    ScrollbarState, Tooltip, prelude::*,
+    Callout, Disclosure, Divider, DividerColor, ElevationIndex, KeyBinding, PopoverMenuHandle,
+    Scrollbar, ScrollbarState, Tooltip, prelude::*,
 };
 use util::{ResultExt, size::format_file_size, time::duration_alt_display};
 use workspace::{CollaboratorId, Workspace};
@@ -59,8 +58,8 @@ use crate::agent_diff::AgentDiff;
 use crate::message_editor::{MAX_EDITOR_LINES, MIN_EDITOR_LINES};
 use crate::ui::{AgentNotification, AgentNotificationEvent, BurnModeTooltip};
 use crate::{
-    AgentDiffPane, AgentPanel, ExpandMessageEditor, Follow, KeepAll, OpenAgentDiff, RejectAll,
-    ToggleBurnMode,
+    AgentDiffPane, AgentPanel, ContinueThread, ContinueWithBurnMode, ExpandMessageEditor, Follow,
+    KeepAll, OpenAgentDiff, RejectAll, ToggleBurnMode,
 };
 
 const RESPONSE_PADDING_X: Pixels = px(19.);
@@ -68,6 +67,7 @@ const RESPONSE_PADDING_X: Pixels = px(19.);
 enum ThreadError {
     PaymentRequired,
     ModelRequestLimitReached(cloud_llm_client::Plan),
+    ToolUseLimitReached,
     Other(SharedString),
 }
 
@@ -75,6 +75,8 @@ impl ThreadError {
     fn from_err(error: anyhow::Error) -> Self {
         if error.is::<language_model::PaymentRequiredError>() {
             Self::PaymentRequired
+        } else if error.is::<language_model::ToolUseLimitReachedError>() {
+            Self::ToolUseLimitReached
         } else if let Some(error) =
             error.downcast_ref::<language_model::ModelRequestLimitReachedError>()
         {
@@ -531,6 +533,25 @@ impl AcpThreadView {
                 this.message_history.borrow_mut().push(chunks);
             })
             .ok();
+        })
+        .detach();
+    }
+
+    fn resume_chat(&mut self, cx: &mut Context<Self>) {
+        self.thread_error.take();
+        let Some(thread) = self.thread() else {
+            return;
+        };
+
+        let task = thread.update(cx, |thread, cx| thread.resume(cx));
+        cx.spawn(async move |this, cx| {
+            let result = task.await;
+
+            this.update(cx, |this, cx| {
+                if let Err(err) = result {
+                    this.handle_thread_error(err, cx);
+                }
+            })
         })
         .detach();
     }
@@ -2665,11 +2686,15 @@ impl AcpThreadView {
             .into_any()
     }
 
+    fn as_native_connection(&self, cx: &App) -> Option<Rc<agent2::NativeAgentConnection>> {
+        let acp_thread = self.thread()?.read(cx);
+        acp_thread.connection().clone().downcast()
+    }
+
     fn as_native_thread(&self, cx: &App) -> Option<Entity<agent2::Thread>> {
         let acp_thread = self.thread()?.read(cx);
-        let connection = acp_thread.connection().as_ref();
-        let connection = connection.downcast::<agent2::NativeAgentConnection>()?;
-        connection.thread(acp_thread.session_id(), cx)
+        self.as_native_connection(cx)?
+            .thread(acp_thread.session_id(), cx)
     }
 
     fn toggle_burn_mode(
@@ -3320,13 +3345,16 @@ impl AcpThreadView {
 }
 
 impl AcpThreadView {
-    fn render_thread_error(&self, cx: &mut Context<'_, Self>) -> Option<Div> {
+    fn render_thread_error(&self, window: &mut Window, cx: &mut Context<'_, Self>) -> Option<Div> {
         let content = match self.thread_error.as_ref()? {
+            ThreadError::Other(error) => self.render_any_thread_error(error.clone(), cx),
             ThreadError::PaymentRequired => self.render_payment_required_error(cx),
             ThreadError::ModelRequestLimitReached(plan) => {
                 self.render_model_request_limit_reached_error(*plan, cx)
             }
-            ThreadError::Other(error) => self.render_any_thread_error(error.clone(), cx),
+            ThreadError::ToolUseLimitReached => {
+                self.render_tool_use_limit_reached_error(window, cx)?
+            }
         };
 
         Some(
@@ -3393,6 +3421,66 @@ impl AcpThreadView {
             .secondary_action(self.create_copy_button(error_message))
             .primary_action(self.dismiss_error_button(cx))
             .bg_color(self.error_callout_bg(cx))
+    }
+
+    fn render_tool_use_limit_reached_error(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<Callout> {
+        let thread = self.as_native_thread(cx)?;
+        let supports_burn_mode = thread.read(cx).model().supports_burn_mode();
+
+        let focus_handle = self.focus_handle(cx);
+
+        let icon = Icon::new(IconName::Info)
+            .size(IconSize::Small)
+            .color(Color::Info);
+
+        Some(
+            Callout::new()
+                .icon(icon)
+                .title("Consecutive tool use limit reached.")
+                .when(supports_burn_mode, |this| {
+                    this.secondary_action(
+                        Button::new("continue-burn-mode", "Continue with Burn Mode")
+                            .style(ButtonStyle::Filled)
+                            .style(ButtonStyle::Tinted(ui::TintColor::Accent))
+                            .layer(ElevationIndex::ModalSurface)
+                            .label_size(LabelSize::Small)
+                            .key_binding(
+                                KeyBinding::for_action_in(
+                                    &ContinueWithBurnMode,
+                                    &focus_handle,
+                                    window,
+                                    cx,
+                                )
+                                .map(|kb| kb.size(rems_from_px(10.))),
+                            )
+                            .tooltip(Tooltip::text("Enable Burn Mode for unlimited tool use."))
+                            .on_click({
+                                cx.listener(move |this, _, _window, cx| {
+                                    thread.update(cx, |thread, cx| {
+                                        thread.set_completion_mode(CompletionMode::Burn);
+                                    });
+                                    this.resume_chat(cx);
+                                })
+                            }),
+                    )
+                })
+                .primary_action(
+                    Button::new("continue-conversation", "Continue")
+                        .layer(ElevationIndex::ModalSurface)
+                        .label_size(LabelSize::Small)
+                        .key_binding(
+                            KeyBinding::for_action_in(&ContinueThread, &focus_handle, window, cx)
+                                .map(|kb| kb.size(rems_from_px(10.))),
+                        )
+                        .on_click(cx.listener(|this, _, _window, cx| {
+                            this.resume_chat(cx);
+                        })),
+                ),
+        )
     }
 
     fn create_copy_button(&self, message: impl Into<String>) -> impl IntoElement {
@@ -3539,7 +3627,7 @@ impl Render for AcpThreadView {
                 }
                 _ => this,
             })
-            .children(self.render_thread_error(cx))
+            .children(self.render_thread_error(window, cx))
             .child(self.render_message_editor(window, cx))
     }
 }
@@ -4048,7 +4136,7 @@ mod tests {
             unimplemented!()
         }
 
-        fn as_any(&self) -> &dyn Any {
+        fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
             self
         }
     }
@@ -4101,7 +4189,7 @@ mod tests {
             unimplemented!()
         }
 
-        fn as_any(&self) -> &dyn Any {
+        fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
             self
         }
     }
