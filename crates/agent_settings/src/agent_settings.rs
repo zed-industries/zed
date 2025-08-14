@@ -105,6 +105,15 @@ impl AgentSettings {
             model,
         });
     }
+
+    pub fn reasoning_for_model(model: &Arc<dyn LanguageModel>, cx: &App) -> Option<ReasoningParameters> {
+        let settings = Self::get_global(cx);
+        settings
+            .model_parameters
+            .iter()
+            .rfind(|params| params.matches(model))
+            .and_then(|params| params.reasoning.clone())
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
@@ -112,6 +121,42 @@ pub struct LanguageModelParameters {
     pub provider: Option<LanguageModelProviderSetting>,
     pub model: Option<SharedString>,
     pub temperature: Option<f32>,
+    /// Optional reasoning parameters (effort/summary) to use for this model.
+    pub reasoning: Option<ReasoningParameters>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
+pub struct ReasoningParameters {
+    #[serde(default)]
+    pub effort: Option<ReasoningEffortSetting>,
+    #[serde(default)]
+    pub summary: Option<ReasoningSummarySetting>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum ReasoningEffortSetting {
+    #[serde(alias = "Minimal")]
+    Minimal,
+    #[serde(alias = "Low")]
+    Low,
+    #[serde(alias = "Medium")]
+    Medium,
+    #[serde(alias = "High")]
+    High,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum ReasoningSummarySetting {
+    #[serde(alias = "Auto")]
+    Auto,
+    #[serde(alias = "Concise")]
+    Concise,
+    #[serde(alias = "Detailed")]
+    Detailed,
+    #[serde(alias = "none", alias = "None")]
+    None,
 }
 
 impl LanguageModelParameters {

@@ -8,6 +8,152 @@ use strum::EnumIter;
 
 pub const OPEN_AI_API_URL: &str = "https://api.openai.com/v1";
 
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ResponsesReasoning {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effort: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub summary: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ResponsesRequest {
+    /// Model id, e.g. "gpt-5"
+    pub model: String,
+
+    /// Free-form input. Can be a string or structured array per Responses API.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input: Option<Value>,
+
+    /// High-level instructions for the generation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub instructions: Option<String>,
+
+    /// Reasoning options for reasoning-capable models.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning: Option<ResponsesReasoning>,
+
+    /// Structured prompt reference (id/version/variables). Left as raw JSON for flexibility.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompt: Option<Value>,
+
+    /// Tools configuration. Kept as raw JSON to allow all tool types.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tools: Vec<Value>,
+
+    /// Tool choice. Kept as raw JSON to allow all supported shapes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_choice: Option<Value>,
+
+    /// Optional output token limit for the response.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_output_tokens: Option<u64>,
+
+    /// Temperature for sampling.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub temperature: Option<f32>,
+
+    /// Whether to enable parallel function calls when using tools.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parallel_tool_calls: Option<bool>,
+
+    /// Enable streaming SSE responses.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stream: Option<bool>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ResponsesStreamingEvent {
+    #[serde(rename = "type")]
+    pub event_type: String,
+    /// The rest of the event payload; varies by event type.
+    #[serde(flatten)]
+    pub payload: Value,
+}
+
+/// Streaming Responses API call: POST {api_url}/responses with stream = true.
+/// Parses SSE "data: ..." lines and emits typed events carrying their "type" field.
+pub async fn responses_stream(
+    client: &dyn HttpClient,
+    api_url: &str,
+    api_key: &str,
+    mut request: ResponsesRequest,
+) -> Result<BoxStream<'static, Result<ResponsesStreamingEvent>>> {
+    // Ensure streaming is enabled in the request body
+    if request.stream != Some(true) {
+        request.stream = Some(true);
+    }
+
+    let uri = format!("{api_url}/responses");
+    let request_builder = HttpRequest::builder()
+        .method(Method::POST)
+        .uri(uri)
+        .header("Content-Type", "application/json")
+        .header("Authorization", format!("Bearer {}", api_key));
+
+    let request = request_builder.body(AsyncBody::from(serde_json::to_string(&request)?))?;
+    let mut response = client.send(request).await?;
+    if response.status().is_success() {
+        let reader = BufReader::new(response.into_body());
+        Ok(reader
+            .lines()
+            .filter_map(|line| async move {
+                match line {
+                    Ok(line) => {
+                        let line = line.trim_end();
+                        // SSE frames carry JSON on "data:" lines; ignore others.
+                        let Some(json_str) = line.strip_prefix("data: ") else {
+                            return None;
+                        };
+                        if json_str == "[DONE]" {
+                            return None;
+                        }
+                        match serde_json::from_str::<ResponsesStreamingEvent>(json_str) {
+                            Ok(event) => Some(Ok(event)),
+                            Err(error) => {
+                                log::error!(
+                                    "Failed to parse OpenAI Responses streaming event: `{}`\n\
+                                     Response: `{}`",
+                                    error,
+                                    json_str
+                                );
+                                Some(Err(anyhow!(error)))
+                            }
+                        }
+                    }
+                    Err(error) => Some(Err(anyhow!(error))),
+                }
+            })
+            .boxed())
+    } else {
+        let mut body = String::new();
+        response.body_mut().read_to_string(&mut body).await?;
+
+        #[derive(Deserialize)]
+        struct OpenAiResponse {
+            error: OpenAiError,
+        }
+        #[derive(Deserialize)]
+        struct OpenAiError {
+            message: String,
+        }
+
+        match serde_json::from_str::<OpenAiResponse>(&body) {
+            Ok(response) if !response.error.message.is_empty() => Err(anyhow!(
+                "API request to {} failed: {}",
+                api_url,
+                response.error.message,
+            )),
+            _ => anyhow::bail!(
+                "API request to {} failed with status {}: {}",
+                api_url,
+                response.status(),
+                body,
+            ),
+        }
+    }
+}
+
 fn is_none_or_empty<T: AsRef<[U]>, U>(opt: &Option<T>) -> bool {
     opt.as_ref().map_or(true, |v| v.as_ref().is_empty())
 }

@@ -10,11 +10,11 @@ use language_model::{
     AuthenticateError, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
     LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
     LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
-    LanguageModelToolChoice, LanguageModelToolResultContent, LanguageModelToolUse, MessageContent,
+    LanguageModelToolChoice, LanguageModelToolSchemaFormat, LanguageModelToolResultContent, LanguageModelToolUse, MessageContent,
     RateLimiter, Role, StopReason, TokenUsage,
 };
 use menu;
-use open_ai::{ImageUrl, Model, ReasoningEffort, ResponseStreamEvent, stream_completion};
+use open_ai::{ImageUrl, Model, ReasoningEffort, ResponseStreamEvent, ResponsesRequest, ResponsesStreamingEvent, responses_stream, stream_completion};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
@@ -332,6 +332,10 @@ impl LanguageModel for OpenAiLanguageModel {
         }
     }
 
+    fn tool_input_format(&self) -> LanguageModelToolSchemaFormat {
+        language_model::LanguageModelToolSchemaFormat::JsonSchemaSubset
+    }
+
     fn telemetry_id(&self) -> String {
         format!("openai/{}", self.model.id())
     }
@@ -366,19 +370,526 @@ impl LanguageModel for OpenAiLanguageModel {
             LanguageModelCompletionError,
         >,
     > {
-        let request = into_open_ai(
-            request,
-            self.model.id(),
-            self.model.supports_parallel_tool_calls(),
-            self.max_output_tokens(),
-            self.model.reasoning_effort(),
-        );
-        let completions = self.stream_completion(request, cx);
-        async move {
-            let mapper = OpenAiEventMapper::new();
-            Ok(mapper.map_stream(completions.await?).boxed())
+        let model_id = self.model.id().to_string();
+        let max_output_tokens = self.max_output_tokens();
+
+        // Fallback to Chat Completions for models that may not support Responses well.
+        let prefer_responses = !model_id.starts_with("o1-");
+
+        if !prefer_responses {
+            let request = into_open_ai(
+                request,
+                &model_id,
+                self.model.supports_parallel_tool_calls(),
+                max_output_tokens,
+                self.model.reasoning_effort(),
+            );
+            let completions = self.stream_completion(request, cx);
+            return async move {
+                let mapper = OpenAiEventMapper::new();
+                Ok(mapper.map_stream(completions.await?).boxed())
+            }
+            .boxed();
         }
-        .boxed()
+
+        // Build Responses input from full request history:
+        // - System -> developer message (input_text, input_image)
+        // - User   -> user message (input_text, input_image)
+        // - Assistant -> visible text, plus function_call and function_call_output as top-level items
+        let mut input_items: Vec<serde_json::Value> = Vec::new();
+
+        for message in &request.messages {
+            match message.role {
+                Role::System => {
+                    let mut content_items = Vec::<serde_json::Value>::new();
+                    for part in &message.content {
+                        match part {
+                            MessageContent::Text(t) | MessageContent::Thinking { text: t, .. } => {
+                                if !t.is_empty() {
+                                    content_items.push(serde_json::json!({"type":"input_text","text": t}));
+                                }
+                            }
+                            MessageContent::Image(img) => {
+                                content_items.push(serde_json::json!({
+                                    "type":"input_image",
+                                    "image_url": img.to_base64_url(),
+                                }));
+                            }
+                            MessageContent::RedactedThinking(_)
+                            | MessageContent::ToolUse(_)
+                            | MessageContent::ToolResult(_) => {}
+                        }
+                    }
+                    if !content_items.is_empty() {
+                        input_items.push(serde_json::json!({
+                            "role":"developer",
+                            "content": content_items
+                        }));
+                    }
+                }
+                Role::User => {
+                    let mut content_items = Vec::<serde_json::Value>::new();
+                    let mut pending_fc_outputs: Vec<serde_json::Value> = Vec::new();
+                    for part in &message.content {
+                        match part {
+                            MessageContent::Text(t) | MessageContent::Thinking { text: t, .. } => {
+                                if !t.is_empty() {
+                                    content_items.push(serde_json::json!({"type":"input_text","text": t}));
+                                }
+                            }
+                            MessageContent::Image(img) => {
+                                content_items.push(serde_json::json!({
+                                    "type":"input_image",
+                                    "image_url": img.to_base64_url(),
+                                }));
+                            }
+                            MessageContent::ToolResult(tool_result) => {
+                                let call_id = tool_result.tool_use_id.to_string();
+                                let output_string = if let Some(output) = &tool_result.output {
+                                    if let Some(s) = output.as_str() { s.to_string() } else { output.to_string() }
+                                } else {
+                                    match &tool_result.content {
+                                        LanguageModelToolResultContent::Text(text) => text.as_ref().to_string(),
+                                        LanguageModelToolResultContent::Image(_image) => "[image-output]".to_string(),
+                                    }
+                                };
+                                let fco_id = if let Some(suffix) = call_id.strip_prefix("call_") {
+                                    format!("fco_{}", suffix)
+                                } else {
+                                    format!("fco_{}", call_id)
+                                };
+                                pending_fc_outputs.push(serde_json::json!({
+                                    "type":"function_call_output",
+                                    "id": fco_id,
+                                    "call_id": call_id,
+                                    "output": output_string
+                                }));
+                            }
+                            MessageContent::RedactedThinking(_)
+                            | MessageContent::ToolUse(_) => {}
+                        }
+                    }
+                    if !content_items.is_empty() {
+                        input_items.push(serde_json::json!({
+                            "role":"user",
+                            "content": content_items
+                        }));
+                    }
+                    for f in pending_fc_outputs {
+                        input_items.push(f);
+                    }
+                }
+                Role::Assistant => {
+                    let mut assistant_text = String::new();
+                    let mut pending_fc_outputs: Vec<serde_json::Value> = Vec::new();
+
+                    for part in &message.content {
+                        match part {
+                            MessageContent::Text(t) | MessageContent::Thinking { text: t, .. } => {
+                                if !t.is_empty() {
+                                    if !assistant_text.is_empty() {
+                                        assistant_text.push_str("\n\n");
+                                    }
+                                    assistant_text.push_str(t);
+                                }
+                            }
+                            MessageContent::Image(_img) => {}
+                            MessageContent::RedactedThinking(_) => {}
+                            MessageContent::ToolUse(tool_use) => {
+                                let args = if !tool_use.raw_input.is_empty() {
+                                    tool_use.raw_input.clone()
+                                } else {
+                                    tool_use.input.to_string()
+                                };
+                                let call_id = tool_use.id.to_string();
+                                let fc_id = if let Some(suffix) = call_id.strip_prefix("call_") {
+                                    format!("fc_{}", suffix)
+                                } else if call_id.starts_with("fc_") {
+                                    call_id.clone()
+                                } else {
+                                    format!("fc_{}", call_id)
+                                };
+                                input_items.push(serde_json::json!({
+                                    "type":"function_call",
+                                    "id": fc_id,
+                                    "call_id": call_id,
+                                    "name": tool_use.name.to_string(),
+                                    "arguments": args
+                                }));
+                            }
+                            MessageContent::ToolResult(tool_result) => {
+                                let call_id = tool_result.tool_use_id.to_string();
+                                let output_string = if let Some(output) = &tool_result.output {
+                                    if let Some(s) = output.as_str() { s.to_string() } else { output.to_string() }
+                                } else {
+                                    match &tool_result.content {
+                                        LanguageModelToolResultContent::Text(text) => text.as_ref().to_string(),
+                                        LanguageModelToolResultContent::Image(_image) => "[image-output]".to_string(),
+                                    }
+                                };
+                                let fco_id = if let Some(suffix) = call_id.strip_prefix("call_") {
+                                    format!("fco_{}", suffix)
+                                } else {
+                                    format!("fco_{}", call_id)
+                                };
+                                pending_fc_outputs.push(serde_json::json!({
+                                    "type":"function_call_output",
+                                    "id": fco_id,
+                                    "call_id": call_id,
+                                    "output": output_string
+                                }));
+                            }
+                        }
+                    }
+
+                    if !assistant_text.is_empty() {
+                        input_items.push(serde_json::json!({
+                            "role":"assistant",
+                            "content": assistant_text
+                        }));
+                    }
+                    for f in pending_fc_outputs {
+                        input_items.push(f);
+                    }
+                }
+            }
+        }
+
+        // Ensure every non-message item (top-level tool items) has an 'id'
+        {
+            let mut idx_counter: usize = 0;
+            for item in input_items.iter_mut() {
+                if let Some(obj) = item.as_object_mut() {
+                    if obj.get("role").is_none() {
+                        let item_type = obj.get("type").and_then(|v| v.as_str()).unwrap_or("");
+                        if !obj.contains_key("id") {
+                            let new_id = match item_type {
+                                "function_call" => {
+                                    if let Some(call_id) = obj.get("call_id").and_then(|v| v.as_str()) {
+                                        let suffix = call_id.strip_prefix("call_").unwrap_or(call_id);
+                                        format!("fc_{}", suffix)
+                                    } else {
+                                        format!("fc_auto_{}", idx_counter)
+                                    }
+                                }
+                                "function_call_output" => {
+                                    if let Some(call_id) = obj.get("call_id").and_then(|v| v.as_str()) {
+                                        let suffix = call_id.strip_prefix("call_").unwrap_or(call_id);
+                                        format!("fco_{}", suffix)
+                                    } else {
+                                        format!("fco_auto_{}", idx_counter)
+                                    }
+                                }
+                                other => format!("item_{}_{}", other, idx_counter),
+                            };
+                            obj.insert("id".to_string(), serde_json::json!(new_id));
+                        }
+                    }
+                }
+                idx_counter += 1;
+            }
+        }
+
+        // Map tools to Responses tools (function tools only, strict by default).
+        let tools_json = request
+            .tools
+            .iter()
+            .map(|t| {
+                let mut params = t.input_schema.clone();
+                if let serde_json::Value::Object(ref mut o) = params {
+                    if !o.contains_key("type") {
+                        o.insert("type".into(), serde_json::Value::String("object".into()));
+                    }
+                    if !o.contains_key("properties") {
+                        o.insert(
+                            "properties".into(),
+                            serde_json::Value::Object(serde_json::Map::new()),
+                        );
+                    }
+                    if !o.contains_key("additionalProperties") {
+                        o.insert("additionalProperties".into(), serde_json::Value::Bool(false));
+                    }
+                    let required = if let Some(props) = o.get("properties").and_then(|v| v.as_object()) {
+                        serde_json::Value::Array(
+                            props
+                                .keys()
+                                .cloned()
+                                .map(serde_json::Value::String)
+                                .collect(),
+                        )
+                    } else {
+                        serde_json::Value::Array(vec![])
+                    };
+                    o.insert("required".into(), required);
+                }
+                serde_json::json!({
+                    "type":"function",
+                    "name": t.name,
+                    "description": t.description,
+                    "parameters": params,
+                    "strict": true
+                })
+            })
+            .collect::<Vec<_>>();
+
+        // Build ResponsesRequest
+        let mut responses_req = open_ai::ResponsesRequest {
+            model: model_id.clone(),
+            input: Some(serde_json::Value::Array(input_items)),
+            instructions: None,
+            reasoning: None,
+            prompt: None,
+            tools: tools_json,
+            tool_choice: request.tool_choice.as_ref().map(|c| match c {
+                LanguageModelToolChoice::Auto => serde_json::Value::String("auto".into()),
+                LanguageModelToolChoice::Any => serde_json::Value::String("required".into()),
+                LanguageModelToolChoice::None => serde_json::Value::String("none".into()),
+            }),
+            max_output_tokens,
+            temperature: request.temperature,
+            parallel_tool_calls: Some(false),
+            stream: Some(true),
+        };
+
+        // Stream from Responses API and map events
+        let http_client = self.http_client.clone();
+        let Ok((api_key, api_url, settings_effort, settings_summary)) = cx.read_entity(&self.state, |state, cx| {
+            let settings = &AllLanguageModelSettings::get_global(cx).openai;
+
+            // Read reasoning settings from AgentSettings by matching provider/model.
+            // Provider for this path is "openai"; model id is `model_id`.
+            let rp = agent_settings::AgentSettings::get_global(cx)
+                .model_parameters
+                .iter()
+                .rfind(|p| {
+                    let provider_ok = p
+                        .provider
+                        .as_ref()
+                        .map(|pr| pr.0.as_str() == "openai")
+                        .unwrap_or(true);
+                    let model_ok = p
+                        .model
+                        .as_ref()
+                        .map(|m| m.as_ref() == model_id)
+                        .unwrap_or(true);
+                    provider_ok && model_ok
+                })
+                .and_then(|p| p.reasoning.clone());
+
+            let (eff, sum) = if let Some(rp) = rp {
+                // Map settings enums to Responses strings
+                let eff = rp.effort.map(|e| match e {
+                    agent_settings::ReasoningEffortSetting::Minimal => "minimal".to_string(),
+                    agent_settings::ReasoningEffortSetting::Low => "low".to_string(),
+                    agent_settings::ReasoningEffortSetting::Medium => "medium".to_string(),
+                    agent_settings::ReasoningEffortSetting::High => "high".to_string(),
+                });
+                let sum = rp.summary.and_then(|s| match s {
+                    agent_settings::ReasoningSummarySetting::Auto => Some("auto".to_string()),
+                    agent_settings::ReasoningSummarySetting::Concise => Some("concise".to_string()),
+                    agent_settings::ReasoningSummarySetting::Detailed => Some("detailed".to_string()),
+                    agent_settings::ReasoningSummarySetting::None => None,
+                });
+                (eff, sum)
+            } else {
+                (None, None)
+            };
+
+            (state.api_key.clone(), settings.api_url.clone(), eff, sum)
+        }) else {
+            return futures::future::ready(Err(LanguageModelCompletionError::from(anyhow!("App state dropped")))).boxed();
+        };
+
+        // Apply reasoning from AgentSettings or fallback to model defaults
+        responses_req.reasoning = {
+            let eff = settings_effort.or_else(|| {
+                self.model.reasoning_effort().and_then(|e| match e {
+                    ReasoningEffort::Minimal => Some("minimal".to_string()),
+                    ReasoningEffort::Low => Some("low".to_string()),
+                    ReasoningEffort::Medium => Some("medium".to_string()),
+                    ReasoningEffort::High => Some("high".to_string()),
+                })
+            });
+            // Default summary to "auto" when not set in settings
+            let sum = settings_summary.or(Some("auto".to_string()));
+            Some(open_ai::ResponsesReasoning { effort: eff, summary: sum })
+        };
+
+        let future = self.request_limiter.stream(async move {
+            let Some(api_key) = api_key else {
+                return Err(LanguageModelCompletionError::NoApiKey {
+                    provider: PROVIDER_NAME,
+                });
+            };
+
+            let stream = open_ai::responses_stream(http_client.as_ref(), &api_url, &api_key, responses_req).await?;
+
+            // Track function call state for streaming arguments and ids
+            struct ResponsesState {
+                args_by_id: std::collections::HashMap<String, String>,
+                names_by_id: std::collections::HashMap<String, String>,
+                call_ids_by_id: std::collections::HashMap<String, String>,
+                saw_function_done: bool,
+            }
+            impl ResponsesState {
+                fn new() -> Self {
+                    Self {
+                        args_by_id: std::collections::HashMap::new(),
+                        names_by_id: std::collections::HashMap::new(),
+                        call_ids_by_id: std::collections::HashMap::new(),
+                        saw_function_done: false,
+                    }
+                }
+            }
+            let mut state = ResponsesState::new();
+
+            let mapped = stream.flat_map(move |event| {
+                let mut out: Vec<Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> = Vec::new();
+                match event {
+                    Ok(ev) => {
+                        let ty = ev.event_type.as_str();
+                        let p = &ev.payload;
+
+                        match ty {
+                            // Text streaming
+                            "response.output_text.delta" => {
+                                if let Some(s) = p.get("delta").and_then(|v| v.as_str()) {
+                                    out.push(Ok(LanguageModelCompletionEvent::Text(s.to_string())));
+                                }
+                            }
+                            // Reasoning summary (Thinking) streaming
+                            "response.reasoning_summary_text.delta" => {
+                                if let Some(delta) = p.get("delta").and_then(|v| v.as_str()) {
+                                    out.push(Ok(LanguageModelCompletionEvent::Thinking {
+                                        text: delta.to_string(),
+                                        signature: None,
+                                    }));
+                                }
+                            }
+                            "response.reasoning_summary_text.done" => {
+                                if let Some(text) = p.get("text").and_then(|v| v.as_str()) {
+                                    out.push(Ok(LanguageModelCompletionEvent::Thinking {
+                                        text: text.to_string(),
+                                        signature: None,
+                                    }));
+                                }
+                            }
+
+                            // Function call item appears
+                            "response.output_item.added" | "response.output_item.done" => {
+                                let item = p.get("item").or_else(|| p.get("output_item"));
+                                if let Some(item) = item {
+                                    if item.get("type").and_then(|v| v.as_str()) == Some("function_call") {
+                                        if let Some(item_id) = item.get("id").and_then(|v| v.as_str()) {
+                                            if let Some(name) = item.get("name").and_then(|v| v.as_str()) {
+                                                state.names_by_id.insert(item_id.to_string(), name.to_string());
+                                            }
+                                            if let Some(call_id) = item.get("call_id").and_then(|v| v.as_str()) {
+                                                state.call_ids_by_id.insert(item_id.to_string(), call_id.to_string());
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            // Streaming function-call arguments
+                            "response.function_call_arguments.delta" => {
+                                let id_opt = p.get("item_id").and_then(|v| v.as_str())
+                                    .or_else(|| p.get("id").and_then(|v| v.as_str()));
+                                let delta_opt = p.get("delta").and_then(|v| v.as_str());
+                                if let (Some(item_id), Some(delta)) = (id_opt, delta_opt) {
+                                    let entry = state.args_by_id.entry(item_id.to_string()).or_default();
+                                    entry.push_str(delta);
+
+                                    // Emit interim ToolUse when partial JSON parses
+                                    if let Ok(value) = serde_json::from_str::<serde_json::Value>(entry) {
+                                        let emit_id = state.call_ids_by_id.get(item_id).cloned().unwrap_or_else(|| item_id.to_string());
+                                        let name = state.names_by_id.get(item_id).cloned().unwrap_or_default();
+                                        out.push(Ok(LanguageModelCompletionEvent::ToolUse(LanguageModelToolUse {
+                                            id: emit_id.clone().into(),
+                                            name: name.clone().into(),
+                                            is_input_complete: false,
+                                            raw_input: entry.clone(),
+                                            input: value,
+                                        })));
+                                    }
+                                }
+                            }
+
+                            // Final function-call arguments
+                            "response.function_call_arguments.done" => {
+                                let id_opt = p.get("item_id").and_then(|v| v.as_str())
+                                    .or_else(|| p.get("id").and_then(|v| v.as_str()));
+                                if let Some(item_id) = id_opt {
+                                    if let Some(raw) = state.args_by_id.remove(item_id) {
+                                        state.saw_function_done = true;
+                                        let name = state.names_by_id.get(item_id).cloned().unwrap_or_default();
+                                        let emit_id = state.call_ids_by_id.get(item_id).cloned().unwrap_or_else(|| item_id.to_string());
+                                        match serde_json::from_str::<serde_json::Value>(&raw) {
+                                            Ok(value) => out.push(Ok(LanguageModelCompletionEvent::ToolUse(LanguageModelToolUse {
+                                                id: emit_id.clone().into(),
+                                                name: name.clone().into(),
+                                                is_input_complete: true,
+                                                raw_input: raw.clone(),
+                                                input: value,
+                                            }))),
+                                            Err(err) => out.push(Ok(LanguageModelCompletionEvent::ToolUseJsonParseError {
+                                                id: emit_id.into(),
+                                                tool_name: name.into(),
+                                                raw_input: raw.clone().into(),
+                                                json_parse_error: err.to_string(),
+                                            })),
+                                        }
+                                    }
+                                }
+                            }
+
+                            // Completed
+                            "response.completed" => {
+                                // Usage if present
+                                let usage = p.get("response").and_then(|r| r.get("usage")).or_else(|| p.get("usage"));
+                                if let Some(u) = usage {
+                                    let input_tokens = u.get("input_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
+                                    let output_tokens = u.get("output_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
+                                    let cached_tokens = u
+                                        .get("input_tokens_details")
+                                        .and_then(|d| d.get("cached_tokens"))
+                                        .and_then(|v| v.as_u64())
+                                        .unwrap_or(0);
+                                    out.push(Ok(LanguageModelCompletionEvent::UsageUpdate(TokenUsage {
+                                        input_tokens,
+                                        output_tokens,
+                                        cache_creation_input_tokens: 0,
+                                        cache_read_input_tokens: cached_tokens,
+                                    })));
+                                }
+                                // Stop reason
+                                let stop = if state.saw_function_done { StopReason::ToolUse } else { StopReason::EndTurn };
+                                out.push(Ok(LanguageModelCompletionEvent::Stop(stop)));
+                            }
+
+                            // Errors
+                            "error" => {
+                                let msg = p
+                                    .get("error")
+                                    .and_then(|e| e.get("message"))
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("Responses stream error")
+                                    .to_string();
+                                out.push(Err(LanguageModelCompletionError::from(anyhow!(msg))));
+                            }
+                            _ => {}
+                        }
+                    }
+                    Err(e) => out.push(Err(LanguageModelCompletionError::from(anyhow!(e)))),
+                }
+                futures::stream::iter(out)
+            });
+
+            Ok(mapped.boxed())
+        });
+
+        async move { Ok(future.await?.boxed()) }.boxed()
     }
 }
 
@@ -604,7 +1115,7 @@ impl OpenAiEventMapper {
             }
             Some("tool_calls") => {
                 events.extend(self.tool_calls_by_index.drain().map(|(_, tool_call)| {
-                    match serde_json::Value::from_str(&tool_call.arguments) {
+                    match serde_json::from_str(&tool_call.arguments) {
                         Ok(input) => Ok(LanguageModelCompletionEvent::ToolUse(
                             LanguageModelToolUse {
                                 id: tool_call.id.clone().into(),

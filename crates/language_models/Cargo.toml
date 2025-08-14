@@ -1,4 +1,4 @@
-[package]
+л ра[package]
 name = "language_models"
 version = "0.1.0"
 edition.workspace = true
@@ -49,6 +49,7 @@ schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true
+agent_settings.workspace = true
 smol.workspace = true
 strum.workspace = true
 theme.workspace = true

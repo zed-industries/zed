@@ -9213,6 +9213,7 @@ dependencies = [
 name = "language_models"
 version = "0.1.0"
 dependencies = [
+ "agent_settings",
  "ai_onboarding",
  "anthropic",
  "anyhow",
