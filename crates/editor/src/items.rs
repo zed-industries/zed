@@ -1036,6 +1036,10 @@ impl Item for Editor {
                 f(ItemEvent::UpdateBreadcrumbs);
             }
 
+            EditorEvent::BreadcrumbsChanged => {
+                f(ItemEvent::UpdateBreadcrumbs);
+            }
+
             EditorEvent::DirtyChanged => {
                 f(ItemEvent::UpdateTab);
             }
