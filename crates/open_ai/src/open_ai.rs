@@ -21,43 +21,43 @@ pub struct ResponsesRequest {
     /// Model id, e.g. "gpt-5"
     pub model: String,
 
-    /// Free-form input. Can be a string or structured array per Responses API.
+
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub input: Option<Value>,
 
-    /// High-level instructions for the generation.
+
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub instructions: Option<String>,
 
-    /// Reasoning options for reasoning-capable models.
+
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reasoning: Option<ResponsesReasoning>,
 
-    /// Structured prompt reference (id/version/variables). Left as raw JSON for flexibility.
+
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prompt: Option<Value>,
 
-    /// Tools configuration. Kept as raw JSON to allow all tool types.
+
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tools: Vec<Value>,
 
-    /// Tool choice. Kept as raw JSON to allow all supported shapes.
+
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_choice: Option<Value>,
 
-    /// Optional output token limit for the response.
+
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_output_tokens: Option<u64>,
 
-    /// Temperature for sampling.
+
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub temperature: Option<f32>,
 
-    /// Whether to enable parallel function calls when using tools.
+
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parallel_tool_calls: Option<bool>,
 
-    /// Enable streaming SSE responses.
+
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stream: Option<bool>,
 }
@@ -71,8 +71,7 @@ pub struct ResponsesStreamingEvent {
     pub payload: Value,
 }
 
-/// Streaming Responses API call: POST {api_url}/responses with stream = true.
-/// Parses SSE "data: ..." lines and emits typed events carrying their "type" field.
+
 pub async fn responses_stream(
     client: &dyn HttpClient,
     api_url: &str,

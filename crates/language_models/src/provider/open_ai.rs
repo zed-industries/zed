@@ -392,10 +392,7 @@ impl LanguageModel for OpenAiLanguageModel {
             .boxed();
         }
 
-        // Build Responses input from full request history:
-        // - System -> developer message (input_text, input_image)
-        // - User   -> user message (input_text, input_image)
-        // - Assistant -> visible text, plus function_call and function_call_output as top-level items
+
         let mut input_items: Vec<serde_json::Value> = Vec::new();
 
         for message in &request.messages {
@@ -555,7 +552,14 @@ impl LanguageModel for OpenAiLanguageModel {
             }
         }
 
-        // Ensure every non-message item (top-level tool items) has an 'id'
+
+        // Normalize IDs for top-level tool items to ensure stable mapping across streamed events.
+        // - function_call  => "fc_<call_id without 'call_'>" or "fc_auto_<n>" if call_id is missing
+        // - function_call_output => "fco_<call_id without 'call_'>" or "fco_auto_<n>"
+        // This preserves referential integrity between function_call and function_call_output when
+        // Responses omits ids or uses temporary ones. The idx_counter provides deterministic unique
+        // fallbacks so interim SSE chunks can be correlated with the final items.
+
         {
             let mut idx_counter: usize = 0;
             for item in input_items.iter_mut() {
@@ -590,7 +594,7 @@ impl LanguageModel for OpenAiLanguageModel {
             }
         }
 
-        // Map tools to Responses tools (function tools only, strict by default).
+
         let tools_json = request
             .tools
             .iter()
@@ -632,7 +636,7 @@ impl LanguageModel for OpenAiLanguageModel {
             })
             .collect::<Vec<_>>();
 
-        // Build ResponsesRequest
+
         let mut responses_req = open_ai::ResponsesRequest {
             model: model_id.clone(),
             input: Some(serde_json::Value::Array(input_items)),
@@ -651,13 +655,12 @@ impl LanguageModel for OpenAiLanguageModel {
             stream: Some(true),
         };
 
-        // Stream from Responses API and map events
+
         let http_client = self.http_client.clone();
         let Ok((api_key, api_url, settings_effort, settings_summary)) = cx.read_entity(&self.state, |state, cx| {
             let settings = &AllLanguageModelSettings::get_global(cx).openai;
 
-            // Read reasoning settings from AgentSettings by matching provider/model.
-            // Provider for this path is "openai"; model id is `model_id`.
+
             let rp = agent_settings::AgentSettings::get_global(cx)
                 .model_parameters
                 .iter()
@@ -700,7 +703,7 @@ impl LanguageModel for OpenAiLanguageModel {
             return futures::future::ready(Err(LanguageModelCompletionError::from(anyhow!("App state dropped")))).boxed();
         };
 
-        // Apply reasoning from AgentSettings or fallback to model defaults
+
         responses_req.reasoning = {
             let eff = settings_effort.or_else(|| {
                 self.model.reasoning_effort().and_then(|e| match e {
@@ -724,7 +727,7 @@ impl LanguageModel for OpenAiLanguageModel {
 
             let stream = open_ai::responses_stream(http_client.as_ref(), &api_url, &api_key, responses_req).await?;
 
-            // Track function call state for streaming arguments and ids
+
             struct ResponsesState {
                 args_by_id: std::collections::HashMap<String, String>,
                 names_by_id: std::collections::HashMap<String, String>,
@@ -775,8 +778,9 @@ impl LanguageModel for OpenAiLanguageModel {
                                 }
                             }
 
-                            // Function call item appears
+
                             "response.output_item.added" | "response.output_item.done" => {
+
                                 let item = p.get("item").or_else(|| p.get("output_item"));
                                 if let Some(item) = item {
                                     if item.get("type").and_then(|v| v.as_str()) == Some("function_call") {
@@ -792,8 +796,9 @@ impl LanguageModel for OpenAiLanguageModel {
                                 }
                             }
 
-                            // Streaming function-call arguments
+
                             "response.function_call_arguments.delta" => {
+
                                 let id_opt = p.get("item_id").and_then(|v| v.as_str())
                                     .or_else(|| p.get("id").and_then(|v| v.as_str()));
                                 let delta_opt = p.get("delta").and_then(|v| v.as_str());
@@ -801,7 +806,9 @@ impl LanguageModel for OpenAiLanguageModel {
                                     let entry = state.args_by_id.entry(item_id.to_string()).or_default();
                                     entry.push_str(delta);
 
-                                    // Emit interim ToolUse when partial JSON parses
+
+
+
                                     if let Ok(value) = serde_json::from_str::<serde_json::Value>(entry) {
                                         let emit_id = state.call_ids_by_id.get(item_id).cloned().unwrap_or_else(|| item_id.to_string());
                                         let name = state.names_by_id.get(item_id).cloned().unwrap_or_default();
@@ -816,8 +823,9 @@ impl LanguageModel for OpenAiLanguageModel {
                                 }
                             }
 
-                            // Final function-call arguments
+
                             "response.function_call_arguments.done" => {
+
                                 let id_opt = p.get("item_id").and_then(|v| v.as_str())
                                     .or_else(|| p.get("id").and_then(|v| v.as_str()));
                                 if let Some(item_id) = id_opt {
@@ -844,10 +852,12 @@ impl LanguageModel for OpenAiLanguageModel {
                                 }
                             }
 
-                            // Completed
+
                             "response.completed" => {
-                                // Usage if present
+
+
                                 let usage = p.get("response").and_then(|r| r.get("usage")).or_else(|| p.get("usage"));
+
                                 if let Some(u) = usage {
                                     let input_tokens = u.get("input_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
                                     let output_tokens = u.get("output_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
@@ -868,8 +878,9 @@ impl LanguageModel for OpenAiLanguageModel {
                                 out.push(Ok(LanguageModelCompletionEvent::Stop(stop)));
                             }
 
-                            // Errors
+
                             "error" => {
+
                                 let msg = p
                                     .get("error")
                                     .and_then(|e| e.get("message"))
