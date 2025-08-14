@@ -2361,7 +2361,7 @@ impl AcpThreadView {
                 window,
                 cx,
             );
-            editor.set_message(&chunks, window, cx);
+            editor.set_message(chunks, window, cx);
             editor
         });
         let subscription =
