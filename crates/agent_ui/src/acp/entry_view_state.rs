@@ -43,7 +43,7 @@ impl EntryViewState {
     }
 
     pub fn remove(&mut self, range: Range<usize>) {
-        self.entries.drain(range.clone());
+        self.entries.drain(range);
     }
 
     pub fn settings_changed(&mut self, cx: &mut App) {
