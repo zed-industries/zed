@@ -36,10 +36,11 @@ elif [[ "$OSTYPE" == "linux-gnu"* ]]; then
         dev) APP_NAME="zed-dev" ;;
     esac
 elif [[ "$OSTYPE" == "msys" ]] || [[ "$OSTYPE" == "cygwin" ]] || [[ "$OSTYPE" == "win32" ]]; then
-    APPDATA_PATH="${APPDATA:-$USERPROFILE/AppData/Roaming}"
-    DB_BASE_DIR="$APPDATA_PATH/Zed/db"
+    LOCALAPPDATA_PATH="${LOCALAPPDATA:-$USERPROFILE/AppData/Local}"
+    DB_BASE_DIR="$LOCALAPPDATA_PATH/Zed/db"
     DB_DIR="$DB_BASE_DIR/0-$CHANNEL"
     DB_BACKUP_DIR="$DB_BASE_DIR/0-$CHANNEL.onboarding_backup"
+
     case "$CHANNEL" in
         stable) APP_NAME="Zed" ;;
         preview) APP_NAME="Zed Preview" ;;
