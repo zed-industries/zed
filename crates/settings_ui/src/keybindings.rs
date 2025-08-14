@@ -3133,7 +3133,7 @@ fn normalized_ctx_eq(
     b: &gpui::KeyBindingContextPredicate,
 ) -> bool {
     use gpui::KeyBindingContextPredicate::*;
-    match (a, b) {
+    return match (a, b) {
         (Identifier(_), Identifier(_)) => a == b,
         (Equal(a_left, a_right), Equal(b_left, b_right)) => {
             (a_left == b_left && a_right == b_right) || (a_left == b_right && a_right == b_left)
@@ -3145,15 +3145,94 @@ fn normalized_ctx_eq(
             normalized_ctx_eq(a_parent, b_parent) && normalized_ctx_eq(a_child, b_child)
         }
         (Not(a_expr), Not(b_expr)) => normalized_ctx_eq(a_expr, b_expr),
+        (And(a_left, a_right), And(b_left, b_right))
+            if matches!(a_left.as_ref(), And(_, _))
+                || matches!(a_right.as_ref(), And(_, _))
+                || matches!(b_left.as_ref(), And(_, _))
+                || matches!(b_right.as_ref(), And(_, _)) =>
+        {
+            let mut a_operands = Vec::new();
+            flatten_and(a, &mut a_operands);
+            let mut b_operands = Vec::new();
+            flatten_and(b, &mut b_operands);
+            compare_operand_sets(&a_operands, &b_operands)
+        }
         (And(a_left, a_right), And(b_left, b_right)) => {
             (normalized_ctx_eq(a_left, b_left) && normalized_ctx_eq(a_right, b_right))
                 || (normalized_ctx_eq(a_left, b_right) && normalized_ctx_eq(a_right, b_left))
+        }
+        (Or(a_left, a_right), Or(b_left, b_right))
+            if matches!(a_left.as_ref(), Or(_, _))
+                || matches!(a_right.as_ref(), Or(_, _))
+                || matches!(b_left.as_ref(), Or(_, _))
+                || matches!(b_right.as_ref(), Or(_, _)) =>
+        {
+            let mut a_operands = Vec::new();
+            flatten_or(a, &mut a_operands);
+            let mut b_operands = Vec::new();
+            flatten_or(b, &mut b_operands);
+            compare_operand_sets(&a_operands, &b_operands)
         }
         (Or(a_left, a_right), Or(b_left, b_right)) => {
             (normalized_ctx_eq(a_left, b_left) && normalized_ctx_eq(a_right, b_right))
                 || (normalized_ctx_eq(a_left, b_right) && normalized_ctx_eq(a_right, b_left))
         }
         _ => false,
+    };
+
+    fn flatten_and<'a>(
+        pred: &'a gpui::KeyBindingContextPredicate,
+        operands: &mut Vec<&'a gpui::KeyBindingContextPredicate>,
+    ) {
+        use gpui::KeyBindingContextPredicate::*;
+        match pred {
+            And(left, right) => {
+                flatten_and(left, operands);
+                flatten_and(right, operands);
+            }
+            _ => operands.push(pred),
+        }
+    }
+
+    fn flatten_or<'a>(
+        pred: &'a gpui::KeyBindingContextPredicate,
+        operands: &mut Vec<&'a gpui::KeyBindingContextPredicate>,
+    ) {
+        use gpui::KeyBindingContextPredicate::*;
+        match pred {
+            Or(left, right) => {
+                flatten_or(left, operands);
+                flatten_or(right, operands);
+            }
+            _ => operands.push(pred),
+        }
+    }
+
+    fn compare_operand_sets(
+        a: &[&gpui::KeyBindingContextPredicate],
+        b: &[&gpui::KeyBindingContextPredicate],
+    ) -> bool {
+        if a.len() != b.len() {
+            return false;
+        }
+
+        // For each operand in a, find a matching operand in b
+        let mut b_matched = vec![false; b.len()];
+        for a_operand in a {
+            let mut found = false;
+            for (b_idx, b_operand) in b.iter().enumerate() {
+                if !b_matched[b_idx] && normalized_ctx_eq(a_operand, b_operand) {
+                    b_matched[b_idx] = true;
+                    found = true;
+                    break;
+                }
+            }
+            if !found {
+                return false;
+            }
+        }
+
+        true
     }
 }
 
@@ -3285,15 +3364,15 @@ mod tests {
 
         // AND operator - associative/commutative
         assert!(cmp("a && b", "b && a"));
-        // assert!(cmp("a && b && c", "c && b && a"));
+        assert!(cmp("a && b && c", "c && b && a"));
         assert!(cmp("a && b && c", "b && a && c"));
-        // assert!(cmp("a && b && c && d", "d && c && b && a"));
+        assert!(cmp("a && b && c && d", "d && c && b && a"));
 
         // OR operator - associative/commutative
         assert!(cmp("a || b", "b || a"));
-        // assert!(cmp("a || b || c", "c || b || a"));
-        // assert!(cmp("a || b || c", "b || a || c"));
-        // assert!(cmp("a || b || c || d", "d || c || b || a"));
+        assert!(cmp("a || b || c", "c || b || a"));
+        assert!(cmp("a || b || c", "b || a || c"));
+        assert!(cmp("a || b || c || d", "d || c || b || a"));
 
         // Equality operator - associative/commutative
         assert!(cmp("a == b", "b == a"));
@@ -3325,15 +3404,15 @@ mod tests {
 
         // Descendant operator (>) - NOT associative/commutative
         assert!(cmp("a > b", "a > b"));
-        assert!(!cmp("a > b", "b > a")); // Should NOT be equal
-        assert!(!cmp("a > b > c", "c > b > a")); // Should NOT be equal
-        assert!(!cmp("a > b > c", "a > c > b")); // Should NOT be equal
+        assert!(!cmp("a > b", "b > a"));
+        assert!(!cmp("a > b > c", "c > b > a"));
+        assert!(!cmp("a > b > c", "a > c > b"));
 
         // Mixed operators with descendant
         assert!(cmp("(a > b) && c", "c && (a > b)"));
-        assert!(!cmp("(a > b) && c", "c && (b > a)")); // Should NOT be equal
+        assert!(!cmp("(a > b) && c", "c && (b > a)"));
         assert!(cmp("(a > b) || (c > d)", "(c > d) || (a > b)"));
-        assert!(!cmp("(a > b) || (c > d)", "(b > a) || (d > c)")); // Should NOT be equal
+        assert!(!cmp("(a > b) || (c > d)", "(b > a) || (d > c)"));
 
         // Negative cases - different operators
         assert!(!cmp("a && b", "a || b"));
@@ -3369,8 +3448,8 @@ mod tests {
         // Edge cases - multiple same operands
         assert!(cmp("a && a", "a && a"));
         assert!(cmp("a || a", "a || a"));
-        // assert!(cmp("a && a && b", "b && a && a"));
-        // assert!(cmp("a || a || b", "b || a || a"));
+        assert!(cmp("a && a && b", "b && a && a"));
+        assert!(cmp("a || a || b", "b || a || a"));
 
         // Edge cases - deeply nested
         assert!(cmp(
