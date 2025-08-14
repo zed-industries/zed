@@ -12088,7 +12088,7 @@ impl Editor {
                         let line_trimmed = line_trimmed
                             .strip_prefix(start.as_ref())
                             .map(|s| {
-                                let mut indent_size = indent_size.clone();
+                                let mut indent_size = indent_size;
                                 indent_size.len -= tab_size;
                                 let indent_prefix: String = indent_size.chars().collect();
                                 first_line_delimiter = Some((indent_prefix, start));

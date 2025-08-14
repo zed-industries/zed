@@ -6079,6 +6079,164 @@ async fn test_rewrap_block_comments(cx: &mut TestAppContext) {
         &mut cx,
     );
 
+    // selection w/ single short block comment
+    assert_rewrap(
+        indoc! {"
+            «/* Lorem ipsum dolor sit amet, consectetur adipiscing elit. */ˇ»
+        "},
+        indoc! {"
+            «/*
+             * Lorem ipsum dolor sit amet,
+             * consectetur adipiscing elit.
+             */ˇ»
+        "},
+        rust_lang.clone(),
+        &mut cx,
+    );
+
+    // rewrapping a single comment w/ abutting comments
+    assert_rewrap(
+        indoc! {"
+            /* ˇLorem ipsum dolor sit amet, consectetur adipiscing elit. */
+            /* Lorem ipsum dolor sit amet, consectetur adipiscing elit. */
+        "},
+        indoc! {"
+            /*
+             * ˇLorem ipsum dolor sit amet,
+             * consectetur adipiscing elit.
+             */
+            /* Lorem ipsum dolor sit amet, consectetur adipiscing elit. */
+        "},
+        rust_lang.clone(),
+        &mut cx,
+    );
+
+    // selection w/ non-abutting short block comments
+    assert_rewrap(
+        indoc! {"
+            «/* Lorem ipsum dolor sit amet, consectetur adipiscing elit. */
+
+            /* Lorem ipsum dolor sit amet, consectetur adipiscing elit. */ˇ»
+        "},
+        indoc! {"
+            «/*
+             * Lorem ipsum dolor sit amet,
+             * consectetur adipiscing elit.
+             */
+
+            /*
+             * Lorem ipsum dolor sit amet,
+             * consectetur adipiscing elit.
+             */ˇ»
+        "},
+        rust_lang.clone(),
+        &mut cx,
+    );
+
+    // selection of multiline block comments
+    assert_rewrap(
+        indoc! {"
+            «/* Lorem ipsum dolor sit amet,
+             * consectetur adipiscing elit. */ˇ»
+        "},
+        indoc! {"
+            «/*
+             * Lorem ipsum dolor sit amet,
+             * consectetur adipiscing elit.
+             */ˇ»
+        "},
+        rust_lang.clone(),
+        &mut cx,
+    );
+
+    // partial selection of multiline block comments
+    assert_rewrap(
+        indoc! {"
+            «/* Lorem ipsum dolor sit amet,ˇ»
+             * consectetur adipiscing elit. */
+            /* Lorem ipsum dolor sit amet,
+             «* consectetur adipiscing elit. */ˇ»
+        "},
+        indoc! {"
+            «/*
+             * Lorem ipsum dolor sit amet,ˇ»
+             * consectetur adipiscing elit. */
+            /* Lorem ipsum dolor sit amet,
+             «* consectetur adipiscing elit.
+             */ˇ»
+        "},
+        rust_lang.clone(),
+        &mut cx,
+    );
+
+    // selection w/ abutting short block comments
+    // FIXME unhandled edge case; not correct, just documenting known issues
+    // should not be combined; should rewrap as 2 comments
+    assert_rewrap(
+        indoc! {"
+            «/* Lorem ipsum dolor sit amet, consectetur adipiscing elit. */
+            /* Lorem ipsum dolor sit amet, consectetur adipiscing elit. */ˇ»
+        "},
+        // desired behavior:
+        // indoc! {"
+        //     «/*
+        //      * Lorem ipsum dolor sit amet,
+        //      * consectetur adipiscing elit.
+        //      */
+        //     /*
+        //      * Lorem ipsum dolor sit amet,
+        //      * consectetur adipiscing elit.
+        //      */ˇ»
+        // "},
+        // actual behaviour:
+        indoc! {"
+            «/*
+             * Lorem ipsum dolor sit amet,
+             * consectetur adipiscing elit. Lorem
+             * ipsum dolor sit amet, consectetur
+             * adipiscing elit.
+             */ˇ»
+        "},
+        rust_lang.clone(),
+        &mut cx,
+    );
+
+    // FIXME same as above, but with delimiters on separate line
+    // assert_rewrap(
+    //     indoc! {"
+    //         «/* Lorem ipsum dolor sit amet, consectetur adipiscing elit.
+    //          */
+    //         /*
+    //          * Lorem ipsum dolor sit amet, consectetur adipiscing elit. */ˇ»
+    //     "},
+    //     // desired:
+    //     // indoc! {"
+    //     //     «/*
+    //     //      * Lorem ipsum dolor sit amet,
+    //     //      * consectetur adipiscing elit.
+    //     //      */
+    //     //     /*
+    //     //      * Lorem ipsum dolor sit amet,
+    //     //      * consectetur adipiscing elit.
+    //     //      */ˇ»
+    //     // "},
+    //     // actual: (but with trailing w/s on the empty lines)
+    //     indoc! {"
+    //         «/*
+    //          * Lorem ipsum dolor sit amet,
+    //          * consectetur adipiscing elit.
+    //          *
+    //          */
+    //         /*
+    //          *
+    //          * Lorem ipsum dolor sit amet,
+    //          * consectetur adipiscing elit.
+    //          */ˇ»
+    //     "},
+    //     rust_lang.clone(),
+    //     &mut cx,
+    // );
+
     // TODO these are unhandled edge cases; not correct, just documenting known issues
     assert_rewrap(
         indoc! {"
@@ -6089,6 +6247,21 @@ async fn test_rewrap_block_comments(cx: &mut TestAppContext) {
              //ˇ Lorem ipsum dolor sit amet, consectetur adipiscing elit. */
             /*ˇ Lorem ipsum dolor sit amet */ /* consectetur adipiscing elit. */
         "},
+        // desired:
+        // indoc! {"
+        //     /*
+        //      *ˇ Lorem ipsum dolor sit amet,
+        //      * consectetur adipiscing elit.
+        //      */
+        //     /*
+        //      *ˇ Lorem ipsum dolor sit amet,
+        //      * consectetur adipiscing elit.
+        //      */
+        //     /*
+        //      *ˇ Lorem ipsum dolor sit amet
+        //      */ /* consectetur adipiscing elit. */
+        // "},
+        // actual:
         indoc! {"
             /*
              //ˇ Lorem ipsum dolor sit amet,
