@@ -519,7 +519,7 @@ impl Thread {
         message_id: UserMessageId,
         content: impl IntoIterator<Item = T>,
         cx: &mut Context<Self>,
-    ) -> mpsc::UnboundedReceiver<Result<AgentResponseEvent, LanguageModelCompletionError>>
+    ) -> mpsc::UnboundedReceiver<Result<AgentResponseEvent>>
     where
         T: Into<UserMessageContent>,
     {
@@ -529,8 +529,7 @@ impl Thread {
         log::debug!("Thread::send content: {:?}", content);
 
         cx.notify();
-        let (events_tx, events_rx) =
-            mpsc::unbounded::<Result<AgentResponseEvent, LanguageModelCompletionError>>();
+        let (events_tx, events_rx) = mpsc::unbounded::<Result<AgentResponseEvent>>();
         let event_stream = AgentResponseEventStream(events_tx);
 
         self.messages.push(Message::User(UserMessage {
@@ -538,90 +537,96 @@ impl Thread {
             content,
         }));
         log::info!("Total messages in thread: {}", self.messages.len());
-        self.running_turn = Some(cx.spawn(async move |this, cx| {
-            log::info!("Starting agent turn execution");
-            let turn_result = async {
-                let mut completion_intent = CompletionIntent::UserPrompt;
-                loop {
-                    log::debug!(
-                        "Building completion request with intent: {:?}",
-                        completion_intent
-                    );
-                    let request = this.update(cx, |this, cx| {
-                        this.build_completion_request(completion_intent, cx)
-                    })?;
 
-                    log::info!("Calling model.stream_completion");
-                    let mut events = model.stream_completion(request, cx).await?;
-                    log::debug!("Stream completion started successfully");
+        // event_stream.send_error(LanguageModelCompletionError::PromptTooLarge {
+        //     tokens: Some(200_000),
+        // });
+        event_stream.send_error(language_model::PaymentRequiredError);
 
-                    let mut tool_uses = FuturesUnordered::new();
-                    while let Some(event) = events.next().await {
-                        match event? {
-                            LanguageModelCompletionEvent::Stop(reason) => {
-                                event_stream.send_stop(reason);
-                                if reason == StopReason::Refusal {
-                                    this.update(cx, |this, _cx| this.truncate(message_id))??;
-                                    return Ok(());
-                                }
-                            }
-                            event => {
-                                log::trace!("Received completion event: {:?}", event);
-                                this.update(cx, |this, cx| {
-                                    tool_uses.extend(this.handle_streamed_completion_event(
-                                        event,
-                                        &event_stream,
-                                        cx,
-                                    ));
-                                })
-                                .ok();
-                            }
-                        }
-                    }
+        // self.running_turn = Some(cx.spawn(async move |this, cx| {
+        //     log::info!("Starting agent turn execution");
+        //     let turn_result = async {
+        //         let mut completion_intent = CompletionIntent::UserPrompt;
+        //         loop {
+        //             log::debug!(
+        //                 "Building completion request with intent: {:?}",
+        //                 completion_intent
+        //             );
+        //             let request = this.update(cx, |this, cx| {
+        //                 this.build_completion_request(completion_intent, cx)
+        //             })?;
 
-                    if tool_uses.is_empty() {
-                        log::info!("No tool uses found, completing turn");
-                        return Ok(());
-                    }
-                    log::info!("Found {} tool uses to execute", tool_uses.len());
+        //             log::info!("Calling model.stream_completion");
+        //             let mut events = model.stream_completion(request, cx).await?;
+        //             log::debug!("Stream completion started successfully");
 
-                    while let Some(tool_result) = tool_uses.next().await {
-                        log::info!("Tool finished {:?}", tool_result);
+        //             let mut tool_uses = FuturesUnordered::new();
+        //             while let Some(event) = events.next().await {
+        //                 match event? {
+        //                     LanguageModelCompletionEvent::Stop(reason) => {
+        //                         event_stream.send_stop(reason);
+        //                         if reason == StopReason::Refusal {
+        //                             this.update(cx, |this, _cx| this.truncate(message_id))??;
+        //                             return Ok(());
+        //                         }
+        //                     }
+        //                     event => {
+        //                         log::trace!("Received completion event: {:?}", event);
+        //                         this.update(cx, |this, cx| {
+        //                             tool_uses.extend(this.handle_streamed_completion_event(
+        //                                 event,
+        //                                 &event_stream,
+        //                                 cx,
+        //                             ));
+        //                         })
+        //                         .ok();
+        //                     }
+        //                 }
+        //             }
 
-                        event_stream.update_tool_call_fields(
-                            &tool_result.tool_use_id,
-                            acp::ToolCallUpdateFields {
-                                status: Some(if tool_result.is_error {
-                                    acp::ToolCallStatus::Failed
-                                } else {
-                                    acp::ToolCallStatus::Completed
-                                }),
-                                raw_output: tool_result.output.clone(),
-                                ..Default::default()
-                            },
-                        );
-                        this.update(cx, |this, _cx| {
-                            this.pending_message()
-                                .tool_results
-                                .insert(tool_result.tool_use_id.clone(), tool_result);
-                        })
-                        .ok();
-                    }
+        //             if tool_uses.is_empty() {
+        //                 log::info!("No tool uses found, completing turn");
+        //                 return Ok(());
+        //             }
+        //             log::info!("Found {} tool uses to execute", tool_uses.len());
 
-                    this.update(cx, |this, _| this.flush_pending_message())?;
-                    completion_intent = CompletionIntent::ToolResults;
-                }
-            }
-            .await;
+        //             while let Some(tool_result) = tool_uses.next().await {
+        //                 log::info!("Tool finished {:?}", tool_result);
 
-            this.update(cx, |this, _| this.flush_pending_message()).ok();
-            if let Err(error) = turn_result {
-                log::error!("Turn execution failed: {:?}", error);
-                event_stream.send_error(error);
-            } else {
-                log::info!("Turn execution completed successfully");
-            }
-        }));
+        //                 event_stream.update_tool_call_fields(
+        //                     &tool_result.tool_use_id,
+        //                     acp::ToolCallUpdateFields {
+        //                         status: Some(if tool_result.is_error {
+        //                             acp::ToolCallStatus::Failed
+        //                         } else {
+        //                             acp::ToolCallStatus::Completed
+        //                         }),
+        //                         raw_output: tool_result.output.clone(),
+        //                         ..Default::default()
+        //                     },
+        //                 );
+        //                 this.update(cx, |this, _cx| {
+        //                     this.pending_message()
+        //                         .tool_results
+        //                         .insert(tool_result.tool_use_id.clone(), tool_result);
+        //                 })
+        //                 .ok();
+        //             }
+
+        //             this.update(cx, |this, _| this.flush_pending_message())?;
+        //             completion_intent = CompletionIntent::ToolResults;
+        //         }
+        //     }
+        //     .await;
+
+        //     this.update(cx, |this, _| this.flush_pending_message()).ok();
+        //     if let Err(error) = turn_result {
+        //         log::error!("Turn execution failed: {:?}", error);
+        //         event_stream.send_error(error);
+        //     } else {
+        //         log::info!("Turn execution completed successfully");
+        //     }
+        // }));
         events_rx
     }
 
@@ -1135,9 +1140,7 @@ where
 }
 
 #[derive(Clone)]
-struct AgentResponseEventStream(
-    mpsc::UnboundedSender<Result<AgentResponseEvent, LanguageModelCompletionError>>,
-);
+struct AgentResponseEventStream(mpsc::UnboundedSender<Result<AgentResponseEvent>>);
 
 impl AgentResponseEventStream {
     fn send_text(&self, text: &str) {
@@ -1224,8 +1227,8 @@ impl AgentResponseEventStream {
         }
     }
 
-    fn send_error(&self, error: LanguageModelCompletionError) {
-        self.0.unbounded_send(Err(error)).ok();
+    fn send_error(&self, error: impl Into<anyhow::Error>) {
+        self.0.unbounded_send(Err(error.into())).ok();
     }
 }
 
@@ -1241,8 +1244,7 @@ pub struct ToolCallEventStream {
 impl ToolCallEventStream {
     #[cfg(test)]
     pub fn test() -> (Self, ToolCallEventStreamReceiver) {
-        let (events_tx, events_rx) =
-            mpsc::unbounded::<Result<AgentResponseEvent, LanguageModelCompletionError>>();
+        let (events_tx, events_rx) = mpsc::unbounded::<Result<AgentResponseEvent>>();
 
         let stream = ToolCallEventStream::new(
             &LanguageModelToolUse {
@@ -1363,9 +1365,7 @@ impl ToolCallEventStream {
 }
 
 #[cfg(test)]
-pub struct ToolCallEventStreamReceiver(
-    mpsc::UnboundedReceiver<Result<AgentResponseEvent, LanguageModelCompletionError>>,
-);
+pub struct ToolCallEventStreamReceiver(mpsc::UnboundedReceiver<Result<AgentResponseEvent>>);
 
 #[cfg(test)]
 impl ToolCallEventStreamReceiver {
@@ -1393,7 +1393,7 @@ impl ToolCallEventStreamReceiver {
 
 #[cfg(test)]
 impl std::ops::Deref for ToolCallEventStreamReceiver {
-    type Target = mpsc::UnboundedReceiver<Result<AgentResponseEvent, LanguageModelCompletionError>>;
+    type Target = mpsc::UnboundedReceiver<Result<AgentResponseEvent>>;
 
     fn deref(&self) -> &Self::Target {
         &self.0

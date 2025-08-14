@@ -63,6 +63,16 @@ use crate::{
 
 const RESPONSE_PADDING_X: Pixels = px(19.);
 
+enum ThreadError {
+    Other(Entity<Markdown>),
+}
+
+impl ThreadError {
+    fn from_err(error: anyhow::Error, cx: &mut App) -> Self {
+        Self::Other(cx.new(|cx| Markdown::new(format!("Error: {error}").into(), None, None, cx)))
+    }
+}
+
 pub struct AcpThreadView {
     agent: Rc<dyn AgentServer>,
     workspace: WeakEntity<Workspace>,
@@ -79,7 +89,7 @@ pub struct AcpThreadView {
     mention_set: Arc<Mutex<MentionSet>>,
     notifications: Vec<WindowHandle<AgentNotification>>,
     notification_subscriptions: HashMap<WindowHandle<AgentNotification>, Vec<Subscription>>,
-    last_error: Option<Entity<Markdown>>,
+    last_error: Option<ThreadError>,
     list_state: ListState,
     scrollbar_state: ScrollbarState,
     auth_task: Option<Task<()>>,
@@ -426,10 +436,9 @@ impl AcpThreadView {
         cx.spawn_in(window, async move |this, cx| {
             let contents = match contents.await {
                 Ok(contents) => contents,
-                Err(e) => {
+                Err(err) => {
                     this.update(cx, |this, cx| {
-                        this.last_error =
-                            Some(cx.new(|cx| Markdown::new(e.to_string().into(), None, None, cx)));
+                        this.handle_thread_error(err, cx);
                     })
                     .ok();
                     return;
@@ -490,10 +499,7 @@ impl AcpThreadView {
 
                     this.update(cx, |this, cx| {
                         if let Err(err) = result {
-                            this.last_error =
-                                Some(cx.new(|cx| {
-                                    Markdown::new(err.to_string().into(), None, None, cx)
-                                }))
+                            this.handle_thread_error(err, cx);
                         }
                     })
                 })
@@ -693,6 +699,11 @@ impl AcpThreadView {
         Some(snapshot.text)
     }
 
+    fn handle_thread_error(&mut self, error: anyhow::Error, cx: &mut Context<Self>) {
+        self.last_error = Some(ThreadError::from_err(error, cx));
+        cx.notify();
+    }
+
     fn handle_thread_event(
         &mut self,
         thread: &Entity<AcpThread>,
@@ -887,9 +898,7 @@ impl AcpThreadView {
 
                 this.update_in(cx, |this, window, cx| {
                     if let Err(err) = result {
-                        this.last_error = Some(cx.new(|cx| {
-                            Markdown::new(format!("Error: {err}").into(), None, None, cx)
-                        }))
+                        this.handle_thread_error(err, cx);
                     } else {
                         this.thread_state = Self::initial_state(
                             agent,
@@ -3225,6 +3234,24 @@ impl AcpThreadView {
             .children(Scrollbar::vertical(self.scrollbar_state.clone()).map(|s| s.auto_hide(cx)))
     }
 
+    fn render_last_error(&self, window: &mut Window, cx: &mut Context<'_, Self>) -> Option<Div> {
+        let content = match self.last_error.as_ref()? {
+            ThreadError::Other(markdown) => self
+                .render_markdown(markdown.clone(), default_markdown_style(false, window, cx))
+                .into_any(),
+        };
+
+        Some(
+            div()
+                .p_2()
+                .text_xs()
+                .border_t_1()
+                .border_color(cx.theme().colors().border)
+                .bg(cx.theme().status().error_background)
+                .child(content),
+        )
+    }
+
     fn settings_changed(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         for diff_editor in self.diff_editors.values() {
             diff_editor.update(cx, |diff_editor, cx| {
@@ -3395,19 +3422,7 @@ impl Render for AcpThreadView {
                 }
                 _ => this,
             })
-            .when_some(self.last_error.clone(), |el, error| {
-                el.child(
-                    div()
-                        .p_2()
-                        .text_xs()
-                        .border_t_1()
-                        .border_color(cx.theme().colors().border)
-                        .bg(cx.theme().status().error_background)
-                        .child(
-                            self.render_markdown(error, default_markdown_style(false, window, cx)),
-                        ),
-                )
-            })
+            .children(self.render_last_error(window, cx))
             .child(self.render_message_editor(window, cx))
     }
 }

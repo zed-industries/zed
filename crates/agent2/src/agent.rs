@@ -762,8 +762,7 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
                     }
                     Err(e) => {
                         log::error!("Error in model response stream: {:?}", e);
-                        // TODO: Consider sending an error message to the UI
-                        break;
+                        return Err(e.into());
                     }
                 }
             }
@@ -975,7 +974,7 @@ mod tests {
         agent.read_with(cx, |agent, _| {
             let session = agent.sessions.get(&session_id).unwrap();
             session.thread.read_with(cx, |thread, _| {
-                assert_eq!(thread.model.id().0, "fake");
+                assert_eq!(thread.model().id().0, "fake");
             });
         });
 

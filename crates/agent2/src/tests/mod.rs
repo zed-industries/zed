@@ -395,7 +395,7 @@ async fn test_tool_hallucination(cx: &mut TestAppContext) {
 }
 
 async fn expect_tool_call(
-    events: &mut UnboundedReceiver<Result<AgentResponseEvent, LanguageModelCompletionError>>,
+    events: &mut UnboundedReceiver<Result<AgentResponseEvent>>,
 ) -> acp::ToolCall {
     let event = events
         .next()
@@ -411,7 +411,7 @@ async fn expect_tool_call(
 }
 
 async fn expect_tool_call_update_fields(
-    events: &mut UnboundedReceiver<Result<AgentResponseEvent, LanguageModelCompletionError>>,
+    events: &mut UnboundedReceiver<Result<AgentResponseEvent>>,
 ) -> acp::ToolCallUpdate {
     let event = events
         .next()
@@ -429,7 +429,7 @@ async fn expect_tool_call_update_fields(
 }
 
 async fn next_tool_call_authorization(
-    events: &mut UnboundedReceiver<Result<AgentResponseEvent, LanguageModelCompletionError>>,
+    events: &mut UnboundedReceiver<Result<AgentResponseEvent>>,
 ) -> ToolCallAuthorization {
     loop {
         let event = events
@@ -1007,9 +1007,7 @@ async fn test_tool_updates_to_completion(cx: &mut TestAppContext) {
 }
 
 /// Filters out the stop events for asserting against in tests
-fn stop_events(
-    result_events: Vec<Result<AgentResponseEvent, LanguageModelCompletionError>>,
-) -> Vec<acp::StopReason> {
+fn stop_events(result_events: Vec<Result<AgentResponseEvent>>) -> Vec<acp::StopReason> {
     result_events
         .into_iter()
         .filter_map(|event| match event.unwrap() {
