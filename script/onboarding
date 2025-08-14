@@ -1,0 +1,179 @@
+#!/usr/bin/env bash
+
+set -e
+
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m'
+
+CHANNEL="${2:-nightly}"
+
+if [[ "$CHANNEL" != "stable" && "$CHANNEL" != "preview" && "$CHANNEL" != "nightly" && "$CHANNEL" != "dev" ]]; then
+    echo -e "${RED}Error: Invalid channel '$CHANNEL'. Must be one of: stable, preview, nightly, dev${NC}"
+    exit 1
+fi
+
+if [[ "$OSTYPE" == "darwin"* ]]; then
+    DB_BASE_DIR="$HOME/Library/Application Support/Zed/db"
+    DB_DIR="$DB_BASE_DIR/0-$CHANNEL"
+    DB_BACKUP_DIR="$DB_BASE_DIR/0-$CHANNEL.onboarding_backup"
+    case "$CHANNEL" in
+        stable) APP_NAME="Zed" ;;
+        preview) APP_NAME="Zed Preview" ;;
+        nightly) APP_NAME="Zed Nightly" ;;
+        dev) APP_NAME="Zed Dev" ;;
+    esac
+elif [[ "$OSTYPE" == "linux-gnu"* ]]; then
+    DB_BASE_DIR="$HOME/.config/zed/db"
+    DB_DIR="$DB_BASE_DIR/0-$CHANNEL"
+    DB_BACKUP_DIR="$DB_BASE_DIR/0-$CHANNEL.onboarding_backup"
+    case "$CHANNEL" in
+        stable) APP_NAME="zed" ;;
+        preview) APP_NAME="zed-preview" ;;
+        nightly) APP_NAME="zed-nightly" ;;
+        dev) APP_NAME="zed-dev" ;;
+    esac
+elif [[ "$OSTYPE" == "msys" ]] || [[ "$OSTYPE" == "cygwin" ]] || [[ "$OSTYPE" == "win32" ]]; then
+    APPDATA_PATH="${APPDATA:-$USERPROFILE/AppData/Roaming}"
+    DB_BASE_DIR="$APPDATA_PATH/Zed/db"
+    DB_DIR="$DB_BASE_DIR/0-$CHANNEL"
+    DB_BACKUP_DIR="$DB_BASE_DIR/0-$CHANNEL.onboarding_backup"
+    case "$CHANNEL" in
+        stable) APP_NAME="Zed" ;;
+        preview) APP_NAME="Zed Preview" ;;
+        nightly) APP_NAME="Zed Nightly" ;;
+        dev) APP_NAME="Zed Dev" ;;
+    esac
+else
+    echo -e "${RED}Error: Unsupported OS type: $OSTYPE${NC}"
+    exit 1
+fi
+
+reset_onboarding() {
+    echo -e "${BLUE}=== Resetting $APP_NAME to First-Time User State ===${NC}"
+    echo ""
+
+    if [ ! -d "$DB_DIR" ]; then
+        echo -e "${YELLOW}No $APP_NAME database directory found at: $DB_DIR${NC}"
+        echo "$APP_NAME will create a fresh database on next launch and show onboarding."
+        exit 0
+    fi
+
+    if [ -d "$DB_BACKUP_DIR" ]; then
+        echo -e "${RED}ERROR: Backup already exists at: $DB_BACKUP_DIR${NC}"
+        echo ""
+        echo "This suggests you've already run 'onboarding reset'."
+        echo "To avoid losing your original database, this script won't overwrite the backup."
+        echo ""
+        echo "Options:"
+        echo "  1. Run './script/onboarding restore' to restore your original database"
+        echo "  2. Manually remove the backup if you're sure: rm -rf \"$DB_BACKUP_DIR\""
+        exit 1
+    fi
+
+    echo -e "${YELLOW}Creating backup of current database directory...${NC}"
+    mv "$DB_DIR" "$DB_BACKUP_DIR"
+
+    echo -e "${GREEN}✓ Database directory backed up to: $DB_BACKUP_DIR${NC}"
+    echo ""
+    echo -e "${GREEN}Success! $APP_NAME has been reset to first-time user state.${NC}"
+    echo ""
+    echo "Next steps:"
+    echo "  1. Start $APP_NAME - you should see the onboarding flow"
+    echo "  2. When done testing, run: ./script/onboarding restore"
+    echo ""
+    echo -e "${YELLOW}Note: All your settings, projects, and history are safely preserved in the backup.${NC}"
+}
+
+restore_onboarding() {
+    echo -e "${BLUE}=== Restoring Original $APP_NAME Database ===${NC}"
+    echo ""
+
+    if [ ! -d "$DB_BACKUP_DIR" ]; then
+        echo -e "${RED}ERROR: No backup found at: $DB_BACKUP_DIR${NC}"
+        echo ""
+        echo "Run './script/onboarding reset' first to create a backup."
+        exit 1
+    fi
+
+    if [ -d "$DB_DIR" ]; then
+        echo -e "${YELLOW}Removing test database directory...${NC}"
+        rm -rf "$DB_DIR"
+    fi
+
+    echo -e "${YELLOW}Restoring original database directory...${NC}"
+    mv "$DB_BACKUP_DIR" "$DB_DIR"
+
+    echo -e "${GREEN}✓ Database directory restored to: $DB_DIR${NC}"
+    echo ""
+    echo -e "${GREEN}Success! Your original $APP_NAME database has been restored.${NC}"
+    echo "$APP_NAME will now behave as it did before the reset."
+}
+
+show_status() {
+    echo -e "${BLUE}=== $APP_NAME Onboarding Test Status ===${NC}"
+    echo ""
+
+    if [ -d "$DB_BACKUP_DIR" ]; then
+        echo -e "${YELLOW}Status: TESTING MODE${NC}"
+        echo "  • Original database directory is backed up"
+        echo "  • $APP_NAME is currently using a fresh database"
+        echo "  • Run './script/onboarding restore' to return to normal"
+    elif [ -d "$DB_DIR" ]; then
+        echo -e "${GREEN}Status: NORMAL${NC}"
+        echo "  • $APP_NAME is using your regular database"
+        echo "  • Run './script/onboarding reset' to test onboarding"
+    else
+        echo -e "${BLUE}Status: NO DATABASE${NC}"
+        echo "  • No $APP_NAME database directory exists yet"
+        echo "  • $APP_NAME will show onboarding on next launch"
+    fi
+
+    echo ""
+    echo "Database locations:"
+    echo "  Active: $DB_DIR"
+    echo "  Backup: $DB_BACKUP_DIR"
+}
+
+case "${1:-}" in
+    reset)
+        reset_onboarding
+        ;;
+    restore)
+        restore_onboarding
+        ;;
+    status)
+        show_status
+        ;;
+    *)
+        echo -e "${BLUE}Zed Onboarding Test Script${NC}"
+        echo ""
+        echo "Usage: $(basename $0) <command> [channel]"
+        echo ""
+        echo "Commands:"
+        echo "  reset    - Back up current database and reset to show onboarding"
+        echo "  restore  - Restore the original database after testing"
+        echo "  status   - Show current testing status"
+        echo ""
+        echo "Channels:"
+        echo "  stable, preview, nightly (default), dev"
+        echo ""
+        echo "Working with: $APP_NAME"
+        echo "Database directory: $DB_DIR"
+        echo ""
+        echo "Examples:"
+        echo "  ./script/onboarding reset             # Reset nightly (default)"
+        echo "  ./script/onboarding reset stable      # Reset stable"
+        echo "  ./script/onboarding restore preview   # Restore preview"
+        echo ""
+        echo "Workflow:"
+        echo "  1. ./script/onboarding reset"
+        echo "  2. Open $APP_NAME"
+        echo "  3. Test onboarding"
+        echo "  4. Quit $APP_NAME"
+        echo "  5. ./script/onboarding restore"
+        exit 1
+        ;;
+esac
