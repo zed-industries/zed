@@ -10,7 +10,8 @@ use collections::{HashMap, HashSet};
 use editor::display_map::CreaseId;
 use editor::{CompletionProvider, Editor, ExcerptId, ToOffset as _};
 use file_icons::FileIcons;
-use futures::future::try_join_all;
+use futures::future::{Shared, try_join_all};
+use futures::{FutureExt, TryFutureExt};
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{App, Entity, ImageFormat, Img, Task, WeakEntity};
 use http_client::HttpClientWithUrl;
@@ -58,7 +59,7 @@ pub struct MentionImage {
 #[derive(Default)]
 pub struct MentionSet {
     uri_by_crease_id: HashMap<CreaseId, MentionUri>,
-    fetch_results: HashMap<Url, String>,
+    fetch_results: HashMap<Url, Shared<Task<Result<String, String>>>>,
     images: HashMap<CreaseId, MentionImage>,
 }
 
@@ -67,7 +68,7 @@ impl MentionSet {
         self.uri_by_crease_id.insert(crease_id, uri);
     }
 
-    pub fn add_fetch_result(&mut self, url: Url, content: String) {
+    pub fn add_fetch_result(&mut self, url: Url, content: Shared<Task<Result<String, String>>>) {
         self.fetch_results.insert(url, content);
     }
 
@@ -237,16 +238,19 @@ impl MentionSet {
                         })
                     }
                     MentionUri::Fetch { url } => {
-                        let Some(content) = self.fetch_results.get(&url) else {
+                        let Some(content) = self.fetch_results.get(&url).cloned() else {
                             return Task::ready(Err(anyhow!("missing fetch result")));
                         };
-                        Task::ready(Ok((
-                            crease_id,
-                            Mention::Text {
-                                uri: uri.clone(),
-                                content: content.clone(),
-                            },
-                        )))
+                        let uri = uri.clone();
+                        cx.spawn(async move |_| {
+                            Ok((
+                                crease_id,
+                                Mention::Text {
+                                    uri,
+                                    content: content.await.map_err(|e| anyhow::anyhow!("{e}"))?,
+                                },
+                            ))
+                        })
                     }
                 }
             })
@@ -878,14 +882,21 @@ impl ContextPickerCompletionProvider {
                         let mention_set = mention_set.clone();
                         let http_client = http_client.clone();
                         let source_range = source_range.clone();
+
+                        let url_string = url.to_string();
+                        let fetch = cx
+                            .background_executor()
+                            .spawn(async move {
+                                fetch_url_content(http_client, url_string)
+                                    .map_err(|e| e.to_string())
+                                    .await
+                            })
+                            .shared();
+                        mention_set.lock().add_fetch_result(url, fetch.clone());
+
                         window
                             .spawn(cx, async move |cx| {
-                                if let Some(content) =
-                                    fetch_url_content(http_client, url.to_string())
-                                        .await
-                                        .notify_async_err(cx)
-                                {
-                                    mention_set.lock().add_fetch_result(url, content);
+                                if fetch.await.notify_async_err(cx).is_some() {
                                     mention_set
                                         .lock()
                                         .insert_uri(crease_id, mention_uri.clone());
