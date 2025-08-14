@@ -423,7 +423,7 @@ impl AgentConnection for AcpConnection {
         self: Rc<Self>,
         project: Entity<Project>,
         _cwd: &Path,
-        cx: &mut AsyncApp,
+        cx: &mut App,
     ) -> Task<Result<Entity<AcpThread>>> {
         let task = self.connection.request_any(
             acp_old::InitializeParams {

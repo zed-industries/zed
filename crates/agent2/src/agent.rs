@@ -1,8 +1,8 @@
 use crate::{AgentResponseEvent, Thread, templates::Templates};
 use crate::{
-    ContextServerRegistry, CopyPathTool, CreateDirectoryTool, DiagnosticsTool, EditFileTool,
-    FetchTool, FindPathTool, GrepTool, ListDirectoryTool, MovePathTool, NowTool, OpenTool,
-    ReadFileTool, TerminalTool, ThinkingTool, ToolCallAuthorization, UserMessageContent,
+    ContextServerRegistry, CopyPathTool, CreateDirectoryTool, DeletePathTool, DiagnosticsTool,
+    EditFileTool, FetchTool, FindPathTool, GrepTool, ListDirectoryTool, MovePathTool, NowTool,
+    OpenTool, ReadFileTool, TerminalTool, ThinkingTool, ToolCallAuthorization, UserMessageContent,
     WebSearchTool,
 };
 use acp_thread::AgentModelSelector;
@@ -522,7 +522,7 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
         self: Rc<Self>,
         project: Entity<Project>,
         cwd: &Path,
-        cx: &mut AsyncApp,
+        cx: &mut App,
     ) -> Task<Result<Entity<acp_thread::AcpThread>>> {
         let agent = self.0.clone();
         log::info!("Creating new thread for project at: {:?}", cwd);
@@ -583,22 +583,22 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
                             default_model,
                             cx,
                         );
-                        thread.add_tool(CreateDirectoryTool::new(project.clone()));
                         thread.add_tool(CopyPathTool::new(project.clone()));
+                        thread.add_tool(CreateDirectoryTool::new(project.clone()));
+                        thread.add_tool(DeletePathTool::new(project.clone(), action_log.clone()));
                         thread.add_tool(DiagnosticsTool::new(project.clone()));
-                        thread.add_tool(MovePathTool::new(project.clone()));
-                        thread.add_tool(ListDirectoryTool::new(project.clone()));
-                        thread.add_tool(OpenTool::new(project.clone()));
-                        thread.add_tool(ThinkingTool);
-                        thread.add_tool(FindPathTool::new(project.clone()));
-                        thread.add_tool(FetchTool::new(project.read(cx).client().http_client()));
-                        thread.add_tool(GrepTool::new(project.clone()));
-                        thread.add_tool(ReadFileTool::new(project.clone(), action_log));
                         thread.add_tool(EditFileTool::new(cx.entity()));
+                        thread.add_tool(FetchTool::new(project.read(cx).client().http_client()));
+                        thread.add_tool(FindPathTool::new(project.clone()));
+                        thread.add_tool(GrepTool::new(project.clone()));
+                        thread.add_tool(ListDirectoryTool::new(project.clone()));
+                        thread.add_tool(MovePathTool::new(project.clone()));
                         thread.add_tool(NowTool);
+                        thread.add_tool(OpenTool::new(project.clone()));
+                        thread.add_tool(ReadFileTool::new(project.clone(), action_log));
                         thread.add_tool(TerminalTool::new(project.clone(), cx));
-                        // TODO: Needs to be conditional based on zed model or not
-                        thread.add_tool(WebSearchTool);
+                        thread.add_tool(ThinkingTool);
+                        thread.add_tool(WebSearchTool); // TODO: Enable this only if it's a zed model.
                         thread
                     });
 
@@ -940,11 +940,7 @@ mod tests {
         // Create a thread/session
         let acp_thread = cx
             .update(|cx| {
-                Rc::new(connection.clone()).new_thread(
-                    project.clone(),
-                    Path::new("/a"),
-                    &mut cx.to_async(),
-                )
+                Rc::new(connection.clone()).new_thread(project.clone(), Path::new("/a"), cx)
             })
             .await
             .unwrap();

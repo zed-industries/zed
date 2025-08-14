@@ -6,7 +6,7 @@ use language::{
     LanguageToolchainStore, LspAdapter, LspAdapterDelegate, language_settings::AllLanguageSettings,
 };
 use lsp::{LanguageServerBinary, LanguageServerName};
-use node_runtime::NodeRuntime;
+use node_runtime::{NodeRuntime, VersionStrategy};
 use project::{Fs, lsp_store::language_server_settings};
 use serde_json::Value;
 use settings::{Settings, SettingsLocation};
@@ -108,8 +108,7 @@ impl LspAdapter for YamlLspAdapter {
                 Self::PACKAGE_NAME,
                 &server_path,
                 &container_dir,
-                &version,
-                Default::default(),
+                VersionStrategy::Latest(version),
             )
             .await;
 

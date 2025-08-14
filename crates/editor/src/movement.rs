@@ -230,7 +230,7 @@ pub fn indented_line_beginning(
     if stop_at_soft_boundaries && soft_line_start > indent_start && display_point != soft_line_start
     {
         soft_line_start
-    } else if stop_at_indent && display_point != indent_start {
+    } else if stop_at_indent && (display_point > indent_start || display_point == line_start) {
         indent_start
     } else {
         line_start

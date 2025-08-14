@@ -32,6 +32,7 @@ use util::ResultExt;
 pub struct UserMessage {
     pub id: Option<UserMessageId>,
     pub content: ContentBlock,
+    pub chunks: Vec<acp::ContentBlock>,
     pub checkpoint: Option<GitStoreCheckpoint>,
 }
 
@@ -808,18 +809,25 @@ impl AcpThread {
         let entries_len = self.entries.len();
 
         if let Some(last_entry) = self.entries.last_mut()
-            && let AgentThreadEntry::UserMessage(UserMessage { id, content, .. }) = last_entry
+            && let AgentThreadEntry::UserMessage(UserMessage {
+                id,
+                content,
+                chunks,
+                ..
+            }) = last_entry
         {
             *id = message_id.or(id.take());
-            content.append(chunk, &language_registry, cx);
+            content.append(chunk.clone(), &language_registry, cx);
+            chunks.push(chunk);
             let idx = entries_len - 1;
             cx.emit(AcpThreadEvent::EntryUpdated(idx));
         } else {
-            let content = ContentBlock::new(chunk, &language_registry, cx);
+            let content = ContentBlock::new(chunk.clone(), &language_registry, cx);
             self.push_entry(
                 AgentThreadEntry::UserMessage(UserMessage {
                     id: message_id,
                     content,
+                    chunks: vec![chunk],
                     checkpoint: None,
                 }),
                 cx,
@@ -1154,6 +1162,7 @@ impl AcpThread {
             AgentThreadEntry::UserMessage(UserMessage {
                 id: message_id.clone(),
                 content: block,
+                chunks: message.clone(),
                 checkpoint: None,
             }),
             cx,
@@ -1570,11 +1579,7 @@ mod tests {
         let project = Project::test(fs, [], cx).await;
         let connection = Rc::new(FakeAgentConnection::new());
         let thread = cx
-            .spawn(async move |mut cx| {
-                connection
-                    .new_thread(project, Path::new(path!("/test")), &mut cx)
-                    .await
-            })
+            .update(|cx| connection.new_thread(project, Path::new(path!("/test")), cx))
             .await
             .unwrap();
 
@@ -1694,11 +1699,7 @@ mod tests {
         ));
 
         let thread = cx
-            .spawn(async move |mut cx| {
-                connection
-                    .new_thread(project, Path::new(path!("/test")), &mut cx)
-                    .await
-            })
+            .update(|cx| connection.new_thread(project, Path::new(path!("/test")), cx))
             .await
             .unwrap();
 
@@ -1781,7 +1782,7 @@ mod tests {
             .unwrap();
 
         let thread = cx
-            .spawn(|mut cx| connection.new_thread(project, Path::new(path!("/tmp")), &mut cx))
+            .update(|cx| connection.new_thread(project, Path::new(path!("/tmp")), cx))
             .await
             .unwrap();
 
@@ -1844,11 +1845,7 @@ mod tests {
         }));
 
         let thread = cx
-            .spawn(async move |mut cx| {
-                connection
-                    .new_thread(project, Path::new(path!("/test")), &mut cx)
-                    .await
-            })
+            .update(|cx| connection.new_thread(project, Path::new(path!("/test")), cx))
             .await
             .unwrap();
 
@@ -1956,10 +1953,11 @@ mod tests {
             }
         }));
 
-        let thread = connection
-            .new_thread(project, Path::new(path!("/test")), &mut cx.to_async())
+        let thread = cx
+            .update(|cx| connection.new_thread(project, Path::new(path!("/test")), cx))
             .await
             .unwrap();
+
         cx.update(|cx| thread.update(cx, |thread, cx| thread.send(vec!["Hi".into()], cx)))
             .await
             .unwrap();
@@ -2016,8 +2014,8 @@ mod tests {
                 .boxed_local()
             }
         }));
-        let thread = connection
-            .new_thread(project, Path::new(path!("/test")), &mut cx.to_async())
+        let thread = cx
+            .update(|cx| connection.new_thread(project, Path::new(path!("/test")), cx))
             .await
             .unwrap();
 
@@ -2222,7 +2220,7 @@ mod tests {
             self: Rc<Self>,
             project: Entity<Project>,
             _cwd: &Path,
-            cx: &mut gpui::AsyncApp,
+            cx: &mut gpui::App,
         ) -> Task<gpui::Result<Entity<AcpThread>>> {
             let session_id = acp::SessionId(
                 rand::thread_rng()
@@ -2232,9 +2230,8 @@ mod tests {
                     .collect::<String>()
                     .into(),
             );
-            let thread = cx
-                .new(|cx| AcpThread::new("Test", self.clone(), project, session_id.clone(), cx))
-                .unwrap();
+            let thread =
+                cx.new(|cx| AcpThread::new("Test", self.clone(), project, session_id.clone(), cx));
             self.sessions.lock().insert(session_id, thread.downgrade());
             Task::ready(Ok(thread))
         }
