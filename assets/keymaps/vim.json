@@ -58,6 +58,8 @@
       "[ space": "vim::InsertEmptyLineAbove",
       "[ e": "editor::MoveLineUp",
       "] e": "editor::MoveLineDown",
+      "[ f": "workspace::FollowNextCollaborator",
+      "] f": "workspace::FollowNextCollaborator",
 
       // Word motions
       "w": "vim::NextWordStart",
