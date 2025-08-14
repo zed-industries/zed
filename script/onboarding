@@ -8,7 +8,7 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m'
 
-CHANNEL="${1:-nightly}"
+CHANNEL="$1"
 COMMAND="$2"
 
 if [[ "$CHANNEL" != "stable" && "$CHANNEL" != "preview" && "$CHANNEL" != "nightly" && "$CHANNEL" != "dev" ]]; then
@@ -160,7 +160,7 @@ case "${COMMAND:-}" in
         echo "  status   - Show current testing status"
         echo ""
         echo "Channels:"
-        echo "  stable, preview, nightly (default), dev"
+        echo "  stable, preview, nightly, dev"
         echo ""
         echo "Working with channel: $CHANNEL"
         echo "Database directory: $DB_DIR"
