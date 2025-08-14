@@ -4,12 +4,10 @@ use ::settings::Settings;
 use command_palette_hooks::CommandPaletteFilter;
 use commit_modal::CommitModal;
 use editor::{Editor, EditorElement, EditorStyle, actions::DiffClipboardWithSelectionData};
-use gpui::{DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, SharedString};
 use ui::{
     Headline, HeadlineSize, Icon, IconName, IconSize, IntoElement, ParentElement, Render, Styled,
     StyledExt, div, h_flex, rems, v_flex,
 };
-use workspace::{ModalView, notifications::DetachAndPromptErr};
 
 mod blame_ui;
 
@@ -19,7 +17,7 @@ use git::{
 };
 use git_panel_settings::GitPanelSettings;
 use gpui::{
-    Action, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, TextStyle,
+    Action, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, SharedString,TextStyle,
     Window, actions,
 };
 use menu::{Cancel, Confirm};
@@ -28,7 +26,7 @@ use project::git_store::Repository;
 use project_diff::ProjectDiff;
 use theme::ThemeSettings;
 use ui::prelude::*;
-use workspace::{ModalView, Workspace};
+use workspace::{ModalView, Workspace, notifications::DetachAndPromptErr};
 use zed_actions;
 
 use crate::{git_panel::GitPanel, text_diff_view::TextDiffView};
