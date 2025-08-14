@@ -183,6 +183,11 @@ impl Entry {
             self.views.insert(entity_id, terminal_view.into_any());
         }
     }
+
+    #[cfg(test)]
+    pub fn len(&self) -> usize {
+        self.views.len()
+    }
 }
 
 fn diff_editor_text_style_refinement(cx: &mut App) -> TextStyleRefinement {

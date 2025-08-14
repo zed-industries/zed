@@ -188,7 +188,7 @@ mod test_support {
             }
         }
 
-        pub fn set_next_prompt_updates(&mut self, updates: Vec<acp::SessionUpdate>) {
+        pub fn set_next_prompt_updates(&self, updates: Vec<acp::SessionUpdate>) {
             *self.next_prompt_updates.lock() = updates;
         }
 
@@ -290,6 +290,22 @@ mod test_support {
 
         fn cancel(&self, _session_id: &acp::SessionId, _cx: &mut App) {
             unimplemented!()
+        }
+
+        fn session_editor(
+            &self,
+            _session_id: &agent_client_protocol::SessionId,
+            _cx: &mut App,
+        ) -> Option<Rc<dyn AgentSessionEditor>> {
+            Some(Rc::new(StubAgentSessionEditor))
+        }
+    }
+
+    struct StubAgentSessionEditor;
+
+    impl AgentSessionEditor for StubAgentSessionEditor {
+        fn truncate(&self, _: UserMessageId, _: &mut App) -> Task<Result<()>> {
+            Task::ready(Ok(()))
         }
     }
 }

@@ -3305,6 +3305,8 @@ pub(crate) mod tests {
     use editor::EditorSettings;
     use fs::FakeFs;
     use gpui::{SemanticVersion, TestAppContext, VisualTestContext};
+    use project::Project;
+    use serde_json::json;
     use settings::SettingsStore;
 
     use super::*;
@@ -3387,7 +3389,7 @@ pub(crate) mod tests {
             raw_input: None,
             raw_output: None,
         };
-        let mut connection =
+        let connection =
             StubAgentConnection::new().with_permission_requests(HashMap::from_iter([(
                 tool_call_id,
                 vec![acp::PermissionOption {
@@ -3556,6 +3558,144 @@ pub(crate) mod tests {
             ThemeSettings::register(cx);
             release_channel::init(SemanticVersion::default(), cx);
             EditorSettings::register(cx);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_rewind_views(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/project",
+            json!({
+                "test1.txt": "old content 1",
+                "test2.txt": "old content 2"
+            }),
+        )
+        .await;
+        let project = Project::test(fs, [Path::new("/project")], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        let thread_store =
+            cx.update(|_window, cx| cx.new(|cx| ThreadStore::fake(project.clone(), cx)));
+        let text_thread_store =
+            cx.update(|_window, cx| cx.new(|cx| TextThreadStore::fake(project.clone(), cx)));
+
+        let connection = Rc::new(StubAgentConnection::new());
+        let thread_view = cx.update(|window, cx| {
+            cx.new(|cx| {
+                AcpThreadView::new(
+                    Rc::new(StubAgentServer::new(connection.as_ref().clone())),
+                    workspace.downgrade(),
+                    project.clone(),
+                    thread_store.clone(),
+                    text_thread_store.clone(),
+                    window,
+                    cx,
+                )
+            })
+        });
+
+        cx.run_until_parked();
+
+        let thread = thread_view
+            .read_with(cx, |view, _| view.thread().cloned())
+            .unwrap();
+
+        // First user message
+        connection.set_next_prompt_updates(vec![acp::SessionUpdate::ToolCall(acp::ToolCall {
+            id: acp::ToolCallId("tool1".into()),
+            title: "Edit file 1".into(),
+            kind: acp::ToolKind::Edit,
+            status: acp::ToolCallStatus::Completed,
+            content: vec![acp::ToolCallContent::Diff {
+                diff: acp::Diff {
+                    path: "/project/test1.txt".into(),
+                    old_text: Some("old content 1".into()),
+                    new_text: "new content 1".into(),
+                },
+            }],
+            locations: vec![],
+            raw_input: None,
+            raw_output: None,
+        })]);
+
+        thread
+            .update(cx, |thread, cx| thread.send_raw("Give me a diff", cx))
+            .await
+            .unwrap();
+        cx.run_until_parked();
+
+        thread.read_with(cx, |thread, _| {
+            assert_eq!(thread.entries().len(), 2);
+        });
+
+        thread_view.read_with(cx, |view, _| {
+            assert_eq!(view.entry_view_state.entry(0).unwrap().len(), 0);
+            assert_eq!(view.entry_view_state.entry(1).unwrap().len(), 1);
+        });
+
+        // Second user message
+        connection.set_next_prompt_updates(vec![acp::SessionUpdate::ToolCall(acp::ToolCall {
+            id: acp::ToolCallId("tool2".into()),
+            title: "Edit file 2".into(),
+            kind: acp::ToolKind::Edit,
+            status: acp::ToolCallStatus::Completed,
+            content: vec![acp::ToolCallContent::Diff {
+                diff: acp::Diff {
+                    path: "/project/test2.txt".into(),
+                    old_text: Some("old content 2".into()),
+                    new_text: "new content 2".into(),
+                },
+            }],
+            locations: vec![],
+            raw_input: None,
+            raw_output: None,
+        })]);
+
+        thread
+            .update(cx, |thread, cx| thread.send_raw("Another one", cx))
+            .await
+            .unwrap();
+        cx.run_until_parked();
+
+        let second_user_message_id = thread.read_with(cx, |thread, _| {
+            assert_eq!(thread.entries().len(), 4);
+            let AgentThreadEntry::UserMessage(user_message) = thread.entries().get(2).unwrap()
+            else {
+                panic!();
+            };
+            user_message.id.clone().unwrap()
+        });
+
+        thread_view.read_with(cx, |view, _| {
+            assert_eq!(view.entry_view_state.entry(0).unwrap().len(), 0);
+            assert_eq!(view.entry_view_state.entry(1).unwrap().len(), 1);
+            assert_eq!(view.entry_view_state.entry(2).unwrap().len(), 0);
+            assert_eq!(view.entry_view_state.entry(3).unwrap().len(), 1);
+        });
+
+        // Rewind to first message
+        thread
+            .update(cx, |thread, cx| thread.rewind(second_user_message_id, cx))
+            .await
+            .unwrap();
+
+        cx.run_until_parked();
+
+        thread.read_with(cx, |thread, _| {
+            assert_eq!(thread.entries().len(), 2);
+        });
+
+        thread_view.read_with(cx, |view, _| {
+            assert_eq!(view.entry_view_state.entry(0).unwrap().len(), 0);
+            assert_eq!(view.entry_view_state.entry(1).unwrap().len(), 1);
+
+            // Old views should be dropped
+            assert!(view.entry_view_state.entry(2).is_none());
+            assert!(view.entry_view_state.entry(3).is_none());
         });
     }
 }
