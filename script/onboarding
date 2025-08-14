@@ -58,8 +58,8 @@ reset_onboarding() {
     echo ""
 
     if [ ! -d "$DB_DIR" ]; then
-        echo -e "${YELLOW}No $APP_NAME database directory found at: $DB_DIR${NC}"
-        echo "$APP_NAME will create a fresh database on next launch and show onboarding."
+        echo -e "${YELLOW}No database directory found at: $DB_DIR${NC}"
+        echo "Zed will create a fresh database on next launch and show onboarding."
         exit 0
     fi
 
@@ -70,21 +70,21 @@ reset_onboarding() {
         echo "To avoid losing your original database, this script won't overwrite the backup."
         echo ""
         echo "Options:"
-        echo "  1. Run './script/onboarding restore' to restore your original database"
-        echo "  2. Manually remove the backup if you're sure: rm -rf \"$DB_BACKUP_DIR\""
+        echo "  1. Run './script/onboarding $CHANNEL restore' to restore your original database"
+        echo "  2. Manually remove the backup if you're sure: rm -rf $DB_BACKUP_DIR"
         exit 1
     fi
 
-    echo -e "${YELLOW}Creating backup of current database directory...${NC}"
+    echo -e "${YELLOW}Moving $DB_DIR to $DB_BACKUP_DIR${NC}"
     mv "$DB_DIR" "$DB_BACKUP_DIR"
 
-    echo -e "${GREEN}✓ Database directory backed up to: $DB_BACKUP_DIR${NC}"
+    echo -e "${GREEN}✓ Backed up: $DB_BACKUP_DIR${NC}"
     echo ""
-    echo -e "${GREEN}Success! $APP_NAME has been reset to first-time user state.${NC}"
+    echo -e "${GREEN}Success! Zed has been reset to first-time user state.${NC}"
     echo ""
     echo "Next steps:"
-    echo "  1. Start $APP_NAME - you should see the onboarding flow"
-    echo "  2. When done testing, run: ./script/onboarding restore"
+    echo "  1. Start Zed - you should see the onboarding flow"
+    echo "  2. When done testing, run: ./script/onboarding $CHANNEL restore"
     echo ""
     echo -e "${YELLOW}Note: All your workspace data is safely preserved in the backup.${NC}"
 }
@@ -96,41 +96,41 @@ restore_onboarding() {
     if [ ! -d "$DB_BACKUP_DIR" ]; then
         echo -e "${RED}ERROR: No backup found at: $DB_BACKUP_DIR${NC}"
         echo ""
-        echo "Run './script/onboarding reset' first to create a backup."
+        echo "Run './script/onboarding $CHANNEL reset' first to create a backup."
         exit 1
     fi
 
     if [ -d "$DB_DIR" ]; then
-        echo -e "${YELLOW}Removing test database directory...${NC}"
+        echo -e "${YELLOW}Removing current database directory: $DB_DIR${NC}"
         rm -rf "$DB_DIR"
     fi
 
-    echo -e "${YELLOW}Restoring original database directory...${NC}"
+    echo -e "${YELLOW}Restoring $DB_BACKUP_DIR to $DB_DIR${NC}"
     mv "$DB_BACKUP_DIR" "$DB_DIR"
 
-    echo -e "${GREEN}✓ Database directory restored to: $DB_DIR${NC}"
+    echo -e "${GREEN}✓ Restored: $DB_DIR${NC}"
     echo ""
-    echo -e "${GREEN}Success! Your original $APP_NAME database has been restored.${NC}"
-    echo "$APP_NAME will now behave as it did before the reset."
+    echo -e "${GREEN}Success! Your original database has been restored.${NC}"
+    echo "Zed will now behave as it did before the reset."
 }
 
 show_status() {
-    echo -e "${BLUE}=== $APP_NAME Onboarding Test Status ===${NC}"
+    echo -e "${BLUE}=== Zed Onboarding Test Status ===${NC}"
     echo ""
 
     if [ -d "$DB_BACKUP_DIR" ]; then
         echo -e "${YELLOW}Status: TESTING MODE${NC}"
-        echo "  • Original database directory is backed up"
-        echo "  • $APP_NAME is currently using a fresh database"
-        echo "  • Run './script/onboarding restore' to return to normal"
+        echo "  • Original database backed up at: $DB_BACKUP_DIR"
+        echo "  • Zed is currently using: $DB_DIR"
+        echo "  • Run './script/onboarding $CHANNEL restore' to return to normal"
     elif [ -d "$DB_DIR" ]; then
         echo -e "${GREEN}Status: NORMAL${NC}"
-        echo "  • $APP_NAME is using your regular database"
-        echo "  • Run './script/onboarding reset' to test onboarding"
+        echo "  • Zed is using: $DB_DIR"
+        echo "  • Run './script/onboarding $CHANNEL reset' to test onboarding"
     else
         echo -e "${BLUE}Status: NO DATABASE${NC}"
-        echo "  • No $APP_NAME database directory exists yet"
-        echo "  • $APP_NAME will show onboarding on next launch"
+        echo "  • No Zed database directory exists yet"
+        echo "  • Zed will show onboarding on next launch"
     fi
 
     echo ""
@@ -162,7 +162,7 @@ case "${COMMAND:-}" in
         echo "Channels:"
         echo "  stable, preview, nightly (default), dev"
         echo ""
-        echo "Working with: $APP_NAME"
+        echo "Working with channel: $CHANNEL"
         echo "Database directory: $DB_DIR"
         echo ""
         echo "Examples:"
@@ -171,11 +171,12 @@ case "${COMMAND:-}" in
         echo "  ./script/onboarding preview restore   # Restore preview"
         echo ""
         echo "Workflow:"
-        echo "  1. ./script/onboarding nightly reset"
-        echo "  2. Open $APP_NAME"
-        echo "  3. Test onboarding"
-        echo "  4. Quit $APP_NAME"
-        echo "  5. ./script/onboarding nightly restore"
+        echo "  1. Close Zed"
+        echo "  2. ./script/onboarding nightly reset"
+        echo "  3. Open Zed"
+        echo "  4. Test onboarding"
+        echo "  5. Close Zed"
+        echo "  6. ./script/onboarding nightly restore"
         exit 1
         ;;
 esac
