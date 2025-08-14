@@ -349,7 +349,11 @@ impl Copilot {
         this.start_copilot(true, false, cx);
         cx.observe_global::<SettingsStore>(move |this, cx| {
             this.start_copilot(true, false, cx);
-            this.send_configuration_update(cx);
+            if let Ok(server) = this.server.as_running() {
+                notify_did_change_config_to_server(&server.lsp, cx)
+                    .context("copilot setting change: did change configuration")
+                    .log_err();
+            }
         })
         .detach();
         this
@@ -436,43 +440,6 @@ impl Copilot {
         }
 
         if env.is_empty() { None } else { Some(env) }
-    }
-
-    fn send_configuration_update(&mut self, cx: &mut Context<Self>) {
-        let copilot_settings = all_language_settings(None, cx)
-            .edit_predictions
-            .copilot
-            .clone();
-
-        let settings = json!({
-            "http": {
-                "proxy": copilot_settings.proxy,
-                "proxyStrictSSL": !copilot_settings.proxy_no_verify.unwrap_or(false)
-            },
-            "github-enterprise": {
-                "uri": copilot_settings.enterprise_uri
-            }
-        });
-
-        if let Some(copilot_chat) = copilot_chat::CopilotChat::global(cx) {
-            copilot_chat.update(cx, |chat, cx| {
-                chat.set_configuration(
-                    copilot_chat::CopilotChatConfiguration {
-                        enterprise_uri: copilot_settings.enterprise_uri.clone(),
-                    },
-                    cx,
-                );
-            });
-        }
-
-        if let Ok(server) = self.server.as_running() {
-            server
-                .lsp
-                .notify::<lsp::notification::DidChangeConfiguration>(
-                    &lsp::DidChangeConfigurationParams { settings },
-                )
-                .log_err();
-        }
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -573,6 +540,9 @@ impl Copilot {
                 })?
                 .await?;
 
+            this.update(cx, |_, cx| notify_did_change_config_to_server(&server, cx))?
+                .context("copilot: did change configuration")?;
+
             let status = server
                 .request::<request::CheckStatus>(request::CheckStatusParams {
                     local_checks_only: false,
@@ -598,8 +568,6 @@ impl Copilot {
                     });
                     cx.emit(Event::CopilotLanguageServerStarted);
                     this.update_sign_in_status(status, cx);
-                    // Send configuration now that the LSP is fully started
-                    this.send_configuration_update(cx);
                 }
                 Err(error) => {
                     this.server = CopilotServer::Error(error.to_string().into());
@@ -1154,6 +1122,41 @@ fn uri_for_buffer(buffer: &Entity<Buffer>, cx: &App) -> Result<lsp::Url, ()> {
             .parse()
             .map_err(|_| ())
     }
+}
+
+fn notify_did_change_config_to_server(
+    server: &Arc<LanguageServer>,
+    cx: &mut Context<Copilot>,
+) -> std::result::Result<(), anyhow::Error> {
+    let copilot_settings = all_language_settings(None, cx)
+        .edit_predictions
+        .copilot
+        .clone();
+
+    if let Some(copilot_chat) = copilot_chat::CopilotChat::global(cx) {
+        copilot_chat.update(cx, |chat, cx| {
+            chat.set_configuration(
+                copilot_chat::CopilotChatConfiguration {
+                    enterprise_uri: copilot_settings.enterprise_uri.clone(),
+                },
+                cx,
+            );
+        });
+    }
+
+    let settings = json!({
+        "http": {
+            "proxy": copilot_settings.proxy,
+            "proxyStrictSSL": !copilot_settings.proxy_no_verify.unwrap_or(false)
+        },
+        "github-enterprise": {
+            "uri": copilot_settings.enterprise_uri
+        }
+    });
+
+    server.notify::<lsp::notification::DidChangeConfiguration>(&lsp::DidChangeConfigurationParams {
+        settings,
+    })
 }
 
 async fn clear_copilot_dir() {
