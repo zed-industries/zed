@@ -103,6 +103,7 @@ workspace.workspace = true
 zed_actions.workspace = true
 
 [dev-dependencies]
+acp_thread = { workspace = true, features = ["test-support"] }
 agent = { workspace = true, features = ["test-support"] }
 assistant_context = { workspace = true, features = ["test-support"] }
 assistant_tools.workspace = true
