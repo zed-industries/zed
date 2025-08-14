@@ -5895,6 +5895,7 @@ async fn test_rewrap_block_comments(cx: &mut TestAppContext) {
             "Rust".into(),
             LanguageSettingsContent {
                 allow_rewrap: Some(language_settings::RewrapBehavior::InComments),
+                preferred_line_length: Some(40),
                 ..Default::default()
             },
         )])
@@ -5932,18 +5933,18 @@ async fn test_rewrap_block_comments(cx: &mut TestAppContext) {
     assert_rewrap(
         indoc! {"
             /*
-             *ˇ Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus mollis elit purus, a ornare lacus gravida vitae.
+             *ˇ Lorem ipsum dolor sit amet, consectetur adipiscing elit.
              */
-            /*ˇ Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus mollis elit purus, a ornare lacus gravida vitae. */
+            /*ˇ Lorem ipsum dolor sit amet, consectetur adipiscing elit. */
         "},
         indoc! {"
             /*
-             *ˇ Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus mollis elit
-             * purus, a ornare lacus gravida vitae.
+             *ˇ Lorem ipsum dolor sit amet,
+             * consectetur adipiscing elit.
              */
             /*
-             *ˇ Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus mollis elit
-             * purus, a ornare lacus gravida vitae.
+             *ˇ Lorem ipsum dolor sit amet,
+             * consectetur adipiscing elit.
              */
         "},
         rust_lang.clone(),
@@ -5959,7 +5960,8 @@ async fn test_rewrap_block_comments(cx: &mut TestAppContext) {
         indoc! {"
             {}
                 /*
-                 *ˇ Lorem ipsum dolor sit amet, consectetur adipiscing elit.
+                 *ˇ Lorem ipsum dolor sit amet,
+                 * consectetur adipiscing elit.
                  */
         "},
         rust_lang.clone(),
@@ -5977,13 +5979,16 @@ async fn test_rewrap_block_comments(cx: &mut TestAppContext) {
         "},
         indoc! {"
             /*
-             *ˇ Lorem ipsum dolor sit amet, consectetur adipiscing elit.
+             *ˇ Lorem ipsum dolor sit amet,
+             * consectetur adipiscing elit.
              */
             /*
-             *ˇ Lorem ipsum dolor sit amet, consectetur adipiscing elit.
+             *ˇ Lorem ipsum dolor sit amet,
+             * consectetur adipiscing elit.
              */
             /*
-             *ˇ Lorem ipsum dolor sit amet, consectetur adipiscing elit.
+             *ˇ Lorem ipsum dolor sit amet,
+             * consectetur adipiscing elit.
              */
         "},
         rust_lang.clone(),
@@ -5993,13 +5998,13 @@ async fn test_rewrap_block_comments(cx: &mut TestAppContext) {
     // multiline block comment with inline start/end delimiters
     assert_rewrap(
         indoc! {"
-            /*ˇ Lorem ipsum dolor sit amet, consectetur adipiscing elit.
-             * Vivamus mollis elit purus, a ornare lacus gravida vitae. */
+            /*ˇ Lorem ipsum dolor sit amet,
+             * consectetur adipiscing elit. */
         "},
         indoc! {"
             /*
-             *ˇ Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus mollis elit
-             * purus, a ornare lacus gravida vitae.
+             *ˇ Lorem ipsum dolor sit amet,
+             * consectetur adipiscing elit.
              */
         "},
         rust_lang.clone(),
@@ -6010,17 +6015,17 @@ async fn test_rewrap_block_comments(cx: &mut TestAppContext) {
     assert_rewrap(
         indoc! {"
             /*
-             *ˇ Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus mollis elit purus, a ornare lacus gravida vitae.
+             *ˇ Lorem ipsum dolor sit amet, consectetur adipiscing elit.
              *
-             * Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus mollis elit purus, a ornare lacus gravida vitae.
+             * Lorem ipsum dolor sit amet, consectetur adipiscing elit.
              */
         "},
         indoc! {"
             /*
-             *ˇ Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus mollis elit
-             * purus, a ornare lacus gravida vitae.
+             *ˇ Lorem ipsum dolor sit amet,
+             * consectetur adipiscing elit.
              *
-             * Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus mollis elit purus, a ornare lacus gravida vitae.
+             * Lorem ipsum dolor sit amet, consectetur adipiscing elit.
              */
         "},
         rust_lang.clone(),
@@ -6030,19 +6035,19 @@ async fn test_rewrap_block_comments(cx: &mut TestAppContext) {
     // documentation comments
     assert_rewrap(
         indoc! {"
-            /**ˇ Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus mollis elit purus, a ornare lacus gravida vitae. */
+            /**ˇ Lorem ipsum dolor sit amet, consectetur adipiscing elit. */
             /**
-             *ˇ Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus mollis elit purus, a ornare lacus gravida vitae.
+             *ˇ Lorem ipsum dolor sit amet, consectetur adipiscing elit.
              */
         "},
         indoc! {"
             /**
-             *ˇ Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus mollis elit
-             * purus, a ornare lacus gravida vitae.
+             *ˇ Lorem ipsum dolor sit amet,
+             * consectetur adipiscing elit.
              */
             /**
-             *ˇ Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus mollis elit
-             * purus, a ornare lacus gravida vitae.
+             *ˇ Lorem ipsum dolor sit amet,
+             * consectetur adipiscing elit.
              */
         "},
         rust_lang.clone(),
@@ -6053,22 +6058,22 @@ async fn test_rewrap_block_comments(cx: &mut TestAppContext) {
     assert_rewrap(
         indoc! {"
             /**
-             *ˇ Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus mollis elit purus, a ornare lacus gravida vitae.
+             *ˇ Lorem ipsum dolor sit amet, consectetur adipiscing elit.
              */
-            /*ˇ Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus mollis elit purus, a ornare lacus gravida vitae. */
-            //ˇ Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus mollis elit purus, a ornare lacus gravida vitae.
+            /*ˇ Lorem ipsum dolor sit amet, consectetur adipiscing elit. */
+            //ˇ Lorem ipsum dolor sit amet, consectetur adipiscing elit.
         "},
         indoc! {"
             /**
-             *ˇ Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus mollis elit
-             * purus, a ornare lacus gravida vitae.
+             *ˇ Lorem ipsum dolor sit amet,
+             * consectetur adipiscing elit.
              */
             /*
-             *ˇ Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus mollis elit
-             * purus, a ornare lacus gravida vitae.
+             *ˇ Lorem ipsum dolor sit amet,
+             * consectetur adipiscing elit.
              */
-            //ˇ Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus mollis elit
-            // purus, a ornare lacus gravida vitae.
+            //ˇ Lorem ipsum dolor sit amet,
+            // consectetur adipiscing elit.
         "},
         rust_lang.clone(),
         &mut cx,
@@ -6078,7 +6083,7 @@ async fn test_rewrap_block_comments(cx: &mut TestAppContext) {
     assert_rewrap(
         indoc! {"
             /*
-             //ˇ Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus mollis elit purus, a ornare lacus gravida vitae.
+             //ˇ Lorem ipsum dolor sit amet, consectetur adipiscing elit.
              */
             /*
              //ˇ Lorem ipsum dolor sit amet, consectetur adipiscing elit. */
@@ -6086,14 +6091,16 @@ async fn test_rewrap_block_comments(cx: &mut TestAppContext) {
         "},
         indoc! {"
             /*
-             //ˇ Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus mollis elit
-             // purus, a ornare lacus gravida vitae.
+             //ˇ Lorem ipsum dolor sit amet,
+             // consectetur adipiscing elit.
              */
             /*
-             * //ˇ Lorem ipsum dolor sit amet, consectetur adipiscing elit.
+             * //ˇ Lorem ipsum dolor sit amet,
+             * consectetur adipiscing elit.
              */
             /*
-             *ˇ Lorem ipsum dolor sit amet */ /* consectetur adipiscing elit.
+             *ˇ Lorem ipsum dolor sit amet */ /*
+             * consectetur adipiscing elit.
              */
         "},
         rust_lang.clone(),
