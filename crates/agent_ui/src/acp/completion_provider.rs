@@ -1,5 +1,5 @@
 use std::ops::Range;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
@@ -8,7 +8,7 @@ use anyhow::{Context as _, Result, anyhow};
 use collections::{HashMap, HashSet};
 use editor::display_map::CreaseId;
 use editor::{CompletionProvider, Editor, ExcerptId, ToOffset as _};
-use file_icons::FileIcons;
+
 use futures::future::try_join_all;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{App, Entity, Task, WeakEntity};
@@ -28,10 +28,7 @@ use url::Url;
 use workspace::Workspace;
 use workspace::notifications::NotifyResultExt;
 
-use agent::{
-    context::RULES_ICON,
-    thread_store::{TextThreadStore, ThreadStore},
-};
+use agent::thread_store::{TextThreadStore, ThreadStore};
 
 use crate::context_picker::fetch_context_picker::fetch_url_content;
 use crate::context_picker::file_context_picker::{FileMatch, search_files};
@@ -514,9 +511,14 @@ impl ContextPickerCompletionProvider {
                                             })
                                             .unwrap_or_default();
                                         let line_range = point_range.start.row..point_range.end.row;
+
+                                        let uri = MentionUri::Selection {
+                                            path: path.clone(),
+                                            line_range: line_range.clone(),
+                                        };
                                         let crease = crate::context_picker::crease_for_mention(
                                             selection_name(&path, &line_range).into(),
-                                            IconName::Reader.path().into(),
+                                            uri.icon_path(cx),
                                             range,
                                             editor.downgrade(),
                                         );
@@ -534,10 +536,7 @@ impl ContextPickerCompletionProvider {
                                                 crease_ids.try_into().unwrap()
                                             });
 
-                                        mention_set.lock().insert(
-                                            crease_id,
-                                            MentionUri::Selection { path, line_range },
-                                        );
+                                        mention_set.lock().insert(crease_id, uri);
 
                                         current_offset += text_len + 1;
                                     }
@@ -575,13 +574,8 @@ impl ContextPickerCompletionProvider {
         recent: bool,
         editor: Entity<Editor>,
         mention_set: Arc<Mutex<MentionSet>>,
+        cx: &mut App,
     ) -> Completion {
-        let icon_for_completion = if recent {
-            IconName::HistoryRerun
-        } else {
-            IconName::Thread
-        };
-
         let uri = match &thread_entry {
             ThreadContextEntry::Thread { id, title } => MentionUri::Thread {
                 id: id.clone(),
@@ -592,6 +586,13 @@ impl ContextPickerCompletionProvider {
                 name: title.to_string(),
             },
         };
+
+        let icon_for_completion = if recent {
+            IconName::HistoryRerun.path().into()
+        } else {
+            uri.icon_path(cx)
+        };
+
         let new_text = format!("{} ", uri.as_link());
 
         let new_text_len = new_text.len();
@@ -602,9 +603,9 @@ impl ContextPickerCompletionProvider {
             documentation: None,
             insert_text_mode: None,
             source: project::CompletionSource::Custom,
-            icon_path: Some(icon_for_completion.path().into()),
+            icon_path: Some(icon_for_completion.clone()),
             confirm: Some(confirm_completion_callback(
-                IconName::Thread.path().into(),
+                uri.icon_path(cx),
                 thread_entry.title().clone(),
                 excerpt_id,
                 source_range.start,
@@ -622,6 +623,7 @@ impl ContextPickerCompletionProvider {
         source_range: Range<Anchor>,
         editor: Entity<Editor>,
         mention_set: Arc<Mutex<MentionSet>>,
+        cx: &mut App,
     ) -> Completion {
         let uri = MentionUri::Rule {
             id: rule.prompt_id.into(),
@@ -629,6 +631,7 @@ impl ContextPickerCompletionProvider {
         };
         let new_text = format!("{} ", uri.as_link());
         let new_text_len = new_text.len();
+        let icon_path = uri.icon_path(cx);
         Completion {
             replace_range: source_range.clone(),
             new_text,
@@ -636,9 +639,9 @@ impl ContextPickerCompletionProvider {
             documentation: None,
             insert_text_mode: None,
             source: project::CompletionSource::Custom,
-            icon_path: Some(RULES_ICON.path().into()),
+            icon_path: Some(icon_path.clone()),
             confirm: Some(confirm_completion_callback(
-                RULES_ICON.path().into(),
+                icon_path,
                 rule.title.clone(),
                 excerpt_id,
                 source_range.start,
@@ -660,7 +663,7 @@ impl ContextPickerCompletionProvider {
         editor: Entity<Editor>,
         mention_set: Arc<Mutex<MentionSet>>,
         project: Entity<Project>,
-        cx: &App,
+        cx: &mut App,
     ) -> Option<Completion> {
         let (file_name, directory) =
             crate::context_picker::file_context_picker::extract_file_name_and_directory(
@@ -670,23 +673,6 @@ impl ContextPickerCompletionProvider {
 
         let label =
             build_code_label_for_full_path(&file_name, directory.as_ref().map(|s| s.as_ref()), cx);
-        let full_path = if let Some(directory) = directory {
-            format!("{}{}", directory, file_name)
-        } else {
-            file_name.to_string()
-        };
-
-        let crease_icon_path = if is_directory {
-            FileIcons::get_folder_icon(false, cx).unwrap_or_else(|| IconName::Folder.path().into())
-        } else {
-            FileIcons::get_icon(Path::new(&full_path), cx)
-                .unwrap_or_else(|| IconName::File.path().into())
-        };
-        let completion_icon_path = if is_recent {
-            IconName::HistoryRerun.path().into()
-        } else {
-            crease_icon_path.clone()
-        };
 
         let abs_path = project.read(cx).absolute_path(&project_path, cx)?;
 
@@ -694,6 +680,14 @@ impl ContextPickerCompletionProvider {
             abs_path,
             is_directory,
         };
+
+        let crease_icon_path = file_uri.icon_path(cx);
+        let completion_icon_path = if is_recent {
+            IconName::HistoryRerun.path().into()
+        } else {
+            crease_icon_path.clone()
+        };
+
         let new_text = format!("{} ", file_uri.as_link());
         let new_text_len = new_text.len();
         Some(Completion {
@@ -738,16 +732,17 @@ impl ContextPickerCompletionProvider {
         };
         let new_text = format!("{} ", uri.as_link());
         let new_text_len = new_text.len();
+        let icon_path = uri.icon_path(cx);
         Some(Completion {
             replace_range: source_range.clone(),
             new_text,
             label,
             documentation: None,
             source: project::CompletionSource::Custom,
-            icon_path: Some(IconName::Code.path().into()),
+            icon_path: Some(icon_path.clone()),
             insert_text_mode: None,
             confirm: Some(confirm_completion_callback(
-                IconName::Code.path().into(),
+                icon_path,
                 symbol.name.clone().into(),
                 excerpt_id,
                 source_range.start,
@@ -766,16 +761,23 @@ impl ContextPickerCompletionProvider {
         editor: Entity<Editor>,
         mention_set: Arc<Mutex<MentionSet>>,
         http_client: Arc<HttpClientWithUrl>,
+        cx: &mut App,
     ) -> Option<Completion> {
         let new_text = format!("@fetch {} ", url_to_fetch.clone());
         let new_text_len = new_text.len();
+        let mention_uri = MentionUri::Fetch {
+            url: url::Url::parse(url_to_fetch.as_ref())
+                .or_else(|_| url::Url::parse(&format!("https://{url_to_fetch}")))
+                .ok()?,
+        };
+        let icon_path = mention_uri.icon_path(cx);
         Some(Completion {
             replace_range: source_range.clone(),
             new_text,
             label: CodeLabel::plain(url_to_fetch.to_string(), None),
             documentation: None,
             source: project::CompletionSource::Custom,
-            icon_path: Some(IconName::ToolWeb.path().into()),
+            icon_path: Some(icon_path.clone()),
             insert_text_mode: None,
             confirm: Some({
                 let start = source_range.start;
@@ -783,6 +785,7 @@ impl ContextPickerCompletionProvider {
                 let editor = editor.clone();
                 let url_to_fetch = url_to_fetch.clone();
                 let source_range = source_range.clone();
+                let icon_path = icon_path.clone();
                 Arc::new(move |_, window, cx| {
                     let Some(url) = url::Url::parse(url_to_fetch.as_ref())
                         .or_else(|_| url::Url::parse(&format!("https://{url_to_fetch}")))
@@ -790,12 +793,12 @@ impl ContextPickerCompletionProvider {
                     else {
                         return false;
                     };
-                    let mention_uri = MentionUri::Fetch { url: url.clone() };
 
                     let editor = editor.clone();
                     let mention_set = mention_set.clone();
                     let http_client = http_client.clone();
                     let source_range = source_range.clone();
+                    let icon_path = icon_path.clone();
                     window.defer(cx, move |window, cx| {
                         let url = url.clone();
 
@@ -804,7 +807,7 @@ impl ContextPickerCompletionProvider {
                             start,
                             content_len,
                             url.to_string().into(),
-                            IconName::ToolWeb.path().into(),
+                            icon_path,
                             editor.clone(),
                             window,
                             cx,
@@ -823,8 +826,10 @@ impl ContextPickerCompletionProvider {
                                         .await
                                         .notify_async_err(cx)
                                 {
-                                    mention_set.lock().add_fetch_result(url, content);
-                                    mention_set.lock().insert(crease_id, mention_uri.clone());
+                                    mention_set.lock().add_fetch_result(url.clone(), content);
+                                    mention_set
+                                        .lock()
+                                        .insert(crease_id, MentionUri::Fetch { url });
                                 } else {
                                     // Remove crease if we failed to fetch
                                     editor
@@ -1010,6 +1015,7 @@ impl CompletionProvider for ContextPickerCompletionProvider {
                             is_recent,
                             editor.clone(),
                             mention_set.clone(),
+                            cx,
                         )),
 
                         Match::Rules(user_rules) => Some(Self::completion_for_rules(
@@ -1018,6 +1024,7 @@ impl CompletionProvider for ContextPickerCompletionProvider {
                             source_range.clone(),
                             editor.clone(),
                             mention_set.clone(),
+                            cx,
                         )),
 
                         Match::Fetch(url) => Self::completion_for_fetch(
@@ -1027,6 +1034,7 @@ impl CompletionProvider for ContextPickerCompletionProvider {
                             editor.clone(),
                             mention_set.clone(),
                             http_client.clone(),
+                            cx,
                         ),
 
                         Match::Entry(EntryMatch { entry, .. }) => Self::completion_for_entry(
@@ -1188,7 +1196,7 @@ mod tests {
     use serde_json::json;
     use settings::SettingsStore;
     use smol::stream::StreamExt as _;
-    use std::{ops::Deref, rc::Rc};
+    use std::{ops::Deref, path::Path, rc::Rc};
     use util::path;
     use workspace::{AppState, Item};
 

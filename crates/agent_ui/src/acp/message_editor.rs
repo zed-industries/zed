@@ -412,7 +412,7 @@ mod tests {
                 .unwrap()
         });
         let completions = editor.update_in(cx, |editor, window, cx| {
-            editor.set_text("Hello @", window, cx);
+            editor.set_text("Hello @file ", window, cx);
             let buffer = editor.buffer().read(cx).as_singleton().unwrap();
             let completion_provider = editor.completion_provider().unwrap();
             completion_provider.completions(

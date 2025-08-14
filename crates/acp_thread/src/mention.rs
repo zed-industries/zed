@@ -286,7 +286,7 @@ mod tests {
                 abs_path,
                 is_directory,
             } => {
-                assert_eq!(abs_path.to_str().unwrap(), "/path/to/dir");
+                assert_eq!(abs_path.to_str().unwrap(), "/path/to/dir/");
                 assert!(is_directory);
             }
             _ => panic!("Expected File variant"),
