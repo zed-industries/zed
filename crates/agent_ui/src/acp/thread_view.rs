@@ -487,8 +487,11 @@ impl AcpThreadView {
                 let len = thread.read(cx).entries().len();
                 let index = len - 1;
                 self.entry_view_state.sync_entry(
-                    self.workspace.clone(),
-                    thread.clone(),
+                    &self.workspace,
+                    &self.project,
+                    &self.thread_store,
+                    &self.text_thread_store,
+                    &thread,
                     index,
                     window,
                     cx,
@@ -497,8 +500,11 @@ impl AcpThreadView {
             }
             AcpThreadEvent::EntryUpdated(index) => {
                 self.entry_view_state.sync_entry(
-                    self.workspace.clone(),
-                    thread.clone(),
+                    &self.workspace,
+                    &self.project,
+                    &self.thread_store,
+                    &self.text_thread_store,
+                    &thread,
                     *index,
                     window,
                     cx,
@@ -1176,9 +1182,7 @@ impl AcpThreadView {
                     Empty.into_any_element()
                 }
             }
-            ToolCallContent::Diff(diff) => {
-                self.render_diff_editor(entry_ix, &diff.read(cx).multibuffer(), cx)
-            }
+            ToolCallContent::Diff(diff) => self.render_diff_editor(entry_ix, &diff, cx),
             ToolCallContent::Terminal(terminal) => {
                 self.render_terminal_tool_call(entry_ix, terminal, tool_call, window, cx)
             }
@@ -1325,7 +1329,7 @@ impl AcpThreadView {
     fn render_diff_editor(
         &self,
         entry_ix: usize,
-        multibuffer: &Entity<MultiBuffer>,
+        diff: &Entity<acp_thread::Diff>,
         cx: &Context<Self>,
     ) -> AnyElement {
         v_flex()
@@ -1334,7 +1338,7 @@ impl AcpThreadView {
             .border_color(self.tool_card_border_color(cx))
             .child(
                 if let Some(entry) = self.entry_view_state.entry(entry_ix)
-                    && let Some(editor) = entry.editor_for_diff(&multibuffer)
+                    && let Some(editor) = entry.editor_for_diff(&diff)
                 {
                     editor.clone().into_any_element()
                 } else {
@@ -3633,8 +3637,14 @@ pub(crate) mod tests {
         });
 
         thread_view.read_with(cx, |view, _| {
-            assert_eq!(view.entry_view_state.entry(0).unwrap().len(), 0);
-            assert_eq!(view.entry_view_state.entry(1).unwrap().len(), 1);
+            assert!(
+                view.entry_view_state
+                    .entry(0)
+                    .unwrap()
+                    .message_editor()
+                    .is_some()
+            );
+            assert!(view.entry_view_state.entry(1).unwrap().has_content());
         });
 
         // Second user message
@@ -3671,10 +3681,22 @@ pub(crate) mod tests {
         });
 
         thread_view.read_with(cx, |view, _| {
-            assert_eq!(view.entry_view_state.entry(0).unwrap().len(), 0);
-            assert_eq!(view.entry_view_state.entry(1).unwrap().len(), 1);
-            assert_eq!(view.entry_view_state.entry(2).unwrap().len(), 0);
-            assert_eq!(view.entry_view_state.entry(3).unwrap().len(), 1);
+            assert!(
+                view.entry_view_state
+                    .entry(0)
+                    .unwrap()
+                    .message_editor()
+                    .is_some()
+            );
+            assert!(view.entry_view_state.entry(1).unwrap().has_content());
+            assert!(
+                view.entry_view_state
+                    .entry(2)
+                    .unwrap()
+                    .message_editor()
+                    .is_some()
+            );
+            assert!(view.entry_view_state.entry(3).unwrap().has_content());
         });
 
         // Rewind to first message
@@ -3690,8 +3712,14 @@ pub(crate) mod tests {
         });
 
         thread_view.read_with(cx, |view, _| {
-            assert_eq!(view.entry_view_state.entry(0).unwrap().len(), 0);
-            assert_eq!(view.entry_view_state.entry(1).unwrap().len(), 1);
+            assert!(
+                view.entry_view_state
+                    .entry(0)
+                    .unwrap()
+                    .message_editor()
+                    .is_some()
+            );
+            assert!(view.entry_view_state.entry(1).unwrap().has_content());
 
             // Old views should be dropped
             assert!(view.entry_view_state.entry(2).is_none());
