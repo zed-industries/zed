@@ -1,7 +1,7 @@
 use crate::{Project, ProjectPath};
 use anyhow::Result;
 use collections::HashMap;
-use gpui::{App, AppContext as _, Context, Entity, Task, WeakEntity};
+use gpui::{App, AppContext as _, AsyncApp, Context, Entity, Task, WeakEntity};
 use itertools::Itertools;
 use language::LanguageName;
 use remote::ssh_session::SshArgs;
@@ -122,12 +122,12 @@ impl Project {
 
         cx.spawn(async move |project, cx| {
             let python_venv_directory = if let Some(path) = path {
-                project
-                    .update(cx, |this, cx| {
-                        this.python_venv_directory(path, venv.clone(), cx)
-                    })?
-                    .await
-                    .zip(Some(venv))
+                match project.upgrade() {
+                    Some(project) => Self::python_venv_directory(project, path, venv.clone(), cx)
+                        .await?
+                        .zip(Some(venv)),
+                    None => None,
+                }
             } else {
                 None
             };
@@ -166,27 +166,18 @@ impl Project {
                     };
 
                     let activate_keyword = match venv_settings.activate_script {
-                        terminal_settings::ActivateScript::Default => match std::env::consts::OS {
-                            "windows" => ".",
-                            _ => ".",
-                        },
+                        terminal_settings::ActivateScript::Default => ".",
                         terminal_settings::ActivateScript::Nushell => "overlay use",
                         terminal_settings::ActivateScript::PowerShell => ".",
                         terminal_settings::ActivateScript::Pyenv => "pyenv",
                         _ => "source",
                     };
 
-                    let line_ending = match std::env::consts::OS {
-                        "windows" => "\r",
-                        _ => "\n",
-                    };
+                    let line_ending = if cfg!(windows) { '\r' } else { 'n' };
 
                     if venv_settings.venv_name.is_empty() {
                         let path = python_venv_directory
-                            .join(match std::env::consts::OS {
-                                "windows" => "Scripts",
-                                _ => "bin",
-                            })
+                            .join(BINARY_DIR)
                             .join(activate_script_name)
                             .to_string_lossy()
                             .to_string();
@@ -486,96 +477,89 @@ impl Project {
         })
     }
 
-    fn python_venv_directory(
-        &self,
+    async fn python_venv_directory(
+        this: Entity<Self>,
         abs_path: Arc<Path>,
         venv_settings: VenvSettings,
-        cx: &Context<Project>,
-    ) -> Task<Option<PathBuf>> {
-        cx.spawn(async move |this, cx| {
-            if let Some((worktree, relative_path)) = this
-                .update(cx, |this, cx| this.find_worktree(&abs_path, cx))
-                .ok()?
-            {
-                let toolchain = this
-                    .update(cx, |this, cx| {
-                        this.active_toolchain(
-                            ProjectPath {
-                                worktree_id: worktree.read(cx).id(),
-                                path: relative_path.into(),
-                            },
-                            LanguageName::new("Python"),
-                            cx,
-                        )
-                    })
-                    .ok()?
-                    .await;
+        cx: &mut AsyncApp,
+    ) -> Result<Option<PathBuf>> {
+        let Some((worktree, relative_path)) =
+            this.update(cx, |this, cx| this.find_worktree(&abs_path, cx))?
+        else {
+            return Ok(None);
+        };
+        let toolchain = this
+            .update(cx, |this, cx| {
+                this.active_toolchain(
+                    ProjectPath {
+                        worktree_id: worktree.read(cx).id(),
+                        path: relative_path.into(),
+                    },
+                    LanguageName::new("Python"),
+                    cx,
+                )
+            })?
+            .await;
 
-                if let Some(toolchain) = toolchain {
-                    let toolchain_path = Path::new(toolchain.path.as_ref());
-                    return Some(toolchain_path.parent()?.parent()?.to_path_buf());
+        if let Some(toolchain) = toolchain {
+            let toolchain_path = Path::new(toolchain.path.as_ref());
+            return Ok(toolchain_path
+                .parent()
+                .and_then(|p| Some(p.parent()?.to_path_buf())));
+        }
+
+        let Some(venv_settings) = venv_settings.as_option() else {
+            return Ok(None);
+        };
+
+        let tool = this.update(cx, |this, cx| {
+            venv_settings
+                .directories
+                .iter()
+                .map(|name| abs_path.join(name))
+                .find(|venv_path| {
+                    let bin_path = venv_path.join(BINARY_DIR);
+                    this.find_worktree(&bin_path, cx)
+                        .and_then(|(worktree, relative_path)| {
+                            worktree.read(cx).entry_for_path(&relative_path)
+                        })
+                        .is_some_and(|entry| entry.is_dir())
+                })
+        })?;
+
+        if let Some(toolchain_path) = tool {
+            return Ok(Some(toolchain_path));
+        }
+
+        let r = this.update(cx, move |_, cx| {
+            let fs = worktree.read(cx).as_local()?.fs().clone();
+            let map: Vec<_> = venv_settings
+                .directories
+                .iter()
+                .map(|name| abs_path.join(name))
+                .collect();
+            Some(cx.spawn(async move |_, _| {
+                for venv_path in map {
+                    let bin_path = venv_path.join(BINARY_DIR);
+                    // One-time synchronous check is acceptable for terminal/task initialization
+                    // we are within a spawned future anyways
+                    let exists = fs
+                        .metadata(&bin_path)
+                        .await
+                        .ok()
+                        .flatten()
+                        .map_or(false, |meta| meta.is_dir);
+                    if exists {
+                        return Some(venv_path);
+                    }
                 }
-            }
-            let venv_settings = venv_settings.as_option()?;
-            this.update(cx, move |this, cx| {
-                if let Some(path) = this.find_venv_in_worktree(&abs_path, &venv_settings, cx) {
-                    return Some(path);
-                }
-                this.find_venv_on_filesystem(&abs_path, &venv_settings, cx)
-            })
-            .ok()
-            .flatten()
+                None
+            }))
+        })?;
+        Ok(match r {
+            Some(task) => task.await,
+            None => None,
         })
-    }
-
-    fn find_venv_in_worktree(
-        &self,
-        abs_path: &Path,
-        venv_settings: &terminal_settings::VenvSettingsContent,
-        cx: &App,
-    ) -> Option<PathBuf> {
-        let bin_dir_name = match std::env::consts::OS {
-            "windows" => "Scripts",
-            _ => "bin",
-        };
-        venv_settings
-            .directories
-            .iter()
-            .map(|name| abs_path.join(name))
-            .find(|venv_path| {
-                let bin_path = venv_path.join(bin_dir_name);
-                self.find_worktree(&bin_path, cx)
-                    .and_then(|(worktree, relative_path)| {
-                        worktree.read(cx).entry_for_path(&relative_path)
-                    })
-                    .is_some_and(|entry| entry.is_dir())
-            })
-    }
-
-    fn find_venv_on_filesystem(
-        &self,
-        abs_path: &Path,
-        venv_settings: &terminal_settings::VenvSettingsContent,
-        cx: &App,
-    ) -> Option<PathBuf> {
-        let (worktree, _) = self.find_worktree(abs_path, cx)?;
-        let fs = worktree.read(cx).as_local()?.fs();
-        let bin_dir_name = match std::env::consts::OS {
-            "windows" => "Scripts",
-            _ => "bin",
-        };
-        venv_settings
-            .directories
-            .iter()
-            .map(|name| abs_path.join(name))
-            .find(|venv_path| {
-                let bin_path = venv_path.join(bin_dir_name);
-                // One-time synchronous check is acceptable for terminal/task initialization
-                smol::block_on(fs.metadata(&bin_path))
-                    .ok()
-                    .flatten()
-                    .map_or(false, |meta| meta.is_dir)
-            })
     }
 
     fn activate_script_kind(shell: Option<&str>) -> ActivateScript {
@@ -598,6 +582,12 @@ impl Project {
         &self.terminals.local_handles
     }
 }
+
+const BINARY_DIR: &str = if cfg!(target_os = "windows") {
+    "Scripts"
+} else {
+    "bin"
+};
 
 pub fn wrap_for_ssh(
     ssh_command: &SshCommand,
