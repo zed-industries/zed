@@ -43,6 +43,7 @@ impl EntryViewState {
 
         match thread_entry {
             AgentThreadEntry::UserMessage(message) => {
+                let has_id = message.id.is_some();
                 let chunks = message.chunks.clone();
                 let message_editor = cx.new(|cx| {
                     let mut editor = MessageEditor::new(
@@ -57,6 +58,9 @@ impl EntryViewState {
                         window,
                         cx,
                     );
+                    if !has_id {
+                        editor.set_read_only(true, cx);
+                    }
                     editor.set_message(&chunks, window, cx);
                     editor
                 });

@@ -234,6 +234,13 @@ impl MessageEditor {
         }
     }
 
+    pub fn set_read_only(&mut self, read_only: bool, cx: &mut Context<Self>) {
+        self.editor.update(cx, |message_editor, cx| {
+            message_editor.set_read_only(read_only);
+            cx.notify()
+        });
+    }
+
     pub fn set_mode(&mut self, mode: EditorMode, cx: &mut Context<Self>) {
         self.editor.update(cx, |editor, cx| {
             editor.set_mode(mode);
