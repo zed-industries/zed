@@ -188,6 +188,7 @@ impl Render for StashList {
 struct StashEntryMatch {
     entry: StashEntry,
     positions: Vec<usize>,
+    formatted_timestamp: String,
 }
 
 pub struct StashListDelegate {
@@ -200,6 +201,7 @@ pub struct StashListDelegate {
     modifiers: Modifiers,
     max_width: Rems,
     focus_handle: FocusHandle,
+    timezone: UtcOffset,
 }
 
 impl StashListDelegate {
@@ -210,6 +212,10 @@ impl StashListDelegate {
         _window: &mut Window,
         cx: &mut Context<StashList>,
     ) -> Self {
+        let timezone =
+            UtcOffset::from_whole_seconds(chrono::Local::now().offset().local_minus_utc())
+                .unwrap_or(UtcOffset::UTC);
+
         Self {
             matches: vec![],
             repo,
@@ -220,11 +226,23 @@ impl StashListDelegate {
             modifiers: Default::default(),
             max_width,
             focus_handle: cx.focus_handle(),
+            timezone,
         }
     }
 
     fn format_message(ix: usize, message: &String) -> String {
         format!("#{}: {}", ix, message)
+    }
+
+    fn format_timestamp(timestamp: i64, timezone: UtcOffset) -> String {
+        let timestamp =
+            OffsetDateTime::from_unix_timestamp(timestamp).unwrap_or(OffsetDateTime::now_utc());
+        time_format::format_localized_timestamp(
+            timestamp,
+            OffsetDateTime::now_utc(),
+            timezone,
+            time_format::TimestampFormat::EnhancedAbsolute,
+        )
     }
 
     fn drop_stash_at(&self, ix: usize, window: &mut Window, cx: &mut Context<Picker<Self>>) {
@@ -304,13 +322,20 @@ impl PickerDelegate for StashListDelegate {
             return Task::ready(());
         };
 
+        let timezone = self.timezone;
+
         cx.spawn_in(window, async move |picker, cx| {
             let matches: Vec<StashEntryMatch> = if query.is_empty() {
                 all_stash_entries
                     .into_iter()
-                    .map(|entry| StashEntryMatch {
-                        entry,
-                        positions: Vec::new(),
+                    .map(|entry| {
+                        let formatted_timestamp = Self::format_timestamp(entry.timestamp, timezone);
+
+                        StashEntryMatch {
+                            entry,
+                            positions: Vec::new(),
+                            formatted_timestamp,
+                        }
                     })
                     .collect()
             } else {
@@ -335,9 +360,15 @@ impl PickerDelegate for StashListDelegate {
                 )
                 .await
                 .into_iter()
-                .map(|candidate| StashEntryMatch {
-                    entry: all_stash_entries[candidate.candidate_id].clone(),
-                    positions: candidate.positions,
+                .map(|candidate| {
+                    let entry = all_stash_entries[candidate.candidate_id].clone();
+                    let formatted_timestamp = Self::format_timestamp(entry.timestamp, timezone);
+
+                    StashEntryMatch {
+                        entry,
+                        positions: candidate.positions,
+                        formatted_timestamp,
+                    }
                 })
                 .collect()
             };
@@ -418,21 +449,9 @@ impl PickerDelegate for StashListDelegate {
         .size(LabelSize::Small)
         .color(Color::Muted);
 
-        let timestamp = OffsetDateTime::from_unix_timestamp(entry_match.entry.timestamp)
-            .unwrap_or(OffsetDateTime::now_utc());
-        let timezone =
-            UtcOffset::from_whole_seconds(chrono::Local::now().offset().local_minus_utc())
-                .unwrap_or(UtcOffset::UTC);
-
-        let absolute_timestamp = time_format::format_localized_timestamp(
-            timestamp,
-            OffsetDateTime::now_utc(),
-            timezone,
-            time_format::TimestampFormat::EnhancedAbsolute,
-        );
         let tooltip_text = format!(
             "stash@{{{}}} created {}",
-            entry_match.entry.index, absolute_timestamp
+            entry_match.entry.index, entry_match.formatted_timestamp
         );
 
         Some(
