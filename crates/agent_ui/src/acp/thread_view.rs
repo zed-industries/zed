@@ -10,6 +10,7 @@ use agent_servers::AgentServer;
 use agent_settings::{AgentSettings, CompletionMode, NotifyWhenAgentWaiting};
 use audio::{Audio, Sound};
 use buffer_diff::BufferDiff;
+use client::zed_urls;
 use collections::{HashMap, HashSet};
 use editor::scroll::Autoscroll;
 use editor::{
@@ -17,12 +18,13 @@ use editor::{
     EditorStyle, MinimapVisibility, MultiBuffer, PathKey, SelectionEffects,
 };
 use file_icons::FileIcons;
+use futures::future::Shared;
 use gpui::{
-    Action, Animation, AnimationExt, App, BorderStyle, EdgesRefinement, Empty, Entity, EntityId,
-    FocusHandle, Focusable, Hsla, Length, ListOffset, ListState, MouseButton, PlatformDisplay,
-    SharedString, Stateful, StyleRefinement, Subscription, Task, TextStyle, TextStyleRefinement,
-    Transformation, UnderlineStyle, WeakEntity, Window, WindowHandle, div, linear_color_stop,
-    linear_gradient, list, percentage, point, prelude::*, pulsating_between,
+    Action, Animation, AnimationExt, App, BorderStyle, ClipboardItem, EdgesRefinement, Empty,
+    Entity, EntityId, FocusHandle, Focusable, Hsla, Length, ListOffset, ListState, MouseButton,
+    PlatformDisplay, SharedString, Stateful, StyleRefinement, Subscription, Task, TextStyle,
+    TextStyleRefinement, Transformation, UnderlineStyle, WeakEntity, Window, WindowHandle, div,
+    linear_color_stop, linear_gradient, list, percentage, point, prelude::*, pulsating_between,
 };
 use language::language_settings::SoftWrap;
 use language::{Buffer, Language};
@@ -42,8 +44,8 @@ use terminal_view::TerminalView;
 use text::{Anchor, BufferSnapshot};
 use theme::ThemeSettings;
 use ui::{
-    Disclosure, Divider, DividerColor, KeyBinding, PopoverMenuHandle, Scrollbar, ScrollbarState,
-    Tooltip, prelude::*,
+    Callout, Disclosure, Divider, DividerColor, KeyBinding, PopoverMenuHandle, Scrollbar,
+    ScrollbarState, Tooltip, prelude::*,
 };
 use util::{ResultExt, size::format_file_size, time::duration_alt_display};
 use workspace::{CollaboratorId, Workspace};
@@ -64,12 +66,17 @@ use crate::{
 const RESPONSE_PADDING_X: Pixels = px(19.);
 
 enum ThreadError {
-    Other(Entity<Markdown>),
+    PaymentRequired,
+    Other(SharedString),
 }
 
 impl ThreadError {
-    fn from_err(error: anyhow::Error, cx: &mut App) -> Self {
-        Self::Other(cx.new(|cx| Markdown::new(format!("Error: {error}").into(), None, None, cx)))
+    fn from_err(error: anyhow::Error) -> Self {
+        if error.is::<language_model::PaymentRequiredError>() {
+            Self::PaymentRequired
+        } else {
+            Self::Other(error.to_string().into())
+        }
     }
 }
 
@@ -89,7 +96,7 @@ pub struct AcpThreadView {
     mention_set: Arc<Mutex<MentionSet>>,
     notifications: Vec<WindowHandle<AgentNotification>>,
     notification_subscriptions: HashMap<WindowHandle<AgentNotification>, Vec<Subscription>>,
-    last_error: Option<ThreadError>,
+    thread_error: Option<ThreadError>,
     list_state: ListState,
     scrollbar_state: ScrollbarState,
     auth_task: Option<Task<()>>,
@@ -224,7 +231,7 @@ impl AcpThreadView {
             terminal_views: Default::default(),
             list_state: list_state.clone(),
             scrollbar_state: ScrollbarState::new(list_state).parent_entity(&cx.entity()),
-            last_error: None,
+            thread_error: None,
             auth_task: None,
             expanded_tool_calls: HashSet::default(),
             expanded_thinking_blocks: HashSet::default(),
@@ -382,7 +389,7 @@ impl AcpThreadView {
     }
 
     pub fn cancel(&mut self, cx: &mut Context<Self>) {
-        self.last_error.take();
+        self.thread_error.take();
 
         if let Some(thread) = self.thread() {
             self._cancel_task = Some(thread.update(cx, |thread, cx| thread.cancel(cx)));
@@ -419,7 +426,7 @@ impl AcpThreadView {
     }
 
     fn chat(&mut self, _: &Chat, window: &mut Window, cx: &mut Context<Self>) {
-        self.last_error.take();
+        self.thread_error.take();
 
         let mut ix = 0;
         let mut chunks: Vec<acp::ContentBlock> = Vec::new();
@@ -700,7 +707,12 @@ impl AcpThreadView {
     }
 
     fn handle_thread_error(&mut self, error: anyhow::Error, cx: &mut Context<Self>) {
-        self.last_error = Some(ThreadError::from_err(error, cx));
+        self.thread_error = Some(ThreadError::from_err(error));
+        cx.notify();
+    }
+
+    fn clear_thread_error(&mut self, cx: &mut Context<Self>) {
+        self.thread_error = None;
         cx.notify();
     }
 
@@ -888,7 +900,7 @@ impl AcpThreadView {
             return;
         };
 
-        self.last_error.take();
+        self.thread_error.take();
         let authenticate = connection.authenticate(method, cx);
         self.auth_task = Some(cx.spawn_in(window, {
             let project = self.project.clone();
@@ -3234,24 +3246,6 @@ impl AcpThreadView {
             .children(Scrollbar::vertical(self.scrollbar_state.clone()).map(|s| s.auto_hide(cx)))
     }
 
-    fn render_last_error(&self, window: &mut Window, cx: &mut Context<'_, Self>) -> Option<Div> {
-        let content = match self.last_error.as_ref()? {
-            ThreadError::Other(markdown) => self
-                .render_markdown(markdown.clone(), default_markdown_style(false, window, cx))
-                .into_any(),
-        };
-
-        Some(
-            div()
-                .p_2()
-                .text_xs()
-                .border_t_1()
-                .border_color(cx.theme().colors().border)
-                .bg(cx.theme().status().error_background)
-                .child(content),
-        )
-    }
-
     fn settings_changed(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         for diff_editor in self.diff_editors.values() {
             diff_editor.update(cx, |diff_editor, cx| {
@@ -3317,6 +3311,88 @@ impl AcpThreadView {
                 confirm(CompletionIntent::Complete, window, cx);
             }
         }
+    }
+}
+
+impl AcpThreadView {
+    fn render_thread_error(&self, cx: &mut Context<'_, Self>) -> Option<Callout> {
+        Some(match self.thread_error.as_ref()? {
+            ThreadError::PaymentRequired => self.render_payment_required_error(cx),
+            ThreadError::Other(error) => self.render_any_thread_error(error.clone(), cx),
+        })
+    }
+
+    fn render_any_thread_error(&self, error: SharedString, cx: &mut Context<'_, Self>) -> Callout {
+        let icon = Icon::new(IconName::XCircle)
+            .size(IconSize::Small)
+            .color(Color::Error);
+
+        Callout::new()
+            .icon(icon)
+            .title("Error")
+            .description(error.clone())
+            .secondary_action(self.create_copy_button(error.to_string()))
+            .primary_action(self.dismiss_error_button(cx))
+            .bg_color(self.error_callout_bg(cx))
+    }
+
+    fn render_payment_required_error(&self, cx: &mut Context<Self>) -> Callout {
+        const ERROR_MESSAGE: &str =
+            "You reached your free usage limit. Upgrade to Zed Pro for more prompts.";
+
+        let icon = Icon::new(IconName::XCircle)
+            .size(IconSize::Small)
+            .color(Color::Error);
+
+        Callout::new()
+            .icon(icon)
+            .title("Free Usage Exceeded")
+            .description(ERROR_MESSAGE)
+            .tertiary_action(self.upgrade_button(cx))
+            .secondary_action(self.create_copy_button(ERROR_MESSAGE))
+            .primary_action(self.dismiss_error_button(cx))
+            .bg_color(self.error_callout_bg(cx))
+    }
+
+    fn create_copy_button(&self, message: impl Into<String>) -> impl IntoElement {
+        let message = message.into();
+
+        IconButton::new("copy", IconName::Copy)
+            .icon_size(IconSize::Small)
+            .icon_color(Color::Muted)
+            .tooltip(Tooltip::text("Copy Error Message"))
+            .on_click(move |_, _, cx| {
+                cx.write_to_clipboard(ClipboardItem::new_string(message.clone()))
+            })
+    }
+
+    fn dismiss_error_button(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        IconButton::new("dismiss", IconName::Close)
+            .icon_size(IconSize::Small)
+            .icon_color(Color::Muted)
+            .tooltip(Tooltip::text("Dismiss Error"))
+            .on_click(cx.listener({
+                move |this, _, _, cx| {
+                    this.clear_thread_error(cx);
+                    cx.notify();
+                }
+            }))
+    }
+
+    fn upgrade_button(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        Button::new("upgrade", "Upgrade")
+            .label_size(LabelSize::Small)
+            .style(ButtonStyle::Tinted(ui::TintColor::Accent))
+            .on_click(cx.listener({
+                move |this, _, _, cx| {
+                    this.clear_thread_error(cx);
+                    cx.open_url(&zed_urls::upgrade_to_zed_pro_url(cx));
+                }
+            }))
+    }
+
+    fn error_callout_bg(&self, cx: &Context<Self>) -> Hsla {
+        cx.theme().status().error.opacity(0.08)
     }
 }
 
@@ -3422,7 +3498,7 @@ impl Render for AcpThreadView {
                 }
                 _ => this,
             })
-            .children(self.render_last_error(window, cx))
+            .children(self.render_thread_error(cx))
             .child(self.render_message_editor(window, cx))
     }
 }
