@@ -1,4 +1,4 @@
-use anyhow::{Context as _, ensure};
+use anyhow::{Context as _, Error, ensure};
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use collections::HashMap;
@@ -952,7 +952,7 @@ impl pet_core::os_environment::Environment for EnvironmentApi<'_> {
 }
 
 pub(crate) struct PyLspAdapter {
-    python_venv_base: OnceCell<Result<Arc<Path>, String>>,
+    python_venv_base: OnceCell<Result<Arc<Path>, Arc<Error>>>,
 }
 impl PyLspAdapter {
     const SERVER_NAME: LanguageServerName = LanguageServerName::new_static("pylsp");
@@ -994,13 +994,9 @@ impl PyLspAdapter {
         None
     }
 
-    async fn base_venv(&self, delegate: &dyn LspAdapterDelegate) -> Result<Arc<Path>, String> {
+    async fn base_venv(&self, delegate: &dyn LspAdapterDelegate) -> Result<Arc<Path>, Arc<Error>> {
         self.python_venv_base
-            .get_or_init(move || async move {
-                Self::ensure_venv(delegate)
-                    .await
-                    .map_err(|e| format!("{e}"))
-            })
+            .get_or_init(move || async move { Self::ensure_venv(delegate).await.map_err(Arc::new) })
             .await
             .clone()
     }
@@ -1254,7 +1250,7 @@ impl LspAdapter for PyLspAdapter {
 }
 
 pub(crate) struct BasedPyrightLspAdapter {
-    python_venv_base: OnceCell<Result<Arc<Path>, String>>,
+    python_venv_base: OnceCell<Result<Arc<Path>, Arc<Error>>>,
 }
 
 impl BasedPyrightLspAdapter {
@@ -1301,13 +1297,9 @@ impl BasedPyrightLspAdapter {
         None
     }
 
-    async fn base_venv(&self, delegate: &dyn LspAdapterDelegate) -> Result<Arc<Path>, String> {
+    async fn base_venv(&self, delegate: &dyn LspAdapterDelegate) -> Result<Arc<Path>, Arc<Error>> {
         self.python_venv_base
-            .get_or_init(move || async move {
-                Self::ensure_venv(delegate)
-                    .await
-                    .map_err(|e| format!("{e}"))
-            })
+            .get_or_init(move || async move { Self::ensure_venv(delegate).await.map_err(Arc::new) })
             .await
             .clone()
     }
