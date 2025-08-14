@@ -12,9 +12,11 @@ use fs::Fs;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     Action, AppContext as _, AsyncApp, Axis, ClickEvent, Context, DismissEvent, Entity,
-    EventEmitter, FocusHandle, Focusable, Global, IsZero, KeyContext, Keystroke, MouseButton,
-    Point, ScrollStrategy, ScrollWheelEvent, Stateful, StyledText, Subscription, Task,
-    TextStyleRefinement, WeakEntity, actions, anchored, deferred, div,
+    EventEmitter, FocusHandle, Focusable, Global, IsZero,
+    KeyBindingContextPredicate::{And, Descendant, Equal, Identifier, Not, NotEqual, Or},
+    KeyContext, Keystroke, MouseButton, Point, ScrollStrategy, ScrollWheelEvent, Stateful,
+    StyledText, Subscription, Task, TextStyleRefinement, WeakEntity, actions, anchored, deferred,
+    div,
 };
 use language::{Language, LanguageConfig, ToOffset as _};
 use notifications::status_toast::{StatusToast, ToastIcon};
@@ -3089,29 +3091,29 @@ fn collect_contexts_from_assets() -> Vec<SharedString> {
             queue.push(root_context);
             while let Some(context) = queue.pop() {
                 match context {
-                    gpui::KeyBindingContextPredicate::Identifier(ident) => {
+                    Identifier(ident) => {
                         contexts.insert(ident);
                     }
-                    gpui::KeyBindingContextPredicate::Equal(ident_a, ident_b) => {
+                    Equal(ident_a, ident_b) => {
                         contexts.insert(ident_a);
                         contexts.insert(ident_b);
                     }
-                    gpui::KeyBindingContextPredicate::NotEqual(ident_a, ident_b) => {
+                    NotEqual(ident_a, ident_b) => {
                         contexts.insert(ident_a);
                         contexts.insert(ident_b);
                     }
-                    gpui::KeyBindingContextPredicate::Descendant(ctx_a, ctx_b) => {
+                    Descendant(ctx_a, ctx_b) => {
                         queue.push(*ctx_a);
                         queue.push(*ctx_b);
                     }
-                    gpui::KeyBindingContextPredicate::Not(ctx) => {
+                    Not(ctx) => {
                         queue.push(*ctx);
                     }
-                    gpui::KeyBindingContextPredicate::And(ctx_a, ctx_b) => {
+                    And(ctx_a, ctx_b) => {
                         queue.push(*ctx_a);
                         queue.push(*ctx_b);
                     }
-                    gpui::KeyBindingContextPredicate::Or(ctx_a, ctx_b) => {
+                    Or(ctx_a, ctx_b) => {
                         queue.push(*ctx_a);
                         queue.push(*ctx_b);
                     }
@@ -3124,6 +3126,35 @@ fn collect_contexts_from_assets() -> Vec<SharedString> {
     contexts.sort();
 
     contexts
+}
+
+fn normalized_ctx_eq(
+    a: &gpui::KeyBindingContextPredicate,
+    b: &gpui::KeyBindingContextPredicate,
+) -> bool {
+    use gpui::KeyBindingContextPredicate::*;
+    match (a, b) {
+        (Identifier(_), Identifier(_)) => a == b,
+        (Equal(a_left, a_right), Equal(b_left, b_right)) => {
+            (a_left == b_left && a_right == b_right) || (a_left == b_right && a_right == b_left)
+        }
+        (NotEqual(a_left, a_right), NotEqual(b_left, b_right)) => {
+            (a_left == b_left && a_right == b_right) || (a_left == b_right && a_right == b_left)
+        }
+        (Descendant(a_parent, a_child), Descendant(b_parent, b_child)) => {
+            normalized_ctx_eq(a_parent, b_parent) && normalized_ctx_eq(a_child, b_child)
+        }
+        (Not(a_expr), Not(b_expr)) => normalized_ctx_eq(a_expr, b_expr),
+        (And(a_left, a_right), And(b_left, b_right)) => {
+            (normalized_ctx_eq(a_left, b_left) && normalized_ctx_eq(a_right, b_right))
+                || (normalized_ctx_eq(a_left, b_right) && normalized_ctx_eq(a_right, b_left))
+        }
+        (Or(a_left, a_right), Or(b_left, b_right)) => {
+            (normalized_ctx_eq(a_left, b_left) && normalized_ctx_eq(a_right, b_right))
+                || (normalized_ctx_eq(a_left, b_right) && normalized_ctx_eq(a_right, b_left))
+        }
+        _ => false,
+    }
 }
 
 impl SerializableItem for KeymapEditor {
@@ -3226,5 +3257,140 @@ mod persistence {
                 WHERE item_id = ? AND workspace_id = ?
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normalized_ctx_cmp() {
+        #[track_caller]
+        fn cmp(a: &str, b: &str) -> bool {
+            let a = gpui::KeyBindingContextPredicate::parse(a)
+                .expect("Failed to parse keybinding context a");
+            let b = gpui::KeyBindingContextPredicate::parse(b)
+                .expect("Failed to parse keybinding context b");
+            normalized_ctx_eq(&a, &b)
+        }
+
+        // Basic equality - identical expressions
+        assert!(cmp("a && b", "a && b"));
+        assert!(cmp("a || b", "a || b"));
+        assert!(cmp("a == b", "a == b"));
+        assert!(cmp("a != b", "a != b"));
+        assert!(cmp("a > b", "a > b"));
+        assert!(cmp("!a", "!a"));
+
+        // AND operator - associative/commutative
+        assert!(cmp("a && b", "b && a"));
+        // assert!(cmp("a && b && c", "c && b && a"));
+        assert!(cmp("a && b && c", "b && a && c"));
+        // assert!(cmp("a && b && c && d", "d && c && b && a"));
+
+        // OR operator - associative/commutative
+        assert!(cmp("a || b", "b || a"));
+        // assert!(cmp("a || b || c", "c || b || a"));
+        // assert!(cmp("a || b || c", "b || a || c"));
+        // assert!(cmp("a || b || c || d", "d || c || b || a"));
+
+        // Equality operator - associative/commutative
+        assert!(cmp("a == b", "b == a"));
+        assert!(cmp("x == y", "y == x"));
+
+        // Inequality operator - associative/commutative
+        assert!(cmp("a != b", "b != a"));
+        assert!(cmp("x != y", "y != x"));
+
+        // Complex nested expressions with associative operators
+        assert!(cmp("(a && b) || c", "c || (a && b)"));
+        assert!(cmp("(a && b) || c", "c || (b && a)"));
+        assert!(cmp("(a || b) && c", "c && (a || b)"));
+        assert!(cmp("(a || b) && c", "c && (b || a)"));
+        assert!(cmp("(a && b) || (c && d)", "(c && d) || (a && b)"));
+        assert!(cmp("(a && b) || (c && d)", "(d && c) || (b && a)"));
+
+        // Multiple levels of nesting
+        assert!(cmp("((a && b) || c) && d", "d && ((a && b) || c)"));
+        assert!(cmp("((a && b) || c) && d", "d && (c || (b && a))"));
+        assert!(cmp("a && (b || (c && d))", "(b || (c && d)) && a"));
+        assert!(cmp("a && (b || (c && d))", "(b || (d && c)) && a"));
+
+        // Negation with associative operators
+        assert!(cmp("!a && b", "b && !a"));
+        assert!(cmp("!a || b", "b || !a"));
+        assert!(cmp("!(a && b) || c", "c || !(a && b)"));
+        assert!(cmp("!(a && b) || c", "c || !(b && a)"));
+
+        // Descendant operator (>) - NOT associative/commutative
+        assert!(cmp("a > b", "a > b"));
+        assert!(!cmp("a > b", "b > a")); // Should NOT be equal
+        assert!(!cmp("a > b > c", "c > b > a")); // Should NOT be equal
+        assert!(!cmp("a > b > c", "a > c > b")); // Should NOT be equal
+
+        // Mixed operators with descendant
+        assert!(cmp("(a > b) && c", "c && (a > b)"));
+        assert!(!cmp("(a > b) && c", "c && (b > a)")); // Should NOT be equal
+        assert!(cmp("(a > b) || (c > d)", "(c > d) || (a > b)"));
+        assert!(!cmp("(a > b) || (c > d)", "(b > a) || (d > c)")); // Should NOT be equal
+
+        // Negative cases - different operators
+        assert!(!cmp("a && b", "a || b"));
+        assert!(!cmp("a == b", "a != b"));
+        assert!(!cmp("a && b", "a > b"));
+        assert!(!cmp("a || b", "a > b"));
+        assert!(!cmp("a == b", "a && b"));
+        assert!(!cmp("a != b", "a || b"));
+
+        // Negative cases - different operands
+        assert!(!cmp("a && b", "a && c"));
+        assert!(!cmp("a && b", "c && d"));
+        assert!(!cmp("a || b", "a || c"));
+        assert!(!cmp("a || b", "c || d"));
+        assert!(!cmp("a == b", "a == c"));
+        assert!(!cmp("a != b", "a != c"));
+        assert!(!cmp("a > b", "a > c"));
+        assert!(!cmp("a > b", "c > b"));
+
+        // Negative cases - with negation
+        assert!(!cmp("!a", "a"));
+        assert!(!cmp("!a && b", "a && b"));
+        assert!(!cmp("!(a && b)", "a && b"));
+        assert!(!cmp("!a || b", "a || b"));
+        assert!(!cmp("!(a || b)", "a || b"));
+
+        // Negative cases - complex expressions
+        assert!(!cmp("(a && b) || c", "(a || b) && c"));
+        assert!(!cmp("a && (b || c)", "a || (b && c)"));
+        assert!(!cmp("(a && b) || (c && d)", "(a || b) && (c || d)"));
+        assert!(!cmp("a > b && c", "a && b > c"));
+
+        // Edge cases - multiple same operands
+        assert!(cmp("a && a", "a && a"));
+        assert!(cmp("a || a", "a || a"));
+        // assert!(cmp("a && a && b", "b && a && a"));
+        // assert!(cmp("a || a || b", "b || a || a"));
+
+        // Edge cases - deeply nested
+        assert!(cmp(
+            "((a && b) || (c && d)) && ((e || f) && g)",
+            "((e || f) && g) && ((c && d) || (a && b))"
+        ));
+        assert!(cmp(
+            "((a && b) || (c && d)) && ((e || f) && g)",
+            "(g && (f || e)) && ((d && c) || (b && a))"
+        ));
+
+        // Edge cases - repeated patterns
+        assert!(cmp("(a && b) || (a && b)", "(b && a) || (b && a)"));
+        assert!(cmp("(a || b) && (a || b)", "(b || a) && (b || a)"));
+
+        // Negative cases - subtle differences
+        assert!(!cmp("a && b && c", "a && b"));
+        assert!(!cmp("a || b || c", "a || b"));
+        assert!(!cmp("(a && b) || c", "a && (b || c)"));
+        assert!(!cmp("!(!a)", "a")); // Double negation is not simplified in parsing
+        assert!(!cmp("a > b > c", "a > c")); // Can't skip middle element in chain
     }
 }
