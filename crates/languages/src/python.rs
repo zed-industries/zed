@@ -22,6 +22,7 @@ use project::lsp_store::language_server_settings;
 use serde_json::{Value, json};
 use smol::lock::OnceCell;
 use std::cmp::Ordering;
+use std::ffi::OsStr;
 
 use parking_lot::Mutex;
 use std::str::FromStr;
@@ -335,36 +336,20 @@ impl LspAdapter for PythonLspAdapter {
                 }
                 let object = user_settings.as_object_mut().unwrap();
 
-                let interpreter_path = toolchain.path.to_string();
+                let interpreter_path = toolchain.path.as_ref();
 
-                // Detect if this is a virtual environment
-                if let Some(interpreter_dir) = Path::new(&interpreter_path).parent() {
-                    if let Some(venv_dir) = interpreter_dir.parent() {
-                        // Check if this looks like a virtual environment
-                        if venv_dir.join("pyvenv.cfg").exists()
-                            || venv_dir.join("bin/activate").exists()
-                            || venv_dir.join("Scripts/activate.bat").exists()
-                        {
-                            // Set venvPath and venv at the root level
-                            // This matches the format of a pyrightconfig.json file
-                            if let Some(parent) = venv_dir.parent() {
-                                // Use relative path if the venv is inside the workspace
-                                let venv_path = if parent == adapter.worktree_root_path() {
-                                    ".".to_string()
-                                } else {
-                                    parent.to_string_lossy().into_owned()
-                                };
-                                object.insert("venvPath".to_string(), Value::String(venv_path));
-                            }
-
-                            if let Some(venv_name) = venv_dir.file_name() {
-                                object.insert(
-                                    "venv".to_owned(),
-                                    Value::String(venv_name.to_string_lossy().into_owned()),
-                                );
-                            }
-                        }
-                    }
+                let (venv_path, venv) = detect_venv(&**adapter, interpreter_path);
+                if let Some(venv) = venv {
+                    object.insert(
+                        "venv".to_owned(),
+                        Value::String(venv.to_string_lossy().into_owned()),
+                    );
+                }
+                if let Some(venv_path) = venv_path {
+                    object.insert(
+                        "venvPath".to_string(),
+                        Value::String(venv_path.to_string_lossy().into_owned()),
+                    );
                 }
 
                 // Always set the python interpreter path
@@ -378,11 +363,11 @@ impl LspAdapter for PythonLspAdapter {
                 // Set both pythonPath and defaultInterpreterPath for compatibility
                 python.insert(
                     "pythonPath".to_owned(),
-                    Value::String(interpreter_path.clone()),
+                    Value::String(interpreter_path.to_owned()),
                 );
                 python.insert(
                     "defaultInterpreterPath".to_owned(),
-                    Value::String(interpreter_path),
+                    Value::String(interpreter_path.to_owned()),
                 );
             }
 
@@ -1027,6 +1012,12 @@ const BINARY_DIR: &str = if cfg!(target_os = "windows") {
     "bin"
 };
 
+const ACTIVATE_PATH: &str = if cfg!(target_os = "windows") {
+    "Scripts/activate.bat"
+} else {
+    "bin/activate"
+};
+
 #[async_trait(?Send)]
 impl LspAdapter for PyLspAdapter {
     fn name(&self) -> LanguageServerName {
@@ -1523,36 +1514,20 @@ impl LspAdapter for BasedPyrightLspAdapter {
                 }
                 let object = user_settings.as_object_mut().unwrap();
 
-                let interpreter_path = toolchain.path.to_string();
+                let interpreter_path = toolchain.path.as_ref();
 
-                // Detect if this is a virtual environment
-                if let Some(interpreter_dir) = Path::new(&interpreter_path).parent() {
-                    if let Some(venv_dir) = interpreter_dir.parent() {
-                        // Check if this looks like a virtual environment
-                        if venv_dir.join("pyvenv.cfg").exists()
-                            || venv_dir.join("bin/activate").exists()
-                            || venv_dir.join("Scripts/activate.bat").exists()
-                        {
-                            // Set venvPath and venv at the root level
-                            // This matches the format of a pyrightconfig.json file
-                            if let Some(parent) = venv_dir.parent() {
-                                // Use relative path if the venv is inside the workspace
-                                let venv_path = if parent == adapter.worktree_root_path() {
-                                    ".".to_string()
-                                } else {
-                                    parent.to_string_lossy().into_owned()
-                                };
-                                object.insert("venvPath".to_string(), Value::String(venv_path));
-                            }
-
-                            if let Some(venv_name) = venv_dir.file_name() {
-                                object.insert(
-                                    "venv".to_owned(),
-                                    Value::String(venv_name.to_string_lossy().into_owned()),
-                                );
-                            }
-                        }
-                    }
+                let (venv_path, venv) = detect_venv(&**adapter, interpreter_path);
+                if let Some(venv) = venv {
+                    object.insert(
+                        "venv".to_owned(),
+                        Value::String(venv.to_string_lossy().into_owned()),
+                    );
+                }
+                if let Some(venv_path) = venv_path {
+                    object.insert(
+                        "venvPath".to_string(),
+                        Value::String(venv_path.to_string_lossy().into_owned()),
+                    );
                 }
 
                 // Always set the python interpreter path
@@ -1566,11 +1541,11 @@ impl LspAdapter for BasedPyrightLspAdapter {
                 // Set both pythonPath and defaultInterpreterPath for compatibility
                 python.insert(
                     "pythonPath".to_owned(),
-                    Value::String(interpreter_path.clone()),
+                    Value::String(interpreter_path.to_owned()),
                 );
                 python.insert(
                     "defaultInterpreterPath".to_owned(),
-                    Value::String(interpreter_path),
+                    Value::String(interpreter_path.to_owned()),
                 );
             }
 
@@ -1581,6 +1556,38 @@ impl LspAdapter for BasedPyrightLspAdapter {
     fn workspace_folders_content(&self) -> WorkspaceFoldersContent {
         WorkspaceFoldersContent::WorktreeRoot
     }
+}
+
+/// Detect if the interpreter path belongs to a virtual environment
+fn detect_venv<'p>(
+    adapter: &dyn LspAdapterDelegate,
+    interpreter_path: &'p str,
+) -> (Option<&'p Path>, Option<&'p OsStr>) {
+    let mut venv_path = None;
+    let mut venv = None;
+    // Detect if this is a virtual environment
+    if let Some(interpreter_dir) = Path::new(interpreter_path).parent() {
+        if let Some(venv_dir) = interpreter_dir.parent() {
+            // Check if this looks like a virtual environment
+            if venv_dir.join("pyvenv.cfg").exists() || venv_dir.join(ACTIVATE_PATH).exists() {
+                // Set venvPath and venv at the root level
+                // This matches the format of a pyrightconfig.json file
+                if let Some(parent) = venv_dir.parent() {
+                    // Use relative path if the venv is inside the workspace
+                    venv_path = Some(if parent == adapter.worktree_root_path() {
+                        Path::new(".")
+                    } else {
+                        parent
+                    });
+                }
+
+                if let Some(venv_name) = venv_dir.file_name() {
+                    venv = Some(venv_name);
+                }
+            }
+        }
+    }
+    (venv_path, venv)
 }
 
 #[cfg(test)]
