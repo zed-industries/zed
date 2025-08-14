@@ -390,13 +390,17 @@ impl LocalLspStore {
                         delegate.update_status(
                             adapter.name(),
                             BinaryStatus::Failed {
-                                error: format!("{err}\n-- stderr--\n{log}"),
+                                error: if log.is_empty() {
+                                    format!("{err:#}")
+                                } else {
+                                    format!("{err:#}\n-- stderr --\n{log}")
+                                },
                             },
                         );
-                        let message =
-                            format!("Failed to start language server {server_name:?}: {err:#?}");
-                        log::error!("{message}");
-                        log::error!("server stderr: {log}");
+                        log::error!("Failed to start language server {server_name:?}: {err:?}");
+                        if !log.is_empty() {
+                            log::error!("server stderr: {log}");
+                        }
                         None
                     }
                 }
