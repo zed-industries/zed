@@ -1,4 +1,3 @@
-use std::cell::RefCell;
 use std::ops::{Not, Range};
 use std::path::Path;
 use std::rc::Rc;
@@ -11,7 +10,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::NewExternalAgentThread;
 use crate::agent_diff::AgentDiffThread;
-use crate::message_editor::{MAX_EDITOR_LINES, MIN_EDITOR_LINES};
 use crate::{
     AddContextServer, AgentDiffPane, ContinueThread, ContinueWithBurnMode,
     DeleteRecentlyOpenThread, ExpandMessageEditor, Follow, InlineAssistant, NewTextThread,
@@ -477,8 +475,6 @@ pub struct AgentPanel {
     configuration_subscription: Option<Subscription>,
     local_timezone: UtcOffset,
     active_view: ActiveView,
-    acp_message_history:
-        Rc<RefCell<crate::acp::MessageHistory<Vec<agent_client_protocol::ContentBlock>>>>,
     previous_view: Option<ActiveView>,
     history_store: Entity<HistoryStore>,
     history: Entity<ThreadHistory>,
@@ -766,7 +762,6 @@ impl AgentPanel {
             .unwrap(),
             inline_assist_context_store,
             previous_view: None,
-            acp_message_history: Default::default(),
             history_store: history_store.clone(),
             history: cx.new(|cx| ThreadHistory::new(weak_self, history_store, window, cx)),
             hovered_recent_history_item: None,
@@ -824,7 +819,9 @@ impl AgentPanel {
                 thread.update(cx, |thread, cx| thread.cancel_last_completion(window, cx));
             }
             ActiveView::ExternalAgentThread { thread_view, .. } => {
-                thread_view.update(cx, |thread_element, cx| thread_element.cancel(cx));
+                thread_view.update(cx, |thread_element, cx| {
+                    thread_element.cancel_generation(cx)
+                });
             }
             ActiveView::TextThread { .. } | ActiveView::History | ActiveView::Configuration => {}
         }
@@ -963,7 +960,6 @@ impl AgentPanel {
     ) {
         let workspace = self.workspace.clone();
         let project = self.project.clone();
-        let message_history = self.acp_message_history.clone();
         let fs = self.fs.clone();
 
         const LAST_USED_EXTERNAL_AGENT_KEY: &str = "agent_panel__last_used_external_agent";
@@ -1016,9 +1012,6 @@ impl AgentPanel {
                         project,
                         thread_store.clone(),
                         text_thread_store.clone(),
-                        message_history,
-                        MIN_EDITOR_LINES,
-                        Some(MAX_EDITOR_LINES),
                         window,
                         cx,
                     )
@@ -1574,8 +1567,6 @@ impl AgentPanel {
             }
             self.active_view = new_view;
         }
-
-        self.acp_message_history.borrow_mut().reset_position();
 
         self.focus_handle(cx).focus(window);
     }
