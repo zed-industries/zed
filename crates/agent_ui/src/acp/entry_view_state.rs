@@ -1,7 +1,6 @@
-use std::ops::Range;
+use std::{collections::HashMap, ops::Range};
 
 use acp_thread::AcpThread;
-use collections::HashMap;
 use editor::{Editor, EditorMode, MinimapVisibility, MultiBuffer};
 use gpui::{
     AnyEntity, App, AppContext as _, Entity, EntityId, TextStyleRefinement, WeakEntity, Window,
@@ -206,7 +205,7 @@ impl Default for Entry {
     fn default() -> Self {
         Self {
             // Avoid allocating in the heap by default
-            views: HashMap::with_capacity_and_hasher(0, collections::FxBuildHasher),
+            views: HashMap::with_capacity(0),
         }
     }
 }

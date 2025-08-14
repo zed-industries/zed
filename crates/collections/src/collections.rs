@@ -22,5 +22,6 @@ pub type IndexMap<K, V> = indexmap::IndexMap<K, V>;
 #[cfg(not(feature = "test-support"))]
 pub type IndexSet<T> = indexmap::IndexSet<T>;
 
-pub use rustc_hash::{FxBuildHasher, FxHashMap, FxHashSet, FxHasher};
+pub use rustc_hash::FxHasher;
+pub use rustc_hash::{FxHashMap, FxHashSet};
 pub use std::collections::*;
