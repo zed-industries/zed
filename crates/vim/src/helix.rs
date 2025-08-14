@@ -314,7 +314,7 @@ impl Vim {
     }
 
     pub fn helix_yank(&mut self, _: &HelixYank, window: &mut Window, cx: &mut Context<Self>) {
-        self.update_editor(window, cx, |vim, editor, window, cx| {
+        self.update_editor(cx, |vim, editor, cx| {
             let has_selection = editor
                 .selections
                 .all_adjusted(cx)
