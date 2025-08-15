@@ -216,54 +216,53 @@ pub fn init(
         let installation_id = installation_id.clone();
         let system_id = system_id.clone();
 
-        if let Some(ssh_client) = project.ssh_client() {
-            ssh_client.update(cx, |client, cx| {
-                if TelemetrySettings::get_global(cx).diagnostics {
-                    let request = client.proto_client().request(proto::GetCrashFiles {});
-                    cx.background_spawn(async move {
-                        let GetCrashFilesResponse {
-                            legacy_panics,
-                            crashes,
-                        } = request.await?;
+        let Some(ssh_client) = project.ssh_client() else {
+            return;
+        };
+        ssh_client.update(cx, |client, cx| {
+            if !TelemetrySettings::get_global(cx).diagnostics {
+                return;
+            }
+            let request = client.proto_client().request(proto::GetCrashFiles {});
+            cx.background_spawn(async move {
+                let GetCrashFilesResponse {
+                    legacy_panics,
+                    crashes,
+                } = request.await?;
 
-                        for panic in legacy_panics {
-                            let mut panic: Option<Panic> =
-                                panic.and_then(|s| serde_json::from_str(&s).log_err());
-
-                            if let Some(panic) = panic.as_mut() {
-                                panic.session_id = session_id.clone();
-                                panic.system_id = system_id.clone();
-                                panic.installation_id = installation_id.clone();
-                            }
-                        }
-
-                        for CrashReport {
-                            metadata,
-                            minidump_contents,
-                        } in crashes
-                        {
-                            if let Some(minidump) = crash.minidump_contents {
-                                upload_minidump(
-                                    http_client.clone(),
-                                    minidump.clone(),
-                                    serde_json::from_str(&metadata),
-                                )
-                                .await
-                                .log_err();
-                            }
-
-                            if let Some(panic) = panic {
-                                upload_panic(&http_client, &panic_report_url, panic, &mut None)
-                                    .await?;
-                            }
-                        }
-
-                        anyhow::Ok(())
-                    })
-                    .detach_and_log_err(cx);
+                for panic in legacy_panics {
+                    if let Some(mut panic) = serde_json::from_str::<Panic>(&panic).log_err() {
+                        panic.session_id = session_id.clone();
+                        panic.system_id = system_id.clone();
+                        panic.installation_id = installation_id.clone();
+                        upload_panic(&http_client, &panic_report_url, panic, &mut None).await?;
+                    }
                 }
+
+                let Some(endpoint) = MINIDUMP_ENDPOINT.as_ref() else {
+                    return Ok(());
+                };
+                for CrashReport {
+                    metadata,
+                    minidump_contents,
+                } in crashes
+                {
+                    if let Some(metadata) = serde_json::from_str(&metadata).log_err() {
+                        upload_minidump(
+                            http_client.clone(),
+                            endpoint,
+                            minidump_contents,
+                            &metadata,
+                        )
+                        .await
+                        .log_err();
+                    }
+                }
+
+                anyhow::Ok(())
             })
-        }
+            .detach_and_log_err(cx);
+        })
     })
     .detach();
 }
@@ -479,14 +478,17 @@ fn upload_panics_and_crashes(
 ) {
     let telemetry_settings = *client::TelemetrySettings::get_global(cx);
     cx.background_spawn(async move {
-        let most_recent_panic =
-            upload_previous_panics(http.clone(), &panic_report_url, telemetry_settings)
-                .await
-                .log_err()
-                .flatten();
-        upload_previous_crashes(http, most_recent_panic, installation_id, telemetry_settings)
+        if !telemetry_settings.diagnostics {
+            return;
+        }
+        upload_previous_minidumps(http.clone()).await.warn_on_err();
+        let most_recent_panic = upload_previous_panics(http.clone(), &panic_report_url)
             .await
             .log_err()
+            .flatten();
+        upload_previous_crashes(http, most_recent_panic, installation_id)
+            .await
+            .log_err();
     })
     .detach()
 }
@@ -495,7 +497,6 @@ fn upload_panics_and_crashes(
 async fn upload_previous_panics(
     http: Arc<HttpClientWithUrl>,
     panic_report_url: &Url,
-    telemetry_settings: client::TelemetrySettings,
 ) -> anyhow::Result<Option<(i64, String)>> {
     let mut children = smol::fs::read_dir(paths::logs_dir()).await?;
 
@@ -518,45 +519,27 @@ async fn upload_previous_panics(
             continue;
         }
 
-        if telemetry_settings.diagnostics {
-            let panic_file_content = smol::fs::read_to_string(&child_path)
-                .await
-                .context("error reading panic file")?;
+        let panic_file_content = smol::fs::read_to_string(&child_path)
+            .await
+            .context("error reading panic file")?;
 
-            let panic: Option<Panic> = serde_json::from_str(&panic_file_content)
-                .log_err()
-                .or_else(|| {
-                    panic_file_content
-                        .lines()
-                        .next()
-                        .and_then(|line| serde_json::from_str(line).ok())
-                })
-                .unwrap_or_else(|| {
-                    log::error!("failed to deserialize panic file {:?}", panic_file_content);
-                    None
-                });
+        let panic: Option<Panic> = serde_json::from_str(&panic_file_content)
+            .log_err()
+            .or_else(|| {
+                panic_file_content
+                    .lines()
+                    .next()
+                    .and_then(|line| serde_json::from_str(line).ok())
+            })
+            .unwrap_or_else(|| {
+                log::error!("failed to deserialize panic file {:?}", panic_file_content);
+                None
+            });
 
-            if let Some(panic) = panic {
-                let minidump_path = paths::logs_dir()
-                    .join(&panic.session_id)
-                    .with_extension("dmp");
-                if minidump_path.exists() {
-                    let minidump = smol::fs::read(&minidump_path)
-                        .await
-                        .context("Failed to read minidump")?;
-                    if upload_minidump(http.clone(), minidump, Some(&panic))
-                        .await
-                        .log_err()
-                        .is_some()
-                    {
-                        fs::remove_file(minidump_path).ok();
-                    }
-                }
-
-                if !upload_panic(&http, &panic_report_url, panic, &mut most_recent_panic).await? {
-                    continue;
-                }
-            }
+        if let Some(panic) = panic
+            && !upload_panic(&http, &panic_report_url, panic, &mut most_recent_panic).await?
+        {
+            continue;
         }
 
         // We've done what we can, delete the file
@@ -565,11 +548,14 @@ async fn upload_previous_panics(
             .log_err();
     }
 
-    if MINIDUMP_ENDPOINT.is_none() {
-        return Ok(most_recent_panic);
-    }
+    Ok(most_recent_panic)
+}
 
-    // loop back over the directory again to upload any minidumps that are missing panics
+pub async fn upload_previous_minidumps(http: Arc<HttpClientWithUrl>) -> anyhow::Result<()> {
+    let Some(minidump_endpoint) = MINIDUMP_ENDPOINT.as_ref() else {
+        return Err(anyhow::anyhow!("Minidump endpoint not set"));
+    };
+
     let mut children = smol::fs::read_dir(paths::logs_dir()).await?;
     while let Some(child) = children.next().await {
         let child = child?;
@@ -577,33 +563,35 @@ async fn upload_previous_panics(
         if child_path.extension() != Some(OsStr::new("dmp")) {
             continue;
         }
-        if upload_minidump(
-            http.clone(),
-            smol::fs::read(&child_path)
-                .await
-                .context("Failed to read minidump")?,
-            None,
-        )
-        .await
-        .log_err()
-        .is_some()
-        {
-            fs::remove_file(child_path).ok();
+        let mut json_path = child_path.clone();
+        json_path.set_extension("json");
+        if let Ok(metadata) = serde_json::from_slice(&smol::fs::read(&json_path).await?) {
+            if upload_minidump(
+                http.clone(),
+                &minidump_endpoint,
+                smol::fs::read(&child_path)
+                    .await
+                    .context("Failed to read minidump")?,
+                &metadata,
+            )
+            .await
+            .log_err()
+            .is_some()
+            {
+                fs::remove_file(child_path).ok();
+                fs::remove_file(json_path).ok();
+            }
         }
     }
-
-    Ok(most_recent_panic)
+    Ok(())
 }
 
 async fn upload_minidump(
     http: Arc<HttpClientWithUrl>,
+    endpoint: &str,
     minidump: Vec<u8>,
     metadata: &crashes::CrashInfo,
 ) -> Result<()> {
-    let minidump_endpoint = MINIDUMP_ENDPOINT
-        .to_owned()
-        .ok_or_else(|| anyhow::anyhow!("Minidump endpoint not set"))?;
-
     let mut form = Form::new()
         .part(
             "upload_file_minidump",
@@ -626,7 +614,7 @@ async fn upload_minidump(
     }
 
     let mut response_text = String::new();
-    let mut response = http.send_multipart_form(&minidump_endpoint, form).await?;
+    let mut response = http.send_multipart_form(endpoint, form).await?;
     response
         .body_mut()
         .read_to_string(&mut response_text)
@@ -676,11 +664,7 @@ async fn upload_previous_crashes(
     http: Arc<HttpClientWithUrl>,
     most_recent_panic: Option<(i64, String)>,
     installation_id: Option<String>,
-    telemetry_settings: client::TelemetrySettings,
 ) -> Result<()> {
-    if !telemetry_settings.diagnostics {
-        return Ok(());
-    }
     let last_uploaded = KEY_VALUE_STORE
         .read_kvp(LAST_CRASH_UPLOADED)?
         .unwrap_or("zed-2024-01-17-221900.ips".to_string()); // don't upload old crash reports from before we had this.

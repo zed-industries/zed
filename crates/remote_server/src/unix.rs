@@ -34,10 +34,10 @@ use smol::io::AsyncReadExt;
 
 use smol::Async;
 use smol::{net::unix::UnixListener, stream::StreamExt as _};
-use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::ops::ControlFlow;
 use std::str::FromStr;
+use std::sync::LazyLock;
 use std::{env, thread};
 use std::{
     io::Write,
@@ -47,6 +47,13 @@ use std::{
 };
 use telemetry_events::LocationData;
 use util::ResultExt;
+
+pub static VERSION: LazyLock<&str> = LazyLock::new(|| match *RELEASE_CHANNEL {
+    ReleaseChannel::Stable | ReleaseChannel::Preview => env!("ZED_PKG_VERSION"),
+    ReleaseChannel::Nightly | ReleaseChannel::Dev => {
+        option_env!("ZED_COMMIT_SHA").unwrap_or("missing-zed-commit-sha")
+    }
+});
 
 fn init_logging_proxy() {
     env_logger::builder()
@@ -151,14 +158,6 @@ fn init_panic_hook(session_id: String) {
             (&backtrace).join("\n")
         );
 
-        let release_channel = *RELEASE_CHANNEL;
-        let version = match release_channel {
-            ReleaseChannel::Stable | ReleaseChannel::Preview => env!("ZED_PKG_VERSION"),
-            ReleaseChannel::Nightly | ReleaseChannel::Dev => {
-                option_env!("ZED_COMMIT_SHA").unwrap_or("missing-zed-commit-sha")
-            }
-        };
-
         let panic_data = telemetry_events::Panic {
             thread: thread_name.into(),
             payload: payload.clone(),
@@ -166,9 +165,9 @@ fn init_panic_hook(session_id: String) {
                 file: location.file().into(),
                 line: location.line(),
             }),
-            app_version: format!("remote-server-{version}"),
+            app_version: format!("remote-server-{}", *VERSION),
             app_commit_sha: option_env!("ZED_COMMIT_SHA").map(|sha| sha.into()),
-            release_channel: release_channel.dev_name().into(),
+            release_channel: RELEASE_CHANNEL.dev_name().into(),
             target: env!("TARGET").to_owned().into(),
             os_name: telemetry::os_name(),
             os_version: Some(telemetry::os_version()),
@@ -230,9 +229,9 @@ fn handle_crash_files_requests(project: &Entity<HeadlessProject>, client: &Arc<C
 
                     legacy_panics.push(file_contents);
                 } else if extension == Some(OsStr::new("dmp")) {
-                    let mut json_path = child_path;
+                    let mut json_path = child_path.clone();
                     json_path.set_extension("json");
-                    if let Ok(json_content) = smol::fs::read_to_string(json_path).await {
+                    if let Ok(json_content) = smol::fs::read_to_string(&json_path).await {
                         crashes.push(CrashReport {
                             metadata: json_content,
                             minidump_contents: smol::fs::read(&child_path).await?,
@@ -437,7 +436,12 @@ pub fn execute_run(
     let app = gpui::Application::headless();
     let id = std::process::id().to_string();
     app.background_executor()
-        .spawn(crashes::init(id.clone()))
+        .spawn(crashes::init(crashes::InitCrashHandler {
+            session_id: id.clone(),
+            zed_version: VERSION.to_owned(),
+            release_channel: release_channel::RELEASE_CHANNEL_NAME.clone(),
+            commit_sha: option_env!("ZED_COMMIT_SHA").unwrap_or("no_sha").to_owned(),
+        }))
         .detach();
     init_panic_hook(id);
     let log_rx = init_logging_server(log_file)?;
@@ -564,7 +568,13 @@ pub fn execute_proxy(identifier: String, is_reconnecting: bool) -> Result<()> {
     let server_paths = ServerPaths::new(&identifier)?;
 
     let id = std::process::id().to_string();
-    smol::spawn(crashes::init(id.clone())).detach();
+    smol::spawn(crashes::init(crashes::InitCrashHandler {
+        session_id: id.clone(),
+        zed_version: VERSION.to_owned(),
+        release_channel: release_channel::RELEASE_CHANNEL_NAME.clone(),
+        commit_sha: option_env!("ZED_COMMIT_SHA").unwrap_or("no_sha").to_owned(),
+    }))
+    .detach();
     init_panic_hook(id);
 
     log::info!("starting proxy process. PID: {}", std::process::id());

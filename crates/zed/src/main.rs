@@ -5,7 +5,7 @@ use agent_ui::AgentPanel;
 use anyhow::{Context as _, Result};
 use clap::{Parser, command};
 use cli::FORCE_CLI_MODE_ENV_VAR_NAME;
-use client::{parse_zed_link, telemetry::os_name, Client, ProxySettings, UserStore};
+use client::{Client, ProxySettings, UserStore, parse_zed_link};
 use collab_ui::channel_view::ChannelView;
 use collections::HashMap;
 use crashes::InitCrashHandler;
@@ -274,10 +274,10 @@ pub fn main() {
             session_id: session_id.clone(),
             zed_version: app_version.to_string(),
             release_channel: release_channel::RELEASE_CHANNEL_NAME.clone(),
-            commit_sha: app_commit_sha.as_ref()
+            commit_sha: app_commit_sha
+                .as_ref()
                 .map(|sha| sha.full())
                 .unwrap_or_else(|| "no sha".to_owned()),
-            gpu: ,
         }))
         .detach();
     reliability::init_panic_hook(

@@ -114,7 +114,7 @@ pub struct InitCrashHandler {
     pub zed_version: String,
     pub release_channel: String,
     pub commit_sha: String,
-    pub gpu: String,
+    // pub gpu: String,
 }
 
 #[derive(Deserialize, Serialize, Debug, Clone)]
