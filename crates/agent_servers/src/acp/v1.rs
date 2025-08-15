@@ -1,7 +1,9 @@
 use agent_client_protocol::{self as acp, Agent as _};
 use anyhow::anyhow;
 use collections::HashMap;
+use futures::AsyncBufReadExt as _;
 use futures::channel::oneshot;
+use futures::io::BufReader;
 use project::Project;
 use std::path::Path;
 use std::rc::Rc;
@@ -40,12 +42,13 @@ impl AcpConnection {
             .current_dir(root_dir)
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::inherit())
+            .stderr(std::process::Stdio::piped())
             .kill_on_drop(true)
             .spawn()?;
 
-        let stdout = child.stdout.take().expect("Failed to take stdout");
-        let stdin = child.stdin.take().expect("Failed to take stdin");
+        let stdout = child.stdout.take().context("Failed to take stdout")?;
+        let stdin = child.stdin.take().context("Failed to take stdin")?;
+        let stderr = child.stderr.take().context("Failed to take stderr")?;
         log::trace!("Spawned (pid: {})", child.id());
 
         let sessions = Rc::new(RefCell::new(HashMap::default()));
@@ -62,6 +65,18 @@ impl AcpConnection {
         });
 
         let io_task = cx.background_spawn(io_task);
+
+        cx.background_spawn(async move {
+            let mut stderr = BufReader::new(stderr);
+            let mut line = String::new();
+            while let Ok(n) = stderr.read_line(&mut line).await
+                && n > 0
+            {
+                log::warn!("agent stderr: {}", &line);
+                line.clear();
+            }
+        })
+        .detach();
 
         cx.spawn({
             let sessions = sessions.clone();
