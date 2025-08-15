@@ -264,8 +264,7 @@ impl AppState {
         {
             let mut llm_db_options = db::ConnectOptions::new(llm_database_url);
             llm_db_options.max_connections(llm_database_max_connections);
-            let mut llm_db = LlmDatabase::new(llm_db_options, executor.clone()).await?;
-            llm_db.initialize().await?;
+            let llm_db = LlmDatabase::new(llm_db_options, executor.clone()).await?;
             Some(Arc::new(llm_db))
         } else {
             None
