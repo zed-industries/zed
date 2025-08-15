@@ -29,7 +29,6 @@ use axum::{
     response::IntoResponse,
     routing::get,
 };
-use chrono::Utc;
 use collections::{HashMap, HashSet};
 pub use connection_pool::{ConnectionPool, ZedVersion};
 use core::fmt::{self, Debug, Formatter};
@@ -449,7 +448,6 @@ impl Server {
             .add_request_handler(follow)
             .add_message_handler(unfollow)
             .add_message_handler(update_followers)
-            .add_request_handler(accept_terms_of_service)
             .add_message_handler(acknowledge_channel_message)
             .add_message_handler(acknowledge_buffer_version)
             .add_request_handler(get_supermaven_api_key)
@@ -3982,25 +3980,6 @@ async fn mark_notification_as_read(
         notifications,
     );
     response.send(proto::Ack {})?;
-    Ok(())
-}
-
-/// Accept the terms of service (tos) on behalf of the current user
-async fn accept_terms_of_service(
-    _request: proto::AcceptTermsOfService,
-    response: Response<proto::AcceptTermsOfService>,
-    session: MessageContext,
-) -> Result<()> {
-    let db = session.db().await;
-
-    let accepted_tos_at = Utc::now();
-    db.set_user_accepted_tos_at(session.user_id(), Some(accepted_tos_at.naive_utc()))
-        .await?;
-
-    response.send(proto::AcceptTermsOfServiceResponse {
-        accepted_tos_at: accepted_tos_at.timestamp() as u64,
-    })?;
-
     Ok(())
 }
 

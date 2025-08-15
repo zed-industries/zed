@@ -6,12 +6,6 @@ message UpdateInviteInfo {
     uint32 count = 2;
 }
 
-message AcceptTermsOfService {}
-
-message AcceptTermsOfServiceResponse {
-    uint64 accepted_tos_at = 1;
-}
-
 message ShutdownRemoteServer {}
 
 message Toast {

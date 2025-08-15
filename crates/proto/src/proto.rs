@@ -20,8 +20,6 @@ pub const SSH_PEER_ID: PeerId = PeerId { owner_id: 0, id: 0 };
 pub const SSH_PROJECT_ID: u64 = 0;
 
 messages!(
-    (AcceptTermsOfService, Foreground),
-    (AcceptTermsOfServiceResponse, Foreground),
     (Ack, Foreground),
     (AckBufferOperation, Background),
     (AckChannelMessage, Background),
@@ -315,7 +313,6 @@ messages!(
 );
 
 request_messages!(
-    (AcceptTermsOfService, AcceptTermsOfServiceResponse),
     (ApplyCodeAction, ApplyCodeActionResponse),
     (
         ApplyCompletionAdditionalEdits,
