@@ -2555,13 +2555,13 @@ impl AcpThreadView {
                                 .color(Color::Muted)
                                 .size(LabelSize::XSmall),
                         )
-                        .child(self.render_set_user_message_editor_buttons(editor, cx)),
+                        .child(self.render_sent_user_message_editor_buttons(editor, cx)),
                 )
             },
         )
     }
 
-    fn render_set_user_message_editor_buttons(
+    fn render_sent_user_message_editor_buttons(
         &self,
         editor: &Entity<MessageEditor>,
         cx: &Context<Self>,

@@ -61,7 +61,7 @@ impl EntryViewState {
                     if !has_id {
                         editor.set_read_only(true, cx);
                     }
-                    editor.set_message(&chunks, window, cx);
+                    editor.set_message(chunks, window, cx);
                     editor
                 });
                 self.set_entry(index, Entry::UserMessage(message_editor));
