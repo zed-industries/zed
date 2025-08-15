@@ -1801,6 +1801,7 @@ impl AcpThreadView {
                                     show_command: true,
                                     show_rerun: true,
                                 };
+                                let cwd_clone = cwd.clone();
                                 workspace.project().update(cx, |project, cx| {
                                     if let Some(task_inventory) = project.task_store().read(cx).task_inventory().cloned() {
                                         task_inventory.update(cx, |inventory, _| {
@@ -1814,7 +1815,7 @@ impl AcpThreadView {
                                             // Create a task context for resolution
                                             let task_context = task::TaskContext {
                                                 project_env: Default::default(),
-                                                cwd: cwd.clone(),
+                                                cwd: cwd_clone.clone(),
                                                 task_variables: Default::default(),
                                             };
                                             
@@ -1849,7 +1850,7 @@ impl AcpThreadView {
                     let url = url.clone();
                     container = container.child(
                         Button::new("open_url", "Open Qwen Website")
-                            .on_click(cx.listener(move |_, _, window, cx| {
+                            .on_click(cx.listener(move |_, _, _window, cx| {
                                 cx.open_url(&url);
                             })),
                     );
