@@ -1908,7 +1908,6 @@ mod test {
     async fn test_change_paragraph_object_with_soft_wrap(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
 
-        // Test paragraphs that will wrap when soft wrap is enabled
         const WRAPPING_EXAMPLE: &str = indoc! {"
             ˇFirst paragraph with very long text that will wrap when soft wrap is enabled and line length is ˇlimited making it span multiple display lines.
 
@@ -1931,7 +1930,6 @@ mod test {
     async fn test_delete_paragraph_object_with_soft_wrap(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
 
-        // Test paragraphs that will wrap when soft wrap is enabled
         const WRAPPING_EXAMPLE: &str = indoc! {"
             ˇFirst paragraph with very long text that will wrap when soft wrap is enabled and line length is ˇlimited making it span multiple display lines.
 
@@ -1954,7 +1952,6 @@ mod test {
     async fn test_delete_paragraph_whitespace(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
 
-        // Test paragraphs that will wrap when soft wrap is enabled
         cx.set_shared_state(indoc! {"
             a
                    ˇ•
@@ -1963,7 +1960,6 @@ mod test {
             .await;
 
         cx.simulate_shared_keystrokes("d i p").await;
-        // Test paragraphs that will wrap when soft wrap is enabled
         cx.shared_state().await.assert_eq(indoc! {"
             a
             aaaaaaaˇaaaaaa
@@ -1974,7 +1970,6 @@ mod test {
     async fn test_visual_paragraph_object_with_soft_wrap(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
 
-        // Test paragraphs that will wrap when soft wrap is enabled
         const WRAPPING_EXAMPLE: &str = indoc! {"
             ˇFirst paragraph with very long text that will wrap when soft wrap is enabled and line length is ˇlimited making it span multiple display lines.
 
