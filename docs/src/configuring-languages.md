@@ -81,7 +81,7 @@ This configuration tells Zed to:
 - Recognize files named "MyLockFile" as TOML
 - Apply Dockerfile syntax to any file starting with "Dockerfile"
 
-You can use glob patterns for more flexible matching, allowing you to handle complex naming conventions in your projects.
+You can use [glob patterns](./globs.md) for more flexible matching, allowing you to handle complex naming conventions in your projects.
 
 ## Working with Language Servers
 
