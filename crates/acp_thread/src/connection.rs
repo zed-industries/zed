@@ -4,7 +4,7 @@ use anyhow::Result;
 use collections::IndexMap;
 use gpui::{Entity, SharedString, Task};
 use project::Project;
-use std::{error::Error, fmt, path::Path, rc::Rc, sync::Arc};
+use std::{any::Any, error::Error, fmt, path::Path, rc::Rc, sync::Arc};
 use ui::{App, IconName};
 use uuid::Uuid;
 
@@ -36,6 +36,14 @@ pub trait AgentConnection {
         cx: &mut App,
     ) -> Task<Result<acp::PromptResponse>>;
 
+    fn resume(
+        &self,
+        _session_id: &acp::SessionId,
+        _cx: &mut App,
+    ) -> Option<Rc<dyn AgentSessionResume>> {
+        None
+    }
+
     fn cancel(&self, session_id: &acp::SessionId, cx: &mut App);
 
     fn session_editor(
@@ -53,10 +61,22 @@ pub trait AgentConnection {
     fn model_selector(&self) -> Option<Rc<dyn AgentModelSelector>> {
         None
     }
+
+    fn into_any(self: Rc<Self>) -> Rc<dyn Any>;
+}
+
+impl dyn AgentConnection {
+    pub fn downcast<T: 'static + AgentConnection + Sized>(self: Rc<Self>) -> Option<Rc<T>> {
+        self.into_any().downcast().ok()
+    }
 }
 
 pub trait AgentSessionEditor {
     fn truncate(&self, message_id: UserMessageId, cx: &mut App) -> Task<Result<()>>;
+}
+
+pub trait AgentSessionResume {
+    fn run(&self, cx: &mut App) -> Task<Result<acp::PromptResponse>>;
 }
 
 #[derive(Debug)]
@@ -298,6 +318,10 @@ mod test_support {
             _cx: &mut App,
         ) -> Option<Rc<dyn AgentSessionEditor>> {
             Some(Rc::new(StubAgentSessionEditor))
+        }
+
+        fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
+            self
         }
     }
 

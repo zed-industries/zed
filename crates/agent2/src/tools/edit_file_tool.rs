@@ -241,7 +241,7 @@ impl AgentTool for EditFileTool {
             thread.build_completion_request(CompletionIntent::ToolResults, cx)
         });
         let thread = self.thread.read(cx);
-        let model = thread.selected_model.clone();
+        let model = thread.model().clone();
         let action_log = thread.action_log().clone();
 
         let authorize = self.authorize(&input, &event_stream, cx);

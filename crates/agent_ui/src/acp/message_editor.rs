@@ -1,4 +1,5 @@
 use crate::acp::completion_provider::ContextPickerCompletionProvider;
+use crate::acp::completion_provider::MentionImage;
 use crate::acp::completion_provider::MentionSet;
 use acp_thread::MentionUri;
 use agent::TextThreadStore;
@@ -6,29 +7,43 @@ use agent::ThreadStore;
 use agent_client_protocol as acp;
 use anyhow::Result;
 use collections::HashSet;
+use editor::ExcerptId;
+use editor::actions::Paste;
+use editor::display_map::CreaseId;
 use editor::{
     AnchorRangeExt, ContextMenuOptions, ContextMenuPlacement, Editor, EditorElement, EditorMode,
     EditorStyle, MultiBuffer,
 };
+use futures::FutureExt as _;
+use gpui::ClipboardEntry;
+use gpui::Image;
+use gpui::ImageFormat;
 use gpui::{
     AppContext, Context, Entity, EventEmitter, FocusHandle, Focusable, Task, TextStyle, WeakEntity,
 };
 use language::Buffer;
 use language::Language;
+use language_model::LanguageModelImage;
 use parking_lot::Mutex;
 use project::{CompletionIntent, Project};
 use settings::Settings;
 use std::fmt::Write;
+use std::path::Path;
 use std::rc::Rc;
 use std::sync::Arc;
 use theme::ThemeSettings;
+use ui::IconName;
+use ui::SharedString;
 use ui::{
     ActiveTheme, App, InteractiveElement, IntoElement, ParentElement, Render, Styled, TextSize,
     Window, div,
 };
 use util::ResultExt;
 use workspace::Workspace;
+use workspace::notifications::NotifyResultExt as _;
 use zed_actions::agent::Chat;
+
+use super::completion_provider::Mention;
 
 pub struct MessageEditor {
     editor: Entity<Editor>,
@@ -130,23 +145,41 @@ impl MessageEditor {
                             continue;
                         }
 
-                        if let Some(mention) = contents.get(&crease_id) {
-                            let crease_range = crease.range().to_offset(&snapshot.buffer_snapshot);
-                            if crease_range.start > ix {
-                                chunks.push(text[ix..crease_range.start].into());
-                            }
-                            chunks.push(acp::ContentBlock::Resource(acp::EmbeddedResource {
-                                annotations: None,
-                                resource: acp::EmbeddedResourceResource::TextResourceContents(
-                                    acp::TextResourceContents {
-                                        mime_type: None,
-                                        text: mention.content.clone(),
-                                        uri: mention.uri.to_uri().to_string(),
-                                    },
-                                ),
-                            }));
-                            ix = crease_range.end;
+                        let Some(mention) = contents.get(&crease_id) else {
+                            continue;
+                        };
+
+                        let crease_range = crease.range().to_offset(&snapshot.buffer_snapshot);
+                        if crease_range.start > ix {
+                            chunks.push(text[ix..crease_range.start].into());
                         }
+                        let chunk = match mention {
+                            Mention::Text { uri, content } => {
+                                acp::ContentBlock::Resource(acp::EmbeddedResource {
+                                    annotations: None,
+                                    resource: acp::EmbeddedResourceResource::TextResourceContents(
+                                        acp::TextResourceContents {
+                                            mime_type: None,
+                                            text: content.clone(),
+                                            uri: uri.to_uri().to_string(),
+                                        },
+                                    ),
+                                })
+                            }
+                            Mention::Image(mention_image) => {
+                                acp::ContentBlock::Image(acp::ImageContent {
+                                    annotations: None,
+                                    data: mention_image.data.to_string(),
+                                    mime_type: mention_image.format.mime_type().into(),
+                                    uri: mention_image
+                                        .abs_path
+                                        .as_ref()
+                                        .map(|path| format!("file://{}", path.display())),
+                                })
+                            }
+                        };
+                        chunks.push(chunk);
+                        ix = crease_range.end;
                     }
 
                     if ix < text.len() {
@@ -175,6 +208,56 @@ impl MessageEditor {
 
     fn cancel(&mut self, _: &menu::Cancel, _: &mut Window, cx: &mut Context<Self>) {
         cx.emit(MessageEditorEvent::Cancel)
+    }
+
+    fn paste(&mut self, _: &Paste, window: &mut Window, cx: &mut Context<Self>) {
+        let images = cx
+            .read_from_clipboard()
+            .map(|item| {
+                item.into_entries()
+                    .filter_map(|entry| {
+                        if let ClipboardEntry::Image(image) = entry {
+                            Some(image)
+                        } else {
+                            None
+                        }
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+
+        if images.is_empty() {
+            return;
+        }
+        cx.stop_propagation();
+
+        let replacement_text = "image";
+        for image in images {
+            let (excerpt_id, anchor) = self.editor.update(cx, |message_editor, cx| {
+                let snapshot = message_editor.snapshot(window, cx);
+                let (excerpt_id, _, snapshot) = snapshot.buffer_snapshot.as_singleton().unwrap();
+
+                let anchor = snapshot.anchor_before(snapshot.len());
+                message_editor.edit(
+                    [(
+                        multi_buffer::Anchor::max()..multi_buffer::Anchor::max(),
+                        format!("{replacement_text} "),
+                    )],
+                    cx,
+                );
+                (*excerpt_id, anchor)
+            });
+
+            self.insert_image(
+                excerpt_id,
+                anchor,
+                replacement_text.len(),
+                Arc::new(image),
+                None,
+                window,
+                cx,
+            );
+        }
     }
 
     pub fn insert_dragged_files(
@@ -238,6 +321,68 @@ impl MessageEditor {
         self.editor.update(cx, |message_editor, cx| {
             message_editor.set_read_only(read_only);
             cx.notify()
+        })
+    }
+
+    fn insert_image(
+        &mut self,
+        excerpt_id: ExcerptId,
+        crease_start: text::Anchor,
+        content_len: usize,
+        image: Arc<Image>,
+        abs_path: Option<Arc<Path>>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(crease_id) = insert_crease_for_image(
+            excerpt_id,
+            crease_start,
+            content_len,
+            self.editor.clone(),
+            window,
+            cx,
+        ) else {
+            return;
+        };
+        self.editor.update(cx, |_editor, cx| {
+            let format = image.format;
+            let convert = LanguageModelImage::from_image(image, cx);
+
+            let task = cx
+                .spawn_in(window, async move |editor, cx| {
+                    if let Some(image) = convert.await {
+                        Ok(MentionImage {
+                            abs_path,
+                            data: image.source,
+                            format,
+                        })
+                    } else {
+                        editor
+                            .update(cx, |editor, cx| {
+                                let snapshot = editor.buffer().read(cx).snapshot(cx);
+                                let Some(anchor) =
+                                    snapshot.anchor_in_excerpt(excerpt_id, crease_start)
+                                else {
+                                    return;
+                                };
+                                editor.display_map.update(cx, |display_map, cx| {
+                                    display_map.unfold_intersecting(vec![anchor..anchor], true, cx);
+                                });
+                                editor.remove_creases([crease_id], cx);
+                            })
+                            .ok();
+                        Err("Failed to convert image".to_string())
+                    }
+                })
+                .shared();
+
+            cx.spawn_in(window, {
+                let task = task.clone();
+                async move |_, cx| task.clone().await.notify_async_err(cx)
+            })
+            .detach();
+
+            self.mention_set.lock().insert_image(crease_id, task);
         });
     }
 
@@ -250,12 +395,13 @@ impl MessageEditor {
 
     pub fn set_message(
         &mut self,
-        message: &[acp::ContentBlock],
+        message: Vec<acp::ContentBlock>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let mut text = String::new();
         let mut mentions = Vec::new();
+        let mut images = Vec::new();
 
         for chunk in message {
             match chunk {
@@ -273,8 +419,13 @@ impl MessageEditor {
                         mentions.push((start..end, mention_uri));
                     }
                 }
-                acp::ContentBlock::Image(_)
-                | acp::ContentBlock::Audio(_)
+                acp::ContentBlock::Image(content) => {
+                    let start = text.len();
+                    text.push_str("image");
+                    let end = text.len();
+                    images.push((start..end, content));
+                }
+                acp::ContentBlock::Audio(_)
                 | acp::ContentBlock::Resource(_)
                 | acp::ContentBlock::ResourceLink(_) => {}
             }
@@ -300,7 +451,50 @@ impl MessageEditor {
             );
 
             if let Some(crease_id) = crease_id {
-                self.mention_set.lock().insert(crease_id, mention_uri);
+                self.mention_set.lock().insert_uri(crease_id, mention_uri);
+            }
+        }
+        for (range, content) in images {
+            let Some(format) = ImageFormat::from_mime_type(&content.mime_type) else {
+                continue;
+            };
+            let anchor = snapshot.anchor_before(range.start);
+            let abs_path = content
+                .uri
+                .as_ref()
+                .and_then(|uri| uri.strip_prefix("file://").map(|s| Path::new(s).into()));
+
+            let name = content
+                .uri
+                .as_ref()
+                .and_then(|uri| {
+                    uri.strip_prefix("file://")
+                        .and_then(|path| Path::new(path).file_name())
+                })
+                .map(|name| name.to_string_lossy().to_string())
+                .unwrap_or("Image".to_owned());
+            let crease_id = crate::context_picker::insert_crease_for_mention(
+                anchor.excerpt_id,
+                anchor.text_anchor,
+                range.end - range.start,
+                name.into(),
+                IconName::Image.path().into(),
+                self.editor.clone(),
+                window,
+                cx,
+            );
+            let data: SharedString = content.data.to_string().into();
+
+            if let Some(crease_id) = crease_id {
+                self.mention_set.lock().insert_image(
+                    crease_id,
+                    Task::ready(Ok(MentionImage {
+                        abs_path,
+                        data,
+                        format,
+                    }))
+                    .shared(),
+                );
             }
         }
         cx.notify();
@@ -326,6 +520,7 @@ impl Render for MessageEditor {
             .key_context("MessageEditor")
             .on_action(cx.listener(Self::chat))
             .on_action(cx.listener(Self::cancel))
+            .capture_action(cx.listener(Self::paste))
             .flex_1()
             .child({
                 let settings = ThemeSettings::get_global(cx);
@@ -356,6 +551,26 @@ impl Render for MessageEditor {
                 )
             })
     }
+}
+
+pub(crate) fn insert_crease_for_image(
+    excerpt_id: ExcerptId,
+    anchor: text::Anchor,
+    content_len: usize,
+    editor: Entity<Editor>,
+    window: &mut Window,
+    cx: &mut App,
+) -> Option<CreaseId> {
+    crate::context_picker::insert_crease_for_mention(
+        excerpt_id,
+        anchor,
+        content_len,
+        "Image".into(),
+        IconName::Image.path().into(),
+        editor,
+        window,
+        cx,
+    )
 }
 
 #[cfg(test)]

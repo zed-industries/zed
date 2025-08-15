@@ -5,7 +5,7 @@ use anyhow::{Context as _, Result, anyhow};
 use futures::channel::oneshot;
 use gpui::{AppContext as _, AsyncApp, Entity, Task, WeakEntity};
 use project::Project;
-use std::{cell::RefCell, path::Path, rc::Rc};
+use std::{any::Any, cell::RefCell, path::Path, rc::Rc};
 use ui::App;
 use util::ResultExt as _;
 
@@ -506,5 +506,9 @@ impl AgentConnection for AcpConnection {
                 anyhow::Ok(())
             })
             .detach_and_log_err(cx)
+    }
+
+    fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
+        self
     }
 }
