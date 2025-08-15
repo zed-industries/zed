@@ -15,6 +15,7 @@ use async_tungstenite::tungstenite::{
 use clock::SystemClock;
 use cloud_api_client::CloudApiClient;
 use cloud_api_client::websocket_protocol::MessageToClient;
+use collections::HashMap;
 use credentials_provider::CredentialsProvider;
 use feature_flags::FeatureFlagAppExt as _;
 use futures::{
@@ -23,12 +24,14 @@ use futures::{
 };
 use gpui::{App, AsyncApp, Entity, Global, Task, WeakEntity, actions};
 use http_client::{HttpClient, HttpClientWithUrl, http};
-use parking_lot::RwLock;
+use parking_lot::{Mutex, RwLock};
 use postage::watch;
 use proxy::connect_proxy_stream;
 use rand::prelude::*;
 use release_channel::{AppVersion, ReleaseChannel};
-use rpc::proto::{AnyTypedEnvelope, EnvelopedMessage, LspRequestMessage, PeerId, RequestMessage};
+use rpc::proto::{
+    AnyTypedEnvelope, EnvelopedMessage, LspRequestId, LspRequestMessage, PeerId, RequestMessage,
+};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources};
@@ -41,7 +44,7 @@ use std::{
     path::PathBuf,
     sync::{
         Arc, LazyLock, Weak,
-        atomic::{AtomicU64, Ordering},
+        atomic::{self, AtomicU64, Ordering},
     },
     time::{Duration, Instant},
 };
@@ -209,6 +212,18 @@ pub struct Client {
     state: RwLock<ClientState>,
     handler_set: parking_lot::Mutex<ProtoMessageHandlerSet>,
     message_to_client_handlers: parking_lot::Mutex<Vec<MessageToClientHandler>>,
+
+    next_lsp_request_id: AtomicU64,
+    request_ids: Arc<
+        Mutex<
+            HashMap<
+                LspRequestId,
+                oneshot::Sender<
+                    Result<Option<TypedEnvelope<proto::LspResponse2<Box<dyn AnyTypedEnvelope>>>>>,
+                >,
+            >,
+        >,
+    >,
 
     #[allow(clippy::type_complexity)]
     #[cfg(any(test, feature = "test-support"))]
@@ -559,6 +574,9 @@ impl Client {
             state: Default::default(),
             handler_set: Default::default(),
             message_to_client_handlers: parking_lot::Mutex::new(Vec::new()),
+
+            next_lsp_request_id: AtomicU64::new(0),
+            request_ids: Arc::default(),
 
             #[cfg(any(test, feature = "test-support"))]
             authenticate: Default::default(),
@@ -1621,31 +1639,54 @@ impl Client {
     pub fn request_lsp<T>(
         &self,
         request: T,
-    ) -> impl Future<Output = Result<TypedEnvelope<T::Response>>> + use<T>
+    ) -> impl Future<Output = Result<Option<TypedEnvelope<proto::LspResponse2<T::Response>>>>> + use<T>
     where
         T: LspRequestMessage,
     {
+        // TODO kb how to deduplicate requests for the same kind?
+        let new_id = LspRequestId(
+            self.next_lsp_request_id
+                .fetch_add(1, atomic::Ordering::Acquire),
+        );
+        let (tx, rx) = oneshot::channel();
+        {
+            self.request_ids.lock().insert(new_id, tx);
+        }
+
+        let client_id = self.id();
+        let name = T::NAME;
+        log::debug!("rpc LSP request started. client_id: {client_id}. name: {name}");
         let query = request.into_query();
-        let new_id = todo!("TODO kb");
-        async move { todo!("TODO kb") }
-        // let client_id = self.id();
-        // log::debug!(
-        //     "rpc request start. client_id:{}. name:{}",
-        //     client_id,
-        //     T::NAME
-        // );
-        // let response = self
-        //     .connection_id()
-        //     .map(|conn_id| self.peer.request_lsp(conn_id, request));
-        // async move {
-        //     let response = response?.await;
-        //     log::debug!(
-        //         "rpc request finish. client_id:{}. name:{}",
-        //         client_id,
-        //         T::NAME
-        //     );
-        //     response
-        // }
+        let request = self.request_envelope(query);
+        async move {
+            let _request_enqueued: TypedEnvelope<proto::Ack> =
+                request.await.context("sending LSP proto request")?;
+            log::debug!("rpc request enqueued. client_id: {client_id}. name: {name}");
+            // TODO kb timeout
+            match rx.await {
+                Ok(response) => {
+                    let response = response
+                        .context("waiting for LSP proto response")?
+                        .map(|response| {
+                            anyhow::Ok(TypedEnvelope {
+                                payload: response.payload.into_response::<T>()?,
+                                sender_id: response.sender_id,
+                                original_sender_id: response.original_sender_id,
+                                message_id: response.message_id,
+                                received_at: response.received_at,
+                            })
+                        })
+                        .transpose()
+                        .context("converting LSP proto response")?;
+                    log::debug!("rpc request finished. client_id: {client_id}. name: {name}");
+                    Ok(response)
+                }
+                Err(_cancelled) => {
+                    log::debug!("rpc request cancelled. client_id: {client_id}. name: {name}");
+                    Ok(None)
+                }
+            }
+        }
     }
 
     pub fn request_dynamic(

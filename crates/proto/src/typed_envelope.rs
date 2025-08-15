@@ -37,9 +37,33 @@ pub trait LspRequestMessage: EnvelopedMessage {
     fn into_query(self) -> crate::LspQuery;
 }
 
-pub struct LspResponse<R> {
-    server_id: u64,
-    response: R,
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct LspRequestId(pub u64);
+
+pub struct LspResponse2<R> {
+    pub server_id: u64,
+    pub response: R,
+}
+
+impl LspResponse2<Box<dyn AnyTypedEnvelope>> {
+    pub fn into_response<T: LspRequestMessage>(self) -> Result<LspResponse2<T::Response>> {
+        let envelope = self
+            .response
+            .into_any()
+            .downcast::<TypedEnvelope<T::Response>>()
+            .map_err(|_| {
+                anyhow::anyhow!(
+                    "cannot downcast LspResponse to {} for message {}",
+                    T::Response::NAME,
+                    T::NAME,
+                )
+            })?;
+
+        Ok(LspResponse2 {
+            server_id: self.server_id,
+            response: envelope.payload,
+        })
+    }
 }
 
 pub trait AnyTypedEnvelope: Any + Send + Sync {

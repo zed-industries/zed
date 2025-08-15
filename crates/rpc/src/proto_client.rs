@@ -6,8 +6,8 @@ use futures::{
 };
 use gpui::{AnyEntity, AnyWeakEntity, AsyncApp, Entity};
 use proto::{
-    AnyTypedEnvelope, EntityMessage, Envelope, EnvelopedMessage, RequestMessage, TypedEnvelope,
-    error::ErrorExt as _,
+    AnyTypedEnvelope, EntityMessage, Envelope, EnvelopedMessage, LspRequestId, RequestMessage,
+    TypedEnvelope, error::ErrorExt as _,
 };
 use std::{
     any::{Any, TypeId},

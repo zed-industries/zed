@@ -5552,6 +5552,9 @@ impl LspStore {
             if !self.is_capable_for_proto_request(buffer, &request, cx) {
                 return Task::ready(Ok(Vec::new()));
             }
+
+            // let aaa = upstream_client.lsp
+
             let request_task = upstream_client.request(proto::LspQuery {
                 request: Some(proto::lsp_query::Request::GetReferences(
                     request.to_proto(project_id, buffer.read(cx)),
@@ -5562,37 +5565,38 @@ impl LspStore {
                 let Some(project) = weak_project.upgrade() else {
                     return Ok(Vec::new());
                 };
-                let responses = request_task.await?.responses;
-                let actions = join_all(
-                    responses
-                        .into_iter()
-                        .filter_map(|lsp_response| match lsp_response.response? {
-                            proto::lsp_response2::Response::GetReferencesResponse(response) => {
-                                Some(response)
-                            }
-                            unexpected => {
-                                debug_panic!("Unexpected response: {unexpected:?}");
-                                None
-                            }
-                        })
-                        .map(|references_response| {
-                            GetReferences { position }.response_from_proto(
-                                references_response,
-                                project.clone(),
-                                buffer.clone(),
-                                cx.clone(),
-                            )
-                        }),
-                )
-                .await;
+                // let responses = request_task.await?.responses;
+                // let actions = join_all(
+                //     responses
+                //         .into_iter()
+                //         .filter_map(|lsp_response| match lsp_response.response? {
+                //             proto::lsp_response2::Response::GetReferencesResponse(response) => {
+                //                 Some(response)
+                //             }
+                //             unexpected => {
+                //                 debug_panic!("Unexpected response: {unexpected:?}");
+                //                 None
+                //             }
+                //         })
+                //         .map(|references_response| {
+                //             GetReferences { position }.response_from_proto(
+                //                 references_response,
+                //                 project.clone(),
+                //                 buffer.clone(),
+                //                 cx.clone(),
+                //             )
+                //         }),
+                // )
+                // .await;
 
-                Ok(actions
-                    .into_iter()
-                    .collect::<Result<Vec<Vec<_>>>>()?
-                    .into_iter()
-                    .flatten()
-                    .dedup()
-                    .collect())
+                // Ok(actions
+                //     .into_iter()
+                //     .collect::<Result<Vec<Vec<_>>>>()?
+                //     .into_iter()
+                //     .flatten()
+                //     .dedup()
+                //     .collect())
+                todo!("TODO kb")
             })
         } else {
             let references_task = self.request_multiple_lsp_locally(
