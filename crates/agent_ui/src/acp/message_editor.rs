@@ -209,6 +209,14 @@ impl MessageEditor {
         });
     }
 
+    pub fn clear_selections(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.editor.update(cx, |editor, cx| {
+            editor.change_selections(Default::default(), window, cx, |selections| {
+                selections.try_cancel();
+            })
+        });
+    }
+
     fn send(&mut self, _: &Chat, _: &mut Window, cx: &mut Context<Self>) {
         cx.emit(MessageEditorEvent::Send)
     }

@@ -516,8 +516,21 @@ impl AcpThreadView {
         .detach();
     }
 
-    fn cancel_editing(&mut self, _: &ClickEvent, _window: &mut Window, cx: &mut Context<Self>) {
-        self.editing_message.take();
+    fn cancel_editing(&mut self, _: &ClickEvent, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(index) = self.editing_message.take() {
+            if let Some(editor) = self
+                .entry_view_state
+                .read(cx)
+                .entry(index)
+                .and_then(|e| e.message_editor())
+                .cloned()
+            {
+                editor.update(cx, |editor, cx| {
+                    editor.clear_selections(window, cx);
+                })
+            }
+        };
+        self.focus_handle(cx).focus(window);
         cx.notify();
     }
 
@@ -748,10 +761,8 @@ impl AcpThreadView {
                                 .entry(entry_ix)
                                 .and_then(|entry| entry.message_editor())
                                 .map(|editor| {
-                                    self.render_sent_user_message_editor(
-                                        entry_ix, editor, window, cx,
-                                    )
-                                    .into_any_element()
+                                    self.render_sent_message_editor(entry_ix, editor, cx)
+                                        .into_any_element()
                                 }),
                         ),
                 )
@@ -842,8 +853,8 @@ impl AcpThreadView {
 
             div()
                 .relative()
-                .child(backdrop)
                 .child(primary)
+                .child(backdrop)
                 .into_any_element()
         } else {
             primary
@@ -2492,15 +2503,14 @@ impl AcpThreadView {
         )
     }
 
-    fn render_sent_user_message_editor(
+    fn render_sent_message_editor(
         &self,
         entry_ix: usize,
         editor: &Entity<MessageEditor>,
-        window: &Window,
         cx: &Context<Self>,
     ) -> Div {
         v_flex().w_full().gap_2().child(editor.clone()).when(
-            editor.focus_handle(cx).is_focused(window),
+            self.editing_message == Some(entry_ix),
             |el| {
                 el.child(
                     h_flex()
@@ -2515,13 +2525,13 @@ impl AcpThreadView {
                                 .color(Color::Muted)
                                 .size(LabelSize::XSmall),
                         )
-                        .child(self.render_sent_user_message_editor_buttons(entry_ix, editor, cx)),
+                        .child(self.render_sent_message_editor_buttons(entry_ix, editor, cx)),
                 )
             },
         )
     }
 
-    fn render_sent_user_message_editor_buttons(
+    fn render_sent_message_editor_buttons(
         &self,
         entry_ix: usize,
         editor: &Entity<MessageEditor>,
