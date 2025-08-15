@@ -77,16 +77,16 @@ impl Render for MarkdownExample {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let markdown_style = MarkdownStyle {
             base_text_style: gpui::TextStyle {
-                font_family: "Zed Plex Sans".into(),
+                font_family: ".ZedSans".into(),
                 color: cx.theme().colors().terminal_ansi_black,
                 ..Default::default()
             },
             code_block: StyleRefinement::default()
-                .font_family("Zed Plex Mono")
+                .font_family(".ZedMono")
                 .m(rems(1.))
                 .bg(rgb(0xAAAAAAA)),
             inline_code: gpui::TextStyleRefinement {
-                font_family: Some("Zed Mono".into()),
+                font_family: Some(".ZedMono".into()),
                 color: Some(cx.theme().colors().editor_foreground),
                 background_color: Some(cx.theme().colors().editor_background),
                 ..Default::default()

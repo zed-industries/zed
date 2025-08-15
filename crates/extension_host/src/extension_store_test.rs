@@ -10,7 +10,7 @@ use fs::{FakeFs, Fs, RealFs};
 use futures::{AsyncReadExt, StreamExt, io::BufReader};
 use gpui::{AppContext as _, SemanticVersion, TestAppContext};
 use http_client::{FakeHttpClient, Response};
-use language::{BinaryStatus, LanguageMatcher, LanguageRegistry};
+use language::{BinaryStatus, LanguageMatcher, LanguageName, LanguageRegistry};
 use language_extension::LspAccess;
 use lsp::LanguageServerName;
 use node_runtime::NodeRuntime;
@@ -306,7 +306,11 @@ async fn test_extension_store(cx: &mut TestAppContext) {
 
         assert_eq!(
             language_registry.language_names(),
-            ["ERB", "Plain Text", "Ruby"]
+            [
+                LanguageName::new("ERB"),
+                LanguageName::new("Plain Text"),
+                LanguageName::new("Ruby"),
+            ]
         );
         assert_eq!(
             theme_registry.list_names(),
@@ -458,7 +462,11 @@ async fn test_extension_store(cx: &mut TestAppContext) {
 
         assert_eq!(
             language_registry.language_names(),
-            ["ERB", "Plain Text", "Ruby"]
+            [
+                LanguageName::new("ERB"),
+                LanguageName::new("Plain Text"),
+                LanguageName::new("Ruby"),
+            ]
         );
         assert_eq!(
             language_registry.grammar_names(),
@@ -513,7 +521,10 @@ async fn test_extension_store(cx: &mut TestAppContext) {
             assert_eq!(actual_language.hidden, expected_language.hidden);
         }
 
-        assert_eq!(language_registry.language_names(), ["Plain Text"]);
+        assert_eq!(
+            language_registry.language_names(),
+            [LanguageName::new("Plain Text")]
+        );
         assert_eq!(language_registry.grammar_names(), []);
     });
 }

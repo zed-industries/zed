@@ -529,11 +529,17 @@ pub struct RejoinedProject {
     pub worktrees: Vec<RejoinedWorktree>,
     pub updated_repositories: Vec<proto::UpdateRepository>,
     pub removed_repositories: Vec<u64>,
-    pub language_servers: Vec<proto::LanguageServer>,
+    pub language_servers: Vec<LanguageServer>,
 }
 
 impl RejoinedProject {
     pub fn to_proto(&self) -> proto::RejoinedProject {
+        let (language_servers, language_server_capabilities) = self
+            .language_servers
+            .clone()
+            .into_iter()
+            .map(|server| (server.server, server.capabilities))
+            .unzip();
         proto::RejoinedProject {
             id: self.id.to_proto(),
             worktrees: self
@@ -551,7 +557,8 @@ impl RejoinedProject {
                 .iter()
                 .map(|collaborator| collaborator.to_proto())
                 .collect(),
-            language_servers: self.language_servers.clone(),
+            language_servers,
+            language_server_capabilities,
         }
     }
 }
@@ -598,7 +605,7 @@ pub struct Project {
     pub collaborators: Vec<ProjectCollaborator>,
     pub worktrees: BTreeMap<u64, Worktree>,
     pub repositories: Vec<proto::UpdateRepository>,
-    pub language_servers: Vec<proto::LanguageServer>,
+    pub language_servers: Vec<LanguageServer>,
 }
 
 pub struct ProjectCollaborator {
@@ -621,6 +628,12 @@ impl ProjectCollaborator {
             committer_email: self.committer_email.clone(),
         }
     }
+}
+
+#[derive(Debug, Clone)]
+pub struct LanguageServer {
+    pub server: proto::LanguageServer,
+    pub capabilities: String,
 }
 
 #[derive(Debug)]

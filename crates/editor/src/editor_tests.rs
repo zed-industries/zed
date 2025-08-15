@@ -2,7 +2,7 @@ use super::*;
 use crate::{
     JoinLines,
     code_context_menus::CodeContextMenu,
-    inline_completion_tests::FakeInlineCompletionProvider,
+    edit_prediction_tests::FakeEditPredictionProvider,
     linked_editing_ranges::LinkedEditingRanges,
     scroll::scroll_amount::ScrollAmount,
     test::{
@@ -74,7 +74,7 @@ fn test_edit_events(cx: &mut TestAppContext) {
     let editor1 = cx.add_window({
         let events = events.clone();
         |window, cx| {
-            let entity = cx.entity().clone();
+            let entity = cx.entity();
             cx.subscribe_in(
                 &entity,
                 window,
@@ -95,7 +95,7 @@ fn test_edit_events(cx: &mut TestAppContext) {
         let events = events.clone();
         |window, cx| {
             cx.subscribe_in(
-                &cx.entity().clone(),
+                &cx.entity(),
                 window,
                 move |_, _, event: &EditorEvent, _, _| match event {
                     EditorEvent::Edited { .. } => events.borrow_mut().push(("editor2", "edited")),
@@ -1898,6 +1898,51 @@ fn test_beginning_of_line_stop_at_indent(cx: &mut TestAppContext) {
         editor.move_left(&MoveLeft, window, cx);
         editor.delete_to_beginning_of_line(&delete_to_beg, window, cx);
         assert_eq!(editor.text(cx), "c\n  f");
+    });
+}
+
+#[gpui::test]
+fn test_beginning_of_line_with_cursor_between_line_start_and_indent(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let move_to_beg = MoveToBeginningOfLine {
+        stop_at_soft_wraps: true,
+        stop_at_indent: true,
+    };
+
+    let editor = cx.add_window(|window, cx| {
+        let buffer = MultiBuffer::build_simple("    hello\nworld", cx);
+        build_editor(buffer, window, cx)
+    });
+
+    _ = editor.update(cx, |editor, window, cx| {
+        // test cursor between line_start and indent_start
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_display_ranges([
+                DisplayPoint::new(DisplayRow(0), 3)..DisplayPoint::new(DisplayRow(0), 3)
+            ]);
+        });
+
+        // cursor should move to line_start
+        editor.move_to_beginning_of_line(&move_to_beg, window, cx);
+        assert_eq!(
+            editor.selections.display_ranges(cx),
+            &[DisplayPoint::new(DisplayRow(0), 0)..DisplayPoint::new(DisplayRow(0), 0)]
+        );
+
+        // cursor should move to indent_start
+        editor.move_to_beginning_of_line(&move_to_beg, window, cx);
+        assert_eq!(
+            editor.selections.display_ranges(cx),
+            &[DisplayPoint::new(DisplayRow(0), 4)..DisplayPoint::new(DisplayRow(0), 4)]
+        );
+
+        // cursor should move to back to line_start
+        editor.move_to_beginning_of_line(&move_to_beg, window, cx);
+        assert_eq!(
+            editor.selections.display_ranges(cx),
+            &[DisplayPoint::new(DisplayRow(0), 0)..DisplayPoint::new(DisplayRow(0), 0)]
+        );
     });
 }
 
@@ -6356,7 +6401,7 @@ async fn test_split_selection_into_lines(cx: &mut TestAppContext) {
     fn test(cx: &mut EditorTestContext, initial_state: &'static str, expected_state: &'static str) {
         cx.set_state(initial_state);
         cx.update_editor(|e, window, cx| {
-            e.split_selection_into_lines(&SplitSelectionIntoLines, window, cx)
+            e.split_selection_into_lines(&Default::default(), window, cx)
         });
         cx.assert_editor_state(expected_state);
     }
@@ -6444,7 +6489,7 @@ async fn test_split_selection_into_lines_interacting_with_creases(cx: &mut TestA
                 DisplayPoint::new(DisplayRow(4), 4)..DisplayPoint::new(DisplayRow(4), 4),
             ])
         });
-        editor.split_selection_into_lines(&SplitSelectionIntoLines, window, cx);
+        editor.split_selection_into_lines(&Default::default(), window, cx);
         assert_eq!(
             editor.display_text(cx),
             "aaaaa\nbbbbb\nccc⋯eeee\nfffff\nggggg\n⋯i"
@@ -6460,7 +6505,7 @@ async fn test_split_selection_into_lines_interacting_with_creases(cx: &mut TestA
                 DisplayPoint::new(DisplayRow(5), 0)..DisplayPoint::new(DisplayRow(0), 1)
             ])
         });
-        editor.split_selection_into_lines(&SplitSelectionIntoLines, window, cx);
+        editor.split_selection_into_lines(&Default::default(), window, cx);
         assert_eq!(
             editor.display_text(cx),
             "aaaaa\nbbbbb\nccccc\nddddd\neeeee\nfffff\nggggg\nhhhhh\niiiii"
@@ -7251,12 +7296,12 @@ async fn test_undo_format_scrolls_to_last_edit_pos(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_undo_inline_completion_scrolls_to_edit_pos(cx: &mut TestAppContext) {
+async fn test_undo_edit_prediction_scrolls_to_edit_pos(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
     let mut cx = EditorTestContext::new(cx).await;
 
-    let provider = cx.new(|_| FakeInlineCompletionProvider::default());
+    let provider = cx.new(|_| FakeEditPredictionProvider::default());
     cx.update_editor(|editor, window, cx| {
         editor.set_edit_prediction_provider(Some(provider.clone()), window, cx);
     });
@@ -7279,7 +7324,7 @@ async fn test_undo_inline_completion_scrolls_to_edit_pos(cx: &mut TestAppContext
 
     cx.update(|_, cx| {
         provider.update(cx, |provider, _| {
-            provider.set_inline_completion(Some(inline_completion::InlineCompletion {
+            provider.set_edit_prediction(Some(edit_prediction::EditPrediction {
                 id: None,
                 edits: vec![(edit_position..edit_position, "X".into())],
                 edit_preview: None,
@@ -7287,7 +7332,7 @@ async fn test_undo_inline_completion_scrolls_to_edit_pos(cx: &mut TestAppContext
         })
     });
 
-    cx.update_editor(|editor, window, cx| editor.update_visible_inline_completion(window, cx));
+    cx.update_editor(|editor, window, cx| editor.update_visible_edit_prediction(window, cx));
     cx.update_editor(|editor, window, cx| {
         editor.accept_edit_prediction(&crate::AcceptEditPrediction, window, cx)
     });
@@ -7967,6 +8012,38 @@ async fn test_select_larger_smaller_syntax_node_for_string(cx: &mut TestAppConte
             cx,
         );
     });
+}
+
+#[gpui::test]
+async fn test_unwrap_syntax_node(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    let language = Arc::new(Language::new(
+        LanguageConfig::default(),
+        Some(tree_sitter_rust::LANGUAGE.into()),
+    ));
+
+    cx.update_buffer(|buffer, cx| {
+        buffer.set_language(Some(language), cx);
+    });
+
+    cx.set_state(
+        &r#"
+            use mod1::mod2::{«mod3ˇ», mod4};
+        "#
+        .unindent(),
+    );
+    cx.update_editor(|editor, window, cx| {
+        editor.unwrap_syntax_node(&UnwrapSyntaxNode, window, cx);
+    });
+    cx.assert_editor_state(
+        &r#"
+            use mod1::mod2::«mod3ˇ»;
+        "#
+        .unindent(),
+    );
 }
 
 #[gpui::test]
@@ -15005,7 +15082,7 @@ async fn go_to_prev_overlapping_diagnostic(executor: BackgroundExecutor, cx: &mu
 
     let mut cx = EditorTestContext::new(cx).await;
     let lsp_store =
-        cx.update_editor(|editor, _, cx| editor.project.as_ref().unwrap().read(cx).lsp_store());
+        cx.update_editor(|editor, _, cx| editor.project().unwrap().read(cx).lsp_store());
 
     cx.set_state(indoc! {"
         ˇfn func(abc def: i32) -> u32 {
@@ -19557,13 +19634,8 @@ fn test_crease_insertion_and_rendering(cx: &mut TestAppContext) {
 
             editor.insert_creases(Some(crease), cx);
             let snapshot = editor.snapshot(window, cx);
-            let _div = snapshot.render_crease_toggle(
-                MultiBufferRow(1),
-                false,
-                cx.entity().clone(),
-                window,
-                cx,
-            );
+            let _div =
+                snapshot.render_crease_toggle(MultiBufferRow(1), false, cx.entity(), window, cx);
             snapshot
         })
         .unwrap();
@@ -20552,7 +20624,7 @@ async fn test_multi_buffer_navigation_with_folded_buffers(cx: &mut TestAppContex
 }
 
 #[gpui::test]
-async fn test_inline_completion_text(cx: &mut TestAppContext) {
+async fn test_edit_prediction_text(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
     // Simple insertion
@@ -20651,7 +20723,7 @@ async fn test_inline_completion_text(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_inline_completion_text_with_deletions(cx: &mut TestAppContext) {
+async fn test_edit_prediction_text_with_deletions(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
     // Deletion
@@ -20741,7 +20813,7 @@ async fn assert_highlighted_edits(
         .await;
 
     cx.update(|_window, cx| {
-        let highlighted_edits = inline_completion_edit_text(
+        let highlighted_edits = edit_prediction_edit_text(
             &snapshot.as_singleton().unwrap().2,
             &edits,
             &edit_preview,
@@ -22424,7 +22496,7 @@ async fn test_invisible_worktree_servers(cx: &mut TestAppContext) {
     );
 
     cx.update(|_, cx| {
-        workspace::reload(&workspace::Reload::default(), cx);
+        workspace::reload(cx);
     });
     assert_language_servers_count(
         1,

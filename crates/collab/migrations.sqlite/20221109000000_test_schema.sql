@@ -173,6 +173,7 @@ CREATE TABLE "language_servers" (
     "id" INTEGER NOT NULL,
     "project_id" INTEGER NOT NULL REFERENCES projects (id) ON DELETE CASCADE,
     "name" VARCHAR NOT NULL,
+    "capabilities" TEXT NOT NULL,
     PRIMARY KEY (project_id, id)
 );
 

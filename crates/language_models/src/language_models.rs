@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use ::settings::{Settings, SettingsStore};
-use client::{Client, CloudUserStore, UserStore};
+use client::{Client, UserStore};
 use collections::HashSet;
 use gpui::{App, Context, Entity};
 use language_model::{LanguageModelProviderId, LanguageModelRegistry};
@@ -26,22 +26,11 @@ use crate::provider::vercel::VercelLanguageModelProvider;
 use crate::provider::x_ai::XAiLanguageModelProvider;
 pub use crate::settings::*;
 
-pub fn init(
-    user_store: Entity<UserStore>,
-    cloud_user_store: Entity<CloudUserStore>,
-    client: Arc<Client>,
-    cx: &mut App,
-) {
+pub fn init(user_store: Entity<UserStore>, client: Arc<Client>, cx: &mut App) {
     crate::settings::init_settings(cx);
     let registry = LanguageModelRegistry::global(cx);
     registry.update(cx, |registry, cx| {
-        register_language_model_providers(
-            registry,
-            user_store,
-            cloud_user_store,
-            client.clone(),
-            cx,
-        );
+        register_language_model_providers(registry, user_store, client.clone(), cx);
     });
 
     let mut openai_compatible_providers = AllLanguageModelSettings::get_global(cx)
@@ -111,17 +100,11 @@ fn register_openai_compatible_providers(
 fn register_language_model_providers(
     registry: &mut LanguageModelRegistry,
     user_store: Entity<UserStore>,
-    cloud_user_store: Entity<CloudUserStore>,
     client: Arc<Client>,
     cx: &mut Context<LanguageModelRegistry>,
 ) {
     registry.register_provider(
-        CloudLanguageModelProvider::new(
-            user_store.clone(),
-            cloud_user_store.clone(),
-            client.clone(),
-            cx,
-        ),
+        CloudLanguageModelProvider::new(user_store.clone(), client.clone(), cx),
         cx,
     );
 

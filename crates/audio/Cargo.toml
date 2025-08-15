@@ -18,6 +18,6 @@ collections.workspace = true
 derive_more.workspace = true
 gpui.workspace = true
 parking_lot.workspace = true
-rodio = { version = "0.21.1", default-features = false, features = ["wav", "playback", "tracing"] }
+rodio = { workspace = true, features = [ "wav", "playback", "tracing" ] }
 util.workspace = true
 workspace-hack.workspace = true

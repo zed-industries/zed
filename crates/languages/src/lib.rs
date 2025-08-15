@@ -17,6 +17,7 @@ use crate::{json::JsonTaskProvider, python::BasedPyrightLspAdapter};
 mod bash;
 mod c;
 mod css;
+mod github_download;
 mod go;
 mod json;
 mod package_json;

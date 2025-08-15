@@ -1107,7 +1107,7 @@ impl VariableList {
                                     let variable_value = value.clone();
                                     this.on_click(cx.listener(
                                         move |this, click: &ClickEvent, window, cx| {
-                                            if click.down.click_count < 2 {
+                                            if click.click_count() < 2 {
                                                 return;
                                             }
                                             let editor = Self::create_variable_editor(

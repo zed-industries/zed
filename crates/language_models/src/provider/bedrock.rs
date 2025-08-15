@@ -1251,7 +1251,7 @@ impl Render for ConfigurationView {
         v_flex()
             .size_full()
             .on_action(cx.listener(ConfigurationView::save_credentials))
-            .child(Label::new("To use Zed's assistant with Bedrock, you can set a custom authentication strategy through the settings.json, or use static credentials."))
+            .child(Label::new("To use Zed's agent with Bedrock, you can set a custom authentication strategy through the settings.json, or use static credentials."))
             .child(Label::new("But, to access models on AWS, you need to:").mt_1())
             .child(
                 List::new()

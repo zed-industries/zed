@@ -3,7 +3,7 @@ use crate::{
     locator::Locator,
 };
 use std::{cmp::Ordering, fmt::Debug, ops::Range};
-use sum_tree::Bias;
+use sum_tree::{Bias, Dimensions};
 
 /// A timestamped position in a buffer
 #[derive(Copy, Clone, Eq, PartialEq, Debug, Hash, Default)]
@@ -102,7 +102,9 @@ impl Anchor {
             let Some(fragment_id) = buffer.try_fragment_id_for_anchor(self) else {
                 return false;
             };
-            let mut fragment_cursor = buffer.fragments.cursor::<(Option<&Locator>, usize)>(&None);
+            let mut fragment_cursor = buffer
+                .fragments
+                .cursor::<Dimensions<Option<&Locator>, usize>>(&None);
             fragment_cursor.seek(&Some(fragment_id), Bias::Left);
             fragment_cursor
                 .item()

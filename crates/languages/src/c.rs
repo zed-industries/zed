@@ -2,14 +2,16 @@ use anyhow::{Context as _, Result, bail};
 use async_trait::async_trait;
 use futures::StreamExt;
 use gpui::{App, AsyncApp};
-use http_client::github::{GitHubLspBinaryVersion, latest_github_release};
+use http_client::github::{AssetKind, GitHubLspBinaryVersion, latest_github_release};
 pub use language::*;
 use lsp::{InitializeParams, LanguageServerBinary, LanguageServerName};
 use project::lsp_store::clangd_ext;
 use serde_json::json;
 use smol::fs;
 use std::{any::Any, env::consts, path::PathBuf, sync::Arc};
-use util::{ResultExt, archive::extract_zip, fs::remove_matching, maybe, merge_json_value_into};
+use util::{ResultExt, fs::remove_matching, maybe, merge_json_value_into};
+
+use crate::github_download::{GithubBinaryMetadata, download_server_binary};
 
 pub struct CLspAdapter;
 
@@ -58,6 +60,7 @@ impl super::LspAdapter for CLspAdapter {
         let version = GitHubLspBinaryVersion {
             name: release.tag_name,
             url: asset.browser_download_url.clone(),
+            digest: asset.digest.clone(),
         };
         Ok(Box::new(version) as Box<_>)
     }
@@ -68,32 +71,72 @@ impl super::LspAdapter for CLspAdapter {
         container_dir: PathBuf,
         delegate: &dyn LspAdapterDelegate,
     ) -> Result<LanguageServerBinary> {
-        let version = version.downcast::<GitHubLspBinaryVersion>().unwrap();
-        let version_dir = container_dir.join(format!("clangd_{}", version.name));
+        let GitHubLspBinaryVersion {
+            name,
+            url,
+            digest: expected_digest,
+        } = *version.downcast::<GitHubLspBinaryVersion>().unwrap();
+        let version_dir = container_dir.join(format!("clangd_{name}"));
         let binary_path = version_dir.join("bin/clangd");
 
-        if fs::metadata(&binary_path).await.is_err() {
-            let mut response = delegate
-                .http_client()
-                .get(&version.url, Default::default(), true)
-                .await
-                .context("error downloading release")?;
-            anyhow::ensure!(
-                response.status().is_success(),
-                "download failed with status {}",
-                response.status().to_string()
-            );
-            extract_zip(&container_dir, response.body_mut())
-                .await
-                .with_context(|| format!("unzipping clangd archive to {container_dir:?}"))?;
-            remove_matching(&container_dir, |entry| entry != version_dir).await;
-        }
-
-        Ok(LanguageServerBinary {
-            path: binary_path,
+        let binary = LanguageServerBinary {
+            path: binary_path.clone(),
             env: None,
-            arguments: Vec::new(),
-        })
+            arguments: Default::default(),
+        };
+
+        let metadata_path = version_dir.join("metadata");
+        let metadata = GithubBinaryMetadata::read_from_file(&metadata_path)
+            .await
+            .ok();
+        if let Some(metadata) = metadata {
+            let validity_check = async || {
+                delegate
+                    .try_exec(LanguageServerBinary {
+                        path: binary_path.clone(),
+                        arguments: vec!["--version".into()],
+                        env: None,
+                    })
+                    .await
+                    .inspect_err(|err| {
+                        log::warn!("Unable to run {binary_path:?} asset, redownloading: {err}",)
+                    })
+            };
+            if let (Some(actual_digest), Some(expected_digest)) =
+                (&metadata.digest, &expected_digest)
+            {
+                if actual_digest == expected_digest {
+                    if validity_check().await.is_ok() {
+                        return Ok(binary);
+                    }
+                } else {
+                    log::info!(
+                        "SHA-256 mismatch for {binary_path:?} asset, downloading new asset. Expected: {expected_digest}, Got: {actual_digest}"
+                    );
+                }
+            } else if validity_check().await.is_ok() {
+                return Ok(binary);
+            }
+        }
+        download_server_binary(
+            delegate,
+            &url,
+            expected_digest.as_deref(),
+            &container_dir,
+            AssetKind::Zip,
+        )
+        .await?;
+        remove_matching(&container_dir, |entry| entry != version_dir).await;
+        GithubBinaryMetadata::write_to_file(
+            &GithubBinaryMetadata {
+                metadata_version: 1,
+                digest: expected_digest,
+            },
+            &metadata_path,
+        )
+        .await?;
+
+        Ok(binary)
     }
 
     async fn cached_server_binary(

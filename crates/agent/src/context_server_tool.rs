@@ -1,7 +1,8 @@
 use std::sync::Arc;
 
+use action_log::ActionLog;
 use anyhow::{Result, anyhow, bail};
-use assistant_tool::{ActionLog, Tool, ToolResult, ToolSource};
+use assistant_tool::{Tool, ToolResult, ToolSource};
 use context_server::{ContextServerId, types};
 use gpui::{AnyWindowHandle, App, Entity, Task};
 use icons::IconName;

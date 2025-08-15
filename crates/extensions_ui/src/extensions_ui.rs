@@ -703,7 +703,7 @@ impl ExtensionsPage {
         extension: &ExtensionMetadata,
         cx: &mut Context<Self>,
     ) -> ExtensionCard {
-        let this = cx.entity().clone();
+        let this = cx.entity();
         let status = Self::extension_status(&extension.id, cx);
         let has_dev_extension = Self::dev_extension_exists(&extension.id, cx);
 

@@ -326,7 +326,7 @@ When you use `cargo build` or `cargo test` as the build command, Zed can infer t
 [
   {
     "label": "Build & Debug native binary",
-    "adapter": "CodeLLDB"
+    "adapter": "CodeLLDB",
     "build": {
       "command": "cargo",
       "args": ["build"]

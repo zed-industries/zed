@@ -504,7 +504,7 @@ impl Render for ContextStrip {
                         )
                         .on_click({
                             Rc::new(cx.listener(move |this, event: &ClickEvent, window, cx| {
-                                if event.down.click_count > 1 {
+                                if event.click_count() > 1 {
                                     this.open_context(&context, window, cx);
                                 } else {
                                     this.focused_index = Some(i);

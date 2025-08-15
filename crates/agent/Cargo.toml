@@ -19,6 +19,7 @@ test-support = [
 ]
 
 [dependencies]
+action_log.workspace = true
 agent_settings.workspace = true
 anyhow.workspace = true
 assistant_context.workspace = true
@@ -47,7 +48,6 @@ paths.workspace = true
 postage.workspace = true
 project.workspace = true
 prompt_store.workspace = true
-proto.workspace = true
 ref-cast.workspace = true
 rope.workspace = true
 schemars.workspace = true

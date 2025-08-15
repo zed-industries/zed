@@ -5,7 +5,7 @@ struct EmmetExtension {
     did_find_server: bool,
 }
 
-const SERVER_PATH: &str = "node_modules/.bin/emmet-language-server";
+const SERVER_PATH: &str = "node_modules/@olrtg/emmet-language-server/dist/index.js";
 const PACKAGE_NAME: &str = "@olrtg/emmet-language-server";
 
 impl EmmetExtension {
@@ -70,8 +70,7 @@ impl zed::Extension for EmmetExtension {
         Ok(zed::Command {
             command: zed::node_binary_path()?,
             args: vec![
-                env::current_dir()
-                    .unwrap()
+                zed_ext::sanitize_windows_path(env::current_dir().unwrap())
                     .join(&server_path)
                     .to_string_lossy()
                     .to_string(),
@@ -83,3 +82,25 @@ impl zed::Extension for EmmetExtension {
 }
 
 zed::register_extension!(EmmetExtension);
+
+/// Extensions to the Zed extension API that have not yet stabilized.
+mod zed_ext {
+    /// Sanitizes the given path to remove the leading `/` on Windows.
+    ///
+    /// On macOS and Linux this is a no-op.
+    ///
+    /// This is a workaround for https://github.com/bytecodealliance/wasmtime/issues/10415.
+    pub fn sanitize_windows_path(path: std::path::PathBuf) -> std::path::PathBuf {
+        use zed_extension_api::{Os, current_platform};
+
+        let (os, _arch) = current_platform();
+        match os {
+            Os::Mac | Os::Linux => path,
+            Os::Windows => path
+                .to_string_lossy()
+                .to_string()
+                .trim_start_matches('/')
+                .into(),
+        }
+    }
+}

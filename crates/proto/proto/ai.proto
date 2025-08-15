@@ -158,14 +158,6 @@ message SynchronizeContextsResponse {
     repeated ContextVersion contexts = 1;
 }
 
-message GetLlmToken {}
-
-message GetLlmTokenResponse {
-    string token = 1;
-}
-
-message RefreshLlmToken {}
-
 enum LanguageModelRole {
     LanguageModelUser = 0;
     LanguageModelAssistant = 1;

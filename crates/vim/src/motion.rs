@@ -677,7 +677,7 @@ impl Vim {
             match self.mode {
                 Mode::Visual | Mode::VisualLine | Mode::VisualBlock => {
                     if !prior_selections.is_empty() {
-                        self.update_editor(window, cx, |_, editor, window, cx| {
+                        self.update_editor(cx, |_, editor, cx| {
                             editor.change_selections(Default::default(), window, cx, |s| {
                                 s.select_ranges(prior_selections.iter().cloned())
                             })
@@ -2665,7 +2665,8 @@ fn find_backward(
     }
 }
 
-fn is_character_match(target: char, other: char, smartcase: bool) -> bool {
+/// Returns true if one char is equal to the other or its uppercase variant (if smartcase is true).
+pub fn is_character_match(target: char, other: char, smartcase: bool) -> bool {
     if smartcase {
         if target.is_uppercase() {
             target == other
@@ -3833,7 +3834,7 @@ mod test {
         cx.update_editor(|editor, _window, cx| {
             let range = editor.selections.newest_anchor().range();
             let inlay_text = "  field: int,\n  field2: string\n  field3: float";
-            let inlay = Inlay::inline_completion(1, range.start, inlay_text);
+            let inlay = Inlay::edit_prediction(1, range.start, inlay_text);
             editor.splice_inlays(&[], vec![inlay], cx);
         });
 
@@ -3865,7 +3866,7 @@ mod test {
             let end_of_line =
                 snapshot.anchor_after(Point::new(0, snapshot.line_len(MultiBufferRow(0))));
             let inlay_text = " hint";
-            let inlay = Inlay::inline_completion(1, end_of_line, inlay_text);
+            let inlay = Inlay::edit_prediction(1, end_of_line, inlay_text);
             editor.splice_inlays(&[], vec![inlay], cx);
         });
         cx.simulate_keystrokes("$");

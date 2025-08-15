@@ -169,7 +169,7 @@ impl Editor {
         else {
             return;
         };
-        let Some(lsp_store) = self.project.as_ref().map(|p| p.read(cx).lsp_store()) else {
+        let Some(lsp_store) = self.project().map(|p| p.read(cx).lsp_store()) else {
             return;
         };
         let task = lsp_store.update(cx, |lsp_store, cx| {
@@ -191,7 +191,7 @@ impl Editor {
 
                         if let Some(language) = language {
                             for signature in &mut signature_help.signatures {
-                                let text = Rope::from(signature.label.to_string());
+                                let text = Rope::from(signature.label.as_ref());
                                 let highlights = language
                                     .highlight_text(&text, 0..signature.label.len())
                                     .into_iter()

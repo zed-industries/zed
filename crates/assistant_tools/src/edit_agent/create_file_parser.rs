@@ -1,10 +1,11 @@
+use std::sync::OnceLock;
+
 use regex::Regex;
 use smallvec::SmallVec;
-use std::cell::LazyCell;
 use util::debug_panic;
 
-const START_MARKER: LazyCell<Regex> = LazyCell::new(|| Regex::new(r"\n?```\S*\n").unwrap());
-const END_MARKER: LazyCell<Regex> = LazyCell::new(|| Regex::new(r"(^|\n)```\s*$").unwrap());
+static START_MARKER: OnceLock<Regex> = OnceLock::new();
+static END_MARKER: OnceLock<Regex> = OnceLock::new();
 
 #[derive(Debug)]
 pub enum CreateFileParserEvent {
@@ -43,10 +44,12 @@ impl CreateFileParser {
         self.buffer.push_str(chunk);
 
         let mut edit_events = SmallVec::new();
+        let start_marker_regex = START_MARKER.get_or_init(|| Regex::new(r"\n?```\S*\n").unwrap());
+        let end_marker_regex = END_MARKER.get_or_init(|| Regex::new(r"(^|\n)```\s*$").unwrap());
         loop {
             match &mut self.state {
                 ParserState::Pending => {
-                    if let Some(m) = START_MARKER.find(&self.buffer) {
+                    if let Some(m) = start_marker_regex.find(&self.buffer) {
                         self.buffer.drain(..m.end());
                         self.state = ParserState::WithinText;
                     } else {
@@ -65,7 +68,7 @@ impl CreateFileParser {
                     break;
                 }
                 ParserState::Finishing => {
-                    if let Some(m) = END_MARKER.find(&self.buffer) {
+                    if let Some(m) = end_marker_regex.find(&self.buffer) {
                         self.buffer.drain(m.start()..);
                     }
                     if !self.buffer.is_empty() {

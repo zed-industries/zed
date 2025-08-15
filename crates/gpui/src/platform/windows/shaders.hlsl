@@ -1,6 +1,6 @@
 cbuffer GlobalParams: register(b0) {
     float2 global_viewport_size;
-    uint2 _global_pad;
+    uint2 _pad;
 };
 
 Texture2D<float4> t_sprite: register(t0);
@@ -914,7 +914,7 @@ float4 path_rasterization_fragment(PathFragmentInput input): SV_Target {
     float2 dx = ddx(input.st_position);
     float2 dy = ddy(input.st_position);
     PathRasterizationSprite sprite = path_rasterization_sprites[input.vertex_id];
-    
+
     Background background = sprite.color;
     Bounds bounds = sprite.bounds;
 
@@ -1021,13 +1021,18 @@ UnderlineVertexOutput underline_vertex(uint vertex_id: SV_VertexID, uint underli
 }
 
 float4 underline_fragment(UnderlineFragmentInput input): SV_Target {
+    const float WAVE_FREQUENCY = 2.0;
+    const float WAVE_HEIGHT_RATIO = 0.8;
+
     Underline underline = underlines[input.underline_id];
     if (underline.wavy) {
         float half_thickness = underline.thickness * 0.5;
         float2 origin = underline.bounds.origin;
+
         float2 st = ((input.position.xy - origin) / underline.bounds.size.y) - float2(0., 0.5);
-        float frequency = (M_PI_F * (3. * underline.thickness)) / 8.;
-        float amplitude = 1. / (2. * underline.thickness);
+        float frequency = (M_PI_F * WAVE_FREQUENCY * underline.thickness) / underline.bounds.size.y;
+        float amplitude = (underline.thickness * WAVE_HEIGHT_RATIO) / underline.bounds.size.y;
+
         float sine = sin(st.x * frequency) * amplitude;
         float dSine = cos(st.x * frequency) * amplitude * frequency;
         float distance = (st.y - sine) / sqrt(1. + dSine * dSine);
@@ -1069,6 +1074,7 @@ struct MonochromeSpriteFragmentInput {
     float4 position: SV_Position;
     float2 tile_position: POSITION;
     nointerpolation float4 color: COLOR;
+    float4 clip_distance: SV_ClipDistance;
 };
 
 StructuredBuffer<MonochromeSprite> mono_sprites: register(t1);
@@ -1091,10 +1097,8 @@ MonochromeSpriteVertexOutput monochrome_sprite_vertex(uint vertex_id: SV_VertexI
 }
 
 float4 monochrome_sprite_fragment(MonochromeSpriteFragmentInput input): SV_Target {
-    float4 sample = t_sprite.Sample(s_sprite, input.tile_position);
-    float4 color = input.color;
-    color.a *= sample.a;
-    return color;
+    float sample = t_sprite.Sample(s_sprite, input.tile_position).r;
+    return float4(input.color.rgb, input.color.a * sample);
 }
 
 /*

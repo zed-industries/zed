@@ -3546,7 +3546,7 @@ pub mod tests {
             let excerpt_hints = excerpt_hints.read();
             for id in &excerpt_hints.ordered_hints {
                 let hint = &excerpt_hints.hints_by_id[id];
-                let mut label = hint.text();
+                let mut label = hint.text().to_string();
                 if hint.padding_left {
                     label.insert(0, ' ');
                 }

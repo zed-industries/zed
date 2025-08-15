@@ -1,5 +1,4 @@
 use crate::db::{BillingCustomerId, BillingSubscriptionId};
-use crate::stripe_client;
 use chrono::{Datelike as _, NaiveDate, Utc};
 use sea_orm::entity::prelude::*;
 use serde::Serialize;
@@ -159,18 +158,4 @@ pub enum StripeCancellationReason {
     PaymentDisputed,
     #[sea_orm(string_value = "payment_failed")]
     PaymentFailed,
-}
-
-impl From<stripe_client::StripeCancellationDetailsReason> for StripeCancellationReason {
-    fn from(value: stripe_client::StripeCancellationDetailsReason) -> Self {
-        match value {
-            stripe_client::StripeCancellationDetailsReason::CancellationRequested => {
-                Self::CancellationRequested
-            }
-            stripe_client::StripeCancellationDetailsReason::PaymentDisputed => {
-                Self::PaymentDisputed
-            }
-            stripe_client::StripeCancellationDetailsReason::PaymentFailed => Self::PaymentFailed,
-        }
-    }
 }

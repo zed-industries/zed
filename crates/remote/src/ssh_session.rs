@@ -400,6 +400,7 @@ impl SshSocket {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
+            .args(self.connection_options.additional_args())
             .args(["-o", "ControlMaster=no", "-o"])
             .arg(format!("ControlPath={}", self.socket_path.display()))
     }
@@ -410,6 +411,7 @@ impl SshSocket {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
+            .args(self.connection_options.additional_args())
             .envs(self.envs.clone())
     }
 
@@ -417,22 +419,26 @@ impl SshSocket {
     // On Linux, we use the `ControlPath` option to create a socket file that ssh can use to
     #[cfg(not(target_os = "windows"))]
     fn ssh_args(&self) -> SshArgs {
+        let mut arguments = self.connection_options.additional_args();
+        arguments.extend(vec![
+            "-o".to_string(),
+            "ControlMaster=no".to_string(),
+            "-o".to_string(),
+            format!("ControlPath={}", self.socket_path.display()),
+            self.connection_options.ssh_url(),
+        ]);
         SshArgs {
-            arguments: vec![
-                "-o".to_string(),
-                "ControlMaster=no".to_string(),
-                "-o".to_string(),
-                format!("ControlPath={}", self.socket_path.display()),
-                self.connection_options.ssh_url(),
-            ],
+            arguments,
             envs: None,
         }
     }
 
     #[cfg(target_os = "windows")]
     fn ssh_args(&self) -> SshArgs {
+        let mut arguments = self.connection_options.additional_args();
+        arguments.push(self.connection_options.ssh_url());
         SshArgs {
-            arguments: vec![self.connection_options.ssh_url()],
+            arguments,
             envs: Some(self.envs.clone()),
         }
     }
@@ -2069,11 +2075,17 @@ impl SshRemoteConnection {
             Ok(())
         }
 
+        let use_musl = !build_remote_server.contains("nomusl");
         let triple = format!(
             "{}-{}",
             self.ssh_platform.arch,
             match self.ssh_platform.os {
-                "linux" => "unknown-linux-musl",
+                "linux" =>
+                    if use_musl {
+                        "unknown-linux-musl"
+                    } else {
+                        "unknown-linux-gnu"
+                    },
                 "macos" => "apple-darwin",
                 _ => anyhow::bail!("can't cross compile for: {:?}", self.ssh_platform),
             }
@@ -2086,7 +2098,7 @@ impl SshRemoteConnection {
                 String::new()
             }
         };
-        if self.ssh_platform.os == "linux" {
+        if self.ssh_platform.os == "linux" && use_musl {
             rust_flags.push_str(" -C target-feature=+crt-static");
         }
         if build_remote_server.contains("mold") {

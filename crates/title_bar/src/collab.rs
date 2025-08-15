@@ -518,7 +518,7 @@ impl TitleBar {
                             .mx_neg_0p5()
                             .h_full()
                             .justify_center()
-                            .child(Icon::new(IconName::ChevronDownSmall).size(IconSize::XSmall)),
+                            .child(Icon::new(IconName::ChevronDown).size(IconSize::XSmall)),
                     )
                     .toggle_state(self.screen_share_popover_handle.is_deployed()),
             )

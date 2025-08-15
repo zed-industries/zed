@@ -73,6 +73,7 @@ async fn run_git_blame(
         .current_dir(working_directory)
         .arg("blame")
         .arg("--incremental")
+        .arg("-w")
         .arg("--contents")
         .arg("-")
         .arg(path.as_os_str())

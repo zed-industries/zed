@@ -80,6 +80,7 @@ where
 {
     fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
         let picker = self.picker.clone();
+
         PopoverMenu::new("popover-menu")
             .menu(move |_window, _cx| Some(picker.clone()))
             .trigger_with_tooltip(self.trigger, self.tooltip)

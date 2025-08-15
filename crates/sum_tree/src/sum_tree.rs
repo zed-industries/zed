@@ -101,37 +101,32 @@ impl<'a, T: Summary> Dimension<'a, T> for () {
     fn add_summary(&mut self, _: &'a T, _: &T::Context) {}
 }
 
-impl<'a, T: Summary, D1: Dimension<'a, T>, D2: Dimension<'a, T>> Dimension<'a, T> for (D1, D2) {
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Dimensions<D1, D2, D3 = ()>(pub D1, pub D2, pub D3);
+
+impl<'a, T: Summary, D1: Dimension<'a, T>, D2: Dimension<'a, T>, D3: Dimension<'a, T>>
+    Dimension<'a, T> for Dimensions<D1, D2, D3>
+{
     fn zero(cx: &T::Context) -> Self {
-        (D1::zero(cx), D2::zero(cx))
+        Dimensions(D1::zero(cx), D2::zero(cx), D3::zero(cx))
     }
 
     fn add_summary(&mut self, summary: &'a T, cx: &T::Context) {
         self.0.add_summary(summary, cx);
         self.1.add_summary(summary, cx);
+        self.2.add_summary(summary, cx);
     }
 }
 
-impl<'a, S, D1, D2> SeekTarget<'a, S, (D1, D2)> for D1
-where
-    S: Summary,
-    D1: SeekTarget<'a, S, D1> + Dimension<'a, S>,
-    D2: Dimension<'a, S>,
-{
-    fn cmp(&self, cursor_location: &(D1, D2), cx: &S::Context) -> Ordering {
-        self.cmp(&cursor_location.0, cx)
-    }
-}
-
-impl<'a, S, D1, D2, D3> SeekTarget<'a, S, ((D1, D2), D3)> for D1
+impl<'a, S, D1, D2, D3> SeekTarget<'a, S, Dimensions<D1, D2, D3>> for D1
 where
     S: Summary,
     D1: SeekTarget<'a, S, D1> + Dimension<'a, S>,
     D2: Dimension<'a, S>,
     D3: Dimension<'a, S>,
 {
-    fn cmp(&self, cursor_location: &((D1, D2), D3), cx: &S::Context) -> Ordering {
-        self.cmp(&cursor_location.0.0, cx)
+    fn cmp(&self, cursor_location: &Dimensions<D1, D2, D3>, cx: &S::Context) -> Ordering {
+        self.cmp(&cursor_location.0, cx)
     }
 }
 

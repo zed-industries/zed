@@ -308,10 +308,14 @@ impl Settings for LineIndicatorFormat {
     type FileContent = Option<LineIndicatorFormatContent>;
 
     fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> anyhow::Result<Self> {
-        let format = [sources.release_channel, sources.user]
-            .into_iter()
-            .find_map(|value| value.copied().flatten())
-            .unwrap_or(sources.default.ok_or_else(Self::missing_default)?);
+        let format = [
+            sources.release_channel,
+            sources.operating_system,
+            sources.user,
+        ]
+        .into_iter()
+        .find_map(|value| value.copied().flatten())
+        .unwrap_or(sources.default.ok_or_else(Self::missing_default)?);
 
         Ok(format.0)
     }

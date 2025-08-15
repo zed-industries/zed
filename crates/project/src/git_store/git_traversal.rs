@@ -110,11 +110,7 @@ impl<'a> GitTraversal<'a> {
     }
 
     pub fn advance(&mut self) -> bool {
-        self.advance_by(1)
-    }
-
-    pub fn advance_by(&mut self, count: usize) -> bool {
-        let found = self.traversal.advance_by(count);
+        let found = self.traversal.advance_by(1);
         self.synchronize_statuses(false);
         found
     }

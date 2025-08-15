@@ -310,6 +310,18 @@ mod windows {
                 &rust_binding_path,
             );
         }
+
+        {
+            let shader_path = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap())
+                .join("src/platform/windows/color_text_raster.hlsl");
+            compile_shader_for_module(
+                "emoji_rasterization",
+                &out_dir,
+                &fxc_path,
+                shader_path.to_str().unwrap(),
+                &rust_binding_path,
+            );
+        }
     }
 
     /// You can set the `GPUI_FXC_PATH` environment variable to specify the path to the fxc.exe compiler.

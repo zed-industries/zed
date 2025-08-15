@@ -1,4 +1,5 @@
 mod timestamp;
+pub mod websocket_protocol;
 
 use serde::{Deserialize, Serialize};
 

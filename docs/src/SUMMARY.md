@@ -21,6 +21,7 @@
 - [Icon Themes](./icon-themes.md)
 - [Visual Customization](./visual-customization.md)
 - [Vim Mode](./vim.md)
+- [Helix Mode](./helix.md)
 
 <!-- - [Globs](./globs.md) -->
 <!-- - [Fonts](./fonts.md) -->

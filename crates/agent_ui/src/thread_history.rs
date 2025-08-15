@@ -701,7 +701,7 @@ impl RenderOnce for HistoryEntryElement {
             .on_hover(self.on_hover)
             .end_slot::<IconButton>(if self.hovered || self.selected {
                 Some(
-                    IconButton::new("delete", IconName::TrashAlt)
+                    IconButton::new("delete", IconName::Trash)
                         .shape(IconButtonShape::Square)
                         .icon_size(IconSize::XSmall)
                         .icon_color(Color::Muted)

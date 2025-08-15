@@ -62,7 +62,7 @@ use std::{
     },
     time::{Duration, Instant},
 };
-use sum_tree::{Bias, Edit, KeyedItem, SeekTarget, SumTree, Summary, TreeMap, TreeSet};
+use sum_tree::{Bias, Dimensions, Edit, KeyedItem, SeekTarget, SumTree, Summary, TreeMap, TreeSet};
 use text::{LineEnding, Rope};
 use util::{
     ResultExt,
@@ -3566,10 +3566,15 @@ impl<'a> sum_tree::Dimension<'a, PathSummary<GitSummary>> for GitSummary {
     }
 }
 
-impl<'a> sum_tree::SeekTarget<'a, PathSummary<GitSummary>, (TraversalProgress<'a>, GitSummary)>
+impl<'a>
+    sum_tree::SeekTarget<'a, PathSummary<GitSummary>, Dimensions<TraversalProgress<'a>, GitSummary>>
     for PathTarget<'_>
 {
-    fn cmp(&self, cursor_location: &(TraversalProgress<'a>, GitSummary), _: &()) -> Ordering {
+    fn cmp(
+        &self,
+        cursor_location: &Dimensions<TraversalProgress<'a>, GitSummary>,
+        _: &(),
+    ) -> Ordering {
         self.cmp_path(&cursor_location.0.max_path)
     }
 }

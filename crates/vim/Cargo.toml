@@ -24,6 +24,7 @@ command_palette.workspace = true
 command_palette_hooks.workspace = true
 db.workspace = true
 editor.workspace = true
+env_logger.workspace = true
 futures.workspace = true
 gpui.workspace = true
 itertools.workspace = true

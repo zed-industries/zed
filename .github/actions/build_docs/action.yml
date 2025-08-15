@@ -13,7 +13,7 @@ runs:
       uses: swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
       with:
         save-if: ${{ github.ref == 'refs/heads/main' }}
-        cache-provider: "buildjet"
+        # cache-provider: "buildjet"
 
     - name: Install Linux dependencies
       shell: bash -euxo pipefail {0}

@@ -272,42 +272,34 @@ impl AddLlmProviderModal {
         cx.emit(DismissEvent);
     }
 
-    fn render_section(&self) -> Section {
-        Section::new()
-            .child(self.input.provider_name.clone())
-            .child(self.input.api_url.clone())
-            .child(self.input.api_key.clone())
-    }
-
-    fn render_model_section(&self, cx: &mut Context<Self>) -> Section {
-        Section::new().child(
-            v_flex()
-                .gap_2()
-                .child(
-                    h_flex()
-                        .justify_between()
-                        .child(Label::new("Models").size(LabelSize::Small))
-                        .child(
-                            Button::new("add-model", "Add Model")
-                                .icon(IconName::Plus)
-                                .icon_position(IconPosition::Start)
-                                .icon_size(IconSize::XSmall)
-                                .icon_color(Color::Muted)
-                                .label_size(LabelSize::Small)
-                                .on_click(cx.listener(|this, _, window, cx| {
-                                    this.input.add_model(window, cx);
-                                    cx.notify();
-                                })),
-                        ),
-                )
-                .children(
-                    self.input
-                        .models
-                        .iter()
-                        .enumerate()
-                        .map(|(ix, _)| self.render_model(ix, cx)),
-                ),
-        )
+    fn render_model_section(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        v_flex()
+            .mt_1()
+            .gap_2()
+            .child(
+                h_flex()
+                    .justify_between()
+                    .child(Label::new("Models").size(LabelSize::Small))
+                    .child(
+                        Button::new("add-model", "Add Model")
+                            .icon(IconName::Plus)
+                            .icon_position(IconPosition::Start)
+                            .icon_size(IconSize::XSmall)
+                            .icon_color(Color::Muted)
+                            .label_size(LabelSize::Small)
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.input.add_model(window, cx);
+                                cx.notify();
+                            })),
+                    ),
+            )
+            .children(
+                self.input
+                    .models
+                    .iter()
+                    .enumerate()
+                    .map(|(ix, _)| self.render_model(ix, cx)),
+            )
     }
 
     fn render_model(&self, ix: usize, cx: &mut Context<Self>) -> impl IntoElement + use<> {
@@ -393,10 +385,14 @@ impl Render for AddLlmProviderModal {
                     .child(
                         v_flex()
                             .id("modal_content")
+                            .size_full()
                             .max_h_128()
                             .overflow_y_scroll()
-                            .gap_2()
-                            .child(self.render_section())
+                            .px(DynamicSpacing::Base12.rems(cx))
+                            .gap(DynamicSpacing::Base04.rems(cx))
+                            .child(self.input.provider_name.clone())
+                            .child(self.input.api_url.clone())
+                            .child(self.input.api_key.clone())
                             .child(self.render_model_section(cx)),
                     )
                     .footer(

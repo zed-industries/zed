@@ -456,7 +456,7 @@ impl SyntaxTreeToolbarItemView {
         let active_layer = buffer_state.active_layer.clone()?;
         let active_buffer = buffer_state.buffer.read(cx).snapshot();
 
-        let view = cx.entity().clone();
+        let view = cx.entity();
         Some(
             PopoverMenu::new("Syntax Tree")
                 .trigger(Self::render_header(&active_layer))

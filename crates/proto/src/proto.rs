@@ -20,8 +20,6 @@ pub const SSH_PEER_ID: PeerId = PeerId { owner_id: 0, id: 0 };
 pub const SSH_PROJECT_ID: u64 = 0;
 
 messages!(
-    (AcceptTermsOfService, Foreground),
-    (AcceptTermsOfServiceResponse, Foreground),
     (Ack, Foreground),
     (AckBufferOperation, Background),
     (AckChannelMessage, Background),
@@ -99,14 +97,12 @@ messages!(
     (GetHoverResponse, Background),
     (GetNotifications, Foreground),
     (GetNotificationsResponse, Foreground),
-    (GetPanicFiles, Background),
-    (GetPanicFilesResponse, Background),
+    (GetCrashFiles, Background),
+    (GetCrashFilesResponse, Background),
     (GetPathMetadata, Background),
     (GetPathMetadataResponse, Background),
     (GetPermalinkToLine, Foreground),
     (GetPermalinkToLineResponse, Foreground),
-    (GetPrivateUserInfo, Foreground),
-    (GetPrivateUserInfoResponse, Foreground),
     (GetProjectSymbols, Background),
     (GetProjectSymbolsResponse, Background),
     (GetReferences, Background),
@@ -119,10 +115,6 @@ messages!(
     (GetTypeDefinitionResponse, Background),
     (GetImplementation, Background),
     (GetImplementationResponse, Background),
-    (GetLlmToken, Background),
-    (GetLlmTokenResponse, Background),
-    (LanguageServerIdForName, Background),
-    (LanguageServerIdForNameResponse, Background),
     (OpenUnstagedDiff, Foreground),
     (OpenUnstagedDiffResponse, Foreground),
     (OpenUncommittedDiff, Foreground),
@@ -198,7 +190,6 @@ messages!(
     (PrepareRenameResponse, Background),
     (ProjectEntryResponse, Foreground),
     (RefreshInlayHints, Foreground),
-    (RefreshLlmToken, Background),
     (RegisterBufferWithLanguageServers, Background),
     (RejoinChannelBuffers, Foreground),
     (RejoinChannelBuffersResponse, Foreground),
@@ -282,7 +273,6 @@ messages!(
     (UpdateProject, Foreground),
     (UpdateProjectCollaborator, Foreground),
     (UpdateUserChannels, Foreground),
-    (UpdateUserPlan, Foreground),
     (UpdateWorktree, Foreground),
     (UpdateWorktreeSettings, Foreground),
     (UpdateRepository, Foreground),
@@ -315,11 +305,14 @@ messages!(
     (LogToDebugConsole, Background),
     (GetDocumentDiagnostics, Background),
     (GetDocumentDiagnosticsResponse, Background),
-    (PullWorkspaceDiagnostics, Background)
+    (PullWorkspaceDiagnostics, Background),
+    (GetDefaultBranch, Background),
+    (GetDefaultBranchResponse, Background),
+    (GitClone, Background),
+    (GitCloneResponse, Background)
 );
 
 request_messages!(
-    (AcceptTermsOfService, AcceptTermsOfServiceResponse),
     (ApplyCodeAction, ApplyCodeActionResponse),
     (
         ApplyCompletionAdditionalEdits,
@@ -352,9 +345,7 @@ request_messages!(
     (GetDocumentHighlights, GetDocumentHighlightsResponse),
     (GetDocumentSymbols, GetDocumentSymbolsResponse),
     (GetHover, GetHoverResponse),
-    (GetLlmToken, GetLlmTokenResponse),
     (GetNotifications, GetNotificationsResponse),
-    (GetPrivateUserInfo, GetPrivateUserInfoResponse),
     (GetProjectSymbols, GetProjectSymbolsResponse),
     (GetReferences, GetReferencesResponse),
     (GetSignatureHelp, GetSignatureHelpResponse),
@@ -429,7 +420,6 @@ request_messages!(
     (UpdateWorktree, Ack),
     (UpdateRepository, Ack),
     (RemoveRepository, Ack),
-    (LanguageServerIdForName, LanguageServerIdForNameResponse),
     (LspExtExpandMacro, LspExtExpandMacroResponse),
     (LspExtOpenDocs, LspExtOpenDocsResponse),
     (LspExtRunnables, LspExtRunnablesResponse),
@@ -460,7 +450,7 @@ request_messages!(
     (ActivateToolchain, Ack),
     (ActiveToolchain, ActiveToolchainResponse),
     (GetPathMetadata, GetPathMetadataResponse),
-    (GetPanicFiles, GetPanicFilesResponse),
+    (GetCrashFiles, GetCrashFilesResponse),
     (CancelLanguageServerWork, Ack),
     (SyncExtensions, SyncExtensionsResponse),
     (InstallExtension, Ack),
@@ -483,7 +473,9 @@ request_messages!(
     (GetDebugAdapterBinary, DebugAdapterBinary),
     (RunDebugLocators, DebugRequest),
     (GetDocumentDiagnostics, GetDocumentDiagnosticsResponse),
-    (PullWorkspaceDiagnostics, Ack)
+    (PullWorkspaceDiagnostics, Ack),
+    (GetDefaultBranch, GetDefaultBranchResponse),
+    (GitClone, GitCloneResponse)
 );
 
 entity_messages!(
@@ -585,7 +577,6 @@ entity_messages!(
     OpenServerSettings,
     GetPermalinkToLine,
     LanguageServerPromptRequest,
-    LanguageServerIdForName,
     GitGetBranches,
     UpdateGitBranch,
     ListToolchains,
@@ -615,7 +606,9 @@ entity_messages!(
     GetDebugAdapterBinary,
     LogToDebugConsole,
     GetDocumentDiagnostics,
-    PullWorkspaceDiagnostics
+    PullWorkspaceDiagnostics,
+    GetDefaultBranch,
+    GitClone
 );
 
 entity_messages!(

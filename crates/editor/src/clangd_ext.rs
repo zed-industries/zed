@@ -29,16 +29,14 @@ pub fn switch_source_header(
         return;
     };
 
-    let server_lookup =
-        find_specific_language_server_in_selection(editor, cx, is_c_language, CLANGD_SERVER_NAME);
+    let Some((_, _, server_to_query, buffer)) =
+        find_specific_language_server_in_selection(editor, cx, is_c_language, CLANGD_SERVER_NAME)
+    else {
+        return;
+    };
     let project = project.clone();
     let upstream_client = project.read(cx).lsp_store().read(cx).upstream_client();
     cx.spawn_in(window, async move |_editor, cx| {
-        let Some((_, _, server_to_query, buffer)) =
-            server_lookup.await
-        else {
-            return Ok(());
-        };
         let source_file = buffer.read_with(cx, |buffer, _| {
             buffer.file().map(|file| file.path()).map(|path| path.to_string_lossy().to_string()).unwrap_or_else(|| "Unknown".to_string())
         })?;

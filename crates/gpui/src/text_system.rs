@@ -65,7 +65,7 @@ impl TextSystem {
             font_runs_pool: Mutex::default(),
             fallback_font_stack: smallvec![
                 // TODO: Remove this when Linux have implemented setting fallbacks.
-                font("Zed Plex Mono"),
+                font(".ZedMono"),
                 font("Helvetica"),
                 font("Segoe UI"),  // Windows
                 font("Cantarell"), // Gnome
@@ -96,7 +96,7 @@ impl TextSystem {
     }
 
     /// Get the FontId for the configure font family and style.
-    pub fn font_id(&self, font: &Font) -> Result<FontId> {
+    fn font_id(&self, font: &Font) -> Result<FontId> {
         fn clone_font_id_result(font_id: &Result<FontId>) -> Result<FontId> {
             match font_id {
                 Ok(font_id) => Ok(*font_id),
@@ -842,5 +842,18 @@ impl FontMetrics {
     /// Returns the outer limits of the area that the font covers in pixels.
     pub fn bounding_box(&self, font_size: Pixels) -> Bounds<Pixels> {
         (self.bounding_box / self.units_per_em as f32 * font_size.0).map(px)
+    }
+}
+
+#[allow(unused)]
+pub(crate) fn font_name_with_fallbacks<'a>(name: &'a str, system: &'a str) -> &'a str {
+    // Note: the "Zed Plex" fonts were deprecated as we are not allowed to use "Plex"
+    // in a derived font name. They are essentially indistinguishable from IBM Plex/Lilex,
+    // and so retained here for backward compatibility.
+    match name {
+        ".SystemUIFont" => system,
+        ".ZedSans" | "Zed Plex Sans" => "IBM Plex Sans",
+        ".ZedMono" | "Zed Plex Mono" => "Lilex",
+        _ => name,
     }
 }

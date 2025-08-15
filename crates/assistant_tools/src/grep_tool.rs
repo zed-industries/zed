@@ -1,6 +1,7 @@
 use crate::schema::json_schema_for;
+use action_log::ActionLog;
 use anyhow::{Result, anyhow};
-use assistant_tool::{ActionLog, Tool, ToolResult};
+use assistant_tool::{Tool, ToolResult};
 use futures::StreamExt;
 use gpui::{AnyWindowHandle, App, Entity, Task};
 use language::{OffsetRangeExt, ParseStatus, Point};

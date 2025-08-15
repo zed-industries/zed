@@ -642,13 +642,7 @@ impl X11Client {
                 let xim_connected = xim_handler.connected;
                 drop(state);
 
-                let xim_filtered = match ximc.filter_event(&event, &mut xim_handler) {
-                    Ok(handled) => handled,
-                    Err(err) => {
-                        log::error!("XIMClientError: {}", err);
-                        false
-                    }
-                };
+                let xim_filtered = ximc.filter_event(&event, &mut xim_handler);
                 let xim_callback_event = xim_handler.last_callback_event.take();
 
                 let mut state = self.0.borrow_mut();
@@ -659,14 +653,28 @@ impl X11Client {
                     self.handle_xim_callback_event(event);
                 }
 
-                if xim_filtered {
-                    continue;
-                }
-
-                if xim_connected {
-                    self.xim_handle_event(event);
-                } else {
-                    self.handle_event(event);
+                match xim_filtered {
+                    Ok(handled) => {
+                        if handled {
+                            continue;
+                        }
+                        if xim_connected {
+                            self.xim_handle_event(event);
+                        } else {
+                            self.handle_event(event);
+                        }
+                    }
+                    Err(err) => {
+                        // this might happen when xim server crashes on one of the events
+                        // we do lose 1-2 keys when crash happens since there is no reliable way to get that info
+                        // luckily, x11 sends us window not found error when xim server crashes upon further key press
+                        // hence we fall back to handle_event
+                        log::error!("XIMClientError: {}", err);
+                        let mut state = self.0.borrow_mut();
+                        state.take_xim();
+                        drop(state);
+                        self.handle_event(event);
+                    }
                 }
             }
         }

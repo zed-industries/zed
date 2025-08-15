@@ -791,13 +791,13 @@ impl MetalRenderer {
             sprites = paths
                 .iter()
                 .map(|path| PathSprite {
-                    bounds: path.bounds,
+                    bounds: path.clipped_bounds(),
                 })
                 .collect();
         } else {
-            let mut bounds = first_path.bounds;
+            let mut bounds = first_path.clipped_bounds();
             for path in paths.iter().skip(1) {
-                bounds = bounds.union(&path.bounds);
+                bounds = bounds.union(&path.clipped_bounds());
             }
             sprites = vec![PathSprite { bounds }];
         }

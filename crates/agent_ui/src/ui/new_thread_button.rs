@@ -11,7 +11,7 @@ pub struct NewThreadButton {
 }
 
 impl NewThreadButton {
-    pub fn new(id: impl Into<ElementId>, label: impl Into<SharedString>, icon: IconName) -> Self {
+    fn new(id: impl Into<ElementId>, label: impl Into<SharedString>, icon: IconName) -> Self {
         Self {
             id: id.into(),
             label: label.into(),
@@ -21,12 +21,12 @@ impl NewThreadButton {
         }
     }
 
-    pub fn keybinding(mut self, keybinding: Option<ui::KeyBinding>) -> Self {
+    fn keybinding(mut self, keybinding: Option<ui::KeyBinding>) -> Self {
         self.keybinding = keybinding;
         self
     }
 
-    pub fn on_click<F>(mut self, handler: F) -> Self
+    fn on_click<F>(mut self, handler: F) -> Self
     where
         F: Fn(&mut Window, &mut App) + 'static,
     {

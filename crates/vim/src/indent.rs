@@ -31,7 +31,7 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
         let count = Vim::take_count(cx).unwrap_or(1);
         Vim::take_forced_motion(cx);
         vim.store_visual_marks(window, cx);
-        vim.update_editor(window, cx, |vim, editor, window, cx| {
+        vim.update_editor(cx, |vim, editor, cx| {
             editor.transact(window, cx, |editor, window, cx| {
                 let original_positions = vim.save_selection_starts(editor, cx);
                 for _ in 0..count {
@@ -50,7 +50,7 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
         let count = Vim::take_count(cx).unwrap_or(1);
         Vim::take_forced_motion(cx);
         vim.store_visual_marks(window, cx);
-        vim.update_editor(window, cx, |vim, editor, window, cx| {
+        vim.update_editor(cx, |vim, editor, cx| {
             editor.transact(window, cx, |editor, window, cx| {
                 let original_positions = vim.save_selection_starts(editor, cx);
                 for _ in 0..count {
@@ -69,7 +69,7 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
         let count = Vim::take_count(cx).unwrap_or(1);
         Vim::take_forced_motion(cx);
         vim.store_visual_marks(window, cx);
-        vim.update_editor(window, cx, |vim, editor, window, cx| {
+        vim.update_editor(cx, |vim, editor, cx| {
             editor.transact(window, cx, |editor, window, cx| {
                 let original_positions = vim.save_selection_starts(editor, cx);
                 for _ in 0..count {
@@ -95,7 +95,7 @@ impl Vim {
         cx: &mut Context<Self>,
     ) {
         self.stop_recording(cx);
-        self.update_editor(window, cx, |_, editor, window, cx| {
+        self.update_editor(cx, |_, editor, cx| {
             let text_layout_details = editor.text_layout_details(window);
             editor.transact(window, cx, |editor, window, cx| {
                 let mut selection_starts: HashMap<_, _> = Default::default();
@@ -137,7 +137,7 @@ impl Vim {
         cx: &mut Context<Self>,
     ) {
         self.stop_recording(cx);
-        self.update_editor(window, cx, |_, editor, window, cx| {
+        self.update_editor(cx, |_, editor, cx| {
             editor.transact(window, cx, |editor, window, cx| {
                 let mut original_positions: HashMap<_, _> = Default::default();
                 editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {

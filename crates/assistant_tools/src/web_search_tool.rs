@@ -2,9 +2,10 @@ use std::{sync::Arc, time::Duration};
 
 use crate::schema::json_schema_for;
 use crate::ui::ToolCallCardHeader;
+use action_log::ActionLog;
 use anyhow::{Context as _, Result, anyhow};
 use assistant_tool::{
-    ActionLog, Tool, ToolCard, ToolResult, ToolResultContent, ToolResultOutput, ToolUseStatus,
+    Tool, ToolCard, ToolResult, ToolResultContent, ToolResultOutput, ToolUseStatus,
 };
 use cloud_llm_client::{WebSearchResponse, WebSearchResult};
 use futures::{Future, FutureExt, TryFutureExt};
@@ -45,7 +46,7 @@ impl Tool for WebSearchTool {
     }
 
     fn icon(&self) -> IconName {
-        IconName::Globe
+        IconName::ToolWeb
     }
 
     fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> Result<serde_json::Value> {
@@ -177,7 +178,7 @@ impl ToolCard for WebSearchToolCard {
                             .label_size(LabelSize::Small)
                             .color(Color::Muted)
                             .icon(IconName::ArrowUpRight)
-                            .icon_size(IconSize::XSmall)
+                            .icon_size(IconSize::Small)
                             .icon_position(IconPosition::End)
                             .truncate(true)
                             .tooltip({

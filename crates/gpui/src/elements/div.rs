@@ -19,10 +19,10 @@ use crate::{
     Action, AnyDrag, AnyElement, AnyTooltip, AnyView, App, Bounds, ClickEvent, DispatchPhase,
     Element, ElementId, Entity, FocusHandle, Global, GlobalElementId, Hitbox, HitboxBehavior,
     HitboxId, InspectorElementId, IntoElement, IsZero, KeyContext, KeyDownEvent, KeyUpEvent,
-    LayoutId, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
-    Overflow, ParentElement, Pixels, Point, Render, ScrollWheelEvent, SharedString, Size, Style,
-    StyleRefinement, Styled, Task, TooltipId, Visibility, Window, WindowControlArea, point, px,
-    size,
+    KeyboardButton, KeyboardClickEvent, LayoutId, ModifiersChangedEvent, MouseButton,
+    MouseClickEvent, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Overflow, ParentElement, Pixels,
+    Point, Render, ScrollWheelEvent, SharedString, Size, Style, StyleRefinement, Styled, Task,
+    TooltipId, Visibility, Window, WindowControlArea, point, px, size,
 };
 use collections::HashMap;
 use refineable::Refineable;
@@ -484,10 +484,9 @@ impl Interactivity {
     where
         Self: Sized,
     {
-        self.click_listeners
-            .push(Box::new(move |event, window, cx| {
-                listener(event, window, cx)
-            }));
+        self.click_listeners.push(Rc::new(move |event, window, cx| {
+            listener(event, window, cx)
+        }));
     }
 
     /// On drag initiation, this callback will be used to create a new view to render the dragged value for a
@@ -1156,7 +1155,7 @@ pub(crate) type MouseMoveListener =
 pub(crate) type ScrollWheelListener =
     Box<dyn Fn(&ScrollWheelEvent, DispatchPhase, &Hitbox, &mut Window, &mut App) + 'static>;
 
-pub(crate) type ClickListener = Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>;
+pub(crate) type ClickListener = Rc<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>;
 
 pub(crate) type DragListener =
     Box<dyn Fn(&dyn Any, Point<Pixels>, &mut Window, &mut App) -> AnyView + 'static>;
@@ -1950,6 +1949,12 @@ impl Interactivity {
         window: &mut Window,
         cx: &mut App,
     ) {
+        let is_focused = self
+            .tracked_focus_handle
+            .as_ref()
+            .map(|handle| handle.is_focused(window))
+            .unwrap_or(false);
+
         // If this element can be focused, register a mouse down listener
         // that will automatically transfer focus when hitting the element.
         // This behavior can be suppressed by using `cx.prevent_default()`.
@@ -2113,6 +2118,39 @@ impl Interactivity {
                     }
                 });
 
+                if is_focused {
+                    // Press enter, space to trigger click, when the element is focused.
+                    window.on_key_event({
+                        let click_listeners = click_listeners.clone();
+                        let hitbox = hitbox.clone();
+                        move |event: &KeyUpEvent, phase, window, cx| {
+                            if phase.bubble() && !window.default_prevented() {
+                                let stroke = &event.keystroke;
+                                let keyboard_button = if stroke.key.eq("enter") {
+                                    Some(KeyboardButton::Enter)
+                                } else if stroke.key.eq("space") {
+                                    Some(KeyboardButton::Space)
+                                } else {
+                                    None
+                                };
+
+                                if let Some(button) = keyboard_button
+                                    && !stroke.modifiers.modified()
+                                {
+                                    let click_event = ClickEvent::Keyboard(KeyboardClickEvent {
+                                        button,
+                                        bounds: hitbox.bounds,
+                                    });
+
+                                    for listener in &click_listeners {
+                                        listener(&click_event, window, cx);
+                                    }
+                                }
+                            }
+                        }
+                    });
+                }
+
                 window.on_mouse_event({
                     let mut captured_mouse_down = None;
                     let hitbox = hitbox.clone();
@@ -2138,10 +2176,10 @@ impl Interactivity {
                         // Fire click handlers during the bubble phase.
                         DispatchPhase::Bubble => {
                             if let Some(mouse_down) = captured_mouse_down.take() {
-                                let mouse_click = ClickEvent {
+                                let mouse_click = ClickEvent::Mouse(MouseClickEvent {
                                     down: mouse_down,
                                     up: event.clone(),
-                                };
+                                });
                                 for listener in &click_listeners {
                                     listener(&mouse_click, window, cx);
                                 }

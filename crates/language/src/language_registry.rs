@@ -411,30 +411,6 @@ impl LanguageRegistry {
         cached
     }
 
-    pub fn get_or_register_lsp_adapter(
-        &self,
-        language_name: LanguageName,
-        server_name: LanguageServerName,
-        build_adapter: impl FnOnce() -> Arc<dyn LspAdapter> + 'static,
-    ) -> Arc<CachedLspAdapter> {
-        let registered = self
-            .state
-            .write()
-            .lsp_adapters
-            .entry(language_name.clone())
-            .or_default()
-            .iter()
-            .find(|cached_adapter| cached_adapter.name == server_name)
-            .cloned();
-
-        if let Some(found) = registered {
-            found
-        } else {
-            let adapter = build_adapter();
-            self.register_lsp_adapter(language_name, adapter)
-        }
-    }
-
     /// Register a fake language server and adapter
     /// The returned channel receives a new instance of the language server every time it is started
     #[cfg(any(feature = "test-support", test))]
@@ -571,15 +547,15 @@ impl LanguageRegistry {
         self.state.read().language_settings.clone()
     }
 
-    pub fn language_names(&self) -> Vec<String> {
+    pub fn language_names(&self) -> Vec<LanguageName> {
         let state = self.state.read();
         let mut result = state
             .available_languages
             .iter()
-            .filter_map(|l| l.loaded.not().then_some(l.name.to_string()))
-            .chain(state.languages.iter().map(|l| l.config.name.to_string()))
+            .filter_map(|l| l.loaded.not().then_some(l.name.clone()))
+            .chain(state.languages.iter().map(|l| l.config.name.clone()))
             .collect::<Vec<_>>();
-        result.sort_unstable_by_key(|language_name| language_name.to_lowercase());
+        result.sort_unstable_by_key(|language_name| language_name.as_ref().to_lowercase());
         result
     }
 

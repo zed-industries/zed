@@ -5,7 +5,6 @@ mod agent_diff;
 mod agent_model_selector;
 mod agent_panel;
 mod buffer_codegen;
-mod burn_mode_tooltip;
 mod context_picker;
 mod context_server_configuration;
 mod context_strip;
@@ -31,7 +30,7 @@ use std::sync::Arc;
 use agent::{Thread, ThreadId};
 use agent_settings::{AgentProfileId, AgentSettings, LanguageModelSelection};
 use assistant_slash_command::SlashCommandRegistry;
-use client::{Client, DisableAiSettings};
+use client::Client;
 use command_palette_hooks::CommandPaletteFilter;
 use feature_flags::FeatureFlagAppExt as _;
 use fs::Fs;
@@ -40,6 +39,7 @@ use language::LanguageRegistry;
 use language_model::{
     ConfiguredModel, LanguageModel, LanguageModelId, LanguageModelProviderId, LanguageModelRegistry,
 };
+use project::DisableAiSettings;
 use prompt_store::PromptBuilder;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -63,6 +63,8 @@ actions!(
         NewTextThread,
         /// Toggles the context picker interface for adding files, symbols, or other context.
         ToggleContextPicker,
+        /// Toggles the menu to create new agent threads.
+        ToggleNewThreadMenu,
         /// Toggles the navigation menu for switching between threads and views.
         ToggleNavigationMenu,
         /// Toggles the options menu for agent settings and preferences.
@@ -150,15 +152,15 @@ enum ExternalAgent {
     #[default]
     Gemini,
     ClaudeCode,
-    Codex,
+    NativeAgent,
 }
 
 impl ExternalAgent {
-    pub fn server(&self) -> Rc<dyn agent_servers::AgentServer> {
+    pub fn server(&self, fs: Arc<dyn fs::Fs>) -> Rc<dyn agent_servers::AgentServer> {
         match self {
             ExternalAgent::Gemini => Rc::new(agent_servers::Gemini),
             ExternalAgent::ClaudeCode => Rc::new(agent_servers::ClaudeCode),
-            ExternalAgent::Codex => Rc::new(agent_servers::Codex),
+            ExternalAgent::NativeAgent => Rc::new(agent2::NativeAgentServer::new(fs)),
         }
     }
 }

@@ -57,21 +57,21 @@ pub fn go_to_parent_module(
         return;
     };
 
-    let server_lookup = find_specific_language_server_in_selection(
-        editor,
-        cx,
-        is_rust_language,
-        RUST_ANALYZER_NAME,
-    );
+    let Some((trigger_anchor, _, server_to_query, buffer)) =
+        find_specific_language_server_in_selection(
+            editor,
+            cx,
+            is_rust_language,
+            RUST_ANALYZER_NAME,
+        )
+    else {
+        return;
+    };
 
     let project = project.clone();
     let lsp_store = project.read(cx).lsp_store();
     let upstream_client = lsp_store.read(cx).upstream_client();
     cx.spawn_in(window, async move |editor, cx| {
-        let Some((trigger_anchor, _, server_to_query, buffer)) = server_lookup.await else {
-            return anyhow::Ok(());
-        };
-
         let location_links = if let Some((client, project_id)) = upstream_client {
             let buffer_id = buffer.read_with(cx, |buffer, _| buffer.remote_id())?;
 
@@ -121,7 +121,7 @@ pub fn go_to_parent_module(
                 )
             })?
             .await?;
-        Ok(())
+        anyhow::Ok(())
     })
     .detach_and_log_err(cx);
 }
@@ -139,21 +139,19 @@ pub fn expand_macro_recursively(
         return;
     };
 
-    let server_lookup = find_specific_language_server_in_selection(
-        editor,
-        cx,
-        is_rust_language,
-        RUST_ANALYZER_NAME,
-    );
-
+    let Some((trigger_anchor, rust_language, server_to_query, buffer)) =
+        find_specific_language_server_in_selection(
+            editor,
+            cx,
+            is_rust_language,
+            RUST_ANALYZER_NAME,
+        )
+    else {
+        return;
+    };
     let project = project.clone();
     let upstream_client = project.read(cx).lsp_store().read(cx).upstream_client();
     cx.spawn_in(window, async move |_editor, cx| {
-        let Some((trigger_anchor, rust_language, server_to_query, buffer)) = server_lookup.await
-        else {
-            return Ok(());
-        };
-
         let macro_expansion = if let Some((client, project_id)) = upstream_client {
             let buffer_id = buffer.update(cx, |buffer, _| buffer.remote_id())?;
             let request = proto::LspExtExpandMacro {
@@ -231,20 +229,20 @@ pub fn open_docs(editor: &mut Editor, _: &OpenDocs, window: &mut Window, cx: &mu
         return;
     };
 
-    let server_lookup = find_specific_language_server_in_selection(
-        editor,
-        cx,
-        is_rust_language,
-        RUST_ANALYZER_NAME,
-    );
+    let Some((trigger_anchor, _, server_to_query, buffer)) =
+        find_specific_language_server_in_selection(
+            editor,
+            cx,
+            is_rust_language,
+            RUST_ANALYZER_NAME,
+        )
+    else {
+        return;
+    };
 
     let project = project.clone();
     let upstream_client = project.read(cx).lsp_store().read(cx).upstream_client();
     cx.spawn_in(window, async move |_editor, cx| {
-        let Some((trigger_anchor, _, server_to_query, buffer)) = server_lookup.await else {
-            return Ok(());
-        };
-
         let docs_urls = if let Some((client, project_id)) = upstream_client {
             let buffer_id = buffer.read_with(cx, |buffer, _| buffer.remote_id())?;
             let request = proto::LspExtOpenDocs {

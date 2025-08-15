@@ -29,7 +29,7 @@ impl Vim {
         let count = Vim::take_count(cx);
         let forced_motion = Vim::take_forced_motion(cx);
         let mode = self.mode;
-        self.update_editor(window, cx, |_, editor, window, cx| {
+        self.update_editor(cx, |_, editor, cx| {
             let text_layout_details = editor.text_layout_details(window);
             editor.transact(window, cx, |editor, window, cx| {
                 editor.set_clip_at_line_ends(false, cx);
@@ -140,7 +140,7 @@ impl Vim {
         };
         let surround = pair.end != *text;
 
-        self.update_editor(window, cx, |_, editor, window, cx| {
+        self.update_editor(cx, |_, editor, cx| {
             editor.transact(window, cx, |editor, window, cx| {
                 editor.set_clip_at_line_ends(false, cx);
 
@@ -228,7 +228,7 @@ impl Vim {
     ) {
         if let Some(will_replace_pair) = object_to_bracket_pair(target) {
             self.stop_recording(cx);
-            self.update_editor(window, cx, |_, editor, window, cx| {
+            self.update_editor(cx, |_, editor, cx| {
                 editor.transact(window, cx, |editor, window, cx| {
                     editor.set_clip_at_line_ends(false, cx);
 
@@ -344,7 +344,7 @@ impl Vim {
     ) -> bool {
         let mut valid = false;
         if let Some(pair) = object_to_bracket_pair(object) {
-            self.update_editor(window, cx, |_, editor, window, cx| {
+            self.update_editor(cx, |_, editor, cx| {
                 editor.transact(window, cx, |editor, window, cx| {
                     editor.set_clip_at_line_ends(false, cx);
                     let (display_map, selections) = editor.selections.all_adjusted_display(cx);

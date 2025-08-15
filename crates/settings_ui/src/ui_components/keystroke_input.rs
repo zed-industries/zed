@@ -529,7 +529,7 @@ impl Render for KeystrokeInput {
             .w_full()
             .flex_1()
             .justify_between()
-            .rounded_lg()
+            .rounded_sm()
             .overflow_hidden()
             .map(|this| {
                 if is_recording {
@@ -590,7 +590,7 @@ impl Render for KeystrokeInput {
                     .map(|this| {
                         if is_recording {
                             this.child(
-                                IconButton::new("stop-record-btn", IconName::StopFilled)
+                                IconButton::new("stop-record-btn", IconName::Stop)
                                     .shape(IconButtonShape::Square)
                                     .map(|this| {
                                         this.tooltip(Tooltip::for_action_title(
@@ -629,7 +629,7 @@ impl Render for KeystrokeInput {
                         }
                     })
                     .child(
-                        IconButton::new("clear-btn", IconName::Delete)
+                        IconButton::new("clear-btn", IconName::Backspace)
                             .shape(IconButtonShape::Square)
                             .tooltip(Tooltip::for_action_title(
                                 "Clear Keystrokes",

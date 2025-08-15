@@ -8,6 +8,8 @@ use gpui_tokio::Tokio;
 use playback::capture_local_video_track;
 
 mod playback;
+#[cfg(feature = "record-microphone")]
+mod record;
 
 use crate::{LocalTrack, Participant, RemoteTrack, RoomEvent, TrackPublication};
 pub use playback::AudioStream;

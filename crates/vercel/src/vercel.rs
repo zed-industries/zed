@@ -71,4 +71,8 @@ impl Model {
             Model::Custom { .. } => false,
         }
     }
+
+    pub fn supports_prompt_cache_key(&self) -> bool {
+        false
+    }
 }

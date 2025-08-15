@@ -500,7 +500,7 @@ impl PickerDelegate for TasksModalDelegate {
         .map(|icon| icon.color(Color::Muted).size(IconSize::Small));
         let indicator = if matches!(source_kind, TaskSourceKind::Lsp { .. }) {
             Some(Indicator::icon(
-                Icon::new(IconName::Bolt).size(IconSize::Small),
+                Icon::new(IconName::BoltOutlined).size(IconSize::Small),
             ))
         } else {
             None

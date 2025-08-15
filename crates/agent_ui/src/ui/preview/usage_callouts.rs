@@ -81,7 +81,7 @@ impl RenderOnce for UsageCallout {
         };
 
         let icon = if is_limit_reached {
-            Icon::new(IconName::X)
+            Icon::new(IconName::Close)
                 .color(Color::Error)
                 .size(IconSize::XSmall)
         } else {

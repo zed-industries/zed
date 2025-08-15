@@ -163,7 +163,7 @@ pub struct LanguageServerManifestEntry {
     #[serde(default)]
     languages: Vec<LanguageName>,
     #[serde(default)]
-    pub language_ids: HashMap<String, String>,
+    pub language_ids: HashMap<LanguageName, String>,
     #[serde(default)]
     pub code_action_kinds: Option<Vec<lsp::CodeActionKind>>,
 }

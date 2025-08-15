@@ -90,6 +90,15 @@ impl From<Uuid> for UserPromptId {
     }
 }
 
+impl std::fmt::Display for PromptId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            PromptId::User { uuid } => write!(f, "{}", uuid.0),
+            PromptId::EditWorkflow => write!(f, "Edit workflow"),
+        }
+    }
+}
+
 pub struct PromptStore {
     env: heed::Env,
     metadata_cache: RwLock<MetadataCache>,

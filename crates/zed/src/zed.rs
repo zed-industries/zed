@@ -1,6 +1,6 @@
 mod app_menus;
 pub mod component_preview;
-pub mod inline_completion_registry;
+pub mod edit_prediction_registry;
 #[cfg(target_os = "macos")]
 pub(crate) mod mac_only_instance;
 mod migrate;
@@ -34,6 +34,8 @@ use image_viewer::ImageInfo;
 use language_tools::lsp_tool::{self, LspTool};
 use migrate::{MigrationBanner, MigrationEvent, MigrationNotification, MigrationType};
 use migrator::{migrate_keymap, migrate_settings};
+use onboarding::DOCS_URL;
+use onboarding::multibuffer_hint::MultibufferHint;
 pub use open_listener::*;
 use outline_panel::OutlinePanel;
 use paths::{
@@ -54,6 +56,7 @@ use settings::{
     initial_local_debug_tasks_content, initial_project_settings_content, initial_tasks_content,
     update_settings_file,
 };
+use std::time::{Duration, Instant};
 use std::{
     borrow::Cow,
     path::{Path, PathBuf},
@@ -67,14 +70,17 @@ use util::markdown::MarkdownString;
 use util::{ResultExt, asset_str};
 use uuid::Uuid;
 use vim_mode_setting::VimModeSetting;
-use welcome::{DOCS_URL, MultibufferHint};
-use workspace::notifications::{NotificationId, dismiss_app_notification, show_app_notification};
+use workspace::notifications::{
+    NotificationId, SuppressEvent, dismiss_app_notification, show_app_notification,
+};
 use workspace::{
     AppState, NewFile, NewWindow, OpenLog, Toast, Workspace, WorkspaceSettings,
     create_and_open_local_file, notifications::simple_message_notification::MessageNotification,
     open_new,
 };
-use workspace::{CloseIntent, CloseWindow, RestoreBanner, with_active_or_new_workspace};
+use workspace::{
+    CloseIntent, CloseWindow, NotificationFrame, RestoreBanner, with_active_or_new_workspace,
+};
 use workspace::{Pane, notifications::DetachAndPromptErr};
 use zed_actions::{
     OpenAccountSettings, OpenBrowser, OpenDocs, OpenServerSettings, OpenSettings, OpenZedUrl, Quit,
@@ -113,6 +119,14 @@ actions!(
         TestPanic,
         /// Triggers a hard crash for debugging.
         TestCrash,
+    ]
+);
+
+actions!(
+    dev,
+    [
+        /// Record 10s of audio from your current microphone
+        CaptureAudio
     ]
 );
 
@@ -305,7 +319,7 @@ pub fn initialize_workspace(
             return;
         };
 
-        let workspace_handle = cx.entity().clone();
+        let workspace_handle = cx.entity();
         let center_pane = workspace.active_pane().clone();
         initialize_pane(workspace, &center_pane, window, cx);
 
@@ -332,18 +346,18 @@ pub fn initialize_workspace(
             show_software_emulation_warning_if_needed(specs, window, cx);
         }
 
-        let inline_completion_menu_handle = PopoverMenuHandle::default();
+        let edit_prediction_menu_handle = PopoverMenuHandle::default();
         let edit_prediction_button = cx.new(|cx| {
-            inline_completion_button::InlineCompletionButton::new(
+            edit_prediction_button::EditPredictionButton::new(
                 app_state.fs.clone(),
-                app_state.cloud_user_store.clone(),
-                inline_completion_menu_handle.clone(),
+                app_state.user_store.clone(),
+                edit_prediction_menu_handle.clone(),
                 cx,
             )
         });
         workspace.register_action({
-            move |_, _: &inline_completion_button::ToggleMenu, window, cx| {
-                inline_completion_menu_handle.toggle(window, cx);
+            move |_, _: &edit_prediction_button::ToggleMenu, window, cx| {
+                edit_prediction_menu_handle.toggle(window, cx);
             }
         });
 
@@ -896,7 +910,11 @@ fn register_actions(
                     .detach();
                 }
             }
+        })
+        .register_action(|workspace, _: &CaptureAudio, window, cx| {
+            capture_audio(workspace, window, cx);
         });
+
     if workspace.project().read(cx).is_via_ssh() {
         workspace.register_action({
             move |workspace, _: &OpenServerSettings, window, cx| {
@@ -1803,6 +1821,107 @@ fn open_settings_file(
         anyhow::Ok(())
     })
     .detach_and_log_err(cx);
+}
+
+fn capture_audio(workspace: &mut Workspace, _: &mut Window, cx: &mut Context<Workspace>) {
+    #[derive(Default)]
+    enum State {
+        Recording(livekit_client::CaptureInput),
+        Failed(String),
+        Finished(PathBuf),
+        // Used during state switch. Should never occur naturally.
+        #[default]
+        Invalid,
+    }
+
+    struct CaptureAudioNotification {
+        focus_handle: gpui::FocusHandle,
+        start_time: Instant,
+        state: State,
+    }
+
+    impl gpui::EventEmitter<DismissEvent> for CaptureAudioNotification {}
+    impl gpui::EventEmitter<SuppressEvent> for CaptureAudioNotification {}
+    impl gpui::Focusable for CaptureAudioNotification {
+        fn focus_handle(&self, _cx: &App) -> gpui::FocusHandle {
+            self.focus_handle.clone()
+        }
+    }
+    impl workspace::notifications::Notification for CaptureAudioNotification {}
+
+    const AUDIO_RECORDING_TIME_SECS: u64 = 10;
+
+    impl Render for CaptureAudioNotification {
+        fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            let elapsed = self.start_time.elapsed().as_secs();
+            let message = match &self.state {
+                State::Recording(capture) => format!(
+                    "Recording {} seconds of audio from input: '{}'",
+                    AUDIO_RECORDING_TIME_SECS - elapsed,
+                    capture.name,
+                ),
+                State::Failed(e) => format!("Error capturing audio: {e}"),
+                State::Finished(path) => format!("Audio recorded to {}", path.display()),
+                State::Invalid => "Error invalid state".to_string(),
+            };
+
+            NotificationFrame::new()
+                .with_title(Some("Recording Audio"))
+                .show_suppress_button(false)
+                .on_close(cx.listener(|_, _, _, cx| {
+                    cx.emit(DismissEvent);
+                }))
+                .with_content(message)
+        }
+    }
+
+    impl CaptureAudioNotification {
+        fn finish(&mut self) {
+            let state = std::mem::take(&mut self.state);
+            self.state = if let State::Recording(capture) = state {
+                match capture.finish() {
+                    Ok(path) => State::Finished(path),
+                    Err(e) => State::Failed(e.to_string()),
+                }
+            } else {
+                state
+            };
+        }
+
+        fn new(cx: &mut Context<Self>) -> Self {
+            cx.spawn(async move |this, cx| {
+                for _ in 0..10 {
+                    cx.background_executor().timer(Duration::from_secs(1)).await;
+                    this.update(cx, |_, cx| {
+                        cx.notify();
+                    })?;
+                }
+
+                this.update(cx, |this, cx| {
+                    this.finish();
+                    cx.notify();
+                })?;
+
+                anyhow::Ok(())
+            })
+            .detach();
+
+            let state = match livekit_client::CaptureInput::start() {
+                Ok(capture_input) => State::Recording(capture_input),
+                Err(err) => State::Failed(format!("Error starting audio capture: {}", err)),
+            };
+
+            Self {
+                focus_handle: cx.focus_handle(),
+                start_time: Instant::now(),
+                state,
+            }
+        }
+    }
+
+    workspace.show_notification(NotificationId::unique::<CaptureAudio>(), cx, |cx| {
+        cx.new(CaptureAudioNotification::new)
+    });
 }
 
 #[cfg(test)]
@@ -3975,7 +4094,6 @@ mod tests {
             client::init(&app_state.client, cx);
             language::init(cx);
             workspace::init(app_state.clone(), cx);
-            welcome::init(cx);
             onboarding::init(cx);
             Project::init_settings(cx);
             app_state
@@ -4354,6 +4472,7 @@ mod tests {
                 "menu",
                 "notebook",
                 "notification_panel",
+                "onboarding",
                 "outline",
                 "outline_panel",
                 "pane",
@@ -4379,7 +4498,6 @@ mod tests {
                 "toolchain",
                 "variable_list",
                 "vim",
-                "welcome",
                 "workspace",
                 "zed",
                 "zed_predict_onboarding",
@@ -4401,11 +4519,11 @@ mod tests {
         cx.text_system()
             .add_fonts(vec![
                 Assets
-                    .load("fonts/plex-mono/ZedPlexMono-Regular.ttf")
+                    .load("fonts/lilex/Lilex-Regular.ttf")
                     .unwrap()
                     .unwrap(),
                 Assets
-                    .load("fonts/plex-sans/ZedPlexSans-Regular.ttf")
+                    .load("fonts/ibm-plex-sans/IBMPlexSans-Regular.ttf")
                     .unwrap()
                     .unwrap(),
             ])
@@ -4438,7 +4556,7 @@ mod tests {
         });
         for name in languages.language_names() {
             languages
-                .language_for_name(&name)
+                .language_for_name(name.as_ref())
                 .await
                 .with_context(|| format!("language name {name}"))
                 .unwrap();
@@ -4488,12 +4606,7 @@ mod tests {
             );
             image_viewer::init(cx);
             language_model::init(app_state.client.clone(), cx);
-            language_models::init(
-                app_state.user_store.clone(),
-                app_state.cloud_user_store.clone(),
-                app_state.client.clone(),
-                cx,
-            );
+            language_models::init(app_state.user_store.clone(), app_state.client.clone(), cx);
             web_search::init(cx);
             web_search_providers::init(app_state.client.clone(), cx);
             let prompt_builder = PromptBuilder::load(app_state.fs.clone(), false, cx);

@@ -1,8 +1,8 @@
 use crate::{Supermaven, SupermavenCompletionStateId};
 use anyhow::Result;
+use edit_prediction::{Direction, EditPrediction, EditPredictionProvider};
 use futures::StreamExt as _;
 use gpui::{App, Context, Entity, EntityId, Task};
-use inline_completion::{Direction, EditPredictionProvider, InlineCompletion};
 use language::{Anchor, Buffer, BufferSnapshot};
 use project::Project;
 use std::{
@@ -44,7 +44,7 @@ fn completion_from_diff(
     completion_text: &str,
     position: Anchor,
     delete_range: Range<Anchor>,
-) -> InlineCompletion {
+) -> EditPrediction {
     let buffer_text = snapshot
         .text_for_range(delete_range.clone())
         .collect::<String>();
@@ -91,7 +91,7 @@ fn completion_from_diff(
         edits.push((edit_range, edit_text));
     }
 
-    InlineCompletion {
+    EditPrediction {
         id: None,
         edits,
         edit_preview: None,
@@ -108,6 +108,14 @@ impl EditPredictionProvider for SupermavenCompletionProvider {
     }
 
     fn show_completions_in_menu() -> bool {
+        true
+    }
+
+    fn show_tab_accept_marker() -> bool {
+        true
+    }
+
+    fn supports_jump_to_edit() -> bool {
         false
     }
 
@@ -116,7 +124,7 @@ impl EditPredictionProvider for SupermavenCompletionProvider {
     }
 
     fn is_refreshing(&self) -> bool {
-        self.pending_refresh.is_some()
+        self.pending_refresh.is_some() && self.completion_id.is_none()
     }
 
     fn refresh(
@@ -182,7 +190,7 @@ impl EditPredictionProvider for SupermavenCompletionProvider {
         buffer: &Entity<Buffer>,
         cursor_position: Anchor,
         cx: &mut Context<Self>,
-    ) -> Option<InlineCompletion> {
+    ) -> Option<EditPrediction> {
         let completion_text = self
             .supermaven
             .read(cx)
@@ -197,6 +205,7 @@ impl EditPredictionProvider for SupermavenCompletionProvider {
             let mut point = cursor_position.to_point(&snapshot);
             point.column = snapshot.line_len(point.row);
             let range = cursor_position..snapshot.anchor_after(point);
+
             Some(completion_from_diff(
                 snapshot,
                 completion_text,

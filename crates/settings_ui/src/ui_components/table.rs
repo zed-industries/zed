@@ -248,7 +248,7 @@ impl TableInteractionState {
                         .cursor_col_resize()
                         .when_some(columns.clone(), |this, columns| {
                             this.on_click(move |event, window, cx| {
-                                if event.down.click_count >= 2 {
+                                if event.click_count() >= 2 {
                                     columns.update(cx, |columns, _| {
                                         columns.on_double_click(
                                             column_ix,
@@ -997,7 +997,7 @@ pub fn render_header<const COLS: usize>(
                         |this, (column_widths, resizables, initial_sizes)| {
                             if resizables[header_idx].is_resizable() {
                                 this.on_click(move |event, window, cx| {
-                                    if event.down.click_count > 1 {
+                                    if event.click_count() > 1 {
                                         column_widths
                                             .update(cx, |column, _| {
                                                 column.on_double_click(

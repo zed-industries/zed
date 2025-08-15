@@ -2,7 +2,11 @@ use anyhow::{Context as _, Result};
 use collections::{BTreeMap, HashMap, btree_map, hash_map};
 use ec4rs::{ConfigParser, PropertiesSource, Section};
 use fs::Fs;
-use futures::{FutureExt, StreamExt, channel::mpsc, future::LocalBoxFuture};
+use futures::{
+    FutureExt, StreamExt,
+    channel::{mpsc, oneshot},
+    future::LocalBoxFuture,
+};
 use gpui::{App, AsyncApp, BorrowAppContext, Global, Task, UpdateGlobal};
 
 use paths::{EDITORCONFIG_NAME, local_settings_file_relative_path, task_file_name};
@@ -12,6 +16,7 @@ use serde_json::{Value, json};
 use smallvec::SmallVec;
 use std::{
     any::{Any, TypeId, type_name},
+    env,
     fmt::Debug,
     ops::Range,
     path::{Path, PathBuf},
@@ -122,6 +127,8 @@ pub struct SettingsSources<'a, T> {
     pub user: Option<&'a T>,
     /// The user settings for the current release channel.
     pub release_channel: Option<&'a T>,
+    /// The user settings for the current operating system.
+    pub operating_system: Option<&'a T>,
     /// The settings associated with an enabled settings profile
     pub profile: Option<&'a T>,
     /// The server's settings.
@@ -143,6 +150,7 @@ impl<'a, T: Serialize> SettingsSources<'a, T> {
             .chain(self.extensions)
             .chain(self.user)
             .chain(self.release_channel)
+            .chain(self.operating_system)
             .chain(self.profile)
             .chain(self.server)
             .chain(self.project.iter().copied())
@@ -332,6 +340,11 @@ impl SettingsStore {
                     .log_err();
             }
 
+            let mut os_settings_value = None;
+            if let Some(os_settings) = &self.raw_user_settings.get(env::consts::OS) {
+                os_settings_value = setting_value.deserialize_setting(os_settings).log_err();
+            }
+
             let mut profile_value = None;
             if let Some(active_profile) = cx.try_global::<ActiveSettingsProfileName>() {
                 if let Some(profiles) = self.raw_user_settings.get("profiles") {
@@ -362,6 +375,7 @@ impl SettingsStore {
                         extensions: extension_value.as_ref(),
                         user: user_value.as_ref(),
                         release_channel: release_channel_value.as_ref(),
+                        operating_system: os_settings_value.as_ref(),
                         profile: profile_value.as_ref(),
                         server: server_value.as_ref(),
                         project: &[],
@@ -531,39 +545,60 @@ impl SettingsStore {
             .ok();
     }
 
-    pub fn import_vscode_settings(&self, fs: Arc<dyn Fs>, vscode_settings: VsCodeSettings) {
+    pub fn import_vscode_settings(
+        &self,
+        fs: Arc<dyn Fs>,
+        vscode_settings: VsCodeSettings,
+    ) -> oneshot::Receiver<Result<()>> {
+        let (tx, rx) = oneshot::channel::<Result<()>>();
         self.setting_file_updates_tx
             .unbounded_send(Box::new(move |cx: AsyncApp| {
                 async move {
-                    let old_text = Self::load_settings(&fs).await?;
-                    let new_text = cx.read_global(|store: &SettingsStore, _cx| {
-                        store.get_vscode_edits(old_text, &vscode_settings)
-                    })?;
-                    let settings_path = paths::settings_file().as_path();
-                    if fs.is_file(settings_path).await {
-                        let resolved_path =
-                            fs.canonicalize(settings_path).await.with_context(|| {
-                                format!("Failed to canonicalize settings path {:?}", settings_path)
-                            })?;
+                    let res = async move {
+                        let old_text = Self::load_settings(&fs).await?;
+                        let new_text = cx.read_global(|store: &SettingsStore, _cx| {
+                            store.get_vscode_edits(old_text, &vscode_settings)
+                        })?;
+                        let settings_path = paths::settings_file().as_path();
+                        if fs.is_file(settings_path).await {
+                            let resolved_path =
+                                fs.canonicalize(settings_path).await.with_context(|| {
+                                    format!(
+                                        "Failed to canonicalize settings path {:?}",
+                                        settings_path
+                                    )
+                                })?;
 
-                        fs.atomic_write(resolved_path.clone(), new_text)
-                            .await
-                            .with_context(|| {
-                                format!("Failed to write settings to file {:?}", resolved_path)
-                            })?;
-                    } else {
-                        fs.atomic_write(settings_path.to_path_buf(), new_text)
-                            .await
-                            .with_context(|| {
-                                format!("Failed to write settings to file {:?}", settings_path)
-                            })?;
+                            fs.atomic_write(resolved_path.clone(), new_text)
+                                .await
+                                .with_context(|| {
+                                    format!("Failed to write settings to file {:?}", resolved_path)
+                                })?;
+                        } else {
+                            fs.atomic_write(settings_path.to_path_buf(), new_text)
+                                .await
+                                .with_context(|| {
+                                    format!("Failed to write settings to file {:?}", settings_path)
+                                })?;
+                        }
+
+                        anyhow::Ok(())
                     }
+                    .await;
 
-                    anyhow::Ok(())
+                    let new_res = match &res {
+                        Ok(_) => anyhow::Ok(()),
+                        Err(e) => Err(anyhow::anyhow!("Failed to write settings to file {:?}", e)),
+                    };
+
+                    _ = tx.send(new_res);
+                    res
                 }
                 .boxed_local()
             }))
             .ok();
+
+        rx
     }
 }
 
@@ -1067,7 +1102,7 @@ impl SettingsStore {
             "$schema": meta_schema,
             "title": "Zed Settings",
             "unevaluatedProperties": false,
-            // ZedSettings + settings overrides for each release stage / profiles
+            // ZedSettings + settings overrides for each release stage / OS / profiles
             "allOf": [
                 zed_settings_ref,
                 {
@@ -1076,6 +1111,9 @@ impl SettingsStore {
                         "nightly": zed_settings_override_ref,
                         "stable": zed_settings_override_ref,
                         "preview": zed_settings_override_ref,
+                        "linux": zed_settings_override_ref,
+                        "macos": zed_settings_override_ref,
+                        "windows": zed_settings_override_ref,
                         "profiles": {
                             "type": "object",
                             "description": "Configures any number of settings profiles.",
@@ -1139,6 +1177,13 @@ impl SettingsStore {
                 }
             }
 
+            let mut os_settings = None;
+            if let Some(settings) = &self.raw_user_settings.get(env::consts::OS) {
+                if let Some(settings) = setting_value.deserialize_setting(settings).log_err() {
+                    os_settings = Some(settings);
+                }
+            }
+
             let mut profile_settings = None;
             if let Some(active_profile) = cx.try_global::<ActiveSettingsProfileName>() {
                 if let Some(profiles) = self.raw_user_settings.get("profiles") {
@@ -1159,6 +1204,7 @@ impl SettingsStore {
                             extensions: extension_settings.as_ref(),
                             user: user_settings.as_ref(),
                             release_channel: release_channel_settings.as_ref(),
+                            operating_system: os_settings.as_ref(),
                             profile: profile_settings.as_ref(),
                             server: server_settings.as_ref(),
                             project: &[],
@@ -1212,6 +1258,7 @@ impl SettingsStore {
                                     extensions: extension_settings.as_ref(),
                                     user: user_settings.as_ref(),
                                     release_channel: release_channel_settings.as_ref(),
+                                    operating_system: os_settings.as_ref(),
                                     profile: profile_settings.as_ref(),
                                     server: server_settings.as_ref(),
                                     project: &project_settings_stack.iter().collect::<Vec<_>>(),
@@ -1337,6 +1384,9 @@ impl<T: Settings> AnySettingValue for SettingValue<T> {
                     .map(|value| value.0.downcast_ref::<T::FileContent>().unwrap()),
                 release_channel: values
                     .release_channel
+                    .map(|value| value.0.downcast_ref::<T::FileContent>().unwrap()),
+                operating_system: values
+                    .operating_system
                     .map(|value| value.0.downcast_ref::<T::FileContent>().unwrap()),
                 profile: values
                     .profile

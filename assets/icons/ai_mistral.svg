@@ -1,1 +1,8 @@
-<svg fill="currentColor" fill-rule="evenodd" height="1em" style="flex:none;line-height:1" viewBox="0 0 24 24" width="1em" xmlns="http://www.w3.org/2000/svg"><title>Mistral</title><g><path d="M15 6v4h-2V6h2zm4-4v4h-2V2h2zM3 2H1h2zM1 2h2v20H1V2zm8 12h2v4H9v-4zm8 0h2v8h-2v-8z"></path><path d="M19 2h4v4h-4V2zM3 2h4v4H3V2z" opacity=".4"></path><path d="M15 10V6h8v4h-8zM3 10V6h8v4H3z" opacity=".5"></path><path d="M3 14v-4h20v4z" opacity=".6"></path><path d="M11 14h4v4h-4v-4zm8 0h4v4h-4v-4zM3 14h4v4H3v-4z" opacity=".7"></path><path d="M19 18h4v4h-4v-4zM3 18h4v4H3v-4z" opacity=".8"></path></g></svg>
+<svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+<path fill-rule="evenodd" clip-rule="evenodd" d="M10.4 4.4V6.8H9.2V4.4H10.4ZM12.8 2V4.4H11.6V2H12.8ZM2 2H3.2V14H2V2ZM6.8 9.2H8V11.6H6.8V9.2ZM11.6 9.2H12.8V14H11.6V9.2Z" fill="black"/>
+<path opacity="0.4" fill-rule="evenodd" clip-rule="evenodd" d="M12.8 2H15.2V4.4H12.8V2ZM3.2 2H5.6V4.4H3.2V2Z" fill="black"/>
+<path opacity="0.5" fill-rule="evenodd" clip-rule="evenodd" d="M10.4 6.8V4.4H15.2V6.8H10.4ZM3.2 6.8V4.4H8V6.8H3.2Z" fill="black"/>
+<path opacity="0.6" fill-rule="evenodd" clip-rule="evenodd" d="M3.2 9.2V6.8H15.2V9.2H3.2Z" fill="black"/>
+<path opacity="0.7" fill-rule="evenodd" clip-rule="evenodd" d="M8 9.2H10.4V11.6H8V9.2ZM12.8 9.2H15.2V11.6H12.8V9.2ZM3.2 9.2H5.6V11.6H3.2V9.2Z" fill="black"/>
+<path opacity="0.8" fill-rule="evenodd" clip-rule="evenodd" d="M12.8 11.6H15.2V14H12.8V11.6ZM3.2 11.6H5.6V14H3.2V11.6Z" fill="black"/>
+</svg>

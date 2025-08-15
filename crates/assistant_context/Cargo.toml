@@ -11,6 +11,9 @@ workspace = true
 [lib]
 path = "src/assistant_context.rs"
 
+[features]
+test-support = []
+
 [dependencies]
 agent_settings.workspace = true
 anyhow.workspace = true

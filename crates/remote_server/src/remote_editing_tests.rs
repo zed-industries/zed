@@ -1724,7 +1724,7 @@ async fn test_remote_agent_fs_tool_calls(cx: &mut TestAppContext, server_cx: &mu
         .await
         .unwrap();
 
-    let action_log = cx.new(|_| assistant_tool::ActionLog::new(project.clone()));
+    let action_log = cx.new(|_| action_log::ActionLog::new(project.clone()));
     let model = Arc::new(FakeLanguageModel::default());
     let request = Arc::new(LanguageModelRequest::default());
 

@@ -13,7 +13,7 @@ use std::{
     ops::{ControlFlow, Range},
     sync::Arc,
 };
-use sum_tree::{Bias, SumTree};
+use sum_tree::{Bias, Dimensions, SumTree};
 use time::OffsetDateTime;
 use util::{ResultExt as _, TryFutureExt, post_inc};
 
@@ -331,7 +331,9 @@ impl ChannelChat {
                 .update(&mut cx, |chat, cx| {
                     if let Some(first_id) = chat.first_loaded_message_id() {
                         if first_id <= message_id {
-                            let mut cursor = chat.messages.cursor::<(ChannelMessageId, Count)>(&());
+                            let mut cursor = chat
+                                .messages
+                                .cursor::<Dimensions<ChannelMessageId, Count>>(&());
                             let message_id = ChannelMessageId::Saved(message_id);
                             cursor.seek(&message_id, Bias::Left);
                             return ControlFlow::Break(
@@ -587,7 +589,9 @@ impl ChannelChat {
                 .map(|m| m.nonce)
                 .collect::<HashSet<_>>();
 
-            let mut old_cursor = self.messages.cursor::<(ChannelMessageId, Count)>(&());
+            let mut old_cursor = self
+                .messages
+                .cursor::<Dimensions<ChannelMessageId, Count>>(&());
             let mut new_messages = old_cursor.slice(&first_message.id, Bias::Left);
             let start_ix = old_cursor.start().1.0;
             let removed_messages = old_cursor.slice(&last_message.id, Bias::Right);

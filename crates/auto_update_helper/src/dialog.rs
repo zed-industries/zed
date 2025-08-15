@@ -72,7 +72,7 @@ pub(crate) fn create_dialog_window(receiver: Receiver<Result<()>>) -> Result<HWN
         let hwnd = CreateWindowExW(
             WS_EX_TOPMOST,
             class_name,
-            windows::core::w!("Zed Editor"),
+            windows::core::w!("Zed"),
             WS_VISIBLE | WS_POPUP | WS_CAPTION,
             rect.right / 2 - width / 2,
             rect.bottom / 2 - height / 2,
@@ -171,7 +171,7 @@ unsafe extern "system" fn wnd_proc(
                 &HSTRING::from(font_name),
             );
             let temp = SelectObject(hdc, font.into());
-            let string = HSTRING::from("Zed Editor is updating...");
+            let string = HSTRING::from("Updating Zed...");
             return_if_failed!(TextOutW(hdc, 20, 15, &string).ok());
             return_if_failed!(DeleteObject(temp).ok());
 

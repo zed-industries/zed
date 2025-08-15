@@ -431,10 +431,9 @@ impl GitSettings {
 
     pub fn inline_blame_delay(&self) -> Option<Duration> {
         match self.inline_blame {
-            Some(InlineBlameSettings {
-                delay_ms: Some(delay_ms),
-                ..
-            }) if delay_ms > 0 => Some(Duration::from_millis(delay_ms)),
+            Some(InlineBlameSettings { delay_ms, .. }) if delay_ms > 0 => {
+                Some(Duration::from_millis(delay_ms))
+            }
             _ => None,
         }
     }
@@ -470,7 +469,7 @@ pub enum GitGutterSetting {
     Hide,
 }
 
-#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub struct InlineBlameSettings {
     /// Whether or not to show git blame data inline in
@@ -483,16 +482,40 @@ pub struct InlineBlameSettings {
     /// after a delay once the cursor stops moving.
     ///
     /// Default: 0
-    pub delay_ms: Option<u64>,
+    #[serde(default)]
+    pub delay_ms: u64,
+    /// The amount of padding between the end of the source line and the start
+    /// of the inline blame in units of columns.
+    ///
+    /// Default: 7
+    #[serde(default = "default_inline_blame_padding")]
+    pub padding: u32,
     /// The minimum column number to show the inline blame information at
     ///
     /// Default: 0
-    pub min_column: Option<u32>,
+    #[serde(default)]
+    pub min_column: u32,
     /// Whether to show commit summary as part of the inline blame.
     ///
     /// Default: false
     #[serde(default)]
     pub show_commit_summary: bool,
+}
+
+fn default_inline_blame_padding() -> u32 {
+    7
+}
+
+impl Default for InlineBlameSettings {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            delay_ms: 0,
+            padding: default_inline_blame_padding(),
+            min_column: 0,
+            show_commit_summary: false,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]

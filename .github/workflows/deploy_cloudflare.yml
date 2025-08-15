@@ -9,7 +9,7 @@ jobs:
   deploy-docs:
     name: Deploy Docs
     if: github.repository_owner == 'zed-industries'
-    runs-on: buildjet-16vcpu-ubuntu-2204
+    runs-on: namespace-profile-16x32-ubuntu-2204
 
     steps:
       - name: Checkout repo
