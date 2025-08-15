@@ -4,8 +4,8 @@ use gpui::{
     Along, App, AppContext as _, Axis as ScrollbarAxis, BorderStyle, Bounds, ContentMask, Context,
     Corner, Corners, CursorStyle, Div, Edges, Element, ElementId, Entity, EntityId,
     GlobalElementId, Hitbox, HitboxBehavior, Hsla, InteractiveElement, IntoElement, IsZero,
-    LayoutId, ListState, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement,
-    Pixels, Point, Position, Render, ScrollHandle, ScrollWheelEvent, Size, Stateful,
+    LayoutId, ListState, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Negate,
+    ParentElement, Pixels, Point, Position, Render, ScrollHandle, ScrollWheelEvent, Size, Stateful,
     StatefulInteractiveElement, Style, Styled, Task, UniformList, UniformListDecoration,
     UniformListScrollHandle, Window, prelude::FluentBuilder as _, px, quad, relative, size,
 };
@@ -217,24 +217,20 @@ where
 {
     let state = &scrollbar.read(cx).0;
 
-    if state.read(cx).disabled() {
-        div
-    } else {
-        div.when_some(state.read(cx).handle_to_track(), |this, handle| {
-            this.track_scroll(handle)
-        })
-        .when_some(
-            state
-                .read(cx)
-                .space_to_reserve_for(ScrollbarAxis::Horizontal),
-            |this, space| this.pb(space),
-        )
-        .when_some(
-            state.read(cx).space_to_reserve_for(ScrollbarAxis::Vertical),
-            |this, space| this.pr(space),
-        )
-        .child(state.clone())
-    }
+    div.when_some(state.read(cx).handle_to_track(), |this, handle| {
+        this.track_scroll(handle)
+    })
+    .when_some(
+        state
+            .read(cx)
+            .space_to_reserve_for(ScrollbarAxis::Horizontal),
+        |this, space| this.pb(space),
+    )
+    .when_some(
+        state.read(cx).space_to_reserve_for(ScrollbarAxis::Vertical),
+        |this, space| this.pr(space),
+    )
+    .child(state.clone())
 }
 
 impl<S: ScrollbarVisibilitySetting, T: ScrollableHandle> UniformListDecoration
@@ -244,13 +240,14 @@ impl<S: ScrollbarVisibilitySetting, T: ScrollableHandle> UniformListDecoration
         &self,
         _visible_range: Range<usize>,
         _bounds: Bounds<Pixels>,
-        _scroll_offset: Point<Pixels>,
+        scroll_offset: Point<Pixels>,
         _item_height: Pixels,
         _item_count: usize,
         _window: &mut Window,
         _cx: &mut App,
     ) -> gpui::AnyElement {
         ScrollbarElement {
+            origin: scroll_offset.negate(),
             state: self.0.clone(),
         }
         .into_any()
@@ -558,7 +555,11 @@ impl<S: ScrollbarVisibilitySetting, T: ScrollableHandle> ScrollbarState<S, T> {
 
     fn space_to_reserve_for(&self, axis: ScrollbarAxis) -> Option<Pixels> {
         (self.show_state.is_disabled().not() && self.visibility.along(axis).needs_scroll_track())
-            .then(|| self.width.to_pixels() + 2 * SCROLLBAR_PADDING)
+            .then(|| self.space_to_reserve())
+    }
+
+    fn space_to_reserve(&self) -> Pixels {
+        self.width.to_pixels() + 2 * SCROLLBAR_PADDING
     }
 
     fn handle_to_track(&self) -> Option<&ScrollHandle> {
@@ -692,11 +693,15 @@ impl<S: ScrollbarVisibilitySetting, T: ScrollableHandle> ScrollbarState<S, T> {
 
 impl<S: ScrollbarVisibilitySetting, T: ScrollableHandle> Render for ScrollbarState<S, T> {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        ScrollbarElement { state: cx.entity() }
+        ScrollbarElement {
+            state: cx.entity(),
+            origin: Default::default(),
+        }
     }
 }
 
 struct ScrollbarElement<S: ScrollbarVisibilitySetting, T: ScrollableHandle> {
+    origin: Point<Pixels>,
     state: Entity<ScrollbarState<S, T>>,
 }
 
@@ -912,86 +917,91 @@ impl<S: ScrollbarVisibilitySetting, T: ScrollableHandle> Element for ScrollbarEl
         window: &mut Window,
         cx: &mut App,
     ) -> Self::PrepaintState {
-        Some(ScrollbarPrepaintState {
-            parent_bounds: bounds,
-            thumbs: self
-                .state
-                .read(cx)
-                .thumb_ranges()
-                .map(|(axis, thumb_range, reserved_space)| {
-                    let track_anchor = match axis {
-                        ScrollbarAxis::Horizontal => Corner::BottomLeft,
-                        ScrollbarAxis::Vertical => Corner::TopRight,
-                    };
-                    let scroll_track_bounds = Bounds::from_corner_and_size(
-                        track_anchor,
-                        bounds
-                            .corner(track_anchor)
-                            .apply_along(axis.invert(), |corner| corner - SCROLLBAR_PADDING),
-                        bounds
-                            .size
-                            .apply_along(axis.invert(), |_| self.state.read(cx).width.to_pixels()),
-                    );
+        self.state
+            .read(cx)
+            .disabled()
+            .not()
+            .then(|| ScrollbarPrepaintState {
+                parent_bounds: bounds,
+                thumbs: self
+                    .state
+                    .read(cx)
+                    .thumb_ranges()
+                    .map(|(axis, thumb_range, reserved_space)| {
+                        let track_anchor = match axis {
+                            ScrollbarAxis::Horizontal => Corner::BottomLeft,
+                            ScrollbarAxis::Vertical => Corner::TopRight,
+                        };
+                        let Bounds { origin, size } = Bounds::from_corner_and_size(
+                            track_anchor,
+                            bounds
+                                .corner(track_anchor)
+                                .apply_along(axis.invert(), |corner| corner - SCROLLBAR_PADDING),
+                            bounds.size.apply_along(axis.invert(), |_| {
+                                self.state.read(cx).width.to_pixels()
+                            }),
+                        );
+                        let scroll_track_bounds = Bounds::new(self.origin + origin, size);
 
-                    let padded_bounds = scroll_track_bounds.extend(match axis {
-                        ScrollbarAxis::Horizontal => Edges {
-                            right: -SCROLLBAR_PADDING,
-                            left: -SCROLLBAR_PADDING,
-                            ..Default::default()
-                        },
-                        ScrollbarAxis::Vertical => Edges {
-                            top: -SCROLLBAR_PADDING,
-                            bottom: -SCROLLBAR_PADDING,
-                            ..Default::default()
-                        },
-                    });
-
-                    let thumb_offset = thumb_range.start * padded_bounds.size.along(axis);
-                    let thumb_end = thumb_range.end * padded_bounds.size.along(axis);
-
-                    let thumb_bounds = Bounds::new(
-                        padded_bounds
-                            .origin
-                            .apply_along(axis, |origin| origin + thumb_offset),
-                        padded_bounds
-                            .size
-                            .apply_along(axis, |_| thumb_end - thumb_offset),
-                    );
-
-                    ScrollbarLayout {
-                        thumb_bounds,
-                        track_bounds: padded_bounds,
-                        axis,
-                        cursor_hitbox: window.insert_hitbox(
-                            if reserved_space.needs_scroll_track() {
-                                padded_bounds
-                            } else {
-                                thumb_bounds
+                        let padded_bounds = scroll_track_bounds.extend(match axis {
+                            ScrollbarAxis::Horizontal => Edges {
+                                right: -SCROLLBAR_PADDING,
+                                left: -SCROLLBAR_PADDING,
+                                ..Default::default()
                             },
-                            HitboxBehavior::BlockMouseExceptScroll,
-                        ),
-                        reserved_space,
-                    }
-                })
-                .collect(),
-        })
+                            ScrollbarAxis::Vertical => Edges {
+                                top: -SCROLLBAR_PADDING,
+                                bottom: -SCROLLBAR_PADDING,
+                                ..Default::default()
+                            },
+                        });
+
+                        let thumb_offset = thumb_range.start * padded_bounds.size.along(axis);
+                        let thumb_end = thumb_range.end * padded_bounds.size.along(axis);
+
+                        let thumb_bounds = Bounds::new(
+                            padded_bounds
+                                .origin
+                                .apply_along(axis, |origin| origin + thumb_offset),
+                            padded_bounds
+                                .size
+                                .apply_along(axis, |_| thumb_end - thumb_offset),
+                        );
+
+                        ScrollbarLayout {
+                            thumb_bounds,
+                            track_bounds: padded_bounds,
+                            axis,
+                            cursor_hitbox: window.insert_hitbox(
+                                if reserved_space.needs_scroll_track() {
+                                    padded_bounds
+                                } else {
+                                    thumb_bounds
+                                },
+                                HitboxBehavior::BlockMouseExceptScroll,
+                            ),
+                            reserved_space,
+                        }
+                    })
+                    .collect(),
+            })
     }
 
     fn paint(
         &mut self,
         _id: Option<&GlobalElementId>,
         _inspector_id: Option<&gpui::InspectorElementId>,
-        bounds: Bounds<Pixels>,
+        Bounds { origin, size }: Bounds<Pixels>,
         _request_layout: &mut Self::RequestLayoutState,
         prepaint_state: &mut Self::PrepaintState,
         window: &mut Window,
         cx: &mut App,
     ) {
-        // Practically, we'll never hit the case of this being none
         let Some(prepaint_state) = prepaint_state.take() else {
             return;
         };
 
+        let bounds = Bounds::new(self.origin + origin, size);
         window.with_content_mask(Some(ContentMask { bounds }), |window| {
             let colors = cx.theme().colors();
 

@@ -4553,7 +4553,6 @@ impl OutlinePanel {
             };
 
             v_flex()
-                .id("outline-panel-empty")
                 .flex_1()
                 .justify_center()
                 .size_full()
@@ -4703,19 +4702,20 @@ impl OutlinePanel {
                             ),
                     )
                 })
+                .custom_scrollbars(
+                    Scrollbars::for_settings::<OutlinePanelSettings>()
+                        .tracked_scroll_handle(self.scroll_handle.clone())
+                        .with_track_along(ScrollAxes::Horizontal)
+                        .tracked_entity(cx.entity()),
+                    window,
+                    cx,
+                )
             };
 
             v_flex()
                 .flex_shrink()
                 .size_full()
                 .child(list_contents.size_full().flex_shrink())
-                .custom_scrollbars(
-                    Scrollbars::for_settings::<OutlinePanelSettings>()
-                        .tracked_scroll_handle(self.scroll_handle.clone())
-                        .with_track_along(ScrollAxes::Horizontal),
-                    window,
-                    cx,
-                )
         }
         .children(self.context_menu.as_ref().map(|(menu, position, _)| {
             deferred(
