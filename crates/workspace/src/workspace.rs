@@ -15,6 +15,8 @@ mod toast_layer;
 mod toolbar;
 mod workspace_settings;
 
+pub use crate::notifications::NotificationFrame;
+pub use dock::Panel;
 pub use toast_layer::{ToastAction, ToastLayer, ToastView};
 
 use anyhow::{Context as _, Result, anyhow};
@@ -24,7 +26,6 @@ use client::{
     proto::{self, ErrorCode, PanelId, PeerId},
 };
 use collections::{HashMap, HashSet, hash_map};
-pub use dock::Panel;
 use dock::{Dock, DockPosition, PanelButtons, PanelHandle, RESIZE_HANDLE_SIZE};
 use futures::{
     Future, FutureExt, StreamExt,
