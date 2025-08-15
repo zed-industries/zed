@@ -34,7 +34,7 @@
 use crate::{
     App, ArenaBox, AvailableSpace, Bounds, Context, DispatchNodeId, ELEMENT_ARENA, ElementId,
     FocusHandle, InspectorElementId, LayoutId, Pixels, Point, Size, Style, Window,
-    util::FluentBuilder,
+    taffy::LOG_TAFFY, util::FluentBuilder,
 };
 use derive_more::{Deref, DerefMut};
 pub(crate) use smallvec::SmallVec;
@@ -372,12 +372,36 @@ impl<E: Element> Drawable<E> {
                     inspector_id = None;
                 }
 
+                let should_start_logging = global_id
+                    .as_ref()
+                    .map(|id| {
+                        id.0.last()
+                            .map(|last| last == &"open-router-container".into())
+                            .unwrap_or(false)
+                    })
+                    .unwrap_or(false);
+
+                if should_start_logging {
+                    println!("Starting taffy logging for element");
+                    LOG_TAFFY.with_borrow_mut(|log_taffy| {
+                        *log_taffy = true;
+                    });
+                }
+
                 let (layout_id, request_layout) = self.element.request_layout(
                     global_id.as_ref(),
                     inspector_id.as_ref(),
                     window,
                     cx,
                 );
+
+                // Only turn off logging if this element started it
+                if should_start_logging {
+                    println!("Stopping taffy logging for element");
+                    LOG_TAFFY.with_borrow_mut(|log_taffy| {
+                        *log_taffy = false;
+                    });
+                }
 
                 if global_id.is_some() {
                     window.element_id_stack.pop();

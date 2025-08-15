@@ -23,7 +23,7 @@ use crate::{
     MouseClickEvent, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Overflow, ParentElement, Pixels,
     Point, Render, ScrollWheelEvent, SharedString, Size, Style, StyleRefinement, Styled, Task,
     TooltipId, Visibility, Window, WindowControlArea, point, px, size,
-    taffy::{CONTAINER_LAYOUT_ID_TO_DEBUG, LAYOUT_ID_TO_DEBUG},
+    taffy::{CONTAINER_LAYOUT_ID_TO_DEBUG, LAYOUT_ID_TO_DEBUG, LOG_TAFFY},
 };
 use collections::HashMap;
 use refineable::Refineable;
@@ -1299,23 +1299,7 @@ impl Element for Div {
                             .iter_mut()
                             .map(|child| child.request_layout(window, cx))
                             .collect::<SmallVec<_>>();
-                        let layout_id =
-                            window.request_layout(style, child_layout_ids.iter().copied(), cx);
-                        if let Some(global_id) = global_id.as_ref()
-                            && global_id.0.ends_with(&["api-key-editor".into()])
-                        {
-                            LAYOUT_ID_TO_DEBUG.with_borrow_mut(|layout_id_to_debug| {
-                                *layout_id_to_debug = Some(layout_id)
-                            });
-                        }
-                        if let Some(global_id) = global_id.as_ref()
-                            && global_id.0.ends_with(&["open-router-container".into()])
-                        {
-                            CONTAINER_LAYOUT_ID_TO_DEBUG.with_borrow_mut(|layout_id_to_debug| {
-                                *layout_id_to_debug = Some(layout_id)
-                            });
-                        }
-                        layout_id
+                        window.request_layout(style, child_layout_ids.iter().copied(), cx)
                     })
                 },
             )
@@ -1333,6 +1317,17 @@ impl Element for Div {
         window: &mut Window,
         cx: &mut App,
     ) -> Option<Hitbox> {
+        if let Some(global_id) = global_id
+            && global_id.0.ends_with(&["open-router-container".into()])
+        {
+            println!("open-router-container bounds = {:?}", bounds)
+        }
+        if let Some(global_id) = global_id
+            && global_id.0.ends_with(&["api-key-editor".into()])
+        {
+            println!("api-key-editor bounds = {:?}", bounds)
+        }
+
         let has_prepaint_listener = self.prepaint_listener.is_some();
         let mut children_bounds = Vec::with_capacity(if has_prepaint_listener {
             request_layout.child_layout_ids.len()

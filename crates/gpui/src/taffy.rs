@@ -19,6 +19,10 @@ thread_local! {
     pub static CONTAINER_LAYOUT_ID_TO_DEBUG: RefCell<Option<LayoutId>> = const { RefCell::new(None) };
 }
 
+thread_local! {
+    pub static LOG_TAFFY: RefCell<bool> = const { RefCell::new(false) };
+}
+
 type NodeMeasureFn = Box<
     dyn FnMut(Size<Option<Pixels>>, Size<AvailableSpace>, &mut Window, &mut App) -> Size<Pixels>,
 >;
@@ -33,6 +37,11 @@ pub struct TaffyLayoutEngine {
 }
 
 const EXPECT_MESSAGE: &str = "we should avoid taffy layout errors by construction if possible";
+
+fn layout_id_to_var_name(layout_id: LayoutId) -> String {
+    let node_id: u64 = layout_id.clone().0.into();
+    format!("node_{}", node_id)
+}
 
 impl TaffyLayoutEngine {
     pub fn new() -> Self {
@@ -57,12 +66,23 @@ impl TaffyLayoutEngine {
         rem_size: Pixels,
         children: &[LayoutId],
     ) -> LayoutId {
+        let should_log = LOG_TAFFY.with_borrow(|log_taffy| *log_taffy);
         let taffy_style = style.to_taffy(rem_size);
         let layout_id = if children.is_empty() {
-            self.taffy
+            let layout_id = self
+                .taffy
                 .new_leaf(taffy_style)
                 .expect(EXPECT_MESSAGE)
-                .into()
+                .into();
+            if should_log {
+                let var_name = layout_id_to_var_name(layout_id);
+                println!(
+                    "let {} = taffy.new_leaf({:?}).unwrap();",
+                    var_name,
+                    serde_json::to_string(&style.to_taffy(rem_size)).unwrap(),
+                );
+            }
+            layout_id
         } else {
             let parent_id = self
                 .taffy
@@ -72,6 +92,19 @@ impl TaffyLayoutEngine {
                 })
                 .expect(EXPECT_MESSAGE)
                 .into();
+            if should_log {
+                let var_name = layout_id_to_var_name(parent_id);
+                println!(
+                    "let {} = taffy.new_with_children({:?}, &[{:?}]).unwrap();",
+                    var_name,
+                    serde_json::to_string(&style.to_taffy(rem_size)).unwrap(),
+                    children
+                        .iter()
+                        .map(|id| layout_id_to_var_name(*id))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                );
+            }
             parent_id
         };
         layout_id
@@ -81,7 +114,7 @@ impl TaffyLayoutEngine {
         &mut self,
         style: Style,
         rem_size: Pixels,
-        measure: impl FnMut(
+        mut measure: impl FnMut(
             Size<Option<Pixels>>,
             Size<AvailableSpace>,
             &mut Window,
@@ -91,16 +124,33 @@ impl TaffyLayoutEngine {
     ) -> LayoutId {
         let taffy_style = style.to_taffy(rem_size);
 
+        let should_log = LOG_TAFFY.with_borrow(|log_taffy| *log_taffy);
+
         let layout_id = self
             .taffy
             .new_leaf_with_context(
                 taffy_style,
                 NodeContext {
-                    measure: Box::new(measure),
+                    measure: Box::new(move |size, available_space, window, app| {
+                        let result = measure(size, available_space, window, app);
+                        if should_log {
+                            println!("measure({:?}, {:?}) == {:?}", size, available_space, result);
+                        }
+                        result
+                    }),
                 },
             )
             .expect(EXPECT_MESSAGE)
             .into();
+
+        if should_log {
+            println!(
+                "let {} = taffy.new_leaf_with_context({:?}, MEASURE_CONTEXT).unwrap()",
+                layout_id_to_var_name(layout_id),
+                serde_json::to_string(&style.to_taffy(rem_size)).unwrap(),
+            );
+        }
+
         layout_id
     }
 
@@ -206,13 +256,15 @@ impl TaffyLayoutEngine {
             )
             .expect(EXPECT_MESSAGE);
 
-        LAYOUT_ID_TO_DEBUG.with_borrow(|layout_id_to_debug| {
-            println!("Layout ID Debug: {:?}", layout_id_to_debug);
-        });
+        /*
+                LAYOUT_ID_TO_DEBUG.with_borrow(|layout_id_to_debug| {
+                    println!("Layout ID Debug: {:?}", layout_id_to_debug);
+                });
 
-        CONTAINER_LAYOUT_ID_TO_DEBUG.with_borrow(|layout_id| {
-            println!("Container Layout ID Debug: {:?}\n", layout_id);
-        });
+                CONTAINER_LAYOUT_ID_TO_DEBUG.with_borrow(|layout_id| {
+                    println!("Container Layout ID Debug: {:?}\n", layout_id);
+                });
+        */
 
         // println!("compute_layout took {:?}", started_at.elapsed());
     }
