@@ -250,10 +250,6 @@ message Envelope {
         AddWorktree add_worktree = 222;
         AddWorktreeResponse add_worktree_response = 223;
 
-        GetLlmToken get_llm_token = 235;
-        GetLlmTokenResponse get_llm_token_response = 236;
-        RefreshLlmToken refresh_llm_token = 259;
-
         LspExtSwitchSourceHeader lsp_ext_switch_source_header = 241;
         LspExtSwitchSourceHeaderResponse lsp_ext_switch_source_header_response = 242;
 
@@ -419,7 +415,9 @@ message Envelope {
     reserved 221;
     reserved 224 to 229;
     reserved 230 to 231;
+    reserved 235 to 236;
     reserved 246;
+    reserved 259;
     reserved 270;
     reserved 247 to 254;
     reserved 255 to 256;
