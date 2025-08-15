@@ -1243,6 +1243,7 @@ mod tests {
                     project.clone(),
                     thread_store.clone(),
                     text_thread_store.clone(),
+                    "Test",
                     EditorMode::AutoHeight {
                         max_lines: None,
                         min_lines: 1,
