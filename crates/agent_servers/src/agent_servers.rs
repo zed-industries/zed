@@ -1,6 +1,7 @@
 mod acp;
 mod claude;
 mod gemini;
+mod qwen;
 mod settings;
 
 #[cfg(test)]
@@ -8,6 +9,7 @@ mod e2e_tests;
 
 pub use claude::*;
 pub use gemini::*;
+pub use qwen::*;
 pub use settings::*;
 
 use acp_thread::AgentConnection;

@@ -13,6 +13,7 @@ pub fn init(cx: &mut App) {
 pub struct AllAgentServersSettings {
     pub gemini: Option<AgentServerSettings>,
     pub claude: Option<AgentServerSettings>,
+    pub qwen: Option<AgentServerSettings>,
 }
 
 #[derive(Deserialize, Serialize, Clone, JsonSchema, Debug)]
@@ -29,12 +30,15 @@ impl settings::Settings for AllAgentServersSettings {
     fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {
         let mut settings = AllAgentServersSettings::default();
 
-        for AllAgentServersSettings { gemini, claude } in sources.defaults_and_customizations() {
+        for AllAgentServersSettings { gemini, claude, qwen } in sources.defaults_and_customizations() {
             if gemini.is_some() {
                 settings.gemini = gemini.clone();
             }
             if claude.is_some() {
                 settings.claude = claude.clone();
+            }
+            if qwen.is_some() {
+                settings.qwen = qwen.clone();
             }
         }
 
