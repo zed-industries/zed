@@ -1781,7 +1781,8 @@ impl AcpThreadView {
                             .update(cx, |workspace, cx| {
                                 let project = workspace.project().read(cx);
                                 let cwd = project.first_project_directory(cx);
-                                let shell = project.terminal_settings(&cwd, cx).shell.clone();
+                                // let shell = project.terminal_settings(&cwd, cx).shell.clone();
+                                let cwd_clone = cwd.clone();
                                 let spawn_in_terminal = task::SpawnInTerminal {
                                     id: task::TaskId("install".to_string()),
                                     full_label: upgrade_command.clone(),
@@ -1789,7 +1790,7 @@ impl AcpThreadView {
                                     command: Some(upgrade_command.clone()),
                                     args: Vec::new(),
                                     command_label: upgrade_command.clone(),
-                                    cwd,
+                                    cwd: cwd_clone.clone(),
                                     env: Default::default(),
                                     use_new_terminal: true,
                                     allow_concurrent_runs: true,
@@ -1801,7 +1802,6 @@ impl AcpThreadView {
                                     show_command: true,
                                     show_rerun: true,
                                 };
-                                let cwd_clone = cwd.clone();
                                 workspace.project().update(cx, |project, cx| {
                                     if let Some(task_inventory) = project.task_store().read(cx).task_inventory().cloned() {
                                         task_inventory.update(cx, |inventory, _| {
