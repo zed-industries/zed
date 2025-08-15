@@ -1829,7 +1829,7 @@ impl AcpThreadView {
                                         });
                                     }
                                 });
-                                workspace.spawn_in_terminal(spawn_in_terminal, window, cx);
+                                let _ = workspace.spawn_in_terminal(spawn_in_terminal, window, cx);
                             })
                             .ok();
                     }),
