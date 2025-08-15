@@ -9,7 +9,6 @@ mod context_picker;
 mod context_server_configuration;
 mod context_strip;
 mod debug;
-mod history_store;
 mod inline_assistant;
 mod inline_prompt_editor;
 mod language_model_selector;
@@ -22,6 +21,7 @@ mod terminal_codegen;
 mod terminal_inline_assistant;
 mod text_thread_editor;
 mod thread_history;
+mod thread_history2;
 mod tool_compatibility;
 mod ui;
 
