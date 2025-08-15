@@ -7,7 +7,7 @@ use action_log::ActionLog;
 use agent::{TextThreadStore, ThreadStore};
 use agent_client_protocol::{self as acp};
 use agent_servers::AgentServer;
-use agent_settings::{AgentSettings, CompletionMode, NotifyWhenAgentWaiting};
+use agent_settings::{AgentProfileId, AgentSettings, CompletionMode, NotifyWhenAgentWaiting};
 use anyhow::bail;
 use audio::{Audio, Sound};
 use buffer_diff::BufferDiff;
@@ -16,6 +16,7 @@ use collections::{HashMap, HashSet};
 use editor::scroll::Autoscroll;
 use editor::{Editor, EditorMode, MultiBuffer, PathKey, SelectionEffects};
 use file_icons::FileIcons;
+use fs::Fs;
 use gpui::{
     Action, Animation, AnimationExt, App, BorderStyle, ClickEvent, ClipboardItem, EdgesRefinement,
     Empty, Entity, FocusHandle, Focusable, Hsla, Length, ListOffset, ListState, MouseButton,
@@ -29,6 +30,7 @@ use project::Project;
 use prompt_store::PromptId;
 use rope::Point;
 use settings::{Settings as _, SettingsStore};
+use std::sync::Arc;
 use std::{collections::BTreeMap, process::ExitStatus, rc::Rc, time::Duration};
 use text::Anchor;
 use theme::ThemeSettings;
@@ -45,10 +47,11 @@ use super::entry_view_state::EntryViewState;
 use crate::acp::AcpModelSelectorPopover;
 use crate::acp::message_editor::{MessageEditor, MessageEditorEvent};
 use crate::agent_diff::AgentDiff;
+use crate::profile_selector::{ProfileProvider, ProfileSelector};
 use crate::ui::{AgentNotification, AgentNotificationEvent, BurnModeTooltip};
 use crate::{
     AgentDiffPane, AgentPanel, ContinueThread, ContinueWithBurnMode, ExpandMessageEditor, Follow,
-    KeepAll, OpenAgentDiff, RejectAll, ToggleBurnMode,
+    KeepAll, OpenAgentDiff, RejectAll, ToggleBurnMode, ToggleProfileSelector,
 };
 
 const RESPONSE_PADDING_X: Pixels = px(19.);
@@ -78,6 +81,22 @@ impl ThreadError {
     }
 }
 
+impl ProfileProvider for Entity<agent2::Thread> {
+    fn profile_id(&self, cx: &App) -> AgentProfileId {
+        self.read(cx).profile().clone()
+    }
+
+    fn set_profile(&self, profile_id: AgentProfileId, cx: &mut App) {
+        self.update(cx, |thread, _cx| {
+            thread.set_profile(profile_id);
+        });
+    }
+
+    fn profiles_supported(&self, cx: &App) -> bool {
+        self.read(cx).model().supports_tools()
+    }
+}
+
 pub struct AcpThreadView {
     agent: Rc<dyn AgentServer>,
     workspace: WeakEntity<Workspace>,
@@ -88,6 +107,7 @@ pub struct AcpThreadView {
     entry_view_state: EntryViewState,
     message_editor: Entity<MessageEditor>,
     model_selector: Option<Entity<AcpModelSelectorPopover>>,
+    profile_selector: Option<Entity<ProfileSelector>>,
     notifications: Vec<WindowHandle<AgentNotification>>,
     notification_subscriptions: HashMap<WindowHandle<AgentNotification>, Vec<Subscription>>,
     thread_error: Option<ThreadError>,
@@ -170,6 +190,7 @@ impl AcpThreadView {
             thread_state: Self::initial_state(agent, workspace, project, window, cx),
             message_editor,
             model_selector: None,
+            profile_selector: None,
             notifications: Vec::new(),
             notification_subscriptions: HashMap::default(),
             entry_view_state: EntryViewState::default(),
@@ -296,6 +317,17 @@ impl AcpThreadView {
                             thread,
                             _subscription: [thread_subscription, action_log_subscription],
                         };
+
+                        this.profile_selector = this.as_native_thread(cx).map(|thread| {
+                            cx.new(|cx| {
+                                ProfileSelector::new(
+                                    <dyn Fs>::global(cx),
+                                    Arc::new(thread.clone()),
+                                    this.focus_handle(cx),
+                                    cx,
+                                )
+                            })
+                        });
 
                         cx.notify();
                     }
@@ -2315,6 +2347,11 @@ impl AcpThreadView {
 
         v_flex()
             .on_action(cx.listener(Self::expand_message_editor))
+            .on_action(cx.listener(|this, _: &ToggleProfileSelector, window, cx| {
+                if let Some(profile_selector) = this.profile_selector.as_ref() {
+                    profile_selector.read(cx).menu_handle().toggle(window, cx);
+                }
+            }))
             .on_action(cx.listener(|this, _: &ToggleModelSelector, window, cx| {
                 if let Some(model_selector) = this.model_selector.as_ref() {
                     model_selector
@@ -2378,6 +2415,7 @@ impl AcpThreadView {
                     .child(
                         h_flex()
                             .gap_1()
+                            .children(self.profile_selector.clone())
                             .children(self.model_selector.clone())
                             .child(self.render_send_button(cx)),
                     ),
