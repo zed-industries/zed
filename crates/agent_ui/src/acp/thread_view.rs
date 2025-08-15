@@ -48,6 +48,7 @@ use crate::acp::AcpModelSelectorPopover;
 use crate::acp::message_editor::{MessageEditor, MessageEditorEvent};
 use crate::agent_diff::AgentDiff;
 use crate::profile_selector::{ProfileProvider, ProfileSelector};
+use crate::ui::preview::UsageCallout;
 use crate::ui::{AgentNotification, AgentNotificationEvent, BurnModeTooltip};
 use crate::{
     AgentDiffPane, AgentPanel, ContinueThread, ContinueWithBurnMode, ExpandMessageEditor, Follow,
@@ -2434,6 +2435,12 @@ impl AcpThreadView {
             .thread(acp_thread.session_id(), cx)
     }
 
+    fn is_using_zed_ai_models(&self, cx: &App) -> bool {
+        self.as_native_thread(cx).map_or(false, |thread| {
+            thread.read(cx).model().provider_id() == language_model::ZED_CLOUD_PROVIDER_ID
+        })
+    }
+
     fn toggle_burn_mode(
         &mut self,
         _: &ToggleBurnMode,
@@ -3136,6 +3143,27 @@ impl AcpThreadView {
             .children(Scrollbar::vertical(self.scrollbar_state.clone()).map(|s| s.auto_hide(cx)))
     }
 
+    fn render_usage_callout(&self, line_height: Pixels, cx: &mut Context<Self>) -> Option<Div> {
+        if !self.is_using_zed_ai_models(cx) {
+            return None;
+        }
+
+        let user_store = self.project.read(cx).user_store().read(cx);
+        if user_store.is_usage_based_billing_enabled() {
+            return None;
+        }
+
+        let plan = user_store.plan().unwrap_or(cloud_llm_client::Plan::ZedFree);
+
+        let usage = user_store.model_request_usage()?;
+
+        Some(
+            div()
+                .child(UsageCallout::new(plan, usage))
+                .line_height(line_height),
+        )
+    }
+
     fn settings_changed(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         self.entry_view_state.settings_changed(cx);
     }
@@ -3176,16 +3204,16 @@ impl AcpThreadView {
     }
 
     fn render_any_thread_error(&self, error: SharedString, cx: &mut Context<'_, Self>) -> Callout {
-        let icon = Icon::new(IconName::XCircle)
-            .size(IconSize::Small)
-            .color(Color::Error);
-
         Callout::new()
-            .icon(icon)
+            .icon(
+                Icon::new(IconName::XCircle)
+                    .size(IconSize::Small)
+                    .color(Color::Error),
+            )
             .title("Error")
             .description(error.clone())
             .secondary_action(self.create_copy_button(error.to_string()))
-            .primary_action(self.dismiss_error_button(cx))
+            .dismiss_action(self.dismiss_error_button(cx))
             .bg_color(self.error_callout_bg(cx))
     }
 
@@ -3193,17 +3221,17 @@ impl AcpThreadView {
         const ERROR_MESSAGE: &str =
             "You reached your free usage limit. Upgrade to Zed Pro for more prompts.";
 
-        let icon = Icon::new(IconName::XCircle)
-            .size(IconSize::Small)
-            .color(Color::Error);
-
         Callout::new()
-            .icon(icon)
+            .icon(
+                Icon::new(IconName::XCircle)
+                    .size(IconSize::Small)
+                    .color(Color::Error),
+            )
             .title("Free Usage Exceeded")
             .description(ERROR_MESSAGE)
-            .tertiary_action(self.upgrade_button(cx))
+            .primary_action(self.upgrade_button(cx))
             .secondary_action(self.create_copy_button(ERROR_MESSAGE))
-            .primary_action(self.dismiss_error_button(cx))
+            .dismiss_action(self.dismiss_error_button(cx))
             .bg_color(self.error_callout_bg(cx))
     }
 
@@ -3344,6 +3372,7 @@ impl Focusable for AcpThreadView {
 impl Render for AcpThreadView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let has_messages = self.list_state.item_count() > 0;
+        let line_height = TextSize::Small.rems(cx).to_pixels(window.rem_size()) * 1.5;
 
         v_flex()
             .size_full()
@@ -3435,6 +3464,7 @@ impl Render for AcpThreadView {
                 _ => this,
             })
             .children(self.render_thread_error(window, cx))
+            .children(self.render_usage_callout(window.line_height(), cx))
             .child(self.render_message_editor(window, cx))
     }
 }

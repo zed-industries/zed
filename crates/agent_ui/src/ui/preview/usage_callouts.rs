@@ -80,14 +80,20 @@ impl RenderOnce for UsageCallout {
             }
         };
 
-        let icon = if is_limit_reached {
-            Icon::new(IconName::Close)
-                .color(Color::Error)
-                .size(IconSize::XSmall)
+        let (icon, bg_color) = if is_limit_reached {
+            (
+                Icon::new(IconName::Close)
+                    .color(Color::Error)
+                    .size(IconSize::XSmall),
+                cx.theme().status().error.opacity(0.1),
+            )
         } else {
-            Icon::new(IconName::Warning)
-                .color(Color::Warning)
-                .size(IconSize::XSmall)
+            (
+                Icon::new(IconName::Warning)
+                    .color(Color::Warning)
+                    .size(IconSize::XSmall),
+                cx.theme().status().warning.opacity(0.1),
+            )
         };
 
         div()
@@ -98,6 +104,7 @@ impl RenderOnce for UsageCallout {
                     .icon(icon)
                     .title(title)
                     .description(message)
+                    .bg_color(bg_color)
                     .primary_action(
                         Button::new("upgrade", button_text)
                             .label_size(LabelSize::Small)

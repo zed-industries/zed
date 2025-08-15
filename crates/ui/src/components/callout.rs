@@ -25,6 +25,7 @@ pub struct Callout {
     primary_action: Option<AnyElement>,
     secondary_action: Option<AnyElement>,
     tertiary_action: Option<AnyElement>,
+    dismiss_action: Option<AnyElement>,
     line_height: Option<Pixels>,
     bg_color: Option<Hsla>,
 }
@@ -39,6 +40,7 @@ impl Callout {
             primary_action: None,
             secondary_action: None,
             tertiary_action: None,
+            dismiss_action: None,
             line_height: None,
             bg_color: None,
         }
@@ -81,6 +83,13 @@ impl Callout {
         self
     }
 
+    /// Sets an optional dismiss button, which is usually an icon button with a close icon.
+    /// This button is always rendered as the last one to the far right.
+    pub fn dismiss_action(mut self, action: impl IntoElement) -> Self {
+        self.dismiss_action = Some(action.into_any_element());
+        self
+    }
+
     /// Sets a custom line height for the callout content.
     pub fn line_height(mut self, line_height: Pixels) -> Self {
         self.line_height = Some(line_height);
@@ -102,7 +111,8 @@ impl RenderOnce for Callout {
             .unwrap_or(cx.theme().colors().panel_background);
         let has_actions = self.primary_action.is_some()
             || self.secondary_action.is_some()
-            || self.tertiary_action.is_some();
+            || self.tertiary_action.is_some()
+            || self.dismiss_action.is_some();
 
         h_flex()
             .p_2()
@@ -137,6 +147,9 @@ impl RenderOnce for Callout {
                                             this.child(action)
                                         })
                                         .when_some(self.primary_action, |this, action| {
+                                            this.child(action)
+                                        })
+                                        .when_some(self.dismiss_action, |this, action| {
                                             this.child(action)
                                         }),
                                 )
