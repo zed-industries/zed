@@ -569,7 +569,7 @@ async fn test_resume_after_tool_use_limit(cx: &mut TestAppContext) {
             LanguageModelRequestMessage {
                 role: Role::User,
                 content: vec![MessageContent::ToolResult(tool_result.clone())],
-                cache: false
+                cache: true
             },
         ]
     );
@@ -610,7 +610,7 @@ async fn test_resume_after_tool_use_limit(cx: &mut TestAppContext) {
             LanguageModelRequestMessage {
                 role: Role::User,
                 content: vec!["Continue where you left off".into()],
-                cache: false
+                cache: true
             }
         ]
     );
@@ -703,7 +703,7 @@ async fn test_send_after_tool_use_limit(cx: &mut TestAppContext) {
             LanguageModelRequestMessage {
                 role: Role::User,
                 content: vec!["ghi".into()],
-                cache: false
+                cache: true
             }
         ]
     );
