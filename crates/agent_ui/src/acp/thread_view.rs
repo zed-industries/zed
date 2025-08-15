@@ -2,7 +2,7 @@ use acp_thread::{
     AcpThread, AcpThreadEvent, AgentThreadEntry, AssistantMessage, AssistantMessageChunk,
     LoadError, MentionUri, ThreadStatus, ToolCall, ToolCallContent, ToolCallStatus, UserMessageId,
 };
-use acp_thread::{AgentConnection, Plan};
+use acp_thread::{AgentConnection, AuthAction, Plan};
 use action_log::ActionLog;
 use agent::{TextThreadStore, ThreadStore};
 use agent_client_protocol::{self as acp};
@@ -1788,23 +1788,18 @@ impl AcpThreadView {
                                     label: upgrade_command.clone(),
                                     command: Some(upgrade_command.clone()),
                                     args: Vec::new(),
-                                    command_label: upgrade_command.clone(),
                                     cwd,
                                     env: Default::default(),
                                     use_new_terminal: true,
                                     allow_concurrent_runs: true,
                                     reveal: Default::default(),
-                                    reveal_target: Default::default(),
-                                    hide: Default::default(),
-                                    shell,
-                                    show_summary: true,
                                 };
                                 workspace.project().update(cx, |project, cx| {
-                                    project.task_inventory().update(cx, |inventory, _| {
+                                    project.task_store().update(cx, |inventory, _| {
                                         inventory.add_task(spawn_in_terminal.into());
                                     });
                                 });
-                                workspace.spawn_task_or_open_terminal(cx);
+                                workspace.spawn_in_terminal(spawn_in_terminal, window, cx);
                             })
                             .ok();
                     }),
@@ -1819,7 +1814,7 @@ impl AcpThreadView {
                     Label::new(instructions.clone())
                         .size(LabelSize::Small)
                         .color(Color::Muted)
-                        .text_center(),
+                        .text_justify(),
                 );
                 
                 if let Some(AuthAction::OpenUrl { url }) = action {
