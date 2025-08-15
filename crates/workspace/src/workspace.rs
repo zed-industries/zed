@@ -78,7 +78,6 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use session::AppSession;
 use settings::{Settings, update_settings_file};
-use editor::EditorSettings;
 use shared_screen::SharedScreen;
 use sqlez::{
     bindable::{Bind, Column, StaticColumnCount},
@@ -108,7 +107,7 @@ use ui::{Window, prelude::*};
 use util::{ResultExt, TryFutureExt, paths::SanitizedPath, serde::default_true};
 use uuid::Uuid;
 pub use workspace_settings::{
-    AutosaveSetting, BottomDockLayout, RestoreOnStartupBehavior, TabBarSettings, WorkspaceSettings,
+    AutosaveSetting, BottomDockLayout, RestoreOnStartupBehavior, TabBarSettings, WorkspaceSettings, StatusBarSettings,
 };
 use zed_actions::{Spawn, feedback::FileBugReport};
 
@@ -506,6 +505,7 @@ impl From<WorkspaceId> for i64 {
 
 pub fn init_settings(cx: &mut App) {
     WorkspaceSettings::register(cx);
+    StatusBarSettings::register(cx);
     ItemSettings::register(cx);
     PreviewTabsSettings::register(cx);
     TabBarSettings::register(cx);
@@ -1318,7 +1318,7 @@ impl Workspace {
         let right_dock_buttons = cx.new(|cx| PanelButtons::new(right_dock.clone(), cx));
         let status_bar = cx.new(|cx| {
             let mut status_bar = StatusBar::new(&center_pane.clone(), window, cx);
-            if EditorSettings::get_global(cx).status_bar.visible {
+            if StatusBarSettings::get_global(cx).visible {
                 status_bar.add_left_item(left_dock_buttons, window, cx);
                 status_bar.add_right_item(right_dock_buttons, window, cx);
                 status_bar.add_right_item(bottom_dock_buttons, window, cx);
@@ -6264,7 +6264,8 @@ impl Render for Workspace {
         let mut context = KeyContext::new_with_defaults();
         context.add("Workspace");
         context.set("keyboard_layout", cx.keyboard_layout().name().to_string());
-        let show_status_bar = EditorSettings::get_global(cx).status_bar.visible;
+        // Read status bar visibility from settings
+        let show_status_bar = StatusBarSettings::get_global(cx).visible;
         if let Some(status) = self
             .debugger_provider
             .as_ref()

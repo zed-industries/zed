@@ -50,6 +50,36 @@ impl OnLastWindowClosed {
     }
 }
 
+// Settings for the status bar (lives under the "status_bar" key)
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
+pub struct StatusBarSettings {
+    /// Whether the status bar is visible
+    /// Default: true
+    pub visible: bool,
+}
+
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
+pub struct StatusBarSettingsContent {
+    /// Whether the status bar is visible
+    pub visible: Option<bool>,
+}
+
+impl Settings for StatusBarSettings {
+    const KEY: Option<&'static str> = Some("status_bar");
+
+    type FileContent = StatusBarSettingsContent;
+
+    fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {
+        let content: StatusBarSettingsContent = sources.json_merge()?;
+        Ok(StatusBarSettings {
+            visible: content.visible.unwrap_or(true),
+        })
+    }
+
+    // No direct import from VS Code for status bar visibility at the moment
+    fn import_from_vscode(_vscode: &settings::VsCodeSettings, _current: &mut Self::FileContent) {}
+}
+
 #[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub struct ActivePanelModifiers {
