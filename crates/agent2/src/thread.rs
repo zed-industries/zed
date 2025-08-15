@@ -33,6 +33,7 @@ use util::{ResultExt, markdown::MarkdownCodeBlock};
 pub enum Message {
     User(UserMessage),
     Agent(AgentMessage),
+    Resume,
 }
 
 impl Message {
@@ -47,6 +48,7 @@ impl Message {
         match self {
             Message::User(message) => message.to_markdown(),
             Message::Agent(message) => message.to_markdown(),
+            Message::Resume => "[resumed after tool use limit was reached]".into(),
         }
     }
 }
@@ -363,12 +365,6 @@ impl AgentMessage {
                 ));
         }
 
-        if self.tool_use_limit_reached {
-            user_message
-                .content
-                .push("Continue where you left off".into());
-        }
-
         let mut messages = Vec::new();
         if !assistant_message.content.is_empty() {
             messages.push(assistant_message);
@@ -384,7 +380,6 @@ impl AgentMessage {
 pub struct AgentMessage {
     pub content: Vec<AgentMessageContent>,
     pub tool_results: IndexMap<LanguageModelToolUseId, LanguageModelToolResult>,
-    pub tool_use_limit_reached: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -425,6 +420,7 @@ pub struct Thread {
     running_turn: Option<Task<()>>,
     pending_message: Option<AgentMessage>,
     tools: BTreeMap<SharedString, Arc<dyn AnyAgentTool>>,
+    tool_use_limit_reached: bool,
     context_server_registry: Entity<ContextServerRegistry>,
     profile_id: AgentProfileId,
     project_context: Rc<RefCell<ProjectContext>>,
@@ -451,6 +447,7 @@ impl Thread {
             running_turn: None,
             pending_message: None,
             tools: BTreeMap::default(),
+            tool_use_limit_reached: false,
             context_server_registry,
             profile_id,
             project_context,
@@ -528,17 +525,14 @@ impl Thread {
         cx: &mut Context<Self>,
     ) -> Result<mpsc::UnboundedReceiver<Result<AgentResponseEvent>>> {
         anyhow::ensure!(
-            matches!(
-                self.messages.last(),
-                Some(Message::Agent(AgentMessage {
-                    tool_use_limit_reached: true,
-                    ..
-                }))
-            ),
+            self.tool_use_limit_reached,
             "can only resume after tool use limit is reached"
         );
 
-        log::info!("Thread::resume called with model: {:?}", self.model.name());
+        self.messages.push(Message::Resume);
+        cx.notify();
+
+        log::info!("Total messages in thread: {}", self.messages.len());
         Ok(self.run_turn(cx))
     }
 
@@ -575,6 +569,7 @@ impl Thread {
         let (events_tx, events_rx) = mpsc::unbounded::<Result<AgentResponseEvent>>();
         let event_stream = AgentResponseEventStream(events_tx);
         let message_ix = self.messages.len();
+        self.tool_use_limit_reached = false;
         self.running_turn = Some(cx.spawn(async move |this, cx| {
             log::info!("Starting agent turn execution");
             let turn_result: Result<()> = async {
@@ -651,9 +646,7 @@ impl Thread {
 
                     if tool_use_limit_reached {
                         log::info!("Tool use limit reached, completing turn");
-                        this.update(cx, |this, _cx| {
-                            this.pending_message().tool_use_limit_reached = true;
-                        })?;
+                        this.update(cx, |this, _cx| this.tool_use_limit_reached = true)?;
                         return Err(language_model::ToolUseLimitReachedError.into());
                     } else if used_tools {
                         log::info!("No tool uses found, completing turn");
@@ -1036,6 +1029,11 @@ impl Thread {
             match message {
                 Message::User(message) => messages.push(message.to_request()),
                 Message::Agent(message) => messages.extend(message.to_request()),
+                Message::Resume => messages.push(LanguageModelRequestMessage {
+                    role: Role::User,
+                    content: vec!["Continue where you left off".into()],
+                    cache: false,
+                }),
             }
         }
 
