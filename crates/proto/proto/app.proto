@@ -6,15 +6,6 @@ message UpdateInviteInfo {
     uint32 count = 2;
 }
 
-message GetPrivateUserInfo {}
-
-message GetPrivateUserInfoResponse {
-    string metrics_id = 1;
-    bool staff = 2;
-    repeated string flags = 3;
-    optional uint64 accepted_tos_at = 4;
-}
-
 enum Plan {
     Free = 0;
     ZedPro = 1;

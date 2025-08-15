@@ -462,7 +462,6 @@ impl Server {
             .add_request_handler(follow)
             .add_message_handler(unfollow)
             .add_message_handler(update_followers)
-            .add_request_handler(get_private_user_info)
             .add_request_handler(accept_terms_of_service)
             .add_message_handler(acknowledge_channel_message)
             .add_message_handler(acknowledge_buffer_version)
@@ -4206,30 +4205,6 @@ async fn mark_notification_as_read(
         notifications,
     );
     response.send(proto::Ack {})?;
-    Ok(())
-}
-
-/// Get the current users information
-async fn get_private_user_info(
-    _request: proto::GetPrivateUserInfo,
-    response: Response<proto::GetPrivateUserInfo>,
-    session: MessageContext,
-) -> Result<()> {
-    let db = session.db().await;
-
-    let metrics_id = db.get_user_metrics_id(session.user_id()).await?;
-    let user = db
-        .get_user_by_id(session.user_id())
-        .await?
-        .context("user not found")?;
-    let flags = db.get_user_flags(session.user_id()).await?;
-
-    response.send(proto::GetPrivateUserInfoResponse {
-        metrics_id,
-        staff: user.admin,
-        flags,
-        accepted_tos_at: user.accepted_tos_at.map(|t| t.and_utc().timestamp() as u64),
-    })?;
     Ok(())
 }
 
