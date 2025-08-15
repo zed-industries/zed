@@ -123,76 +123,102 @@ impl Project {
         cx.spawn(async move |project, cx| {
             let python_venv_directory = if let Some(path) = path {
                 match project.upgrade() {
-                    Some(project) => Self::python_venv_directory(project, path, venv.clone(), cx)
-                        .await?
-                        .zip(Some(venv)),
+                    Some(project) => {
+                        let venv_dir =
+                            Self::python_venv_directory(project.clone(), path, venv.clone(), cx)
+                                .await?;
+                        match venv_dir {
+                            Some(venv_dir)
+                                if project
+                                    .update(cx, |project, cx| {
+                                        project.resolve_abs_path(
+                                            &venv_dir
+                                                .join(BINARY_DIR)
+                                                .join("activate")
+                                                .to_string_lossy(),
+                                            cx,
+                                        )
+                                    })?
+                                    .await
+                                    .is_some_and(|m| m.is_file()) =>
+                            {
+                                Some((venv_dir, venv))
+                            }
+                            _ => None,
+                        }
+                    }
                     None => None,
                 }
             } else {
                 None
             };
-            project.update(cx, |project, cx| {
-                // todo lw: move all this out of here?
-                let startup_script = move |shell: &_| {
-                    let Some((python_venv_directory, venv)) = &python_venv_directory else {
-                        return None;
-                    };
-                    // todo: If this returns `None` we may don't have a venv, but we may still have a python toolchiain
-                    // we should modify the PATH here still
-                    let venv_settings = venv.as_option()?;
-                    let script_kind = if venv_settings.activate_script
-                        == terminal_settings::ActivateScript::Default
-                    {
-                        match shell {
-                            Shell::Program(program) => Self::activate_script_kind(Some(program)),
-                            Shell::WithArguments {
-                                program,
-                                args: _,
-                                title_override: _,
-                            } => Self::activate_script_kind(Some(program)),
-                            Shell::System => Self::activate_script_kind(None),
-                        }
-                    } else {
-                        venv_settings.activate_script
-                    };
-
-                    let activate_script_name = match script_kind {
-                        terminal_settings::ActivateScript::Default
-                        | terminal_settings::ActivateScript::Pyenv => "activate",
-                        terminal_settings::ActivateScript::Csh => "activate.csh",
-                        terminal_settings::ActivateScript::Fish => "activate.fish",
-                        terminal_settings::ActivateScript::Nushell => "activate.nu",
-                        terminal_settings::ActivateScript::PowerShell => "activate.ps1",
-                    };
-
-                    let activate_keyword = match venv_settings.activate_script {
-                        terminal_settings::ActivateScript::Default => ".",
-                        terminal_settings::ActivateScript::Nushell => "overlay use",
-                        terminal_settings::ActivateScript::PowerShell => ".",
-                        terminal_settings::ActivateScript::Pyenv => "pyenv",
-                        _ => "source",
-                    };
-
-                    let line_ending = if cfg!(windows) { '\r' } else { 'n' };
-
-                    if venv_settings.venv_name.is_empty() {
-                        let path = python_venv_directory
-                            .join(BINARY_DIR)
-                            .join(activate_script_name)
-                            .to_string_lossy()
-                            .to_string();
-                        let quoted = shlex::try_quote(&path).ok()?;
-                        Some(format!(
-                            "{} {} ; clear{}",
-                            activate_keyword, quoted, line_ending
-                        ))
-                    } else {
-                        Some(format!(
-                            "{activate_keyword} {activate_script_name} {name}; clear{line_ending}",
-                            name = venv_settings.venv_name
-                        ))
-                    }
+            // todo lw: move all this out of here?
+            let startup_script = move |shell: &_| {
+                let Some((python_venv_directory, venv)) = &python_venv_directory else {
+                    return None;
                 };
+                // todo: If this returns `None` we may don't have a venv, but we may still have a python toolchiain
+                // we should modify the PATH here still
+                let venv_settings = venv.as_option()?;
+                // todo: handle ssh!
+                let script_kind = if venv_settings.activate_script
+                    == terminal_settings::ActivateScript::Default
+                {
+                    match shell {
+                        Shell::Program(program) => ActivateScript::by_shell(program),
+                        Shell::WithArguments {
+                            program,
+                            args: _,
+                            title_override: _,
+                        } => ActivateScript::by_shell(program),
+                        Shell::System => None,
+                    }
+                } else {
+                    Some(venv_settings.activate_script)
+                }
+                .or_else(|| ActivateScript::by_env());
+                let script_kind = match script_kind {
+                    Some(activate) => activate,
+                    None => ActivateScript::Default,
+                };
+
+                let activate_script_name = match script_kind {
+                    terminal_settings::ActivateScript::Default
+                    | terminal_settings::ActivateScript::Pyenv => "activate",
+                    terminal_settings::ActivateScript::Csh => "activate.csh",
+                    terminal_settings::ActivateScript::Fish => "activate.fish",
+                    terminal_settings::ActivateScript::Nushell => "activate.nu",
+                    terminal_settings::ActivateScript::PowerShell => "activate.ps1",
+                };
+
+                let activate_keyword = match script_kind {
+                    terminal_settings::ActivateScript::Nushell => "overlay use",
+                    terminal_settings::ActivateScript::PowerShell => ".",
+                    terminal_settings::ActivateScript::Pyenv => "pyenv",
+                    terminal_settings::ActivateScript::Default
+                    | terminal_settings::ActivateScript::Csh
+                    | terminal_settings::ActivateScript::Fish => "source",
+                };
+
+                let line_ending = if cfg!(windows) { '\r' } else { '\n' };
+
+                if venv_settings.venv_name.is_empty() {
+                    let path = python_venv_directory
+                        .join(BINARY_DIR)
+                        .join(activate_script_name)
+                        .to_string_lossy()
+                        .to_string();
+                    let quoted = shlex::try_quote(&path).ok()?;
+                    Some(format!("{activate_keyword} {quoted}{line_ending}",))
+                } else {
+                    Some(format!(
+                        "{activate_keyword} {activate_script_name} {name}{line_ending}",
+                        name = venv_settings.venv_name
+                    ))
+                }
+            };
+
+            project.update(cx, |project, cx| {
                 project.create_terminal_with_startup(kind, startup_script, cx)
             })?
         })
@@ -532,23 +558,22 @@ impl Project {
         }
 
         let r = this.update(cx, move |_, cx| {
-            let fs = worktree.read(cx).as_local()?.fs().clone();
             let map: Vec<_> = venv_settings
                 .directories
                 .iter()
                 .map(|name| abs_path.join(name))
                 .collect();
-            Some(cx.spawn(async move |_, _| {
+            Some(cx.spawn(async move |project, cx| {
                 for venv_path in map {
                     let bin_path = venv_path.join(BINARY_DIR);
-                    // One-time synchronous check is acceptable for terminal/task initialization
-                    // we are within a spawned future anyways
-                    let exists = fs
-                        .metadata(&bin_path)
+                    let exists = project
+                        .upgrade()?
+                        .update(cx, |project, cx| {
+                            project.resolve_abs_path(&bin_path.to_string_lossy(), cx)
+                        })
+                        .ok()?
                         .await
-                        .ok()
-                        .flatten()
-                        .map_or(false, |meta| meta.is_dir);
+                        .map_or(false, |meta| meta.is_dir());
                     if exists {
                         return Some(venv_path);
                     }
@@ -560,22 +585,6 @@ impl Project {
             Some(task) => task.await,
             None => None,
         })
-    }
-
-    fn activate_script_kind(shell: Option<&str>) -> ActivateScript {
-        let shell_env = std::env::var("SHELL").ok();
-        let shell_path = shell.or_else(|| shell_env.as_deref());
-        let shell = std::path::Path::new(shell_path.unwrap_or(""))
-            .file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or("");
-        match shell {
-            "fish" => ActivateScript::Fish,
-            "tcsh" => ActivateScript::Csh,
-            "nu" => ActivateScript::Nushell,
-            "powershell" | "pwsh" => ActivateScript::PowerShell,
-            _ => ActivateScript::Default,
-        }
     }
 
     pub fn local_terminal_handles(&self) -> &Vec<WeakEntity<terminal::Terminal>> {
