@@ -157,6 +157,7 @@ impl AcpThreadView {
                 project.clone(),
                 thread_store.clone(),
                 text_thread_store.clone(),
+                "Message the agent － @ to include context",
                 editor::EditorMode::AutoHeight {
                     min_lines: MIN_EDITOR_LINES,
                     max_lines: Some(MAX_EDITOR_LINES),

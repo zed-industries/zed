@@ -67,6 +67,7 @@ impl EntryViewState {
                         self.project.clone(),
                         self.thread_store.clone(),
                         self.text_thread_store.clone(),
+                        "Edit message － @ to include context",
                         editor::EditorMode::AutoHeight {
                             min_lines: 1,
                             max_lines: None,
