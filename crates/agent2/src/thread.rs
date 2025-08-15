@@ -972,15 +972,15 @@ impl Thread {
         log::info!("Request includes {} tools", tools.len());
 
         let request = LanguageModelRequest {
-            thread_id: None, // todo!(fix)
-            prompt_id: None, // todo!(fix)
+            thread_id: None,
+            prompt_id: None,
             intent: Some(completion_intent),
             mode: Some(self.completion_mode.into()),
             messages,
             tools,
             tool_choice: None,
             stop: Vec::new(),
-            temperature: None, // todo!("fix")
+            temperature: None,
             thinking_allowed: true,
         };
 

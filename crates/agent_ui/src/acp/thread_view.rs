@@ -993,9 +993,7 @@ impl AcpThreadView {
                 .py_4()
                 .px_2()
                 .children(message.id.clone().and_then(|message_id| {
-                    message.checkpoint.as_ref()?;
-
-                    Some(
+                    message.checkpoint.as_ref()?.show.then(|| {
                         Button::new("restore-checkpoint", "Restore Checkpoint")
                             .icon(IconName::Undo)
                             .icon_size(IconSize::XSmall)
@@ -1003,8 +1001,8 @@ impl AcpThreadView {
                             .label_size(LabelSize::XSmall)
                             .on_click(cx.listener(move |this, _, _window, cx| {
                                 this.rewind(&message_id, cx);
-                            })),
-                    )
+                            }))
+                    })
                 }))
                 .child(
                     v_flex()
