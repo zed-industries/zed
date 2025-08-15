@@ -237,6 +237,7 @@ pub enum AgentType {
     TextThread,
     Gemini,
     ClaudeCode,
+    Qwen,
     NativeAgent,
 }
 
@@ -247,6 +248,7 @@ impl AgentType {
             Self::NativeAgent => "Agent 2",
             Self::Gemini => "Gemini",
             Self::ClaudeCode => "Claude Code",
+            Self::Qwen => "Qwen",
         }
     }
 
@@ -256,6 +258,7 @@ impl AgentType {
             Self::NativeAgent => IconName::ZedAssistant,
             Self::Gemini => IconName::AiGemini,
             Self::ClaudeCode => IconName::AiClaude,
+            Self::Qwen => IconName::AiQwen,
         }
     }
 }
@@ -2356,6 +2359,37 @@ impl AgentPanel {
                                             window.dispatch_action(
                                                 NewExternalAgentThread {
                                                     agent: Some(crate::ExternalAgent::ClaudeCode),
+                                                }
+                                                .boxed_clone(),
+                                                cx,
+                                            );
+                                        }
+                                    }),
+                            )
+                            .item(
+                                ContextMenuEntry::new("New Qwen Thread")
+                                    .icon(IconName::AiQwen)
+                                    .icon_color(Color::Muted)
+                                    .handler({
+                                        let workspace = workspace.clone();
+                                        move |window, cx| {
+                                            if let Some(workspace) = workspace.upgrade() {
+                                                workspace.update(cx, |workspace, cx| {
+                                                    if let Some(panel) =
+                                                        workspace.panel::<AgentPanel>(cx)
+                                                    {
+                                                        panel.update(cx, |panel, cx| {
+                                                            panel.set_selected_agent(
+                                                                AgentType::Qwen,
+                                                                cx,
+                                                            );
+                                                        });
+                                                    }
+                                                });
+                                            }
+                                            window.dispatch_action(
+                                                NewExternalAgentThread {
+                                                    agent: Some(crate::ExternalAgent::Qwen),
                                                 }
                                                 .boxed_clone(),
                                                 cx,
