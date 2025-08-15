@@ -400,8 +400,10 @@ impl Server {
             .add_request_handler(forward_mutating_project_request::<proto::SaveBuffer>)
             .add_request_handler(forward_mutating_project_request::<proto::BlameBuffer>)
             // TODO kb remove + remove the span
+            // TODO kb add the same for the headless part
             .add_request_handler(multi_lsp_query)
             .add_request_handler(lsp_query)
+            .add_request_handler(forward_read_only_project_request::<proto::LspQueryResponse>)
             .add_request_handler(forward_mutating_project_request::<proto::RestartLanguageServers>)
             .add_request_handler(forward_mutating_project_request::<proto::StopLanguageServers>)
             .add_request_handler(forward_mutating_project_request::<proto::LinkedEditingRange>)
