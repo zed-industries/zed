@@ -1,6 +1,6 @@
 use crate::{
-    burn_mode_tooltip::BurnModeTooltip,
     language_model_selector::{LanguageModelSelector, language_model_selector},
+    ui::BurnModeTooltip,
 };
 use agent_settings::{AgentSettings, CompletionMode};
 use anyhow::Result;

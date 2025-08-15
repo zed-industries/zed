@@ -6,7 +6,7 @@ use crate::agent_diff::AgentDiffThread;
 use crate::agent_model_selector::AgentModelSelector;
 use crate::tool_compatibility::{IncompatibleToolsState, IncompatibleToolsTooltip};
 use crate::ui::{
-    MaxModeTooltip,
+    BurnModeTooltip,
     preview::{AgentPreview, UsageCallout},
 };
 use agent::history_store::HistoryStore;
@@ -605,7 +605,7 @@ impl MessageEditor {
                     this.toggle_burn_mode(&ToggleBurnMode, window, cx);
                 }))
                 .tooltip(move |_window, cx| {
-                    cx.new(|_| MaxModeTooltip::new().selected(burn_mode_enabled))
+                    cx.new(|_| BurnModeTooltip::new().selected(burn_mode_enabled))
                         .into()
                 })
                 .into_any_element(),
