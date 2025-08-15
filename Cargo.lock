@@ -5738,6 +5738,7 @@ dependencies = [
 name = "feedback"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "client",
  "editor",
  "gpui",

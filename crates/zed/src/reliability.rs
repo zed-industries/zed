@@ -87,7 +87,9 @@ pub fn init_panic_hook(
                 },
                 backtrace,
             );
-            std::process::exit(-1);
+            if MINIDUMP_ENDPOINT.is_none() {
+                std::process::exit(-1);
+            }
         }
         let main_module_base_address = get_main_module_base_address();
 
@@ -146,7 +148,9 @@ pub fn init_panic_hook(
         }
         zlog::flush();
 
-        if !is_pty && let Some(panic_data_json) = serde_json::to_string(&panic_data).log_err() {
+        if (!is_pty || MINIDUMP_ENDPOINT.is_some())
+            && let Some(panic_data_json) = serde_json::to_string(&panic_data).log_err()
+        {
             let timestamp = chrono::Utc::now().format("%Y_%m_%d %H_%M_%S").to_string();
             let panic_file_path = paths::logs_dir().join(format!("zed-{timestamp}.panic"));
             let panic_file = fs::OpenOptions::new()
@@ -614,8 +618,6 @@ async fn upload_minidump(
         panic_message = panic_info.message.clone();
         form = form.text("sentry[logentry][formatted]", panic_info.message.clone());
         form = form.text("span", panic_info.span.clone());
-        // TODO: add gpu-context, feature-flag-context, and more of device-context like gpu
-        // name, screen resolution, available ram, device model, etc
     }
     if let Some(minidump_error) = metadata.minidump_error.clone() {
         form = form.text("minidump_error", minidump_error);
@@ -630,6 +632,42 @@ async fn upload_minidump(
         crashed_version = metadata.init.zed_version.clone(),
         commit_sha = metadata.init.commit_sha.clone(),
     );
+
+    if let Ok(gpus) = feedback::system_specs::read_gpu_info_from_sys_class_drm() {
+        let gpu_count = gpus.len();
+        for (index, gpu) in gpus.into_iter().enumerate() {
+            let feedback::system_specs::GpuInfo {
+                device_pci_id,
+                vendor_pci_id,
+                driver_version,
+                driver_name,
+                pci_address: _,
+            } = gpu;
+            let num = if gpu_count == 1 {
+                String::new()
+            } else {
+                index.to_string()
+            };
+            let name = format!("gpu{num}");
+            let root = format!("sentry[contexts][{name}]");
+            form = form
+                .text(format!("{root}[type]"), "gpu")
+                .text(format!("{root}[name]"), name)
+                .text(format!("{root}[id]"), format!("{:#06x}", device_pci_id))
+                .text(
+                    format!("{root}[vendor_id]"),
+                    format!("{:#06x}", vendor_pci_id),
+                );
+            if let Some(driver_version) = driver_version {
+                form = form.text(format!("{root}[driver_version]"), driver_version);
+            }
+            if let Some(driver_name) = driver_name {
+                form = form.text(format!("{root}[driver_name]"), driver_name);
+            }
+        }
+    }
+    // TODO: add gpu-context, feature-flag-context, and more of device-context like gpu
+    // name, screen resolution, available ram, device model, etc
 
     let mut response_text = String::new();
     let mut response = http.send_multipart_form(endpoint, form).await?;

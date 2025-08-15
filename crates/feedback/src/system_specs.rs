@@ -1,3 +1,4 @@
+use anyhow::Context as _;
 use client::telemetry;
 use gpui::{App, AppContext as _, SemanticVersion, Task, Window};
 use human_bytes::human_bytes;
@@ -157,6 +158,123 @@ fn try_determine_available_gpus() -> Option<String> {
         None
     }
 }
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct GpuInfo {
+    pub device_pci_id: u16,
+    pub vendor_pci_id: u16,
+    pub driver_version: Option<String>,
+    pub driver_name: Option<String>,
+    pub pci_address: String,
+}
+
+pub fn read_gpu_info_from_sys_class_drm() -> anyhow::Result<Vec<GpuInfo>> {
+    let dir_iter = std::fs::read_dir("/sys/class/drm").context("Failed to read /sys/class/drm")?;
+    let mut gpus = vec![];
+    for entry in dir_iter {
+        let Ok(entry) = entry else {
+            continue;
+        };
+
+        let device_path = entry.path().join("device");
+        let Some(pci_address) = device_path.read_link().ok().and_then(|pci_address| {
+            pci_address
+                .file_name()
+                .and_then(std::ffi::OsStr::to_str)
+                .map(str::trim)
+                .map(str::to_string)
+        }) else {
+            continue;
+        };
+        let Ok(device_pci_id) = read_pci_id_from_path(device_path.join("device")) else {
+            continue;
+        };
+        let Ok(vendor_pci_id) = read_pci_id_from_path(device_path.join("vendor")) else {
+            continue;
+        };
+        let driver_name = std::fs::read_link(device_path.join("driver"))
+            .ok()
+            .and_then(|driver_link| {
+                driver_link
+                    .file_name()
+                    .and_then(std::ffi::OsStr::to_str)
+                    .map(str::trim)
+                    .map(str::to_string)
+            });
+        let driver_version = driver_name
+            .as_ref()
+            .and_then(|driver_name| {
+                std::fs::read_to_string(format!("/sys/module/{driver_name}/version")).ok()
+            })
+            .as_deref()
+            .map(str::trim)
+            .map(str::to_string);
+
+        // let name = entry
+        //     .file_name()
+        //     .to_str()
+        //     .context("Name not unicode")
+        //     .map(str::to_string)?;
+
+        let found_gpu = GpuInfo {
+            device_pci_id,
+            vendor_pci_id,
+            driver_version,
+            driver_name,
+            pci_address,
+        };
+
+        if gpus.iter().position(|gpu| gpu == &found_gpu).is_none() {
+            gpus.push(found_gpu);
+        }
+
+        // eprintln!("Vendor ID: {:0x}", vendor_pci_id);
+        // eprintln!("Device ID: {:0x}", device_pci_id);
+        // eprintln!("Driver   : {:?}", driver_name);
+        // eprintln!("Driver Version: {:?}", driver_version);
+    }
+
+    return Ok(gpus);
+
+    fn read_pci_id_from_path(path: impl AsRef<std::path::Path>) -> anyhow::Result<u16> {
+        let id = std::fs::read_to_string(path)?;
+        let id = id
+            .trim()
+            .strip_prefix("0x")
+            .context("Not a device ID")
+            .context(id.clone())?;
+        anyhow::ensure!(
+            id.len() == 4,
+            "Not a device id, expected 4 digits, found {}",
+            id.len()
+        );
+        u16::from_str_radix(id, 16).context("Failed to parse device ID")
+    }
+}
+
+struct PciDatabase {
+    contents: Vec<String>,
+}
+
+// fn read_pci_db() -> anyhow::Result<PciDatabase> {
+//     let possible_paths = [
+//         "/usr/share/misc/pci.ids",    // Debian, Ubuntu
+//         "/usr/share/hwdata/pci/ids",  // Fedora, Red Hat, Arch
+//         "/var/lib/pciutills/pci.ids", // legacy
+//     ];
+//     let mut contents = None;
+//     for path in possible_paths {
+//         contents = std::fs::read_to_string(path).ok();
+//         if contents.is_some() {
+//             break;
+//         }
+//     }
+//     let Some(contents) = contents else {
+//         anyhow::bail!("Could not find pci.ids database");
+//     };
+
+//     let mut contents = contents.lines().map().collect::<Vec<_>>();
+// }
 
 /// Returns value of `ZED_BUNDLE_TYPE` set at compiletime or else at runtime.
 ///

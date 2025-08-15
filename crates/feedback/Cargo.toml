@@ -15,6 +15,7 @@ path = "src/feedback.rs"
 test-support = []
 
 [dependencies]
+anyhow.workspace = true
 client.workspace = true
 gpui.workspace = true
 human_bytes = "0.4.1"
