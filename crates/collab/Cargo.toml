@@ -32,7 +32,6 @@ clock.workspace = true
 cloud_llm_client.workspace = true
 collections.workspace = true
 dashmap.workspace = true
-derive_more.workspace = true
 envy = "0.4.2"
 futures.workspace = true
 gpui.workspace = true

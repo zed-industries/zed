@@ -3281,7 +3281,6 @@ dependencies = [
  "dap_adapters",
  "dashmap 6.1.0",
  "debugger_ui",
- "derive_more 0.99.19",
  "editor",
  "envy",
  "extension",
