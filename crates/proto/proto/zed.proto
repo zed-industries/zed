@@ -136,8 +136,6 @@ message Envelope {
         UpdateFollowers update_followers = 100;
         Unfollow unfollow = 101;
         UpdateDiffBases update_diff_bases = 104;
-        AcceptTermsOfService accept_terms_of_service = 239;
-        AcceptTermsOfServiceResponse accept_terms_of_service_response = 240;
 
         OnTypeFormatting on_type_formatting = 105;
         OnTypeFormattingResponse on_type_formatting_response = 106;
@@ -414,6 +412,7 @@ message Envelope {
     reserved 224 to 229;
     reserved 230 to 231;
     reserved 234 to 236;
+    reserved 239 to 240;
     reserved 246;
     reserved 247 to 254;
     reserved 255 to 256;
