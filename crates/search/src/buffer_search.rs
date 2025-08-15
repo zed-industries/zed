@@ -1,12 +1,10 @@
 mod registrar;
 
 use crate::{
-    FocusSearch, NextHistoryQuery, PreviousHistoryQuery, ReplaceAll, ReplaceNext, SearchOptions,
-    SelectAllMatches, SelectNextMatch, SelectPreviousMatch, ToggleCaseSensitive, ToggleRegex,
-    ToggleReplace, ToggleSelection, ToggleWholeWord,
-    search_bar::{
-        input_base_styles, render_action_button, render_text_input, toggle_replace_button,
-    },
+    FocusSearch, NextHistoryQuery, PreviousHistoryQuery, ReplaceAll, ReplaceNext, SearchOption,
+    SearchOptions, SelectAllMatches, SelectNextMatch, SelectPreviousMatch, ToggleCaseSensitive,
+    ToggleRegex, ToggleReplace, ToggleSelection, ToggleWholeWord,
+    search_bar::{input_base_styles, render_action_button, render_text_input},
 };
 use any_vec::AnyVec;
 use anyhow::Context as _;
@@ -215,31 +213,22 @@ impl Render for BufferSearchBar {
                     h_flex()
                         .gap_1()
                         .when(case, |div| {
-                            div.child(SearchOptions::CASE_SENSITIVE.as_button(
-                                self.search_options.contains(SearchOptions::CASE_SENSITIVE),
-                                focus_handle.clone(),
-                                cx.listener(|this, _, window, cx| {
-                                    this.toggle_case_sensitive(&ToggleCaseSensitive, window, cx)
-                                }),
-                            ))
+                            div.child(
+                                SearchOption::CaseSensitive
+                                    .as_button(self.search_options, focus_handle.clone()),
+                            )
                         })
                         .when(word, |div| {
-                            div.child(SearchOptions::WHOLE_WORD.as_button(
-                                self.search_options.contains(SearchOptions::WHOLE_WORD),
-                                focus_handle.clone(),
-                                cx.listener(|this, _, window, cx| {
-                                    this.toggle_whole_word(&ToggleWholeWord, window, cx)
-                                }),
-                            ))
+                            div.child(
+                                SearchOption::WholeWord
+                                    .as_button(self.search_options, focus_handle.clone()),
+                            )
                         })
                         .when(regex, |div| {
-                            div.child(SearchOptions::REGEX.as_button(
-                                self.search_options.contains(SearchOptions::REGEX),
-                                focus_handle.clone(),
-                                cx.listener(|this, _, window, cx| {
-                                    this.toggle_regex(&ToggleRegex, window, cx)
-                                }),
-                            ))
+                            div.child(
+                                SearchOption::Regex
+                                    .as_button(self.search_options, focus_handle.clone()),
+                            )
                         }),
                 )
             });
@@ -248,13 +237,13 @@ impl Render for BufferSearchBar {
             .gap_1()
             .min_w_64()
             .when(replacement, |this| {
-                this.child(toggle_replace_button(
-                    "buffer-search-bar-toggle-replace-button",
-                    focus_handle.clone(),
+                this.child(render_action_button(
+                    "buffer-search-bar-toggle",
+                    IconName::Replace,
                     self.replace_enabled,
-                    cx.listener(|this, _: &ClickEvent, window, cx| {
-                        this.toggle_replace(&ToggleReplace, window, cx);
-                    }),
+                    "Toggle Replace",
+                    &ToggleReplace,
+                    focus_handle.clone(),
                 ))
             })
             .when(selection, |this| {

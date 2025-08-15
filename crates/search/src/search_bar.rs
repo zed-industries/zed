@@ -5,8 +5,6 @@ use theme::ThemeSettings;
 use ui::{IconButton, IconButtonShape};
 use ui::{Tooltip, prelude::*};
 
-use crate::ToggleReplace;
-
 pub(super) fn render_action_button(
     id_prefix: &'static str,
     icon: ui::IconName,
@@ -44,25 +42,6 @@ pub(crate) fn input_base_styles(border_color: Hsla, map: impl FnOnce(Div) -> Div
         .border_1()
         .border_color(border_color)
         .rounded_lg()
-}
-
-pub(crate) fn toggle_replace_button(
-    id: &'static str,
-    focus_handle: FocusHandle,
-    replace_enabled: bool,
-    on_click: impl Fn(&gpui::ClickEvent, &mut Window, &mut App) + 'static,
-) -> IconButton {
-    IconButton::new(id, IconName::Replace)
-        .shape(IconButtonShape::Square)
-        .style(ButtonStyle::Subtle)
-        .when(replace_enabled, |button| button.style(ButtonStyle::Filled))
-        .on_click(on_click)
-        .toggle_state(replace_enabled)
-        .tooltip({
-            move |window, cx| {
-                Tooltip::for_action_in("Toggle Replace", &ToggleReplace, &focus_handle, window, cx)
-            }
-        })
 }
 
 pub(crate) fn render_text_input(
