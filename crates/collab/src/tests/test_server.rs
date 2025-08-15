@@ -1,4 +1,3 @@
-use crate::stripe_client::FakeStripeClient;
 use crate::{
     AppState, Config,
     db::{NewUserParams, UserId, tests::TestDb},
@@ -569,9 +568,6 @@ impl TestServer {
             llm_db: None,
             livekit_client: Some(Arc::new(livekit_test_server.create_api_client())),
             blob_store_client: None,
-            real_stripe_client: None,
-            stripe_client: Some(Arc::new(FakeStripeClient::new())),
-            stripe_billing: None,
             executor,
             kinesis_client: None,
             config: Config {
@@ -608,7 +604,6 @@ impl TestServer {
                 auto_join_channel_id: None,
                 migrations_path: None,
                 seed_path: None,
-                stripe_api_key: None,
                 supermaven_admin_api_key: None,
                 user_backfiller_github_access_token: None,
                 kinesis_region: None,
