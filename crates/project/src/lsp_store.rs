@@ -84,7 +84,7 @@ use rand::prelude::*;
 
 use rpc::{
     AnyProtoClient,
-    proto::{FromProto, ToProto},
+    proto::{FromProto, LspRequestId, ToProto},
 };
 use serde::Serialize;
 use settings::{Settings, SettingsLocation, SettingsStore};
@@ -3490,6 +3490,8 @@ pub struct LspStore {
     pub(super) lsp_server_capabilities: HashMap<LanguageServerId, lsp::ServerCapabilities>,
     lsp_document_colors: HashMap<BufferId, DocumentColorData>,
     lsp_code_lens: HashMap<BufferId, CodeLensData>,
+    // TODO kb what is the key for deduplication? Use `TypeId`?
+    running_lsp_requests: HashMap<LspRequestId, Task<()>>,
 }
 
 #[derive(Debug, Default, Clone)]
@@ -3580,6 +3582,8 @@ struct CoreSymbol {
 impl LspStore {
     pub fn init(client: &AnyProtoClient) {
         client.add_entity_request_handler(Self::handle_multi_lsp_query);
+        client.add_entity_request_handler(Self::handle_lsp_query);
+        client.add_entity_request_handler(Self::handle_lsp_query_response);
         client.add_entity_request_handler(Self::handle_restart_language_servers);
         client.add_entity_request_handler(Self::handle_stop_language_servers);
         client.add_entity_request_handler(Self::handle_cancel_language_server_work);
@@ -3758,6 +3762,7 @@ impl LspStore {
             lsp_server_capabilities: HashMap::default(),
             lsp_document_colors: HashMap::default(),
             lsp_code_lens: HashMap::default(),
+            running_lsp_requests: HashMap::default(),
             active_entry: None,
             _maintain_workspace_config,
             _maintain_buffer_languages: Self::maintain_buffer_languages(languages, cx),
@@ -3819,6 +3824,7 @@ impl LspStore {
             lsp_server_capabilities: HashMap::default(),
             lsp_document_colors: HashMap::default(),
             lsp_code_lens: HashMap::default(),
+            running_lsp_requests: HashMap::default(),
             active_entry: None,
 
             _maintain_workspace_config,
@@ -5553,45 +5559,34 @@ impl LspStore {
                 return Task::ready(Ok(Vec::new()));
             }
 
-            let request_task =
-                upstream_client.request_lsp(request.to_proto(project_id, buffer.read(cx)));
+            let request_task = upstream_client
+                .request_lsp(project_id, request.to_proto(project_id, buffer.read(cx)));
+            let buffer = buffer.clone();
             cx.spawn(async move |weak_project, cx| {
                 let Some(project) = weak_project.upgrade() else {
                     return Ok(Vec::new());
                 };
-                // TODO kb need to return Option now.
-                let responses = request_task.await?;
-                // let actions = join_all(
-                //     responses
-                //         .into_iter()
-                //         .filter_map(|lsp_response| match lsp_response.response? {
-                //             proto::lsp_response2::Response::GetReferencesResponse(response) => {
-                //                 Some(response)
-                //             }
-                //             unexpected => {
-                //                 debug_panic!("Unexpected response: {unexpected:?}");
-                //                 None
-                //             }
-                //         })
-                //         .map(|references_response| {
-                //             GetReferences { position }.response_from_proto(
-                //                 references_response,
-                //                 project.clone(),
-                //                 buffer.clone(),
-                //                 cx.clone(),
-                //             )
-                //         }),
-                // )
-                // .await;
+                let Some(responses) = request_task.await? else {
+                    // TODO kb need to return Option now.
+                    return Ok(Vec::new());
+                };
 
-                // Ok(actions
-                //     .into_iter()
-                //     .collect::<Result<Vec<Vec<_>>>>()?
-                //     .into_iter()
-                //     .flatten()
-                //     .dedup()
-                //     .collect())
-                todo!("TODO kb")
+                let locations = join_all(responses.payload.into_iter().map(|lsp_response| {
+                    GetReferences { position }.response_from_proto(
+                        lsp_response.response,
+                        project.clone(),
+                        buffer.clone(),
+                        cx.clone(),
+                    )
+                }))
+                .await
+                .into_iter()
+                .collect::<Result<Vec<Vec<_>>>>()?
+                .into_iter()
+                .flatten()
+                .dedup()
+                .collect();
+                Ok(locations)
             })
         } else {
             let references_task = self.request_multiple_lsp_locally(
@@ -8265,6 +8260,110 @@ impl LspStore {
     //             .ok();
     //     }
     // }
+    //
+
+    async fn handle_lsp_query(
+        lsp_store: Entity<Self>,
+        envelope: TypedEnvelope<proto::LspQuery>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::Ack> {
+        use proto::lsp_query::Request;
+        let sender_id = envelope.original_sender_id().unwrap_or_default();
+        let lsp_query = envelope.payload;
+        match lsp_query.request.context("invalid LSP query request")? {
+            Request::GetReferences(get_references) => {
+                let buffer_id = BufferId::new(get_references.buffer_id)?;
+                let version = deserialize_version(&get_references.version);
+                let buffer = lsp_store.update(&mut cx, |this, cx| {
+                    this.buffer_store.read(cx).get_existing(buffer_id)
+                })??;
+                buffer
+                    .update(&mut cx, |buffer, _| {
+                        buffer.wait_for_version(version.clone())
+                    })?
+                    .await?;
+                let buffer_version = buffer.read_with(&mut cx, |buffer, _| buffer.version())?;
+
+                let get_references = GetReferences::from_proto(
+                    get_references,
+                    lsp_store.clone(),
+                    buffer.clone(),
+                    cx.clone(),
+                )
+                .await?;
+                let request_id = LspRequestId(lsp_query.lsp_request_id);
+
+                lsp_store.update(&mut cx, |lsp_store, cx| {
+                    let references_task = lsp_store.request_multiple_lsp_locally(
+                        &buffer,
+                        Some(get_references.position),
+                        get_references,
+                        cx,
+                    );
+                    lsp_store.running_lsp_requests.insert(
+                        request_id,
+                        cx.spawn(async move |lsp_store, cx| {
+                            let references = references_task.await;
+                            let send_response_task = lsp_store
+                                .update(cx, |lsp_store, cx| {
+                                    if let Some((client, project_id)) =
+                                        lsp_store.downstream_client.clone()
+                                    {
+                                        let response = references
+                                            .into_iter()
+                                            .map(|(server_id, references)| {
+                                                (
+                                                    proto::LanguageServerId(server_id.to_proto()),
+                                                    GetReferences::response_to_proto(
+                                                        references,
+                                                        lsp_store,
+                                                        sender_id,
+                                                        &buffer_version,
+                                                        cx,
+                                                    ),
+                                                )
+                                            })
+                                            .collect::<HashMap<_, _>>();
+                                        Some(client.send_lsp_response::<proto::GetReferences>(
+                                            project_id, request_id, response,
+                                        ))
+                                    } else {
+                                        None
+                                    }
+                                })
+                                .ok()
+                                .flatten();
+
+                            if let Some(send_response_task) = send_response_task {
+                                match send_response_task.await {
+                                    Ok(proto::Ack {}) => {}
+                                    Err(e) => log::error!("Failed to send LSP response: {e:#}"),
+                                }
+                            }
+                        }),
+                    );
+                })?;
+
+                Ok(proto::Ack {})
+            }
+        }
+    }
+
+    // TODO kb wrong, better be in the client.rs
+    async fn handle_lsp_query_response(
+        lsp_store: Entity<Self>,
+        // TODO kb there's no way to return an Option<LspResp> with such `proto::LspQueryResponse`
+        // TODO kb OR maybe this `Some` should go elsewhere, and here we should not send anything if it's None
+        envelope: TypedEnvelope<proto::LspQueryResponse>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::Ack> {
+        lsp_store.update(&mut cx, |lsp_store, cx| {
+            if let Some((upstream_client, _)) = lsp_store.upstream_client() {
+                upstream_client.handle_lsp_response(envelope);
+            }
+        })?;
+        Ok(proto::Ack {})
+    }
 
     async fn handle_multi_lsp_query(
         lsp_store: Entity<Self>,

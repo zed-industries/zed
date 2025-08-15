@@ -28,7 +28,7 @@ type RequestIds = Arc<
             LspRequestId,
             oneshot::Sender<
                 anyhow::Result<
-                    Option<TypedEnvelope<proto::ProtoLspResponse<Box<dyn AnyTypedEnvelope>>>>,
+                    Option<TypedEnvelope<Vec<proto::ProtoLspResponse<Box<dyn AnyTypedEnvelope>>>>>,
                 >,
             >,
         >,
@@ -228,9 +228,10 @@ impl AnyProtoClient {
 
     pub fn request_lsp<T: LspRequestMessage>(
         &self,
+        project_id: u64,
         request: T,
     ) -> impl Future<
-        Output = anyhow::Result<Option<TypedEnvelope<proto::ProtoLspResponse<T::Response>>>>,
+        Output = anyhow::Result<Option<TypedEnvelope<Vec<proto::ProtoLspResponse<T::Response>>>>>,
     > + use<T>
     where
         T: LspRequestMessage,
@@ -248,6 +249,7 @@ impl AnyProtoClient {
         }
 
         let query = proto::LspQuery {
+            project_id,
             lsp_request_id: new_id.to_proto(),
             request: Some(request.to_proto_query()),
         };
@@ -262,7 +264,11 @@ impl AnyProtoClient {
                         .context("waiting for LSP proto response")?
                         .map(|response| {
                             anyhow::Ok(TypedEnvelope {
-                                payload: response.payload.into_response::<T>()?,
+                                payload: response
+                                    .payload
+                                    .into_iter()
+                                    .map(|lsp_response| lsp_response.into_response::<T>())
+                                    .collect::<anyhow::Result<Vec<_>>>()?,
                                 sender_id: response.sender_id,
                                 original_sender_id: response.original_sender_id,
                                 message_id: response.message_id,
@@ -281,10 +287,12 @@ impl AnyProtoClient {
     // TODO kb need to write a `handle_` method that will use this to send the responses + deduplicate
     pub fn send_lsp_response<T: LspRequestMessage>(
         &self,
+        project_id: u64,
         request_id: LspRequestId,
         response: HashMap<proto::LanguageServerId, T::Response>,
     ) -> impl Future<Output = anyhow::Result<proto::Ack>> + use<T> {
         self.request(proto::LspQueryResponse {
+            project_id,
             lsp_request_id: request_id.to_proto(),
             responses: response
                 .into_iter()
@@ -294,6 +302,43 @@ impl AnyProtoClient {
                 })
                 .collect(),
         })
+    }
+
+    pub fn handle_lsp_response(&self, envelope: TypedEnvelope<proto::LspQueryResponse>) {
+        let request_id = LspRequestId(envelope.payload.lsp_request_id);
+        if let Some(tx) = self.0.request_ids.lock().remove(&request_id) {
+            tx.send(Ok(Some(proto::TypedEnvelope {
+                sender_id: envelope.sender_id,
+                original_sender_id: envelope.original_sender_id,
+                message_id: envelope.message_id,
+                received_at: envelope.received_at,
+                payload: envelope
+                    .payload
+                    .responses
+                    .into_iter()
+                    .filter_map(|response| {
+                        use proto::lsp_response2::Response;
+
+                        let server_id = proto::LanguageServerId(response.server_id);
+                        let proto_response = match response.response? {
+                            Response::GetReferencesResponse(response) => response,
+                        };
+                        let response_envelope = proto::TypedEnvelope {
+                            sender_id: envelope.sender_id,
+                            original_sender_id: envelope.original_sender_id,
+                            message_id: envelope.message_id,
+                            received_at: envelope.received_at,
+                            payload: proto_response,
+                        };
+                        Some(proto::ProtoLspResponse {
+                            server_id,
+                            response: Box::new(response_envelope) as Box<_>,
+                        })
+                    })
+                    .collect(),
+            })))
+            .ok();
+        }
     }
 
     pub fn add_request_handler<M, E, H, F>(&self, entity: gpui::WeakEntity<E>, handler: H)

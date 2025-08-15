@@ -2370,17 +2370,18 @@ async fn multi_lsp_query(
     forward_mutating_project_request(request, response, session).await
 }
 
-// async fn lsp_query(
-//     request: LspQuery,
-//     response: Response<LspQueryResponse>,
-//     session: MessageContext,
-// ) -> Result<()> {
-//     tracing::Span::current().record("lsp_query_request", request.request_str());
-//     tracing::info!("lsp_query message received");
-//     // TODO kb separate the permissions based on the request type?
-//     // inline match from request_str and have the `is_readonly` flag.
-//     forward_mutating_project_request(request, response, session).await
-// }
+async fn lsp_query(
+    request: proto::LspQuery,
+    response: Response<proto::LspQueryResponse>,
+    session: MessageContext,
+) -> Result<()> {
+    todo!("TODO kb")
+    // tracing::Span::current().record("lsp_query_request", request.request_str());
+    // tracing::info!("lsp_query message received");
+    // // TODO kb separate the permissions based on the request type?
+    // // inline match from request_str and have the `is_readonly` flag.
+    // forward_mutating_project_request(request, response, session).await
+}
 
 /// Notify other participants that a new buffer has been created
 async fn create_buffer_for_peer(
