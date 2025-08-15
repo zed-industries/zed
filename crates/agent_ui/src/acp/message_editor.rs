@@ -397,7 +397,7 @@ impl MessageEditor {
         cx.emit(MessageEditorEvent::Send)
     }
 
-    fn cancel(&mut self, _: &menu::Cancel, _: &mut Window, cx: &mut Context<Self>) {
+    fn cancel(&mut self, _: &editor::actions::Cancel, _: &mut Window, cx: &mut Context<Self>) {
         cx.emit(MessageEditorEvent::Cancel)
     }
 

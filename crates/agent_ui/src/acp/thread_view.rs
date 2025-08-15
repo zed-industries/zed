@@ -3587,12 +3587,13 @@ pub(crate) mod tests {
     use agent_client_protocol::SessionId;
     use editor::EditorSettings;
     use fs::FakeFs;
-    use gpui::{SemanticVersion, TestAppContext, VisualTestContext};
+    use gpui::{EventEmitter, SemanticVersion, TestAppContext, VisualTestContext};
     use project::Project;
     use serde_json::json;
     use settings::SettingsStore;
     use std::any::Any;
     use std::path::Path;
+    use workspace::Item;
 
     use super::*;
     use crate::acp::entry_view_state::{EntryViewEvent, ViewEvent};
@@ -3740,6 +3741,50 @@ pub(crate) mod tests {
         (thread_view, cx)
     }
 
+    fn add_to_workspace(thread_view: Entity<AcpThreadView>, cx: &mut VisualTestContext) {
+        let workspace = thread_view.read_with(cx, |thread_view, _cx| thread_view.workspace.clone());
+
+        workspace
+            .update_in(cx, |workspace, window, cx| {
+                workspace.add_item_to_active_pane(
+                    Box::new(cx.new(|_| ThreadViewItem(thread_view.clone()))),
+                    None,
+                    true,
+                    window,
+                    cx,
+                );
+            })
+            .unwrap();
+    }
+
+    struct ThreadViewItem(Entity<AcpThreadView>);
+
+    impl Item for ThreadViewItem {
+        type Event = ();
+
+        fn include_in_nav_history() -> bool {
+            false
+        }
+
+        fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
+            "Test".into()
+        }
+    }
+
+    impl EventEmitter<()> for ThreadViewItem {}
+
+    impl Focusable for ThreadViewItem {
+        fn focus_handle(&self, cx: &App) -> FocusHandle {
+            self.0.read(cx).focus_handle(cx).clone()
+        }
+    }
+
+    impl Render for ThreadViewItem {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            self.0.clone().into_any_element()
+        }
+    }
+
     struct StubAgentServer<C> {
         connection: C,
     }
@@ -3761,19 +3806,19 @@ pub(crate) mod tests {
         C: 'static + AgentConnection + Send + Clone,
     {
         fn logo(&self) -> ui::IconName {
-            unimplemented!()
+            ui::IconName::Ai
         }
 
         fn name(&self) -> &'static str {
-            unimplemented!()
+            "Test"
         }
 
         fn empty_state_headline(&self) -> &'static str {
-            unimplemented!()
+            "Test"
         }
 
         fn empty_state_message(&self) -> &'static str {
-            unimplemented!()
+            "Test"
         }
 
         fn connect(
@@ -3961,8 +4006,7 @@ pub(crate) mod tests {
 
         let second_user_message_id = thread.read_with(cx, |thread, _| {
             assert_eq!(thread.entries().len(), 4);
-            let AgentThreadEntry::UserMessage(user_message) = thread.entries().get(2).unwrap()
-            else {
+            let AgentThreadEntry::UserMessage(user_message) = &thread.entries()[2] else {
                 panic!();
             };
             user_message.id.clone().unwrap()
@@ -4033,6 +4077,7 @@ pub(crate) mod tests {
         }]);
 
         let (thread_view, cx) = setup_thread_view(StubAgentServer::new(connection), cx).await;
+        add_to_workspace(thread_view.clone(), cx);
 
         let message_editor = cx.read(|cx| thread_view.read(cx).message_editor.clone());
         message_editor.update_in(cx, |editor, window, cx| {
@@ -4057,22 +4102,8 @@ pub(crate) mod tests {
         });
 
         // Focus
-        thread_view.update(cx, |view, cx| {
-            view.entry_view_state.update(cx, |_state, cx| {
-                cx.emit(EntryViewEvent {
-                    entry_index: 0,
-                    view_event: ViewEvent::MessageEditorEvent(
-                        message_editor.clone(),
-                        MessageEditorEvent::Focus,
-                    ),
-                })
-            });
-        });
+        cx.focus(&user_message_editor);
         cx.run_until_parked();
-
-        thread_view.read_with(cx, |view, _cx| {
-            assert_eq!(view.editing_message, Some(0));
-        });
 
         // Edit
         user_message_editor.update_in(cx, |editor, window, cx| {
@@ -4117,6 +4148,7 @@ pub(crate) mod tests {
 
         let (thread_view, cx) =
             setup_thread_view(StubAgentServer::new(connection.clone()), cx).await;
+        add_to_workspace(thread_view.clone(), cx);
 
         let message_editor = cx.read(|cx| thread_view.read(cx).message_editor.clone());
         message_editor.update_in(cx, |editor, window, cx| {
@@ -4142,17 +4174,7 @@ pub(crate) mod tests {
         });
 
         // Focus
-        thread_view.update(cx, |view, cx| {
-            view.entry_view_state.update(cx, |_state, cx| {
-                cx.emit(EntryViewEvent {
-                    entry_index: 0,
-                    view_event: ViewEvent::MessageEditorEvent(
-                        message_editor.clone(),
-                        MessageEditorEvent::Focus,
-                    ),
-                })
-            });
-        });
+        cx.focus(&user_message_editor);
         cx.run_until_parked();
 
         // Edit
