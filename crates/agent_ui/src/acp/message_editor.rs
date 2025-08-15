@@ -234,15 +234,7 @@ impl MessageEditor {
                     .await?;
                 image.read_with(cx, |image, _cx| image.image.clone())
             });
-            // FIXME pathbuf vs arc<path>
-            self.confirm_mention_for_image(
-                crease_id,
-                anchor,
-                Some(abs_path.as_path().into()),
-                image,
-                window,
-                cx,
-            );
+            self.confirm_mention_for_image(crease_id, anchor, Some(abs_path), image, window, cx);
         }
     }
 
@@ -488,7 +480,6 @@ impl MessageEditor {
             let Some(anchor) = multibuffer_anchor else {
                 return;
             };
-            // FIXME why not just use a multibuffer anchor everywhere?
             let Some(crease_id) = insert_crease_for_image(
                 excerpt_id,
                 text_anchor,
@@ -567,7 +558,7 @@ impl MessageEditor {
         &mut self,
         crease_id: CreaseId,
         anchor: Anchor,
-        abs_path: Option<Arc<Path>>,
+        abs_path: Option<PathBuf>,
         image: Task<Result<Arc<Image>>>,
         window: &mut Window,
         cx: &mut Context<Self>,
