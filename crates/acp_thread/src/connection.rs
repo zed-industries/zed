@@ -4,11 +4,12 @@ use anyhow::Result;
 use collections::IndexMap;
 use gpui::{Entity, SharedString, Task};
 use project::Project;
+use serde::{Deserialize, Serialize};
 use std::{any::Any, error::Error, fmt, path::Path, rc::Rc, sync::Arc};
 use ui::{App, IconName};
 use uuid::Uuid;
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct UserMessageId(Arc<str>);
 
 impl UserMessageId {

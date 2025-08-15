@@ -191,6 +191,7 @@ version = "0.1.0"
 dependencies = [
  "acp_thread",
  "action_log",
+ "agent",
  "agent-client-protocol",
  "agent_servers",
  "agent_settings",

@@ -17,6 +17,7 @@ action_log.workspace = true
 agent-client-protocol.workspace = true
 agent_servers.workspace = true
 agent_settings.workspace = true
+agent.workspace = true
 anyhow.workspace = true
 assistant_tool.workspace = true
 assistant_tools.workspace = true
