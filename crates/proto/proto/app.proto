@@ -6,37 +6,6 @@ message UpdateInviteInfo {
     uint32 count = 2;
 }
 
-enum Plan {
-    Free = 0;
-    ZedPro = 1;
-    ZedProTrial = 2;
-}
-
-message SubscriptionPeriod {
-    uint64 started_at = 1;
-    uint64 ended_at = 2;
-}
-
-message SubscriptionUsage {
-    uint32 model_requests_usage_amount = 1;
-    UsageLimit model_requests_usage_limit = 2;
-    uint32 edit_predictions_usage_amount = 3;
-    UsageLimit edit_predictions_usage_limit = 4;
-}
-
-message UsageLimit {
-    oneof variant {
-        Limited limited = 1;
-        Unlimited unlimited = 2;
-    }
-
-    message Limited {
-        uint32 limit = 1;
-    }
-
-    message Unlimited {}
-}
-
 message AcceptTermsOfService {}
 
 message AcceptTermsOfServiceResponse {
