@@ -686,7 +686,7 @@ impl Client {
                             }
                             ConnectionResult::Result(r) => {
                                 if let Err(error) = r {
-                                    log::error!("failed to connect: {error}");
+                                    log::error!("failed to connect: {error:?}");
                                 } else {
                                     break;
                                 }

@@ -344,7 +344,7 @@ pub struct TerminalBuilder {
 impl TerminalBuilder {
     pub fn new(
         working_directory: Option<PathBuf>,
-        python_venv_directory: Option<PathBuf>,
+        startup_script: Option<String>,
         task: Option<TaskState>,
         shell: Shell,
         mut env: HashMap<String, String>,
@@ -432,9 +432,6 @@ impl TerminalBuilder {
             }
         };
 
-        // Setup Alacritty's env, which modifies the current process's environment
-        alacritty_terminal::tty::setup_env();
-
         let default_cursor_style = AlacCursorStyle::from(cursor_shape);
         let scrolling_history = if task.is_some() {
             // Tasks like `cargo build --all` may produce a lot of output, ergo allow maximum scrolling.
@@ -495,8 +492,8 @@ impl TerminalBuilder {
         //Kick things off
         let pty_tx = event_loop.channel();
         let _io_thread = event_loop.spawn(); // DANGER
-
-        let terminal = Terminal {
+        let activate = startup_script.clone();
+        let mut terminal = Terminal {
             task,
             pty_tx: Notifier(pty_tx),
             completion_tx,
@@ -517,12 +514,16 @@ impl TerminalBuilder {
             hyperlink_regex_searches: RegexSearches::new(),
             vi_mode_enabled: false,
             is_ssh_terminal,
-            python_venv_directory,
+            startup_script,
             last_mouse_move_time: Instant::now(),
             last_hyperlink_search_position: None,
             #[cfg(windows)]
             shell_program,
         };
+
+        if let Some(activate) = activate {
+            terminal.input(activate.into_bytes());
+        }
 
         Ok(TerminalBuilder {
             terminal,
@@ -687,6 +688,8 @@ pub struct Terminal {
     term: Arc<FairMutex<Term<ZedListener>>>,
     term_config: Config,
     events: VecDeque<InternalEvent>,
+    // TODO lw: type this better
+    pub startup_script: Option<String>,
     /// This is only used for mouse mode cell change detection
     last_mouse: Option<(AlacPoint, AlacDirection)>,
     pub matches: Vec<RangeInclusive<AlacPoint>>,
@@ -695,7 +698,6 @@ pub struct Terminal {
     pub breadcrumb_text: String,
     pub pty_info: PtyProcessInfo,
     title_override: Option<SharedString>,
-    pub python_venv_directory: Option<PathBuf>,
     scroll_px: Pixels,
     next_link_id: usize,
     selection_phase: SelectionPhase,

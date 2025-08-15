@@ -416,25 +416,18 @@ impl TerminalPanel {
         let database_id = workspace.database_id();
         let weak_workspace = self.workspace.clone();
         let project = workspace.project().clone();
-        let (working_directory, python_venv_directory) = self
+        let terminal = self
             .active_pane
             .read(cx)
             .active_item()
             .and_then(|item| item.downcast::<TerminalView>())
-            .map(|terminal_view| {
-                let terminal = terminal_view.read(cx).terminal().read(cx);
-                (
-                    terminal
-                        .working_directory()
-                        .or_else(|| default_working_directory(workspace, cx)),
-                    terminal.python_venv_directory.clone(),
-                )
-            })
-            .unwrap_or((None, None));
-        let kind = TerminalKind::Shell(working_directory);
+            .map(|terminal_view| terminal_view.read(cx).terminal().clone());
         let terminal = project
-            .update(cx, |project, cx| {
-                project.create_terminal_with_venv(kind, python_venv_directory, cx)
+            .update(cx, |project, cx| match terminal {
+                Some(terminal) => project.clone_terminal(&terminal, cx),
+                None => {
+                    project.create_terminal_with_startup(TerminalKind::Shell(None), |_| None, cx)
+                }
             })
             .ok()?;
 

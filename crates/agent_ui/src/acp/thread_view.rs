@@ -562,7 +562,7 @@ impl AcpThreadView {
                 this.update_in(cx, |this, window, cx| {
                     if let Err(err) = result {
                         this.last_error = Some(cx.new(|cx| {
-                            Markdown::new(format!("Error: {err}").into(), None, None, cx)
+                            Markdown::new(format!("Error: {err:#}").into(), None, None, cx)
                         }))
                     } else {
                         this.thread_state = Self::initial_state(

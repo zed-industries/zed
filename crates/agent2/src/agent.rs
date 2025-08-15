@@ -332,7 +332,7 @@ impl NativeAgent {
                 Err(err) => (
                     None,
                     Some(RulesLoadingError {
-                        message: format!("{err}").into(),
+                        message: format!("{err:#}").into(),
                     }),
                 ),
             };
