@@ -1041,6 +1041,14 @@ impl Thread {
             messages.extend(message.to_request());
         }
 
+        if let Some(last_user_message) = messages
+            .iter_mut()
+            .rev()
+            .find(|message| message.role == Role::User)
+        {
+            last_user_message.cache = true;
+        }
+
         messages
     }
 
