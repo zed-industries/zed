@@ -2,8 +2,8 @@ mod registrar;
 
 use crate::{
     FocusSearch, NextHistoryQuery, PreviousHistoryQuery, ReplaceAll, ReplaceNext, SearchOption,
-    SearchOptions, SelectAllMatches, SelectNextMatch, SelectPreviousMatch, ToggleCaseSensitive,
-    ToggleRegex, ToggleReplace, ToggleSelection, ToggleWholeWord,
+    SearchOptions, SearchSource, SelectAllMatches, SelectNextMatch, SelectPreviousMatch,
+    ToggleCaseSensitive, ToggleRegex, ToggleReplace, ToggleSelection, ToggleWholeWord,
     search_bar::{ActionButtonState, input_base_styles, render_action_button, render_text_input},
 };
 use any_vec::AnyVec;
@@ -213,22 +213,25 @@ impl Render for BufferSearchBar {
                     h_flex()
                         .gap_1()
                         .when(case, |div| {
-                            div.child(
-                                SearchOption::CaseSensitive
-                                    .as_button(self.search_options, focus_handle.clone()),
-                            )
+                            div.child(SearchOption::CaseSensitive.as_button(
+                                self.search_options,
+                                SearchSource::Buffer,
+                                focus_handle.clone(),
+                            ))
                         })
                         .when(word, |div| {
-                            div.child(
-                                SearchOption::WholeWord
-                                    .as_button(self.search_options, focus_handle.clone()),
-                            )
+                            div.child(SearchOption::WholeWord.as_button(
+                                self.search_options,
+                                SearchSource::Buffer,
+                                focus_handle.clone(),
+                            ))
                         })
                         .when(regex, |div| {
-                            div.child(
-                                SearchOption::Regex
-                                    .as_button(self.search_options, focus_handle.clone()),
-                            )
+                            div.child(SearchOption::Regex.as_button(
+                                self.search_options,
+                                SearchSource::Buffer,
+                                focus_handle.clone(),
+                            ))
                         }),
                 )
             });

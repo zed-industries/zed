@@ -1,7 +1,7 @@
 use crate::{
     BufferSearchBar, FocusSearch, NextHistoryQuery, PreviousHistoryQuery, ReplaceAll, ReplaceNext,
-    SearchOption, SearchOptions, SelectNextMatch, SelectPreviousMatch, ToggleCaseSensitive,
-    ToggleIncludeIgnored, ToggleRegex, ToggleReplace, ToggleWholeWord,
+    SearchOption, SearchOptions, SearchSource, SelectNextMatch, SelectPreviousMatch,
+    ToggleCaseSensitive, ToggleIncludeIgnored, ToggleRegex, ToggleReplace, ToggleWholeWord,
     buffer_search::Deploy,
     search_bar::{ActionButtonState, input_base_styles, render_action_button, render_text_input},
 };
@@ -1665,7 +1665,7 @@ impl ProjectSearchBar {
         });
     }
 
-    fn toggle_search_option(
+    pub(crate) fn toggle_search_option(
         &mut self,
         option: SearchOptions,
         window: &mut Window,
@@ -1962,17 +1962,21 @@ impl Render for ProjectSearchBar {
             .child(
                 h_flex()
                     .gap_1()
-                    .child(
-                        SearchOption::CaseSensitive
-                            .as_button(search.search_options, focus_handle.clone()),
-                    )
-                    .child(
-                        SearchOption::WholeWord
-                            .as_button(search.search_options, focus_handle.clone()),
-                    )
-                    .child(
-                        SearchOption::Regex.as_button(search.search_options, focus_handle.clone()),
-                    ),
+                    .child(SearchOption::CaseSensitive.as_button(
+                        search.search_options,
+                        SearchSource::Project(cx),
+                        focus_handle.clone(),
+                    ))
+                    .child(SearchOption::WholeWord.as_button(
+                        search.search_options,
+                        SearchSource::Project(cx),
+                        focus_handle.clone(),
+                    ))
+                    .child(SearchOption::Regex.as_button(
+                        search.search_options,
+                        SearchSource::Project(cx),
+                        focus_handle.clone(),
+                    )),
             );
 
         let query_focus = search.query_editor.focus_handle(cx);
@@ -2135,10 +2139,11 @@ impl Render for ProjectSearchBar {
                             this.toggle_opened_only(window, cx);
                         })),
                 )
-                .child(
-                    SearchOption::IncludeIgnored
-                        .as_button(search.search_options, focus_handle.clone()),
-                );
+                .child(SearchOption::IncludeIgnored.as_button(
+                    search.search_options,
+                    SearchSource::Project(cx),
+                    focus_handle.clone(),
+                ));
             h_flex()
                 .w_full()
                 .gap_2()
