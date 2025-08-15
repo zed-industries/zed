@@ -499,6 +499,10 @@ impl Thread {
         self.tools.remove(name).is_some()
     }
 
+    pub fn profile(&self) -> &AgentProfileId {
+        &self.profile_id
+    }
+
     pub fn set_profile(&mut self, profile_id: AgentProfileId) {
         self.profile_id = profile_id;
     }
