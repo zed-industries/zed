@@ -1,11 +1,9 @@
 use crate::{
     BufferSearchBar, FocusSearch, NextHistoryQuery, PreviousHistoryQuery, ReplaceAll, ReplaceNext,
-    SearchOptions, SelectNextMatch, SelectPreviousMatch, ToggleCaseSensitive, ToggleIncludeIgnored,
-    ToggleRegex, ToggleReplace, ToggleWholeWord,
+    SearchOption, SearchOptions, SelectNextMatch, SelectPreviousMatch, ToggleCaseSensitive,
+    ToggleIncludeIgnored, ToggleRegex, ToggleReplace, ToggleWholeWord,
     buffer_search::Deploy,
-    search_bar::{
-        input_base_styles, render_action_button, render_text_input, toggle_replace_button,
-    },
+    search_bar::{input_base_styles, render_action_button, render_text_input},
 };
 use anyhow::Context as _;
 use collections::HashMap;
@@ -1784,14 +1782,6 @@ impl ProjectSearchBar {
         }
     }
 
-    fn is_option_enabled(&self, option: SearchOptions, cx: &App) -> bool {
-        if let Some(search) = self.active_project_search.as_ref() {
-            search.read(cx).search_options.contains(option)
-        } else {
-            false
-        }
-    }
-
     fn next_history_query(
         &mut self,
         _: &NextHistoryQuery,
@@ -1972,27 +1962,17 @@ impl Render for ProjectSearchBar {
             .child(
                 h_flex()
                     .gap_1()
-                    .child(SearchOptions::CASE_SENSITIVE.as_button(
-                        self.is_option_enabled(SearchOptions::CASE_SENSITIVE, cx),
-                        focus_handle.clone(),
-                        cx.listener(|this, _, window, cx| {
-                            this.toggle_search_option(SearchOptions::CASE_SENSITIVE, window, cx);
-                        }),
-                    ))
-                    .child(SearchOptions::WHOLE_WORD.as_button(
-                        self.is_option_enabled(SearchOptions::WHOLE_WORD, cx),
-                        focus_handle.clone(),
-                        cx.listener(|this, _, window, cx| {
-                            this.toggle_search_option(SearchOptions::WHOLE_WORD, window, cx);
-                        }),
-                    ))
-                    .child(SearchOptions::REGEX.as_button(
-                        self.is_option_enabled(SearchOptions::REGEX, cx),
-                        focus_handle.clone(),
-                        cx.listener(|this, _, window, cx| {
-                            this.toggle_search_option(SearchOptions::REGEX, window, cx);
-                        }),
-                    )),
+                    .child(
+                        SearchOption::CaseSensitive
+                            .as_button(search.search_options, focus_handle.clone()),
+                    )
+                    .child(
+                        SearchOption::WholeWord
+                            .as_button(search.search_options, focus_handle.clone()),
+                    )
+                    .child(
+                        SearchOption::Regex.as_button(search.search_options, focus_handle.clone()),
+                    ),
             );
 
         let mode_column = h_flex()
@@ -2026,16 +2006,16 @@ impl Render for ProjectSearchBar {
                         }
                     }),
             )
-            .child(toggle_replace_button(
-                "project-search-toggle-replace",
-                focus_handle.clone(),
+            .child(render_action_button(
+                "project-search",
+                IconName::Replace,
                 self.active_project_search
                     .as_ref()
                     .map(|search| search.read(cx).replace_enabled)
                     .unwrap_or_default(),
-                cx.listener(|this, _, window, cx| {
-                    this.toggle_replace(&ToggleReplace, window, cx);
-                }),
+                "Toggle Replace",
+                &ToggleReplace,
+                focus_handle.clone(),
             ));
 
         let query_focus = search.query_editor.focus_handle(cx);
@@ -2149,15 +2129,8 @@ impl Render for ProjectSearchBar {
                         })),
                 )
                 .child(
-                    SearchOptions::INCLUDE_IGNORED.as_button(
-                        search
-                            .search_options
-                            .contains(SearchOptions::INCLUDE_IGNORED),
-                        focus_handle.clone(),
-                        cx.listener(|this, _, window, cx| {
-                            this.toggle_search_option(SearchOptions::INCLUDE_IGNORED, window, cx);
-                        }),
-                    ),
+                    SearchOption::IncludeIgnored
+                        .as_button(search.search_options, focus_handle.clone()),
                 );
             h_flex()
                 .w_full()
