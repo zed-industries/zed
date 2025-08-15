@@ -3596,7 +3596,6 @@ pub(crate) mod tests {
     use workspace::Item;
 
     use super::*;
-    use crate::acp::entry_view_state::{EntryViewEvent, ViewEvent};
 
     #[gpui::test]
     async fn test_drop(cx: &mut TestAppContext) {
@@ -4103,7 +4102,9 @@ pub(crate) mod tests {
 
         // Focus
         cx.focus(&user_message_editor);
-        cx.run_until_parked();
+        thread_view.read_with(cx, |view, _cx| {
+            assert_eq!(view.editing_message, Some(0));
+        });
 
         // Edit
         user_message_editor.update_in(cx, |editor, window, cx| {
@@ -4111,18 +4112,9 @@ pub(crate) mod tests {
         });
 
         // Cancel
-        thread_view.update(cx, |view, cx| {
-            view.entry_view_state.update(cx, |_state, cx| {
-                cx.emit(EntryViewEvent {
-                    entry_index: 0,
-                    view_event: ViewEvent::MessageEditorEvent(
-                        user_message_editor.clone(),
-                        MessageEditorEvent::Cancel,
-                    ),
-                })
-            });
+        user_message_editor.update_in(cx, |_editor, window, cx| {
+            window.dispatch_action(Box::new(editor::actions::Cancel), cx);
         });
-        cx.run_until_parked();
 
         thread_view.read_with(cx, |view, _cx| {
             assert_eq!(view.editing_message, None);
@@ -4175,7 +4167,6 @@ pub(crate) mod tests {
 
         // Focus
         cx.focus(&user_message_editor);
-        cx.run_until_parked();
 
         // Edit
         user_message_editor.update_in(cx, |editor, window, cx| {
@@ -4190,20 +4181,15 @@ pub(crate) mod tests {
             }),
         }]);
 
-        thread_view.update(cx, |view, cx| {
-            view.entry_view_state.update(cx, |_state, cx| {
-                cx.emit(EntryViewEvent {
-                    entry_index: 0,
-                    view_event: ViewEvent::MessageEditorEvent(
-                        user_message_editor.clone(),
-                        MessageEditorEvent::Send,
-                    ),
-                })
-            });
+        user_message_editor.update_in(cx, |_editor, window, cx| {
+            window.dispatch_action(Box::new(Chat), cx);
         });
+
         cx.run_until_parked();
 
         thread_view.read_with(cx, |view, cx| {
+            assert_eq!(view.editing_message, None);
+
             let entries = view.thread().unwrap().read(cx).entries();
             assert_eq!(entries.len(), 2);
             assert_eq!(
