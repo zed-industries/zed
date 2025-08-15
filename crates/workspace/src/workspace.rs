@@ -612,21 +612,41 @@ impl ProjectItemRegistry {
         );
         self.build_project_item_for_path_fns
             .push(|project, project_path, window, cx| {
+                let project_path = project_path.clone();
                 let project_item =
-                    <T::Item as project::ProjectItem>::try_open(project, project_path, cx)?;
+                    <T::Item as project::ProjectItem>::try_open(project, &project_path, cx)?;
                 let project = project.clone();
-                Some(window.spawn(cx, async move |cx| {
-                    let project_item = project_item.await?;
-                    let project_entry_id: Option<ProjectEntryId> =
-                        project_item.read_with(cx, project::ProjectItem::entry_id)?;
-                    let build_workspace_item = Box::new(
-                        |pane: &mut Pane, window: &mut Window, cx: &mut Context<Pane>| {
-                            Box::new(cx.new(|cx| {
-                                T::for_project_item(project, Some(pane), project_item, window, cx)
-                            })) as Box<dyn ItemHandle>
-                        },
-                    ) as Box<_>;
-                    Ok((project_entry_id, build_workspace_item))
+                Some(window.spawn(cx, async move |cx| match project_item.await {
+                    Ok(project_item) => {
+                        let project_item = project_item;
+                        let project_entry_id: Option<ProjectEntryId> =
+                            project_item.read_with(cx, project::ProjectItem::entry_id)?;
+                        let build_workspace_item = Box::new(
+                            |pane: &mut Pane, window: &mut Window, cx: &mut Context<Pane>| {
+                                Box::new(cx.new(|cx| {
+                                    T::for_project_item(
+                                        project,
+                                        Some(pane),
+                                        project_item,
+                                        window,
+                                        cx,
+                                    )
+                                })) as Box<dyn ItemHandle>
+                            },
+                        ) as Box<_>;
+                        Ok((project_entry_id, build_workspace_item))
+                    }
+                    Err(err) => {
+                        let broken_project_item_view = cx.update(|window, cx| {
+                            T::for_broken_project_item(project_path, err, window, cx)
+                        })??;
+                        let build_workspace_item = Box::new(
+                            |pane: &mut Pane, window: &mut Window, cx: &mut Context<Pane>| {
+                                broken_project_item_view
+                            },
+                        ) as Box<_>;
+                        Ok((None, build_workspace_item))
+                    }
                 }))
             });
     }

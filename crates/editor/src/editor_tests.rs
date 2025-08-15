@@ -3,6 +3,7 @@ use crate::{
     JoinLines,
     code_context_menus::CodeContextMenu,
     edit_prediction_tests::FakeEditPredictionProvider,
+    invalid_buffer_view::InvalidBufferView,
     linked_editing_ranges::LinkedEditingRanges,
     scroll::scroll_amount::ScrollAmount,
     test::{
@@ -58,6 +59,7 @@ use workspace::{
     CloseActiveItem, CloseAllItems, CloseOtherItems, MoveItemToPaneInDirection, NavigationEntry,
     OpenOptions, ViewId,
     item::{FollowEvent, FollowableItem, Item, ItemHandle, SaveOptions},
+    register_project_item,
 };
 
 #[gpui::test]
@@ -24289,6 +24291,41 @@ async fn test_newline_replacement_in_single_line(cx: &mut TestAppContext) {
     editor.update(cx, |editor, cx| {
         assert_eq!(editor.display_text(cx), "oop⋯wow⋯");
     });
+}
+
+#[gpui::test]
+async fn test_non_utf_8_opens(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    cx.update(|cx| {
+        register_project_item::<Editor>(cx);
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree("/root1", json!({})).await;
+    fs.insert_file("/root1/one.pdf", vec![0xff, 0xfe, 0xfd])
+        .await;
+
+    let project = Project::test(fs, ["/root1".as_ref()], cx).await;
+    let (workspace, cx) =
+        cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+    let worktree_id = project.update(cx, |project, cx| {
+        project.worktrees(cx).next().unwrap().read(cx).id()
+    });
+
+    let handle = workspace
+        .update_in(cx, |workspace, window, cx| {
+            let project_path = (worktree_id, "one.pdf");
+            workspace.open_path(project_path, None, true, window, cx)
+        })
+        .await
+        .unwrap();
+
+    assert_eq!(
+        handle.to_any().entity_type(),
+        TypeId::of::<InvalidBufferView>()
+    );
 }
 
 #[track_caller]

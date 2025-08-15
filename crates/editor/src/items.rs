@@ -4,6 +4,7 @@ use crate::{
     SelectionEffects, ToPoint as _,
     display_map::HighlightKey,
     editor_settings::SeedQuerySetting,
+    invalid_buffer_view::InvalidBufferView,
     persistence::{DB, SerializedEditor},
     scroll::ScrollAnchor,
 };
@@ -41,7 +42,8 @@ use theme::{Theme, ThemeSettings};
 use ui::{IconDecorationKind, prelude::*};
 use util::{ResultExt, TryFutureExt, paths::PathExt};
 use workspace::{
-    CollaboratorId, ItemId, ItemNavHistory, ToolbarItemLocation, ViewId, Workspace, WorkspaceId,
+    CollaboratorId, ItemHandle, ItemId, ItemNavHistory, ToolbarItemLocation, ViewId, Workspace,
+    WorkspaceId,
     item::{FollowableItem, Item, ItemEvent, ProjectItem, SaveOptions},
     searchable::{Direction, SearchEvent, SearchableItem, SearchableItemHandle},
 };
@@ -1400,6 +1402,17 @@ impl ProjectItem for Editor {
         }
 
         editor
+    }
+
+    fn for_broken_project_item(
+        project_path: ProjectPath,
+        err: anyhow::Error,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Result<Box<dyn ItemHandle>> {
+        Ok(cx
+            .new(|cx| InvalidBufferView::new(project_path, err, window, cx))
+            .boxed_clone())
     }
 }
 

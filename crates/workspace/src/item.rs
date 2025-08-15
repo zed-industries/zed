@@ -1161,6 +1161,19 @@ pub trait ProjectItem: Item {
     ) -> Self
     where
         Self: Sized;
+
+    /// TODO kb comment
+    fn for_broken_project_item(
+        _project_path: ProjectPath,
+        err: anyhow::Error,
+        _window: &mut Window,
+        _cx: &mut App,
+    ) -> Result<Box<dyn ItemHandle>>
+    where
+        Self: Sized,
+    {
+        anyhow::bail!(err)
+    }
 }
 
 #[derive(Debug)]
