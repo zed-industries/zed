@@ -52,9 +52,11 @@ pub struct MessageEditor {
     text_thread_store: Entity<TextThreadStore>,
 }
 
+#[derive(Clone, Copy)]
 pub enum MessageEditorEvent {
     Send,
     Cancel,
+    Focus,
 }
 
 impl EventEmitter<MessageEditorEvent> for MessageEditor {}
@@ -100,6 +102,11 @@ impl MessageEditor {
             });
             editor
         });
+
+        cx.on_focus(&editor.focus_handle(cx), window, |_, _, cx| {
+            cx.emit(MessageEditorEvent::Focus)
+        })
+        .detach();
 
         Self {
             editor,
@@ -386,11 +393,11 @@ impl MessageEditor {
         });
     }
 
-    fn chat(&mut self, _: &Chat, _: &mut Window, cx: &mut Context<Self>) {
+    fn send(&mut self, _: &Chat, _: &mut Window, cx: &mut Context<Self>) {
         cx.emit(MessageEditorEvent::Send)
     }
 
-    fn cancel(&mut self, _: &menu::Cancel, _: &mut Window, cx: &mut Context<Self>) {
+    fn cancel(&mut self, _: &editor::actions::Cancel, _: &mut Window, cx: &mut Context<Self>) {
         cx.emit(MessageEditorEvent::Cancel)
     }
 
@@ -496,6 +503,13 @@ impl MessageEditor {
         }
     }
 
+    pub fn set_read_only(&mut self, read_only: bool, cx: &mut Context<Self>) {
+        self.editor.update(cx, |message_editor, cx| {
+            message_editor.set_read_only(read_only);
+            cx.notify()
+        })
+    }
+
     fn insert_image(
         &mut self,
         excerpt_id: ExcerptId,
@@ -572,6 +586,8 @@ impl MessageEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.clear(window, cx);
+
         let mut text = String::new();
         let mut mentions = Vec::new();
         let mut images = Vec::new();
@@ -609,7 +625,6 @@ impl MessageEditor {
             editor.buffer().read(cx).snapshot(cx)
         });
 
-        self.mention_set.clear();
         for (range, mention_uri) in mentions {
             let anchor = snapshot.anchor_before(range.start);
             let crease_id = crate::context_picker::insert_crease_for_mention(
@@ -679,6 +694,11 @@ impl MessageEditor {
             editor.set_text(text, window, cx);
         });
     }
+
+    #[cfg(test)]
+    pub fn text(&self, cx: &App) -> String {
+        self.editor.read(cx).text(cx)
+    }
 }
 
 impl Focusable for MessageEditor {
@@ -691,7 +711,7 @@ impl Render for MessageEditor {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         div()
             .key_context("MessageEditor")
-            .on_action(cx.listener(Self::chat))
+            .on_action(cx.listener(Self::send))
             .on_action(cx.listener(Self::cancel))
             .capture_action(cx.listener(Self::paste))
             .flex_1()

@@ -80,11 +80,6 @@ impl MentionSet {
             .chain(self.images.drain().map(|(id, _)| id))
     }
 
-    pub fn clear(&mut self) {
-        self.fetch_results.clear();
-        self.uri_by_crease_id.clear();
-    }
-
     pub fn contents(
         &self,
         project: Entity<Project>,
