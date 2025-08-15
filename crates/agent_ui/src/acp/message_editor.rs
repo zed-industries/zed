@@ -16,14 +16,14 @@ use editor::{
 use futures::{FutureExt as _, TryFutureExt as _};
 use gpui::{
     AppContext, ClipboardEntry, Context, Entity, EventEmitter, FocusHandle, Focusable, Image,
-    ImageFormat, Task, TextStyle, WeakEntity,
+    ImageFormat, Img, Task, TextStyle, WeakEntity,
 };
-use http_client::HttpClientWithUrl;
 use language::{Buffer, Language};
 use language_model::LanguageModelImage;
 use project::{CompletionIntent, Project};
 use settings::Settings;
 use std::{
+    ffi::OsStr,
     fmt::Write,
     ops::Range,
     path::{Path, PathBuf},
@@ -48,6 +48,7 @@ pub struct MessageEditor {
     mention_set: MentionSet,
     editor: Entity<Editor>,
     project: Entity<Project>,
+    workspace: WeakEntity<Workspace>,
     thread_store: Entity<ThreadStore>,
     text_thread_store: Entity<TextThreadStore>,
 }
@@ -79,7 +80,7 @@ impl MessageEditor {
             None,
         );
         let completion_provider = ContextPickerCompletionProvider::new(
-            workspace,
+            workspace.clone(),
             thread_store.downgrade(),
             text_thread_store.downgrade(),
             cx.weak_entity(),
@@ -114,6 +115,7 @@ impl MessageEditor {
             mention_set,
             thread_store,
             text_thread_store,
+            workspace,
         }
     }
 
@@ -131,7 +133,7 @@ impl MessageEditor {
         self.editor.read(cx).is_empty(cx)
     }
 
-    pub fn mentioned_path_and_threads(&self, _: &App) -> (HashSet<PathBuf>, HashSet<ThreadId>) {
+    pub fn mentioned_path_and_threads(&self) -> (HashSet<PathBuf>, HashSet<ThreadId>) {
         let mut excluded_paths = HashSet::default();
         let mut excluded_threads = HashSet::default();
 
@@ -165,8 +167,14 @@ impl MessageEditor {
         let Some((excerpt_id, _, _)) = snapshot.buffer_snapshot.as_singleton() else {
             return;
         };
+        let Some(anchor) = snapshot
+            .buffer_snapshot
+            .anchor_in_excerpt(*excerpt_id, start)
+        else {
+            return;
+        };
 
-        if let Some(crease_id) = crate::context_picker::insert_crease_for_mention(
+        let Some(crease_id) = crate::context_picker::insert_crease_for_mention(
             *excerpt_id,
             start,
             content_len,
@@ -175,48 +183,83 @@ impl MessageEditor {
             self.editor.clone(),
             window,
             cx,
-        ) {
-            self.mention_set.insert_uri(crease_id, mention_uri.clone());
-        }
-    }
-
-    pub fn confirm_mention_for_fetch(
-        &mut self,
-        new_text: String,
-        source_range: Range<text::Anchor>,
-        url: url::Url,
-        http_client: Arc<HttpClientWithUrl>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let mention_uri = MentionUri::Fetch { url: url.clone() };
-        let icon_path = mention_uri.icon_path(cx);
-
-        let start = source_range.start;
-        let content_len = new_text.len() - 1;
-
-        let snapshot = self
-            .editor
-            .update(cx, |editor, cx| editor.snapshot(window, cx));
-        let Some((&excerpt_id, _, _)) = snapshot.buffer_snapshot.as_singleton() else {
-            return;
-        };
-
-        let Some(crease_id) = crate::context_picker::insert_crease_for_mention(
-            excerpt_id,
-            start,
-            content_len,
-            url.to_string().into(),
-            icon_path,
-            self.editor.clone(),
-            window,
-            cx,
         ) else {
             return;
         };
+        self.mention_set.insert_uri(crease_id, mention_uri.clone());
 
-        let http_client = http_client.clone();
-        let source_range = source_range.clone();
+        match mention_uri {
+            MentionUri::Fetch { url } => {
+                self.confirm_mention_for_fetch(crease_id, anchor, url, window, cx);
+            }
+            MentionUri::File {
+                abs_path,
+                is_directory,
+            } => {
+                self.confirm_mention_for_file(
+                    crease_id,
+                    anchor,
+                    abs_path,
+                    is_directory,
+                    window,
+                    cx,
+                );
+            }
+            MentionUri::Symbol { .. }
+            | MentionUri::Thread { .. }
+            | MentionUri::TextThread { .. }
+            | MentionUri::Rule { .. }
+            | MentionUri::Selection { .. } => {}
+        }
+    }
+
+    fn confirm_mention_for_file(
+        &mut self,
+        crease_id: CreaseId,
+        anchor: Anchor,
+        abs_path: PathBuf,
+        _is_directory: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let extension = abs_path
+            .extension()
+            .and_then(OsStr::to_str)
+            .unwrap_or_default();
+        let project = self.project.clone();
+        let Some(project_path) = project
+            .read(cx)
+            .project_path_for_absolute_path(&abs_path, cx)
+        else {
+            return;
+        };
+
+        if Img::extensions().contains(&extension) && !extension.contains("svg") {
+            let image = cx.spawn(async move |_, cx| {
+                let image = project
+                    .update(cx, |project, cx| project.open_image(project_path, cx))?
+                    .await?;
+                image.read_with(cx, |image, _cx| image.image.clone())
+            });
+            self.confirm_mention_for_image(crease_id, anchor, Some(abs_path), image, window, cx);
+        }
+    }
+
+    fn confirm_mention_for_fetch(
+        &mut self,
+        crease_id: CreaseId,
+        anchor: Anchor,
+        url: url::Url,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(http_client) = self
+            .workspace
+            .update(cx, |workspace, _cx| workspace.client().http_client())
+            .ok()
+        else {
+            return;
+        };
 
         let url_string = url.to_string();
         let fetch = cx
@@ -227,22 +270,18 @@ impl MessageEditor {
                     .await
             })
             .shared();
-        self.mention_set.add_fetch_result(url, fetch.clone());
+        self.mention_set
+            .add_fetch_result(url.clone(), fetch.clone());
 
         cx.spawn_in(window, async move |this, cx| {
             let fetch = fetch.await.notify_async_err(cx);
             this.update(cx, |this, cx| {
+                let mention_uri = MentionUri::Fetch { url };
                 if fetch.is_some() {
                     this.mention_set.insert_uri(crease_id, mention_uri.clone());
                 } else {
                     // Remove crease if we failed to fetch
                     this.editor.update(cx, |editor, cx| {
-                        let snapshot = editor.buffer().read(cx).snapshot(cx);
-                        let Some(anchor) =
-                            snapshot.anchor_in_excerpt(excerpt_id, source_range.start)
-                        else {
-                            return;
-                        };
                         editor.display_map.update(cx, |display_map, cx| {
                             display_map.unfold_intersecting(vec![anchor..anchor], true, cx);
                         });
@@ -424,27 +463,46 @@ impl MessageEditor {
 
         let replacement_text = "image";
         for image in images {
-            let (excerpt_id, anchor) = self.editor.update(cx, |message_editor, cx| {
-                let snapshot = message_editor.snapshot(window, cx);
-                let (excerpt_id, _, snapshot) = snapshot.buffer_snapshot.as_singleton().unwrap();
+            let (excerpt_id, text_anchor, multibuffer_anchor) =
+                self.editor.update(cx, |message_editor, cx| {
+                    let snapshot = message_editor.snapshot(window, cx);
+                    let (excerpt_id, _, buffer_snapshot) =
+                        snapshot.buffer_snapshot.as_singleton().unwrap();
 
-                let anchor = snapshot.anchor_before(snapshot.len());
-                message_editor.edit(
-                    [(
-                        multi_buffer::Anchor::max()..multi_buffer::Anchor::max(),
-                        format!("{replacement_text} "),
-                    )],
-                    cx,
-                );
-                (*excerpt_id, anchor)
-            });
+                    let text_anchor = buffer_snapshot.anchor_before(buffer_snapshot.len());
+                    let multibuffer_anchor = snapshot
+                        .buffer_snapshot
+                        .anchor_in_excerpt(*excerpt_id, text_anchor);
+                    message_editor.edit(
+                        [(
+                            multi_buffer::Anchor::max()..multi_buffer::Anchor::max(),
+                            format!("{replacement_text} "),
+                        )],
+                        cx,
+                    );
+                    (*excerpt_id, text_anchor, multibuffer_anchor)
+                });
 
-            self.insert_image(
+            let content_len = replacement_text.len();
+            let Some(anchor) = multibuffer_anchor else {
+                return;
+            };
+            let Some(crease_id) = insert_crease_for_image(
                 excerpt_id,
+                text_anchor,
+                content_len,
+                None.clone(),
+                self.editor.clone(),
+                window,
+                cx,
+            ) else {
+                return;
+            };
+            self.confirm_mention_for_image(
+                crease_id,
                 anchor,
-                replacement_text.len(),
-                Arc::new(image),
                 None,
+                Task::ready(Ok(Arc::new(image))),
                 window,
                 cx,
             );
@@ -510,34 +568,25 @@ impl MessageEditor {
         })
     }
 
-    fn insert_image(
+    fn confirm_mention_for_image(
         &mut self,
-        excerpt_id: ExcerptId,
-        crease_start: text::Anchor,
-        content_len: usize,
-        image: Arc<Image>,
-        abs_path: Option<Arc<Path>>,
+        crease_id: CreaseId,
+        anchor: Anchor,
+        abs_path: Option<PathBuf>,
+        image: Task<Result<Arc<Image>>>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(crease_id) = insert_crease_for_image(
-            excerpt_id,
-            crease_start,
-            content_len,
-            abs_path.clone(),
-            self.editor.clone(),
-            window,
-            cx,
-        ) else {
-            return;
-        };
         self.editor.update(cx, |_editor, cx| {
-            let format = image.format;
-            let convert = LanguageModelImage::from_image(image, cx);
-
             let task = cx
                 .spawn_in(window, async move |editor, cx| {
-                    if let Some(image) = convert.await {
+                    let image = image.await.map_err(|e| e.to_string())?;
+                    let format = image.format;
+                    let image = cx
+                        .update(|_, cx| LanguageModelImage::from_image(image, cx))
+                        .map_err(|e| e.to_string())?
+                        .await;
+                    if let Some(image) = image {
                         Ok(MentionImage {
                             abs_path,
                             data: image.source,
@@ -546,12 +595,6 @@ impl MessageEditor {
                     } else {
                         editor
                             .update(cx, |editor, cx| {
-                                let snapshot = editor.buffer().read(cx).snapshot(cx);
-                                let Some(anchor) =
-                                    snapshot.anchor_in_excerpt(excerpt_id, crease_start)
-                                else {
-                                    return;
-                                };
                                 editor.display_map.update(cx, |display_map, cx| {
                                     display_map.unfold_intersecting(vec![anchor..anchor], true, cx);
                                 });

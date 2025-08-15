@@ -1,20 +1,17 @@
-use std::ffi::OsStr;
 use std::ops::Range;
-use std::path::Path;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
 use acp_thread::MentionUri;
 use anyhow::{Context as _, Result, anyhow};
-use collections::HashMap;
+use collections::{HashMap, HashSet};
 use editor::display_map::CreaseId;
 use editor::{CompletionProvider, Editor, ExcerptId};
 use futures::future::{Shared, try_join_all};
 use fuzzy::{StringMatch, StringMatchCandidate};
-use gpui::{App, Entity, ImageFormat, Img, Task, WeakEntity};
-use http_client::HttpClientWithUrl;
+use gpui::{App, Entity, ImageFormat, Task, WeakEntity};
 use language::{Buffer, CodeLabel, HighlightId};
-use language_model::LanguageModelImage;
 use lsp::CompletionContext;
 use project::{
     Completion, CompletionIntent, CompletionResponse, Project, ProjectPath, Symbol, WorktreeId,
@@ -43,7 +40,7 @@ use crate::context_picker::{
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MentionImage {
-    pub abs_path: Option<Arc<Path>>,
+    pub abs_path: Option<PathBuf>,
     pub data: SharedString,
     pub format: ImageFormat,
 }
@@ -88,6 +85,8 @@ impl MentionSet {
         window: &mut Window,
         cx: &mut App,
     ) -> Task<Result<HashMap<CreaseId, Mention>>> {
+        let mut processed_image_creases = HashSet::default();
+
         let mut contents = self
             .uri_by_crease_id
             .iter()
@@ -97,59 +96,27 @@ impl MentionSet {
                         // TODO directories
                         let uri = uri.clone();
                         let abs_path = abs_path.to_path_buf();
-                        let extension = abs_path.extension().and_then(OsStr::to_str).unwrap_or("");
 
-                        if Img::extensions().contains(&extension) && !extension.contains("svg") {
-                            let open_image_task = project.update(cx, |project, cx| {
-                                let path = project
-                                    .find_project_path(&abs_path, cx)
-                                    .context("Failed to find project path")?;
-                                anyhow::Ok(project.open_image(path, cx))
+                        if let Some(task) = self.images.get(&crease_id).cloned() {
+                            processed_image_creases.insert(crease_id);
+                            return cx.spawn(async move |_| {
+                                let image = task.await.map_err(|e| anyhow!("{e}"))?;
+                                anyhow::Ok((crease_id, Mention::Image(image)))
                             });
-
-                            cx.spawn(async move |cx| {
-                                let image_item = open_image_task?.await?;
-                                let (data, format) = image_item.update(cx, |image_item, cx| {
-                                    let format = image_item.image.format;
-                                    (
-                                        LanguageModelImage::from_image(
-                                            image_item.image.clone(),
-                                            cx,
-                                        ),
-                                        format,
-                                    )
-                                })?;
-                                let data = cx.spawn(async move |_| {
-                                    if let Some(data) = data.await {
-                                        Ok(data.source)
-                                    } else {
-                                        anyhow::bail!("Failed to convert image")
-                                    }
-                                });
-
-                                anyhow::Ok((
-                                    crease_id,
-                                    Mention::Image(MentionImage {
-                                        abs_path: Some(abs_path.as_path().into()),
-                                        data: data.await?,
-                                        format,
-                                    }),
-                                ))
-                            })
-                        } else {
-                            let buffer_task = project.update(cx, |project, cx| {
-                                let path = project
-                                    .find_project_path(abs_path, cx)
-                                    .context("Failed to find project path")?;
-                                anyhow::Ok(project.open_buffer(path, cx))
-                            });
-                            cx.spawn(async move |cx| {
-                                let buffer = buffer_task?.await?;
-                                let content = buffer.read_with(cx, |buffer, _cx| buffer.text())?;
-
-                                anyhow::Ok((crease_id, Mention::Text { uri, content }))
-                            })
                         }
+
+                        let buffer_task = project.update(cx, |project, cx| {
+                            let path = project
+                                .find_project_path(abs_path, cx)
+                                .context("Failed to find project path")?;
+                            anyhow::Ok(project.open_buffer(path, cx))
+                        });
+                        cx.spawn(async move |cx| {
+                            let buffer = buffer_task?.await?;
+                            let content = buffer.read_with(cx, |buffer, _cx| buffer.text())?;
+
+                            anyhow::Ok((crease_id, Mention::Text { uri, content }))
+                        })
                     }
                     MentionUri::Symbol {
                         path, line_range, ..
@@ -243,15 +210,19 @@ impl MentionSet {
             })
             .collect::<Vec<_>>();
 
-        contents.extend(self.images.iter().map(|(crease_id, image)| {
+        // Handle images that didn't have a mention URI (because they were added by the paste handler).
+        contents.extend(self.images.iter().filter_map(|(crease_id, image)| {
+            if processed_image_creases.contains(crease_id) {
+                return None;
+            }
             let crease_id = *crease_id;
             let image = image.clone();
-            cx.spawn(async move |_| {
+            Some(cx.spawn(async move |_| {
                 Ok((
                     crease_id,
                     Mention::Image(image.await.map_err(|e| anyhow::anyhow!("{e}"))?),
                 ))
-            })
+            }))
         }));
 
         cx.spawn(async move |_cx| {
@@ -753,7 +724,6 @@ impl ContextPickerCompletionProvider {
         source_range: Range<Anchor>,
         url_to_fetch: SharedString,
         message_editor: WeakEntity<MessageEditor>,
-        http_client: Arc<HttpClientWithUrl>,
         cx: &mut App,
     ) -> Option<Completion> {
         let new_text = format!("@fetch {} ", url_to_fetch.clone());
@@ -772,30 +742,13 @@ impl ContextPickerCompletionProvider {
             source: project::CompletionSource::Custom,
             icon_path: Some(icon_path.clone()),
             insert_text_mode: None,
-            confirm: Some({
-                Arc::new(move |_, window, cx| {
-                    let url_to_fetch = url_to_fetch.clone();
-                    let source_range = source_range.clone();
-                    let message_editor = message_editor.clone();
-                    let new_text = new_text.clone();
-                    let http_client = http_client.clone();
-                    window.defer(cx, move |window, cx| {
-                        message_editor
-                            .update(cx, |message_editor, cx| {
-                                message_editor.confirm_mention_for_fetch(
-                                    new_text,
-                                    source_range,
-                                    url_to_fetch,
-                                    http_client,
-                                    window,
-                                    cx,
-                                )
-                            })
-                            .ok();
-                    });
-                    false
-                })
-            }),
+            confirm: Some(confirm_completion_callback(
+                url_to_fetch.to_string().into(),
+                source_range.start,
+                new_text.len() - 1,
+                message_editor,
+                mention_uri,
+            )),
         })
     }
 }
@@ -843,7 +796,6 @@ impl CompletionProvider for ContextPickerCompletionProvider {
         };
 
         let project = workspace.read(cx).project().clone();
-        let http_client = workspace.read(cx).client().http_client();
         let snapshot = buffer.read(cx).snapshot();
         let source_range = snapshot.anchor_before(state.source_range.start)
             ..snapshot.anchor_after(state.source_range.end);
@@ -852,8 +804,8 @@ impl CompletionProvider for ContextPickerCompletionProvider {
         let text_thread_store = self.text_thread_store.clone();
         let editor = self.message_editor.clone();
         let Ok((exclude_paths, exclude_threads)) =
-            self.message_editor.update(cx, |message_editor, cx| {
-                message_editor.mentioned_path_and_threads(cx)
+            self.message_editor.update(cx, |message_editor, _cx| {
+                message_editor.mentioned_path_and_threads()
             })
         else {
             return Task::ready(Ok(Vec::new()));
@@ -942,7 +894,6 @@ impl CompletionProvider for ContextPickerCompletionProvider {
                             source_range.clone(),
                             url,
                             editor.clone(),
-                            http_client.clone(),
                             cx,
                         ),
 
