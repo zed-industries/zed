@@ -304,6 +304,8 @@ mod tests {
     use editor::{EditorSettings, RowInfo};
     use fs::FakeFs;
     use gpui::{AppContext as _, SemanticVersion, TestAppContext};
+
+    use crate::acp::entry_view_state::EntryViewState;
     use multi_buffer::MultiBufferRow;
     use pretty_assertions::assert_matches;
     use project::Project;
@@ -312,8 +314,6 @@ mod tests {
     use theme::ThemeSettings;
     use util::path;
     use workspace::Workspace;
-
-    use crate::acp::entry_view_state::EntryViewState;
 
     #[gpui::test]
     async fn test_diff_sync(cx: &mut TestAppContext) {

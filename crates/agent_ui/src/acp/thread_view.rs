@@ -424,7 +424,7 @@ impl AcpThreadView {
         match event {
             MessageEditorEvent::Send => self.send(window, cx),
             MessageEditorEvent::Cancel => self.cancel_generation(cx),
-            MessageEditorEvent::Focused => {}
+            MessageEditorEvent::Focus => {}
         }
     }
 
@@ -436,7 +436,7 @@ impl AcpThreadView {
         cx: &mut Context<Self>,
     ) {
         match &event.view_event {
-            ViewEvent::MessageEditorEvent(_editor, MessageEditorEvent::Focused) => {
+            ViewEvent::MessageEditorEvent(_editor, MessageEditorEvent::Focus) => {
                 self.editing_message = Some(event.entry_index);
                 cx.notify();
             }
@@ -3595,6 +3595,7 @@ pub(crate) mod tests {
     use std::path::Path;
 
     use super::*;
+    use crate::acp::entry_view_state::{EntryViewEvent, ViewEvent};
 
     #[gpui::test]
     async fn test_drop(cx: &mut TestAppContext) {
@@ -4016,5 +4017,188 @@ pub(crate) mod tests {
                 assert!(entry_view_state.entry(3).is_none());
             });
         });
+    }
+
+    #[gpui::test]
+    async fn test_message_editing_cancel(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let connection = StubAgentConnection::new();
+
+        connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk {
+            content: acp::ContentBlock::Text(acp::TextContent {
+                text: "Response".into(),
+                annotations: None,
+            }),
+        }]);
+
+        let (thread_view, cx) = setup_thread_view(StubAgentServer::new(connection), cx).await;
+
+        let message_editor = cx.read(|cx| thread_view.read(cx).message_editor.clone());
+        message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("Original message to edit", window, cx);
+        });
+        thread_view.update_in(cx, |thread_view, window, cx| {
+            thread_view.send(window, cx);
+        });
+
+        cx.run_until_parked();
+
+        let user_message_editor = thread_view.read_with(cx, |view, cx| {
+            assert_eq!(view.editing_message, None);
+
+            view.entry_view_state
+                .read(cx)
+                .entry(0)
+                .unwrap()
+                .message_editor()
+                .unwrap()
+                .clone()
+        });
+
+        // Focus
+        thread_view.update(cx, |view, cx| {
+            view.entry_view_state.update(cx, |_state, cx| {
+                cx.emit(EntryViewEvent {
+                    entry_index: 0,
+                    view_event: ViewEvent::MessageEditorEvent(
+                        message_editor.clone(),
+                        MessageEditorEvent::Focus,
+                    ),
+                })
+            });
+        });
+        cx.run_until_parked();
+
+        thread_view.read_with(cx, |view, _cx| {
+            assert_eq!(view.editing_message, Some(0));
+        });
+
+        // Edit
+        user_message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("Edited message content", window, cx);
+        });
+
+        // Cancel
+        thread_view.update(cx, |view, cx| {
+            view.entry_view_state.update(cx, |_state, cx| {
+                cx.emit(EntryViewEvent {
+                    entry_index: 0,
+                    view_event: ViewEvent::MessageEditorEvent(
+                        user_message_editor.clone(),
+                        MessageEditorEvent::Cancel,
+                    ),
+                })
+            });
+        });
+        cx.run_until_parked();
+
+        thread_view.read_with(cx, |view, _cx| {
+            assert_eq!(view.editing_message, None);
+        });
+
+        user_message_editor.read_with(cx, |editor, cx| {
+            assert_eq!(editor.text(cx), "Original message to edit");
+        });
+    }
+
+    #[gpui::test]
+    async fn test_message_editing_regenerate(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let connection = StubAgentConnection::new();
+
+        connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk {
+            content: acp::ContentBlock::Text(acp::TextContent {
+                text: "Response".into(),
+                annotations: None,
+            }),
+        }]);
+
+        let (thread_view, cx) =
+            setup_thread_view(StubAgentServer::new(connection.clone()), cx).await;
+
+        let message_editor = cx.read(|cx| thread_view.read(cx).message_editor.clone());
+        message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("Original message to edit", window, cx);
+        });
+        thread_view.update_in(cx, |thread_view, window, cx| {
+            thread_view.send(window, cx);
+        });
+
+        cx.run_until_parked();
+
+        let user_message_editor = thread_view.read_with(cx, |view, cx| {
+            assert_eq!(view.editing_message, None);
+            assert_eq!(view.thread().unwrap().read(cx).entries().len(), 2);
+
+            view.entry_view_state
+                .read(cx)
+                .entry(0)
+                .unwrap()
+                .message_editor()
+                .unwrap()
+                .clone()
+        });
+
+        // Focus
+        thread_view.update(cx, |view, cx| {
+            view.entry_view_state.update(cx, |_state, cx| {
+                cx.emit(EntryViewEvent {
+                    entry_index: 0,
+                    view_event: ViewEvent::MessageEditorEvent(
+                        message_editor.clone(),
+                        MessageEditorEvent::Focus,
+                    ),
+                })
+            });
+        });
+        cx.run_until_parked();
+
+        // Edit
+        user_message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("Edited message content", window, cx);
+        });
+
+        // Send
+        connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk {
+            content: acp::ContentBlock::Text(acp::TextContent {
+                text: "New Response".into(),
+                annotations: None,
+            }),
+        }]);
+
+        thread_view.update(cx, |view, cx| {
+            view.entry_view_state.update(cx, |_state, cx| {
+                cx.emit(EntryViewEvent {
+                    entry_index: 0,
+                    view_event: ViewEvent::MessageEditorEvent(
+                        user_message_editor.clone(),
+                        MessageEditorEvent::Send,
+                    ),
+                })
+            });
+        });
+        cx.run_until_parked();
+
+        thread_view.read_with(cx, |view, cx| {
+            let entries = view.thread().unwrap().read(cx).entries();
+            assert_eq!(entries.len(), 2);
+            assert_eq!(
+                entries[0].to_markdown(cx),
+                "## User\n\nEdited message content\n\n"
+            );
+            assert_eq!(
+                entries[1].to_markdown(cx),
+                "## Assistant\n\nNew Response\n\n"
+            );
+
+            let new_editor = view.entry_view_state.read_with(cx, |state, _cx| {
+                assert!(!state.entry(1).unwrap().has_content());
+                state.entry(0).unwrap().message_editor().unwrap().clone()
+            });
+
+            assert_eq!(new_editor.read(cx).text(cx), "Edited message content");
+        })
     }
 }

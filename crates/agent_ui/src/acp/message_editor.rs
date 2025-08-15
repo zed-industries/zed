@@ -57,7 +57,7 @@ pub struct MessageEditor {
 pub enum MessageEditorEvent {
     Send,
     Cancel,
-    Focused,
+    Focus,
 }
 
 impl EventEmitter<MessageEditorEvent> for MessageEditor {}
@@ -106,7 +106,7 @@ impl MessageEditor {
         });
 
         cx.on_focus(&editor.focus_handle(cx), window, |_, _, cx| {
-            cx.emit(MessageEditorEvent::Focused)
+            cx.emit(MessageEditorEvent::Focus)
         })
         .detach();
 
@@ -513,6 +513,11 @@ impl MessageEditor {
         self.editor.update(cx, |editor, cx| {
             editor.set_text(text, window, cx);
         });
+    }
+
+    #[cfg(test)]
+    pub fn text(&self, cx: &App) -> String {
+        self.editor.read(cx).text(cx)
     }
 }
 
