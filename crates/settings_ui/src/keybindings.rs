@@ -2181,6 +2181,7 @@ impl KeybindingEditorModal {
 
         let value = action_arguments
             .as_ref()
+            .filter(|args| !args.is_empty())
             .map(|args| {
                 serde_json::from_str(args).context("Failed to parse action arguments as JSON")
             })
