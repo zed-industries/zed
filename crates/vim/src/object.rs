@@ -1951,6 +1951,26 @@ mod test {
     }
 
     #[gpui::test]
+    async fn test_delete_paragraph_whitespace(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        // Test paragraphs that will wrap when soft wrap is enabled
+        cx.set_shared_state(indoc! {"
+            a
+                   ˇ•
+            aaaaaaaaaaaaa
+        "})
+            .await;
+
+        cx.simulate_shared_keystrokes("d i p").await;
+        // Test paragraphs that will wrap when soft wrap is enabled
+        cx.shared_state().await.assert_eq(indoc! {"
+            a
+            aaaaaaaˇaaaaaa
+        "});
+    }
+
+    #[gpui::test]
     async fn test_visual_paragraph_object_with_soft_wrap(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
 
