@@ -20,7 +20,6 @@ use axum::{
 };
 use db::{ChannelId, Database};
 use executor::Executor;
-use llm::db::LlmDatabase;
 use serde::Deserialize;
 use std::{path::PathBuf, sync::Arc};
 use util::ResultExt;
@@ -242,7 +241,6 @@ impl ServiceMode {
 
 pub struct AppState {
     pub db: Arc<Database>,
-    pub llm_db: Option<Arc<LlmDatabase>>,
     pub livekit_client: Option<Arc<dyn livekit_api::Client>>,
     pub blob_store_client: Option<aws_sdk_s3::Client>,
     pub executor: Executor,
@@ -256,20 +254,6 @@ impl AppState {
         db_options.max_connections(config.database_max_connections);
         let mut db = Database::new(db_options).await?;
         db.initialize_notification_kinds().await?;
-
-        let llm_db = if let Some((llm_database_url, llm_database_max_connections)) = config
-            .llm_database_url
-            .clone()
-            .zip(config.llm_database_max_connections)
-        {
-            let mut llm_db_options = db::ConnectOptions::new(llm_database_url);
-            llm_db_options.max_connections(llm_database_max_connections);
-            let mut llm_db = LlmDatabase::new(llm_db_options, executor.clone()).await?;
-            llm_db.initialize().await?;
-            Some(Arc::new(llm_db))
-        } else {
-            None
-        };
 
         let livekit_client = if let Some(((server, key), secret)) = config
             .livekit_server
@@ -289,7 +273,6 @@ impl AppState {
         let db = Arc::new(db);
         let this = Self {
             db: db.clone(),
-            llm_db,
             livekit_client,
             blob_store_client: build_blob_store_client(&config).await.log_err(),
             executor,
