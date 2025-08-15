@@ -1,14 +1,12 @@
 mod connection_pool;
 
-use crate::api::billing::find_or_create_billing_customer;
 use crate::api::{CloudflareIpCountryHeader, SystemIdHeader};
 use crate::db::billing_subscription::SubscriptionKind;
 use crate::llm::db::LlmDatabase;
 use crate::llm::{
-    AGENT_EXTENDED_TRIAL_FEATURE_FLAG, BYPASS_ACCOUNT_AGE_CHECK_FEATURE_FLAG, LlmTokenClaims,
+    AGENT_EXTENDED_TRIAL_FEATURE_FLAG, BYPASS_ACCOUNT_AGE_CHECK_FEATURE_FLAG,
     MIN_ACCOUNT_AGE_FOR_LLM_USE,
 };
-use crate::stripe_client::StripeCustomerId;
 use crate::{
     AppState, Error, Result, auth,
     db::{
@@ -218,6 +216,7 @@ struct Session {
     /// The GeoIP country code for the user.
     #[allow(unused)]
     geoip_country_code: Option<String>,
+    #[allow(unused)]
     system_id: Option<String>,
     _executor: Executor,
 }
@@ -464,7 +463,6 @@ impl Server {
             .add_message_handler(unfollow)
             .add_message_handler(update_followers)
             .add_request_handler(get_private_user_info)
-            .add_request_handler(get_llm_api_token)
             .add_request_handler(accept_terms_of_service)
             .add_message_handler(acknowledge_channel_message)
             .add_message_handler(acknowledge_buffer_version)
@@ -4251,96 +4249,6 @@ async fn accept_terms_of_service(
         accepted_tos_at: accepted_tos_at.timestamp() as u64,
     })?;
 
-    // When the user accepts the terms of service, we want to refresh their LLM
-    // token to grant access.
-    session
-        .peer
-        .send(session.connection_id, proto::RefreshLlmToken {})?;
-
-    Ok(())
-}
-
-async fn get_llm_api_token(
-    _request: proto::GetLlmToken,
-    response: Response<proto::GetLlmToken>,
-    session: MessageContext,
-) -> Result<()> {
-    let db = session.db().await;
-
-    let flags = db.get_user_flags(session.user_id()).await?;
-
-    let user_id = session.user_id();
-    let user = db
-        .get_user_by_id(user_id)
-        .await?
-        .with_context(|| format!("user {user_id} not found"))?;
-
-    if user.accepted_tos_at.is_none() {
-        Err(anyhow!("terms of service not accepted"))?
-    }
-
-    let stripe_client = session
-        .app_state
-        .stripe_client
-        .as_ref()
-        .context("failed to retrieve Stripe client")?;
-
-    let stripe_billing = session
-        .app_state
-        .stripe_billing
-        .as_ref()
-        .context("failed to retrieve Stripe billing object")?;
-
-    let billing_customer = if let Some(billing_customer) =
-        db.get_billing_customer_by_user_id(user.id).await?
-    {
-        billing_customer
-    } else {
-        let customer_id = stripe_billing
-            .find_or_create_customer_by_email(user.email_address.as_deref())
-            .await?;
-
-        find_or_create_billing_customer(&session.app_state, stripe_client.as_ref(), &customer_id)
-            .await?
-            .context("billing customer not found")?
-    };
-
-    let billing_subscription =
-        if let Some(billing_subscription) = db.get_active_billing_subscription(user.id).await? {
-            billing_subscription
-        } else {
-            let stripe_customer_id =
-                StripeCustomerId(billing_customer.stripe_customer_id.clone().into());
-
-            let stripe_subscription = stripe_billing
-                .subscribe_to_zed_free(stripe_customer_id)
-                .await?;
-
-            db.create_billing_subscription(&db::CreateBillingSubscriptionParams {
-                billing_customer_id: billing_customer.id,
-                kind: Some(SubscriptionKind::ZedFree),
-                stripe_subscription_id: stripe_subscription.id.to_string(),
-                stripe_subscription_status: stripe_subscription.status.into(),
-                stripe_cancellation_reason: None,
-                stripe_current_period_start: Some(stripe_subscription.current_period_start),
-                stripe_current_period_end: Some(stripe_subscription.current_period_end),
-            })
-            .await?
-        };
-
-    let billing_preferences = db.get_billing_preferences(user.id).await?;
-
-    let token = LlmTokenClaims::create(
-        &user,
-        session.is_staff(),
-        billing_customer,
-        billing_preferences,
-        &flags,
-        billing_subscription,
-        session.system_id.clone(),
-        &session.app_state.config,
-    )?;
-    response.send(proto::GetLlmTokenResponse { token })?;
     Ok(())
 }
 
