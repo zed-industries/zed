@@ -291,7 +291,7 @@ pub(crate) fn new_debugger_pane(
             let Some(project) = project.upgrade() else {
                 return ControlFlow::Break(());
             };
-            let this_pane = cx.entity().clone();
+            let this_pane = cx.entity();
             let item = if tab.pane == this_pane {
                 pane.item_for_index(tab.ix)
             } else {
@@ -502,7 +502,7 @@ pub(crate) fn new_debugger_pane(
                                     .on_drag(
                                         DraggedTab {
                                             item: item.boxed_clone(),
-                                            pane: cx.entity().clone(),
+                                            pane: cx.entity(),
                                             detail: 0,
                                             is_active: selected,
                                             ix,

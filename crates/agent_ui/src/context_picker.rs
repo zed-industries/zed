@@ -228,7 +228,7 @@ impl ContextPicker {
     }
 
     fn build_menu(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Entity<ContextMenu> {
-        let context_picker = cx.entity().clone();
+        let context_picker = cx.entity();
 
         let menu = ContextMenu::build(window, cx, move |menu, _window, cx| {
             let recent = self.recent_entries(cx);
