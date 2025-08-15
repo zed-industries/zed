@@ -7,7 +7,6 @@ pub mod llm;
 pub mod migrations;
 pub mod rpc;
 pub mod seed;
-pub mod stripe_client;
 pub mod user_backfiller;
 
 #[cfg(test)]
