@@ -76,10 +76,12 @@ macro_rules! lsp_messages {
         $(impl LspRequestMessage for $request_name {
             type Response = $response_name;
 
-            fn into_query(self) -> crate::LspQuery {
-                crate::LspQuery {
-                    request: Some(crate::lsp_query::Request::$request_name(self)),
-                }
+            fn to_proto_query(self) -> crate::lsp_query::Request {
+                crate::lsp_query::Request::$request_name(self)
+            }
+
+            fn response_to_proto_query(response: Self::Response) -> crate::lsp_response2::Response {
+                crate::lsp_response2::Response::$response_name(response)
             }
         })*
     };

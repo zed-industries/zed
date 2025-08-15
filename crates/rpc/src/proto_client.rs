@@ -2,34 +2,46 @@ use anyhow::Context;
 use collections::HashMap;
 use futures::{
     Future, FutureExt as _,
+    channel::oneshot,
     future::{BoxFuture, LocalBoxFuture},
 };
 use gpui::{AnyEntity, AnyWeakEntity, AsyncApp, Entity};
+use parking_lot::Mutex;
 use proto::{
-    AnyTypedEnvelope, EntityMessage, Envelope, EnvelopedMessage, LspRequestId, RequestMessage,
-    TypedEnvelope, error::ErrorExt as _,
+    AnyTypedEnvelope, EntityMessage, Envelope, EnvelopedMessage, LspRequestId, LspRequestMessage,
+    RequestMessage, TypedEnvelope, error::ErrorExt as _,
 };
 use std::{
     any::{Any, TypeId},
-    sync::{Arc, Weak},
+    sync::{
+        Arc, OnceLock,
+        atomic::{self, AtomicU64},
+    },
 };
 
 #[derive(Clone)]
-pub struct AnyProtoClient(Arc<dyn ProtoClient>);
+pub struct AnyProtoClient(Arc<State>);
 
-impl AnyProtoClient {
-    pub fn downgrade(&self) -> AnyWeakProtoClient {
-        AnyWeakProtoClient(Arc::downgrade(&self.0))
-    }
-}
+type RequestIds = Arc<
+    Mutex<
+        HashMap<
+            LspRequestId,
+            oneshot::Sender<
+                anyhow::Result<
+                    Option<TypedEnvelope<proto::ProtoLspResponse<Box<dyn AnyTypedEnvelope>>>>,
+                >,
+            >,
+        >,
+    >,
+>;
 
-#[derive(Clone)]
-pub struct AnyWeakProtoClient(Weak<dyn ProtoClient>);
+static NEXT_LSP_REQUEST_ID: OnceLock<Arc<AtomicU64>> = OnceLock::new();
+static REQUEST_IDS: OnceLock<RequestIds> = OnceLock::new();
 
-impl AnyWeakProtoClient {
-    pub fn upgrade(&self) -> Option<AnyProtoClient> {
-        self.0.upgrade().map(AnyProtoClient)
-    }
+struct State {
+    client: Arc<dyn ProtoClient>,
+    next_lsp_request_id: Arc<AtomicU64>,
+    request_ids: RequestIds,
 }
 
 pub trait ProtoClient: Send + Sync {
@@ -169,17 +181,23 @@ where
     T: ProtoClient + 'static,
 {
     fn from(client: Arc<T>) -> Self {
-        Self(client)
+        Self::new(client)
     }
 }
 
 impl AnyProtoClient {
     pub fn new<T: ProtoClient + 'static>(client: Arc<T>) -> Self {
-        Self(client)
+        Self(Arc::new(State {
+            client,
+            next_lsp_request_id: NEXT_LSP_REQUEST_ID
+                .get_or_init(|| Arc::new(AtomicU64::new(0)))
+                .clone(),
+            request_ids: REQUEST_IDS.get_or_init(|| RequestIds::default()).clone(),
+        }))
     }
 
     pub fn is_via_collab(&self) -> bool {
-        self.0.is_via_collab()
+        self.0.client.is_via_collab()
     }
 
     pub fn request<T: RequestMessage>(
@@ -187,7 +205,7 @@ impl AnyProtoClient {
         request: T,
     ) -> impl Future<Output = anyhow::Result<T::Response>> + use<T> {
         let envelope = request.into_envelope(0, None, None);
-        let response = self.0.request(envelope, T::NAME);
+        let response = self.0.client.request(envelope, T::NAME);
         async move {
             T::Response::from_envelope(response.await?)
                 .context("received response of the wrong type")
@@ -196,7 +214,7 @@ impl AnyProtoClient {
 
     pub fn send<T: EnvelopedMessage>(&self, request: T) -> anyhow::Result<()> {
         let envelope = request.into_envelope(0, None, None);
-        self.0.send(envelope, T::NAME)
+        self.0.client.send(envelope, T::NAME)
     }
 
     pub fn send_response<T: EnvelopedMessage>(
@@ -205,7 +223,77 @@ impl AnyProtoClient {
         request: T,
     ) -> anyhow::Result<()> {
         let envelope = request.into_envelope(0, Some(request_id), None);
-        self.0.send(envelope, T::NAME)
+        self.0.client.send(envelope, T::NAME)
+    }
+
+    pub fn request_lsp<T: LspRequestMessage>(
+        &self,
+        request: T,
+    ) -> impl Future<
+        Output = anyhow::Result<Option<TypedEnvelope<proto::ProtoLspResponse<T::Response>>>>,
+    > + use<T>
+    where
+        T: LspRequestMessage,
+    {
+        // TODO kb how to deduplicate requests for the same kind?
+        // Should `LspRequestMessage` get another method?
+        let new_id = LspRequestId(
+            self.0
+                .next_lsp_request_id
+                .fetch_add(1, atomic::Ordering::Acquire),
+        );
+        let (tx, rx) = oneshot::channel();
+        {
+            self.0.request_ids.lock().insert(new_id, tx);
+        }
+
+        let query = proto::LspQuery {
+            lsp_request_id: new_id.to_proto(),
+            request: Some(request.to_proto_query()),
+        };
+        let request = self.request(query);
+        async move {
+            let _request_enqueued: proto::Ack =
+                request.await.context("sending LSP proto request")?;
+            // TODO kb timeout
+            match rx.await {
+                Ok(response) => {
+                    let response = response
+                        .context("waiting for LSP proto response")?
+                        .map(|response| {
+                            anyhow::Ok(TypedEnvelope {
+                                payload: response.payload.into_response::<T>()?,
+                                sender_id: response.sender_id,
+                                original_sender_id: response.original_sender_id,
+                                message_id: response.message_id,
+                                received_at: response.received_at,
+                            })
+                        })
+                        .transpose()
+                        .context("converting LSP proto response")?;
+                    Ok(response)
+                }
+                Err(_cancelled) => Ok(None),
+            }
+        }
+    }
+
+    // TODO kb need to write a `handle_` method that will use this to send the responses + deduplicate
+    pub fn send_lsp_response<T: LspRequestMessage>(
+        &self,
+        request_id: LspRequestId,
+        response: HashMap<proto::LanguageServerId, T::Response>,
+    ) -> impl Future<Output = anyhow::Result<proto::Ack>> + use<T> {
+        self.request(proto::LspQueryResponse {
+            lsp_request_id: request_id.to_proto(),
+            responses: response
+                .into_iter()
+                .map(|(server_id, response)| proto::LspResponse2 {
+                    server_id: server_id.to_proto(),
+                    response: Some(T::response_to_proto_query(response)),
+                })
+                .collect(),
+        })
     }
 
     pub fn add_request_handler<M, E, H, F>(&self, entity: gpui::WeakEntity<E>, handler: H)
@@ -215,29 +303,33 @@ impl AnyProtoClient {
         H: 'static + Sync + Fn(Entity<E>, TypedEnvelope<M>, AsyncApp) -> F + Send + Sync,
         F: 'static + Future<Output = anyhow::Result<M::Response>>,
     {
-        self.0.message_handler_set().lock().add_message_handler(
-            TypeId::of::<M>(),
-            entity.into(),
-            Arc::new(move |entity, envelope, client, cx| {
-                let entity = entity.downcast::<E>().unwrap();
-                let envelope = envelope.into_any().downcast::<TypedEnvelope<M>>().unwrap();
-                let request_id = envelope.message_id();
-                handler(entity, *envelope, cx)
-                    .then(move |result| async move {
-                        match result {
-                            Ok(response) => {
-                                client.send_response(request_id, response)?;
-                                Ok(())
+        self.0
+            .client
+            .message_handler_set()
+            .lock()
+            .add_message_handler(
+                TypeId::of::<M>(),
+                entity.into(),
+                Arc::new(move |entity, envelope, client, cx| {
+                    let entity = entity.downcast::<E>().unwrap();
+                    let envelope = envelope.into_any().downcast::<TypedEnvelope<M>>().unwrap();
+                    let request_id = envelope.message_id();
+                    handler(entity, *envelope, cx)
+                        .then(move |result| async move {
+                            match result {
+                                Ok(response) => {
+                                    client.send_response(request_id, response)?;
+                                    Ok(())
+                                }
+                                Err(error) => {
+                                    client.send_response(request_id, error.to_proto())?;
+                                    Err(error)
+                                }
                             }
-                            Err(error) => {
-                                client.send_response(request_id, error.to_proto())?;
-                                Err(error)
-                            }
-                        }
-                    })
-                    .boxed_local()
-            }),
-        )
+                        })
+                        .boxed_local()
+                }),
+            )
     }
 
     pub fn add_entity_request_handler<M, E, H, F>(&self, handler: H)
@@ -257,6 +349,7 @@ impl AnyProtoClient {
                 .remote_entity_id()
         };
         self.0
+            .client
             .message_handler_set()
             .lock()
             .add_entity_message_handler(
@@ -302,6 +395,7 @@ impl AnyProtoClient {
                 .remote_entity_id()
         };
         self.0
+            .client
             .message_handler_set()
             .lock()
             .add_entity_message_handler(

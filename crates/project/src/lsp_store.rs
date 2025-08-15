@@ -5553,19 +5553,14 @@ impl LspStore {
                 return Task::ready(Ok(Vec::new()));
             }
 
-            // let aaa = upstream_client.lsp
-
-            let request_task = upstream_client.request(proto::LspQuery {
-                request: Some(proto::lsp_query::Request::GetReferences(
-                    request.to_proto(project_id, buffer.read(cx)),
-                )),
-            });
-            let buffer = buffer.clone();
+            let request_task =
+                upstream_client.request_lsp(request.to_proto(project_id, buffer.read(cx)));
             cx.spawn(async move |weak_project, cx| {
                 let Some(project) = weak_project.upgrade() else {
                     return Ok(Vec::new());
                 };
-                // let responses = request_task.await?.responses;
+                // TODO kb need to return Option now.
+                let responses = request_task.await?;
                 // let actions = join_all(
                 //     responses
                 //         .into_iter()

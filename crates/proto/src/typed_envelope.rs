@@ -34,19 +34,37 @@ pub trait RequestMessage: EnvelopedMessage {
 pub trait LspRequestMessage: EnvelopedMessage {
     type Response: EnvelopedMessage;
 
-    fn into_query(self) -> crate::LspQuery;
+    fn to_proto_query(self) -> crate::lsp_query::Request;
+
+    fn response_to_proto_query(response: Self::Response) -> crate::lsp_response2::Response;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct LspRequestId(pub u64);
 
-pub struct LspResponse2<R> {
-    pub server_id: u64,
+// TODO consider lower visibility bounds for all new structs
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct LanguageServerId(pub u64);
+
+impl LspRequestId {
+    pub fn to_proto(&self) -> u64 {
+        self.0
+    }
+}
+
+impl LanguageServerId {
+    pub fn to_proto(&self) -> u64 {
+        self.0
+    }
+}
+
+pub struct ProtoLspResponse<R> {
+    pub server_id: LanguageServerId,
     pub response: R,
 }
 
-impl LspResponse2<Box<dyn AnyTypedEnvelope>> {
-    pub fn into_response<T: LspRequestMessage>(self) -> Result<LspResponse2<T::Response>> {
+impl ProtoLspResponse<Box<dyn AnyTypedEnvelope>> {
+    pub fn into_response<T: LspRequestMessage>(self) -> Result<ProtoLspResponse<T::Response>> {
         let envelope = self
             .response
             .into_any()
@@ -59,7 +77,7 @@ impl LspResponse2<Box<dyn AnyTypedEnvelope>> {
                 )
             })?;
 
-        Ok(LspResponse2 {
+        Ok(ProtoLspResponse {
             server_id: self.server_id,
             response: envelope.payload,
         })

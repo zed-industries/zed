@@ -776,8 +776,21 @@ message MultiLspQuery {
 }
 
 message LspQuery {
+    uint64 lsp_request_id = 1;
     oneof request {
-        GetReferences get_references = 1;
+        GetReferences get_references = 2;
+    }
+}
+
+message LspQueryResponse {
+    uint64 lsp_request_id = 1;
+    repeated LspResponse2 responses = 2;
+}
+
+message LspResponse2 {
+    uint64 server_id = 1;
+    oneof response {
+        GetReferencesResponse get_references_response = 2;
     }
 }
 
