@@ -10,7 +10,7 @@ use language::{
     LspAdapterDelegate,
 };
 use lsp::{CodeActionKind, LanguageServerBinary, LanguageServerName};
-use node_runtime::NodeRuntime;
+use node_runtime::{NodeRuntime, VersionStrategy};
 use project::{Fs, lsp_store::language_server_settings};
 use serde_json::{Value, json};
 use smol::{fs, lock::RwLock, stream::StreamExt};
@@ -588,7 +588,7 @@ impl LspAdapter for TypeScriptLspAdapter {
                 Self::PACKAGE_NAME,
                 &server_path,
                 &container_dir,
-                version.typescript_version.as_str(),
+                VersionStrategy::Latest(version.typescript_version.as_str()),
             )
             .await;
 

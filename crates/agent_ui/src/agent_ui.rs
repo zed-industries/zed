@@ -5,7 +5,6 @@ mod agent_diff;
 mod agent_model_selector;
 mod agent_panel;
 mod buffer_codegen;
-mod burn_mode_tooltip;
 mod context_picker;
 mod context_server_configuration;
 mod context_strip;
@@ -64,6 +63,8 @@ actions!(
         NewTextThread,
         /// Toggles the context picker interface for adding files, symbols, or other context.
         ToggleContextPicker,
+        /// Toggles the menu to create new agent threads.
+        ToggleNewThreadMenu,
         /// Toggles the navigation menu for switching between threads and views.
         ToggleNavigationMenu,
         /// Toggles the options menu for agent settings and preferences.

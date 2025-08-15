@@ -355,10 +355,13 @@ impl LanguageModel for OpenAiCompatibleLanguageModel {
             LanguageModelCompletionError,
         >,
     > {
+        let supports_parallel_tool_call = true;
+        let supports_prompt_cache_key = false;
         let request = into_open_ai(
             request,
             &self.model.name,
-            true,
+            supports_parallel_tool_call,
+            supports_prompt_cache_key,
             self.max_output_tokens(),
             None,
         );

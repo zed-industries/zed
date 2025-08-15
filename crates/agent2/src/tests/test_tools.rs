@@ -7,7 +7,7 @@ use std::future;
 #[derive(JsonSchema, Serialize, Deserialize)]
 pub struct EchoToolInput {
     /// The text to echo.
-    text: String,
+    pub text: String,
 }
 
 pub struct EchoTool;

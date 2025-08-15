@@ -324,7 +324,7 @@ impl FixedWidth for Button {
     /// ```
     ///
     /// This sets the button's width to be exactly 100 pixels.
-    fn width(mut self, width: DefiniteLength) -> Self {
+    fn width(mut self, width: impl Into<DefiniteLength>) -> Self {
         self.base = self.base.width(width);
         self
     }

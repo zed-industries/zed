@@ -29,6 +29,13 @@ pub struct NodeBinaryOptions {
     pub use_paths: Option<(PathBuf, PathBuf)>,
 }
 
+pub enum VersionStrategy<'a> {
+    /// Install if current version doesn't match pinned version
+    Pin(&'a str),
+    /// Install if current version is older than latest version
+    Latest(&'a str),
+}
+
 #[derive(Clone)]
 pub struct NodeRuntime(Arc<Mutex<NodeRuntimeState>>);
 
@@ -286,7 +293,7 @@ impl NodeRuntime {
         package_name: &str,
         local_executable_path: &Path,
         local_package_directory: &Path,
-        latest_version: &str,
+        version_strategy: VersionStrategy<'_>,
     ) -> bool {
         // In the case of the local system not having the package installed,
         // or in the instances where we fail to parse package.json data,
@@ -307,11 +314,21 @@ impl NodeRuntime {
         let Some(installed_version) = Version::parse(&installed_version).log_err() else {
             return true;
         };
-        let Some(latest_version) = Version::parse(latest_version).log_err() else {
-            return true;
-        };
 
-        installed_version < latest_version
+        match version_strategy {
+            VersionStrategy::Pin(pinned_version) => {
+                let Some(pinned_version) = Version::parse(pinned_version).log_err() else {
+                    return true;
+                };
+                installed_version != pinned_version
+            }
+            VersionStrategy::Latest(latest_version) => {
+                let Some(latest_version) = Version::parse(latest_version).log_err() else {
+                    return true;
+                };
+                installed_version < latest_version
+            }
+        }
     }
 }
 

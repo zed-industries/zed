@@ -2062,6 +2062,8 @@ impl Pane {
                 })?
                 .await?;
             } else if can_save_as && is_singleton {
+                let suggested_name =
+                    cx.update(|_window, cx| item.suggested_filename(cx).to_string())?;
                 let new_path = pane.update_in(cx, |pane, window, cx| {
                     pane.activate_item(item_ix, true, true, window, cx);
                     pane.workspace.update(cx, |workspace, cx| {
@@ -2073,7 +2075,7 @@ impl Pane {
                         } else {
                             DirectoryLister::Project(workspace.project().clone())
                         };
-                        workspace.prompt_for_new_path(lister, window, cx)
+                        workspace.prompt_for_new_path(lister, Some(suggested_name), window, cx)
                     })
                 })??;
                 let Some(new_path) = new_path.await.ok().flatten().into_iter().flatten().next()
@@ -2478,8 +2480,19 @@ impl Pane {
                 },
                 |tab, _, _, cx| cx.new(|_| tab.clone()),
             )
-            .drag_over::<DraggedTab>(|tab, _, _, cx| {
-                tab.bg(cx.theme().colors().drop_target_background)
+            .drag_over::<DraggedTab>(move |tab, dragged_tab: &DraggedTab, _, cx| {
+                let mut styled_tab = tab
+                    .bg(cx.theme().colors().drop_target_background)
+                    .border_color(cx.theme().colors().drop_target_border)
+                    .border_0();
+
+                if ix < dragged_tab.ix {
+                    styled_tab = styled_tab.border_l_2();
+                } else if ix > dragged_tab.ix {
+                    styled_tab = styled_tab.border_r_2();
+                }
+
+                styled_tab
             })
             .drag_over::<DraggedSelection>(|tab, _, _, cx| {
                 tab.bg(cx.theme().colors().drop_target_background)

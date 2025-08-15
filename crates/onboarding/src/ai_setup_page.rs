@@ -188,6 +188,11 @@ fn render_llm_provider_card(
                                 workspace
                                     .update(cx, |workspace, cx| {
                                         workspace.toggle_modal(window, cx, |window, cx| {
+                                            telemetry::event!(
+                                                "Welcome AI Modal Opened",
+                                                provider = provider.name().0,
+                                            );
+
                                             let modal = AiConfigurationModal::new(
                                                 provider.clone(),
                                                 window,
@@ -245,16 +250,25 @@ pub(crate) fn render_ai_setup_page(
                     ToggleState::Selected
                 },
                 |&toggle_state, _, cx| {
+                    let enabled = match toggle_state {
+                        ToggleState::Indeterminate => {
+                            return;
+                        }
+                        ToggleState::Unselected => true,
+                        ToggleState::Selected => false,
+                    };
+
+                    telemetry::event!(
+                        "Welcome AI Enabled",
+                        toggle = if enabled { "on" } else { "off" },
+                    );
+
                     let fs = <dyn Fs>::global(cx);
                     update_settings_file::<DisableAiSettings>(
                         fs,
                         cx,
                         move |ai_settings: &mut Option<bool>, _| {
-                            *ai_settings = match toggle_state {
-                                ToggleState::Indeterminate => None,
-                                ToggleState::Unselected => Some(true),
-                                ToggleState::Selected => Some(false),
-                            };
+                            *ai_settings = Some(enabled);
                         },
                     );
                 },

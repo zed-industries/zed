@@ -654,6 +654,10 @@ impl Item for Editor {
         }
     }
 
+    fn suggested_filename(&self, cx: &App) -> SharedString {
+        self.buffer.read(cx).title(cx).to_string().into()
+    }
+
     fn tab_icon(&self, _: &Window, cx: &App) -> Option<Icon> {
         ItemSettings::get_global(cx)
             .file_icons
@@ -1033,6 +1037,10 @@ impl Item for Editor {
             }
 
             EditorEvent::SelectionsChanged { local } if *local => {
+                f(ItemEvent::UpdateBreadcrumbs);
+            }
+
+            EditorEvent::BreadcrumbsChanged => {
                 f(ItemEvent::UpdateBreadcrumbs);
             }
 
