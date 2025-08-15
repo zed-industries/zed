@@ -3,7 +3,7 @@ use crate::{
     SearchOption, SearchOptions, SelectNextMatch, SelectPreviousMatch, ToggleCaseSensitive,
     ToggleIncludeIgnored, ToggleRegex, ToggleReplace, ToggleWholeWord,
     buffer_search::Deploy,
-    search_bar::{input_base_styles, render_action_button, render_text_input},
+    search_bar::{ActionButtonState, input_base_styles, render_action_button, render_text_input},
 };
 use anyhow::Context as _;
 use collections::HashMap;
@@ -1985,7 +1985,10 @@ impl Render for ProjectSearchBar {
             .child(render_action_button(
                 "project-search-nav-button",
                 IconName::ChevronLeft,
-                search.active_match_index.is_some(),
+                search
+                    .active_match_index
+                    .is_none()
+                    .then_some(ActionButtonState::Disabled),
                 "Select Previous Match",
                 &SelectPreviousMatch,
                 query_focus.clone(),
@@ -1993,7 +1996,10 @@ impl Render for ProjectSearchBar {
             .child(render_action_button(
                 "project-search-nav-button",
                 IconName::ChevronRight,
-                search.active_match_index.is_some(),
+                search
+                    .active_match_index
+                    .is_none()
+                    .then_some(ActionButtonState::Disabled),
                 "Select Next Match",
                 &SelectNextMatch,
                 query_focus,
@@ -2054,7 +2060,7 @@ impl Render for ProjectSearchBar {
                 self.active_project_search
                     .as_ref()
                     .map(|search| search.read(cx).replace_enabled)
-                    .unwrap_or_default(),
+                    .and_then(|enabled| enabled.then_some(ActionButtonState::Toggled)),
                 "Toggle Replace",
                 &ToggleReplace,
                 focus_handle.clone(),
@@ -2079,7 +2085,7 @@ impl Render for ProjectSearchBar {
                 .child(render_action_button(
                     "project-search-replace-button",
                     IconName::ReplaceNext,
-                    true,
+                    Default::default(),
                     "Replace Next Match",
                     &ReplaceNext,
                     focus_handle.clone(),
@@ -2087,7 +2093,7 @@ impl Render for ProjectSearchBar {
                 .child(render_action_button(
                     "project-search-replace-button",
                     IconName::ReplaceAll,
-                    true,
+                    Default::default(),
                     "Replace All Matches",
                     &ReplaceAll,
                     focus_handle,

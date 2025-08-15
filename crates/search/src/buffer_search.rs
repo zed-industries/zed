@@ -4,7 +4,7 @@ use crate::{
     FocusSearch, NextHistoryQuery, PreviousHistoryQuery, ReplaceAll, ReplaceNext, SearchOption,
     SearchOptions, SelectAllMatches, SelectNextMatch, SelectPreviousMatch, ToggleCaseSensitive,
     ToggleRegex, ToggleReplace, ToggleSelection, ToggleWholeWord,
-    search_bar::{input_base_styles, render_action_button, render_text_input},
+    search_bar::{ActionButtonState, input_base_styles, render_action_button, render_text_input},
 };
 use any_vec::AnyVec;
 use anyhow::Context as _;
@@ -240,7 +240,7 @@ impl Render for BufferSearchBar {
                 this.child(render_action_button(
                     "buffer-search-bar-toggle",
                     IconName::Replace,
-                    self.replace_enabled,
+                    self.replace_enabled.then_some(ActionButtonState::Toggled),
                     "Toggle Replace",
                     &ToggleReplace,
                     focus_handle.clone(),
@@ -285,7 +285,9 @@ impl Render for BufferSearchBar {
                     .child(render_action_button(
                         "buffer-search-nav-button",
                         ui::IconName::ChevronLeft,
-                        self.active_match_index.is_some(),
+                        self.active_match_index
+                            .is_none()
+                            .then_some(ActionButtonState::Disabled),
                         "Select Previous Match",
                         &SelectPreviousMatch,
                         query_focus.clone(),
@@ -293,7 +295,9 @@ impl Render for BufferSearchBar {
                     .child(render_action_button(
                         "buffer-search-nav-button",
                         ui::IconName::ChevronRight,
-                        self.active_match_index.is_some(),
+                        self.active_match_index
+                            .is_none()
+                            .then_some(ActionButtonState::Disabled),
                         "Select Next Match",
                         &SelectNextMatch,
                         query_focus.clone(),
@@ -313,7 +317,7 @@ impl Render for BufferSearchBar {
                 el.child(render_action_button(
                     "buffer-search-nav-button",
                     IconName::SelectAll,
-                    true,
+                    Default::default(),
                     "Select All Matches",
                     &SelectAllMatches,
                     query_focus,
@@ -324,7 +328,7 @@ impl Render for BufferSearchBar {
                 el.child(render_action_button(
                     "buffer-search",
                     IconName::Close,
-                    true,
+                    Default::default(),
                     "Close Search Bar",
                     &Dismiss,
                     focus_handle.clone(),
@@ -352,7 +356,7 @@ impl Render for BufferSearchBar {
                     .child(render_action_button(
                         "buffer-search-replace-button",
                         IconName::ReplaceNext,
-                        true,
+                        Default::default(),
                         "Replace Next Match",
                         &ReplaceNext,
                         focus_handle.clone(),
@@ -360,7 +364,7 @@ impl Render for BufferSearchBar {
                     .child(render_action_button(
                         "buffer-search-replace-button",
                         IconName::ReplaceAll,
-                        true,
+                        Default::default(),
                         "Replace All Matches",
                         &ReplaceAll,
                         focus_handle,
@@ -394,7 +398,7 @@ impl Render for BufferSearchBar {
                     div.child(h_flex().absolute().right_0().child(render_action_button(
                         "buffer-search",
                         IconName::Close,
-                        true,
+                        Default::default(),
                         "Close Search Bar",
                         &Dismiss,
                         focus_handle.clone(),
