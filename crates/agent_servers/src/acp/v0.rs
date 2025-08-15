@@ -5,7 +5,7 @@ use anyhow::{Context as _, Result, anyhow};
 use futures::channel::oneshot;
 use gpui::{AppContext as _, AsyncApp, Entity, Task, WeakEntity};
 use project::Project;
-use std::{cell::RefCell, path::Path, rc::Rc};
+use std::{any::Any, cell::RefCell, path::Path, rc::Rc};
 use ui::App;
 use util::ResultExt as _;
 
@@ -423,7 +423,7 @@ impl AgentConnection for AcpConnection {
         self: Rc<Self>,
         project: Entity<Project>,
         _cwd: &Path,
-        cx: &mut AsyncApp,
+        cx: &mut App,
     ) -> Task<Result<Entity<AcpThread>>> {
         let task = self.connection.request_any(
             acp_old::InitializeParams {
@@ -467,6 +467,7 @@ impl AgentConnection for AcpConnection {
 
     fn prompt(
         &self,
+        _id: Option<acp_thread::UserMessageId>,
         params: acp::PromptRequest,
         cx: &mut App,
     ) -> Task<Result<acp::PromptResponse>> {
@@ -505,5 +506,9 @@ impl AgentConnection for AcpConnection {
                 anyhow::Ok(())
             })
             .detach_and_log_err(cx)
+    }
+
+    fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
+        self
     }
 }

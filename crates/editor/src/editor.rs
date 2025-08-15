@@ -247,6 +247,24 @@ pub type RenderDiffHunkControlsFn = Arc<
     ) -> AnyElement,
 >;
 
+enum ReportEditorEvent {
+    Saved { auto_saved: bool },
+    EditorOpened,
+    ZetaTosClicked,
+    Closed,
+}
+
+impl ReportEditorEvent {
+    pub fn event_type(&self) -> &'static str {
+        match self {
+            Self::Saved { .. } => "Editor Saved",
+            Self::EditorOpened => "Editor Opened",
+            Self::ZetaTosClicked => "Edit Prediction Provider ToS Clicked",
+            Self::Closed => "Editor Closed",
+        }
+    }
+}
+
 struct InlineValueCache {
     enabled: bool,
     inlays: Vec<InlayId>,
@@ -2322,7 +2340,7 @@ impl Editor {
         }
 
         if editor.mode.is_full() {
-            editor.report_editor_event("Editor Opened", None, cx);
+            editor.report_editor_event(ReportEditorEvent::EditorOpened, None, cx);
         }
 
         editor
@@ -9121,7 +9139,7 @@ impl Editor {
                     .on_mouse_down(MouseButton::Left, |_, window, _| window.prevent_default())
                     .on_click(cx.listener(|this, _event, window, cx| {
                         cx.stop_propagation();
-                        this.report_editor_event("Edit Prediction Provider ToS Clicked", None, cx);
+                        this.report_editor_event(ReportEditorEvent::ZetaTosClicked, None, cx);
                         window.dispatch_action(
                             zed_actions::OpenZedPredictOnboarding.boxed_clone(),
                             cx,
@@ -12155,6 +12173,8 @@ impl Editor {
         let clipboard_text = Cow::Borrowed(text);
 
         self.transact(window, cx, |this, window, cx| {
+            let had_active_edit_prediction = this.has_active_edit_prediction();
+
             if let Some(mut clipboard_selections) = clipboard_selections {
                 let old_selections = this.selections.all::<usize>(cx);
                 let all_selections_were_entire_line =
@@ -12227,6 +12247,11 @@ impl Editor {
             } else {
                 this.insert(&clipboard_text, window, cx);
             }
+
+            let trigger_in_words =
+                this.show_edit_predictions_in_menu() || !had_active_edit_prediction;
+
+            this.trigger_completion_on_input(&text, trigger_in_words, window, cx);
         });
     }
 
@@ -13584,7 +13609,7 @@ impl Editor {
 
     pub fn split_selection_into_lines(
         &mut self,
-        _: &SplitSelectionIntoLines,
+        action: &SplitSelectionIntoLines,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -13601,8 +13626,21 @@ impl Editor {
             let buffer = self.buffer.read(cx).read(cx);
             for selection in selections {
                 for row in selection.start.row..selection.end.row {
-                    let cursor = Point::new(row, buffer.line_len(MultiBufferRow(row)));
-                    new_selection_ranges.push(cursor..cursor);
+                    let line_start = Point::new(row, 0);
+                    let line_end = Point::new(row, buffer.line_len(MultiBufferRow(row)));
+
+                    if action.keep_selections {
+                        // Keep the selection range for each line
+                        let selection_start = if row == selection.start.row {
+                            selection.start
+                        } else {
+                            line_start
+                        };
+                        new_selection_ranges.push(selection_start..line_end);
+                    } else {
+                        // Collapse to cursor at end of line
+                        new_selection_ranges.push(line_end..line_end);
+                    }
                 }
 
                 let is_multiline_selection = selection.start.row != selection.end.row;
@@ -13610,7 +13648,16 @@ impl Editor {
                 // so this action feels more ergonomic when paired with other selection operations
                 let should_skip_last = is_multiline_selection && selection.end.column == 0;
                 if !should_skip_last {
-                    new_selection_ranges.push(selection.end..selection.end);
+                    if action.keep_selections {
+                        if is_multiline_selection {
+                            let line_start = Point::new(selection.end.row, 0);
+                            new_selection_ranges.push(line_start..selection.end);
+                        } else {
+                            new_selection_ranges.push(selection.start..selection.end);
+                        }
+                    } else {
+                        new_selection_ranges.push(selection.end..selection.end);
+                    }
                 }
             }
         }
@@ -15814,19 +15861,25 @@ impl Editor {
 
                 let tab_kind = match kind {
                     Some(GotoDefinitionKind::Implementation) => "Implementations",
-                    _ => "Definitions",
+                    Some(GotoDefinitionKind::Symbol) | None => "Definitions",
+                    Some(GotoDefinitionKind::Declaration) => "Declarations",
+                    Some(GotoDefinitionKind::Type) => "Types",
                 };
                 let title = editor
                     .update_in(acx, |_, _, cx| {
-                        let origin = locations.first().unwrap();
-                        let buffer = origin.buffer.read(cx);
-                        format!(
-                            "{} for {}",
-                            tab_kind,
-                            buffer
-                                .text_for_range(origin.range.clone())
-                                .collect::<String>()
-                        )
+                        let target = locations
+                            .iter()
+                            .map(|location| {
+                                location
+                                    .buffer
+                                    .read(cx)
+                                    .text_for_range(location.range.clone())
+                                    .collect::<String>()
+                            })
+                            .unique()
+                            .take(3)
+                            .join(", ");
+                        format!("{tab_kind} for {target}")
                     })
                     .context("buffer title")?;
 
@@ -16022,19 +16075,19 @@ impl Editor {
             }
 
             workspace.update_in(cx, |workspace, window, cx| {
-                let title = locations
-                    .first()
-                    .as_ref()
+                let target = locations
+                    .iter()
                     .map(|location| {
-                        let buffer = location.buffer.read(cx);
-                        format!(
-                            "References to `{}`",
-                            buffer
-                                .text_for_range(location.range.clone())
-                                .collect::<String>()
-                        )
+                        location
+                            .buffer
+                            .read(cx)
+                            .text_for_range(location.range.clone())
+                            .collect::<String>()
                     })
-                    .unwrap();
+                    .unique()
+                    .take(3)
+                    .join(", ");
+                let title = format!("References to {target}");
                 Self::open_locations_in_multibuffer(
                     workspace,
                     locations,
@@ -20179,6 +20232,7 @@ impl Editor {
         );
 
         let old_cursor_shape = self.cursor_shape;
+        let old_show_breadcrumbs = self.show_breadcrumbs;
 
         {
             let editor_settings = EditorSettings::get_global(cx);
@@ -20190,6 +20244,10 @@ impl Editor {
 
         if old_cursor_shape != self.cursor_shape {
             cx.emit(EditorEvent::CursorShapeChanged);
+        }
+
+        if old_show_breadcrumbs != self.show_breadcrumbs {
+            cx.emit(EditorEvent::BreadcrumbsChanged);
         }
 
         let project_settings = ProjectSettings::get_global(cx);
@@ -20544,7 +20602,7 @@ impl Editor {
 
     fn report_editor_event(
         &self,
-        event_type: &'static str,
+        reported_event: ReportEditorEvent,
         file_extension: Option<String>,
         cx: &App,
     ) {
@@ -20578,15 +20636,30 @@ impl Editor {
             .show_edit_predictions;
 
         let project = project.read(cx);
-        telemetry::event!(
-            event_type,
-            file_extension,
-            vim_mode,
-            copilot_enabled,
-            copilot_enabled_for_language,
-            edit_predictions_provider,
-            is_via_ssh = project.is_via_ssh(),
-        );
+        let event_type = reported_event.event_type();
+
+        if let ReportEditorEvent::Saved { auto_saved } = reported_event {
+            telemetry::event!(
+                event_type,
+                type = if auto_saved {"autosave"} else {"manual"},
+                file_extension,
+                vim_mode,
+                copilot_enabled,
+                copilot_enabled_for_language,
+                edit_predictions_provider,
+                is_via_ssh = project.is_via_ssh(),
+            );
+        } else {
+            telemetry::event!(
+                event_type,
+                file_extension,
+                vim_mode,
+                copilot_enabled,
+                copilot_enabled_for_language,
+                edit_predictions_provider,
+                is_via_ssh = project.is_via_ssh(),
+            );
+        };
     }
 
     /// Copy the highlighted chunks to the clipboard as JSON. The format is an array of lines,
@@ -22798,6 +22871,7 @@ pub enum EditorEvent {
     },
     Reloaded,
     CursorShapeChanged,
+    BreadcrumbsChanged,
     PushedToNavHistory {
         anchor: Anchor,
         is_deactivate: bool,

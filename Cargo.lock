@@ -6,30 +6,63 @@ version = 4
 name = "acp_thread"
 version = "0.1.0"
 dependencies = [
+ "action_log",
+ "agent",
  "agent-client-protocol",
  "anyhow",
- "assistant_tool",
  "buffer_diff",
+ "collections",
  "editor",
  "env_logger 0.11.8",
+ "file_icons",
  "futures 0.3.31",
  "gpui",
  "indoc",
  "itertools 0.14.0",
  "language",
- "language_model",
  "markdown",
  "parking_lot",
  "project",
+ "prompt_store",
  "rand 0.8.5",
  "serde",
  "serde_json",
  "settings",
  "smol",
  "tempfile",
+ "terminal",
  "ui",
+ "url",
  "util",
+ "uuid",
+ "watch",
  "workspace-hack",
+]
+
+[[package]]
+name = "action_log"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "buffer_diff",
+ "clock",
+ "collections",
+ "ctor",
+ "futures 0.3.31",
+ "gpui",
+ "indoc",
+ "language",
+ "log",
+ "pretty_assertions",
+ "project",
+ "rand 0.8.5",
+ "serde_json",
+ "settings",
+ "text",
+ "util",
+ "watch",
+ "workspace-hack",
+ "zlog",
 ]
 
 [[package]]
@@ -84,6 +117,7 @@ dependencies = [
 name = "agent"
 version = "0.1.0"
 dependencies = [
+ "action_log",
  "agent_settings",
  "anyhow",
  "assistant_context",
@@ -138,9 +172,9 @@ dependencies = [
 
 [[package]]
 name = "agent-client-protocol"
-version = "0.0.23"
+version = "0.0.24"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3fad72b7b8ee4331b3a4c8d43c107e982a4725564b4ee658ae5c4e79d2b486e8"
+checksum = "8fd68bbbef8e424fb8a605c5f0b00c360f682c4528b0a5feb5ec928aaf5ce28e"
 dependencies = [
  "anyhow",
  "futures 0.3.31",
@@ -156,23 +190,29 @@ name = "agent2"
 version = "0.1.0"
 dependencies = [
  "acp_thread",
+ "action_log",
  "agent-client-protocol",
  "agent_servers",
  "agent_settings",
  "anyhow",
  "assistant_tool",
  "assistant_tools",
+ "chrono",
  "client",
  "clock",
  "cloud_llm_client",
  "collections",
+ "context_server",
  "ctor",
+ "editor",
  "env_logger 0.11.8",
  "fs",
  "futures 0.3.31",
  "gpui",
  "gpui_tokio",
  "handlebars 4.5.0",
+ "html_to_markdown",
+ "http_client",
  "indoc",
  "itertools 0.14.0",
  "language",
@@ -180,7 +220,9 @@ dependencies = [
  "language_models",
  "log",
  "lsp",
+ "open",
  "paths",
+ "portable-pty",
  "pretty_assertions",
  "project",
  "prompt_store",
@@ -191,12 +233,22 @@ dependencies = [
  "serde_json",
  "settings",
  "smol",
+ "task",
+ "tempfile",
+ "terminal",
+ "text",
+ "theme",
+ "tree-sitter-rust",
  "ui",
+ "unindent",
  "util",
  "uuid",
  "watch",
+ "web_search",
+ "which 6.0.3",
  "workspace-hack",
  "worktree",
+ "zlog",
 ]
 
 [[package]]
@@ -261,6 +313,7 @@ name = "agent_ui"
 version = "0.1.0"
 dependencies = [
  "acp_thread",
+ "action_log",
  "agent",
  "agent-client-protocol",
  "agent2",
@@ -342,6 +395,7 @@ dependencies = [
  "ui",
  "ui_input",
  "unindent",
+ "url",
  "urlencoding",
  "util",
  "uuid",
@@ -842,13 +896,13 @@ dependencies = [
 name = "assistant_tool"
 version = "0.1.0"
 dependencies = [
+ "action_log",
  "anyhow",
  "buffer_diff",
  "clock",
  "collections",
  "ctor",
  "derive_more 0.99.19",
- "futures 0.3.31",
  "gpui",
  "icons",
  "indoc",
@@ -865,7 +919,6 @@ dependencies = [
  "settings",
  "text",
  "util",
- "watch",
  "workspace",
  "workspace-hack",
  "zlog",
@@ -875,6 +928,7 @@ dependencies = [
 name = "assistant_tools"
 version = "0.1.0"
 dependencies = [
+ "action_log",
  "agent_settings",
  "anyhow",
  "assistant_tool",
@@ -1250,9 +1304,9 @@ checksum = "8b75356056920673b02621b35afd0f7dda9306d03c79a30f5c56c44cf256e3de"
 
 [[package]]
 name = "async-trait"
-version = "0.1.88"
+version = "0.1.89"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e539d3fca749fcee5236ab05e93a52867dd549cc157c8cb7f99595f3cedffdb5"
+checksum = "9035ad2d096bed7955a320ee7e2230574d28fd3c3a0f186cbea1ff3c7eed5dbb"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -6397,6 +6451,7 @@ dependencies = [
  "log",
  "parking_lot",
  "pretty_assertions",
+ "rand 0.8.5",
  "regex",
  "rope",
  "schemars",
@@ -7827,6 +7882,12 @@ checksum = "589533453244b0995c858700322199b2becb13b627df2851f64a2775d024abcf"
 dependencies = [
  "windows-sys 0.59.0",
 ]
+
+[[package]]
+name = "hound"
+version = "3.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "62adaabb884c94955b19907d60019f4e145d091c75345379e70d1ee696f7854f"
 
 [[package]]
 name = "html5ever"
@@ -9656,6 +9717,7 @@ dependencies = [
  "objc",
  "parking_lot",
  "postage",
+ "rodio",
  "scap",
  "serde",
  "serde_json",
@@ -11101,14 +11163,13 @@ dependencies = [
  "ai_onboarding",
  "anyhow",
  "client",
- "command_palette_hooks",
  "component",
  "db",
  "documented",
  "editor",
- "feature_flags",
  "fs",
  "fuzzy",
+ "git",
  "gpui",
  "itertools 0.14.0",
  "language",
@@ -11120,6 +11181,7 @@ dependencies = [
  "schemars",
  "serde",
  "settings",
+ "telemetry",
  "theme",
  "ui",
  "util",
@@ -11195,6 +11257,7 @@ dependencies = [
  "anyhow",
  "futures 0.3.31",
  "http_client",
+ "log",
  "schemars",
  "serde",
  "serde_json",
@@ -13523,6 +13586,7 @@ dependencies = [
 name = "remote_server"
 version = "0.1.0"
 dependencies = [
+ "action_log",
  "anyhow",
  "askpass",
  "assistant_tool",
@@ -13915,6 +13979,7 @@ checksum = "e40ecf59e742e03336be6a3d53755e789fd05a059fa22dfa0ed624722319e183"
 dependencies = [
  "cpal",
  "dasp_sample",
+ "hound",
  "num-rational",
  "symphonia",
  "tracing",
@@ -14997,8 +15062,10 @@ dependencies = [
  "ui",
  "ui_input",
  "util",
+ "vim",
  "workspace",
  "workspace-hack",
+ "zed_actions",
 ]
 
 [[package]]
@@ -17979,6 +18046,7 @@ dependencies = [
  "command_palette_hooks",
  "db",
  "editor",
+ "env_logger 0.11.8",
  "futures 0.3.31",
  "git_ui",
  "gpui",
@@ -18831,33 +18899,6 @@ name = "weezl"
 version = "0.1.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "53a85b86a771b1c87058196170769dd264f66c0782acf1ae6cc51bfd64b39082"
-
-[[package]]
-name = "welcome"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "client",
- "component",
- "db",
- "documented",
- "editor",
- "fuzzy",
- "gpui",
- "install_cli",
- "language",
- "picker",
- "project",
- "serde",
- "settings",
- "telemetry",
- "ui",
- "util",
- "vim_mode_setting",
- "workspace",
- "workspace-hack",
- "zed_actions",
-]
 
 [[package]]
 name = "which"
@@ -20244,7 +20285,7 @@ dependencies = [
 [[package]]
 name = "xim"
 version = "0.4.0"
-source = "git+https://github.com/XDeme1/xim-rs?rev=d50d461764c2213655cd9cf65a0ea94c70d3c4fd#d50d461764c2213655cd9cf65a0ea94c70d3c4fd"
+source = "git+https://github.com/zed-industries/xim-rs?rev=c0a70c1bd2ce197364216e5e818a2cb3adb99a8d#c0a70c1bd2ce197364216e5e818a2cb3adb99a8d"
 dependencies = [
  "ahash 0.8.11",
  "hashbrown 0.14.5",
@@ -20257,7 +20298,7 @@ dependencies = [
 [[package]]
 name = "xim-ctext"
 version = "0.3.0"
-source = "git+https://github.com/XDeme1/xim-rs?rev=d50d461764c2213655cd9cf65a0ea94c70d3c4fd#d50d461764c2213655cd9cf65a0ea94c70d3c4fd"
+source = "git+https://github.com/zed-industries/xim-rs?rev=c0a70c1bd2ce197364216e5e818a2cb3adb99a8d#c0a70c1bd2ce197364216e5e818a2cb3adb99a8d"
 dependencies = [
  "encoding_rs",
 ]
@@ -20265,7 +20306,7 @@ dependencies = [
 [[package]]
 name = "xim-parser"
 version = "0.2.1"
-source = "git+https://github.com/XDeme1/xim-rs?rev=d50d461764c2213655cd9cf65a0ea94c70d3c4fd#d50d461764c2213655cd9cf65a0ea94c70d3c4fd"
+source = "git+https://github.com/zed-industries/xim-rs?rev=c0a70c1bd2ce197364216e5e818a2cb3adb99a8d#c0a70c1bd2ce197364216e5e818a2cb3adb99a8d"
 dependencies = [
  "bitflags 2.9.0",
 ]
@@ -20473,7 +20514,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.200.0"
+version = "0.201.0"
 dependencies = [
  "activity_indicator",
  "agent",
@@ -20543,6 +20584,7 @@ dependencies = [
  "language_tools",
  "languages",
  "libc",
+ "livekit_client",
  "log",
  "markdown",
  "markdown_preview",
@@ -20613,7 +20655,6 @@ dependencies = [
  "watch",
  "web_search",
  "web_search_providers",
- "welcome",
  "windows 0.61.1",
  "winresource",
  "workspace",
@@ -20637,7 +20678,7 @@ dependencies = [
 
 [[package]]
 name = "zed_emmet"
-version = "0.0.4"
+version = "0.0.6"
 dependencies = [
  "zed_extension_api 0.1.0",
 ]
@@ -20876,6 +20917,7 @@ dependencies = [
  "menu",
  "postage",
  "project",
+ "rand 0.8.5",
  "regex",
  "release_channel",
  "reqwest_client",

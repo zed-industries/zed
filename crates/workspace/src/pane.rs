@@ -1829,6 +1829,7 @@ impl Pane {
         let mode = self.nav_history.mode();
         self.nav_history.set_mode(NavigationMode::ClosingItem);
         item.deactivated(window, cx);
+        item.on_removed(cx);
         self.nav_history.set_mode(mode);
 
         if self.is_active_preview_item(item.item_id()) {
@@ -2477,8 +2478,19 @@ impl Pane {
                 },
                 |tab, _, _, cx| cx.new(|_| tab.clone()),
             )
-            .drag_over::<DraggedTab>(|tab, _, _, cx| {
-                tab.bg(cx.theme().colors().drop_target_background)
+            .drag_over::<DraggedTab>(move |tab, dragged_tab: &DraggedTab, _, cx| {
+                let mut styled_tab = tab
+                    .bg(cx.theme().colors().drop_target_background)
+                    .border_color(cx.theme().colors().drop_target_border)
+                    .border_0();
+
+                if ix < dragged_tab.ix {
+                    styled_tab = styled_tab.border_l_2();
+                } else if ix > dragged_tab.ix {
+                    styled_tab = styled_tab.border_r_2();
+                }
+
+                styled_tab
             })
             .drag_over::<DraggedSelection>(|tab, _, _, cx| {
                 tab.bg(cx.theme().colors().drop_target_background)

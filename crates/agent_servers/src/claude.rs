@@ -6,6 +6,7 @@ use context_server::listener::McpServerTool;
 use project::Project;
 use settings::SettingsStore;
 use smol::process::Child;
+use std::any::Any;
 use std::cell::RefCell;
 use std::fmt::Display;
 use std::path::Path;
@@ -74,7 +75,7 @@ impl AgentConnection for ClaudeAgentConnection {
         self: Rc<Self>,
         project: Entity<Project>,
         cwd: &Path,
-        cx: &mut AsyncApp,
+        cx: &mut App,
     ) -> Task<Result<Entity<AcpThread>>> {
         let cwd = cwd.to_owned();
         cx.spawn(async move |cx| {
@@ -210,6 +211,7 @@ impl AgentConnection for ClaudeAgentConnection {
 
     fn prompt(
         &self,
+        _id: Option<acp_thread::UserMessageId>,
         params: acp::PromptRequest,
         cx: &mut App,
     ) -> Task<Result<acp::PromptResponse>> {
@@ -287,6 +289,10 @@ impl AgentConnection for ClaudeAgentConnection {
                 request: ControlRequest::Interrupt,
             })
             .log_err();
+    }
+
+    fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
+        self
     }
 }
 
@@ -423,7 +429,7 @@ impl ClaudeAgentSession {
                             if !turn_state.borrow().is_cancelled() {
                                 thread
                                     .update(cx, |thread, cx| {
-                                        thread.push_user_content_block(text.into(), cx)
+                                        thread.push_user_content_block(None, text.into(), cx)
                                     })
                                     .log_err();
                             }

@@ -8,7 +8,7 @@ use collections::HashMap;
 use futures::future::BoxFuture;
 use futures::{AsyncWriteExt, FutureExt as _, select_biased};
 use git2::BranchType;
-use gpui::{AppContext as _, AsyncApp, BackgroundExecutor, SharedString};
+use gpui::{AppContext as _, AsyncApp, BackgroundExecutor, SharedString, Task};
 use parking_lot::Mutex;
 use rope::Rope;
 use schemars::JsonSchema;
@@ -321,7 +321,7 @@ pub trait GitRepository: Send + Sync {
 
     fn merge_message(&self) -> BoxFuture<'_, Option<String>>;
 
-    fn status(&self, path_prefixes: &[RepoPath]) -> BoxFuture<'_, Result<GitStatus>>;
+    fn status(&self, path_prefixes: &[RepoPath]) -> Task<Result<GitStatus>>;
 
     fn branches(&self) -> BoxFuture<'_, Result<Vec<Branch>>>;
 
@@ -382,9 +382,9 @@ pub trait GitRepository: Send + Sync {
         &self,
         paths: Vec<RepoPath>,
         env: Arc<HashMap<String, String>>,
-    ) -> BoxFuture<Result<()>>;
+    ) -> BoxFuture<'_, Result<()>>;
 
-    fn stash_pop(&self, env: Arc<HashMap<String, String>>) -> BoxFuture<Result<()>>;
+    fn stash_pop(&self, env: Arc<HashMap<String, String>>) -> BoxFuture<'_, Result<()>>;
 
     fn push(
         &self,
@@ -954,25 +954,27 @@ impl GitRepository for RealGitRepository {
             .boxed()
     }
 
-    fn status(&self, path_prefixes: &[RepoPath]) -> BoxFuture<'_, Result<GitStatus>> {
+    fn status(&self, path_prefixes: &[RepoPath]) -> Task<Result<GitStatus>> {
         let git_binary_path = self.git_binary_path.clone();
-        let working_directory = self.working_directory();
-        let path_prefixes = path_prefixes.to_owned();
-        self.executor
-            .spawn(async move {
-                let output = new_std_command(&git_binary_path)
-                    .current_dir(working_directory?)
-                    .args(git_status_args(&path_prefixes))
-                    .output()?;
-                if output.status.success() {
-                    let stdout = String::from_utf8_lossy(&output.stdout);
-                    stdout.parse()
-                } else {
-                    let stderr = String::from_utf8_lossy(&output.stderr);
-                    anyhow::bail!("git status failed: {stderr}");
-                }
-            })
-            .boxed()
+        let working_directory = match self.working_directory() {
+            Ok(working_directory) => working_directory,
+            Err(e) => return Task::ready(Err(e)),
+        };
+        let args = git_status_args(&path_prefixes);
+        log::debug!("Checking for git status in {path_prefixes:?}");
+        self.executor.spawn(async move {
+            let output = new_std_command(&git_binary_path)
+                .current_dir(working_directory)
+                .args(args)
+                .output()?;
+            if output.status.success() {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                stdout.parse()
+            } else {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                anyhow::bail!("git status failed: {stderr}");
+            }
+        })
     }
 
     fn branches(&self) -> BoxFuture<'_, Result<Vec<Branch>>> {
@@ -1202,7 +1204,7 @@ impl GitRepository for RealGitRepository {
         &self,
         paths: Vec<RepoPath>,
         env: Arc<HashMap<String, String>>,
-    ) -> BoxFuture<Result<()>> {
+    ) -> BoxFuture<'_, Result<()>> {
         let working_directory = self.working_directory();
         self.executor
             .spawn(async move {
@@ -1226,7 +1228,7 @@ impl GitRepository for RealGitRepository {
             .boxed()
     }
 
-    fn stash_pop(&self, env: Arc<HashMap<String, String>>) -> BoxFuture<Result<()>> {
+    fn stash_pop(&self, env: Arc<HashMap<String, String>>) -> BoxFuture<'_, Result<()>> {
         let working_directory = self.working_directory();
         self.executor
             .spawn(async move {

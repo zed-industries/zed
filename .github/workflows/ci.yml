@@ -718,7 +718,7 @@ jobs:
     timeout-minutes: 60
     runs-on: github-8vcpu-ubuntu-2404
     if: |
-      ( startsWith(github.ref, 'refs/tags/v')
+      false && ( startsWith(github.ref, 'refs/tags/v')
       || contains(github.event.pull_request.labels.*.name, 'run-bundling') )
     needs: [linux_tests]
     name: Build Zed on FreeBSD

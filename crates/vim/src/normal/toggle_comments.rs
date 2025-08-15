@@ -14,7 +14,7 @@ impl Vim {
         cx: &mut Context<Self>,
     ) {
         self.stop_recording(cx);
-        self.update_editor(window, cx, |_, editor, window, cx| {
+        self.update_editor(cx, |_, editor, cx| {
             let text_layout_details = editor.text_layout_details(window);
             editor.transact(window, cx, |editor, window, cx| {
                 let mut selection_starts: HashMap<_, _> = Default::default();
@@ -51,7 +51,7 @@ impl Vim {
         cx: &mut Context<Self>,
     ) {
         self.stop_recording(cx);
-        self.update_editor(window, cx, |_, editor, window, cx| {
+        self.update_editor(cx, |_, editor, cx| {
             editor.transact(window, cx, |editor, window, cx| {
                 let mut original_positions: HashMap<_, _> = Default::default();
                 editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {

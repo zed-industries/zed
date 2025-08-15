@@ -28,7 +28,9 @@
     "edit_prediction_provider": "zed"
   },
   // The name of a font to use for rendering text in the editor
-  "buffer_font_family": "Zed Plex Mono",
+  // ".ZedMono" currently aliases to Lilex
+  // but this may change in the future.
+  "buffer_font_family": ".ZedMono",
   // Set the buffer text's font fallbacks, this will be merged with
   // the platform's default fallbacks.
   "buffer_font_fallbacks": null,
@@ -54,7 +56,9 @@
   "buffer_line_height": "comfortable",
   // The name of a font to use for rendering text in the UI
   // You can set this to ".SystemUIFont" to use the system font
-  "ui_font_family": "Zed Plex Sans",
+  // ".ZedSans" currently aliases to "IBM Plex Sans", but this may
+  // change in the future
+  "ui_font_family": ".ZedSans",
   // Set the UI's font fallbacks, this will be merged with the platform's
   // default font fallbacks.
   "ui_font_fallbacks": null,
@@ -82,10 +86,10 @@
   // Layout mode of the bottom dock. Defaults to "contained"
   //   choices: contained, full, left_aligned, right_aligned
   "bottom_dock_layout": "contained",
-  // The direction that you want to split panes horizontally. Defaults to "up"
-  "pane_split_direction_horizontal": "up",
-  // The direction that you want to split panes vertically. Defaults to "left"
-  "pane_split_direction_vertical": "left",
+  // The direction that you want to split panes horizontally. Defaults to "down"
+  "pane_split_direction_horizontal": "down",
+  // The direction that you want to split panes vertically. Defaults to "right"
+  "pane_split_direction_vertical": "right",
   // Centered layout related settings.
   "centered_layout": {
     // The relative width of the left padding of the central pane from the
@@ -1402,7 +1406,7 @@
     // "font_size": 15,
     // Set the terminal's font family. If this option is not included,
     // the terminal will default to matching the buffer's font family.
-    // "font_family": "Zed Plex Mono",
+    // "font_family": ".ZedMono",
     // Set the terminal's font fallbacks. If this option is not included,
     // the terminal will default to matching the buffer's font fallbacks.
     // This will be merged with the platform's default font fallbacks
