@@ -667,20 +667,6 @@ workspace-hack = "0.1.0"
 yawc = { git = "https://github.com/deviant-forks/yawc", rev = "1899688f3e69ace4545aceb97b2a13881cf26142" }
 zstd = "0.11"
 
-[workspace.dependencies.async-stripe]
-git = "https://github.com/zed-industries/async-stripe"
-rev = "3672dd4efb7181aa597bf580bf5a2f5d23db6735"
-default-features = false
-features = [
-    "runtime-tokio-hyper-rustls",
-    "billing",
-    "checkout",
-    "events",
-    # The features below are only enabled to get the `events` feature to build.
-    "chrono",
-    "connect",
-]
-
 [workspace.dependencies.windows]
 version = "0.61"
 features = [
