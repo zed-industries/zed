@@ -210,6 +210,8 @@ actions!(
         NewTerminal,
         /// Opens a new window.
         NewWindow,
+        /// Opens a new window but doesn't open a new file.
+        NewEmptyWindow,
         /// Opens a file or directory.
         Open,
         /// Opens multiple files.

@@ -71,7 +71,7 @@ use uuid::Uuid;
 use vim_mode_setting::VimModeSetting;
 use workspace::notifications::{NotificationId, dismiss_app_notification, show_app_notification};
 use workspace::{
-    AppState, NewFile, NewWindow, OpenLog, Toast, Workspace, WorkspaceSettings,
+    AppState, NewFile, NewWindow, NewEmptyWindow, OpenLog, Toast, Workspace, WorkspaceSettings,
     create_and_open_local_file, notifications::simple_message_notification::MessageNotification,
     open_new,
 };
@@ -876,6 +876,22 @@ fn register_actions(
                         |workspace, window, cx| {
                             cx.activate(true);
                             Editor::new_file(workspace, &Default::default(), window, cx)
+                        },
+                    )
+                    .detach();
+                }
+            }
+        })
+        .register_action({
+            let app_state = Arc::downgrade(&app_state);
+            move |_, _: &NewEmptyWindow, _, cx| {
+                if let Some(app_state) = app_state.upgrade() {
+                    open_new(
+                        Default::default(),
+                        app_state,
+                        cx,
+                        |_, _, cx| {
+                            cx.activate(true)
                         },
                     )
                     .detach();
