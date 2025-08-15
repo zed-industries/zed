@@ -30,7 +30,7 @@ use util::{ResultExt, debug_panic};
 use crate::claude::mcp_server::{ClaudeZedMcpServer, McpConfig};
 use crate::claude::tools::ClaudeTool;
 use crate::{AgentServer, AgentServerCommand, AllAgentServersSettings};
-use acp_thread::{AcpThread, AgentConnection};
+use acp_thread::{AcpThread, AcpThreadMetadata, AgentConnection};
 
 #[derive(Clone)]
 pub struct ClaudeCode;
@@ -207,6 +207,10 @@ impl AgentConnection for ClaudeAgentConnection {
 
     fn authenticate(&self, _: acp::AuthMethodId, _cx: &mut App) -> Task<Result<()>> {
         Task::ready(Err(anyhow!("Authentication not supported")))
+    }
+
+    fn list_threads(&self, _cx: &mut App) -> Task<Result<Vec<AcpThreadMetadata>>> {
+        Task::ready(Ok(Vec::default()))
     }
 
     fn prompt(

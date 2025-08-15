@@ -10,7 +10,7 @@ use ui::App;
 use util::ResultExt as _;
 
 use crate::AgentServerCommand;
-use acp_thread::{AcpThread, AgentConnection, AuthRequired};
+use acp_thread::{AcpThread, AcpThreadMetadata, AgentConnection, AuthRequired};
 
 #[derive(Clone)]
 struct OldAcpClientDelegate {
@@ -449,6 +449,10 @@ impl AgentConnection for AcpConnection {
                 thread
             })
         })
+    }
+
+    fn list_threads(&self, _cx: &mut App) -> Task<Result<Vec<AcpThreadMetadata>>> {
+        Task::ready(Ok(Vec::default()))
     }
 
     fn auth_methods(&self) -> &[acp::AuthMethod] {

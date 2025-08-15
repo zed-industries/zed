@@ -1,16 +1,18 @@
+use crate::ThreadsDatabase;
 use crate::{
     AgentResponseEvent, ContextServerRegistry, CopyPathTool, CreateDirectoryTool, DeletePathTool,
     DiagnosticsTool, EditFileTool, FetchTool, FindPathTool, GrepTool, ListDirectoryTool,
     MovePathTool, NowTool, OpenTool, ReadFileTool, TerminalTool, ThinkingTool, Thread,
     ToolCallAuthorization, UserMessageContent, WebSearchTool, templates::Templates,
 };
-use acp_thread::AgentModelSelector;
+use acp_thread::{AcpThreadMetadata, AgentModelSelector};
 use agent_client_protocol as acp;
 use agent_settings::AgentSettings;
 use anyhow::{Context as _, Result, anyhow};
 use collections::{HashSet, IndexMap};
 use fs::Fs;
 use futures::channel::mpsc;
+use futures::future::Shared;
 use futures::{StreamExt, future};
 use gpui::{
     App, AppContext, AsyncApp, Context, Entity, SharedString, Subscription, Task, WeakEntity,
@@ -166,6 +168,7 @@ pub struct NativeAgent {
     models: LanguageModels,
     project: Entity<Project>,
     prompt_store: Option<Entity<PromptStore>>,
+    thread_database: Shared<Task<Result<Arc<ThreadsDatabase>, Arc<anyhow::Error>>>>,
     fs: Arc<dyn Fs>,
     _subscriptions: Vec<Subscription>,
 }
@@ -208,6 +211,7 @@ impl NativeAgent {
                 context_server_registry: cx.new(|cx| {
                     ContextServerRegistry::new(project.read(cx).context_server_store(), cx)
                 }),
+                thread_database: ThreadsDatabase::connect(cx),
                 templates,
                 models: LanguageModels::new(cx),
                 project,
@@ -749,6 +753,23 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
 
     fn authenticate(&self, _method: acp::AuthMethodId, _cx: &mut App) -> Task<Result<()>> {
         Task::ready(Ok(()))
+    }
+
+    fn list_threads(&self, cx: &mut App) -> Task<Result<Vec<AcpThreadMetadata>>> {
+        let database = self.0.read(cx).thread_database.clone();
+        cx.background_executor().spawn(async move {
+            let database = database.await.map_err(|e| anyhow!(e))?;
+            let results = database.list_threads().await?;
+
+            Ok(results
+                .into_iter()
+                .map(|thread| AcpThreadMetadata {
+                    id: thread.id,
+                    title: thread.title,
+                    updated_at: thread.updated_at,
+                })
+                .collect())
+        })
     }
 
     fn model_selector(&self) -> Option<Rc<dyn AgentModelSelector>> {

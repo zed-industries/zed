@@ -3583,7 +3583,7 @@ fn terminal_command_markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
 
 #[cfg(test)]
 pub(crate) mod tests {
-    use acp_thread::StubAgentConnection;
+    use acp_thread::{AcpThreadMetadata, StubAgentConnection};
     use agent::{TextThreadStore, ThreadStore};
     use agent_client_protocol::SessionId;
     use editor::EditorSettings;
@@ -3817,6 +3817,10 @@ pub(crate) mod tests {
             _cx: &mut App,
         ) -> Task<gpui::Result<()>> {
             unimplemented!()
+        }
+
+        fn list_threads(&self, _cx: &mut App) -> Task<gpui::Result<Vec<AcpThreadMetadata>>> {
+            Task::ready(Ok(vec![]))
         }
 
         fn prompt(

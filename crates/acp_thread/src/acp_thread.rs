@@ -6,11 +6,13 @@ mod terminal;
 pub use connection::*;
 pub use diff::*;
 pub use mention::*;
+use serde::{Deserialize, Serialize};
 pub use terminal::*;
 
 use action_log::ActionLog;
 use agent_client_protocol as acp;
 use anyhow::{Context as _, Result, anyhow};
+use chrono::{DateTime, Utc};
 use editor::Bias;
 use futures::{FutureExt, channel::oneshot, future::BoxFuture};
 use gpui::{AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Task, WeakEntity};
@@ -630,6 +632,13 @@ impl PlanEntry {
             status: entry.status,
         }
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AcpThreadMetadata {
+    pub id: acp::SessionId,
+    pub title: SharedString,
+    pub updated_at: DateTime<Utc>,
 }
 
 pub struct AcpThread {
@@ -1608,7 +1617,7 @@ mod tests {
     use super::*;
     use anyhow::anyhow;
     use futures::{channel::mpsc, future::LocalBoxFuture, select};
-    use gpui::{AsyncApp, TestAppContext, WeakEntity};
+    use gpui::{App, AsyncApp, TestAppContext, WeakEntity};
     use indoc::indoc;
     use project::{FakeFs, Fs};
     use rand::Rng as _;
@@ -2284,7 +2293,7 @@ mod tests {
             self: Rc<Self>,
             project: Entity<Project>,
             _cwd: &Path,
-            cx: &mut gpui::App,
+            cx: &mut App,
         ) -> Task<gpui::Result<Entity<AcpThread>>> {
             let session_id = acp::SessionId(
                 rand::thread_rng()
@@ -2298,6 +2307,10 @@ mod tests {
                 cx.new(|cx| AcpThread::new("Test", self.clone(), project, session_id.clone(), cx));
             self.sessions.lock().insert(session_id, thread.downgrade());
             Task::ready(Ok(thread))
+        }
+
+        fn list_threads(&self, _: &mut App) -> Task<Result<Vec<AcpThreadMetadata>>> {
+            unimplemented!()
         }
 
         fn authenticate(&self, method: acp::AuthMethodId, _cx: &mut App) -> Task<gpui::Result<()>> {

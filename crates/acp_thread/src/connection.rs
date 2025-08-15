@@ -1,4 +1,4 @@
-use crate::AcpThread;
+use crate::{AcpThread, AcpThreadMetadata};
 use agent_client_protocol::{self as acp};
 use anyhow::Result;
 use collections::IndexMap;
@@ -25,6 +25,8 @@ pub trait AgentConnection {
         cwd: &Path,
         cx: &mut App,
     ) -> Task<Result<Entity<AcpThread>>>;
+
+    fn list_threads(&self, _cx: &mut App) -> Task<Result<Vec<AcpThreadMetadata>>>;
 
     fn auth_methods(&self) -> &[acp::AuthMethod];
 
@@ -261,6 +263,10 @@ mod test_support {
             _method_id: acp::AuthMethodId,
             _cx: &mut App,
         ) -> Task<gpui::Result<()>> {
+            unimplemented!()
+        }
+
+        fn list_threads(&self, _: &mut App) -> Task<Result<Vec<AcpThreadMetadata>>> {
             unimplemented!()
         }
 

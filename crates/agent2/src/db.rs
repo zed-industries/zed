@@ -216,10 +216,6 @@ impl Column for DataType {
     }
 }
 
-struct GlobalThreadsDatabase(Shared<Task<Result<Arc<ThreadsDatabase>, Arc<anyhow::Error>>>>);
-
-impl Global for GlobalThreadsDatabase {}
-
 pub(crate) struct ThreadsDatabase {
     executor: BackgroundExecutor,
     connection: Arc<Mutex<Connection>>,
@@ -234,34 +230,26 @@ impl ThreadsDatabase {
 }
 
 impl ThreadsDatabase {
-    fn global_future(
-        cx: &mut App,
-    ) -> Shared<Task<Result<Arc<ThreadsDatabase>, Arc<anyhow::Error>>>> {
-        GlobalThreadsDatabase::global(cx).0.clone()
-    }
-
-    fn init(cx: &mut App) {
+    pub fn connect(cx: &mut App) -> Shared<Task<Result<Arc<ThreadsDatabase>, Arc<anyhow::Error>>>> {
         let executor = cx.background_executor().clone();
-        let database_future = executor
+        executor
             .spawn({
                 let executor = executor.clone();
-                let threads_dir = paths::data_dir().join("threads");
                 async move {
-                    match ThreadsDatabase::new(threads_dir, executor) {
+                    match ThreadsDatabase::new(executor) {
                         Ok(db) => Ok(Arc::new(db)),
                         Err(err) => Err(Arc::new(err)),
                     }
                 }
             })
-            .shared();
-
-        cx.set_global(GlobalThreadsDatabase(database_future));
+            .shared()
     }
 
-    pub fn new(threads_dir: PathBuf, executor: BackgroundExecutor) -> Result<Self> {
+    pub fn new(executor: BackgroundExecutor) -> Result<Self> {
         let connection = if *ZED_STATELESS || cfg!(any(feature = "test-support", test)) {
             Connection::open_memory(Some("THREAD_FALLBACK_DB"))
         } else {
+            let threads_dir = paths::data_dir().join("threads");
             std::fs::create_dir_all(&threads_dir)?;
             let sqlite_path = threads_dir.join("threads.db");
             Connection::open_file(&sqlite_path.to_string_lossy())
@@ -397,7 +385,6 @@ mod tests {
     use gpui::TestAppContext;
     use http_client::FakeHttpClient;
     use language_model::Role;
-    use pretty_assertions::assert_matches;
     use project::Project;
     use settings::SettingsStore;
 
@@ -408,7 +395,6 @@ mod tests {
             cx.set_global(settings_store);
             Project::init_settings(cx);
             language::init(cx);
-            ThreadsDatabase::init(cx);
 
             let http_client = FakeHttpClient::with_404_response();
             let clock = Arc::new(clock::FakeSystemClock::new());
@@ -453,10 +439,7 @@ mod tests {
                 .unwrap();
         }
 
-        let db = cx
-            .update(|cx| ThreadsDatabase::global_future(cx))
-            .await
-            .unwrap();
+        let db = cx.update(|cx| ThreadsDatabase::connect(cx)).await.unwrap();
         let threads = db.list_threads().await.unwrap();
         assert_eq!(threads.len(), 1);
         let thread = db

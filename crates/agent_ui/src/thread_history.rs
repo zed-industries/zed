@@ -1,5 +1,5 @@
+use crate::history_store::{HistoryEntry, HistoryStore};
 use crate::{AgentPanel, RemoveSelectedThread};
-use agent::history_store::{HistoryEntry, HistoryStore};
 use chrono::{Datelike as _, Local, NaiveDate, TimeDelta};
 use editor::{Editor, EditorEvent};
 use fuzzy::{StringMatch, StringMatchCandidate};

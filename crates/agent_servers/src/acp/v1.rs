@@ -11,7 +11,7 @@ use anyhow::{Context as _, Result};
 use gpui::{App, AppContext as _, AsyncApp, Entity, Task, WeakEntity};
 
 use crate::{AgentServerCommand, acp::UnsupportedVersion};
-use acp_thread::{AcpThread, AgentConnection, AuthRequired};
+use acp_thread::{AcpThread, AcpThreadMetadata, AgentConnection, AuthRequired};
 
 pub struct AcpConnection {
     server_name: &'static str,
@@ -167,6 +167,10 @@ impl AgentConnection for AcpConnection {
 
             Ok(result)
         })
+    }
+
+    fn list_threads(&self, _cx: &mut App) -> Task<Result<Vec<AcpThreadMetadata>>> {
+        Task::ready(Ok(Vec::default()))
     }
 
     fn prompt(
