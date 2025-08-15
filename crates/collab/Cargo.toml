@@ -39,7 +39,6 @@ futures.workspace = true
 gpui.workspace = true
 hex.workspace = true
 http_client.workspace = true
-jsonwebtoken.workspace = true
 livekit_api.workspace = true
 log.workspace = true
 nanoid.workspace = true
@@ -65,7 +64,6 @@ subtle.workspace = true
 supermaven_api.workspace = true
 telemetry_events.workspace = true
 text.workspace = true
-thiserror.workspace = true
 time.workspace = true
 tokio = { workspace = true, features = ["full"] }
 toml.workspace = true
