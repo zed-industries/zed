@@ -186,7 +186,6 @@ impl MessageEditor {
         ) else {
             return;
         };
-        self.mention_set.insert_uri(crease_id, mention_uri.clone());
 
         match mention_uri {
             MentionUri::Fetch { url } => {
@@ -209,7 +208,9 @@ impl MessageEditor {
             | MentionUri::Thread { .. }
             | MentionUri::TextThread { .. }
             | MentionUri::Rule { .. }
-            | MentionUri::Selection { .. } => {}
+            | MentionUri::Selection { .. } => {
+                self.mention_set.insert_uri(crease_id, mention_uri.clone());
+            }
         }
     }
 
@@ -218,7 +219,7 @@ impl MessageEditor {
         crease_id: CreaseId,
         anchor: Anchor,
         abs_path: PathBuf,
-        _is_directory: bool,
+        is_directory: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -226,15 +227,15 @@ impl MessageEditor {
             .extension()
             .and_then(OsStr::to_str)
             .unwrap_or_default();
-        let project = self.project.clone();
-        let Some(project_path) = project
-            .read(cx)
-            .project_path_for_absolute_path(&abs_path, cx)
-        else {
-            return;
-        };
 
         if Img::extensions().contains(&extension) && !extension.contains("svg") {
+            let project = self.project.clone();
+            let Some(project_path) = project
+                .read(cx)
+                .project_path_for_absolute_path(&abs_path, cx)
+            else {
+                return;
+            };
             let image = cx.spawn(async move |_, cx| {
                 let image = project
                     .update(cx, |project, cx| project.open_image(project_path, cx))?
@@ -242,6 +243,14 @@ impl MessageEditor {
                 image.read_with(cx, |image, _cx| image.image.clone())
             });
             self.confirm_mention_for_image(crease_id, anchor, Some(abs_path), image, window, cx);
+        } else {
+            self.mention_set.insert_uri(
+                crease_id,
+                MentionUri::File {
+                    abs_path,
+                    is_directory,
+                },
+            );
         }
     }
 
@@ -577,43 +586,54 @@ impl MessageEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.editor.update(cx, |_editor, cx| {
-            let task = cx
-                .spawn_in(window, async move |editor, cx| {
-                    let image = image.await.map_err(|e| e.to_string())?;
-                    let format = image.format;
-                    let image = cx
-                        .update(|_, cx| LanguageModelImage::from_image(image, cx))
-                        .map_err(|e| e.to_string())?
-                        .await;
-                    if let Some(image) = image {
-                        Ok(MentionImage {
-                            abs_path,
-                            data: image.source,
-                            format,
+        let editor = self.editor.clone();
+        let task = cx
+            .spawn_in(window, async move |this, cx| {
+                let image = image.await.map_err(|e| e.to_string())?;
+                let format = image.format;
+                let image = cx
+                    .update(|_, cx| LanguageModelImage::from_image(image, cx))
+                    .map_err(|e| e.to_string())?
+                    .await;
+                if let Some(image) = image {
+                    if let Some(abs_path) = abs_path.clone() {
+                        this.update(cx, |this, _cx| {
+                            this.mention_set.insert_uri(
+                                crease_id,
+                                MentionUri::File {
+                                    abs_path,
+                                    is_directory: false,
+                                },
+                            );
                         })
-                    } else {
-                        editor
-                            .update(cx, |editor, cx| {
-                                editor.display_map.update(cx, |display_map, cx| {
-                                    display_map.unfold_intersecting(vec![anchor..anchor], true, cx);
-                                });
-                                editor.remove_creases([crease_id], cx);
-                            })
-                            .ok();
-                        Err("Failed to convert image".to_string())
+                        .map_err(|e| e.to_string())?;
                     }
-                })
-                .shared();
-
-            cx.spawn_in(window, {
-                let task = task.clone();
-                async move |_, cx| task.clone().await.notify_async_err(cx)
+                    Ok(MentionImage {
+                        abs_path,
+                        data: image.source,
+                        format,
+                    })
+                } else {
+                    editor
+                        .update(cx, |editor, cx| {
+                            editor.display_map.update(cx, |display_map, cx| {
+                                display_map.unfold_intersecting(vec![anchor..anchor], true, cx);
+                            });
+                            editor.remove_creases([crease_id], cx);
+                        })
+                        .ok();
+                    Err("Failed to convert image".to_string())
+                }
             })
-            .detach();
+            .shared();
 
-            self.mention_set.insert_image(crease_id, task);
-        });
+        cx.spawn_in(window, {
+            let task = task.clone();
+            async move |_, cx| task.clone().await.notify_async_err(cx)
+        })
+        .detach();
+
+        self.mention_set.insert_image(crease_id, task);
     }
 
     pub fn set_mode(&mut self, mode: EditorMode, cx: &mut Context<Self>) {
