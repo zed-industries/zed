@@ -395,7 +395,7 @@ async fn test_tool_hallucination(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_tool_use_limit(cx: &mut TestAppContext) {
+async fn test_resume_after_tool_use_limit(cx: &mut TestAppContext) {
     let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
     let fake_model = model.as_fake();
 
@@ -508,6 +508,76 @@ async fn test_tool_use_limit(cx: &mut TestAppContext) {
         error.to_string(),
         "can only resume after tool use limit is reached"
     )
+}
+
+#[gpui::test]
+async fn test_send_after_tool_use_limit(cx: &mut TestAppContext) {
+    let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
+    let fake_model = model.as_fake();
+
+    let events = thread.update(cx, |thread, cx| {
+        thread.add_tool(EchoTool);
+        thread.send(UserMessageId::new(), ["abc"], cx)
+    });
+    cx.run_until_parked();
+
+    let tool_use = LanguageModelToolUse {
+        id: "tool_id_1".into(),
+        name: EchoTool.name().into(),
+        raw_input: "{}".into(),
+        input: serde_json::to_value(&EchoToolInput { text: "def".into() }).unwrap(),
+        is_input_complete: true,
+    };
+    let tool_result = LanguageModelToolResult {
+        tool_use_id: "tool_id_1".into(),
+        tool_name: EchoTool.name().into(),
+        is_error: false,
+        content: "def".into(),
+        output: Some("def".into()),
+    };
+    fake_model
+        .send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(tool_use.clone()));
+    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::StatusUpdate(
+        cloud_llm_client::CompletionRequestStatus::ToolUseLimitReached,
+    ));
+    fake_model.end_last_completion_stream();
+    let last_event = events.collect::<Vec<_>>().await.pop().unwrap();
+    assert!(
+        last_event
+            .unwrap_err()
+            .is::<language_model::ToolUseLimitReachedError>()
+    );
+
+    thread.update(cx, |thread, cx| {
+        thread.send(UserMessageId::new(), vec!["ghi"], cx)
+    });
+    cx.run_until_parked();
+    let completion = fake_model.pending_completions().pop().unwrap();
+    assert_eq!(
+        completion.messages[1..],
+        vec![
+            LanguageModelRequestMessage {
+                role: Role::User,
+                content: vec!["abc".into()],
+                cache: false
+            },
+            LanguageModelRequestMessage {
+                role: Role::Assistant,
+                content: vec![MessageContent::ToolUse(tool_use)],
+                cache: false
+            },
+            LanguageModelRequestMessage {
+                role: Role::User,
+                content: vec![MessageContent::ToolResult(tool_result)],
+                cache: false
+            },
+            LanguageModelRequestMessage {
+                role: Role::User,
+                content: vec!["ghi".into()],
+                cache: false
+            }
+        ]
+    );
 }
 
 async fn expect_tool_call(
