@@ -34,6 +34,7 @@ use ui::{
     Disclosure, Divider, DividerColor, KeyBinding, PopoverMenuHandle, Scrollbar, ScrollbarState,
     Tooltip, prelude::*,
 };
+use util::debug_panic;
 use util::{ResultExt, size::format_file_size, time::duration_alt_display};
 use workspace::{CollaboratorId, Workspace};
 use zed_actions::agent::{Chat, ToggleModelSelector};
@@ -83,8 +84,6 @@ pub struct AcpThreadView {
 struct EditingMessage {
     index: usize,
     message_id: UserMessageId,
-    editor: Entity<MessageEditor>,
-    _subscription: Subscription,
 }
 
 enum ThreadState {
@@ -438,9 +437,20 @@ impl AcpThreadView {
             thread.rewind(editing_message.message_id, cx)
         });
 
-        let contents = editing_message
-            .editor
-            .update(cx, |message_editor, cx| message_editor.contents(window, cx));
+        let Some(message_editor) = self
+            .entry_view_state
+            .entry(editing_message.index)
+            .and_then(|entry| entry.message_editor())
+        else {
+            debug_panic!(
+                "Entry #{} should have a message editor",
+                editing_message.index
+            );
+            return;
+        };
+
+        let contents =
+            message_editor.update(cx, |message_editor, cx| message_editor.contents(window, cx));
         let task = cx.foreground_executor().spawn(async move {
             rewind.await?;
             contents.await
@@ -648,29 +658,14 @@ impl AcpThreadView {
                         .border_1()
                         .border_color(cx.theme().colors().border)
                         .text_xs()
-                        .id("message")
-                        .on_click(cx.listener({
-                            move |this, _, window, cx| {
-                                this.start_editing_message(entry_ix, window, cx)
-                            }
-                        }))
                         .children(
-                            if let Some(editing) = self.editing_message.as_ref()
-                                && Some(&editing.message_id) == message.id.as_ref()
-                            {
-                                Some(
-                                    self.render_edit_message_editor(editing, cx)
-                                        .into_any_element(),
-                                )
-                            } else {
-                                message.content.markdown().map(|md| {
-                                    self.render_markdown(
-                                        md.clone(),
-                                        user_message_markdown_style(window, cx),
-                                    )
-                                    .into_any_element()
-                                })
-                            },
+                            self.entry_view_state
+                                .entry(entry_ix)
+                                .and_then(|entry| entry.message_editor())
+                                .map(|editor| {
+                                    self.render_sent_user_message_editor(editor, window, cx)
+                                        .into_any_element()
+                                }),
                         ),
                 )
                 .into_any(),
@@ -2381,37 +2376,41 @@ impl AcpThreadView {
         self.editing_message.replace(EditingMessage {
             index: index,
             message_id: message_id.clone(),
-            editor,
-            _subscription: subscription,
         });
         cx.notify();
     }
 
-    fn render_edit_message_editor(&self, editing: &EditingMessage, cx: &Context<Self>) -> Div {
-        v_flex()
-            .w_full()
-            .gap_2()
-            .child(editing.editor.clone())
-            .child(
-                h_flex()
-                    .gap_1()
-                    .child(
-                        Icon::new(IconName::Warning)
-                            .color(Color::Warning)
-                            .size(IconSize::XSmall),
-                    )
-                    .child(
-                        Label::new("Editing will restart the thread from this point.")
-                            .color(Color::Muted)
-                            .size(LabelSize::XSmall),
-                    )
-                    .child(self.render_editing_message_editor_buttons(editing, cx)),
-            )
+    fn render_sent_user_message_editor(
+        &self,
+        editor: &Entity<MessageEditor>,
+        window: &Window,
+        cx: &Context<Self>,
+    ) -> Div {
+        v_flex().w_full().gap_2().child(editor.clone()).when(
+            editor.focus_handle(cx).is_focused(window),
+            |el| {
+                el.child(
+                    h_flex()
+                        .gap_1()
+                        .child(
+                            Icon::new(IconName::Warning)
+                                .color(Color::Warning)
+                                .size(IconSize::XSmall),
+                        )
+                        .child(
+                            Label::new("Editing will restart the thread from this point.")
+                                .color(Color::Muted)
+                                .size(LabelSize::XSmall),
+                        )
+                        .child(self.render_set_user_message_editor_buttons(editor, cx)),
+                )
+            },
+        )
     }
 
-    fn render_editing_message_editor_buttons(
+    fn render_set_user_message_editor_buttons(
         &self,
-        editing: &EditingMessage,
+        editor: &Entity<MessageEditor>,
         cx: &Context<Self>,
     ) -> Div {
         h_flex()
@@ -2424,7 +2423,7 @@ impl AcpThreadView {
                     .icon_color(Color::Error)
                     .icon_size(IconSize::Small)
                     .tooltip({
-                        let focus_handle = editing.editor.focus_handle(cx);
+                        let focus_handle = editor.focus_handle(cx);
                         move |window, cx| {
                             Tooltip::for_action_in(
                                 "Cancel Edit",
@@ -2439,12 +2438,12 @@ impl AcpThreadView {
             )
             .child(
                 IconButton::new("confirm-edit-message", IconName::Return)
-                    .disabled(editing.editor.read(cx).is_empty(cx))
+                    .disabled(editor.read(cx).is_empty(cx))
                     .shape(ui::IconButtonShape::Square)
                     .icon_color(Color::Muted)
                     .icon_size(IconSize::Small)
                     .tooltip({
-                        let focus_handle = editing.editor.focus_handle(cx);
+                        let focus_handle = editor.focus_handle(cx);
                         move |window, cx| {
                             Tooltip::for_action_in(
                                 "Regenerate",
