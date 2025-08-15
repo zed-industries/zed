@@ -357,7 +357,7 @@ impl<S: ScrollbarVisibilitySetting> Scrollbars<S> {
             id: None,
             tracked_setting: PhantomData,
             handle_was_added: false,
-            scrollable_handle: Box::new(|| ScrollHandle::new()),
+            scrollable_handle: Box::new(ScrollHandle::new),
             tracked_entity_id: None,
             visibility: show_along.apply_to(Default::default(), ReservedSpace::Thumb),
             scrollbar_width: ScrollbarWidth::Normal,

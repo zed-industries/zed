@@ -266,6 +266,7 @@ impl MemoryView {
         }
     }
 
+    #[allow(unused)]
     fn handle_scroll_drag(&mut self, evt: &DragMoveEvent<()>) -> bool {
         // todo!
         // if !self.scroll_state.is_dragging() {

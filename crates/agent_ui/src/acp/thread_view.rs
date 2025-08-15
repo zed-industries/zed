@@ -19,10 +19,10 @@ use file_icons::FileIcons;
 use fs::Fs;
 use gpui::{
     Action, Animation, AnimationExt, App, BorderStyle, ClickEvent, ClipboardItem, EdgesRefinement,
-    Empty, Entity, FocusHandle, Focusable, Hsla, Length, ListOffset, ListState, MouseButton,
-    PlatformDisplay, SharedString, Stateful, StyleRefinement, Subscription, Task, TextStyle,
-    TextStyleRefinement, Transformation, UnderlineStyle, WeakEntity, Window, WindowHandle, div,
-    linear_color_stop, linear_gradient, list, percentage, point, prelude::*, pulsating_between,
+    Empty, Entity, FocusHandle, Focusable, Hsla, Length, ListOffset, ListState, PlatformDisplay,
+    SharedString, StyleRefinement, Subscription, Task, TextStyle, TextStyleRefinement,
+    Transformation, UnderlineStyle, WeakEntity, Window, WindowHandle, div, linear_color_stop,
+    linear_gradient, list, percentage, point, prelude::*, pulsating_between,
 };
 use language::Buffer;
 use markdown::{HeadingLevelStyles, Markdown, MarkdownElement, MarkdownStyle};
