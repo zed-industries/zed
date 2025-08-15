@@ -84,7 +84,7 @@ use lsp::{
 };
 use lsp_command::*;
 use lsp_store::{CompletionDocumentation, LspFormatTarget, OpenLspBufferHandle};
-pub use manifest_tree::ManifestProviders;
+pub use manifest_tree::ManifestProvidersStore;
 use node_runtime::NodeRuntime;
 use parking_lot::Mutex;
 pub use prettier_store::PrettierStore;
@@ -1115,7 +1115,11 @@ impl Project {
                     buffer_store.clone(),
                     worktree_store.clone(),
                     prettier_store.clone(),
-                    toolchain_store.clone(),
+                    toolchain_store
+                        .read(cx)
+                        .as_local_store()
+                        .expect("Toolchain store to be local")
+                        .clone(),
                     environment.clone(),
                     manifest_tree,
                     languages.clone(),
@@ -1260,7 +1264,6 @@ impl Project {
                 LspStore::new_remote(
                     buffer_store.clone(),
                     worktree_store.clone(),
-                    Some(toolchain_store.clone()),
                     languages.clone(),
                     ssh_proto.clone(),
                     SSH_PROJECT_ID,
@@ -1485,7 +1488,6 @@ impl Project {
             let mut lsp_store = LspStore::new_remote(
                 buffer_store.clone(),
                 worktree_store.clone(),
-                None,
                 languages.clone(),
                 client.clone().into(),
                 remote_id,
@@ -3596,16 +3598,10 @@ impl Project {
         &mut self,
         abs_path: lsp::Url,
         language_server_id: LanguageServerId,
-        language_server_name: LanguageServerName,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Buffer>>> {
         self.lsp_store.update(cx, |lsp_store, cx| {
-            lsp_store.open_local_buffer_via_lsp(
-                abs_path,
-                language_server_id,
-                language_server_name,
-                cx,
-            )
+            lsp_store.open_local_buffer_via_lsp(abs_path, language_server_id, cx)
         })
     }
 

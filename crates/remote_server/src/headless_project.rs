@@ -171,7 +171,11 @@ impl HeadlessProject {
                 buffer_store.clone(),
                 worktree_store.clone(),
                 prettier_store.clone(),
-                toolchain_store.clone(),
+                toolchain_store
+                    .read(cx)
+                    .as_local_store()
+                    .expect("Toolchain store to be local")
+                    .clone(),
                 environment,
                 manifest_tree,
                 languages.clone(),

@@ -22,6 +22,7 @@ use settings::{
     SettingsStore, parse_json_with_comments, watch_config_file,
 };
 use std::{
+    collections::BTreeMap,
     path::{Path, PathBuf},
     sync::Arc,
     time::Duration,
@@ -518,16 +519,15 @@ impl Default for InlineBlameSettings {
     }
 }
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema, Hash)]
 pub struct BinarySettings {
     pub path: Option<String>,
     pub arguments: Option<Vec<String>>,
-    // this can't be an FxHashMap because the extension APIs require the default SipHash
-    pub env: Option<std::collections::HashMap<String, String>>,
+    pub env: Option<BTreeMap<String, String>>,
     pub ignore_system_version: Option<bool>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema, Hash)]
 #[serde(rename_all = "snake_case")]
 pub struct LspSettings {
     pub binary: Option<BinarySettings>,

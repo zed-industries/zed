@@ -109,14 +109,10 @@ impl LspAdapter for RustLspAdapter {
         SERVER_NAME.clone()
     }
 
-    fn manifest_name(&self) -> Option<ManifestName> {
-        Some(SharedString::new_static("Cargo.toml").into())
-    }
-
     async fn check_if_user_installed(
         &self,
         delegate: &dyn LspAdapterDelegate,
-        _: Arc<dyn LanguageToolchainStore>,
+        _: Option<Toolchain>,
         _: &AsyncApp,
     ) -> Option<LanguageServerBinary> {
         let path = delegate.which("rust-analyzer".as_ref()).await?;
