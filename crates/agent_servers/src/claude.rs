@@ -6,6 +6,7 @@ use context_server::listener::McpServerTool;
 use project::Project;
 use settings::SettingsStore;
 use smol::process::Child;
+use std::any::Any;
 use std::cell::RefCell;
 use std::fmt::Display;
 use std::path::Path;
@@ -288,6 +289,10 @@ impl AgentConnection for ClaudeAgentConnection {
                 request: ControlRequest::Interrupt,
             })
             .log_err();
+    }
+
+    fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
+        self
     }
 }
 
