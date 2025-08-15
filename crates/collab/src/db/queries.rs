@@ -9,7 +9,6 @@ pub mod embeddings;
 pub mod extensions;
 pub mod messages;
 pub mod notifications;
-pub mod processed_stripe_events;
 pub mod projects;
 pub mod rooms;
 pub mod servers;
