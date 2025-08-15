@@ -18,7 +18,6 @@ use gpui::{
     AppContext, ClipboardEntry, Context, Entity, EventEmitter, FocusHandle, Focusable, Image,
     ImageFormat, Task, TextStyle, WeakEntity,
 };
-use http_client::HttpClientWithUrl;
 use language::{Buffer, Language};
 use language_model::LanguageModelImage;
 use project::{CompletionIntent, Project};
@@ -48,6 +47,7 @@ pub struct MessageEditor {
     mention_set: MentionSet,
     editor: Entity<Editor>,
     project: Entity<Project>,
+    workspace: WeakEntity<Workspace>,
     thread_store: Entity<ThreadStore>,
     text_thread_store: Entity<TextThreadStore>,
 }
@@ -77,7 +77,7 @@ impl MessageEditor {
             None,
         );
         let completion_provider = ContextPickerCompletionProvider::new(
-            workspace,
+            workspace.clone(),
             thread_store.downgrade(),
             text_thread_store.downgrade(),
             cx.weak_entity(),
@@ -107,6 +107,7 @@ impl MessageEditor {
             mention_set,
             thread_store,
             text_thread_store,
+            workspace,
         }
     }
 
@@ -124,7 +125,7 @@ impl MessageEditor {
         self.editor.read(cx).is_empty(cx)
     }
 
-    pub fn mentioned_path_and_threads(&self, _: &App) -> (HashSet<PathBuf>, HashSet<ThreadId>) {
+    pub fn mentioned_path_and_threads(&self) -> (HashSet<PathBuf>, HashSet<ThreadId>) {
         let mut excluded_paths = HashSet::default();
         let mut excluded_threads = HashSet::default();
 
@@ -158,8 +159,14 @@ impl MessageEditor {
         let Some((excerpt_id, _, _)) = snapshot.buffer_snapshot.as_singleton() else {
             return;
         };
+        let Some(anchor) = snapshot
+            .buffer_snapshot
+            .anchor_in_excerpt(*excerpt_id, start)
+        else {
+            return;
+        };
 
-        if let Some(crease_id) = crate::context_picker::insert_crease_for_mention(
+        let Some(crease_id) = crate::context_picker::insert_crease_for_mention(
             *excerpt_id,
             start,
             content_len,
@@ -168,48 +175,34 @@ impl MessageEditor {
             self.editor.clone(),
             window,
             cx,
-        ) {
-            self.mention_set.insert_uri(crease_id, mention_uri.clone());
-        }
-    }
-
-    pub fn confirm_mention_for_fetch(
-        &mut self,
-        new_text: String,
-        source_range: Range<text::Anchor>,
-        url: url::Url,
-        http_client: Arc<HttpClientWithUrl>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let mention_uri = MentionUri::Fetch { url: url.clone() };
-        let icon_path = mention_uri.icon_path(cx);
-
-        let start = source_range.start;
-        let content_len = new_text.len() - 1;
-
-        let snapshot = self
-            .editor
-            .update(cx, |editor, cx| editor.snapshot(window, cx));
-        let Some((&excerpt_id, _, _)) = snapshot.buffer_snapshot.as_singleton() else {
-            return;
-        };
-
-        let Some(crease_id) = crate::context_picker::insert_crease_for_mention(
-            excerpt_id,
-            start,
-            content_len,
-            url.to_string().into(),
-            icon_path,
-            self.editor.clone(),
-            window,
-            cx,
         ) else {
             return;
         };
+        self.mention_set.insert_uri(crease_id, mention_uri.clone());
 
-        let http_client = http_client.clone();
-        let source_range = source_range.clone();
+        match mention_uri {
+            MentionUri::Fetch { url } => {
+                self.confirm_mention_for_fetch(crease_id, anchor, url, window, cx);
+            }
+            _ => {}
+        }
+    }
+
+    fn confirm_mention_for_fetch(
+        &mut self,
+        crease_id: CreaseId,
+        anchor: Anchor,
+        url: url::Url,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(http_client) = self
+            .workspace
+            .update(cx, |workspace, _cx| workspace.client().http_client())
+            .ok()
+        else {
+            return;
+        };
 
         let url_string = url.to_string();
         let fetch = cx
@@ -220,22 +213,18 @@ impl MessageEditor {
                     .await
             })
             .shared();
-        self.mention_set.add_fetch_result(url, fetch.clone());
+        self.mention_set
+            .add_fetch_result(url.clone(), fetch.clone());
 
         cx.spawn_in(window, async move |this, cx| {
             let fetch = fetch.await.notify_async_err(cx);
             this.update(cx, |this, cx| {
+                let mention_uri = MentionUri::Fetch { url };
                 if fetch.is_some() {
                     this.mention_set.insert_uri(crease_id, mention_uri.clone());
                 } else {
                     // Remove crease if we failed to fetch
                     this.editor.update(cx, |editor, cx| {
-                        let snapshot = editor.buffer().read(cx).snapshot(cx);
-                        let Some(anchor) =
-                            snapshot.anchor_in_excerpt(excerpt_id, source_range.start)
-                        else {
-                            return;
-                        };
                         editor.display_map.update(cx, |display_map, cx| {
                             display_map.unfold_intersecting(vec![anchor..anchor], true, cx);
                         });

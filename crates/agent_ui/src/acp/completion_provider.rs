@@ -12,7 +12,6 @@ use editor::{CompletionProvider, Editor, ExcerptId};
 use futures::future::{Shared, try_join_all};
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{App, Entity, ImageFormat, Img, Task, WeakEntity};
-use http_client::HttpClientWithUrl;
 use language::{Buffer, CodeLabel, HighlightId};
 use language_model::LanguageModelImage;
 use lsp::CompletionContext;
@@ -758,7 +757,6 @@ impl ContextPickerCompletionProvider {
         source_range: Range<Anchor>,
         url_to_fetch: SharedString,
         message_editor: WeakEntity<MessageEditor>,
-        http_client: Arc<HttpClientWithUrl>,
         cx: &mut App,
     ) -> Option<Completion> {
         let new_text = format!("@fetch {} ", url_to_fetch.clone());
@@ -777,30 +775,13 @@ impl ContextPickerCompletionProvider {
             source: project::CompletionSource::Custom,
             icon_path: Some(icon_path.clone()),
             insert_text_mode: None,
-            confirm: Some({
-                Arc::new(move |_, window, cx| {
-                    let url_to_fetch = url_to_fetch.clone();
-                    let source_range = source_range.clone();
-                    let message_editor = message_editor.clone();
-                    let new_text = new_text.clone();
-                    let http_client = http_client.clone();
-                    window.defer(cx, move |window, cx| {
-                        message_editor
-                            .update(cx, |message_editor, cx| {
-                                message_editor.confirm_mention_for_fetch(
-                                    new_text,
-                                    source_range,
-                                    url_to_fetch,
-                                    http_client,
-                                    window,
-                                    cx,
-                                )
-                            })
-                            .ok();
-                    });
-                    false
-                })
-            }),
+            confirm: Some(confirm_completion_callback(
+                url_to_fetch.to_string().into(),
+                source_range.start,
+                new_text.len() - 1,
+                message_editor,
+                mention_uri,
+            )),
         })
     }
 }
@@ -848,7 +829,6 @@ impl CompletionProvider for ContextPickerCompletionProvider {
         };
 
         let project = workspace.read(cx).project().clone();
-        let http_client = workspace.read(cx).client().http_client();
         let snapshot = buffer.read(cx).snapshot();
         let source_range = snapshot.anchor_before(state.source_range.start)
             ..snapshot.anchor_after(state.source_range.end);
@@ -857,8 +837,8 @@ impl CompletionProvider for ContextPickerCompletionProvider {
         let text_thread_store = self.text_thread_store.clone();
         let editor = self.message_editor.clone();
         let Ok((exclude_paths, exclude_threads)) =
-            self.message_editor.update(cx, |message_editor, cx| {
-                message_editor.mentioned_path_and_threads(cx)
+            self.message_editor.update(cx, |message_editor, _cx| {
+                message_editor.mentioned_path_and_threads()
             })
         else {
             return Task::ready(Ok(Vec::new()));
@@ -947,7 +927,6 @@ impl CompletionProvider for ContextPickerCompletionProvider {
                             source_range.clone(),
                             url,
                             editor.clone(),
-                            http_client.clone(),
                             cx,
                         ),
 
