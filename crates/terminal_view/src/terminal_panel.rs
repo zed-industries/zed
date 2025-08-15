@@ -947,7 +947,7 @@ pub fn new_terminal_pane(
     cx: &mut Context<TerminalPanel>,
 ) -> Entity<Pane> {
     let is_local = project.read(cx).is_local();
-    let terminal_panel = cx.entity().clone();
+    let terminal_panel = cx.entity();
     let pane = cx.new(|cx| {
         let mut pane = Pane::new(
             workspace.clone(),
@@ -1009,7 +1009,7 @@ pub fn new_terminal_pane(
                 return ControlFlow::Break(());
             };
             if let Some(tab) = dropped_item.downcast_ref::<DraggedTab>() {
-                let this_pane = cx.entity().clone();
+                let this_pane = cx.entity();
                 let item = if tab.pane == this_pane {
                     pane.item_for_index(tab.ix)
                 } else {

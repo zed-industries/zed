@@ -1007,7 +1007,7 @@ impl Render for LspTool {
             (None, "All Servers Operational")
         };
 
-        let lsp_tool = cx.entity().clone();
+        let lsp_tool = cx.entity();
 
         div().child(
             PopoverMenu::new("lsp-tool")
