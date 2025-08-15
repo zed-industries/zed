@@ -38,7 +38,6 @@ use ui::{
     Callout, Disclosure, Divider, DividerColor, ElevationIndex, KeyBinding, PopoverMenuHandle,
     Scrollbar, ScrollbarState, Tooltip, prelude::*,
 };
-use util::debug_panic;
 use util::{ResultExt, size::format_file_size, time::duration_alt_display};
 use workspace::{CollaboratorId, Workspace};
 use zed_actions::agent::{Chat, ToggleModelSelector};
@@ -46,6 +45,7 @@ use zed_actions::assistant::OpenRulesLibrary;
 
 use super::entry_view_state::EntryViewState;
 use crate::acp::AcpModelSelectorPopover;
+use crate::acp::entry_view_state::{EntryViewEvent, ViewEvent};
 use crate::acp::message_editor::{MessageEditor, MessageEditorEvent};
 use crate::agent_diff::AgentDiff;
 use crate::profile_selector::{ProfileProvider, ProfileSelector};
@@ -102,10 +102,8 @@ pub struct AcpThreadView {
     agent: Rc<dyn AgentServer>,
     workspace: WeakEntity<Workspace>,
     project: Entity<Project>,
-    thread_store: Entity<ThreadStore>,
-    text_thread_store: Entity<TextThreadStore>,
     thread_state: ThreadState,
-    entry_view_state: EntryViewState,
+    entry_view_state: Entity<EntryViewState>,
     message_editor: Entity<MessageEditor>,
     model_selector: Option<Entity<AcpModelSelectorPopover>>,
     profile_selector: Option<Entity<ProfileSelector>>,
@@ -121,14 +119,9 @@ pub struct AcpThreadView {
     plan_expanded: bool,
     editor_expanded: bool,
     terminal_expanded: bool,
-    editing_message: Option<EditingMessage>,
+    editing_message: Option<usize>,
     _cancel_task: Option<Task<()>>,
-    _subscriptions: [Subscription; 2],
-}
-
-struct EditingMessage {
-    index: usize,
-    message_id: UserMessageId,
+    _subscriptions: [Subscription; 3],
 }
 
 enum ThreadState {
@@ -175,24 +168,32 @@ impl AcpThreadView {
 
         let list_state = ListState::new(0, gpui::ListAlignment::Bottom, px(2048.0));
 
+        let entry_view_state = cx.new(|_| {
+            EntryViewState::new(
+                workspace.clone(),
+                project.clone(),
+                thread_store.clone(),
+                text_thread_store.clone(),
+            )
+        });
+
         let subscriptions = [
             cx.observe_global_in::<SettingsStore>(window, Self::settings_changed),
-            cx.subscribe_in(&message_editor, window, Self::on_message_editor_event),
+            cx.subscribe_in(&message_editor, window, Self::handle_message_editor_event),
+            cx.subscribe_in(&entry_view_state, window, Self::handle_entry_view_event),
         ];
 
         Self {
             agent: agent.clone(),
             workspace: workspace.clone(),
             project: project.clone(),
-            thread_store,
-            text_thread_store,
+            entry_view_state,
             thread_state: Self::initial_state(agent, workspace, project, window, cx),
             message_editor,
             model_selector: None,
             profile_selector: None,
             notifications: Vec::new(),
             notification_subscriptions: HashMap::default(),
-            entry_view_state: EntryViewState::default(),
             list_state: list_state.clone(),
             scrollbar_state: ScrollbarState::new(list_state).parent_entity(&cx.entity()),
             thread_error: None,
@@ -413,7 +414,7 @@ impl AcpThreadView {
         cx.notify();
     }
 
-    pub fn on_message_editor_event(
+    pub fn handle_message_editor_event(
         &mut self,
         _: &Entity<MessageEditor>,
         event: &MessageEditorEvent,
@@ -423,6 +424,28 @@ impl AcpThreadView {
         match event {
             MessageEditorEvent::Send => self.send(window, cx),
             MessageEditorEvent::Cancel => self.cancel_generation(cx),
+            MessageEditorEvent::Focused => {}
+        }
+    }
+
+    pub fn handle_entry_view_event(
+        &mut self,
+        _: &Entity<EntryViewState>,
+        event: &EntryViewEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match &event.view_event {
+            ViewEvent::MessageEditorEvent(_editor, MessageEditorEvent::Focused) => {
+                self.editing_message = Some(event.entry_index);
+                cx.notify();
+            }
+            ViewEvent::MessageEditorEvent(editor, MessageEditorEvent::Send) => {
+                self.regenerate(event.entry_index, editor, window, cx);
+            }
+            ViewEvent::MessageEditorEvent(_editor, MessageEditorEvent::Cancel) => {
+                self.cancel_editing(&Default::default(), window, cx);
+            }
         }
     }
 
@@ -498,33 +521,27 @@ impl AcpThreadView {
         cx.notify();
     }
 
-    fn regenerate(&mut self, _: &ClickEvent, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(editing_message) = self.editing_message.take() else {
-            return;
-        };
-
+    fn regenerate(
+        &mut self,
+        entry_ix: usize,
+        message_editor: &Entity<MessageEditor>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let Some(thread) = self.thread().cloned() else {
             return;
         };
 
-        let rewind = thread.update(cx, |thread, cx| {
-            thread.rewind(editing_message.message_id, cx)
-        });
-
-        let Some(message_editor) = self
-            .entry_view_state
-            .entry(editing_message.index)
-            .and_then(|entry| entry.message_editor())
-        else {
-            debug_panic!(
-                "Entry #{} should have a message editor",
-                editing_message.index
-            );
+        let Some(rewind) = thread.update(cx, |thread, cx| {
+            let user_message_id = thread.entries().get(entry_ix)?.user_message()?.id.clone()?;
+            Some(thread.rewind(user_message_id, cx))
+        }) else {
             return;
         };
 
         let contents =
             message_editor.update(cx, |message_editor, cx| message_editor.contents(window, cx));
+
         let task = cx.foreground_executor().spawn(async move {
             rewind.await?;
             contents.await
@@ -580,33 +597,20 @@ impl AcpThreadView {
             AcpThreadEvent::NewEntry => {
                 let len = thread.read(cx).entries().len();
                 let index = len - 1;
-                self.entry_view_state.sync_entry(
-                    &self.workspace,
-                    &self.project,
-                    &self.thread_store,
-                    &self.text_thread_store,
-                    &thread,
-                    index,
-                    window,
-                    cx,
-                );
+                self.entry_view_state.update(cx, |view_state, cx| {
+                    view_state.sync_entry(index, &thread, window, cx)
+                });
                 self.list_state.splice(index..index, 1);
             }
             AcpThreadEvent::EntryUpdated(index) => {
-                self.entry_view_state.sync_entry(
-                    &self.workspace,
-                    &self.project,
-                    &self.thread_store,
-                    &self.text_thread_store,
-                    &thread,
-                    *index,
-                    window,
-                    cx,
-                );
+                self.entry_view_state.update(cx, |view_state, cx| {
+                    view_state.sync_entry(*index, &thread, window, cx)
+                });
                 self.list_state.splice(*index..index + 1, 1);
             }
             AcpThreadEvent::EntriesRemoved(range) => {
-                self.entry_view_state.remove(range.clone());
+                self.entry_view_state
+                    .update(cx, |view_state, _cx| view_state.remove(range.clone()));
                 self.list_state.splice(range.clone(), 0);
             }
             AcpThreadEvent::ToolAuthorizationRequired => {
@@ -740,11 +744,14 @@ impl AcpThreadView {
                         .text_xs()
                         .children(
                             self.entry_view_state
+                                .read(cx)
                                 .entry(entry_ix)
                                 .and_then(|entry| entry.message_editor())
                                 .map(|editor| {
-                                    self.render_sent_user_message_editor(editor, window, cx)
-                                        .into_any_element()
+                                    self.render_sent_user_message_editor(
+                                        entry_ix, editor, window, cx,
+                                    )
+                                    .into_any_element()
                                 }),
                         ),
                 )
@@ -820,8 +827,8 @@ impl AcpThreadView {
             primary
         };
 
-        if let Some(editing) = self.editing_message.as_ref()
-            && editing.index < entry_ix
+        if let Some(editing_index) = self.editing_message.as_ref()
+            && *editing_index < entry_ix
         {
             let backdrop = div()
                 .id(("backdrop", entry_ix))
@@ -1412,7 +1419,7 @@ impl AcpThreadView {
             .border_t_1()
             .border_color(self.tool_card_border_color(cx))
             .child(
-                if let Some(entry) = self.entry_view_state.entry(entry_ix)
+                if let Some(entry) = self.entry_view_state.read(cx).entry(entry_ix)
                     && let Some(editor) = entry.editor_for_diff(&diff)
                 {
                     editor.clone().into_any_element()
@@ -1616,6 +1623,7 @@ impl AcpThreadView {
 
         let terminal_view = self
             .entry_view_state
+            .read(cx)
             .entry(entry_ix)
             .and_then(|entry| entry.terminal(&terminal));
         let show_output = self.terminal_expanded && terminal_view.is_some();
@@ -2484,57 +2492,9 @@ impl AcpThreadView {
         )
     }
 
-    fn start_editing_message(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(thread) = self.thread() else {
-            return;
-        };
-        let Some(AgentThreadEntry::UserMessage(message)) = thread.read(cx).entries().get(index)
-        else {
-            return;
-        };
-        let Some(message_id) = message.id.clone() else {
-            return;
-        };
-
-        self.list_state.scroll_to_reveal_item(index);
-
-        let chunks = message.chunks.clone();
-        let editor = cx.new(|cx| {
-            let mut editor = MessageEditor::new(
-                self.workspace.clone(),
-                self.project.clone(),
-                self.thread_store.clone(),
-                self.text_thread_store.clone(),
-                editor::EditorMode::AutoHeight {
-                    min_lines: 1,
-                    max_lines: None,
-                },
-                window,
-                cx,
-            );
-            editor.set_message(chunks, window, cx);
-            editor
-        });
-        let subscription =
-            cx.subscribe_in(&editor, window, |this, _, event, window, cx| match event {
-                MessageEditorEvent::Send => {
-                    this.regenerate(&Default::default(), window, cx);
-                }
-                MessageEditorEvent::Cancel => {
-                    this.cancel_editing(&Default::default(), window, cx);
-                }
-            });
-        editor.focus_handle(cx).focus(window);
-
-        self.editing_message.replace(EditingMessage {
-            index: index,
-            message_id: message_id.clone(),
-        });
-        cx.notify();
-    }
-
     fn render_sent_user_message_editor(
         &self,
+        entry_ix: usize,
         editor: &Entity<MessageEditor>,
         window: &Window,
         cx: &Context<Self>,
@@ -2555,7 +2515,7 @@ impl AcpThreadView {
                                 .color(Color::Muted)
                                 .size(LabelSize::XSmall),
                         )
-                        .child(self.render_sent_user_message_editor_buttons(editor, cx)),
+                        .child(self.render_sent_user_message_editor_buttons(entry_ix, editor, cx)),
                 )
             },
         )
@@ -2563,6 +2523,7 @@ impl AcpThreadView {
 
     fn render_sent_user_message_editor_buttons(
         &self,
+        entry_ix: usize,
         editor: &Entity<MessageEditor>,
         cx: &Context<Self>,
     ) -> Div {
@@ -2607,7 +2568,12 @@ impl AcpThreadView {
                             )
                         }
                     })
-                    .on_click(cx.listener(Self::regenerate)),
+                    .on_click(cx.listener({
+                        let editor = editor.clone();
+                        move |this, _, window, cx| {
+                            this.regenerate(entry_ix, &editor, window, cx);
+                        }
+                    })),
             )
     }
 
@@ -3140,7 +3106,9 @@ impl AcpThreadView {
     }
 
     fn settings_changed(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
-        self.entry_view_state.settings_changed(cx);
+        self.entry_view_state.update(cx, |entry_view_state, cx| {
+            entry_view_state.settings_changed(cx);
+        });
     }
 
     pub(crate) fn insert_dragged_files(
@@ -3440,35 +3408,6 @@ impl Render for AcpThreadView {
             .children(self.render_thread_error(window, cx))
             .child(self.render_message_editor(window, cx))
     }
-}
-
-fn user_message_markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
-    let mut style = default_markdown_style(false, window, cx);
-    let mut text_style = window.text_style();
-    let theme_settings = ThemeSettings::get_global(cx);
-
-    let buffer_font = theme_settings.buffer_font.family.clone();
-    let buffer_font_size = TextSize::Small.rems(cx);
-
-    text_style.refine(&TextStyleRefinement {
-        font_family: Some(buffer_font),
-        font_size: Some(buffer_font_size.into()),
-        ..Default::default()
-    });
-
-    style.base_text_style = text_style;
-    style.link_callback = Some(Rc::new(move |url, cx| {
-        if MentionUri::parse(url).is_ok() {
-            let colors = cx.theme().colors();
-            Some(TextStyleRefinement {
-                background_color: Some(colors.element_background),
-                ..Default::default()
-            })
-        } else {
-            None
-        }
-    }));
-    style
 }
 
 fn default_markdown_style(buffer_font: bool, window: &Window, cx: &App) -> MarkdownStyle {
@@ -3963,15 +3902,17 @@ pub(crate) mod tests {
             assert_eq!(thread.entries().len(), 2);
         });
 
-        thread_view.read_with(cx, |view, _| {
-            assert!(
-                view.entry_view_state
-                    .entry(0)
-                    .unwrap()
-                    .message_editor()
-                    .is_some()
-            );
-            assert!(view.entry_view_state.entry(1).unwrap().has_content());
+        thread_view.read_with(cx, |view, cx| {
+            view.entry_view_state.read_with(cx, |entry_view_state, _| {
+                assert!(
+                    entry_view_state
+                        .entry(0)
+                        .unwrap()
+                        .message_editor()
+                        .is_some()
+                );
+                assert!(entry_view_state.entry(1).unwrap().has_content());
+            });
         });
 
         // Second user message
@@ -4007,23 +3948,25 @@ pub(crate) mod tests {
             user_message.id.clone().unwrap()
         });
 
-        thread_view.read_with(cx, |view, _| {
-            assert!(
-                view.entry_view_state
-                    .entry(0)
-                    .unwrap()
-                    .message_editor()
-                    .is_some()
-            );
-            assert!(view.entry_view_state.entry(1).unwrap().has_content());
-            assert!(
-                view.entry_view_state
-                    .entry(2)
-                    .unwrap()
-                    .message_editor()
-                    .is_some()
-            );
-            assert!(view.entry_view_state.entry(3).unwrap().has_content());
+        thread_view.read_with(cx, |view, cx| {
+            view.entry_view_state.read_with(cx, |entry_view_state, _| {
+                assert!(
+                    entry_view_state
+                        .entry(0)
+                        .unwrap()
+                        .message_editor()
+                        .is_some()
+                );
+                assert!(entry_view_state.entry(1).unwrap().has_content());
+                assert!(
+                    entry_view_state
+                        .entry(2)
+                        .unwrap()
+                        .message_editor()
+                        .is_some()
+                );
+                assert!(entry_view_state.entry(3).unwrap().has_content());
+            });
         });
 
         // Rewind to first message
@@ -4038,19 +3981,21 @@ pub(crate) mod tests {
             assert_eq!(thread.entries().len(), 2);
         });
 
-        thread_view.read_with(cx, |view, _| {
-            assert!(
-                view.entry_view_state
-                    .entry(0)
-                    .unwrap()
-                    .message_editor()
-                    .is_some()
-            );
-            assert!(view.entry_view_state.entry(1).unwrap().has_content());
+        thread_view.read_with(cx, |view, cx| {
+            view.entry_view_state.read_with(cx, |entry_view_state, _| {
+                assert!(
+                    entry_view_state
+                        .entry(0)
+                        .unwrap()
+                        .message_editor()
+                        .is_some()
+                );
+                assert!(entry_view_state.entry(1).unwrap().has_content());
 
-            // Old views should be dropped
-            assert!(view.entry_view_state.entry(2).is_none());
-            assert!(view.entry_view_state.entry(3).is_none());
+                // Old views should be dropped
+                assert!(entry_view_state.entry(2).is_none());
+                assert!(entry_view_state.entry(3).is_none());
+            });
         });
     }
 }

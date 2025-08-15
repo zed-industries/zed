@@ -4,38 +4,53 @@ use acp_thread::{AcpThread, AgentThreadEntry};
 use agent::{TextThreadStore, ThreadStore};
 use editor::{Editor, EditorMode, MinimapVisibility};
 use gpui::{
-    AnyEntity, App, AppContext as _, Entity, EntityId, TextStyleRefinement, WeakEntity, Window,
+    AnyEntity, App, AppContext as _, Entity, EntityId, EventEmitter, TextStyleRefinement,
+    WeakEntity, Window,
 };
 use language::language_settings::SoftWrap;
 use project::Project;
 use settings::Settings as _;
 use terminal_view::TerminalView;
 use theme::ThemeSettings;
-use ui::TextSize;
+use ui::{Context, TextSize};
 use workspace::Workspace;
 
-use crate::acp::message_editor::MessageEditor;
+use crate::acp::message_editor::{MessageEditor, MessageEditorEvent};
 
-#[derive(Default)]
 pub struct EntryViewState {
+    workspace: WeakEntity<Workspace>,
+    project: Entity<Project>,
+    thread_store: Entity<ThreadStore>,
+    text_thread_store: Entity<TextThreadStore>,
     entries: Vec<Entry>,
 }
 
 impl EntryViewState {
+    pub fn new(
+        workspace: WeakEntity<Workspace>,
+        project: Entity<Project>,
+        thread_store: Entity<ThreadStore>,
+        text_thread_store: Entity<TextThreadStore>,
+    ) -> Self {
+        Self {
+            workspace,
+            project,
+            thread_store,
+            text_thread_store,
+            entries: Vec::new(),
+        }
+    }
+
     pub fn entry(&self, index: usize) -> Option<&Entry> {
         self.entries.get(index)
     }
 
     pub fn sync_entry(
         &mut self,
-        workspace: &WeakEntity<Workspace>,
-        project: &Entity<Project>,
-        thread_store: &Entity<ThreadStore>,
-        text_thread_store: &Entity<TextThreadStore>,
-        thread: &Entity<AcpThread>,
         index: usize,
+        thread: &Entity<AcpThread>,
         window: &mut Window,
-        cx: &mut App,
+        cx: &mut Context<Self>,
     ) {
         let Some(thread_entry) = thread.read(cx).entries().get(index) else {
             return;
@@ -47,10 +62,10 @@ impl EntryViewState {
                 let chunks = message.chunks.clone();
                 let message_editor = cx.new(|cx| {
                     let mut editor = MessageEditor::new(
-                        workspace.clone(),
-                        project.clone(),
-                        thread_store.clone(),
-                        text_thread_store.clone(),
+                        self.workspace.clone(),
+                        self.project.clone(),
+                        self.thread_store.clone(),
+                        self.text_thread_store.clone(),
                         editor::EditorMode::AutoHeight {
                             min_lines: 1,
                             max_lines: None,
@@ -64,6 +79,13 @@ impl EntryViewState {
                     editor.set_message(chunks, window, cx);
                     editor
                 });
+                cx.subscribe(&message_editor, move |_, editor, event, cx| {
+                    cx.emit(EntryViewEvent {
+                        entry_index: index,
+                        view_event: ViewEvent::MessageEditorEvent(editor, *event),
+                    })
+                })
+                .detach();
                 self.set_entry(index, Entry::UserMessage(message_editor));
             }
             AgentThreadEntry::ToolCall(tool_call) => {
@@ -83,8 +105,8 @@ impl EntryViewState {
                 for terminal in terminals {
                     views.entry(terminal.entity_id()).or_insert_with(|| {
                         create_terminal(
-                            workspace.clone(),
-                            project.clone(),
+                            self.workspace.clone(),
+                            self.project.clone(),
                             terminal.clone(),
                             window,
                             cx,
@@ -138,6 +160,17 @@ impl EntryViewState {
             }
         }
     }
+}
+
+impl EventEmitter<EntryViewEvent> for EntryViewState {}
+
+pub struct EntryViewEvent {
+    pub entry_index: usize,
+    pub view_event: ViewEvent,
+}
+
+pub enum ViewEvent {
+    MessageEditorEvent(Entity<MessageEditor>, MessageEditorEvent),
 }
 
 pub enum Entry {
@@ -332,19 +365,17 @@ mod tests {
         let thread_store = cx.new(|cx| ThreadStore::fake(project.clone(), cx));
         let text_thread_store = cx.new(|cx| TextThreadStore::fake(project.clone(), cx));
 
-        let mut view_state = EntryViewState::default();
+        let view_state = cx.new(|_cx| {
+            EntryViewState::new(
+                workspace.downgrade(),
+                project.clone(),
+                thread_store,
+                text_thread_store,
+            )
+        });
 
-        cx.update(|window, cx| {
-            view_state.sync_entry(
-                &workspace.downgrade(),
-                &project.clone(),
-                &thread_store,
-                &text_thread_store,
-                &thread.clone(),
-                0,
-                window,
-                cx,
-            );
+        view_state.update_in(cx, |view_state, window, cx| {
+            view_state.sync_entry(0, &thread, window, cx)
         });
 
         let diff = thread.read_with(cx, |thread, _cx| {
@@ -360,8 +391,9 @@ mod tests {
 
         cx.run_until_parked();
 
-        let entry = view_state.entry(0).unwrap();
-        let diff_editor = entry.editor_for_diff(&diff).unwrap();
+        let diff_editor = view_state.read_with(cx, |view_state, _cx| {
+            view_state.entry(0).unwrap().editor_for_diff(&diff).unwrap()
+        });
         assert_eq!(
             diff_editor.read_with(cx, |editor, cx| editor.text(cx)),
             "hi world\nhello world"

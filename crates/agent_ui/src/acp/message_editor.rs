@@ -53,9 +53,11 @@ pub struct MessageEditor {
     mention_set: Arc<Mutex<MentionSet>>,
 }
 
+#[derive(Clone, Copy)]
 pub enum MessageEditorEvent {
     Send,
     Cancel,
+    Focused,
 }
 
 impl EventEmitter<MessageEditorEvent> for MessageEditor {}
@@ -102,6 +104,11 @@ impl MessageEditor {
             });
             editor
         });
+
+        cx.on_focus(&editor.focus_handle(cx), window, |_, _, cx| {
+            cx.emit(MessageEditorEvent::Focused)
+        })
+        .detach();
 
         Self {
             editor,
@@ -202,7 +209,7 @@ impl MessageEditor {
         });
     }
 
-    fn chat(&mut self, _: &Chat, _: &mut Window, cx: &mut Context<Self>) {
+    fn send(&mut self, _: &Chat, _: &mut Window, cx: &mut Context<Self>) {
         cx.emit(MessageEditorEvent::Send)
     }
 
@@ -518,7 +525,7 @@ impl Render for MessageEditor {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         div()
             .key_context("MessageEditor")
-            .on_action(cx.listener(Self::chat))
+            .on_action(cx.listener(Self::send))
             .on_action(cx.listener(Self::cancel))
             .capture_action(cx.listener(Self::paste))
             .flex_1()

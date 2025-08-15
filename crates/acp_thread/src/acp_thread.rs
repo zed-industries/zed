@@ -117,6 +117,14 @@ impl AgentThreadEntry {
         }
     }
 
+    pub fn user_message(&self) -> Option<&UserMessage> {
+        if let AgentThreadEntry::UserMessage(message) = self {
+            Some(message)
+        } else {
+            None
+        }
+    }
+
     pub fn diffs(&self) -> impl Iterator<Item = &Entity<Diff>> {
         if let AgentThreadEntry::ToolCall(call) = self {
             itertools::Either::Left(call.diffs())
