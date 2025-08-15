@@ -517,6 +517,10 @@ impl AcpThreadView {
     }
 
     fn cancel_editing(&mut self, _: &ClickEvent, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(thread) = self.thread().cloned() else {
+            return;
+        };
+
         if let Some(index) = self.editing_message.take() {
             if let Some(editor) = self
                 .entry_view_state
@@ -526,7 +530,14 @@ impl AcpThreadView {
                 .cloned()
             {
                 editor.update(cx, |editor, cx| {
-                    editor.clear_selections(window, cx);
+                    if let Some(user_message) = thread
+                        .read(cx)
+                        .entries()
+                        .get(index)
+                        .and_then(|e| e.user_message())
+                    {
+                        editor.set_message(user_message.chunks.clone(), window, cx);
+                    }
                 })
             }
         };

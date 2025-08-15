@@ -209,14 +209,6 @@ impl MessageEditor {
         });
     }
 
-    pub fn clear_selections(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.editor.update(cx, |editor, cx| {
-            editor.change_selections(Default::default(), window, cx, |selections| {
-                selections.try_cancel();
-            })
-        });
-    }
-
     fn send(&mut self, _: &Chat, _: &mut Window, cx: &mut Context<Self>) {
         cx.emit(MessageEditorEvent::Send)
     }
@@ -414,6 +406,8 @@ impl MessageEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.clear(window, cx);
+
         let mut text = String::new();
         let mut mentions = Vec::new();
         let mut images = Vec::new();
@@ -451,7 +445,6 @@ impl MessageEditor {
             editor.buffer().read(cx).snapshot(cx)
         });
 
-        self.mention_set.lock().clear();
         for (range, mention_uri) in mentions {
             let anchor = snapshot.anchor_before(range.start);
             let crease_id = crate::context_picker::insert_crease_for_mention(
