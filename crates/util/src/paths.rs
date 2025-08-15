@@ -13,7 +13,13 @@ use std::{
 /// Returns the path to the user's home directory.
 pub fn home_dir() -> &'static PathBuf {
     static HOME_DIR: OnceLock<PathBuf> = OnceLock::new();
-    HOME_DIR.get_or_init(|| dirs::home_dir().expect("failed to determine home directory"))
+    HOME_DIR.get_or_init(|| {
+        if cfg!(any(test, feature = "test-support")) {
+            PathBuf::from("/home/zed")
+        } else {
+            dirs::home_dir().expect("failed to determine home directory")
+        }
+    })
 }
 
 pub trait PathExt {

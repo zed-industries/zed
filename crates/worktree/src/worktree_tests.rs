@@ -2025,7 +2025,6 @@ async fn test_repository_above_root(executor: BackgroundExecutor, cx: &mut TestA
     });
     pretty_assertions::assert_eq!(repos, [Path::new(path!("/root")).into()]);
 
-    eprintln!(">>>>>>>>>> touch");
     fs.touch_path(path!("/root/subproject")).await;
     worktree
         .update(cx, |worktree, _| {
@@ -2044,6 +2043,116 @@ async fn test_repository_above_root(executor: BackgroundExecutor, cx: &mut TestA
             .collect::<Vec<_>>()
     });
     pretty_assertions::assert_eq!(repos, [Path::new(path!("/root")).into()]);
+}
+
+#[gpui::test]
+async fn test_global_gitignore(executor: BackgroundExecutor, cx: &mut TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(executor);
+    fs.insert_tree(
+        path!("/home/zed"),
+        json!({
+            ".config": {
+                "git": {
+                    "ignore": "foo\n/bar\nbaz\n"
+                }
+            },
+            "project": {
+                ".git": {},
+                ".gitignore": "!baz",
+                "foo": "",
+                "bar": "",
+                "sub": {
+                    "bar": "",
+                },
+                "subrepo": {
+                    ".git": {},
+                    "bar": ""
+                },
+                "baz": ""
+            }
+        }),
+    )
+    .await;
+    let worktree = Worktree::local(
+        path!("/home/zed/project").as_ref(),
+        true,
+        fs.clone(),
+        Arc::default(),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+    worktree
+        .update(cx, |worktree, _| {
+            worktree.as_local().unwrap().scan_complete()
+        })
+        .await;
+    cx.run_until_parked();
+
+    // .gitignore overrides excludesFile, and anchored paths in excludesFile are resolved
+    // relative to the nearest containing repository
+    worktree.update(cx, |worktree, _cx| {
+        check_worktree_entries(
+            worktree,
+            &[],
+            &["foo", "bar", "subrepo/bar"],
+            &["sub/bar", "baz"],
+            &[],
+        );
+    });
+
+    // Ignore statuses are updated when excludesFile changes
+    fs.write(
+        Path::new(path!("/home/zed/.config/git/ignore")),
+        "/bar\nbaz\n".as_bytes(),
+    )
+    .await
+    .unwrap();
+    worktree
+        .update(cx, |worktree, _| {
+            worktree.as_local().unwrap().scan_complete()
+        })
+        .await;
+    cx.run_until_parked();
+
+    worktree.update(cx, |worktree, _cx| {
+        check_worktree_entries(
+            worktree,
+            &[],
+            &["bar", "subrepo/bar"],
+            &["foo", "sub/bar", "baz"],
+            &[],
+        );
+    });
+
+    // Statuses are updated when .git added/removed
+    fs.remove_dir(
+        Path::new(path!("/home/zed/project/subrepo/.git")),
+        RemoveOptions {
+            recursive: true,
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    worktree
+        .update(cx, |worktree, _| {
+            worktree.as_local().unwrap().scan_complete()
+        })
+        .await;
+    cx.run_until_parked();
+
+    worktree.update(cx, |worktree, _cx| {
+        check_worktree_entries(
+            worktree,
+            &[],
+            &["bar"],
+            &["foo", "sub/bar", "baz", "subrepo/bar"],
+            &[],
+        );
+    });
 }
 
 #[track_caller]
