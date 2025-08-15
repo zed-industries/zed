@@ -2457,7 +2457,7 @@ impl Pane {
             .drag_over::<DraggedTab>(move |tab, dragged_tab: &DraggedTab, _, cx| {
                 let mut styled_tab = tab
                     .bg(cx.theme().colors().drop_target_background)
-                    .border_color(cx.theme().colors().text)
+                    .border_color(cx.theme().colors().drop_target_border)
                     .border_0();
 
                 if ix < dragged_tab.ix {
