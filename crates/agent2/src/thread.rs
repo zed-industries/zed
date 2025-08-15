@@ -568,7 +568,7 @@ impl Thread {
         let model = self.model.clone();
         let (events_tx, events_rx) = mpsc::unbounded::<Result<AgentResponseEvent>>();
         let event_stream = AgentResponseEventStream(events_tx);
-        let message_ix = self.messages.len();
+        let message_ix = self.messages.len().saturating_sub(1);
         self.tool_use_limit_reached = false;
         self.running_turn = Some(cx.spawn(async move |this, cx| {
             log::info!("Starting agent turn execution");
