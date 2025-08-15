@@ -417,10 +417,10 @@ message Envelope {
     reserved 230 to 231;
     reserved 235 to 236;
     reserved 246;
-    reserved 259;
-    reserved 270;
     reserved 247 to 254;
     reserved 255 to 256;
+    reserved 259;
+    reserved 270;
     reserved 280 to 281;
     reserved 332 to 333;
 }
