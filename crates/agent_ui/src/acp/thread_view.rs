@@ -753,6 +753,7 @@ impl AcpThreadView {
                 };
 
                 let editing = self.editing_message == Some(entry_ix);
+                let editor_focus = editor.focus_handle(cx).is_focused(window);
                 let focus_border = cx.theme().colors().border_focused;
 
                 div()
@@ -781,9 +782,10 @@ impl AcpThreadView {
                                     .shadow_md()
                                     .bg(cx.theme().colors().editor_background)
                                     .border_1()
+                                    .when(editing && !editor_focus, |this| this.border_dashed())
                                     .border_color(cx.theme().colors().border)
                                     .map(|this|{
-                                        if editing {
+                                        if editor_focus {
                                             this.border_color(focus_border)
                                         } else {
                                             this.hover(|s| s.border_color(focus_border.opacity(0.8)))
@@ -792,7 +794,7 @@ impl AcpThreadView {
                                     .text_xs()
                                     .child(editor.clone().into_any_element()),
                             )
-                            .when(editing, |this|
+                            .when(editor_focus, |this|
                                 this.child(
                                     h_flex()
                                         .absolute()
