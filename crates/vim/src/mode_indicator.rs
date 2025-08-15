@@ -1,3 +1,4 @@
+use editor::display_map::{is_invisible, replacement};
 use gpui::{Context, Element, Entity, Render, Subscription, WeakEntity, Window, div};
 use ui::text_for_keystrokes;
 use workspace::{StatusItemView, item::ItemHandle, ui::prelude::*};
@@ -107,10 +108,24 @@ impl Render for ModeIndicator {
             };
 
             let current_operators_description = self.current_operators_description(vim.clone(), cx);
-            let pending = self
+            let pending: String = self
                 .pending_keys
                 .as_ref()
-                .unwrap_or(&current_operators_description);
+                .unwrap_or(&current_operators_description)
+                .chars()
+                .map(|c| {
+                    if is_invisible(c) || matches!(c, '\t' | '\r' | '\n') {
+                        if c <= '\x1f' {
+                            replacement(c).unwrap_or("").to_string()
+                        } else {
+                            format!("\\u{:04X}", c as u32)
+                        }
+                    } else {
+                        c.to_string()
+                    }
+                })
+                .collect();
+
             format!("{} -- {} --", pending, mode).into()
         };
 
