@@ -54,6 +54,8 @@ impl AgentServer for Qwen {
             };
 
             let result = crate::acp::connect(server_name, command.clone(), &root_dir, cx).await;
+            
+            // Only check for version compatibility if the connection failed
             if result.is_err() {
                 let version_fut = util::command::new_smol_command(&command.path)
                     .args(command.args.iter())
@@ -82,20 +84,8 @@ impl AgentServer for Qwen {
                         upgrade_command: "npm install -g @qwen-code/qwen-code@latest".into(),
                     }.into())
                 }
-                
-                // Check if the error is related to authentication
-                if let Err(ref e) = result {
-                    if e.to_string().contains("authentication") || e.to_string().contains("API key") {
-                        return Err(LoadError::AuthenticationRequired {
-                            prompt: "Qwen requires authentication. Please set up your API key.".into(),
-                            instructions: "The recommended approach is to run the `qwen` command which will automatically open a browser for OAuth authentication.\nAlternatively, you can set environment variables: OPENAI_API_KEY, OPENAI_BASE_URL, and OPENAI_MODEL".into(),
-                            action: Some(acp_thread::AuthAction::OpenUrl {
-                                url: "https://help.aliyun.com/zh/qwen".into(), // Qwen API key page
-                            }),
-                        }.into())
-                    }
-                }
             }
+            
             result
         })
     }
