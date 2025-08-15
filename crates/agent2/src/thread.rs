@@ -580,7 +580,7 @@ impl Thread {
                         completion_intent
                     );
                     let request = this.update(cx, |this, cx| {
-                        this.build_completion_request(completion_intent, cx)
+                        this.build_completion_request(&model, completion_intent, cx)
                     })?;
 
                     log::info!("Calling model.stream_completion");
@@ -941,6 +941,7 @@ impl Thread {
 
     pub(crate) fn build_completion_request(
         &self,
+        model: &Arc<dyn LanguageModel>,
         completion_intent: CompletionIntent,
         cx: &mut App,
     ) -> LanguageModelRequest {
@@ -980,7 +981,7 @@ impl Thread {
             tools,
             tool_choice: None,
             stop: Vec::new(),
-            temperature: None,
+            temperature: AgentSettings::temperature_for_model(model, cx),
             thinking_allowed: true,
         };
 
