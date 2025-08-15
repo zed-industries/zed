@@ -270,6 +270,12 @@ pub trait Item: Focusable + EventEmitter<Self::Event> + Render + Sized {
     /// Returns the textual contents of the tab.
     fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString;
 
+    /// Returns the suggested filename for saving this item.
+    /// By default, returns the tab content text.
+    fn suggested_filename(&self, cx: &App) -> SharedString {
+        self.tab_content_text(0, cx)
+    }
+
     fn tab_icon(&self, _window: &Window, _cx: &App) -> Option<Icon> {
         None
     }
@@ -497,6 +503,7 @@ pub trait ItemHandle: 'static + Send {
     ) -> gpui::Subscription;
     fn tab_content(&self, params: TabContentParams, window: &Window, cx: &App) -> AnyElement;
     fn tab_content_text(&self, detail: usize, cx: &App) -> SharedString;
+    fn suggested_filename(&self, cx: &App) -> SharedString;
     fn tab_icon(&self, window: &Window, cx: &App) -> Option<Icon>;
     fn tab_tooltip_text(&self, cx: &App) -> Option<SharedString>;
     fn tab_tooltip_content(&self, cx: &App) -> Option<TabTooltipContent>;
@@ -629,6 +636,10 @@ impl<T: Item> ItemHandle for Entity<T> {
     }
     fn tab_content_text(&self, detail: usize, cx: &App) -> SharedString {
         self.read(cx).tab_content_text(detail, cx)
+    }
+
+    fn suggested_filename(&self, cx: &App) -> SharedString {
+        self.read(cx).suggested_filename(cx)
     }
 
     fn tab_icon(&self, window: &Window, cx: &App) -> Option<Icon> {

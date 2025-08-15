@@ -15,6 +15,8 @@ mod toast_layer;
 mod toolbar;
 mod workspace_settings;
 
+pub use crate::notifications::NotificationFrame;
+pub use dock::Panel;
 pub use toast_layer::{ToastAction, ToastLayer, ToastView};
 
 use anyhow::{Context as _, Result, anyhow};
@@ -24,7 +26,6 @@ use client::{
     proto::{self, ErrorCode, PanelId, PeerId},
 };
 use collections::{HashMap, HashSet, hash_map};
-pub use dock::Panel;
 use dock::{Dock, DockPosition, PanelButtons, PanelHandle, RESIZE_HANDLE_SIZE};
 use futures::{
     Future, FutureExt, StreamExt,
@@ -2066,6 +2067,7 @@ impl Workspace {
     pub fn prompt_for_new_path(
         &mut self,
         lister: DirectoryLister,
+        suggested_name: Option<String>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> oneshot::Receiver<Option<Vec<PathBuf>>> {
@@ -2093,7 +2095,7 @@ impl Workspace {
                     })
                     .or_else(std::env::home_dir)
                     .unwrap_or_else(|| PathBuf::from(""));
-                cx.prompt_for_new_path(&relative_to)
+                cx.prompt_for_new_path(&relative_to, suggested_name.as_deref())
             })?;
             let abs_path = match abs_path.await? {
                 Ok(path) => path,
@@ -3878,9 +3880,7 @@ impl Workspace {
                 local,
                 focus_changed,
             } => {
-                cx.on_next_frame(window, |_, window, _| {
-                    window.invalidate_character_coordinates();
-                });
+                window.invalidate_character_coordinates();
 
                 pane.update(cx, |pane, _| {
                     pane.track_alternate_file_items();
@@ -3921,9 +3921,7 @@ impl Workspace {
                 }
             }
             pane::Event::Focus => {
-                cx.on_next_frame(window, |_, window, _| {
-                    window.invalidate_character_coordinates();
-                });
+                window.invalidate_character_coordinates();
                 self.handle_pane_focused(pane.clone(), window, cx);
             }
             pane::Event::ZoomIn => {
@@ -6664,25 +6662,15 @@ impl Render for Workspace {
                                     }
                                 })
                                 .children(self.zoomed.as_ref().and_then(|view| {
-                                    let zoomed_view = view.upgrade()?;
-                                    let div = div()
+                                    Some(div()
                                         .occlude()
                                         .absolute()
                                         .overflow_hidden()
                                         .border_color(colors.border)
                                         .bg(colors.background)
-                                        .child(zoomed_view)
+                                        .child(view.upgrade()?)
                                         .inset_0()
-                                        .shadow_lg();
-
-                                    Some(match self.zoomed_position {
-                                        Some(DockPosition::Left) => div.right_2().border_r_1(),
-                                        Some(DockPosition::Right) => div.left_2().border_l_1(),
-                                        Some(DockPosition::Bottom) => div.top_2().border_t_1(),
-                                        None => {
-                                            div.top_2().bottom_2().left_2().right_2().border_1()
-                                        }
-                                    })
+                                        .shadow_lg())
                                 }))
                                 .children(self.render_notifications(window, cx)),
                         )

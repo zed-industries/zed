@@ -370,6 +370,7 @@ impl LanguageModel for OpenAiLanguageModel {
             request,
             self.model.id(),
             self.model.supports_parallel_tool_calls(),
+            self.model.supports_prompt_cache_key(),
             self.max_output_tokens(),
             self.model.reasoning_effort(),
         );
@@ -386,6 +387,7 @@ pub fn into_open_ai(
     request: LanguageModelRequest,
     model_id: &str,
     supports_parallel_tool_calls: bool,
+    supports_prompt_cache_key: bool,
     max_output_tokens: Option<u64>,
     reasoning_effort: Option<ReasoningEffort>,
 ) -> open_ai::Request {
@@ -477,7 +479,11 @@ pub fn into_open_ai(
         } else {
             None
         },
-        prompt_cache_key: request.thread_id,
+        prompt_cache_key: if supports_prompt_cache_key {
+            request.thread_id
+        } else {
+            None
+        },
         tools: request
             .tools
             .into_iter()

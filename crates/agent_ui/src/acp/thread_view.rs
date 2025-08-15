@@ -7,20 +7,22 @@ use action_log::ActionLog;
 use agent::{TextThreadStore, ThreadStore};
 use agent_client_protocol::{self as acp};
 use agent_servers::AgentServer;
-use agent_settings::{AgentSettings, NotifyWhenAgentWaiting};
+use agent_settings::{AgentProfileId, AgentSettings, CompletionMode, NotifyWhenAgentWaiting};
 use anyhow::bail;
 use audio::{Audio, Sound};
 use buffer_diff::BufferDiff;
+use client::zed_urls;
 use collections::{HashMap, HashSet};
 use editor::scroll::Autoscroll;
 use editor::{Editor, EditorMode, MultiBuffer, PathKey, SelectionEffects};
 use file_icons::FileIcons;
+use fs::Fs;
 use gpui::{
-    Action, Animation, AnimationExt, App, BorderStyle, ClickEvent, EdgesRefinement, Empty, Entity,
-    FocusHandle, Focusable, Hsla, Length, ListOffset, ListState, MouseButton, PlatformDisplay,
-    SharedString, Stateful, StyleRefinement, Subscription, Task, TextStyle, TextStyleRefinement,
-    Transformation, UnderlineStyle, WeakEntity, Window, WindowHandle, div, linear_color_stop,
-    linear_gradient, list, percentage, point, prelude::*, pulsating_between,
+    Action, Animation, AnimationExt, App, BorderStyle, ClickEvent, ClipboardItem, EdgesRefinement,
+    Empty, Entity, FocusHandle, Focusable, Hsla, Length, ListOffset, ListState, MouseButton,
+    PlatformDisplay, SharedString, Stateful, StyleRefinement, Subscription, Task, TextStyle,
+    TextStyleRefinement, Transformation, UnderlineStyle, WeakEntity, Window, WindowHandle, div,
+    linear_color_stop, linear_gradient, list, percentage, point, prelude::*, pulsating_between,
 };
 use language::Buffer;
 use markdown::{HeadingLevelStyles, Markdown, MarkdownElement, MarkdownStyle};
@@ -28,12 +30,13 @@ use project::Project;
 use prompt_store::PromptId;
 use rope::Point;
 use settings::{Settings as _, SettingsStore};
+use std::sync::Arc;
 use std::{collections::BTreeMap, process::ExitStatus, rc::Rc, time::Duration};
 use text::Anchor;
 use theme::ThemeSettings;
 use ui::{
-    Disclosure, Divider, DividerColor, KeyBinding, PopoverMenuHandle, Scrollbar, ScrollbarState,
-    Tooltip, prelude::*,
+    Callout, Disclosure, Divider, DividerColor, ElevationIndex, KeyBinding, PopoverMenuHandle,
+    Scrollbar, ScrollbarState, Tooltip, prelude::*,
 };
 use util::{ResultExt, size::format_file_size, time::duration_alt_display};
 use workspace::{CollaboratorId, Workspace};
@@ -44,15 +47,55 @@ use super::entry_view_state::EntryViewState;
 use crate::acp::AcpModelSelectorPopover;
 use crate::acp::message_editor::{MessageEditor, MessageEditorEvent};
 use crate::agent_diff::AgentDiff;
-use crate::ui::{AgentNotification, AgentNotificationEvent};
+use crate::profile_selector::{ProfileProvider, ProfileSelector};
+use crate::ui::{AgentNotification, AgentNotificationEvent, BurnModeTooltip};
 use crate::{
-    AgentDiffPane, AgentPanel, ExpandMessageEditor, Follow, KeepAll, OpenAgentDiff, RejectAll,
+    AgentDiffPane, AgentPanel, ContinueThread, ContinueWithBurnMode, ExpandMessageEditor, Follow,
+    KeepAll, OpenAgentDiff, RejectAll, ToggleBurnMode, ToggleProfileSelector,
 };
 
 const RESPONSE_PADDING_X: Pixels = px(19.);
-
 pub const MIN_EDITOR_LINES: usize = 4;
 pub const MAX_EDITOR_LINES: usize = 8;
+
+enum ThreadError {
+    PaymentRequired,
+    ModelRequestLimitReached(cloud_llm_client::Plan),
+    ToolUseLimitReached,
+    Other(SharedString),
+}
+
+impl ThreadError {
+    fn from_err(error: anyhow::Error) -> Self {
+        if error.is::<language_model::PaymentRequiredError>() {
+            Self::PaymentRequired
+        } else if error.is::<language_model::ToolUseLimitReachedError>() {
+            Self::ToolUseLimitReached
+        } else if let Some(error) =
+            error.downcast_ref::<language_model::ModelRequestLimitReachedError>()
+        {
+            Self::ModelRequestLimitReached(error.plan)
+        } else {
+            Self::Other(error.to_string().into())
+        }
+    }
+}
+
+impl ProfileProvider for Entity<agent2::Thread> {
+    fn profile_id(&self, cx: &App) -> AgentProfileId {
+        self.read(cx).profile().clone()
+    }
+
+    fn set_profile(&self, profile_id: AgentProfileId, cx: &mut App) {
+        self.update(cx, |thread, _cx| {
+            thread.set_profile(profile_id);
+        });
+    }
+
+    fn profiles_supported(&self, cx: &App) -> bool {
+        self.read(cx).model().supports_tools()
+    }
+}
 
 pub struct AcpThreadView {
     agent: Rc<dyn AgentServer>,
@@ -64,9 +107,10 @@ pub struct AcpThreadView {
     entry_view_state: EntryViewState,
     message_editor: Entity<MessageEditor>,
     model_selector: Option<Entity<AcpModelSelectorPopover>>,
+    profile_selector: Option<Entity<ProfileSelector>>,
     notifications: Vec<WindowHandle<AgentNotification>>,
     notification_subscriptions: HashMap<WindowHandle<AgentNotification>, Vec<Subscription>>,
-    last_error: Option<Entity<Markdown>>,
+    thread_error: Option<ThreadError>,
     list_state: ListState,
     scrollbar_state: ScrollbarState,
     auth_task: Option<Task<()>>,
@@ -146,12 +190,13 @@ impl AcpThreadView {
             thread_state: Self::initial_state(agent, workspace, project, window, cx),
             message_editor,
             model_selector: None,
+            profile_selector: None,
             notifications: Vec::new(),
             notification_subscriptions: HashMap::default(),
             entry_view_state: EntryViewState::default(),
             list_state: list_state.clone(),
             scrollbar_state: ScrollbarState::new(list_state).parent_entity(&cx.entity()),
-            last_error: None,
+            thread_error: None,
             auth_task: None,
             expanded_tool_calls: HashSet::default(),
             expanded_thinking_blocks: HashSet::default(),
@@ -273,6 +318,17 @@ impl AcpThreadView {
                             _subscription: [thread_subscription, action_log_subscription],
                         };
 
+                        this.profile_selector = this.as_native_thread(cx).map(|thread| {
+                            cx.new(|cx| {
+                                ProfileSelector::new(
+                                    <dyn Fs>::global(cx),
+                                    Arc::new(thread.clone()),
+                                    this.focus_handle(cx),
+                                    cx,
+                                )
+                            })
+                        });
+
                         cx.notify();
                     }
                     Err(err) => {
@@ -316,7 +372,7 @@ impl AcpThreadView {
     }
 
     pub fn cancel_generation(&mut self, cx: &mut Context<Self>) {
-        self.last_error.take();
+        self.thread_error.take();
 
         if let Some(thread) = self.thread() {
             self._cancel_task = Some(thread.update(cx, |thread, cx| thread.cancel(cx)));
@@ -371,6 +427,25 @@ impl AcpThreadView {
         }
     }
 
+    fn resume_chat(&mut self, cx: &mut Context<Self>) {
+        self.thread_error.take();
+        let Some(thread) = self.thread() else {
+            return;
+        };
+
+        let task = thread.update(cx, |thread, cx| thread.resume(cx));
+        cx.spawn(async move |this, cx| {
+            let result = task.await;
+
+            this.update(cx, |this, cx| {
+                if let Err(err) = result {
+                    this.handle_thread_error(err, cx);
+                }
+            })
+        })
+        .detach();
+    }
+
     fn send(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let contents = self
             .message_editor
@@ -384,7 +459,7 @@ impl AcpThreadView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.last_error.take();
+        self.thread_error.take();
         self.editing_message.take();
 
         let Some(thread) = self.thread().cloned() else {
@@ -409,11 +484,9 @@ impl AcpThreadView {
         });
 
         cx.spawn(async move |this, cx| {
-            if let Err(e) = task.await {
+            if let Err(err) = task.await {
                 this.update(cx, |this, cx| {
-                    this.last_error =
-                        Some(cx.new(|cx| Markdown::new(e.to_string().into(), None, None, cx)));
-                    cx.notify()
+                    this.handle_thread_error(err, cx);
                 })
                 .ok();
             }
@@ -474,6 +547,16 @@ impl AcpThreadView {
         diff.update(cx, |diff, cx| {
             diff.move_to_path(PathKey::for_buffer(&buffer, cx), window, cx)
         })
+    }
+
+    fn handle_thread_error(&mut self, error: anyhow::Error, cx: &mut Context<Self>) {
+        self.thread_error = Some(ThreadError::from_err(error));
+        cx.notify();
+    }
+
+    fn clear_thread_error(&mut self, cx: &mut Context<Self>) {
+        self.thread_error = None;
+        cx.notify();
     }
 
     fn handle_thread_event(
@@ -551,7 +634,7 @@ impl AcpThreadView {
             return;
         };
 
-        self.last_error.take();
+        self.thread_error.take();
         let authenticate = connection.authenticate(method, cx);
         self.auth_task = Some(cx.spawn_in(window, {
             let project = self.project.clone();
@@ -561,9 +644,7 @@ impl AcpThreadView {
 
                 this.update_in(cx, |this, window, cx| {
                     if let Err(err) = result {
-                        this.last_error = Some(cx.new(|cx| {
-                            Markdown::new(format!("Error: {err}").into(), None, None, cx)
-                        }))
+                        this.handle_thread_error(err, cx);
                     } else {
                         this.thread_state = Self::initial_state(
                             agent,
@@ -620,9 +701,7 @@ impl AcpThreadView {
                 .py_4()
                 .px_2()
                 .children(message.id.clone().and_then(|message_id| {
-                    message.checkpoint.as_ref()?;
-
-                    Some(
+                    message.checkpoint.as_ref()?.show.then(|| {
                         Button::new("restore-checkpoint", "Restore Checkpoint")
                             .icon(IconName::Undo)
                             .icon_size(IconSize::XSmall)
@@ -630,8 +709,8 @@ impl AcpThreadView {
                             .label_size(LabelSize::XSmall)
                             .on_click(cx.listener(move |this, _, _window, cx| {
                                 this.rewind(&message_id, cx);
-                            })),
-                    )
+                            }))
+                    })
                 }))
                 .child(
                     v_flex()
@@ -2268,6 +2347,11 @@ impl AcpThreadView {
 
         v_flex()
             .on_action(cx.listener(Self::expand_message_editor))
+            .on_action(cx.listener(|this, _: &ToggleProfileSelector, window, cx| {
+                if let Some(profile_selector) = this.profile_selector.as_ref() {
+                    profile_selector.read(cx).menu_handle().toggle(window, cx);
+                }
+            }))
             .on_action(cx.listener(|this, _: &ToggleModelSelector, window, cx| {
                 if let Some(model_selector) = this.model_selector.as_ref() {
                     model_selector
@@ -2322,15 +2406,83 @@ impl AcpThreadView {
                 h_flex()
                     .flex_none()
                     .justify_between()
-                    .child(self.render_follow_toggle(cx))
                     .child(
                         h_flex()
                             .gap_1()
+                            .child(self.render_follow_toggle(cx))
+                            .children(self.render_burn_mode_toggle(cx)),
+                    )
+                    .child(
+                        h_flex()
+                            .gap_1()
+                            .children(self.profile_selector.clone())
                             .children(self.model_selector.clone())
                             .child(self.render_send_button(cx)),
                     ),
             )
             .into_any()
+    }
+
+    fn as_native_connection(&self, cx: &App) -> Option<Rc<agent2::NativeAgentConnection>> {
+        let acp_thread = self.thread()?.read(cx);
+        acp_thread.connection().clone().downcast()
+    }
+
+    fn as_native_thread(&self, cx: &App) -> Option<Entity<agent2::Thread>> {
+        let acp_thread = self.thread()?.read(cx);
+        self.as_native_connection(cx)?
+            .thread(acp_thread.session_id(), cx)
+    }
+
+    fn toggle_burn_mode(
+        &mut self,
+        _: &ToggleBurnMode,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(thread) = self.as_native_thread(cx) else {
+            return;
+        };
+
+        thread.update(cx, |thread, _cx| {
+            let current_mode = thread.completion_mode();
+            thread.set_completion_mode(match current_mode {
+                CompletionMode::Burn => CompletionMode::Normal,
+                CompletionMode::Normal => CompletionMode::Burn,
+            });
+        });
+    }
+
+    fn render_burn_mode_toggle(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let thread = self.as_native_thread(cx)?.read(cx);
+
+        if !thread.model().supports_burn_mode() {
+            return None;
+        }
+
+        let active_completion_mode = thread.completion_mode();
+        let burn_mode_enabled = active_completion_mode == CompletionMode::Burn;
+        let icon = if burn_mode_enabled {
+            IconName::ZedBurnModeOn
+        } else {
+            IconName::ZedBurnMode
+        };
+
+        Some(
+            IconButton::new("burn-mode", icon)
+                .icon_size(IconSize::Small)
+                .icon_color(Color::Muted)
+                .toggle_state(burn_mode_enabled)
+                .selected_icon_color(Color::Error)
+                .on_click(cx.listener(|this, _event, window, cx| {
+                    this.toggle_burn_mode(&ToggleBurnMode, window, cx);
+                }))
+                .tooltip(move |_window, cx| {
+                    cx.new(|_| BurnModeTooltip::new().selected(burn_mode_enabled))
+                        .into()
+                })
+                .into_any_element(),
+        )
     }
 
     fn start_editing_message(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
@@ -3002,6 +3154,187 @@ impl AcpThreadView {
     }
 }
 
+impl AcpThreadView {
+    fn render_thread_error(&self, window: &mut Window, cx: &mut Context<'_, Self>) -> Option<Div> {
+        let content = match self.thread_error.as_ref()? {
+            ThreadError::Other(error) => self.render_any_thread_error(error.clone(), cx),
+            ThreadError::PaymentRequired => self.render_payment_required_error(cx),
+            ThreadError::ModelRequestLimitReached(plan) => {
+                self.render_model_request_limit_reached_error(*plan, cx)
+            }
+            ThreadError::ToolUseLimitReached => {
+                self.render_tool_use_limit_reached_error(window, cx)?
+            }
+        };
+
+        Some(
+            div()
+                .border_t_1()
+                .border_color(cx.theme().colors().border)
+                .child(content),
+        )
+    }
+
+    fn render_any_thread_error(&self, error: SharedString, cx: &mut Context<'_, Self>) -> Callout {
+        let icon = Icon::new(IconName::XCircle)
+            .size(IconSize::Small)
+            .color(Color::Error);
+
+        Callout::new()
+            .icon(icon)
+            .title("Error")
+            .description(error.clone())
+            .secondary_action(self.create_copy_button(error.to_string()))
+            .primary_action(self.dismiss_error_button(cx))
+            .bg_color(self.error_callout_bg(cx))
+    }
+
+    fn render_payment_required_error(&self, cx: &mut Context<Self>) -> Callout {
+        const ERROR_MESSAGE: &str =
+            "You reached your free usage limit. Upgrade to Zed Pro for more prompts.";
+
+        let icon = Icon::new(IconName::XCircle)
+            .size(IconSize::Small)
+            .color(Color::Error);
+
+        Callout::new()
+            .icon(icon)
+            .title("Free Usage Exceeded")
+            .description(ERROR_MESSAGE)
+            .tertiary_action(self.upgrade_button(cx))
+            .secondary_action(self.create_copy_button(ERROR_MESSAGE))
+            .primary_action(self.dismiss_error_button(cx))
+            .bg_color(self.error_callout_bg(cx))
+    }
+
+    fn render_model_request_limit_reached_error(
+        &self,
+        plan: cloud_llm_client::Plan,
+        cx: &mut Context<Self>,
+    ) -> Callout {
+        let error_message = match plan {
+            cloud_llm_client::Plan::ZedPro => "Upgrade to usage-based billing for more prompts.",
+            cloud_llm_client::Plan::ZedProTrial | cloud_llm_client::Plan::ZedFree => {
+                "Upgrade to Zed Pro for more prompts."
+            }
+        };
+
+        let icon = Icon::new(IconName::XCircle)
+            .size(IconSize::Small)
+            .color(Color::Error);
+
+        Callout::new()
+            .icon(icon)
+            .title("Model Prompt Limit Reached")
+            .description(error_message)
+            .tertiary_action(self.upgrade_button(cx))
+            .secondary_action(self.create_copy_button(error_message))
+            .primary_action(self.dismiss_error_button(cx))
+            .bg_color(self.error_callout_bg(cx))
+    }
+
+    fn render_tool_use_limit_reached_error(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<Callout> {
+        let thread = self.as_native_thread(cx)?;
+        let supports_burn_mode = thread.read(cx).model().supports_burn_mode();
+
+        let focus_handle = self.focus_handle(cx);
+
+        let icon = Icon::new(IconName::Info)
+            .size(IconSize::Small)
+            .color(Color::Info);
+
+        Some(
+            Callout::new()
+                .icon(icon)
+                .title("Consecutive tool use limit reached.")
+                .when(supports_burn_mode, |this| {
+                    this.secondary_action(
+                        Button::new("continue-burn-mode", "Continue with Burn Mode")
+                            .style(ButtonStyle::Filled)
+                            .style(ButtonStyle::Tinted(ui::TintColor::Accent))
+                            .layer(ElevationIndex::ModalSurface)
+                            .label_size(LabelSize::Small)
+                            .key_binding(
+                                KeyBinding::for_action_in(
+                                    &ContinueWithBurnMode,
+                                    &focus_handle,
+                                    window,
+                                    cx,
+                                )
+                                .map(|kb| kb.size(rems_from_px(10.))),
+                            )
+                            .tooltip(Tooltip::text("Enable Burn Mode for unlimited tool use."))
+                            .on_click({
+                                cx.listener(move |this, _, _window, cx| {
+                                    thread.update(cx, |thread, _cx| {
+                                        thread.set_completion_mode(CompletionMode::Burn);
+                                    });
+                                    this.resume_chat(cx);
+                                })
+                            }),
+                    )
+                })
+                .primary_action(
+                    Button::new("continue-conversation", "Continue")
+                        .layer(ElevationIndex::ModalSurface)
+                        .label_size(LabelSize::Small)
+                        .key_binding(
+                            KeyBinding::for_action_in(&ContinueThread, &focus_handle, window, cx)
+                                .map(|kb| kb.size(rems_from_px(10.))),
+                        )
+                        .on_click(cx.listener(|this, _, _window, cx| {
+                            this.resume_chat(cx);
+                        })),
+                ),
+        )
+    }
+
+    fn create_copy_button(&self, message: impl Into<String>) -> impl IntoElement {
+        let message = message.into();
+
+        IconButton::new("copy", IconName::Copy)
+            .icon_size(IconSize::Small)
+            .icon_color(Color::Muted)
+            .tooltip(Tooltip::text("Copy Error Message"))
+            .on_click(move |_, _, cx| {
+                cx.write_to_clipboard(ClipboardItem::new_string(message.clone()))
+            })
+    }
+
+    fn dismiss_error_button(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        IconButton::new("dismiss", IconName::Close)
+            .icon_size(IconSize::Small)
+            .icon_color(Color::Muted)
+            .tooltip(Tooltip::text("Dismiss Error"))
+            .on_click(cx.listener({
+                move |this, _, _, cx| {
+                    this.clear_thread_error(cx);
+                    cx.notify();
+                }
+            }))
+    }
+
+    fn upgrade_button(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        Button::new("upgrade", "Upgrade")
+            .label_size(LabelSize::Small)
+            .style(ButtonStyle::Tinted(ui::TintColor::Accent))
+            .on_click(cx.listener({
+                move |this, _, _, cx| {
+                    this.clear_thread_error(cx);
+                    cx.open_url(&zed_urls::upgrade_to_zed_pro_url(cx));
+                }
+            }))
+    }
+
+    fn error_callout_bg(&self, cx: &Context<Self>) -> Hsla {
+        cx.theme().status().error.opacity(0.08)
+    }
+}
+
 impl Focusable for AcpThreadView {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
         self.message_editor.focus_handle(cx)
@@ -3016,6 +3349,7 @@ impl Render for AcpThreadView {
             .size_full()
             .key_context("AcpThread")
             .on_action(cx.listener(Self::open_agent_diff))
+            .on_action(cx.listener(Self::toggle_burn_mode))
             .bg(cx.theme().colors().panel_background)
             .child(match &self.thread_state {
                 ThreadState::Unauthenticated { connection } => v_flex()
@@ -3100,19 +3434,7 @@ impl Render for AcpThreadView {
                 }
                 _ => this,
             })
-            .when_some(self.last_error.clone(), |el, error| {
-                el.child(
-                    div()
-                        .p_2()
-                        .text_xs()
-                        .border_t_1()
-                        .border_color(cx.theme().colors().border)
-                        .bg(cx.theme().status().error_background)
-                        .child(
-                            self.render_markdown(error, default_markdown_style(false, window, cx)),
-                        ),
-                )
-            })
+            .children(self.render_thread_error(window, cx))
             .child(self.render_message_editor(window, cx))
     }
 }
@@ -3299,8 +3621,6 @@ fn terminal_command_markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
 
 #[cfg(test)]
 pub(crate) mod tests {
-    use std::path::Path;
-
     use acp_thread::StubAgentConnection;
     use agent::{TextThreadStore, ThreadStore};
     use agent_client_protocol::SessionId;
@@ -3310,6 +3630,8 @@ pub(crate) mod tests {
     use project::Project;
     use serde_json::json;
     use settings::SettingsStore;
+    use std::any::Any;
+    use std::path::Path;
 
     use super::*;
 
@@ -3546,6 +3868,10 @@ pub(crate) mod tests {
 
         fn cancel(&self, _session_id: &acp::SessionId, _cx: &mut App) {
             unimplemented!()
+        }
+
+        fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
+            self
         }
     }
 

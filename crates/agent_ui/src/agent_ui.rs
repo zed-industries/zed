@@ -5,7 +5,6 @@ mod agent_diff;
 mod agent_model_selector;
 mod agent_panel;
 mod buffer_codegen;
-mod burn_mode_tooltip;
 mod context_picker;
 mod context_server_configuration;
 mod context_strip;

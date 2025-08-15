@@ -11817,14 +11817,16 @@ impl LspStore {
                         notify_server_capabilities_updated(&server, cx);
                     }
                 }
-                "textDocument/synchronization" => {
-                    if let Some(caps) = reg
+                "textDocument/didChange" => {
+                    if let Some(sync_kind) = reg
                         .register_options
-                        .map(serde_json::from_value)
+                        .and_then(|opts| opts.get("syncKind").cloned())
+                        .map(serde_json::from_value::<lsp::TextDocumentSyncKind>)
                         .transpose()?
                     {
                         server.update_capabilities(|capabilities| {
-                            capabilities.text_document_sync = Some(caps);
+                            capabilities.text_document_sync =
+                                Some(lsp::TextDocumentSyncCapability::Kind(sync_kind));
                         });
                         notify_server_capabilities_updated(&server, cx);
                     }
@@ -11974,7 +11976,7 @@ impl LspStore {
                     });
                     notify_server_capabilities_updated(&server, cx);
                 }
-                "textDocument/synchronization" => {
+                "textDocument/didChange" => {
                     server.update_capabilities(|capabilities| {
                         capabilities.text_document_sync = None;
                     });
