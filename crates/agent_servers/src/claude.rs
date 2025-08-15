@@ -14,7 +14,7 @@ use std::rc::Rc;
 use uuid::Uuid;
 
 use agent_client_protocol as acp;
-use anyhow::{Result, anyhow};
+use anyhow::{Context as _, Result, anyhow};
 use futures::channel::oneshot;
 use futures::{AsyncBufReadExt, AsyncWriteExt};
 use futures::{
@@ -130,11 +130,24 @@ impl AgentConnection for ClaudeAgentConnection {
                 &cwd,
             )?;
 
-            let stdin = child.stdin.take().unwrap();
-            let stdout = child.stdout.take().unwrap();
+            let stdout = child.stdout.take().context("Failed to take stdout")?;
+            let stdin = child.stdin.take().context("Failed to take stdin")?;
+            let stderr = child.stderr.take().context("Failed to take stderr")?;
 
             let pid = child.id();
             log::trace!("Spawned (pid: {})", pid);
+
+            cx.background_spawn(async move {
+                let mut stderr = BufReader::new(stderr);
+                let mut line = String::new();
+                while let Ok(n) = stderr.read_line(&mut line).await
+                    && n > 0
+                {
+                    log::warn!("agent stderr: {}", &line);
+                    line.clear();
+                }
+            })
+            .detach();
 
             cx.background_spawn(async move {
                 let mut outgoing_rx = Some(outgoing_rx);
@@ -345,7 +358,7 @@ fn spawn_claude(
         .current_dir(root_dir)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::inherit())
+        .stderr(std::process::Stdio::piped())
         .kill_on_drop(true)
         .spawn()?;
 
