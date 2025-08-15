@@ -1484,20 +1484,17 @@ impl RemoteConnection for SshRemoteConnection {
             identifier = &unique_identifier,
         );
 
-        if let Some(rust_log) = std::env::var("RUST_LOG").ok() {
-            start_proxy_command = format!(
-                "RUST_LOG={} {}",
-                shlex::try_quote(&rust_log).unwrap(),
-                start_proxy_command
-            )
+        for env_var in ["RUST_LOG", "RUST_BACKTRACE", "ZED_GENERATE_MINIDUMPS"] {
+            if let Some(value) = std::env::var(env_var).ok() {
+                start_proxy_command = format!(
+                    "{}={} {} ",
+                    env_var,
+                    shlex::try_quote(&value).unwrap(),
+                    start_proxy_command,
+                );
+            }
         }
-        if let Some(rust_backtrace) = std::env::var("RUST_BACKTRACE").ok() {
-            start_proxy_command = format!(
-                "RUST_BACKTRACE={} {}",
-                shlex::try_quote(&rust_backtrace).unwrap(),
-                start_proxy_command
-            )
-        }
+
         if reconnect {
             start_proxy_command.push_str(" --reconnect");
         }
