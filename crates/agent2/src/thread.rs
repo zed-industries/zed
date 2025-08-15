@@ -320,7 +320,11 @@ impl AgentMessage {
     }
 
     pub fn to_request(&self) -> Vec<LanguageModelRequestMessage> {
-        let mut content = Vec::with_capacity(self.content.len());
+        let mut assistant_message = LanguageModelRequestMessage {
+            role: Role::Assistant,
+            content: Vec::with_capacity(self.content.len()),
+            cache: false,
+        };
         for chunk in &self.content {
             let chunk = match chunk {
                 AgentMessageContent::Text(text) => {
@@ -342,29 +346,36 @@ impl AgentMessage {
                     language_model::MessageContent::Image(value.clone())
                 }
             };
-            content.push(chunk);
+            assistant_message.content.push(chunk);
         }
 
-        let mut messages = vec![LanguageModelRequestMessage {
-            role: Role::Assistant,
-            content,
+        let mut user_message = LanguageModelRequestMessage {
+            role: Role::User,
+            content: Vec::new(),
             cache: false,
-        }];
+        };
 
-        if !self.tool_results.is_empty() {
-            let mut tool_results = Vec::with_capacity(self.tool_results.len());
-            for tool_result in self.tool_results.values() {
-                tool_results.push(language_model::MessageContent::ToolResult(
+        for tool_result in self.tool_results.values() {
+            user_message
+                .content
+                .push(language_model::MessageContent::ToolResult(
                     tool_result.clone(),
                 ));
-            }
-            messages.push(LanguageModelRequestMessage {
-                role: Role::User,
-                content: tool_results,
-                cache: false,
-            });
         }
 
+        if self.tool_use_limit_reached {
+            user_message
+                .content
+                .push("Continue where you left off".into());
+        }
+
+        let mut messages = Vec::new();
+        if !assistant_message.content.is_empty() {
+            messages.push(assistant_message);
+        }
+        if !user_message.content.is_empty() {
+            messages.push(user_message);
+        }
         messages
     }
 }
@@ -614,12 +625,7 @@ impl Thread {
                         }
                     }
 
-                    if tool_uses.is_empty() {
-                        log::info!("No tool uses found, completing turn");
-                        return Ok(());
-                    }
-                    log::info!("Found {} tool uses to execute", tool_uses.len());
-
+                    let used_tools = tool_uses.is_empty();
                     while let Some(tool_result) = tool_uses.next().await {
                         log::info!("Tool finished {:?}", tool_result);
 
@@ -644,12 +650,18 @@ impl Thread {
                     }
 
                     if tool_use_limit_reached {
-                        // todo!("write a test")
+                        log::info!("Tool use limit reached, completing turn");
+                        this.update(cx, |this, _cx| {
+                            this.pending_message().tool_use_limit_reached = true;
+                        })?;
                         return Err(language_model::ToolUseLimitReachedError.into());
+                    } else if used_tools {
+                        log::info!("No tool uses found, completing turn");
+                        return Ok(());
+                    } else {
+                        this.update(cx, |this, _| this.flush_pending_message())?;
+                        completion_intent = CompletionIntent::ToolResults;
                     }
-
-                    this.update(cx, |this, _| this.flush_pending_message())?;
-                    completion_intent = CompletionIntent::ToolResults;
                 }
             }
             .await;
@@ -852,6 +864,7 @@ impl Thread {
         });
         let supports_images = self.model.supports_images();
         let tool_result = tool.run(tool_use.input, tool_event_stream, cx);
+        log::info!("Running tool {}", tool_use.name);
         Some(cx.foreground_executor().spawn(async move {
             let tool_result = tool_result.await.and_then(|output| {
                 if let LanguageModelToolResultContent::Image(_) = &output.llm_output {
