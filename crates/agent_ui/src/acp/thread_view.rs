@@ -1788,16 +1788,37 @@ impl AcpThreadView {
                                     label: upgrade_command.clone(),
                                     command: Some(upgrade_command.clone()),
                                     args: Vec::new(),
+                                    command_label: upgrade_command.clone(),
                                     cwd,
                                     env: Default::default(),
                                     use_new_terminal: true,
                                     allow_concurrent_runs: true,
                                     reveal: Default::default(),
+                                    reveal_target: Default::default(),
+                                    hide: Default::default(),
+                                    shell: Default::default(),
+                                    show_summary: true,
+                                    show_command: true,
+                                    show_rerun: true,
                                 };
                                 workspace.project().update(cx, |project, cx| {
-                                    project.task_store().update(cx, |inventory, _| {
-                                        inventory.add_task(spawn_in_terminal.into());
-                                    });
+                                    if let Some(task_inventory) = project.task_store().read(cx).task_inventory().cloned() {
+                                        task_inventory.update(cx, |inventory, _| {
+                                            inventory.task_scheduled(
+                                                project::TaskSourceKind::UserInput,
+                                                task::ResolvedTask {
+                                                    original_task: task::TaskTemplate {
+                                                        label: upgrade_command.clone(),
+                                                        command: Some(upgrade_command.clone()),
+                                                        args: Vec::new(),
+                                                        ..Default::default()
+                                                    },
+                                                    resolved: spawn_in_terminal.clone(),
+                                                    id: task::TaskId("install".to_string()),
+                                                },
+                                            );
+                                        });
+                                    }
                                 });
                                 workspace.spawn_in_terminal(spawn_in_terminal, window, cx);
                             })
@@ -1814,7 +1835,7 @@ impl AcpThreadView {
                     Label::new(instructions.clone())
                         .size(LabelSize::Small)
                         .color(Color::Muted)
-                        .text_justify(),
+                        .text_wrap(ui::TextWrap::WordBoundary),
                 );
                 
                 if let Some(AuthAction::OpenUrl { url }) = action {
