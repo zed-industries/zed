@@ -2,6 +2,7 @@ use crate::{
     Vim,
     motion::{Motion, MotionKind},
     object::Object,
+    state::Mode,
 };
 use collections::{HashMap, HashSet};
 use editor::{
@@ -107,25 +108,12 @@ impl Vim {
                 // to the same column it was before deletion if the line is not empty or only
                 // contains whitespace
                 let mut column_before_move: HashMap<_, _> = Default::default();
+                let target_mode = object.target_visual_mode(vim.mode, around);
 
                 editor.change_selections(Default::default(), window, cx, |s| {
                     s.move_with(|map, selection| {
                         let cursor_point = selection.head().to_point(map);
-                        let line_start = Point::new(cursor_point.row, 0);
-                        let line_end = Point::new(
-                            cursor_point.row,
-                            map.buffer_snapshot
-                                .line_len(MultiBufferRow(cursor_point.row)),
-                        );
-                        let current_line_has_non_whitespace_chars = map
-                            .buffer_snapshot
-                            .text_for_range(line_start..line_end)
-                            .any(|chunk| chunk.chars().any(|c| !c.is_whitespace()));
-                        if object == Object::Paragraph
-                            && around
-                            && current_line_has_non_whitespace_chars
-                        {
-                            let cursor_point = selection.head().to_point(map);
+                        if target_mode == Mode::VisualLine {
                             column_before_move.insert(selection.id, cursor_point.column);
                         }
 
@@ -194,9 +182,10 @@ impl Vim {
                         {
                             let mut cursor_point = cursor.to_point(map);
                             cursor_point.column = *column;
-                            let new_cursor = cursor_point.to_display_point(map);
-                            *cursor.row_mut() = new_cursor.row().0;
-                            *cursor.column_mut() = new_cursor.column();
+                            cursor = map
+                                .buffer_snapshot
+                                .clip_point(cursor_point, Bias::Left)
+                                .to_display_point(map);
                         }
                         cursor = map.clip_point(cursor, Bias::Left);
                         selection.collapse_to(cursor, selection.goal)
