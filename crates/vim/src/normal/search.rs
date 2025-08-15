@@ -231,14 +231,8 @@ impl Vim {
                     count = count.saturating_sub(1)
                 }
                 self.search.count = 1;
-                // If search was initiated with vim shortcut '/', focus on editor, else if initiated
-                // via standard search shortcut, keep search bar focused (and always move by count=1).
-                if self.search.vim_mode_search {
-                    search_bar.select_match(direction, count, window, cx);
-                    search_bar.focus_editor(&Default::default(), window, cx);
-                } else {
-                    search_bar.select_match(direction, 1, window, cx);
-                }
+                search_bar.select_match(direction, count, window, cx);
+                search_bar.focus_editor(&Default::default(), window, cx);
 
                 let prior_selections: Vec<_> = self.search.prior_selections.drain(..).collect();
                 let prior_mode = self.search.prior_mode;

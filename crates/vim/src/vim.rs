@@ -336,8 +336,12 @@ pub fn init(cx: &mut App) {
                 .and_then(|item| item.act_as::<Editor>(cx))
                 .and_then(|editor| editor.read(cx).addon::<VimAddon>().cloned());
             let Some(vim) = vim else { return };
-            vim.entity.update(cx, |_, cx| {
-                cx.defer_in(window, |vim, window, cx| vim.search_submit(window, cx))
+            vim.entity.update(cx, |vim, cx| {
+                if vim.search.vim_mode_search {
+                    cx.defer_in(window, |vim, window, cx| vim.search_submit(window, cx))
+                } else {
+                    cx.propagate()
+                }
             })
         });
     })
