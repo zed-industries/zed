@@ -6338,7 +6338,7 @@ impl Render for Workspace {
                                 .border_b_1()
                                 .border_color(colors.border)
                                 .child({
-                                    let this = cx.entity().clone();
+                                    let this = cx.entity();
                                     canvas(
                                         move |bounds, window, cx| {
                                             this.update(cx, |this, cx| {

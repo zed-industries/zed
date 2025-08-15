@@ -674,7 +674,7 @@ impl ChatPanel {
                 })
             })
             .when_some(message_id, |el, message_id| {
-                let this = cx.entity().clone();
+                let this = cx.entity();
 
                 el.child(
                     self.render_popover_button(
