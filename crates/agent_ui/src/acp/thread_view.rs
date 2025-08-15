@@ -1804,19 +1804,27 @@ impl AcpThreadView {
                                 workspace.project().update(cx, |project, cx| {
                                     if let Some(task_inventory) = project.task_store().read(cx).task_inventory().cloned() {
                                         task_inventory.update(cx, |inventory, _| {
-                                            inventory.task_scheduled(
-                                                project::TaskSourceKind::UserInput,
-                                                task::ResolvedTask {
-                                                    original_task: task::TaskTemplate {
-                                                        label: upgrade_command.clone(),
-                                                        command: Some(upgrade_command.clone()),
-                                                        args: Vec::new(),
-                                                        ..Default::default()
-                                                    },
-                                                    resolved: spawn_in_terminal.clone(),
-                                                    id: task::TaskId("install".to_string()),
-                                                },
-                                            );
+                                            let task_template = task::TaskTemplate {
+                                                label: upgrade_command.clone(),
+                                                command: Some(upgrade_command.clone()),
+                                                args: Vec::new(),
+                                                ..Default::default()
+                                            };
+                                            
+                                            // Create a task context for resolution
+                                            let task_context = task::TaskContext {
+                                                project_env: Default::default(),
+                                                cwd: cwd.clone(),
+                                                task_variables: Default::default(),
+                                            };
+                                            
+                                            // Resolve the task template into a resolved task
+                                            if let Some(resolved_task) = task_template.resolve_task("install", &task_context) {
+                                                inventory.task_scheduled(
+                                                    project::TaskSourceKind::UserInput,
+                                                    resolved_task,
+                                                );
+                                            }
                                         });
                                     }
                                 });
@@ -1834,8 +1842,7 @@ impl AcpThreadView {
                 container = container.child(
                     Label::new(instructions.clone())
                         .size(LabelSize::Small)
-                        .color(Color::Muted)
-                        .text_wrap(ui::TextWrap::WordBoundary),
+                        .color(Color::Muted),
                 );
                 
                 if let Some(AuthAction::OpenUrl { url }) = action {
