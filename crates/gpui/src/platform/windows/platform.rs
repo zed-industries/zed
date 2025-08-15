@@ -490,13 +490,18 @@ impl Platform for WindowsPlatform {
         rx
     }
 
-    fn prompt_for_new_path(&self, directory: &Path) -> Receiver<Result<Option<PathBuf>>> {
+    fn prompt_for_new_path(
+        &self,
+        directory: &Path,
+        suggested_name: Option<&str>,
+    ) -> Receiver<Result<Option<PathBuf>>> {
         let directory = directory.to_owned();
+        let suggested_name = suggested_name.map(|s| s.to_owned());
         let (tx, rx) = oneshot::channel();
         let window = self.find_current_active_window();
         self.foreground_executor()
             .spawn(async move {
-                let _ = tx.send(file_save_dialog(directory, window));
+                let _ = tx.send(file_save_dialog(directory, suggested_name, window));
             })
             .detach();
 
@@ -804,7 +809,11 @@ fn file_open_dialog(
     Ok(Some(paths))
 }
 
-fn file_save_dialog(directory: PathBuf, window: Option<HWND>) -> Result<Option<PathBuf>> {
+fn file_save_dialog(
+    directory: PathBuf,
+    suggested_name: Option<String>,
+    window: Option<HWND>,
+) -> Result<Option<PathBuf>> {
     let dialog: IFileSaveDialog = unsafe { CoCreateInstance(&FileSaveDialog, None, CLSCTX_ALL)? };
     if !directory.to_string_lossy().is_empty() {
         if let Some(full_path) = directory.canonicalize().log_err() {
@@ -815,6 +824,11 @@ fn file_save_dialog(directory: PathBuf, window: Option<HWND>) -> Result<Option<P
             unsafe { dialog.SetFolder(&path_item).log_err() };
         }
     }
+
+    if let Some(suggested_name) = suggested_name {
+        unsafe { dialog.SetFileName(&HSTRING::from(suggested_name)).log_err() };
+    }
+
     unsafe {
         dialog.SetFileTypes(&[Common::COMDLG_FILTERSPEC {
             pszName: windows::core::w!("All files"),

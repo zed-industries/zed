@@ -737,8 +737,13 @@ impl Platform for MacPlatform {
         done_rx
     }
 
-    fn prompt_for_new_path(&self, directory: &Path) -> oneshot::Receiver<Result<Option<PathBuf>>> {
+    fn prompt_for_new_path(
+        &self,
+        directory: &Path,
+        suggested_name: Option<&str>,
+    ) -> oneshot::Receiver<Result<Option<PathBuf>>> {
         let directory = directory.to_owned();
+        let suggested_name = suggested_name.map(|s| s.to_owned());
         let (done_tx, done_rx) = oneshot::channel();
         self.foreground_executor()
             .spawn(async move {
@@ -747,6 +752,11 @@ impl Platform for MacPlatform {
                     let path = ns_string(directory.to_string_lossy().as_ref());
                     let url = NSURL::fileURLWithPath_isDirectory_(nil, path, true.to_objc());
                     panel.setDirectoryURL(url);
+
+                    if let Some(suggested_name) = suggested_name {
+                        let name_string = ns_string(&suggested_name);
+                        let _: () = msg_send![panel, setNameFieldStringValue: name_string];
+                    }
 
                     let done_tx = Cell::new(Some(done_tx));
                     let block = ConcreteBlock::new(move |response: NSModalResponse| {

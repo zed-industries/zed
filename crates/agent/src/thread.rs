@@ -844,11 +844,17 @@ impl Thread {
                     .await
                     .unwrap_or(false);
 
-                if !equal {
-                    this.update(cx, |this, cx| {
-                        this.insert_checkpoint(pending_checkpoint, cx)
-                    })?;
-                }
+                this.update(cx, |this, cx| {
+                    this.pending_checkpoint = if equal {
+                        Some(pending_checkpoint)
+                    } else {
+                        this.insert_checkpoint(pending_checkpoint, cx);
+                        Some(ThreadCheckpoint {
+                            message_id: this.next_message_id,
+                            git_checkpoint: final_checkpoint,
+                        })
+                    }
+                })?;
 
                 Ok(())
             }
