@@ -3460,7 +3460,7 @@ impl AcpThreadView {
                             .tooltip(Tooltip::text("Enable Burn Mode for unlimited tool use."))
                             .on_click({
                                 cx.listener(move |this, _, _window, cx| {
-                                    thread.update(cx, |thread, cx| {
+                                    thread.update(cx, |thread, _cx| {
                                         thread.set_completion_mode(CompletionMode::Burn);
                                     });
                                     this.resume_chat(cx);
