@@ -1806,7 +1806,7 @@ impl AcpThreadView {
                                         task_inventory.update(cx, |inventory, _| {
                                             let task_template = task::TaskTemplate {
                                                 label: upgrade_command.clone(),
-                                                command: Some(upgrade_command.clone()),
+                                                command: upgrade_command.clone(),
                                                 args: Vec::new(),
                                                 ..Default::default()
                                             };
