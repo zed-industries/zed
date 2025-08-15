@@ -7,9 +7,11 @@ use gpui::{
     Window, actions,
 };
 use picker::{Picker, PickerDelegate};
-use settings::{SettingsStore, update_settings_file};
+use settings::{Settings as _, SettingsStore, update_settings_file};
 use std::sync::Arc;
-use theme::{Appearance, Theme, ThemeMeta, ThemeRegistry, ThemeSettings};
+use theme::{
+    Appearance, Theme, ThemeMeta, ThemeMode, ThemeRegistry, ThemeSelection, ThemeSettings,
+};
 use ui::{ListItem, ListItemSpacing, prelude::*, v_flex};
 use util::ResultExt;
 use workspace::{ModalView, Workspace, ui::HighlightedLabel, with_active_or_new_workspace};
@@ -36,6 +38,11 @@ pub fn init(cx: &mut App) {
         let action = action.clone();
         with_active_or_new_workspace(cx, move |workspace, window, cx| {
             toggle_icon_theme_selector(workspace, &action, window, cx);
+        });
+    });
+    cx.on_action(|_: &zed_actions::theme_selector::ToggleMode, cx| {
+        with_active_or_new_workspace(cx, |workspace, window, cx| {
+            toggle_theme_mode(workspace, window, cx);
         });
     });
 }
@@ -74,6 +81,35 @@ fn toggle_icon_theme_selector(
         );
         IconThemeSelector::new(delegate, window, cx)
     });
+}
+
+fn toggle_theme_mode(workspace: &mut Workspace, _window: &mut Window, cx: &mut Context<Workspace>) {
+    let current_settings = ThemeSettings::get_global(cx);
+    let current_selection = current_settings.theme_selection.as_ref();
+
+    let new_mode = match current_selection {
+        Some(ThemeSelection::Dynamic { mode, .. }) => match mode {
+            ThemeMode::Light => ThemeMode::Dark,
+            ThemeMode::Dark => ThemeMode::Light,
+            ThemeMode::System => {
+                if cx.theme().appearance().is_light() {
+                    ThemeMode::Dark
+                } else {
+                    ThemeMode::Light
+                }
+            }
+        },
+        Some(ThemeSelection::Static(_)) => ThemeMode::Light,
+        None => ThemeMode::Light,
+    };
+
+    let fs = workspace.app_state().fs.clone();
+
+    update_settings_file::<ThemeSettings>(fs, cx, move |settings, _| {
+        settings.set_mode(new_mode);
+    });
+
+    ThemeSettings::reload_current_theme(cx);
 }
 
 impl ModalView for ThemeSelector {}

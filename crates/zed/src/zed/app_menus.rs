@@ -32,6 +32,10 @@ pub fn app_menus() -> Vec<Menu> {
                             "Select Theme...",
                             zed_actions::theme_selector::Toggle::default(),
                         ),
+                        MenuItem::action(
+                            "Toggle Theme Mode",
+                            zed_actions::theme_selector::ToggleMode,
+                        ),
                     ],
                 }),
                 MenuItem::separator(),
