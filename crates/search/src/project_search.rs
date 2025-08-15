@@ -1975,49 +1975,6 @@ impl Render for ProjectSearchBar {
                     ),
             );
 
-        let mode_column = h_flex()
-            .gap_1()
-            .min_w_64()
-            .child(
-                IconButton::new("project-search-filter-button", IconName::Filter)
-                    .shape(IconButtonShape::Square)
-                    .tooltip(|window, cx| {
-                        Tooltip::for_action("Toggle Filters", &ToggleFilters, window, cx)
-                    })
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        this.toggle_filters(window, cx);
-                    }))
-                    .toggle_state(
-                        self.active_project_search
-                            .as_ref()
-                            .map(|search| search.read(cx).filters_enabled)
-                            .unwrap_or_default(),
-                    )
-                    .tooltip({
-                        let focus_handle = focus_handle.clone();
-                        move |window, cx| {
-                            Tooltip::for_action_in(
-                                "Toggle Filters",
-                                &ToggleFilters,
-                                &focus_handle,
-                                window,
-                                cx,
-                            )
-                        }
-                    }),
-            )
-            .child(render_action_button(
-                "project-search",
-                IconName::Replace,
-                self.active_project_search
-                    .as_ref()
-                    .map(|search| search.read(cx).replace_enabled)
-                    .unwrap_or_default(),
-                "Toggle Replace",
-                &ToggleReplace,
-                focus_handle.clone(),
-            ));
-
         let query_focus = search.query_editor.focus_handle(cx);
 
         let matches_column = h_flex()
@@ -2060,11 +2017,55 @@ impl Render for ProjectSearchBar {
                     }),
             );
 
+        let mode_column = h_flex()
+            .gap_1()
+            .min_w_64()
+            .child(
+                IconButton::new("project-search-filter-button", IconName::Filter)
+                    .shape(IconButtonShape::Square)
+                    .tooltip(|window, cx| {
+                        Tooltip::for_action("Toggle Filters", &ToggleFilters, window, cx)
+                    })
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.toggle_filters(window, cx);
+                    }))
+                    .toggle_state(
+                        self.active_project_search
+                            .as_ref()
+                            .map(|search| search.read(cx).filters_enabled)
+                            .unwrap_or_default(),
+                    )
+                    .tooltip({
+                        let focus_handle = focus_handle.clone();
+                        move |window, cx| {
+                            Tooltip::for_action_in(
+                                "Toggle Filters",
+                                &ToggleFilters,
+                                &focus_handle,
+                                window,
+                                cx,
+                            )
+                        }
+                    }),
+            )
+            .child(render_action_button(
+                "project-search",
+                IconName::Replace,
+                self.active_project_search
+                    .as_ref()
+                    .map(|search| search.read(cx).replace_enabled)
+                    .unwrap_or_default(),
+                "Toggle Replace",
+                &ToggleReplace,
+                focus_handle.clone(),
+            ))
+            .child(matches_column);
+
         let search_line = h_flex()
             .w_full()
             .gap_2()
             .child(query_column)
-            .child(h_flex().min_w_64().child(mode_column).child(matches_column));
+            .child(mode_column);
 
         let replace_line = search.replace_enabled.then(|| {
             let replace_column = input_base_styles(InputPanel::Replacement)
