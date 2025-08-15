@@ -23,7 +23,8 @@ use std::{
 pub static CRASH_HANDLER: OnceLock<Arc<Client>> = OnceLock::new();
 // set when the first minidump request is made to avoid generating duplicate crash reports
 pub static REQUESTED_MINIDUMP: AtomicBool = AtomicBool::new(false);
-const CRASH_HANDLER_TIMEOUT: Duration = Duration::from_secs(60);
+const CRASH_HANDLER_PING_TIMEOUT: Duration = Duration::from_secs(60);
+const CRASH_HANDLER_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
 pub async fn init(crash_init: InitCrashHandler) {
     if *RELEASE_CHANNEL == ReleaseChannel::Dev && env::var("ZED_GENERATE_MINIDUMPS").is_err() {
@@ -191,13 +192,13 @@ impl minidumper::ServerHandler for CrashServer {
         }
     }
 
-    fn on_client_disconnected(&self, clients: usize) -> LoopAction {
-        info!("client disconnected, {clients} remaining");
-        if clients == 0 {
-            LoopAction::Exit
-        } else {
-            LoopAction::Continue
-        }
+    fn on_client_disconnected(&self, _clients: usize) -> LoopAction {
+        LoopAction::Exit
+    }
+
+    fn on_client_connected(&self, _clients: usize) -> LoopAction {
+        self.has_connection.store(true, Ordering::SeqCst);
+        LoopAction::Continue
     }
 }
 
@@ -233,15 +234,30 @@ pub fn crash_server(socket: &Path) {
         log::info!("Couldn't create socket, there may already be a running crash server");
         return;
     };
-    let ab = AtomicBool::new(false);
+
+    let shutdown = Arc::new(AtomicBool::new(false));
+    let has_connection = Arc::new(AtomicBool::new(false));
+
+    std::thread::spawn({
+        let shutdown = shutdown.clone();
+        let has_connection = has_connection.clone();
+        move || {
+            std::thread::sleep(CRASH_HANDLER_CONNECT_TIMEOUT);
+            if !has_connection.load(Ordering::SeqCst) {
+                shutdown.store(true, Ordering::SeqCst);
+            }
+        }
+    });
+
     server
         .run(
             Box::new(CrashServer {
                 initialization_params: OnceLock::new(),
                 panic_info: OnceLock::new(),
+                has_connection,
             }),
-            &ab,
-            Some(CRASH_HANDLER_TIMEOUT),
+            &shutdown,
+            Some(CRASH_HANDLER_PING_TIMEOUT),
         )
         .expect("failed to run server");
 }
