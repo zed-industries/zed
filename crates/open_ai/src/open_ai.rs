@@ -236,6 +236,13 @@ impl Model {
             Self::O1 | Self::O3 | Self::O3Mini | Self::O4Mini | Model::Custom { .. } => false,
         }
     }
+
+    /// Returns whether the given model supports the `prompt_cache_key` parameter.
+    ///
+    /// If the model does not support the parameter, do not pass it up.
+    pub fn supports_prompt_cache_key(&self) -> bool {
+        return true;
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
