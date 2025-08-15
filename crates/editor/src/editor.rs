@@ -1170,6 +1170,7 @@ pub struct Editor {
     /// Whether we are temporarily displaying a diff other than git's
     temporary_diff_override: bool,
     selection_mark_mode: bool,
+    continue_selection_mark_mode: bool,
     toggle_fold_multiple_buffers: Task<()>,
     _scroll_cursor_center_top_bottom_task: Task<()>,
     serialize_selections: Task<()>,
@@ -2200,6 +2201,7 @@ impl Editor {
             registered_buffers: HashMap::default(),
             _scroll_cursor_center_top_bottom_task: Task::ready(()),
             selection_mark_mode: false,
+            continue_selection_mark_mode: false,
             toggle_fold_multiple_buffers: Task::ready(()),
             serialize_selections: Task::ready(()),
             serialize_folds: Task::ready(()),
@@ -12431,7 +12433,9 @@ impl Editor {
         self.hide_mouse_cursor(HideMouseCursorOrigin::MovementAction, cx);
         self.change_selections(Default::default(), window, cx, |s| {
             s.move_heads_with(|map, head, _| (movement::left(map, head), SelectionGoal::None));
-        })
+        });
+
+        self.continue_selection_mark_mode = self.selection_mark_mode;
     }
 
     pub fn move_right(&mut self, _: &MoveRight, window: &mut Window, cx: &mut Context<Self>) {
@@ -12452,7 +12456,9 @@ impl Editor {
         self.hide_mouse_cursor(HideMouseCursorOrigin::MovementAction, cx);
         self.change_selections(Default::default(), window, cx, |s| {
             s.move_heads_with(|map, head, _| (movement::right(map, head), SelectionGoal::None));
-        })
+        });
+
+        self.continue_selection_mark_mode = self.selection_mark_mode;
     }
 
     pub fn move_up(&mut self, _: &MoveUp, window: &mut Window, cx: &mut Context<Self>) {
@@ -12579,7 +12585,9 @@ impl Editor {
             s.move_heads_with(|map, head, goal| {
                 movement::down_by_rows(map, head, action.lines, goal, false, text_layout_details)
             })
-        })
+        });
+
+        self.continue_selection_mark_mode = self.selection_mark_mode;
     }
 
     pub fn select_up_by_lines(
@@ -12594,7 +12602,9 @@ impl Editor {
             s.move_heads_with(|map, head, goal| {
                 movement::up_by_rows(map, head, action.lines, goal, false, text_layout_details)
             })
-        })
+        });
+
+        self.continue_selection_mark_mode = self.selection_mark_mode;
     }
 
     pub fn select_page_up(
@@ -12615,7 +12625,9 @@ impl Editor {
             s.move_heads_with(|map, head, goal| {
                 movement::up_by_rows(map, head, row_count, goal, false, text_layout_details)
             })
-        })
+        });
+
+        self.continue_selection_mark_mode = self.selection_mark_mode;
     }
 
     pub fn move_page_up(
@@ -12682,7 +12694,9 @@ impl Editor {
             s.move_heads_with(|map, head, goal| {
                 movement::up(map, head, goal, false, text_layout_details)
             })
-        })
+        });
+
+        self.continue_selection_mark_mode = true;
     }
 
     pub fn move_down(&mut self, _: &MoveDown, window: &mut Window, cx: &mut Context<Self>) {
@@ -12739,7 +12753,9 @@ impl Editor {
             s.move_heads_with(|map, head, goal| {
                 movement::down_by_rows(map, head, row_count, goal, false, text_layout_details)
             })
-        })
+        });
+
+        self.continue_selection_mark_mode = self.selection_mark_mode;
     }
 
     pub fn move_page_down(
@@ -12806,6 +12822,8 @@ impl Editor {
                 movement::down(map, head, goal, false, text_layout_details)
             })
         });
+
+        self.continue_selection_mark_mode = self.selection_mark_mode;
     }
 
     pub fn context_menu_first(
@@ -12932,7 +12950,9 @@ impl Editor {
                     SelectionGoal::None,
                 )
             });
-        })
+        });
+
+        self.continue_selection_mark_mode = self.selection_mark_mode;
     }
 
     pub fn select_to_previous_subword_start(
@@ -12949,7 +12969,9 @@ impl Editor {
                     SelectionGoal::None,
                 )
             });
-        })
+        });
+
+        self.continue_selection_mark_mode = self.selection_mark_mode;
     }
 
     pub fn delete_to_previous_word_start(
@@ -13037,7 +13059,9 @@ impl Editor {
             s.move_heads_with(|map, head, _| {
                 (movement::next_word_end(map, head), SelectionGoal::None)
             });
-        })
+        });
+
+        self.continue_selection_mark_mode = self.selection_mark_mode;
     }
 
     pub fn select_to_next_subword_end(
@@ -13051,7 +13075,9 @@ impl Editor {
             s.move_heads_with(|map, head, _| {
                 (movement::next_subword_end(map, head), SelectionGoal::None)
             });
-        })
+        });
+
+        self.continue_selection_mark_mode = self.selection_mark_mode;
     }
 
     pub fn delete_to_next_word_end(
@@ -13140,6 +13166,8 @@ impl Editor {
                 )
             });
         });
+
+        self.continue_selection_mark_mode = self.selection_mark_mode;
     }
 
     pub fn delete_to_beginning_of_line(
@@ -13199,7 +13227,9 @@ impl Editor {
                     SelectionGoal::None,
                 )
             });
-        })
+        });
+
+        self.continue_selection_mark_mode = self.selection_mark_mode;
     }
 
     pub fn delete_to_end_of_line(
@@ -13300,7 +13330,9 @@ impl Editor {
                     SelectionGoal::None,
                 )
             });
-        })
+        });
+
+        self.continue_selection_mark_mode = self.selection_mark_mode;
     }
 
     pub fn select_to_end_of_paragraph(
@@ -13321,7 +13353,9 @@ impl Editor {
                     SelectionGoal::None,
                 )
             });
-        })
+        });
+
+        self.continue_selection_mark_mode = self.selection_mark_mode;
     }
 
     pub fn move_to_start_of_excerpt(
@@ -13442,7 +13476,9 @@ impl Editor {
                     SelectionGoal::None,
                 )
             });
-        })
+        });
+
+        self.continue_selection_mark_mode = self.selection_mark_mode;
     }
 
     pub fn select_to_start_of_next_excerpt(
@@ -13463,7 +13499,9 @@ impl Editor {
                     SelectionGoal::None,
                 )
             });
-        })
+        });
+
+        self.continue_selection_mark_mode = self.selection_mark_mode;
     }
 
     pub fn select_to_end_of_excerpt(
@@ -13484,7 +13522,9 @@ impl Editor {
                     SelectionGoal::None,
                 )
             });
-        })
+        });
+
+        self.continue_selection_mark_mode = self.selection_mark_mode;
     }
 
     pub fn select_to_end_of_previous_excerpt(
@@ -13505,7 +13545,9 @@ impl Editor {
                     SelectionGoal::None,
                 )
             });
-        })
+        });
+
+        self.continue_selection_mark_mode = self.selection_mark_mode;
     }
 
     pub fn move_to_beginning(
@@ -13536,6 +13578,8 @@ impl Editor {
         self.change_selections(Default::default(), window, cx, |s| {
             s.select(vec![selection]);
         });
+
+        self.continue_selection_mark_mode = self.selection_mark_mode;
     }
 
     pub fn move_to_end(&mut self, _: &MoveToEnd, window: &mut Window, cx: &mut Context<Self>) {
@@ -13614,6 +13658,8 @@ impl Editor {
         self.change_selections(Default::default(), window, cx, |s| {
             s.select(vec![selection]);
         });
+
+        self.continue_selection_mark_mode = self.selection_mark_mode;
     }
 
     pub fn select_all(&mut self, _: &SelectAll, window: &mut Window, cx: &mut Context<Self>) {
@@ -17235,7 +17281,22 @@ impl Editor {
             })
         }
         self.selection_mark_mode = true;
+        self.continue_selection_mark_mode = true;
         cx.notify();
+    }
+
+    pub fn reset_mark(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.selection_mark_mode && !self.continue_selection_mark_mode {
+            self.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+                s.move_with(|_, sel| {
+                    sel.collapse_to(sel.head(), SelectionGoal::None);
+                });
+            });
+
+            self.selection_mark_mode = false;
+        }
+
+        self.continue_selection_mark_mode = false;
     }
 
     pub fn swap_selection_ends(
