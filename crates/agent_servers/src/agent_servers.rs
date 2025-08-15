@@ -97,6 +97,9 @@ impl AgentServerCommand {
         cx: &mut AsyncApp,
     ) -> Option<Self> {
         if let Some(agent_settings) = settings {
+            // Use configured environment variables if available
+            let env = agent_settings.command.env.clone().or(agent_settings.env.clone());
+            
             return Some(Self {
                 path: agent_settings.command.path,
                 args: agent_settings
@@ -105,7 +108,7 @@ impl AgentServerCommand {
                     .into_iter()
                     .chain(extra_args.iter().map(|arg| arg.to_string()))
                     .collect(),
-                env: agent_settings.command.env,
+                env,
             });
         } else {
             match find_bin_in_path(path_bin_name, project, cx).await {

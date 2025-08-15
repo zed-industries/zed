@@ -20,6 +20,8 @@ pub struct AllAgentServersSettings {
 pub struct AgentServerSettings {
     #[serde(flatten)]
     pub command: AgentServerCommand,
+    /// Optional environment variables for the agent server
+    pub env: Option<std::collections::HashMap<String, String>>,
 }
 
 impl settings::Settings for AllAgentServersSettings {

@@ -88,7 +88,7 @@ impl AgentServer for Qwen {
                     if e.to_string().contains("authentication") || e.to_string().contains("API key") {
                         return Err(LoadError::AuthenticationRequired {
                             prompt: "Qwen requires authentication. Please set up your API key.".into(),
-                            instructions: "Visit the Qwen website to get your API key, then set it in your environment variables or configuration.".into(),
+                            instructions: "You can authenticate in two ways:\n1. Run `qwen` command which will automatically open a browser for OAuth authentication (recommended)\n2. Set environment variables: OPENAI_API_KEY, OPENAI_BASE_URL, and OPENAI_MODEL".into(),
                             action: Some(acp_thread::AuthAction::OpenUrl {
                                 url: "https://help.aliyun.com/zh/qwen".into(), // Qwen API key page
                             }),
