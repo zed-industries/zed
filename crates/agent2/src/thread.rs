@@ -28,6 +28,48 @@ use smol::stream::StreamExt;
 use std::{cell::RefCell, collections::BTreeMap, path::Path, rc::Rc, sync::Arc};
 use std::{fmt::Write, ops::Range};
 use util::{ResultExt, markdown::MarkdownCodeBlock};
+use uuid::Uuid;
+
+#[derive(
+    Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Serialize, Deserialize, JsonSchema,
+)]
+pub struct ThreadId(Arc<str>);
+
+impl ThreadId {
+    pub fn new() -> Self {
+        Self(Uuid::new_v4().to_string().into())
+    }
+}
+
+impl std::fmt::Display for ThreadId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl From<&str> for ThreadId {
+    fn from(value: &str) -> Self {
+        Self(value.into())
+    }
+}
+
+/// The ID of the user prompt that initiated a request.
+///
+/// This equates to the user physically submitting a message to the model (e.g., by pressing the Enter key).
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Serialize, Deserialize)]
+pub struct PromptId(Arc<str>);
+
+impl PromptId {
+    pub fn new() -> Self {
+        Self(Uuid::new_v4().to_string().into())
+    }
+}
+
+impl std::fmt::Display for PromptId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Message {
@@ -412,6 +454,8 @@ pub struct ToolCallAuthorization {
 }
 
 pub struct Thread {
+    id: ThreadId,
+    prompt_id: PromptId,
     messages: Vec<Message>,
     completion_mode: CompletionMode,
     /// Holds the task that handles agent interaction until the end of the turn.
@@ -442,6 +486,8 @@ impl Thread {
     ) -> Self {
         let profile_id = AgentSettings::get_global(cx).default_profile.clone();
         Self {
+            id: ThreadId::new(),
+            prompt_id: PromptId::new(),
             messages: Vec::new(),
             completion_mode: CompletionMode::Normal,
             running_turn: None,
@@ -549,6 +595,7 @@ impl Thread {
         T: Into<UserMessageContent>,
     {
         log::info!("Thread::send called with model: {:?}", self.model.name());
+        self.advance_prompt_id();
 
         let content = content.into_iter().map(Into::into).collect::<Vec<_>>();
         log::debug!("Thread::send content: {:?}", content);
@@ -580,7 +627,7 @@ impl Thread {
                         completion_intent
                     );
                     let request = this.update(cx, |this, cx| {
-                        this.build_completion_request(&model, completion_intent, cx)
+                        this.build_completion_request(completion_intent, cx)
                     })?;
 
                     log::info!("Calling model.stream_completion");
@@ -941,7 +988,6 @@ impl Thread {
 
     pub(crate) fn build_completion_request(
         &self,
-        model: &Arc<dyn LanguageModel>,
         completion_intent: CompletionIntent,
         cx: &mut App,
     ) -> LanguageModelRequest {
@@ -973,15 +1019,15 @@ impl Thread {
         log::info!("Request includes {} tools", tools.len());
 
         let request = LanguageModelRequest {
-            thread_id: None,
-            prompt_id: None,
+            thread_id: Some(self.id.to_string()),
+            prompt_id: Some(self.prompt_id.to_string()),
             intent: Some(completion_intent),
             mode: Some(self.completion_mode.into()),
             messages,
             tools,
             tool_choice: None,
             stop: Vec::new(),
-            temperature: AgentSettings::temperature_for_model(model, cx),
+            temperature: AgentSettings::temperature_for_model(self.model(), cx),
             thinking_allowed: true,
         };
 
@@ -1068,6 +1114,10 @@ impl Thread {
         }
 
         markdown
+    }
+
+    fn advance_prompt_id(&mut self) {
+        self.prompt_id = PromptId::new();
     }
 }
 
