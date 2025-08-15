@@ -3,13 +3,21 @@ use crate::{
 };
 use collections::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
-use std::{fmt::Debug, ops::Range};
+use std::{cell::RefCell, fmt::Debug, ops::Range};
 use taffy::{
     TaffyTree, TraversePartialTree as _,
     geometry::{Point as TaffyPoint, Rect as TaffyRect, Size as TaffySize},
     style::AvailableSpace as TaffyAvailableSpace,
     tree::NodeId,
 };
+
+thread_local! {
+    pub static LAYOUT_ID_TO_DEBUG: RefCell<Option<LayoutId>> = const { RefCell::new(None) };
+}
+
+thread_local! {
+    pub static CONTAINER_LAYOUT_ID_TO_DEBUG: RefCell<Option<LayoutId>> = const { RefCell::new(None) };
+}
 
 type NodeMeasureFn = Box<
     dyn FnMut(Size<Option<Pixels>>, Size<AvailableSpace>, &mut Window, &mut App) -> Size<Pixels>,
@@ -197,6 +205,14 @@ impl TaffyLayoutEngine {
                 },
             )
             .expect(EXPECT_MESSAGE);
+
+        LAYOUT_ID_TO_DEBUG.with_borrow(|layout_id_to_debug| {
+            println!("Layout ID Debug: {:?}", layout_id_to_debug);
+        });
+
+        CONTAINER_LAYOUT_ID_TO_DEBUG.with_borrow(|layout_id| {
+            println!("Container Layout ID Debug: {:?}\n", layout_id);
+        });
 
         // println!("compute_layout took {:?}", started_at.elapsed());
     }

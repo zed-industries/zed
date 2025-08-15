@@ -853,6 +853,7 @@ impl Render for ConfigurationView {
             div().child(Label::new("Loading credentials...")).into_any()
         } else if self.should_render_editor(cx) {
             v_flex()
+                .id("open-router-container")
                 .size_full()
                 .on_action(cx.listener(Self::save_api_key))
                 .child(Label::new("To use Zed's agent with OpenRouter, you need to add an API key. Follow these steps:"))
@@ -872,6 +873,7 @@ impl Render for ConfigurationView {
                 )
                 .child(
                     h_flex()
+                        .id("api-key-editor")
                         .w_full()
                         .my_2()
                         .px_2()

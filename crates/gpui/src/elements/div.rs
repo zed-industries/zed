@@ -23,6 +23,7 @@ use crate::{
     MouseClickEvent, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Overflow, ParentElement, Pixels,
     Point, Render, ScrollWheelEvent, SharedString, Size, Style, StyleRefinement, Styled, Task,
     TooltipId, Visibility, Window, WindowControlArea, point, px, size,
+    taffy::{CONTAINER_LAYOUT_ID_TO_DEBUG, LAYOUT_ID_TO_DEBUG},
 };
 use collections::HashMap;
 use refineable::Refineable;
@@ -1298,7 +1299,23 @@ impl Element for Div {
                             .iter_mut()
                             .map(|child| child.request_layout(window, cx))
                             .collect::<SmallVec<_>>();
-                        window.request_layout(style, child_layout_ids.iter().copied(), cx)
+                        let layout_id =
+                            window.request_layout(style, child_layout_ids.iter().copied(), cx);
+                        if let Some(global_id) = global_id.as_ref()
+                            && global_id.0.ends_with(&["api-key-editor".into()])
+                        {
+                            LAYOUT_ID_TO_DEBUG.with_borrow_mut(|layout_id_to_debug| {
+                                *layout_id_to_debug = Some(layout_id)
+                            });
+                        }
+                        if let Some(global_id) = global_id.as_ref()
+                            && global_id.0.ends_with(&["open-router-container".into()])
+                        {
+                            CONTAINER_LAYOUT_ID_TO_DEBUG.with_borrow_mut(|layout_id_to_debug| {
+                                *layout_id_to_debug = Some(layout_id)
+                            });
+                        }
+                        layout_id
                     })
                 },
             )
