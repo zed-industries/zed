@@ -425,7 +425,9 @@ impl AcpThreadView {
         match event {
             MessageEditorEvent::Send => self.send(window, cx),
             MessageEditorEvent::Cancel => self.cancel_generation(cx),
-            MessageEditorEvent::Focus => {}
+            MessageEditorEvent::Focus => {
+                self.cancel_editing(&Default::default(), window, cx);
+            }
         }
     }
 
@@ -907,20 +909,12 @@ impl AcpThreadView {
         if let Some(editing_index) = self.editing_message.as_ref()
             && *editing_index < entry_ix
         {
-            let backdrop = div()
-                .id(("backdrop", entry_ix))
-                .size_full()
-                .absolute()
-                .inset_0()
-                .bg(cx.theme().colors().panel_background)
-                .opacity(0.8)
-                .block_mouse_except_scroll()
-                .on_click(cx.listener(Self::cancel_editing));
-
             div()
-                .relative()
                 .child(primary)
-                .child(backdrop)
+                .opacity(0.2)
+                .block_mouse_except_scroll()
+                .id("overlay")
+                .on_click(cx.listener(Self::cancel_editing))
                 .into_any_element()
         } else {
             primary
