@@ -6,29 +6,10 @@ message UpdateInviteInfo {
     uint32 count = 2;
 }
 
-message GetPrivateUserInfo {}
-
-message GetPrivateUserInfoResponse {
-    string metrics_id = 1;
-    bool staff = 2;
-    repeated string flags = 3;
-    optional uint64 accepted_tos_at = 4;
-}
-
 enum Plan {
     Free = 0;
     ZedPro = 1;
     ZedProTrial = 2;
-}
-
-message UpdateUserPlan {
-    Plan plan = 1;
-    optional uint64 trial_started_at = 2;
-    optional bool is_usage_based_billing_enabled = 3;
-    optional SubscriptionUsage usage = 4;
-    optional SubscriptionPeriod subscription_period = 5;
-    optional bool account_too_young = 6;
-    optional bool has_overdue_invoices = 7;
 }
 
 message SubscriptionPeriod {
