@@ -545,7 +545,7 @@ impl NativeAgentConnection {
                     }
                     Err(e) => {
                         log::error!("Error in model response stream: {:?}", e);
-                        return Err(e.into());
+                        return Err(e);
                     }
                 }
             }
