@@ -4,7 +4,7 @@ use collections::HashMap;
 use gpui::AsyncApp;
 use language::{LanguageName, LanguageToolchainStore, LspAdapter, LspAdapterDelegate};
 use lsp::{CodeActionKind, LanguageServerBinary, LanguageServerName};
-use node_runtime::NodeRuntime;
+use node_runtime::{NodeRuntime, VersionStrategy};
 use project::{Fs, lsp_store::language_server_settings};
 use serde_json::Value;
 use std::{
@@ -115,7 +115,7 @@ impl LspAdapter for VtslsLspAdapter {
                 Self::PACKAGE_NAME,
                 &server_path,
                 &container_dir,
-                &latest_version.server_version,
+                VersionStrategy::Latest(&latest_version.server_version),
             )
             .await
         {
@@ -128,7 +128,7 @@ impl LspAdapter for VtslsLspAdapter {
                 Self::TYPESCRIPT_PACKAGE_NAME,
                 &container_dir.join(Self::TYPESCRIPT_TSDK_PATH),
                 &container_dir,
-                &latest_version.typescript_version,
+                VersionStrategy::Latest(&latest_version.typescript_version),
             )
             .await
         {

@@ -525,6 +525,7 @@ message UpdateDiagnosticSummary {
     uint64 project_id = 1;
     uint64 worktree_id = 2;
     DiagnosticSummary summary = 3;
+    repeated DiagnosticSummary more_summaries = 4;
 }
 
 message DiagnosticSummary {
@@ -816,16 +817,6 @@ message LspResponse {
         GetReferencesResponse get_references_response = 12;
     }
     uint64 server_id = 7;
-}
-
-message LanguageServerIdForName {
-    uint64 project_id = 1;
-    uint64 buffer_id = 2;
-    string name = 3;
-}
-
-message LanguageServerIdForNameResponse {
-    optional uint64 server_id = 1;
 }
 
 message LspExtRunnables {

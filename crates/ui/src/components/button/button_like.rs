@@ -1,7 +1,8 @@
 use documented::Documented;
 use gpui::{
     AnyElement, AnyView, ClickEvent, CursorStyle, DefiniteLength, Hsla, MouseButton,
-    MouseDownEvent, MouseUpEvent, Rems, StyleRefinement, relative, transparent_black,
+    MouseClickEvent, MouseDownEvent, MouseUpEvent, Rems, StyleRefinement, relative,
+    transparent_black,
 };
 use smallvec::SmallVec;
 
@@ -498,8 +499,8 @@ impl Clickable for ButtonLike {
 }
 
 impl FixedWidth for ButtonLike {
-    fn width(mut self, width: DefiniteLength) -> Self {
-        self.width = Some(width);
+    fn width(mut self, width: impl Into<DefiniteLength>) -> Self {
+        self.width = Some(width.into());
         self
     }
 
@@ -620,7 +621,7 @@ impl RenderOnce for ButtonLike {
                         MouseButton::Right,
                         move |event, window, cx| {
                             cx.stop_propagation();
-                            let click_event = ClickEvent {
+                            let click_event = ClickEvent::Mouse(MouseClickEvent {
                                 down: MouseDownEvent {
                                     button: MouseButton::Right,
                                     position: event.position,
@@ -634,7 +635,7 @@ impl RenderOnce for ButtonLike {
                                     modifiers: event.modifiers,
                                     click_count: 1,
                                 },
-                            };
+                            });
                             (on_right_click)(&click_event, window, cx)
                         },
                     )

@@ -277,6 +277,8 @@ pub struct App {
     pub(crate) release_listeners: SubscriberSet<EntityId, ReleaseListener>,
     pub(crate) global_observers: SubscriberSet<TypeId, Handler>,
     pub(crate) quit_observers: SubscriberSet<(), QuitHandler>,
+    pub(crate) restart_observers: SubscriberSet<(), Handler>,
+    pub(crate) restart_path: Option<PathBuf>,
     pub(crate) window_closed_observers: SubscriberSet<(), WindowClosedHandler>,
     pub(crate) layout_id_buffer: Vec<LayoutId>, // We recycle this memory across layout requests.
     pub(crate) propagate_event: bool,
@@ -349,6 +351,8 @@ impl App {
                 keyboard_layout_observers: SubscriberSet::new(),
                 global_observers: SubscriberSet::new(),
                 quit_observers: SubscriberSet::new(),
+                restart_observers: SubscriberSet::new(),
+                restart_path: None,
                 window_closed_observers: SubscriberSet::new(),
                 layout_id_buffer: Default::default(),
                 propagate_event: true,
@@ -832,8 +836,16 @@ impl App {
     }
 
     /// Restarts the application.
-    pub fn restart(&self, binary_path: Option<PathBuf>) {
-        self.platform.restart(binary_path)
+    pub fn restart(&mut self) {
+        self.restart_observers
+            .clone()
+            .retain(&(), |observer| observer(self));
+        self.platform.restart(self.restart_path.take())
+    }
+
+    /// Sets the path to use when restarting the application.
+    pub fn set_restart_path(&mut self, path: PathBuf) {
+        self.restart_path = Some(path);
     }
 
     /// Returns the HTTP client for the application.
@@ -1460,6 +1472,21 @@ impl App {
             Box::new(move |cx| {
                 let future = on_quit(cx);
                 future.boxed_local()
+            }),
+        );
+        activate();
+        subscription
+    }
+
+    /// Register a callback to be invoked when the application is about to restart.
+    ///
+    /// These callbacks are called before any `on_app_quit` callbacks.
+    pub fn on_app_restart(&self, mut on_restart: impl 'static + FnMut(&mut App)) -> Subscription {
+        let (subscription, activate) = self.restart_observers.insert(
+            (),
+            Box::new(move |cx| {
+                on_restart(cx);
+                true
             }),
         );
         activate();

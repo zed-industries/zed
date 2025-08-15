@@ -246,7 +246,7 @@ pub async fn test_cancel(server: impl AgentServer + 'static, cx: &mut TestAppCon
 
     let project = Project::test(fs, [path!("/private/tmp").as_ref()], cx).await;
     let thread = new_test_thread(server, project.clone(), "/private/tmp", cx).await;
-    let full_turn = thread.update(cx, |thread, cx| {
+    let _ = thread.update(cx, |thread, cx| {
         thread.send_raw(
             r#"Run exactly `touch hello.txt && echo "Hello, world!" | tee hello.txt` in the terminal."#,
             cx,
@@ -285,9 +285,8 @@ pub async fn test_cancel(server: impl AgentServer + 'static, cx: &mut TestAppCon
         id.clone()
     });
 
-    let _ = thread.update(cx, |thread, cx| thread.cancel(cx));
-    full_turn.await.unwrap();
-    thread.read_with(cx, |thread, _| {
+    thread.update(cx, |thread, cx| thread.cancel(cx)).await;
+    thread.read_with(cx, |thread, _cx| {
         let AgentThreadEntry::ToolCall(ToolCall {
             status: ToolCallStatus::Canceled,
             ..
@@ -309,6 +308,27 @@ pub async fn test_cancel(server: impl AgentServer + 'static, cx: &mut TestAppCon
             AgentThreadEntry::AssistantMessage(..),
         ))
     });
+}
+
+pub async fn test_thread_drop(server: impl AgentServer + 'static, cx: &mut TestAppContext) {
+    let fs = init_test(cx).await;
+    let project = Project::test(fs, [], cx).await;
+    let thread = new_test_thread(server, project.clone(), "/private/tmp", cx).await;
+
+    thread
+        .update(cx, |thread, cx| thread.send_raw("Hello from test!", cx))
+        .await
+        .unwrap();
+
+    thread.read_with(cx, |thread, _| {
+        assert!(thread.entries().len() >= 2, "Expected at least 2 entries");
+    });
+
+    let weak_thread = thread.downgrade();
+    drop(thread);
+
+    cx.executor().run_until_parked();
+    assert!(!weak_thread.is_upgradable());
 }
 
 #[macro_export]
@@ -350,6 +370,12 @@ macro_rules! common_e2e_tests {
             #[cfg_attr(not(feature = "e2e"), ignore)]
             async fn cancel(cx: &mut ::gpui::TestAppContext) {
                 $crate::e2e_tests::test_cancel($server, cx).await;
+            }
+
+            #[::gpui::test]
+            #[cfg_attr(not(feature = "e2e"), ignore)]
+            async fn thread_drop(cx: &mut ::gpui::TestAppContext) {
+                $crate::e2e_tests::test_thread_drop($server, cx).await;
             }
         }
     };
@@ -396,8 +422,8 @@ pub async fn new_test_thread(
         .await
         .unwrap();
 
-    let thread = connection
-        .new_thread(project.clone(), current_dir.as_ref(), &mut cx.to_async())
+    let thread = cx
+        .update(|cx| connection.new_thread(project.clone(), current_dir.as_ref(), cx))
         .await
         .unwrap();
 

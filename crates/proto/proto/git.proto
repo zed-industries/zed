@@ -202,6 +202,16 @@ message GitInit {
     string fallback_branch_name = 3;
 }
 
+message GitClone {
+    uint64 project_id = 1;
+    string abs_path = 2;
+    string remote_repo = 3;
+}
+
+message GitCloneResponse {
+    bool success = 1;
+}
+
 message CheckForPushedCommits {
     uint64 project_id = 1;
     reserved 2;

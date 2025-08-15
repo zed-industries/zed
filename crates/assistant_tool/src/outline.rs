@@ -1,4 +1,4 @@
-use crate::ActionLog;
+use action_log::ActionLog;
 use anyhow::{Context as _, Result};
 use gpui::{AsyncApp, Entity};
 use language::{OutlineItem, ParseStatus};

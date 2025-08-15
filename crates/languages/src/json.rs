@@ -12,7 +12,7 @@ use language::{
     LspAdapter, LspAdapterDelegate,
 };
 use lsp::{LanguageServerBinary, LanguageServerName};
-use node_runtime::NodeRuntime;
+use node_runtime::{NodeRuntime, VersionStrategy};
 use project::{Fs, lsp_store::language_server_settings};
 use serde_json::{Value, json};
 use settings::{KeymapFile, SettingsJsonSchemaParams, SettingsStore};
@@ -269,7 +269,15 @@ impl JsonLspAdapter {
             .await;
 
         let config = cx.update(|cx| {
-            Self::get_workspace_config(self.languages.language_names().clone(), adapter_schemas, cx)
+            Self::get_workspace_config(
+                self.languages
+                    .language_names()
+                    .into_iter()
+                    .map(|name| name.to_string())
+                    .collect(),
+                adapter_schemas,
+                cx,
+            )
         })?;
         writer.replace(config.clone());
         return Ok(config);
@@ -332,7 +340,12 @@ impl LspAdapter for JsonLspAdapter {
 
         let should_install_language_server = self
             .node
-            .should_install_npm_package(Self::PACKAGE_NAME, &server_path, &container_dir, &version)
+            .should_install_npm_package(
+                Self::PACKAGE_NAME,
+                &server_path,
+                &container_dir,
+                VersionStrategy::Latest(version),
+            )
             .await;
 
         if should_install_language_server {
@@ -509,6 +522,7 @@ impl LspAdapter for NodeVersionAdapter {
         Ok(Box::new(GitHubLspBinaryVersion {
             name: release.tag_name,
             url: asset.browser_download_url.clone(),
+            digest: asset.digest.clone(),
         }))
     }
 

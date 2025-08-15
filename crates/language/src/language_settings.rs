@@ -987,7 +987,7 @@ pub struct InlayHintSettings {
     /// Default: false
     #[serde(default)]
     pub enabled: bool,
-    /// Global switch to toggle inline values on and off.
+    /// Global switch to toggle inline values on and off when debugging.
     ///
     /// Default: true
     #[serde(default = "default_true")]
