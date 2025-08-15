@@ -45,9 +45,8 @@ use zed_actions::agent::Chat;
 use super::completion_provider::Mention;
 
 pub struct MessageEditor {
-    // todo!() this shoul dnot be pub
-    pub(crate) editor: Entity<Editor>,
-    pub(crate) mention_set: MentionSet,
+    mention_set: MentionSet,
+    editor: Entity<Editor>,
     project: Entity<Project>,
     thread_store: Entity<ThreadStore>,
     text_thread_store: Entity<TextThreadStore>,
@@ -109,6 +108,16 @@ impl MessageEditor {
             thread_store,
             text_thread_store,
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn editor(&self) -> &Entity<Editor> {
+        &self.editor
+    }
+
+    #[cfg(test)]
+    pub(crate) fn mention_set(&mut self) -> &mut MentionSet {
+        &mut self.mention_set
     }
 
     pub fn is_empty(&self, cx: &App) -> bool {
@@ -283,7 +292,7 @@ impl MessageEditor {
             let crease_id = self.editor.update(cx, |editor, cx| {
                 let crease_ids = editor.insert_creases(vec![crease.clone()], cx);
                 editor.fold_creases(vec![crease], false, window, cx);
-                crease_ids.first().unwrap().clone()
+                crease_ids.first().copied().unwrap()
             });
 
             self.mention_set

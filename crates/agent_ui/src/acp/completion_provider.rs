@@ -1316,7 +1316,7 @@ mod tests {
                 );
             });
             message_editor.read(cx).focus_handle(cx).focus(window);
-            let editor = message_editor.read(cx).editor.clone();
+            let editor = message_editor.read(cx).editor().clone();
             (message_editor, editor)
         });
 
@@ -1388,7 +1388,7 @@ mod tests {
 
         let contents = message_editor
             .update_in(&mut cx, |message_editor, window, cx| {
-                message_editor.mention_set.contents(
+                message_editor.mention_set().contents(
                     project.clone(),
                     thread_store.clone(),
                     text_thread_store.clone(),
@@ -1456,7 +1456,7 @@ mod tests {
 
         let contents = message_editor
             .update_in(&mut cx, |message_editor, window, cx| {
-                message_editor.mention_set.contents(
+                message_editor.mention_set().contents(
                     project.clone(),
                     thread_store.clone(),
                     text_thread_store.clone(),
@@ -1580,7 +1580,7 @@ mod tests {
 
         let contents = message_editor
             .update_in(&mut cx, |message_editor, window, cx| {
-                message_editor.mention_set.contents(
+                message_editor.mention_set().contents(
                     project.clone(),
                     thread_store,
                     text_thread_store,
