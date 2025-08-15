@@ -678,7 +678,7 @@ impl Item for Editor {
                     let buffer = buffer.read(cx);
                     let path = buffer.project_path(cx)?;
                     let buffer_id = buffer.remote_id();
-                    let project = self.project.as_ref()?.read(cx);
+                    let project = self.project()?.read(cx);
                     let entry = project.entry_for_path(&path, cx)?;
                     let (repo, repo_path) = project
                         .git_store()
