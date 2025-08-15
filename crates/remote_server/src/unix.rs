@@ -228,6 +228,10 @@ fn handle_crash_files_requests(project: &Entity<HeadlessProject>, client: &Arc<C
                         .context("error reading panic file")?;
 
                     legacy_panics.push(file_contents);
+                    smol::fs::remove_file(&child_path)
+                        .await
+                        .context("error removing panic")
+                        .log_err();
                 } else if extension == Some(OsStr::new("dmp")) {
                     let mut json_path = child_path.clone();
                     json_path.set_extension("json");
@@ -236,20 +240,12 @@ fn handle_crash_files_requests(project: &Entity<HeadlessProject>, client: &Arc<C
                             metadata: json_content,
                             minidump_contents: smol::fs::read(&child_path).await?,
                         });
-                        smol::fs::remove_file(&json_path)
-                            .await
-                            .context("error removing panic")
-                            .log_err();
+                        smol::fs::remove_file(&child_path).await.log_err();
+                        smol::fs::remove_file(&json_path).await.log_err();
                     } else {
                         log::error!("Couldn't find json metadata for crash: {child_path:?}");
                     }
                 }
-
-                // We've done what we can, delete the file
-                smol::fs::remove_file(&child_path)
-                    .await
-                    .context("error removing panic")
-                    .log_err();
             }
 
             anyhow::Ok(proto::GetCrashFilesResponse {

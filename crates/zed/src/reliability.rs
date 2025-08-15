@@ -476,11 +476,10 @@ fn upload_panics_and_crashes(
     installation_id: Option<String>,
     cx: &App,
 ) {
-    let telemetry_settings = *client::TelemetrySettings::get_global(cx);
+    if !client::TelemetrySettings::get_global(cx).diagnostics {
+        return;
+    }
     cx.background_spawn(async move {
-        if !telemetry_settings.diagnostics {
-            return;
-        }
         upload_previous_minidumps(http.clone()).await.warn_on_err();
         let most_recent_panic = upload_previous_panics(http.clone(), &panic_report_url)
             .await
@@ -537,15 +536,13 @@ async fn upload_previous_panics(
             });
 
         if let Some(panic) = panic
-            && !upload_panic(&http, &panic_report_url, panic, &mut most_recent_panic).await?
+            && upload_panic(&http, &panic_report_url, panic, &mut most_recent_panic).await?
         {
-            continue;
+            // We've done what we can, delete the file
+            fs::remove_file(child_path)
+                .context("error removing panic")
+                .log_err();
         }
-
-        // We've done what we can, delete the file
-        fs::remove_file(child_path)
-            .context("error removing panic")
-            .log_err();
     }
 
     Ok(most_recent_panic)

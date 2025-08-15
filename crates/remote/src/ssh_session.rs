@@ -2226,8 +2226,7 @@ impl SshRemoteConnection {
 
             #[cfg(not(target_os = "windows"))]
             {
-                run_cmd(Command::new("gzip").args(["-f", &bin_path.to_string_lossy()]))
-                    .await?;
+                run_cmd(Command::new("gzip").args(["-f", &bin_path.to_string_lossy()])).await?;
             }
             #[cfg(target_os = "windows")]
             {

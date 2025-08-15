@@ -101,6 +101,7 @@ pub async fn init(crash_init: InitCrashHandler) {
 pub struct CrashServer {
     initialization_params: OnceLock<InitCrashHandler>,
     panic_info: OnceLock<CrashPanic>,
+    has_connection: Arc<AtomicBool>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -182,9 +183,7 @@ impl minidumper::ServerHandler for CrashServer {
             2 => {
                 let panic_data =
                     serde_json::from_slice::<CrashPanic>(&buffer).expect("invalid panic data");
-                self.panic_info
-                    .set(panic_data)
-                    .expect("already initialized");
+                self.panic_info.set(panic_data).expect("already panicked");
             }
             _ => {
                 panic!("invalid message kind");
