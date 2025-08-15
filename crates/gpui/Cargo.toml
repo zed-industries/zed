@@ -209,7 +209,7 @@ xkbcommon = { version = "0.8.0", features = [
     "wayland",
     "x11",
 ], optional = true }
-xim = { git = "https://github.com/XDeme1/xim-rs", rev = "d50d461764c2213655cd9cf65a0ea94c70d3c4fd", features = [
+xim = { path = "/home/smit/xim-rs", features = [
     "x11rb-xcb",
     "x11rb-client",
 ], optional = true }
