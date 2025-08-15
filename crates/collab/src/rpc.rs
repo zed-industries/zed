@@ -1081,53 +1081,6 @@ impl Server {
         Ok(())
     }
 
-    pub async fn update_plan_for_user(
-        self: &Arc<Self>,
-        user_id: UserId,
-        update_user_plan: proto::UpdateUserPlan,
-    ) -> Result<()> {
-        let pool = self.connection_pool.lock();
-        for connection_id in pool.user_connection_ids(user_id) {
-            self.peer
-                .send(connection_id, update_user_plan.clone())
-                .trace_err();
-        }
-
-        Ok(())
-    }
-
-    /// This is the legacy way of updating the user's plan, where we fetch the data to construct the `UpdateUserPlan`
-    /// message on the Collab server.
-    ///
-    /// The new way is to receive the data from Cloud via the `POST /users/:id/update_plan` endpoint.
-    pub async fn update_plan_for_user_legacy(self: &Arc<Self>, user_id: UserId) -> Result<()> {
-        let user = self
-            .app_state
-            .db
-            .get_user_by_id(user_id)
-            .await?
-            .context("user not found")?;
-
-        let update_user_plan = make_update_user_plan_message(
-            &user,
-            user.admin,
-            &self.app_state.db,
-            self.app_state.llm_db.clone(),
-        )
-        .await?;
-
-        self.update_plan_for_user(user_id, update_user_plan).await
-    }
-
-    pub async fn refresh_llm_tokens_for_user(self: &Arc<Self>, user_id: UserId) {
-        let pool = self.connection_pool.lock();
-        for connection_id in pool.user_connection_ids(user_id) {
-            self.peer
-                .send(connection_id, proto::RefreshLlmToken {})
-                .trace_err();
-        }
-    }
-
     pub async fn snapshot(self: &Arc<Self>) -> ServerSnapshot<'_> {
         ServerSnapshot {
             connection_pool: ConnectionPoolGuard {
