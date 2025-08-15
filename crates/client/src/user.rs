@@ -998,19 +998,6 @@ impl RequestUsage {
         }
     }
 
-    pub fn from_proto(amount: u32, limit: proto::UsageLimit) -> Option<Self> {
-        let limit = match limit.variant? {
-            proto::usage_limit::Variant::Limited(limited) => {
-                UsageLimit::Limited(limited.limit as i32)
-            }
-            proto::usage_limit::Variant::Unlimited(_) => UsageLimit::Unlimited,
-        };
-        Some(RequestUsage {
-            limit,
-            amount: amount as i32,
-        })
-    }
-
     fn from_headers(
         limit_name: &str,
         amount_name: &str,

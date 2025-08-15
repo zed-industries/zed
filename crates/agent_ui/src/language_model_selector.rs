@@ -1,5 +1,6 @@
 use std::{cmp::Reverse, sync::Arc};
 
+use cloud_llm_client::Plan;
 use collections::{HashSet, IndexMap};
 use feature_flags::ZedProFeatureFlag;
 use fuzzy::{StringMatch, StringMatchCandidate, match_strings};
@@ -10,7 +11,6 @@ use language_model::{
 };
 use ordered_float::OrderedFloat;
 use picker::{Picker, PickerDelegate};
-use proto::Plan;
 use ui::{ListItem, ListItemSpacing, prelude::*};
 
 const TRY_ZED_PRO_URL: &str = "https://zed.dev/pro";
@@ -536,7 +536,7 @@ impl PickerDelegate for LanguageModelPickerDelegate {
     ) -> Option<gpui::AnyElement> {
         use feature_flags::FeatureFlagAppExt;
 
-        let plan = proto::Plan::ZedPro;
+        let plan = Plan::ZedPro;
 
         Some(
             h_flex()
@@ -557,7 +557,7 @@ impl PickerDelegate for LanguageModelPickerDelegate {
                                 window
                                     .dispatch_action(Box::new(zed_actions::OpenAccountSettings), cx)
                             }),
-                        Plan::Free | Plan::ZedProTrial => Button::new(
+                        Plan::ZedFree | Plan::ZedProTrial => Button::new(
                             "try-pro",
                             if plan == Plan::ZedProTrial {
                                 "Upgrade to Pro"
