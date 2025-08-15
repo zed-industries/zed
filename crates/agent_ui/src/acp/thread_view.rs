@@ -3133,9 +3133,7 @@ impl AcpThreadView {
             drop(added_worktrees);
         })
     }
-}
 
-impl AcpThreadView {
     fn render_thread_error(&self, window: &mut Window, cx: &mut Context<'_, Self>) -> Option<Div> {
         let content = match self.thread_error.as_ref()? {
             ThreadError::Other(error) => self.render_any_thread_error(error.clone(), cx),
