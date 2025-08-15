@@ -1,16 +1,12 @@
 use crate::{Client, Connection, Credentials, EstablishConnectionError, UserStore};
 use anyhow::{Context as _, Result, anyhow};
-use chrono::Duration;
 use cloud_api_client::{AuthenticatedUser, GetAuthenticatedUserResponse, PlanInfo};
 use cloud_llm_client::{CurrentUsage, Plan, UsageData, UsageLimit};
 use futures::{StreamExt, stream::BoxStream};
 use gpui::{AppContext as _, BackgroundExecutor, Entity, TestAppContext};
 use http_client::{AsyncBody, Method, Request, http};
 use parking_lot::Mutex;
-use rpc::{
-    ConnectionId, Peer, Receipt, TypedEnvelope,
-    proto::{self, GetPrivateUserInfo, GetPrivateUserInfoResponse},
-};
+use rpc::{ConnectionId, Peer, Receipt, TypedEnvelope, proto};
 use std::sync::Arc;
 
 pub struct FakeServer {
@@ -203,27 +199,6 @@ impl FakeServer {
 
             if message.is::<TypedEnvelope<M>>() {
                 return Ok(*message.downcast().unwrap());
-            }
-
-            let accepted_tos_at = chrono::Utc::now()
-                .checked_sub_signed(Duration::hours(5))
-                .expect("failed to build accepted_tos_at")
-                .timestamp() as u64;
-
-            if message.is::<TypedEnvelope<GetPrivateUserInfo>>() {
-                self.respond(
-                    message
-                        .downcast::<TypedEnvelope<GetPrivateUserInfo>>()
-                        .unwrap()
-                        .receipt(),
-                    GetPrivateUserInfoResponse {
-                        metrics_id: "the-metrics-id".into(),
-                        staff: false,
-                        flags: Default::default(),
-                        accepted_tos_at: Some(accepted_tos_at),
-                    },
-                );
-                continue;
             }
 
             panic!(
