@@ -975,7 +975,6 @@ impl Thread {
 
         log::info!("Request includes {} tools", tools.len());
 
-        dbg!(&tools);
         let request = LanguageModelRequest {
             thread_id: None,
             prompt_id: None,
