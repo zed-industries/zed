@@ -88,8 +88,9 @@ message GetCrashFilesResponse {
 }
 
 message CrashReport {
-    string metadata = 1;
-    bytes minidump_contents = 2;
+    reserved 1, 2;
+    string metadata = 3;
+    bytes minidump_contents = 4;
 }
 
 message Extension {
