@@ -126,7 +126,7 @@ pub struct CrashPanic {
 
 impl minidumper::ServerHandler for CrashServer {
     fn create_minidump_file(&self) -> Result<(File, PathBuf), io::Error> {
-        let err_message = "Need to send a message with the ID upon starting the crash handler";
+        let err_message = "Missing initialization data";
         let dump_path = paths::logs_dir()
             .join(
                 &self

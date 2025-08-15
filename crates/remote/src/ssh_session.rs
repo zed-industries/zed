@@ -2226,7 +2226,7 @@ impl SshRemoteConnection {
 
             #[cfg(not(target_os = "windows"))]
             {
-                run_cmd(Command::new("gzip").args(["-9", "-f", &bin_path.to_string_lossy()]))
+                run_cmd(Command::new("gzip").args(["-f", &bin_path.to_string_lossy()]))
                     .await?;
             }
             #[cfg(target_os = "windows")]
@@ -2459,7 +2459,7 @@ impl ChannelClient {
             },
             async {
                 smol::Timer::after(timeout).await;
-                anyhow::bail!("Timeout detected")
+                anyhow::bail!("Timed out resyncing remote client")
             },
         )
         .await
@@ -2473,7 +2473,7 @@ impl ChannelClient {
             },
             async {
                 smol::Timer::after(timeout).await;
-                anyhow::bail!("Timeout detected")
+                anyhow::bail!("Timed out pinging remote client")
             },
         )
         .await
