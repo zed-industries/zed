@@ -85,14 +85,14 @@ impl RenderOnce for UsageCallout {
                 Icon::new(IconName::Close)
                     .color(Color::Error)
                     .size(IconSize::XSmall),
-                cx.theme().status().error.opacity(0.1),
+                cx.theme().status().error.opacity(0.06),
             )
         } else {
             (
                 Icon::new(IconName::Warning)
                     .color(Color::Warning)
                     .size(IconSize::XSmall),
-                cx.theme().status().warning.opacity(0.1),
+                cx.theme().status().warning.opacity(0.06),
             )
         };
 

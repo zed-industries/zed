@@ -3143,6 +3143,76 @@ impl AcpThreadView {
             .children(Scrollbar::vertical(self.scrollbar_state.clone()).map(|s| s.auto_hide(cx)))
     }
 
+    fn render_token_limit_callout(
+        &self,
+        line_height: Pixels,
+        cx: &mut Context<Self>,
+    ) -> Option<Div> {
+        let thread = self.as_native_thread(cx)?;
+
+        let token_usage_warning = false; //todo(actually hook this up)
+        let token_usage_exceeded = true; //todo(actually hook this up)
+
+        if !token_usage_warning && !token_usage_exceeded {
+            return None;
+        }
+
+        let (icon, title) = if token_usage_exceeded {
+            (
+                Icon::new(IconName::Close)
+                    .color(Color::Error)
+                    .size(IconSize::XSmall),
+                "Thread reached the token limit",
+            )
+        } else {
+            (
+                Icon::new(IconName::Warning)
+                    .color(Color::Warning)
+                    .size(IconSize::XSmall),
+                "Thread reaching the token limit soon",
+            )
+        };
+
+        let burn_mode_available = thread.read(cx).completion_mode() == CompletionMode::Normal
+            && thread.read(cx).model().provider_id() == language_model::ZED_CLOUD_PROVIDER_ID;
+
+        let description = if burn_mode_available {
+            "To continue, start a new thread from a summary or turn Burn Mode on."
+        } else {
+            "To continue, start a new thread from a summary."
+        };
+
+        let callout = Callout::new()
+            .line_height(line_height)
+            .icon(icon)
+            .title(title)
+            .description(description)
+            .primary_action(
+                Button::new("start-new-thread", "Start New Thread")
+                    .label_size(LabelSize::Small)
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        // let from_thread_id = Some(this.thread.read(cx).id().clone());
+                        // window.dispatch_action(Box::new(NewThread { from_thread_id }), cx);
+                    })),
+            )
+            .when(burn_mode_available, |this| {
+                this.secondary_action(
+                    IconButton::new("burn-mode-callout", IconName::ZedBurnMode)
+                        .icon_size(IconSize::XSmall)
+                        .on_click(cx.listener(|this, _event, window, cx| {
+                            this.toggle_burn_mode(&ToggleBurnMode, window, cx);
+                        })),
+                )
+            });
+
+        Some(
+            div()
+                .border_t_1()
+                .border_color(cx.theme().colors().border)
+                .child(callout),
+        )
+    }
+
     fn render_usage_callout(&self, line_height: Pixels, cx: &mut Context<Self>) -> Option<Div> {
         if !self.is_using_zed_ai_models(cx) {
             return None;
@@ -3464,7 +3534,17 @@ impl Render for AcpThreadView {
                 _ => this,
             })
             .children(self.render_thread_error(window, cx))
-            .children(self.render_usage_callout(window.line_height(), cx))
+            .children(
+                if let Some(usage_callout) = self.render_usage_callout(line_height, cx) {
+                    Some(usage_callout)
+                } else if let Some(token_limit_callout) =
+                    self.render_token_limit_callout(line_height, cx)
+                {
+                    Some(token_limit_callout)
+                } else {
+                    None
+                },
+            )
             .child(self.render_message_editor(window, cx))
     }
 }
