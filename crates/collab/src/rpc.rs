@@ -399,8 +399,9 @@ impl Server {
             .add_request_handler(forward_mutating_project_request::<proto::OnTypeFormatting>)
             .add_request_handler(forward_mutating_project_request::<proto::SaveBuffer>)
             .add_request_handler(forward_mutating_project_request::<proto::BlameBuffer>)
+            // TODO kb remove + remove the span
             .add_request_handler(multi_lsp_query)
-            // .add_request_handler(lsp_query)
+            .add_request_handler(lsp_query)
             .add_request_handler(forward_mutating_project_request::<proto::RestartLanguageServers>)
             .add_request_handler(forward_mutating_project_request::<proto::StopLanguageServers>)
             .add_request_handler(forward_mutating_project_request::<proto::LinkedEditingRange>)
@@ -2372,15 +2373,17 @@ async fn multi_lsp_query(
 
 async fn lsp_query(
     request: proto::LspQuery,
-    response: Response<proto::LspQueryResponse>,
+    response: Response<proto::LspQuery>,
     session: MessageContext,
 ) -> Result<()> {
-    todo!("TODO kb")
-    // tracing::Span::current().record("lsp_query_request", request.request_str());
-    // tracing::info!("lsp_query message received");
-    // // TODO kb separate the permissions based on the request type?
-    // // inline match from request_str and have the `is_readonly` flag.
-    // forward_mutating_project_request(request, response, session).await
+    let (name, should_write) = request.query_name_and_write_capabilities();
+    tracing::Span::current().record("lsp_query_request", name);
+    tracing::info!("lsp_query message received");
+    if should_write {
+        forward_mutating_project_request(request, response, session).await
+    } else {
+        forward_read_only_project_request(request, response, session).await
+    }
 }
 
 /// Notify other participants that a new buffer has been created
