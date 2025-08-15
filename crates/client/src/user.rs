@@ -177,7 +177,6 @@ impl UserStore {
         let (mut current_user_tx, current_user_rx) = watch::channel();
         let (update_contacts_tx, mut update_contacts_rx) = mpsc::unbounded();
         let rpc_subscriptions = vec![
-            client.add_message_handler(cx.weak_entity(), Self::handle_update_plan),
             client.add_message_handler(cx.weak_entity(), Self::handle_update_contacts),
             client.add_message_handler(cx.weak_entity(), Self::handle_update_invite_info),
             client.add_message_handler(cx.weak_entity(), Self::handle_show_contacts),
@@ -341,26 +340,6 @@ impl UserStore {
                 .unwrap();
         })?;
         Ok(())
-    }
-
-    async fn handle_update_plan(
-        this: Entity<Self>,
-        _message: TypedEnvelope<proto::UpdateUserPlan>,
-        mut cx: AsyncApp,
-    ) -> Result<()> {
-        let client = this
-            .read_with(&cx, |this, _| this.client.upgrade())?
-            .context("client was dropped")?;
-
-        let response = client
-            .cloud_client()
-            .get_authenticated_user()
-            .await
-            .context("failed to fetch authenticated user")?;
-
-        this.update(&mut cx, |this, cx| {
-            this.update_authenticated_user(response, cx);
-        })
     }
 
     fn update_contacts(&mut self, message: UpdateContacts, cx: &Context<Self>) -> Task<Result<()>> {

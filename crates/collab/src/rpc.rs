@@ -1,12 +1,6 @@
 mod connection_pool;
 
 use crate::api::{CloudflareIpCountryHeader, SystemIdHeader};
-use crate::db::billing_subscription::SubscriptionKind;
-use crate::llm::db::LlmDatabase;
-use crate::llm::{
-    AGENT_EXTENDED_TRIAL_FEATURE_FLAG, BYPASS_ACCOUNT_AGE_CHECK_FEATURE_FLAG,
-    MIN_ACCOUNT_AGE_FOR_LLM_USE,
-};
 use crate::{
     AppState, Error, Result, auth,
     db::{
@@ -146,13 +140,6 @@ pub enum Principal {
 }
 
 impl Principal {
-    fn user(&self) -> &User {
-        match self {
-            Principal::User(user) => user,
-            Principal::Impersonated { user, .. } => user,
-        }
-    }
-
     fn update_span(&self, span: &tracing::Span) {
         match &self {
             Principal::User(user) => {
@@ -996,8 +983,6 @@ impl Server {
                         .set_user_connected_once(user.id, true)
                         .await?;
                 }
-
-                update_user_plan(session).await?;
 
                 let contacts = self.app_state.db.get_contacts(user.id).await?;
 
@@ -2830,214 +2815,6 @@ async fn remove_contact(
 
 fn should_auto_subscribe_to_channels(version: ZedVersion) -> bool {
     version.0.minor() < 139
-}
-
-async fn current_plan(db: &Arc<Database>, user_id: UserId, is_staff: bool) -> Result<proto::Plan> {
-    if is_staff {
-        return Ok(proto::Plan::ZedPro);
-    }
-
-    let subscription = db.get_active_billing_subscription(user_id).await?;
-    let subscription_kind = subscription.and_then(|subscription| subscription.kind);
-
-    let plan = if let Some(subscription_kind) = subscription_kind {
-        match subscription_kind {
-            SubscriptionKind::ZedPro => proto::Plan::ZedPro,
-            SubscriptionKind::ZedProTrial => proto::Plan::ZedProTrial,
-            SubscriptionKind::ZedFree => proto::Plan::Free,
-        }
-    } else {
-        proto::Plan::Free
-    };
-
-    Ok(plan)
-}
-
-async fn make_update_user_plan_message(
-    user: &User,
-    is_staff: bool,
-    db: &Arc<Database>,
-    llm_db: Option<Arc<LlmDatabase>>,
-) -> Result<proto::UpdateUserPlan> {
-    let feature_flags = db.get_user_flags(user.id).await?;
-    let plan = current_plan(db, user.id, is_staff).await?;
-    let billing_customer = db.get_billing_customer_by_user_id(user.id).await?;
-    let billing_preferences = db.get_billing_preferences(user.id).await?;
-
-    let (subscription_period, usage) = if let Some(llm_db) = llm_db {
-        let subscription = db.get_active_billing_subscription(user.id).await?;
-
-        let subscription_period =
-            crate::db::billing_subscription::Model::current_period(subscription, is_staff);
-
-        let usage = if let Some((period_start_at, period_end_at)) = subscription_period {
-            llm_db
-                .get_subscription_usage_for_period(user.id, period_start_at, period_end_at)
-                .await?
-        } else {
-            None
-        };
-
-        (subscription_period, usage)
-    } else {
-        (None, None)
-    };
-
-    let bypass_account_age_check = feature_flags
-        .iter()
-        .any(|flag| flag == BYPASS_ACCOUNT_AGE_CHECK_FEATURE_FLAG);
-    let account_too_young = !matches!(plan, proto::Plan::ZedPro)
-        && !bypass_account_age_check
-        && user.account_age() < MIN_ACCOUNT_AGE_FOR_LLM_USE;
-
-    Ok(proto::UpdateUserPlan {
-        plan: plan.into(),
-        trial_started_at: billing_customer
-            .as_ref()
-            .and_then(|billing_customer| billing_customer.trial_started_at)
-            .map(|trial_started_at| trial_started_at.and_utc().timestamp() as u64),
-        is_usage_based_billing_enabled: if is_staff {
-            Some(true)
-        } else {
-            billing_preferences.map(|preferences| preferences.model_request_overages_enabled)
-        },
-        subscription_period: subscription_period.map(|(started_at, ended_at)| {
-            proto::SubscriptionPeriod {
-                started_at: started_at.timestamp() as u64,
-                ended_at: ended_at.timestamp() as u64,
-            }
-        }),
-        account_too_young: Some(account_too_young),
-        has_overdue_invoices: billing_customer
-            .map(|billing_customer| billing_customer.has_overdue_invoices),
-        usage: Some(
-            usage
-                .map(|usage| subscription_usage_to_proto(plan, usage, &feature_flags))
-                .unwrap_or_else(|| make_default_subscription_usage(plan, &feature_flags)),
-        ),
-    })
-}
-
-fn model_requests_limit(
-    plan: cloud_llm_client::Plan,
-    feature_flags: &Vec<String>,
-) -> cloud_llm_client::UsageLimit {
-    match plan.model_requests_limit() {
-        cloud_llm_client::UsageLimit::Limited(limit) => {
-            let limit = if plan == cloud_llm_client::Plan::ZedProTrial
-                && feature_flags
-                    .iter()
-                    .any(|flag| flag == AGENT_EXTENDED_TRIAL_FEATURE_FLAG)
-            {
-                1_000
-            } else {
-                limit
-            };
-
-            cloud_llm_client::UsageLimit::Limited(limit)
-        }
-        cloud_llm_client::UsageLimit::Unlimited => cloud_llm_client::UsageLimit::Unlimited,
-    }
-}
-
-fn subscription_usage_to_proto(
-    plan: proto::Plan,
-    usage: crate::llm::db::subscription_usage::Model,
-    feature_flags: &Vec<String>,
-) -> proto::SubscriptionUsage {
-    let plan = match plan {
-        proto::Plan::Free => cloud_llm_client::Plan::ZedFree,
-        proto::Plan::ZedPro => cloud_llm_client::Plan::ZedPro,
-        proto::Plan::ZedProTrial => cloud_llm_client::Plan::ZedProTrial,
-    };
-
-    proto::SubscriptionUsage {
-        model_requests_usage_amount: usage.model_requests as u32,
-        model_requests_usage_limit: Some(proto::UsageLimit {
-            variant: Some(match model_requests_limit(plan, feature_flags) {
-                cloud_llm_client::UsageLimit::Limited(limit) => {
-                    proto::usage_limit::Variant::Limited(proto::usage_limit::Limited {
-                        limit: limit as u32,
-                    })
-                }
-                cloud_llm_client::UsageLimit::Unlimited => {
-                    proto::usage_limit::Variant::Unlimited(proto::usage_limit::Unlimited {})
-                }
-            }),
-        }),
-        edit_predictions_usage_amount: usage.edit_predictions as u32,
-        edit_predictions_usage_limit: Some(proto::UsageLimit {
-            variant: Some(match plan.edit_predictions_limit() {
-                cloud_llm_client::UsageLimit::Limited(limit) => {
-                    proto::usage_limit::Variant::Limited(proto::usage_limit::Limited {
-                        limit: limit as u32,
-                    })
-                }
-                cloud_llm_client::UsageLimit::Unlimited => {
-                    proto::usage_limit::Variant::Unlimited(proto::usage_limit::Unlimited {})
-                }
-            }),
-        }),
-    }
-}
-
-fn make_default_subscription_usage(
-    plan: proto::Plan,
-    feature_flags: &Vec<String>,
-) -> proto::SubscriptionUsage {
-    let plan = match plan {
-        proto::Plan::Free => cloud_llm_client::Plan::ZedFree,
-        proto::Plan::ZedPro => cloud_llm_client::Plan::ZedPro,
-        proto::Plan::ZedProTrial => cloud_llm_client::Plan::ZedProTrial,
-    };
-
-    proto::SubscriptionUsage {
-        model_requests_usage_amount: 0,
-        model_requests_usage_limit: Some(proto::UsageLimit {
-            variant: Some(match model_requests_limit(plan, feature_flags) {
-                cloud_llm_client::UsageLimit::Limited(limit) => {
-                    proto::usage_limit::Variant::Limited(proto::usage_limit::Limited {
-                        limit: limit as u32,
-                    })
-                }
-                cloud_llm_client::UsageLimit::Unlimited => {
-                    proto::usage_limit::Variant::Unlimited(proto::usage_limit::Unlimited {})
-                }
-            }),
-        }),
-        edit_predictions_usage_amount: 0,
-        edit_predictions_usage_limit: Some(proto::UsageLimit {
-            variant: Some(match plan.edit_predictions_limit() {
-                cloud_llm_client::UsageLimit::Limited(limit) => {
-                    proto::usage_limit::Variant::Limited(proto::usage_limit::Limited {
-                        limit: limit as u32,
-                    })
-                }
-                cloud_llm_client::UsageLimit::Unlimited => {
-                    proto::usage_limit::Variant::Unlimited(proto::usage_limit::Unlimited {})
-                }
-            }),
-        }),
-    }
-}
-
-async fn update_user_plan(session: &Session) -> Result<()> {
-    let db = session.db().await;
-
-    let update_user_plan = make_update_user_plan_message(
-        session.principal.user(),
-        session.is_staff(),
-        &db.0,
-        session.app_state.llm_db.clone(),
-    )
-    .await?;
-
-    session
-        .peer
-        .send(session.connection_id, update_user_plan)
-        .trace_err();
-
-    Ok(())
 }
 
 async fn subscribe_to_channels(
