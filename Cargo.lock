@@ -3270,7 +3270,6 @@ dependencies = [
  "chrono",
  "client",
  "clock",
- "cloud_llm_client",
  "collab_ui",
  "collections",
  "command_palette_hooks",
