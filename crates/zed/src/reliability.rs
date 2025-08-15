@@ -12,6 +12,7 @@ use gpui::{App, AppContext as _, SemanticVersion};
 use http_client::{self, HttpClient, HttpClientWithUrl, HttpRequestExt, Method};
 use paths::{crashes_dir, crashes_retired_dir};
 use project::Project;
+use proto::{CrashReport, GetCrashFilesResponse};
 use release_channel::{AppCommitSha, RELEASE_CHANNEL, ReleaseChannel};
 use reqwest::multipart::{Form, Part};
 use settings::Settings;
@@ -220,23 +221,32 @@ pub fn init(
                 if TelemetrySettings::get_global(cx).diagnostics {
                     let request = client.proto_client().request(proto::GetCrashFiles {});
                     cx.background_spawn(async move {
-                        let crash_files = request.await?;
-                        for crash in crash_files.crashes {
-                            let mut panic: Option<Panic> = crash
-                                .panic_contents
-                                .and_then(|s| serde_json::from_str(&s).log_err());
+                        let GetCrashFilesResponse {
+                            legacy_panics,
+                            crashes,
+                        } = request.await?;
+
+                        for panic in legacy_panics {
+                            let mut panic: Option<Panic> =
+                                panic.and_then(|s| serde_json::from_str(&s).log_err());
 
                             if let Some(panic) = panic.as_mut() {
                                 panic.session_id = session_id.clone();
                                 panic.system_id = system_id.clone();
                                 panic.installation_id = installation_id.clone();
                             }
+                        }
 
+                        for CrashReport {
+                            metadata,
+                            minidump_contents,
+                        } in crashes
+                        {
                             if let Some(minidump) = crash.minidump_contents {
                                 upload_minidump(
                                     http_client.clone(),
                                     minidump.clone(),
-                                    panic.as_ref(),
+                                    serde_json::from_str(&metadata),
                                 )
                                 .await
                                 .log_err();
@@ -588,7 +598,7 @@ async fn upload_previous_panics(
 async fn upload_minidump(
     http: Arc<HttpClientWithUrl>,
     minidump: Vec<u8>,
-    panic: Option<&Panic>,
+    metadata: &crashes::CrashInfo,
 ) -> Result<()> {
     let minidump_endpoint = MINIDUMP_ENDPOINT
         .to_owned()
@@ -601,32 +611,16 @@ async fn upload_minidump(
                 .file_name("minidump.dmp")
                 .mime_str("application/octet-stream")?,
         )
+        .text(
+            "sentry[tags][channel]",
+            metadata.init.release_channel.clone(),
+        )
+        .text("sentry[tags][version]", metadata.init.zed_version.clone())
+        .text("sentry[release]", metadata.init.commit_sha.clone())
         .text("platform", "rust");
-    if let Some(panic) = panic {
-        form = form
-            .text("sentry[tags][channel]", panic.release_channel.clone())
-            .text("sentry[tags][version]", panic.app_version.clone())
-            .text("sentry[context][os][name]", panic.os_name.clone())
-            .text(
-                "sentry[context][device][architecture]",
-                panic.architecture.clone(),
-            )
-            .text("sentry[logentry][formatted]", panic.payload.clone());
-
-        if let Some(sha) = panic.app_commit_sha.clone() {
-            form = form.text("sentry[release]", sha)
-        } else {
-            form = form.text(
-                "sentry[release]",
-                format!("{}-{}", panic.release_channel, panic.app_version),
-            )
-        }
-        if let Some(v) = panic.os_version.clone() {
-            form = form.text("sentry[context][os][release]", v);
-        }
-        if let Some(location) = panic.location_data.as_ref() {
-            form = form.text("span", format!("{}:{}", location.file, location.line))
-        }
+    if let Some(panic_info) = metadata.panic.as_ref() {
+        form = form.text("sentry[logentry][formatted]", panic_info.message.clone());
+        form = form.text("span", panic_info.span.clone());
         // TODO: add gpu-context, feature-flag-context, and more of device-context like gpu
         // name, screen resolution, available ram, device model, etc
     }

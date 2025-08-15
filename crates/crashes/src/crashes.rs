@@ -114,12 +114,13 @@ pub struct InitCrashHandler {
     pub zed_version: String,
     pub release_channel: String,
     pub commit_sha: String,
+    pub gpu: String,
 }
 
 #[derive(Deserialize, Serialize, Debug, Clone)]
 pub struct CrashPanic {
-    message: String,
-    span: String,
+    pub message: String,
+    pub span: String,
 }
 
 impl minidumper::ServerHandler for CrashServer {
