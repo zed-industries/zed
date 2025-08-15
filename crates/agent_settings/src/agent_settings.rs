@@ -309,7 +309,7 @@ pub struct AgentSettingsContent {
     ///
     /// Default: true
     expand_terminal_card: Option<bool>,
-    /// Whether to always use cmd-enter (or ctrl-enter on Linux) to send messages in the agent panel.
+    /// Whether to always use cmd-enter (or ctrl-enter on Linux or Windows) to send messages in the agent panel.
     ///
     /// Default: false
     use_modifier_to_send: Option<bool>,

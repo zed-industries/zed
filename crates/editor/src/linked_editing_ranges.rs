@@ -51,7 +51,7 @@ pub(super) fn refresh_linked_ranges(
     if editor.pending_rename.is_some() {
         return None;
     }
-    let project = editor.project.as_ref()?.downgrade();
+    let project = editor.project()?.downgrade();
 
     editor.linked_editing_range_task = Some(cx.spawn_in(window, async move |editor, cx| {
         cx.background_executor().timer(UPDATE_DEBOUNCE).await;

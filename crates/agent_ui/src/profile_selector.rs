@@ -163,7 +163,7 @@ impl Render for ProfileSelector {
             .unwrap_or_else(|| "Unknown".into());
 
         if self.provider.profiles_supported(cx) {
-            let this = cx.entity().clone();
+            let this = cx.entity();
             let focus_handle = self.focus_handle.clone();
             let trigger_button = Button::new("profile-selector-model", selected_profile)
                 .label_size(LabelSize::Small)
