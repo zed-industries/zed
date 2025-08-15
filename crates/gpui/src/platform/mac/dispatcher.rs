@@ -4,6 +4,14 @@
 
 use crate::{PlatformDispatcher, TaskLabel};
 use async_task::Runnable;
+use block::{Block, ConcreteBlock, RcBlock};
+use core_foundation::{
+    base::CFTypeRef,
+    runloop::{
+        CFRunLoopRef, CFRunLoopRunInMode, CFRunLoopWakeUp, kCFRunLoopCommonModes,
+        kCFRunLoopDefaultMode,
+    },
+};
 use objc::{
     class, msg_send,
     runtime::{BOOL, YES},
@@ -11,7 +19,9 @@ use objc::{
 };
 use parking::{Parker, Unparker};
 use parking_lot::Mutex;
+use smol::io::BlockOn;
 use std::{
+    cell::Cell,
     ffi::c_void,
     ptr::{NonNull, addr_of},
     sync::Arc,
@@ -64,11 +74,21 @@ impl PlatformDispatcher for MacDispatcher {
     }
 
     fn dispatch_on_main_thread(&self, runnable: Runnable) {
+        use core_foundation::runloop::CFRunLoopGetMain;
+
         unsafe {
-            dispatch_async_f(
-                dispatch_get_main_queue(),
-                runnable.into_raw().as_ptr() as *mut c_void,
-                Some(trampoline),
+            let mut runnable = Cell::new(Some(runnable));
+            let main_run_loop = CFRunLoopGetMain();
+            let block = ConcreteBlock::new(move || {
+                if let Some(runnable) = runnable.take() {
+                    runnable.run();
+                }
+            })
+            .copy();
+            CFRunLoopPerformBlock(
+                main_run_loop,
+                kCFRunLoopDefaultMode as _,
+                &*block as *const Block<_, _> as _,
             );
         }
     }
@@ -85,6 +105,13 @@ impl PlatformDispatcher for MacDispatcher {
                 Some(trampoline),
             );
         }
+    }
+
+    fn tick(&self, background_only: bool) -> bool {
+        unsafe {
+            CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0., 0);
+        }
+        true
     }
 
     fn park(&self, timeout: Option<Duration>) -> bool {
@@ -104,4 +131,8 @@ impl PlatformDispatcher for MacDispatcher {
 extern "C" fn trampoline(runnable: *mut c_void) {
     let task = unsafe { Runnable::<()>::from_raw(NonNull::new_unchecked(runnable as *mut ())) };
     task.run();
+}
+
+unsafe extern "C" {
+    fn CFRunLoopPerformBlock(rl: CFRunLoopRef, mode: CFTypeRef, block: *const c_void);
 }

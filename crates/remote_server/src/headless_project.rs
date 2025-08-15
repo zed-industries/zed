@@ -650,12 +650,13 @@ impl HeadlessProject {
         cx: AsyncApp,
     ) -> Result<proto::Ack> {
         cx.spawn(async move |cx| {
-            cx.update(|cx| {
-                // TODO: This is a hack, because in a headless project, shutdown isn't executed
-                // when calling quit, but it should be.
-                cx.shutdown();
-                cx.quit();
-            })
+            // todo!("come back to this")
+            // cx.update(|cx| {
+            //     // TODO: This is a hack, because in a headless project, shutdown isn't executed
+            //     // when calling quit, but it should be.
+            //     cx.shutdown();
+            //     cx.quit();
+            // })
         })
         .detach();
 
