@@ -670,14 +670,26 @@ pub enum LoadError {
         upgrade_message: SharedString,
         upgrade_command: String,
     },
+    AuthenticationRequired {
+        prompt: SharedString,
+        instructions: SharedString,
+        action: Option<AuthAction>,
+    },
     Exited(i32),
     Other(SharedString),
+}
+
+#[derive(Debug, Clone)]
+pub enum AuthAction {
+    OpenUrl { url: SharedString },
+    // Add other actions as needed
 }
 
 impl Display for LoadError {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
             LoadError::Unsupported { error_message, .. } => write!(f, "{}", error_message),
+            LoadError::AuthenticationRequired { prompt, .. } => write!(f, "{}", prompt),
             LoadError::Exited(status) => write!(f, "Server exited with status {}", status),
             LoadError::Other(msg) => write!(f, "{}", msg),
         }

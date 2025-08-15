@@ -82,6 +82,19 @@ impl AgentServer for Qwen {
                         upgrade_command: "npm install -g @qwen-code/qwen-code@latest".into(),
                     }.into())
                 }
+                
+                // Check if the error is related to authentication
+                if let Err(ref e) = result {
+                    if e.to_string().contains("authentication") || e.to_string().contains("API key") {
+                        return Err(LoadError::AuthenticationRequired {
+                            prompt: "Qwen requires authentication. Please set up your API key.".into(),
+                            instructions: "Visit the Qwen website to get your API key, then set it in your environment variables or configuration.".into(),
+                            action: Some(acp_thread::AuthAction::OpenUrl {
+                                url: "https://help.aliyun.com/zh/qwen".into(), // Qwen API key page
+                            }),
+                        }.into())
+                    }
+                }
             }
             result
         })
