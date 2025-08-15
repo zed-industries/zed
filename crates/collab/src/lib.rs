@@ -7,7 +7,6 @@ pub mod llm;
 pub mod migrations;
 pub mod rpc;
 pub mod seed;
-pub mod stripe_billing;
 pub mod stripe_client;
 pub mod user_backfiller;
 
@@ -26,9 +25,6 @@ use llm::db::LlmDatabase;
 use serde::Deserialize;
 use std::{path::PathBuf, sync::Arc};
 use util::ResultExt;
-
-use crate::stripe_billing::StripeBilling;
-use crate::stripe_client::{RealStripeClient, StripeClient};
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
@@ -269,11 +265,6 @@ pub struct AppState {
     pub llm_db: Option<Arc<LlmDatabase>>,
     pub livekit_client: Option<Arc<dyn livekit_api::Client>>,
     pub blob_store_client: Option<aws_sdk_s3::Client>,
-    /// This is a real instance of the Stripe client; we're working to replace references to this with the
-    /// [`StripeClient`] trait.
-    pub real_stripe_client: Option<Arc<stripe::Client>>,
-    pub stripe_client: Option<Arc<dyn StripeClient>>,
-    pub stripe_billing: Option<Arc<StripeBilling>>,
     pub executor: Executor,
     pub kinesis_client: Option<::aws_sdk_kinesis::Client>,
     pub config: Config,
@@ -316,18 +307,11 @@ impl AppState {
         };
 
         let db = Arc::new(db);
-        let stripe_client = build_stripe_client(&config).map(Arc::new).log_err();
         let this = Self {
             db: db.clone(),
             llm_db,
             livekit_client,
             blob_store_client: build_blob_store_client(&config).await.log_err(),
-            stripe_billing: stripe_client
-                .clone()
-                .map(|stripe_client| Arc::new(StripeBilling::new(stripe_client))),
-            real_stripe_client: stripe_client.clone(),
-            stripe_client: stripe_client
-                .map(|stripe_client| Arc::new(RealStripeClient::new(stripe_client)) as _),
             executor,
             kinesis_client: if config.kinesis_access_key.is_some() {
                 build_kinesis_client(&config).await.log_err()
@@ -338,14 +322,6 @@ impl AppState {
         };
         Ok(Arc::new(this))
     }
-}
-
-fn build_stripe_client(config: &Config) -> anyhow::Result<stripe::Client> {
-    let api_key = config
-        .stripe_api_key
-        .as_ref()
-        .context("missing stripe_api_key")?;
-    Ok(stripe::Client::new(api_key))
 }
 
 async fn build_blob_store_client(config: &Config) -> anyhow::Result<aws_sdk_s3::Client> {

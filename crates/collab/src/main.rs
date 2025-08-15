@@ -102,13 +102,6 @@ async fn main() -> Result<()> {
 
                 let state = AppState::new(config, Executor::Production).await?;
 
-                if let Some(stripe_billing) = state.stripe_billing.clone() {
-                    let executor = state.executor.clone();
-                    executor.spawn_detached(async move {
-                        stripe_billing.initialize().await.trace_err();
-                    });
-                }
-
                 if mode.is_collab() {
                     state.db.purge_old_embeddings().await.trace_err();
 

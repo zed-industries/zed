@@ -1,16 +1,9 @@
-#[cfg(test)]
-mod fake_stripe_client;
-mod real_stripe_client;
-
 use std::collections::HashMap;
 use std::sync::Arc;
 
 use anyhow::Result;
 use async_trait::async_trait;
 
-#[cfg(test)]
-pub use fake_stripe_client::*;
-pub use real_stripe_client::*;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone, derive_more::Display, Serialize)]
