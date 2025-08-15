@@ -1,11 +1,13 @@
 use std::{path::Path, rc::Rc, sync::Arc};
 
+use acp_thread::AgentServerName;
 use agent_servers::AgentServer;
 use anyhow::Result;
 use fs::Fs;
 use gpui::{App, Entity, Task};
 use project::Project;
 use prompt_store::PromptStore;
+use ui::SharedString;
 
 use crate::{NativeAgent, NativeAgentConnection, templates::Templates};
 
@@ -20,9 +22,12 @@ impl NativeAgentServer {
     }
 }
 
+pub const NATIVE_AGENT_SERVER_NAME: AgentServerName =
+    AgentServerName(SharedString::new_static("Native Agent"));
+
 impl AgentServer for NativeAgentServer {
-    fn name(&self) -> &'static str {
-        "Native Agent"
+    fn name(&self) -> AgentServerName {
+        NATIVE_AGENT_SERVER_NAME.clone()
     }
 
     fn empty_state_headline(&self) -> &'static str {

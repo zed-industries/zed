@@ -10,7 +10,7 @@ pub use claude::*;
 pub use gemini::*;
 pub use settings::*;
 
-use acp_thread::AgentConnection;
+use acp_thread::{AgentConnection, AgentServerName};
 use anyhow::Result;
 use collections::HashMap;
 use gpui::{App, AsyncApp, Entity, SharedString, Task};
@@ -30,7 +30,7 @@ pub fn init(cx: &mut App) {
 
 pub trait AgentServer: Send {
     fn logo(&self) -> ui::IconName;
-    fn name(&self) -> &'static str;
+    fn name(&self) -> AgentServerName;
     fn empty_state_headline(&self) -> &'static str;
     fn empty_state_message(&self) -> &'static str;
 

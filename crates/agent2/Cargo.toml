@@ -61,6 +61,7 @@ web_search.workspace = true
 which.workspace = true
 workspace-hack.workspace = true
 zstd.workspace = true
+assistant_context.workspace = true
 
 [dev-dependencies]
 agent = { workspace = true, "features" = ["test-support"] }

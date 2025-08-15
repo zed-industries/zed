@@ -1,4 +1,5 @@
 use crate::ThreadsDatabase;
+use crate::native_agent_server::NATIVE_AGENT_SERVER_NAME;
 use crate::{
     AgentResponseEvent, ContextServerRegistry, CopyPathTool, CreateDirectoryTool, DeletePathTool,
     DiagnosticsTool, EditFileTool, FetchTool, FindPathTool, GrepTool, ListDirectoryTool,
@@ -11,9 +12,9 @@ use agent_settings::AgentSettings;
 use anyhow::{Context as _, Result, anyhow};
 use collections::{HashSet, IndexMap};
 use fs::Fs;
-use futures::channel::mpsc;
+use futures::channel::mpsc::{self, UnboundedReceiver, UnboundedSender};
 use futures::future::Shared;
-use futures::{StreamExt, future};
+use futures::{SinkExt, StreamExt, future};
 use gpui::{
     App, AppContext, AsyncApp, Context, Entity, SharedString, Subscription, Task, WeakEntity,
 };
@@ -169,6 +170,7 @@ pub struct NativeAgent {
     project: Entity<Project>,
     prompt_store: Option<Entity<PromptStore>>,
     thread_database: Shared<Task<Result<Arc<ThreadsDatabase>, Arc<anyhow::Error>>>>,
+    history_listeners: Vec<UnboundedSender<Vec<AcpThreadMetadata>>>,
     fs: Arc<dyn Fs>,
     _subscriptions: Vec<Subscription>,
 }
@@ -217,6 +219,7 @@ impl NativeAgent {
                 project,
                 prompt_store,
                 fs,
+                history_listeners: Vec::new(),
                 _subscriptions: subscriptions,
             }
         })
@@ -755,21 +758,36 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
         Task::ready(Ok(()))
     }
 
-    fn list_threads(&self, cx: &mut App) -> Task<Result<Vec<AcpThreadMetadata>>> {
-        let database = self.0.read(cx).thread_database.clone();
-        cx.background_executor().spawn(async move {
-            let database = database.await.map_err(|e| anyhow!(e))?;
-            let results = database.list_threads().await?;
+    fn list_threads(&self, cx: &mut App) -> Option<UnboundedReceiver<Vec<AcpThreadMetadata>>> {
+        dbg!("listing!");
+        let (mut tx, rx) = futures::channel::mpsc::unbounded();
+        let database = self.0.update(cx, |this, _| {
+            this.history_listeners.push(tx.clone());
+            this.thread_database.clone()
+        });
+        cx.background_executor()
+            .spawn(async move {
+                dbg!("listing!");
+                let database = database.await.map_err(|e| anyhow!(e))?;
+                let results = database.list_threads().await?;
 
-            Ok(results
-                .into_iter()
-                .map(|thread| AcpThreadMetadata {
-                    id: thread.id,
-                    title: thread.title,
-                    updated_at: thread.updated_at,
-                })
-                .collect())
-        })
+                dbg!(&results);
+                tx.send(
+                    results
+                        .into_iter()
+                        .map(|thread| AcpThreadMetadata {
+                            agent: NATIVE_AGENT_SERVER_NAME.clone(),
+                            id: thread.id,
+                            title: thread.title,
+                            updated_at: thread.updated_at,
+                        })
+                        .collect(),
+                )
+                .await?;
+                anyhow::Ok(())
+            })
+            .detach_and_log_err(cx);
+        Some(rx)
     }
 
     fn model_selector(&self) -> Option<Rc<dyn AgentModelSelector>> {

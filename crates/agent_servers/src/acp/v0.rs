@@ -10,7 +10,7 @@ use ui::App;
 use util::ResultExt as _;
 
 use crate::AgentServerCommand;
-use acp_thread::{AcpThread, AcpThreadMetadata, AgentConnection, AuthRequired};
+use acp_thread::{AcpThread, AgentConnection, AgentServerName, AuthRequired};
 
 #[derive(Clone)]
 struct OldAcpClientDelegate {
@@ -354,7 +354,7 @@ fn into_new_plan_status(status: acp_old::PlanEntryStatus) -> acp::PlanEntryStatu
 }
 
 pub struct AcpConnection {
-    pub name: &'static str,
+    pub name: AgentServerName,
     pub connection: acp_old::AgentConnection,
     pub _child_status: Task<Result<()>>,
     pub current_thread: Rc<RefCell<WeakEntity<AcpThread>>>,
@@ -362,7 +362,7 @@ pub struct AcpConnection {
 
 impl AcpConnection {
     pub fn stdio(
-        name: &'static str,
+        name: AgentServerName,
         command: AgentServerCommand,
         root_dir: &Path,
         cx: &mut AsyncApp,
@@ -443,16 +443,12 @@ impl AgentConnection for AcpConnection {
             cx.update(|cx| {
                 let thread = cx.new(|cx| {
                     let session_id = acp::SessionId("acp-old-no-id".into());
-                    AcpThread::new(self.name, self.clone(), project, session_id, cx)
+                    AcpThread::new(self.name.0.clone(), self.clone(), project, session_id, cx)
                 });
                 current_thread.replace(thread.downgrade());
                 thread
             })
         })
-    }
-
-    fn list_threads(&self, _cx: &mut App) -> Task<Result<Vec<AcpThreadMetadata>>> {
-        Task::ready(Ok(Vec::default()))
     }
 
     fn auth_methods(&self) -> &[acp::AuthMethod] {

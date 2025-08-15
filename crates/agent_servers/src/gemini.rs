@@ -2,7 +2,7 @@ use std::path::Path;
 use std::rc::Rc;
 
 use crate::{AgentServer, AgentServerCommand};
-use acp_thread::{AgentConnection, LoadError};
+use acp_thread::{AgentConnection, AgentServerName, LoadError};
 use anyhow::Result;
 use gpui::{Entity, Task};
 use project::Project;
@@ -17,8 +17,8 @@ pub struct Gemini;
 const ACP_ARG: &str = "--experimental-acp";
 
 impl AgentServer for Gemini {
-    fn name(&self) -> &'static str {
-        "Gemini"
+    fn name(&self) -> AgentServerName {
+        AgentServerName("Gemini".into())
     }
 
     fn empty_state_headline(&self) -> &'static str {

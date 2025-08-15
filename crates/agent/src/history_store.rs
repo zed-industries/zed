@@ -62,7 +62,7 @@ enum SerializedRecentOpen {
 
 pub struct HistoryStore {
     thread_store: Entity<ThreadStore>,
-    context_store: Entity<assistant_context::ContextStore>,
+    pub context_store: Entity<assistant_context::ContextStore>,
     recently_opened_entries: VecDeque<HistoryEntryId>,
     _subscriptions: Vec<gpui::Subscription>,
     _save_recently_opened_entries_task: Task<()>,
