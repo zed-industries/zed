@@ -23,7 +23,7 @@ use settings::{BaseKeymap, KeybindSource, KeymapFile, Settings as _, SettingsAss
 use ui::{
     ActiveTheme as _, App, Banner, BorrowAppContext, ContextMenu, IconButtonShape, Indicator,
     Modal, ModalFooter, ModalHeader, ParentElement as _, Render, Section, SharedString,
-    Styled as _, Tooltip, Window, prelude::*,
+    Styled as _, Tooltip, Window, prelude::*, right_click_menu,
 };
 use ui_input::SingleLineInput;
 use util::ResultExt;
@@ -1536,6 +1536,33 @@ impl Render for KeymapEditor {
                     .child(
                         h_flex()
                             .gap_2()
+                            .child(
+                                right_click_menu("open-keymap-menu")
+                                    .menu(|window, cx| {
+                                        ContextMenu::build(window, cx, |menu, _, _| {
+                                            menu.header("Open Keymap JSON")
+                                                .action("User", zed_actions::OpenKeymap.boxed_clone())
+                                                .action("Zed Default", zed_actions::OpenDefaultKeymap.boxed_clone())
+                                                .action("Vim Default", vim::OpenDefaultKeymap.boxed_clone())
+                                        })
+                                    })
+                                    .anchor(gpui::Corner::TopLeft)
+                                    .trigger(|open, _, _|
+                                        IconButton::new(
+                                            "OpenKeymapJsonButton",
+                                            IconName::Json
+                                        )
+                                        .shape(ui::IconButtonShape::Square)
+                                        .when(!open, |this|
+                                            this.tooltip(move |window, cx| {
+                                                Tooltip::with_meta("Open Keymap JSON", Some(&zed_actions::OpenKeymap),"Right click to view more options", window, cx)
+                                            })
+                                        )
+                                        .on_click(|_, window, cx| {
+                                            window.dispatch_action(zed_actions::OpenKeymap.boxed_clone(), cx);
+                                        })
+                                    )
+                            )
                             .child(
                                 div()
                                     .key_context({

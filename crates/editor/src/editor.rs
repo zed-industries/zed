@@ -13612,7 +13612,7 @@ impl Editor {
 
     pub fn split_selection_into_lines(
         &mut self,
-        _: &SplitSelectionIntoLines,
+        action: &SplitSelectionIntoLines,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -13629,8 +13629,21 @@ impl Editor {
             let buffer = self.buffer.read(cx).read(cx);
             for selection in selections {
                 for row in selection.start.row..selection.end.row {
-                    let cursor = Point::new(row, buffer.line_len(MultiBufferRow(row)));
-                    new_selection_ranges.push(cursor..cursor);
+                    let line_start = Point::new(row, 0);
+                    let line_end = Point::new(row, buffer.line_len(MultiBufferRow(row)));
+
+                    if action.keep_selections {
+                        // Keep the selection range for each line
+                        let selection_start = if row == selection.start.row {
+                            selection.start
+                        } else {
+                            line_start
+                        };
+                        new_selection_ranges.push(selection_start..line_end);
+                    } else {
+                        // Collapse to cursor at end of line
+                        new_selection_ranges.push(line_end..line_end);
+                    }
                 }
 
                 let is_multiline_selection = selection.start.row != selection.end.row;
@@ -13638,7 +13651,16 @@ impl Editor {
                 // so this action feels more ergonomic when paired with other selection operations
                 let should_skip_last = is_multiline_selection && selection.end.column == 0;
                 if !should_skip_last {
-                    new_selection_ranges.push(selection.end..selection.end);
+                    if action.keep_selections {
+                        if is_multiline_selection {
+                            let line_start = Point::new(selection.end.row, 0);
+                            new_selection_ranges.push(line_start..selection.end);
+                        } else {
+                            new_selection_ranges.push(selection.start..selection.end);
+                        }
+                    } else {
+                        new_selection_ranges.push(selection.end..selection.end);
+                    }
                 }
             }
         }
@@ -15857,6 +15879,8 @@ impl Editor {
                                     .text_for_range(location.range.clone())
                                     .collect::<String>()
                             })
+                            .unique()
+                            .take(3)
                             .join(", ");
                         format!("{tab_kind} for {target}")
                     })
@@ -16063,6 +16087,8 @@ impl Editor {
                             .text_for_range(location.range.clone())
                             .collect::<String>()
                     })
+                    .unique()
+                    .take(3)
                     .join(", ");
                 let title = format!("References to {target}");
                 Self::open_locations_in_multibuffer(
@@ -20209,6 +20235,7 @@ impl Editor {
         );
 
         let old_cursor_shape = self.cursor_shape;
+        let old_show_breadcrumbs = self.show_breadcrumbs;
 
         {
             let editor_settings = EditorSettings::get_global(cx);
@@ -20220,6 +20247,10 @@ impl Editor {
 
         if old_cursor_shape != self.cursor_shape {
             cx.emit(EditorEvent::CursorShapeChanged);
+        }
+
+        if old_show_breadcrumbs != self.show_breadcrumbs {
+            cx.emit(EditorEvent::BreadcrumbsChanged);
         }
 
         let project_settings = ProjectSettings::get_global(cx);
@@ -22843,6 +22874,7 @@ pub enum EditorEvent {
     },
     Reloaded,
     CursorShapeChanged,
+    BreadcrumbsChanged,
     PushedToNavHistory {
         anchor: Anchor,
         is_deactivate: bool,

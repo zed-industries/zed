@@ -2069,11 +2069,17 @@ impl SshRemoteConnection {
             Ok(())
         }
 
+        let use_musl = !build_remote_server.contains("nomusl");
         let triple = format!(
             "{}-{}",
             self.ssh_platform.arch,
             match self.ssh_platform.os {
-                "linux" => "unknown-linux-musl",
+                "linux" =>
+                    if use_musl {
+                        "unknown-linux-musl"
+                    } else {
+                        "unknown-linux-gnu"
+                    },
                 "macos" => "apple-darwin",
                 _ => anyhow::bail!("can't cross compile for: {:?}", self.ssh_platform),
             }
@@ -2086,7 +2092,7 @@ impl SshRemoteConnection {
                 String::new()
             }
         };
-        if self.ssh_platform.os == "linux" {
+        if self.ssh_platform.os == "linux" && use_musl {
             rust_flags.push_str(" -C target-feature=+crt-static");
         }
         if build_remote_server.contains("mold") {

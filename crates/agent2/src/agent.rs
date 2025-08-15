@@ -641,7 +641,7 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
         self: Rc<Self>,
         project: Entity<Project>,
         cwd: &Path,
-        cx: &mut AsyncApp,
+        cx: &mut App,
     ) -> Task<Result<Entity<acp_thread::AcpThread>>> {
         let agent = self.0.clone();
         log::info!("Creating new thread for project at: {:?}", cwd);
@@ -990,11 +990,7 @@ mod tests {
         // Create a thread/session
         let acp_thread = cx
             .update(|cx| {
-                Rc::new(connection.clone()).new_thread(
-                    project.clone(),
-                    Path::new("/a"),
-                    &mut cx.to_async(),
-                )
+                Rc::new(connection.clone()).new_thread(project.clone(), Path::new("/a"), cx)
             })
             .await
             .unwrap();

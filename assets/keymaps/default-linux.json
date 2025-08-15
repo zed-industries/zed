@@ -331,8 +331,6 @@
     "use_key_equivalents": true,
     "bindings": {
       "enter": "agent::Chat",
-      "up": "agent::PreviousHistoryMessage",
-      "down": "agent::NextHistoryMessage",
       "shift-ctrl-r": "agent::OpenAgentDiff",
       "ctrl-shift-y": "agent::KeepAll",
       "ctrl-shift-n": "agent::RejectAll"

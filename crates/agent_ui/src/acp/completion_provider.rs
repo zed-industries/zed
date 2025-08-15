@@ -1,3 +1,4 @@
+use std::ffi::OsStr;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -8,13 +9,14 @@ use anyhow::{Context as _, Result, anyhow};
 use collections::{HashMap, HashSet};
 use editor::display_map::CreaseId;
 use editor::{CompletionProvider, Editor, ExcerptId, ToOffset as _};
-use file_icons::FileIcons;
-use futures::future::try_join_all;
+use futures::future::{Shared, try_join_all};
+use futures::{FutureExt, TryFutureExt};
 use fuzzy::{StringMatch, StringMatchCandidate};
-use gpui::{App, Entity, Task, WeakEntity};
+use gpui::{App, Entity, ImageFormat, Img, Task, WeakEntity};
 use http_client::HttpClientWithUrl;
 use itertools::Itertools as _;
 use language::{Buffer, CodeLabel, HighlightId};
+use language_model::LanguageModelImage;
 use lsp::CompletionContext;
 use parking_lot::Mutex;
 use project::{
@@ -28,10 +30,7 @@ use url::Url;
 use workspace::Workspace;
 use workspace::notifications::NotifyResultExt;
 
-use agent::{
-    context::RULES_ICON,
-    thread_store::{TextThreadStore, ThreadStore},
-};
+use agent::thread_store::{TextThreadStore, ThreadStore};
 
 use crate::context_picker::fetch_context_picker::fetch_url_content;
 use crate::context_picker::file_context_picker::{FileMatch, search_files};
@@ -46,24 +45,48 @@ use crate::context_picker::{
     available_context_picker_entries, recent_context_picker_entries, selection_ranges,
 };
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MentionImage {
+    pub abs_path: Option<Arc<Path>>,
+    pub data: SharedString,
+    pub format: ImageFormat,
+}
+
 #[derive(Default)]
 pub struct MentionSet {
     uri_by_crease_id: HashMap<CreaseId, MentionUri>,
-    fetch_results: HashMap<Url, String>,
+    fetch_results: HashMap<Url, Shared<Task<Result<String, String>>>>,
+    images: HashMap<CreaseId, Shared<Task<Result<MentionImage, String>>>>,
 }
 
 impl MentionSet {
-    pub fn insert(&mut self, crease_id: CreaseId, uri: MentionUri) {
+    pub fn insert_uri(&mut self, crease_id: CreaseId, uri: MentionUri) {
         self.uri_by_crease_id.insert(crease_id, uri);
     }
 
-    pub fn add_fetch_result(&mut self, url: Url, content: String) {
+    pub fn add_fetch_result(&mut self, url: Url, content: Shared<Task<Result<String, String>>>) {
         self.fetch_results.insert(url, content);
+    }
+
+    pub fn insert_image(
+        &mut self,
+        crease_id: CreaseId,
+        task: Shared<Task<Result<MentionImage, String>>>,
+    ) {
+        self.images.insert(crease_id, task);
     }
 
     pub fn drain(&mut self) -> impl Iterator<Item = CreaseId> {
         self.fetch_results.clear();
-        self.uri_by_crease_id.drain().map(|(id, _)| id)
+        self.uri_by_crease_id
+            .drain()
+            .map(|(id, _)| id)
+            .chain(self.images.drain().map(|(id, _)| id))
+    }
+
+    pub fn clear(&mut self) {
+        self.fetch_results.clear();
+        self.uri_by_crease_id.clear();
     }
 
     pub fn contents(
@@ -74,27 +97,68 @@ impl MentionSet {
         window: &mut Window,
         cx: &mut App,
     ) -> Task<Result<HashMap<CreaseId, Mention>>> {
-        let contents = self
+        let mut contents = self
             .uri_by_crease_id
             .iter()
             .map(|(&crease_id, uri)| {
                 match uri {
-                    MentionUri::File(path) => {
+                    MentionUri::File { abs_path, .. } => {
+                        // TODO directories
                         let uri = uri.clone();
-                        let path = path.to_path_buf();
-                        let buffer_task = project.update(cx, |project, cx| {
-                            let path = project
-                                .find_project_path(path, cx)
-                                .context("Failed to find project path")?;
-                            anyhow::Ok(project.open_buffer(path, cx))
-                        });
+                        let abs_path = abs_path.to_path_buf();
+                        let extension = abs_path.extension().and_then(OsStr::to_str).unwrap_or("");
 
-                        cx.spawn(async move |cx| {
-                            let buffer = buffer_task?.await?;
-                            let content = buffer.read_with(cx, |buffer, _cx| buffer.text())?;
+                        if Img::extensions().contains(&extension) && !extension.contains("svg") {
+                            let open_image_task = project.update(cx, |project, cx| {
+                                let path = project
+                                    .find_project_path(&abs_path, cx)
+                                    .context("Failed to find project path")?;
+                                anyhow::Ok(project.open_image(path, cx))
+                            });
 
-                            anyhow::Ok((crease_id, Mention { uri, content }))
-                        })
+                            cx.spawn(async move |cx| {
+                                let image_item = open_image_task?.await?;
+                                let (data, format) = image_item.update(cx, |image_item, cx| {
+                                    let format = image_item.image.format;
+                                    (
+                                        LanguageModelImage::from_image(
+                                            image_item.image.clone(),
+                                            cx,
+                                        ),
+                                        format,
+                                    )
+                                })?;
+                                let data = cx.spawn(async move |_| {
+                                    if let Some(data) = data.await {
+                                        Ok(data.source)
+                                    } else {
+                                        anyhow::bail!("Failed to convert image")
+                                    }
+                                });
+
+                                anyhow::Ok((
+                                    crease_id,
+                                    Mention::Image(MentionImage {
+                                        abs_path: Some(abs_path.as_path().into()),
+                                        data: data.await?,
+                                        format,
+                                    }),
+                                ))
+                            })
+                        } else {
+                            let buffer_task = project.update(cx, |project, cx| {
+                                let path = project
+                                    .find_project_path(abs_path, cx)
+                                    .context("Failed to find project path")?;
+                                anyhow::Ok(project.open_buffer(path, cx))
+                            });
+                            cx.spawn(async move |cx| {
+                                let buffer = buffer_task?.await?;
+                                let content = buffer.read_with(cx, |buffer, _cx| buffer.text())?;
+
+                                anyhow::Ok((crease_id, Mention::Text { uri, content }))
+                            })
+                        }
                     }
                     MentionUri::Symbol {
                         path, line_range, ..
@@ -127,7 +191,7 @@ impl MentionSet {
                                     .collect()
                             })?;
 
-                            anyhow::Ok((crease_id, Mention { uri, content }))
+                            anyhow::Ok((crease_id, Mention::Text { uri, content }))
                         })
                     }
                     MentionUri::Thread { id: thread_id, .. } => {
@@ -142,7 +206,7 @@ impl MentionSet {
                                 thread.latest_detailed_summary_or_text().to_string()
                             })?;
 
-                            anyhow::Ok((crease_id, Mention { uri, content }))
+                            anyhow::Ok((crease_id, Mention::Text { uri, content }))
                         })
                     }
                     MentionUri::TextThread { path, .. } => {
@@ -153,7 +217,7 @@ impl MentionSet {
                         cx.spawn(async move |cx| {
                             let context = context.await?;
                             let xml = context.update(cx, |context, cx| context.to_xml(cx))?;
-                            anyhow::Ok((crease_id, Mention { uri, content: xml }))
+                            anyhow::Ok((crease_id, Mention::Text { uri, content: xml }))
                         })
                     }
                     MentionUri::Rule { id: prompt_id, .. } => {
@@ -166,24 +230,38 @@ impl MentionSet {
                         cx.spawn(async move |_| {
                             // TODO: report load errors instead of just logging
                             let text = text_task.await?;
-                            anyhow::Ok((crease_id, Mention { uri, content: text }))
+                            anyhow::Ok((crease_id, Mention::Text { uri, content: text }))
                         })
                     }
                     MentionUri::Fetch { url } => {
-                        let Some(content) = self.fetch_results.get(&url) else {
+                        let Some(content) = self.fetch_results.get(&url).cloned() else {
                             return Task::ready(Err(anyhow!("missing fetch result")));
                         };
-                        Task::ready(Ok((
-                            crease_id,
-                            Mention {
-                                uri: uri.clone(),
-                                content: content.clone(),
-                            },
-                        )))
+                        let uri = uri.clone();
+                        cx.spawn(async move |_| {
+                            Ok((
+                                crease_id,
+                                Mention::Text {
+                                    uri,
+                                    content: content.await.map_err(|e| anyhow::anyhow!("{e}"))?,
+                                },
+                            ))
+                        })
                     }
                 }
             })
             .collect::<Vec<_>>();
+
+        contents.extend(self.images.iter().map(|(crease_id, image)| {
+            let crease_id = *crease_id;
+            let image = image.clone();
+            cx.spawn(async move |_| {
+                Ok((
+                    crease_id,
+                    Mention::Image(image.await.map_err(|e| anyhow::anyhow!("{e}"))?),
+                ))
+            })
+        }));
 
         cx.spawn(async move |_cx| {
             let contents = try_join_all(contents).await?.into_iter().collect();
@@ -192,10 +270,10 @@ impl MentionSet {
     }
 }
 
-#[derive(Debug)]
-pub struct Mention {
-    pub uri: MentionUri,
-    pub content: String,
+#[derive(Debug, Eq, PartialEq)]
+pub enum Mention {
+    Text { uri: MentionUri, content: String },
+    Image(MentionImage),
 }
 
 pub(crate) enum Match {
@@ -508,9 +586,14 @@ impl ContextPickerCompletionProvider {
                                             })
                                             .unwrap_or_default();
                                         let line_range = point_range.start.row..point_range.end.row;
+
+                                        let uri = MentionUri::Selection {
+                                            path: path.clone(),
+                                            line_range: line_range.clone(),
+                                        };
                                         let crease = crate::context_picker::crease_for_mention(
                                             selection_name(&path, &line_range).into(),
-                                            IconName::Reader.path().into(),
+                                            uri.icon_path(cx),
                                             range,
                                             editor.downgrade(),
                                         );
@@ -528,7 +611,7 @@ impl ContextPickerCompletionProvider {
                                                 crease_ids.try_into().unwrap()
                                             });
 
-                                        mention_set.lock().insert(
+                                        mention_set.lock().insert_uri(
                                             crease_id,
                                             MentionUri::Selection { path, line_range },
                                         );
@@ -569,13 +652,8 @@ impl ContextPickerCompletionProvider {
         recent: bool,
         editor: Entity<Editor>,
         mention_set: Arc<Mutex<MentionSet>>,
+        cx: &mut App,
     ) -> Completion {
-        let icon_for_completion = if recent {
-            IconName::HistoryRerun
-        } else {
-            IconName::Thread
-        };
-
         let uri = match &thread_entry {
             ThreadContextEntry::Thread { id, title } => MentionUri::Thread {
                 id: id.clone(),
@@ -586,6 +664,13 @@ impl ContextPickerCompletionProvider {
                 name: title.to_string(),
             },
         };
+
+        let icon_for_completion = if recent {
+            IconName::HistoryRerun.path().into()
+        } else {
+            uri.icon_path(cx)
+        };
+
         let new_text = format!("{} ", uri.as_link());
 
         let new_text_len = new_text.len();
@@ -596,9 +681,9 @@ impl ContextPickerCompletionProvider {
             documentation: None,
             insert_text_mode: None,
             source: project::CompletionSource::Custom,
-            icon_path: Some(icon_for_completion.path().into()),
+            icon_path: Some(icon_for_completion.clone()),
             confirm: Some(confirm_completion_callback(
-                IconName::Thread.path().into(),
+                uri.icon_path(cx),
                 thread_entry.title().clone(),
                 excerpt_id,
                 source_range.start,
@@ -616,6 +701,7 @@ impl ContextPickerCompletionProvider {
         source_range: Range<Anchor>,
         editor: Entity<Editor>,
         mention_set: Arc<Mutex<MentionSet>>,
+        cx: &mut App,
     ) -> Completion {
         let uri = MentionUri::Rule {
             id: rule.prompt_id.into(),
@@ -623,6 +709,7 @@ impl ContextPickerCompletionProvider {
         };
         let new_text = format!("{} ", uri.as_link());
         let new_text_len = new_text.len();
+        let icon_path = uri.icon_path(cx);
         Completion {
             replace_range: source_range.clone(),
             new_text,
@@ -630,9 +717,9 @@ impl ContextPickerCompletionProvider {
             documentation: None,
             insert_text_mode: None,
             source: project::CompletionSource::Custom,
-            icon_path: Some(RULES_ICON.path().into()),
+            icon_path: Some(icon_path.clone()),
             confirm: Some(confirm_completion_callback(
-                RULES_ICON.path().into(),
+                icon_path,
                 rule.title.clone(),
                 excerpt_id,
                 source_range.start,
@@ -654,7 +741,7 @@ impl ContextPickerCompletionProvider {
         editor: Entity<Editor>,
         mention_set: Arc<Mutex<MentionSet>>,
         project: Entity<Project>,
-        cx: &App,
+        cx: &mut App,
     ) -> Option<Completion> {
         let (file_name, directory) =
             crate::context_picker::file_context_picker::extract_file_name_and_directory(
@@ -664,27 +751,21 @@ impl ContextPickerCompletionProvider {
 
         let label =
             build_code_label_for_full_path(&file_name, directory.as_ref().map(|s| s.as_ref()), cx);
-        let full_path = if let Some(directory) = directory {
-            format!("{}{}", directory, file_name)
-        } else {
-            file_name.to_string()
+
+        let abs_path = project.read(cx).absolute_path(&project_path, cx)?;
+
+        let file_uri = MentionUri::File {
+            abs_path,
+            is_directory,
         };
 
-        let crease_icon_path = if is_directory {
-            FileIcons::get_folder_icon(false, cx).unwrap_or_else(|| IconName::Folder.path().into())
-        } else {
-            FileIcons::get_icon(Path::new(&full_path), cx)
-                .unwrap_or_else(|| IconName::File.path().into())
-        };
+        let crease_icon_path = file_uri.icon_path(cx);
         let completion_icon_path = if is_recent {
             IconName::HistoryRerun.path().into()
         } else {
             crease_icon_path.clone()
         };
 
-        let abs_path = project.read(cx).absolute_path(&project_path, cx)?;
-
-        let file_uri = MentionUri::File(abs_path);
         let new_text = format!("{} ", file_uri.as_link());
         let new_text_len = new_text.len();
         Some(Completion {
@@ -729,16 +810,17 @@ impl ContextPickerCompletionProvider {
         };
         let new_text = format!("{} ", uri.as_link());
         let new_text_len = new_text.len();
+        let icon_path = uri.icon_path(cx);
         Some(Completion {
             replace_range: source_range.clone(),
             new_text,
             label,
             documentation: None,
             source: project::CompletionSource::Custom,
-            icon_path: Some(IconName::Code.path().into()),
+            icon_path: Some(icon_path.clone()),
             insert_text_mode: None,
             confirm: Some(confirm_completion_callback(
-                IconName::Code.path().into(),
+                icon_path,
                 symbol.name.clone().into(),
                 excerpt_id,
                 source_range.start,
@@ -757,16 +839,23 @@ impl ContextPickerCompletionProvider {
         editor: Entity<Editor>,
         mention_set: Arc<Mutex<MentionSet>>,
         http_client: Arc<HttpClientWithUrl>,
+        cx: &mut App,
     ) -> Option<Completion> {
         let new_text = format!("@fetch {} ", url_to_fetch.clone());
         let new_text_len = new_text.len();
+        let mention_uri = MentionUri::Fetch {
+            url: url::Url::parse(url_to_fetch.as_ref())
+                .or_else(|_| url::Url::parse(&format!("https://{url_to_fetch}")))
+                .ok()?,
+        };
+        let icon_path = mention_uri.icon_path(cx);
         Some(Completion {
             replace_range: source_range.clone(),
             new_text,
             label: CodeLabel::plain(url_to_fetch.to_string(), None),
             documentation: None,
             source: project::CompletionSource::Custom,
-            icon_path: Some(IconName::ToolWeb.path().into()),
+            icon_path: Some(icon_path.clone()),
             insert_text_mode: None,
             confirm: Some({
                 let start = source_range.start;
@@ -774,6 +863,8 @@ impl ContextPickerCompletionProvider {
                 let editor = editor.clone();
                 let url_to_fetch = url_to_fetch.clone();
                 let source_range = source_range.clone();
+                let icon_path = icon_path.clone();
+                let mention_uri = mention_uri.clone();
                 Arc::new(move |_, window, cx| {
                     let Some(url) = url::Url::parse(url_to_fetch.as_ref())
                         .or_else(|_| url::Url::parse(&format!("https://{url_to_fetch}")))
@@ -781,12 +872,13 @@ impl ContextPickerCompletionProvider {
                     else {
                         return false;
                     };
-                    let mention_uri = MentionUri::Fetch { url: url.clone() };
 
                     let editor = editor.clone();
                     let mention_set = mention_set.clone();
                     let http_client = http_client.clone();
                     let source_range = source_range.clone();
+                    let icon_path = icon_path.clone();
+                    let mention_uri = mention_uri.clone();
                     window.defer(cx, move |window, cx| {
                         let url = url.clone();
 
@@ -795,7 +887,7 @@ impl ContextPickerCompletionProvider {
                             start,
                             content_len,
                             url.to_string().into(),
-                            IconName::ToolWeb.path().into(),
+                            icon_path,
                             editor.clone(),
                             window,
                             cx,
@@ -807,15 +899,24 @@ impl ContextPickerCompletionProvider {
                         let mention_set = mention_set.clone();
                         let http_client = http_client.clone();
                         let source_range = source_range.clone();
+
+                        let url_string = url.to_string();
+                        let fetch = cx
+                            .background_executor()
+                            .spawn(async move {
+                                fetch_url_content(http_client, url_string)
+                                    .map_err(|e| e.to_string())
+                                    .await
+                            })
+                            .shared();
+                        mention_set.lock().add_fetch_result(url, fetch.clone());
+
                         window
                             .spawn(cx, async move |cx| {
-                                if let Some(content) =
-                                    fetch_url_content(http_client, url.to_string())
-                                        .await
-                                        .notify_async_err(cx)
-                                {
-                                    mention_set.lock().add_fetch_result(url, content);
-                                    mention_set.lock().insert(crease_id, mention_uri.clone());
+                                if fetch.await.notify_async_err(cx).is_some() {
+                                    mention_set
+                                        .lock()
+                                        .insert_uri(crease_id, mention_uri.clone());
                                 } else {
                                     // Remove crease if we failed to fetch
                                     editor
@@ -911,8 +1012,8 @@ impl CompletionProvider for ContextPickerCompletionProvider {
 
             for uri in mention_set.uri_by_crease_id.values() {
                 match uri {
-                    MentionUri::File(path) => {
-                        excluded_paths.insert(path.clone());
+                    MentionUri::File { abs_path, .. } => {
+                        excluded_paths.insert(abs_path.clone());
                     }
                     MentionUri::Thread { id, .. } => {
                         excluded_threads.insert(id.clone());
@@ -1001,6 +1102,7 @@ impl CompletionProvider for ContextPickerCompletionProvider {
                             is_recent,
                             editor.clone(),
                             mention_set.clone(),
+                            cx,
                         )),
 
                         Match::Rules(user_rules) => Some(Self::completion_for_rules(
@@ -1009,6 +1111,7 @@ impl CompletionProvider for ContextPickerCompletionProvider {
                             source_range.clone(),
                             editor.clone(),
                             mention_set.clone(),
+                            cx,
                         )),
 
                         Match::Fetch(url) => Self::completion_for_fetch(
@@ -1018,6 +1121,7 @@ impl CompletionProvider for ContextPickerCompletionProvider {
                             editor.clone(),
                             mention_set.clone(),
                             http_client.clone(),
+                            cx,
                         ),
 
                         Match::Entry(EntryMatch { entry, .. }) => Self::completion_for_entry(
@@ -1104,7 +1208,9 @@ fn confirm_completion_callback(
                 window,
                 cx,
             ) {
-                mention_set.lock().insert(crease_id, mention_uri.clone());
+                mention_set
+                    .lock()
+                    .insert_uri(crease_id, mention_uri.clone());
             }
         });
         false
@@ -1179,7 +1285,7 @@ mod tests {
     use serde_json::json;
     use settings::SettingsStore;
     use smol::stream::StreamExt as _;
-    use std::{ops::Deref, rc::Rc};
+    use std::{ops::Deref, path::Path, rc::Rc};
     use util::path;
     use workspace::{AppState, Item};
 
@@ -1482,11 +1588,12 @@ mod tests {
             .into_values()
             .collect::<Vec<_>>();
 
-        assert_eq!(contents.len(), 1);
-        assert_eq!(contents[0].content, "1");
-        assert_eq!(
-            contents[0].uri.to_uri().to_string(),
-            "file:///dir/a/one.txt"
+        pretty_assertions::assert_eq!(
+            contents,
+            [Mention::Text {
+                content: "1".into(),
+                uri: "file:///dir/a/one.txt".parse().unwrap()
+            }]
         );
 
         cx.simulate_input(" ");
@@ -1550,11 +1657,13 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert_eq!(contents.len(), 2);
-        let new_mention = contents
-            .iter()
-            .find(|mention| mention.uri.to_uri().to_string() == "file:///dir/b/eight.txt")
-            .unwrap();
-        assert_eq!(new_mention.content, "8");
+        pretty_assertions::assert_eq!(
+            contents[1],
+            Mention::Text {
+                content: "8".to_string(),
+                uri: "file:///dir/b/eight.txt".parse().unwrap(),
+            }
+        );
 
         editor.update(&mut cx, |editor, cx| {
             assert_eq!(
@@ -1672,13 +1781,15 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert_eq!(contents.len(), 3);
-        let new_mention = contents
-            .iter()
-            .find(|mention| {
-                mention.uri.to_uri().to_string() == "file:///dir/a/one.txt?symbol=MySymbol#L1:1"
-            })
-            .unwrap();
-        assert_eq!(new_mention.content, "1");
+        pretty_assertions::assert_eq!(
+            contents[2],
+            Mention::Text {
+                content: "1".into(),
+                uri: "file:///dir/a/one.txt?symbol=MySymbol#L1:1"
+                    .parse()
+                    .unwrap(),
+            }
+        );
 
         cx.run_until_parked();
 

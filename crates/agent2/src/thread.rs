@@ -126,12 +126,12 @@ impl UserMessage {
                 }
                 UserMessageContent::Mention { uri, content } => {
                     match uri {
-                        MentionUri::File(path) => {
+                        MentionUri::File { abs_path, .. } => {
                             write!(
                                 &mut symbol_context,
                                 "\n{}",
                                 MarkdownCodeBlock {
-                                    tag: &codeblock_tag(&path, None),
+                                    tag: &codeblock_tag(&abs_path, None),
                                     text: &content.to_string(),
                                 }
                             )
