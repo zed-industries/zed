@@ -1,7 +1,8 @@
-use std::{collections::HashMap, ops::Range};
+use std::ops::Range;
 
 use acp_thread::{AcpThread, AgentThreadEntry};
 use agent::{TextThreadStore, ThreadStore};
+use collections::HashMap;
 use editor::{Editor, EditorMode, MinimapVisibility};
 use gpui::{
     AnyEntity, App, AppContext as _, Entity, EntityId, EventEmitter, TextStyleRefinement,
@@ -211,8 +212,7 @@ impl Entry {
     }
 
     fn empty() -> Self {
-        // Avoid heap allocating while empty (which is pretty common)
-        Self::Content(HashMap::with_capacity(0))
+        Self::Content(HashMap::default())
     }
 
     #[cfg(test)]
