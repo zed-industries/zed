@@ -183,29 +183,27 @@ impl FakeServer {
     pub async fn receive<M: proto::EnvelopedMessage>(&self) -> Result<TypedEnvelope<M>> {
         self.executor.start_waiting();
 
-        loop {
-            let message = self
-                .state
-                .lock()
-                .incoming
-                .as_mut()
-                .expect("not connected")
-                .next()
-                .await
-                .context("other half hung up")?;
-            self.executor.finish_waiting();
-            let type_name = message.payload_type_name();
-            let message = message.into_any();
+        let message = self
+            .state
+            .lock()
+            .incoming
+            .as_mut()
+            .expect("not connected")
+            .next()
+            .await
+            .context("other half hung up")?;
+        self.executor.finish_waiting();
+        let type_name = message.payload_type_name();
+        let message = message.into_any();
 
-            if message.is::<TypedEnvelope<M>>() {
-                return Ok(*message.downcast().unwrap());
-            }
-
-            panic!(
-                "fake server received unexpected message type: {:?}",
-                type_name
-            );
+        if message.is::<TypedEnvelope<M>>() {
+            return Ok(*message.downcast().unwrap());
         }
+
+        panic!(
+            "fake server received unexpected message type: {:?}",
+            type_name
+        );
     }
 
     pub fn respond<T: proto::RequestMessage>(&self, receipt: Receipt<T>, response: T::Response) {
