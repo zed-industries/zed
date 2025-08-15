@@ -102,7 +102,7 @@ pub struct FlexibleEvent {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub enum InlineCompletionRating {
+pub enum EditPredictionRating {
     Positive,
     Negative,
 }
