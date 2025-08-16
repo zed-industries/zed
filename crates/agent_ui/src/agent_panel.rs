@@ -216,8 +216,8 @@ enum ActiveView {
     },
     TextThread {
         context_editor: Entity<ContextEditor>,
-        context_strip: Entity<ContextStrip>,
-        prompt_editor: Entity<PromptEditor>,
+        title_editor: Entity<Editor>,
+        buffer_search_bar: Entity<BufferSearchBar>,
         _subscriptions: Vec<gpui::Subscription>,
     },
     History,
