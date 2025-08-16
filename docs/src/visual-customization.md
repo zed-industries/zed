@@ -316,6 +316,10 @@ TBD: Centered layout related settings
     // Clicking the button brings up the language selector.
     // Defaults to true.
     "active_language_button": true,
+    // Show/hide a button that displays the cursor's position.
+    // Clicking the button brings up an input for jumping to a line and column.
+    // Defaults to true.
+    "cursor_position_button": true,
   },
 ```
 
