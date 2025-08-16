@@ -2725,6 +2725,15 @@ impl ProjectPanel {
                 dir_path
             };
 
+            // Ensure trailing slash.
+            let dir_path = {
+                let mut complete_path = dir_path.to_path_buf();
+                if !complete_path.ends_with("/") {
+                    complete_path.as_mut_os_string().push("/");
+                }
+                Arc::from(complete_path)
+            };
+
             self.workspace
                 .update(cx, |workspace, cx| {
                     search::ProjectSearchView::new_search_in_directory(
