@@ -1,6 +1,7 @@
 use acp_thread::{
-    AcpThread, AcpThreadEvent, AgentThreadEntry, AssistantMessage, AssistantMessageChunk,
-    LoadError, MentionUri, ThreadStatus, ToolCall, ToolCallContent, ToolCallStatus, UserMessageId,
+    AcpThread, AcpThreadEvent, AcpThreadMetadata, AgentThreadEntry, AssistantMessage,
+    AssistantMessageChunk, LoadError, MentionUri, ThreadStatus, ToolCall, ToolCallContent,
+    ToolCallStatus, UserMessageId,
 };
 use acp_thread::{AgentConnection, Plan};
 use action_log::ActionLog;
@@ -136,6 +137,7 @@ impl AcpThreadView {
         project: Entity<Project>,
         thread_store: Entity<ThreadStore>,
         text_thread_store: Entity<TextThreadStore>,
+        restore_thread: Option<AcpThreadMetadata>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {

@@ -4,13 +4,13 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
 
+use acp_thread::AcpThreadMetadata;
 use agent_servers::AgentServer;
-use agent2::NativeAgentServer;
+use agent2::history_store::HistoryEntry;
 use db::kvp::{Dismissable, KEY_VALUE_STORE};
 use serde::{Deserialize, Serialize};
 
-use crate::NewExternalAgentThread;
-use crate::acp::AcpThreadHistory;
+use crate::acp::{AcpThreadHistory, ThreadHistoryEvent};
 use crate::agent_diff::AgentDiffThread;
 use crate::{
     AddContextServer, AgentDiffPane, ContinueThread, ContinueWithBurnMode,
@@ -31,6 +31,7 @@ use crate::{
     thread_history::{HistoryEntryElement, ThreadHistory},
     ui::{AgentOnboardingModal, EndTrialUpsell},
 };
+use crate::{ExternalAgent, NewExternalAgentThread};
 use agent::{
     Thread, ThreadError, ThreadEvent, ThreadId, ThreadSummary, TokenUsageRatio,
     context_store::ContextStore,
@@ -121,7 +122,7 @@ pub fn init(cx: &mut App) {
                     if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
                         workspace.focus_panel::<AgentPanel>(window, cx);
                         panel.update(cx, |panel, cx| {
-                            panel.new_external_thread(action.agent, window, cx)
+                            panel.new_external_thread(action.agent, None, window, cx)
                         });
                     }
                 })
@@ -746,8 +747,26 @@ impl AgentPanel {
             )
         });
 
-        let acp_history =
-            cx.new(|cx| AcpThreadHistory::new(weak_self.clone(), &project, window, cx));
+        let acp_history = cx.new(|cx| AcpThreadHistory::new(&project, window, cx));
+        cx.subscribe_in(
+            &acp_history,
+            window,
+            |this, _, event, window, cx| match event {
+                ThreadHistoryEvent::Open(HistoryEntry::Thread(thread)) => {
+                    let agent_choice = match thread.agent.0.as_ref() {
+                        "Claude Code" => Some(ExternalAgent::ClaudeCode),
+                        "Gemini" => Some(ExternalAgent::Gemini),
+                        "Native Agent" => Some(ExternalAgent::NativeAgent),
+                        _ => None,
+                    };
+                    this.new_external_thread(agent_choice, Some(thread.clone()), window, cx);
+                }
+                ThreadHistoryEvent::Open(HistoryEntry::Context(thread)) => {
+                    todo!()
+                }
+            },
+        )
+        .detach();
 
         Self {
             active_view,
@@ -962,6 +981,7 @@ impl AgentPanel {
     fn new_external_thread(
         &mut self,
         agent_choice: Option<crate::ExternalAgent>,
+        restore_thread: Option<AcpThreadMetadata>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -1019,6 +1039,7 @@ impl AgentPanel {
                         project,
                         thread_store.clone(),
                         text_thread_store.clone(),
+                        restore_thread,
                         window,
                         cx,
                     )

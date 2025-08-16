@@ -8,7 +8,7 @@ use chrono::{Datelike as _, Local, NaiveDate, TimeDelta};
 use editor::{Editor, EditorEvent};
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    App, Empty, Entity, FocusHandle, Focusable, ScrollStrategy, Stateful, Task,
+    App, Empty, Entity, EventEmitter, FocusHandle, Focusable, ScrollStrategy, Stateful, Task,
     UniformListScrollHandle, WeakEntity, Window, uniform_list,
 };
 use project::Project;
@@ -61,9 +61,14 @@ enum ListItemType {
     },
 }
 
+pub enum ThreadHistoryEvent {
+    Open(HistoryEntry),
+}
+
+impl EventEmitter<ThreadHistoryEvent> for AcpThreadHistory {}
+
 impl AcpThreadHistory {
     pub(crate) fn new(
-        agent_panel: WeakEntity<AgentPanel>,
         project: &Entity<Project>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -117,7 +122,6 @@ impl AcpThreadHistory {
         let scrollbar_state = ScrollbarState::new(scroll_handle.clone());
 
         let mut this = Self {
-            agent_panel,
             history_store,
             scroll_handle,
             selected_index: 0,
@@ -429,28 +433,29 @@ impl AcpThreadHistory {
         )
     }
 
-    fn confirm(&mut self, _: &menu::Confirm, window: &mut Window, cx: &mut Context<Self>) {
-        self.confirm_entry(self.selected_index, window, cx);
+    fn confirm(&mut self, _: &menu::Confirm, _window: &mut Window, cx: &mut Context<Self>) {
+        self.confirm_entry(self.selected_index, cx);
     }
 
-    fn confirm_entry(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Self>) {
+    fn confirm_entry(&mut self, ix: usize, cx: &mut Context<Self>) {
         let Some(entry) = self.get_match(ix) else {
             return;
         };
-        let task_result = match entry {
-            HistoryEntry::Thread(thread) => {
-                self.agent_panel.update(cx, move |agent_panel, cx| todo!())
-            }
-            HistoryEntry::Context(context) => {
-                self.agent_panel.update(cx, move |agent_panel, cx| {
-                    agent_panel.open_saved_prompt_editor(context.path.clone(), window, cx)
-                })
-            }
-        };
+        cx.emit(ThreadHistoryEvent::Open(entry.clone()));
+        // let task_result = match entry {
+        //     HistoryEntry::Thread(thread) => {
+        //         self.agent_panel.update(cx, move |agent_panel, cx| todo!())
+        //     }
+        //     HistoryEntry::Context(context) => {
+        //         self.agent_panel.update(cx, move |agent_panel, cx| {
+        //             agent_panel.open_saved_prompt_editor(context.path.clone(), window, cx)
+        //         })
+        //     }
+        // };
 
-        if let Some(task) = task_result.log_err() {
-            task.detach_and_log_err(cx);
-        };
+        // if let Some(task) = task_result.log_err() {
+        //     task.detach_and_log_err(cx);
+        // };
 
         cx.notify();
     }
@@ -606,9 +611,9 @@ impl AcpThreadHistory {
                     } else {
                         None
                     })
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        this.confirm_entry(list_entry_ix, window, cx)
-                    })),
+                    .on_click(
+                        cx.listener(move |this, _, _, cx| this.confirm_entry(list_entry_ix, cx)),
+                    ),
             )
             .into_any_element()
     }

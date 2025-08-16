@@ -6,7 +6,7 @@ use anyhow::{Result, anyhow};
 use chrono::{DateTime, Utc};
 use collections::{HashMap, IndexMap};
 use futures::{FutureExt, future::Shared};
-use gpui::{BackgroundExecutor, Global, ReadGlobal, Task};
+use gpui::{BackgroundExecutor, Global, Task};
 use indoc::indoc;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
@@ -15,7 +15,7 @@ use sqlez::{
     connection::Connection,
     statement::Statement,
 };
-use std::{path::PathBuf, sync::Arc};
+use std::sync::Arc;
 use ui::{App, SharedString};
 
 pub type DbMessage = crate::Message;
@@ -221,6 +221,10 @@ pub(crate) struct ThreadsDatabase {
     connection: Arc<Mutex<Connection>>,
 }
 
+struct GlobalThreadsDatabase(Shared<Task<Result<Arc<ThreadsDatabase>, Arc<anyhow::Error>>>>);
+
+impl Global for GlobalThreadsDatabase {}
+
 impl ThreadsDatabase {
     fn connection(&self) -> Arc<Mutex<Connection>> {
         self.connection.clone()
@@ -231,8 +235,11 @@ impl ThreadsDatabase {
 
 impl ThreadsDatabase {
     pub fn connect(cx: &mut App) -> Shared<Task<Result<Arc<ThreadsDatabase>, Arc<anyhow::Error>>>> {
+        if cx.has_global::<GlobalThreadsDatabase>() {
+            return cx.global::<GlobalThreadsDatabase>().0.clone();
+        }
         let executor = cx.background_executor().clone();
-        executor
+        let task = executor
             .spawn({
                 let executor = executor.clone();
                 async move {
@@ -242,7 +249,10 @@ impl ThreadsDatabase {
                     }
                 }
             })
-            .shared()
+            .shared();
+
+        cx.set_global(GlobalThreadsDatabase(task.clone()));
+        task
     }
 
     pub fn new(executor: BackgroundExecutor) -> Result<Self> {
