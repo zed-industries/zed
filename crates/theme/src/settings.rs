@@ -962,20 +962,20 @@ impl settings::Settings for ThemeSettings {
                 }
             }
 
-            merge(&mut this.ui_font_size, value.ui_font_size.map(Into::into));
-            this.ui_font_size = clamp_font_size(this.ui_font_size);
-
+            merge(
+                &mut this.ui_font_size,
+                value.ui_font_size.map(Into::into).map(clamp_font_size),
+            );
             merge(
                 &mut this.buffer_font_size,
-                value.buffer_font_size.map(Into::into),
+                value.buffer_font_size.map(Into::into).map(clamp_font_size),
             );
-            this.buffer_font_size = clamp_font_size(this.buffer_font_size);
-
             merge(
                 &mut this.agent_font_size,
-                value.agent_font_size.map(|value| value.map(Into::into)),
+                value
+                    .agent_font_size
+                    .map(|value| value.map(Into::into).map(clamp_font_size)),
             );
-            this.agent_font_size = this.agent_font_size.map(clamp_font_size);
 
             merge(&mut this.buffer_line_height, value.buffer_line_height);
 
