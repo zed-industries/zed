@@ -532,7 +532,6 @@ Custom models will be listed in the model dropdown in the Agent Panel.
 [Docker Model Runner](https://docs.docker.com/ai/model-runner/) provides an easy way to run LLMs locally in Docker Desktop or Docker CE. It automatically manages model serving, so you don't need to manually start or stop model servers.
 To use it from Zed, you need to [enable host-side TCP support](https://docs.docker.com/ai/model-runner/#enable-docker-model-runner)
 
-
 #### Configuration
 
 To use Docker Model Runner with Zed, configure it as an OpenAI-compatible provider:
