@@ -303,9 +303,13 @@ impl Element for Scrollbar {
         window: &mut Window,
         _: &mut App,
     ) -> Self::PrepaintState {
-        window.with_content_mask(Some(ContentMask { bounds }), |window| {
-            window.insert_hitbox(bounds, HitboxBehavior::Normal)
-        })
+        window.with_content_mask(
+            Some(ContentMask {
+                bounds,
+                ..Default::default()
+            }),
+            |window| window.insert_hitbox(bounds, HitboxBehavior::Normal),
+        )
     }
 
     fn paint(
@@ -319,7 +323,11 @@ impl Element for Scrollbar {
         cx: &mut App,
     ) {
         const EXTRA_PADDING: Pixels = px(5.0);
-        window.with_content_mask(Some(ContentMask { bounds }), |window| {
+        let content_mask = ContentMask {
+            bounds,
+            ..Default::default()
+        };
+        window.with_content_mask(Some(content_mask), |window| {
             let axis = self.kind;
             let colors = cx.theme().colors();
             let thumb_state = self.state.thumb_state.get();
