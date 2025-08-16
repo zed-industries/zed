@@ -199,7 +199,6 @@ members = [
     # Extensions
     #
 
-    "extensions/emmet",
     "extensions/glsl",
     "extensions/html",
     "extensions/proto",
