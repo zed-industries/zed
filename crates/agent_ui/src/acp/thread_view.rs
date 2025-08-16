@@ -4038,3 +4038,23 @@ pub(crate) mod tests {
         });
     }
 }
+
+impl AcpThreadView {
+    /// Check if the thread is unused (no user messages have been sent)
+    pub fn is_unused(&self, cx: &App) -> bool {
+        match &self.thread_state {
+            ThreadState::Ready { thread, .. } => {
+                thread.read(cx).entries().is_empty()
+            }
+            ThreadState::Loading { .. } => true,
+            ThreadState::Unauthenticated { .. } => true,
+            ThreadState::LoadError(_) => true,
+            ThreadState::ServerExited { .. } => false, // Consider exited threads as used
+        }
+    }
+
+    /// Get the name of the agent
+    pub fn agent_name(&self) -> &'static str {
+        self.agent.name()
+    }
+}

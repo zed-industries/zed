@@ -215,13 +215,21 @@ enum ActiveView {
         thread_view: Entity<AcpThreadView>,
     },
     TextThread {
-        context_editor: Entity<TextThreadEditor>,
-        title_editor: Entity<Editor>,
-        buffer_search_bar: Entity<BufferSearchBar>,
+        context_editor: Entity<ContextEditor>,
+        context_strip: Entity<ContextStrip>,
+        prompt_editor: Entity<PromptEditor>,
         _subscriptions: Vec<gpui::Subscription>,
     },
     History,
     Configuration,
+}
+
+// Store for unused external agent threads that can be reused
+#[derive(Default)]
+struct UnusedExternalAgentThreads {
+    gemini: Option<Entity<AcpThreadView>>,
+    claude_code: Option<Entity<AcpThreadView>>,
+    qwen: Option<Entity<AcpThreadView>>,
 }
 
 enum WhichFontSize {
@@ -492,6 +500,7 @@ pub struct AgentPanel {
     pending_serialization: Option<Task<Result<()>>>,
     onboarding: Entity<AgentPanelOnboarding>,
     selected_agent: AgentType,
+    unused_external_threads: UnusedExternalAgentThreads,
 }
 
 impl AgentPanel {
@@ -778,6 +787,7 @@ impl AgentPanel {
             pending_serialization: None,
             onboarding,
             selected_agent: AgentType::default(),
+            unused_external_threads: UnusedExternalAgentThreads::default(),
         }
     }
 
@@ -1008,17 +1018,31 @@ impl AgentPanel {
             };
 
             this.update_in(cx, |this, window, cx| {
-                let thread_view = cx.new(|cx| {
-                    crate::acp::AcpThreadView::new(
-                        server,
-                        workspace.clone(),
-                        project,
-                        thread_store.clone(),
-                        text_thread_store.clone(),
-                        window,
-                        cx,
-                    )
-                });
+                // Check if we have an unused thread of this type that we can reuse
+                let thread_view = match server.name() {
+                    "Gemini" => this.unused_external_threads.gemini.take(),
+                    "Claude Code" => this.unused_external_threads.claude_code.take(),
+                    "Qwen" => this.unused_external_threads.qwen.take(),
+                    _ => None,
+                };
+
+                let thread_view = if let Some(thread_view) = thread_view {
+                    // Reuse existing thread view
+                    thread_view
+                } else {
+                    // Create new thread view
+                    cx.new(|cx| {
+                        crate::acp::AcpThreadView::new(
+                            server,
+                            workspace.clone(),
+                            project,
+                            thread_store.clone(),
+                            text_thread_store.clone(),
+                            window,
+                            cx,
+                        )
+                    })
+                };
 
                 this.set_active_view(ActiveView::ExternalAgentThread { thread_view }, window, cx);
             })
@@ -1530,6 +1554,45 @@ impl AgentPanel {
 
         let current_is_special = current_is_history || current_is_config;
         let new_is_special = new_is_history || new_is_config;
+
+        // When switching away from an external agent thread, save it for potential reuse
+        // if it's unused (no messages have been sent)
+        if let ActiveView::ExternalAgentThread { thread_view } = &self.active_view {
+            // Check if the thread is unused (no user messages sent)
+            let is_unused = thread_view.read(cx).is_unused(cx);
+            
+            if is_unused {
+                // Save the unused thread view for potential reuse
+                match thread_view.read(cx).agent_name() {
+                    "Gemini" => {
+                        self.unused_external_threads.gemini = Some(thread_view.clone());
+                    }
+                    "Claude Code" => {
+                        self.unused_external_threads.claude_code = Some(thread_view.clone());
+                    }
+                    "Qwen" => {
+                        self.unused_external_threads.qwen = Some(thread_view.clone());
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        // Clear any existing unused thread of the same type if we're switching to a new one of that type
+        if let ActiveView::ExternalAgentThread { thread_view } = &new_view {
+            match thread_view.read(cx).agent_name() {
+                "Gemini" => {
+                    self.unused_external_threads.gemini.take();
+                }
+                "Claude Code" => {
+                    self.unused_external_threads.claude_code.take();
+                }
+                "Qwen" => {
+                    self.unused_external_threads.qwen.take();
+                }
+                _ => {}
+            }
+        }
 
         match &self.active_view {
             ActiveView::Thread { thread, .. } => {
