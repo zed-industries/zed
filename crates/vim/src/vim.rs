@@ -148,6 +148,8 @@ actions!(
         SwitchToVisualBlockMode,
         /// Switches to Helix-style normal mode.
         SwitchToHelixNormalMode,
+        /// Switches to Helix-style select  mode.
+        SwitchToHelixSelectMode,
         /// Clears any pending operators.
         ClearOperators,
         /// Clears the exchange register.
@@ -497,7 +499,7 @@ impl Vim {
         vim.update(cx, |_, cx| {
             Vim::action(editor, cx, |vim, _: &SwitchToNormalMode, window, cx| {
                 if HelixModeSetting::get_global(cx).0 {
-                    vim.switch_mode(Mode::HelixNormal, false, window, cx)
+                    vim.switch_mode(Mode::HelixNormal, true, window, cx)
                 } else {
                     vim.switch_mode(Mode::Normal, false, window, cx)
                 }
@@ -512,7 +514,11 @@ impl Vim {
             });
 
             Vim::action(editor, cx, |vim, _: &SwitchToVisualMode, window, cx| {
-                vim.switch_mode(Mode::Visual, false, window, cx)
+                if HelixModeSetting::get_global(cx).0 {
+                    vim.switch_mode(Mode::HelixSelect, true, window, cx)
+                } else {
+                    vim.switch_mode(Mode::Visual, false, window, cx)
+                }
             });
 
             Vim::action(editor, cx, |vim, _: &SwitchToVisualLineMode, window, cx| {
@@ -531,7 +537,14 @@ impl Vim {
                 editor,
                 cx,
                 |vim, _: &SwitchToHelixNormalMode, window, cx| {
-                    vim.switch_mode(Mode::HelixNormal, false, window, cx)
+                    vim.switch_mode(Mode::HelixNormal, true, window, cx)
+                },
+            );
+            Vim::action(
+                editor,
+                cx,
+                |vim, _: &SwitchToHelixSelectMode, window, cx| {
+                    vim.switch_mode(Mode::HelixSelect, true, window, cx)
                 },
             );
             Vim::action(editor, cx, |_, _: &PushForcedMotion, _, cx| {
@@ -1107,6 +1120,7 @@ impl Vim {
                 }
             }
             Mode::HelixNormal => cursor_shape.normal.unwrap_or(CursorShape::Block),
+            Mode::HelixSelect => cursor_shape.visual.unwrap_or(CursorShape::Block),
             Mode::Replace => cursor_shape.replace.unwrap_or(CursorShape::Underline),
             Mode::Visual | Mode::VisualLine | Mode::VisualBlock => {
                 cursor_shape.visual.unwrap_or(CursorShape::Block)
@@ -1129,6 +1143,7 @@ impl Vim {
             }
             Mode::Normal
             | Mode::HelixNormal
+            | Mode::HelixSelect
             | Mode::Replace
             | Mode::Visual
             | Mode::VisualLine
@@ -1147,7 +1162,8 @@ impl Vim {
             | Mode::VisualLine
             | Mode::VisualBlock
             | Mode::Replace
-            | Mode::HelixNormal => false,
+            | Mode::HelixNormal
+            | Mode::HelixSelect => false,
             Mode::Normal => true,
         }
     }
@@ -1159,6 +1175,7 @@ impl Vim {
             Mode::Insert => "insert",
             Mode::Replace => "replace",
             Mode::HelixNormal => "helix_normal",
+            Mode::HelixSelect => "helix_select",
         }
         .to_string();
 
@@ -1184,7 +1201,12 @@ impl Vim {
             }
         }
 
-        if mode == "normal" || mode == "visual" || mode == "operator" || mode == "helix_normal" {
+        if mode == "normal"
+            || mode == "visual"
+            || mode == "operator"
+            || mode == "helix_normal"
+            || mode == "helix_select"
+        {
             context.add("VimControl");
         }
         context.set("vim_mode", mode);
@@ -1520,7 +1542,7 @@ impl Vim {
                     })
                 });
             }
-            Mode::Insert | Mode::Replace | Mode::HelixNormal => {}
+            Mode::Insert | Mode::Replace | Mode::HelixNormal | Mode::HelixSelect => {}
         }
     }
 

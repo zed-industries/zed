@@ -10,7 +10,9 @@ use gpui::{Context, Window, actions};
 use language::{Point, Selection, SelectionGoal};
 use multi_buffer::MultiBufferRow;
 use search::BufferSearchBar;
+use settings::Settings;
 use util::ResultExt;
+use vim_mode_setting::HelixModeSetting;
 use workspace::searchable::Direction;
 
 use crate::{
@@ -64,7 +66,11 @@ actions!(
 
 pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     Vim::action(editor, cx, |vim, _: &ToggleVisual, window, cx| {
-        vim.toggle_mode(Mode::Visual, window, cx)
+        if HelixModeSetting::get_global(cx).0 {
+            vim.toggle_mode(Mode::HelixSelect, window, cx)
+        } else {
+            vim.toggle_mode(Mode::Visual, window, cx)
+        }
     });
     Vim::action(editor, cx, |vim, _: &ToggleVisualLine, window, cx| {
         vim.toggle_mode(Mode::VisualLine, window, cx)
@@ -510,7 +516,12 @@ impl Vim {
 
     fn toggle_mode(&mut self, mode: Mode, window: &mut Window, cx: &mut Context<Self>) {
         if self.mode == mode {
-            self.switch_mode(Mode::Normal, false, window, cx);
+            let (normal, leave_selections) = if HelixModeSetting::get_global(cx).0 {
+                (Mode::HelixNormal, true)
+            } else {
+                (Mode::Normal, false)
+            };
+            self.switch_mode(normal, leave_selections, window, cx);
         } else {
             self.switch_mode(mode, false, window, cx);
         }
