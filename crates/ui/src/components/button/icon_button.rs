@@ -31,9 +31,9 @@ impl IconButton {
     pub fn new(id: impl Into<ElementId>, icon: IconName) -> Self {
         let mut this = Self {
             base: ButtonLike::new(id),
-            shape: IconButtonShape::Wide,
+            shape: IconButtonShape::Square,
             icon,
-            icon_size: IconSize::default(),
+            icon_size: IconSize::Small,
             icon_color: Color::Default,
             selected_icon: None,
             selected_icon_color: None,
@@ -232,6 +232,43 @@ impl Component for IconButton {
                     example_group_with_title(
                         "Icon Button Styles",
                         vec![
+                            // TODO: Remove/organize this later
+                            single_example(
+                                "SIZES",
+                                h_flex()
+                                    .gap_0p5()
+                                    .child(
+                                        IconButton::new("tinted", IconName::Debug)
+                                            .icon_size(IconSize::Indicator)
+                                            .layer(ElevationIndex::Background)
+                                            .style(ButtonStyle::Tinted(TintColor::Accent)),
+                                    )
+                                    .child(
+                                        IconButton::new("tinted", IconName::Debug)
+                                            .icon_size(IconSize::XSmall)
+                                            .layer(ElevationIndex::Background)
+                                            .style(ButtonStyle::Tinted(TintColor::Accent)),
+                                    )
+                                    .child(
+                                        IconButton::new("tinted", IconName::Debug)
+                                            .icon_size(IconSize::Small)
+                                            .layer(ElevationIndex::Background)
+                                            .style(ButtonStyle::Tinted(TintColor::Accent)),
+                                    )
+                                    .child(
+                                        IconButton::new("tinted", IconName::Debug)
+                                            .icon_size(IconSize::Medium)
+                                            .layer(ElevationIndex::Background)
+                                            .style(ButtonStyle::Tinted(TintColor::Accent)),
+                                    )
+                                    .child(
+                                        IconButton::new("tinted", IconName::Debug)
+                                            .icon_size(IconSize::XLarge)
+                                            .layer(ElevationIndex::Background)
+                                            .style(ButtonStyle::Tinted(TintColor::Accent)),
+                                    )
+                                    .into_any_element(),
+                            ),
                             single_example(
                                 "Default",
                                 IconButton::new("default", IconName::Check)
