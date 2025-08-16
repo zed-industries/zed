@@ -445,11 +445,14 @@ impl TextLayout {
         let line_height = element_state.line_height;
         let mut line_origin = bounds.origin;
         let text_style = window.text_style();
+        let text_align = window
+            .current_layout_direction()
+            .apply_text_align_direction(text_style.text_align);
         for line in &element_state.lines {
             line.paint_background(
                 line_origin,
                 line_height,
-                text_style.text_align,
+                text_align,
                 Some(bounds),
                 window,
                 cx,
@@ -458,7 +461,7 @@ impl TextLayout {
             line.paint(
                 line_origin,
                 line_height,
-                text_style.text_align,
+                text_align,
                 Some(bounds),
                 window,
                 cx,

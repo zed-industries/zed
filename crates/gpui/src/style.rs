@@ -1,4 +1,5 @@
 use std::{
+    fmt::Debug,
     hash::{Hash, Hasher},
     iter, mem,
     ops::Range,
@@ -254,6 +255,9 @@ pub struct Style {
     /// The text style of this element
     pub text: TextStyleRefinement,
 
+    /// The bidi style of this element
+    pub bidi: BidiStyleRefinement,
+
     /// The mouse cursor style shown when the mouse pointer is over an element.
     pub mouse_cursor: Option<CursorStyle>,
 
@@ -496,6 +500,86 @@ impl TextStyle {
     }
 }
 
+/// The direction of layout.
+#[derive(Clone, Copy, Debug, PartialEq, Deserialize, Serialize, JsonSchema, Default)]
+pub enum LayoutDirection {
+    /// Left-to-right layout.
+    #[default]
+    LeftToRight,
+    /// Right-to-left layout.
+    RightToLeft,
+}
+
+impl LayoutDirection {
+    /// Sets the flex direction on a style, given the bidi direction
+    pub fn apply_flex_direction(self, mut style: Style) -> Style {
+        match self {
+            LayoutDirection::LeftToRight => style,
+            LayoutDirection::RightToLeft => {
+                style.flex_direction = style.flex_direction.flip_horizontal();
+                style
+            }
+        }
+    }
+
+    /// Sets the margin and padding orientations on a style, given the bidi direction
+    pub fn apply_spacing_direction(self, mut style: Style) -> Style {
+        match self {
+            LayoutDirection::LeftToRight => style,
+            LayoutDirection::RightToLeft => {
+                style.margin = self.apply_edge_direction(style.margin);
+                style.padding = self.apply_edge_direction(style.padding);
+                style
+            }
+        }
+    }
+
+    /// Sets the border orientations on a style, given the bidi direction
+    pub fn apply_border_direction(self, mut style: Style) -> Style {
+        match self {
+            LayoutDirection::LeftToRight => style,
+            LayoutDirection::RightToLeft => {
+                style.border_widths = self.apply_edge_direction(style.border_widths);
+                style
+            }
+        }
+    }
+
+    /// Sets the flex direction on a TextAlign, given the bidi direction
+    pub fn apply_text_align_direction(self, mut text_align: TextAlign) -> TextAlign {
+        match self {
+            LayoutDirection::LeftToRight => text_align,
+            LayoutDirection::RightToLeft => match text_align {
+                TextAlign::Left => TextAlign::Right,
+                TextAlign::Center => TextAlign::Center,
+                TextAlign::Right => TextAlign::Left,
+            },
+        }
+    }
+
+    /// Maps a set of edges to the correct orientation based on the bidi direction
+    pub fn apply_edge_direction<T>(self, mut edge: Edges<T>) -> Edges<T>
+    where
+        T: Clone + Debug + Default + PartialEq,
+    {
+        match self {
+            LayoutDirection::LeftToRight => edge,
+            LayoutDirection::RightToLeft => {
+                std::mem::swap(&mut edge.left, &mut edge.right);
+                edge
+            }
+        }
+    }
+}
+
+/// The properties used to change the layout direction in GPUI
+#[derive(Refineable, Clone, Debug, PartialEq, Deserialize, Serialize, JsonSchema, Default)]
+#[refineable(Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct BidiStyle {
+    /// The direction of layout.
+    pub dir: LayoutDirection,
+}
+
 /// A highlight style to apply, similar to a `TextStyle` except
 /// for a single font, uniformly sized and spaced text.
 #[derive(Copy, Clone, Debug, Default, PartialEq)]
@@ -550,6 +634,15 @@ impl Style {
     pub fn text_style(&self) -> Option<&TextStyleRefinement> {
         if self.text.is_some() {
             Some(&self.text)
+        } else {
+            None
+        }
+    }
+
+    /// Get the bidi style in this element style.
+    pub fn bidi_style(&self) -> Option<&BidiStyleRefinement> {
+        if self.bidi.is_some() {
+            Some(&self.bidi)
         } else {
             None
         }
@@ -773,6 +866,7 @@ impl Default for Style {
             corner_radii: Corners::default(),
             box_shadow: Default::default(),
             text: TextStyleRefinement::default(),
+            bidi: BidiStyleRefinement::default(),
             mouse_cursor: None,
             opacity: None,
             grid_rows: None,
@@ -1164,6 +1258,18 @@ pub enum FlexDirection {
     ///
     /// Items will be added from bottom to top in a column.
     ColumnReverse,
+}
+
+impl FlexDirection {
+    /// Reverse the direction that items will be drawn in.
+    pub fn flip_horizontal(self) -> Self {
+        match self {
+            FlexDirection::Row => FlexDirection::RowReverse,
+            FlexDirection::Column => FlexDirection::Column,
+            FlexDirection::RowReverse => FlexDirection::Row,
+            FlexDirection::ColumnReverse => FlexDirection::ColumnReverse,
+        }
+    }
 }
 
 /// How children overflowing their container should affect layout
