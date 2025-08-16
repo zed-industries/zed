@@ -4551,7 +4551,7 @@ mod tests {
     #[gpui::test]
     async fn test_bundled_files_editor(cx: &mut TestAppContext) {
         let app_state = init_test(cx);
-        cx.update(|cx| init(cx));
+        cx.update(init);
 
         let project = Project::test(app_state.fs.clone(), [], cx).await;
         let _window = cx.add_window(|window, cx| Workspace::test_new(project, window, cx));
