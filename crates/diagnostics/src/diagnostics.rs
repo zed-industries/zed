@@ -1,12 +1,14 @@
 pub mod items;
 mod toolbar_controls;
 
+mod buffer_diagnostics;
 mod diagnostic_renderer;
 
 #[cfg(test)]
 mod diagnostics_tests;
 
 use anyhow::Result;
+use buffer_diagnostics::BufferDiagnosticsEditor;
 use collections::{BTreeSet, HashMap};
 use diagnostic_renderer::DiagnosticBlock;
 use editor::{
@@ -46,6 +48,8 @@ use workspace::{
     searchable::SearchableItemHandle,
 };
 
+use crate::diagnostic_renderer::DiagnosticsEditorHandle;
+
 actions!(
     diagnostics,
     [
@@ -65,6 +69,7 @@ impl Global for IncludeWarnings {}
 pub fn init(cx: &mut App) {
     editor::set_diagnostic_renderer(diagnostic_renderer::DiagnosticRenderer {}, cx);
     cx.observe_new(ProjectDiagnosticsEditor::register).detach();
+    cx.observe_new(BufferDiagnosticsEditor::register).detach();
 }
 
 pub(crate) struct ProjectDiagnosticsEditor {
@@ -84,6 +89,7 @@ pub(crate) struct ProjectDiagnosticsEditor {
     _subscription: Subscription,
 }
 
+#[derive(Default)]
 struct CargoDiagnosticsFetchState {
     fetch_task: Option<Task<()>>,
     cancel_task: Option<Task<()>>,
@@ -93,6 +99,7 @@ struct CargoDiagnosticsFetchState {
 impl EventEmitter<EditorEvent> for ProjectDiagnosticsEditor {}
 
 const DIAGNOSTICS_UPDATE_DELAY: Duration = Duration::from_millis(50);
+const DIAGNOSTICS_SUMMARY_UPDATE_DELAY: Duration = Duration::from_millis(30);
 
 impl Render for ProjectDiagnosticsEditor {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -103,11 +110,11 @@ impl Render for ProjectDiagnosticsEditor {
         };
 
         let child = if warning_count + self.summary.error_count == 0 {
-            let label = if self.summary.warning_count == 0 {
-                SharedString::new_static("No problems in workspace")
-            } else {
-                SharedString::new_static("No errors in workspace")
+            let label = match self.summary.warning_count {
+                0 => SharedString::new_static("No problems in workspace"),
+                _ => SharedString::new_static("No errors in workspace"),
             };
+
             v_flex()
                 .key_context("EmptyPane")
                 .size_full()
@@ -151,7 +158,7 @@ impl Render for ProjectDiagnosticsEditor {
 }
 
 impl ProjectDiagnosticsEditor {
-    fn register(
+    pub fn register(
         workspace: &mut Workspace,
         _window: Option<&mut Window>,
         _: &mut Context<Workspace>,
@@ -167,7 +174,7 @@ impl ProjectDiagnosticsEditor {
         cx: &mut Context<Self>,
     ) -> Self {
         let project_event_subscription =
-            cx.subscribe_in(&project_handle, window, |this, project, event, window, cx| match event {
+            cx.subscribe_in(&project_handle, window, |this, _project, event, window, cx| match event {
                 project::Event::DiskBasedDiagnosticsStarted { .. } => {
                     cx.notify();
                 }
@@ -180,13 +187,12 @@ impl ProjectDiagnosticsEditor {
                     paths,
                 } => {
                     this.paths_to_update.extend(paths.clone());
-                    let project = project.clone();
                     this.diagnostic_summary_update = cx.spawn(async move |this, cx| {
                         cx.background_executor()
-                            .timer(Duration::from_millis(30))
+                            .timer(DIAGNOSTICS_SUMMARY_UPDATE_DELAY)
                             .await;
                         this.update(cx, |this, cx| {
-                            this.summary = project.read(cx).diagnostic_summary(false, cx);
+                            this.update_diagnostic_summary(cx);
                         })
                         .log_err();
                     });
@@ -263,6 +269,7 @@ impl ProjectDiagnosticsEditor {
             this.update_all_diagnostics(false, window, cx);
         })
         .detach();
+
         cx.observe_release(&cx.entity(), |editor, _, cx| {
             editor.stop_cargo_diagnostics_fetch(cx);
         })
@@ -341,6 +348,7 @@ impl ProjectDiagnosticsEditor {
             let is_active = workspace
                 .active_item(cx)
                 .is_some_and(|item| item.item_id() == existing.item_id());
+
             workspace.activate_item(&existing, true, !is_active, window, cx);
         } else {
             let workspace_handle = cx.entity().downgrade();
@@ -477,22 +485,25 @@ impl ProjectDiagnosticsEditor {
     /// currently have diagnostics or are currently present in this view.
     fn update_all_excerpts(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.project.update(cx, |project, cx| {
-            let mut paths = project
+            let mut project_paths = project
                 .diagnostic_summaries(false, cx)
-                .map(|(path, _, _)| path)
+                .map(|(project_path, _, _)| project_path)
                 .collect::<BTreeSet<_>>();
+
             self.multibuffer.update(cx, |multibuffer, cx| {
                 for buffer in multibuffer.all_buffers() {
                     if let Some(file) = buffer.read(cx).file() {
-                        paths.insert(ProjectPath {
+                        project_paths.insert(ProjectPath {
                             path: file.path().clone(),
                             worktree_id: file.worktree_id(cx),
                         });
                     }
                 }
             });
-            self.paths_to_update = paths;
+
+            self.paths_to_update = project_paths;
         });
+
         self.update_stale_excerpts(window, cx);
     }
 
@@ -522,6 +533,7 @@ impl ProjectDiagnosticsEditor {
         let was_empty = self.multibuffer.read(cx).is_empty();
         let buffer_snapshot = buffer.read(cx).snapshot();
         let buffer_id = buffer_snapshot.remote_id();
+
         let max_severity = if self.include_warnings {
             lsp::DiagnosticSeverity::WARNING
         } else {
@@ -535,6 +547,7 @@ impl ProjectDiagnosticsEditor {
                     false,
                 )
                 .collect::<Vec<_>>();
+
             let unchanged = this.update(cx, |this, _| {
                 if this.diagnostics.get(&buffer_id).is_some_and(|existing| {
                     this.diagnostics_are_unchanged(existing, &diagnostics, &buffer_snapshot)
@@ -569,7 +582,7 @@ impl ProjectDiagnosticsEditor {
                     crate::diagnostic_renderer::DiagnosticRenderer::diagnostic_blocks_for_group(
                         group,
                         buffer_snapshot.remote_id(),
-                        Some(this.clone()),
+                        Some(DiagnosticsEditorHandle::Project(this.clone())),
                         cx,
                     )
                 })?;
@@ -598,6 +611,7 @@ impl ProjectDiagnosticsEditor {
                     &mut cx,
                 )
                 .await;
+
                 let i = excerpt_ranges
                     .binary_search_by(|probe| {
                         probe
@@ -669,6 +683,7 @@ impl ProjectDiagnosticsEditor {
                                 priority: 1,
                             }
                         });
+
                 let block_ids = this.editor.update(cx, |editor, cx| {
                     editor.display_map.update(cx, |display_map, cx| {
                         display_map.insert_blocks(editor_blocks, cx)
@@ -700,6 +715,10 @@ impl ProjectDiagnosticsEditor {
         })
     }
 
+    fn update_diagnostic_summary(&mut self, cx: &mut Context<Self>) {
+        self.summary = self.project.read(cx).diagnostic_summary(false, cx);
+    }
+
     pub fn cargo_diagnostics_sources(&self, cx: &App) -> Vec<ProjectPath> {
         let fetch_cargo_diagnostics = ProjectSettings::get_global(cx)
             .diagnostics
@@ -711,6 +730,7 @@ impl ProjectDiagnosticsEditor {
             .read(cx)
             .worktrees(cx)
             .filter_map(|worktree| {
+                // TODO: Can this ignored variable be removed?!
                 let _cargo_toml_entry = worktree.read(cx).entry_for_path("Cargo.toml")?;
                 let rust_file_entry = worktree.read(cx).entries(false, 0).find(|entry| {
                     entry
