@@ -14834,15 +14834,18 @@ impl Editor {
         self.hide_mouse_cursor(HideMouseCursorOrigin::MovementAction, cx);
 
         let buffer = self.buffer.read(cx).snapshot(cx);
-        let old_selections: Box<[_]> = self.selections.all::<usize>(cx).into();
+        let selections = self
+            .selections
+            .all::<usize>(cx)
+            .into_iter()
+            // subtracting the offset requires sorting
+            .sorted_by_key(|i| i.start);
 
-        let edits = old_selections
-            .iter()
-            // only consider the first selection for now
-            .take(1)
-            .map(|selection| {
+        let full_edits = selections
+            .into_iter()
+            .filter_map(|selection| {
                 // Only requires two branches once if-let-chains stabilize (#53667)
-                let selection_range = if !selection.is_empty() {
+                let child = if !selection.is_empty() {
                     selection.range()
                 } else if let Some((_, ancestor_range)) =
                     buffer.syntax_ancestor(selection.start..selection.end)
@@ -14855,48 +14858,52 @@ impl Editor {
                     selection.range()
                 };
 
-                let mut new_range = selection_range.clone();
-                while let Some((_, ancestor_range)) = buffer.syntax_ancestor(new_range.clone()) {
-                    new_range = match ancestor_range {
+                let mut parent = child.clone();
+                while let Some((_, ancestor_range)) = buffer.syntax_ancestor(parent.clone()) {
+                    parent = match ancestor_range {
                         MultiOrSingleBufferOffsetRange::Single(range) => range,
                         MultiOrSingleBufferOffsetRange::Multi(range) => range,
                     };
-                    if new_range.start < selection_range.start
-                        || new_range.end > selection_range.end
-                    {
+                    if parent.start < child.start || parent.end > child.end {
                         break;
                     }
                 }
 
-                (selection, selection_range, new_range)
+                if parent == child {
+                    return None;
+                }
+                let text = buffer.text_for_range(child.clone()).collect::<String>();
+                Some((selection.id, parent, text))
             })
             .collect::<Vec<_>>();
 
-        self.transact(window, cx, |editor, window, cx| {
-            for (_, child, parent) in &edits {
-                let text = buffer.text_for_range(child.clone()).collect::<String>();
-                editor.replace_text_in_range(Some(parent.clone()), &text, window, cx);
-            }
-
-            editor.change_selections(
-                SelectionEffects::scroll(Autoscroll::fit()),
-                window,
-                cx,
-                |s| {
-                    s.select(
-                        edits
-                            .iter()
-                            .map(|(s, old, new)| Selection {
-                                id: s.id,
-                                start: new.start,
-                                end: new.start + old.len(),
-                                goal: SelectionGoal::None,
-                                reversed: s.reversed,
-                            })
-                            .collect(),
-                    );
-                },
-            );
+        self.transact(window, cx, |this, window, cx| {
+            this.buffer.update(cx, |buffer, cx| {
+                buffer.edit(
+                    full_edits
+                        .iter()
+                        .map(|(_, p, t)| (p.clone(), t.clone()))
+                        .collect::<Vec<_>>(),
+                    None,
+                    cx,
+                );
+            });
+            this.change_selections(Default::default(), window, cx, |s| {
+                let mut offset = 0;
+                let mut selections = vec![];
+                for (id, parent, text) in full_edits {
+                    let start = parent.start - offset;
+                    offset += parent.len() - text.len();
+                    selections.push(Selection {
+                        id: id,
+                        start,
+                        end: start + text.len(),
+                        reversed: false,
+                        goal: Default::default(),
+                    });
+                }
+                s.select(selections);
+            });
         });
     }
 
