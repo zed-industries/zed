@@ -970,9 +970,25 @@ impl<'a> Iterator for WrapChunks<'a> {
         }
 
         let (prefix, suffix) = self.input_chunk.text.split_at(input_len);
+
+        let (chars, tabs) = if input_len == 128 {
+            let output = (self.input_chunk.chars, self.input_chunk.tabs);
+            self.input_chunk.chars = 0;
+            self.input_chunk.tabs = 0;
+            output
+        } else {
+            let mask = (1 << input_len) - 1;
+            let output = (self.input_chunk.chars & mask, self.input_chunk.tabs & mask);
+            self.input_chunk.chars = self.input_chunk.chars >> input_len;
+            self.input_chunk.tabs = self.input_chunk.tabs >> input_len;
+            output
+        };
+
         self.input_chunk.text = suffix;
         Some(Chunk {
             text: prefix,
+            chars,
+            tabs,
             ..self.input_chunk.clone()
         })
     }
