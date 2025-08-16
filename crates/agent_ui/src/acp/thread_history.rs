@@ -8,7 +8,7 @@ use chrono::{Datelike as _, Local, NaiveDate, TimeDelta};
 use editor::{Editor, EditorEvent};
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    App, ClickEvent, Empty, Entity, FocusHandle, Focusable, ScrollStrategy, Stateful, Task,
+    App, Empty, Entity, FocusHandle, Focusable, ScrollStrategy, Stateful, Task,
     UniformListScrollHandle, WeakEntity, Window, uniform_list,
 };
 use project::Project;
@@ -37,6 +37,7 @@ pub struct AcpThreadHistory {
     search_state: SearchState,
     scrollbar_visibility: bool,
     scrollbar_state: ScrollbarState,
+    local_timezone: UtcOffset,
     _subscriptions: Vec<gpui::Subscription>,
 }
 
@@ -58,15 +59,6 @@ enum ListItemType {
         index: usize,
         format: EntryTimeFormat,
     },
-}
-
-impl ListItemType {
-    fn entry_index(&self) -> Option<usize> {
-        match self {
-            ListItemType::BucketSeparator(_) => None,
-            ListItemType::Entry { index, .. } => Some(*index),
-        }
-    }
 }
 
 impl AcpThreadHistory {
@@ -137,6 +129,10 @@ impl AcpThreadHistory {
             search_editor,
             scrollbar_visibility: true,
             scrollbar_state,
+            local_timezone: UtcOffset::from_whole_seconds(
+                chrono::Local::now().offset().local_minus_utc(),
+            )
+            .unwrap(),
             _subscriptions: vec![search_editor_subscription, history_store_subscription],
             _separated_items_task: None,
         };
@@ -434,24 +430,29 @@ impl AcpThreadHistory {
     }
 
     fn confirm(&mut self, _: &menu::Confirm, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(entry) = self.get_match(self.selected_index) {
-            let task_result = match entry {
-                HistoryEntry::Thread(thread) => {
-                    self.agent_panel.update(cx, move |agent_panel, cx| todo!())
-                }
-                HistoryEntry::Context(context) => {
-                    self.agent_panel.update(cx, move |agent_panel, cx| {
-                        agent_panel.open_saved_prompt_editor(context.path.clone(), window, cx)
-                    })
-                }
-            };
+        self.confirm_entry(self.selected_index, window, cx);
+    }
 
-            if let Some(task) = task_result.log_err() {
-                task.detach_and_log_err(cx);
-            };
+    fn confirm_entry(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(entry) = self.get_match(ix) else {
+            return;
+        };
+        let task_result = match entry {
+            HistoryEntry::Thread(thread) => {
+                self.agent_panel.update(cx, move |agent_panel, cx| todo!())
+            }
+            HistoryEntry::Context(context) => {
+                self.agent_panel.update(cx, move |agent_panel, cx| {
+                    agent_panel.open_saved_prompt_editor(context.path.clone(), window, cx)
+                })
+            }
+        };
 
-            cx.notify();
-        }
+        if let Some(task) = task_result.log_err() {
+            task.detach_and_log_err(cx);
+        };
+
+        cx.notify();
     }
 
     fn remove_selected_thread(
@@ -460,20 +461,25 @@ impl AcpThreadHistory {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(entry) = self.get_match(self.selected_index) {
-            let task_result = match entry {
-                HistoryEntry::Thread(thread) => todo!(),
-                HistoryEntry::Context(context) => self
-                    .agent_panel
-                    .update(cx, |this, cx| this.delete_context(context.path.clone(), cx)),
-            };
+        self.remove_thread(self.selected_index, cx)
+    }
 
-            if let Some(task) = task_result.log_err() {
-                task.detach_and_log_err(cx);
-            };
+    fn remove_thread(&mut self, ix: usize, cx: &mut Context<Self>) {
+        let Some(entry) = self.get_match(ix) else {
+            return;
+        };
+        let task_result = match entry {
+            HistoryEntry::Thread(thread) => todo!(),
+            HistoryEntry::Context(context) => self
+                .agent_panel
+                .update(cx, |this, cx| this.delete_context(context.path.clone(), cx)),
+        };
 
-            cx.notify();
-        }
+        if let Some(task) = task_result.log_err() {
+            task.detach_and_log_err(cx);
+        };
+
+        cx.notify();
     }
 
     fn list_items(
@@ -482,8 +488,6 @@ impl AcpThreadHistory {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Vec<AnyElement> {
-        let range_start = range.start;
-
         match &self.search_state {
             SearchState::Empty => self
                 .separated_items
@@ -492,22 +496,20 @@ impl AcpThreadHistory {
                 .flat_map(|items| {
                     items
                         .iter()
-                        .map(|item| self.render_list_item(item.entry_index(), item, vec![], cx))
+                        .map(|item| self.render_list_item(item, vec![], cx))
                 })
                 .collect(),
             SearchState::Searched { matches, .. } => matches[range]
                 .iter()
-                .enumerate()
-                .map(|(ix, m)| {
-                    self.render_list_item(
-                        Some(range_start + ix),
-                        &ListItemType::Entry {
-                            index: m.candidate_id,
-                            format: EntryTimeFormat::DateAndTime,
-                        },
+                .filter_map(|m| {
+                    let entry = self.all_entries.get(m.candidate_id)?;
+                    Some(self.render_history_entry(
+                        entry,
+                        EntryTimeFormat::DateAndTime,
+                        m.candidate_id,
                         m.positions.clone(),
                         cx,
-                    )
+                    ))
                 })
                 .collect(),
             SearchState::Searching { .. } => {
@@ -518,33 +520,14 @@ impl AcpThreadHistory {
 
     fn render_list_item(
         &self,
-        list_entry_ix: Option<usize>,
         item: &ListItemType,
         highlight_positions: Vec<usize>,
         cx: &Context<Self>,
     ) -> AnyElement {
         match item {
             ListItemType::Entry { index, format } => match self.all_entries.get(*index) {
-                Some(entry) => h_flex()
-                    .w_full()
-                    .pb_1()
-                    .child(
-                        HistoryEntryElement::new(entry.clone(), self.agent_panel.clone())
-                            .highlight_positions(highlight_positions)
-                            .timestamp_format(*format)
-                            .selected(list_entry_ix == Some(self.selected_index))
-                            .hovered(list_entry_ix == self.hovered_index)
-                            .on_hover(cx.listener(move |this, is_hovered, _window, cx| {
-                                if *is_hovered {
-                                    this.hovered_index = list_entry_ix;
-                                } else if this.hovered_index == list_entry_ix {
-                                    this.hovered_index = None;
-                                }
-
-                                cx.notify();
-                            }))
-                            .into_any_element(),
-                    )
+                Some(entry) => self
+                    .render_history_entry(entry, *format, *index, highlight_positions, cx)
                     .into_any(),
                 None => Empty.into_any_element(),
             },
@@ -559,6 +542,75 @@ impl AcpThreadHistory {
                 )
                 .into_any_element(),
         }
+    }
+
+    fn render_history_entry(
+        &self,
+        entry: &HistoryEntry,
+        format: EntryTimeFormat,
+        list_entry_ix: usize,
+        highlight_positions: Vec<usize>,
+        cx: &Context<Self>,
+    ) -> AnyElement {
+        let selected = list_entry_ix == self.selected_index;
+        let hovered = Some(list_entry_ix) == self.hovered_index;
+        let timestamp = entry.updated_at().timestamp();
+        let thread_timestamp = format.format_timestamp(timestamp, self.local_timezone);
+
+        h_flex()
+            .w_full()
+            .pb_1()
+            .child(
+                ListItem::new(list_entry_ix)
+                    .rounded()
+                    .toggle_state(selected)
+                    .spacing(ListItemSpacing::Sparse)
+                    .start_slot(
+                        h_flex()
+                            .w_full()
+                            .gap_2()
+                            .justify_between()
+                            .child(
+                                HighlightedLabel::new(entry.title(), highlight_positions)
+                                    .size(LabelSize::Small)
+                                    .truncate(),
+                            )
+                            .child(
+                                Label::new(thread_timestamp)
+                                    .color(Color::Muted)
+                                    .size(LabelSize::XSmall),
+                            ),
+                    )
+                    .on_hover(cx.listener(move |this, is_hovered, _window, cx| {
+                        if *is_hovered {
+                            this.hovered_index = Some(list_entry_ix);
+                        } else if this.hovered_index == Some(list_entry_ix) {
+                            this.hovered_index = None;
+                        }
+
+                        cx.notify();
+                    }))
+                    .end_slot::<IconButton>(if hovered || selected {
+                        Some(
+                            IconButton::new("delete", IconName::Trash)
+                                .shape(IconButtonShape::Square)
+                                .icon_size(IconSize::XSmall)
+                                .icon_color(Color::Muted)
+                                .tooltip(move |window, cx| {
+                                    Tooltip::for_action("Delete", &RemoveSelectedThread, window, cx)
+                                })
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.remove_thread(list_entry_ix, cx)
+                                })),
+                        )
+                    } else {
+                        None
+                    })
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.confirm_entry(list_entry_ix, window, cx)
+                    })),
+            )
+            .into_any_element()
     }
 }
 
@@ -641,174 +693,6 @@ impl Render for AcpThreadHistory {
     }
 }
 
-#[derive(IntoElement)]
-pub struct HistoryEntryElement {
-    entry: HistoryEntry,
-    agent_panel: WeakEntity<AgentPanel>,
-    selected: bool,
-    hovered: bool,
-    highlight_positions: Vec<usize>,
-    timestamp_format: EntryTimeFormat,
-    on_hover: Box<dyn Fn(&bool, &mut Window, &mut App) + 'static>,
-}
-
-impl HistoryEntryElement {
-    pub fn new(entry: HistoryEntry, agent_panel: WeakEntity<AgentPanel>) -> Self {
-        Self {
-            entry,
-            agent_panel,
-            selected: false,
-            hovered: false,
-            highlight_positions: vec![],
-            timestamp_format: EntryTimeFormat::DateAndTime,
-            on_hover: Box::new(|_, _, _| {}),
-        }
-    }
-
-    pub fn selected(mut self, selected: bool) -> Self {
-        self.selected = selected;
-        self
-    }
-
-    pub fn hovered(mut self, hovered: bool) -> Self {
-        self.hovered = hovered;
-        self
-    }
-
-    pub fn highlight_positions(mut self, positions: Vec<usize>) -> Self {
-        self.highlight_positions = positions;
-        self
-    }
-
-    pub fn on_hover(mut self, on_hover: impl Fn(&bool, &mut Window, &mut App) + 'static) -> Self {
-        self.on_hover = Box::new(on_hover);
-        self
-    }
-
-    pub fn timestamp_format(mut self, format: EntryTimeFormat) -> Self {
-        self.timestamp_format = format;
-        self
-    }
-}
-
-impl RenderOnce for HistoryEntryElement {
-    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let (id, summary, timestamp) = match &self.entry {
-            HistoryEntry::Thread(thread) => (
-                thread.id.to_string(),
-                thread.title.clone(),
-                thread.updated_at.timestamp(),
-            ),
-            HistoryEntry::Context(context) => (
-                context.path.to_string_lossy().to_string(),
-                context.title.clone(),
-                context.mtime.timestamp(),
-            ),
-        };
-
-        let thread_timestamp =
-            self.timestamp_format
-                .format_timestamp(&self.agent_panel, timestamp, cx);
-
-        ListItem::new(SharedString::from(id))
-            .rounded()
-            .toggle_state(self.selected)
-            .spacing(ListItemSpacing::Sparse)
-            .start_slot(
-                h_flex()
-                    .w_full()
-                    .gap_2()
-                    .justify_between()
-                    .child(
-                        HighlightedLabel::new(summary, self.highlight_positions)
-                            .size(LabelSize::Small)
-                            .truncate(),
-                    )
-                    .child(
-                        Label::new(thread_timestamp)
-                            .color(Color::Muted)
-                            .size(LabelSize::XSmall),
-                    ),
-            )
-            .on_hover(self.on_hover)
-            .end_slot::<IconButton>(if self.hovered || self.selected {
-                Some(
-                    IconButton::new("delete", IconName::Trash)
-                        .shape(IconButtonShape::Square)
-                        .icon_size(IconSize::XSmall)
-                        .icon_color(Color::Muted)
-                        .tooltip(move |window, cx| {
-                            Tooltip::for_action("Delete", &RemoveSelectedThread, window, cx)
-                        })
-                        .on_click({
-                            let agent_panel = self.agent_panel.clone();
-
-                            let f: Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static> =
-                                match &self.entry {
-                                    HistoryEntry::Thread(thread) => {
-                                        let id = thread.id.clone();
-
-                                        Box::new(move |_event, _window, cx| {
-                                            agent_panel
-                                                .update(cx, |agent_panel, cx| {
-                                                    todo!()
-                                                    // this.delete_thread(&id, cx)
-                                                    //     .detach_and_log_err(cx);
-                                                })
-                                                .ok();
-                                        })
-                                    }
-                                    HistoryEntry::Context(context) => {
-                                        let path = context.path.clone();
-
-                                        Box::new(move |_event, _window, cx| {
-                                            agent_panel
-                                                .update(cx, |this, cx| {
-                                                    this.delete_context(path.clone(), cx)
-                                                        .detach_and_log_err(cx);
-                                                })
-                                                .ok();
-                                        })
-                                    }
-                                };
-                            f
-                        }),
-                )
-            } else {
-                None
-            })
-            .on_click({
-                let agent_panel = self.agent_panel.clone();
-
-                let f: Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static> = match &self.entry
-                {
-                    HistoryEntry::Thread(thread) => {
-                        let id = thread.id.clone();
-                        Box::new(move |_event, window, cx| {
-                            agent_panel
-                                .update(cx, |agent_panel, cx| {
-                                    // todo!()
-                                })
-                                .ok();
-                        })
-                    }
-                    HistoryEntry::Context(context) => {
-                        let path = context.path.clone();
-                        Box::new(move |_event, window, cx| {
-                            agent_panel
-                                .update(cx, |this, cx| {
-                                    this.open_saved_prompt_editor(path.clone(), window, cx)
-                                        .detach_and_log_err(cx);
-                                })
-                                .ok();
-                        })
-                    }
-                };
-                f
-            })
-    }
-}
-
 #[derive(Clone, Copy)]
 pub enum EntryTimeFormat {
     DateAndTime,
@@ -816,18 +700,10 @@ pub enum EntryTimeFormat {
 }
 
 impl EntryTimeFormat {
-    fn format_timestamp(
-        &self,
-        agent_panel: &WeakEntity<AgentPanel>,
-        timestamp: i64,
-        cx: &App,
-    ) -> String {
+    fn format_timestamp(&self, timestamp: i64, timezone: UtcOffset) -> String {
         let timestamp = OffsetDateTime::from_unix_timestamp(timestamp).unwrap();
-        let timezone = agent_panel
-            .read_with(cx, |this, _cx| this.local_timezone())
-            .unwrap_or(UtcOffset::UTC);
 
-        match &self {
+        match self {
             EntryTimeFormat::DateAndTime => time_format::format_localized_timestamp(
                 timestamp,
                 OffsetDateTime::now_utc(),

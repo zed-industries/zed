@@ -132,7 +132,7 @@ impl HistoryStore {
         // todo!() include the text threads in here.
 
         history_entries.sort_unstable_by_key(|entry| std::cmp::Reverse(entry.updated_at()));
-        dbg!(history_entries)
+        history_entries
     }
 
     pub fn recent_entries(&self, limit: usize, cx: &mut Context<Self>) -> Vec<HistoryEntry> {
