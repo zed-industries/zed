@@ -887,5 +887,11 @@
       // and Windows.
       "alt-l": "editor::AcceptEditPrediction"
     }
+  },
+  {
+    "context": "Pane",
+    "bindings": {
+      "ctrl-w": "editor::DeleteToPreviousWordStart"
+    }
   }
 ]
