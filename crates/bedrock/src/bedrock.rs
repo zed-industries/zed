@@ -3,6 +3,7 @@ mod models;
 use anyhow::{Context, Error, Result, anyhow};
 use aws_sdk_bedrockruntime as bedrock;
 pub use aws_sdk_bedrockruntime as bedrock_client;
+use aws_sdk_bedrockruntime::types::InferenceConfiguration;
 pub use aws_sdk_bedrockruntime::types::{
     AnyToolChoice as BedrockAnyToolChoice, AutoToolChoice as BedrockAutoToolChoice,
     ContentBlock as BedrockInnerContent, Tool as BedrockTool, ToolChoice as BedrockToolChoice,
@@ -61,6 +62,14 @@ pub async fn stream_completion(
     {
         response = response.set_tool_config(request.tools);
     }
+
+    let inference_config = InferenceConfiguration::builder()
+        .max_tokens(request.max_tokens as i32)
+        .set_temperature(request.temperature)
+        .set_top_p(request.top_p)
+        .build();
+
+    response = response.inference_config(inference_config);
 
     let output = response
         .send()
