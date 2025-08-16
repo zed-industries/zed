@@ -282,7 +282,7 @@ impl FuzzyBoundary {
         &self,
         left: char,
         right: char,
-        classifier: CharClassifier,
+        classifier: &CharClassifier,
     ) -> Option<Box<dyn Fn(DisplayPoint, &'a DisplaySnapshot) -> Option<DisplayPoint>>> {
         if is_buffer_start(left) {
             return Some(Box::new(|identifier, _| Some(identifier)));
@@ -297,7 +297,11 @@ impl FuzzyBoundary {
                 }))
             }
             Self::Sentence => {
-                if !is_sentence_end(left, right, &classifier) {
+                if let Some(find_paragraph_start) =
+                    Self::Paragraph.is_near_potential_start(left, right, classifier)
+                {
+                    return Some(find_paragraph_start);
+                } else if !is_sentence_end(left, right, classifier) {
                     return None;
                 }
                 Some(Box::new(|identifier, map| {
@@ -315,7 +319,7 @@ impl FuzzyBoundary {
         &self,
         left: char,
         right: char,
-        classifier: CharClassifier,
+        classifier: &CharClassifier,
     ) -> Option<Box<dyn Fn(DisplayPoint, &'a DisplaySnapshot) -> Option<DisplayPoint>>> {
         if is_buffer_end(right) {
             return Some(Box::new(|identifier, _| Some(identifier)));
@@ -332,7 +336,11 @@ impl FuzzyBoundary {
                 }))
             }
             Self::Sentence => {
-                if !is_sentence_end(left, right, &classifier) {
+                if let Some(find_paragraph_end) =
+                    Self::Paragraph.is_near_potential_end(left, right, classifier)
+                {
+                    return Some(find_paragraph_end);
+                } else if !is_sentence_end(left, right, &classifier) {
                     return None;
                 }
                 Some(Box::new(|identifier, _| Some(identifier)))
@@ -349,7 +357,7 @@ impl BoundedObject for FuzzyBoundary {
                 let classifier = map
                     .buffer_snapshot
                     .char_classifier_at(point.to_offset(map, Bias::Left));
-                self.is_near_potential_start(left, right, classifier)
+                self.is_near_potential_start(left, right, &classifier)
                     .map(|reach_start| (point, reach_start))
             })
         {
@@ -371,7 +379,7 @@ impl BoundedObject for FuzzyBoundary {
                 let classifier = map
                     .buffer_snapshot
                     .char_classifier_at(point.to_offset(map, Bias::Left));
-                self.is_near_potential_end(left, right, classifier)
+                self.is_near_potential_end(left, right, &classifier)
                     .map(|reach_end| (point, reach_end))
             })
         {
@@ -393,7 +401,7 @@ impl BoundedObject for FuzzyBoundary {
                 let classifier = map
                     .buffer_snapshot
                     .char_classifier_at(point.to_offset(map, Bias::Left));
-                self.is_near_potential_start(left, right, classifier)
+                self.is_near_potential_start(left, right, &classifier)
                     .map(|reach_start| (point, reach_start))
             })
         {
@@ -415,7 +423,7 @@ impl BoundedObject for FuzzyBoundary {
                 let classifier = map
                     .buffer_snapshot
                     .char_classifier_at(point.to_offset(map, Bias::Left));
-                self.is_near_potential_end(left, right, classifier)
+                self.is_near_potential_end(left, right, &classifier)
                     .map(|reach_end| (point, reach_end))
             })
         {
