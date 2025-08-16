@@ -50,7 +50,6 @@ fuzzy.workspace = true
 gpui.workspace = true
 html_to_markdown.workspace = true
 http_client.workspace = true
-indexed_docs.workspace = true
 indoc.workspace = true
 inventory.workspace = true
 itertools.workspace = true

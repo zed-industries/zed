@@ -1035,7 +1035,6 @@ fn extension_only_provides_context_server(manifest: &ExtensionManifest) -> bool 
         && manifest.grammars.is_empty()
         && manifest.language_servers.is_empty()
         && manifest.slash_commands.is_empty()
-        && manifest.indexed_docs_providers.is_empty()
         && manifest.snippets.is_none()
         && manifest.debug_locators.is_empty()
 }
