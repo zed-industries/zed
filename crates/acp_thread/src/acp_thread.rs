@@ -792,7 +792,7 @@ impl AcpThread {
         &mut self,
         update: acp::SessionUpdate,
         cx: &mut Context<Self>,
-    ) -> Result<()> {
+    ) -> Result<(), acp::Error> {
         match update {
             acp::SessionUpdate::UserMessageChunk { content } => {
                 self.push_user_content_block(None, content, cx);
@@ -804,7 +804,7 @@ impl AcpThread {
                 self.push_assistant_content_block(content, true, cx);
             }
             acp::SessionUpdate::ToolCall(tool_call) => {
-                self.upsert_tool_call(tool_call, cx);
+                self.upsert_tool_call(tool_call, cx)?;
             }
             acp::SessionUpdate::ToolCallUpdate(tool_call_update) => {
                 self.update_tool_call(tool_call_update, cx)?;
@@ -940,32 +940,40 @@ impl AcpThread {
     }
 
     /// Updates a tool call if id matches an existing entry, otherwise inserts a new one.
-    pub fn upsert_tool_call(&mut self, tool_call: acp::ToolCall, cx: &mut Context<Self>) {
+    pub fn upsert_tool_call(
+        &mut self,
+        tool_call: acp::ToolCall,
+        cx: &mut Context<Self>,
+    ) -> Result<(), acp::Error> {
         let status = ToolCallStatus::Allowed {
             status: tool_call.status,
         };
-        self.upsert_tool_call_inner(tool_call, status, cx)
+        self.upsert_tool_call_inner(tool_call.into(), status, cx)
     }
 
+    /// Fails if id does not match an existing entry.
     pub fn upsert_tool_call_inner(
         &mut self,
-        tool_call: acp::ToolCall,
+        tool_call_update: acp::ToolCallUpdate,
         status: ToolCallStatus,
         cx: &mut Context<Self>,
-    ) {
+    ) -> Result<(), acp::Error> {
         let language_registry = self.project.read(cx).languages().clone();
-        let call = ToolCall::from_acp(tool_call, status, language_registry, cx);
-        let id = call.id.clone();
+        let id = tool_call_update.id.clone();
 
-        if let Some((ix, current_call)) = self.tool_call_mut(&call.id) {
-            *current_call = call;
+        if let Some((ix, current_call)) = self.tool_call_mut(&id) {
+            current_call.update_fields(tool_call_update.fields, language_registry, cx);
+            current_call.status = status;
 
             cx.emit(AcpThreadEvent::EntryUpdated(ix));
         } else {
+            let call =
+                ToolCall::from_acp(tool_call_update.try_into()?, status, language_registry, cx);
             self.push_entry(AgentThreadEntry::ToolCall(call), cx);
         };
 
         self.resolve_locations(id, cx);
+        Ok(())
     }
 
     fn tool_call_mut(&mut self, id: &acp::ToolCallId) -> Option<(usize, &mut ToolCall)> {
@@ -1034,10 +1042,10 @@ impl AcpThread {
 
     pub fn request_tool_call_authorization(
         &mut self,
-        tool_call: acp::ToolCall,
+        tool_call: acp::ToolCallUpdate,
         options: Vec<acp::PermissionOption>,
         cx: &mut Context<Self>,
-    ) -> oneshot::Receiver<acp::PermissionOptionId> {
+    ) -> Result<oneshot::Receiver<acp::PermissionOptionId>, acp::Error> {
         let (tx, rx) = oneshot::channel();
 
         let status = ToolCallStatus::WaitingForConfirmation {
@@ -1045,9 +1053,9 @@ impl AcpThread {
             respond_tx: tx,
         };
 
-        self.upsert_tool_call_inner(tool_call, status, cx);
+        self.upsert_tool_call_inner(tool_call, status, cx)?;
         cx.emit(AcpThreadEvent::ToolAuthorizationRequired);
-        rx
+        Ok(rx)
     }
 
     pub fn authorize_tool_call(

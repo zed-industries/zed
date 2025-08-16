@@ -560,8 +560,9 @@ impl ClaudeAgentSession {
                                         thread.upsert_tool_call(
                                             claude_tool.as_acp(acp::ToolCallId(id.into())),
                                             cx,
-                                        );
+                                        )?;
                                     }
+                                    anyhow::Ok(())
                                 })
                                 .log_err();
                         }
