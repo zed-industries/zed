@@ -443,6 +443,7 @@ impl GitStore {
         client.add_entity_message_handler(Self::handle_update_repository);
         client.add_entity_message_handler(Self::handle_remove_repository);
         client.add_entity_request_handler(Self::handle_git_clone);
+        client.add_entity_request_handler(Self::handle_delete_branch);
     }
 
     pub fn is_local(&self) -> bool {
@@ -1913,6 +1914,25 @@ impl GitStore {
         repository_handle
             .update(&mut cx, |repository_handle, _| {
                 repository_handle.create_branch(branch_name)
+            })?
+            .await??;
+
+        Ok(proto::Ack {})
+    }
+
+    async fn handle_delete_branch(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::GitDeleteBranch>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::Ack> {
+        let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
+        let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
+        let branch_name = envelope.payload.branch_name;
+        let force = envelope.payload.force;
+
+        repository_handle
+            .update(&mut cx, |repository_handle, _| {
+                repository_handle.delete_branch(branch_name, force)
             })?
             .await??;
 
@@ -4157,6 +4177,28 @@ impl Repository {
                             .await?;
 
                         Ok(())
+                    }
+                }
+            },
+        )
+    }
+
+    pub fn delete_branch(
+        &mut self,
+        branch_name: String,
+        force: bool,
+    ) -> oneshot::Receiver<Result<()>> {
+        let force_flag = if force { " --force" } else { "" };
+        self.send_job(
+            Some(format!("git branch -d{force_flag} {branch_name}").into()),
+            move |repo, _cx| async move {
+                match repo {
+                    RepositoryState::Local { backend, .. } => {
+                        backend.delete_branch(branch_name, force).await
+                    }
+                    RepositoryState::Remote { .. } => {
+                        // Remote branch deletion is not supported for now
+                        anyhow::bail!("Remote branch deletion is not supported")
                     }
                 }
             },

@@ -442,3 +442,11 @@ message GetDefaultBranch {
 message GetDefaultBranchResponse {
     optional string branch = 1;
 }
+
+message GitDeleteBranch {
+    uint64 project_id = 1;
+    reserved 2;
+    uint64 repository_id = 3;
+    string branch_name = 4;
+    bool force = 5;
+}

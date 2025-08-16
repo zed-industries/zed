@@ -5,8 +5,8 @@ use collections::HashSet;
 use git::repository::Branch;
 use gpui::{
     App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, InteractiveElement,
-    IntoElement, Modifiers, ModifiersChangedEvent, ParentElement, Render, SharedString, Styled,
-    Subscription, Task, Window, rems,
+    IntoElement, KeyDownEvent, Modifiers, ModifiersChangedEvent, ParentElement, Render,
+    SharedString, Styled, Subscription, Task, Window, rems,
 };
 use picker::{Picker, PickerDelegate, PickerEditorPosition};
 use project::git_store::Repository;
@@ -22,6 +22,7 @@ pub fn register(workspace: &mut Workspace) {
     workspace.register_action(open);
     workspace.register_action(switch);
     workspace.register_action(checkout_branch);
+    workspace.register_action(delete_branch);
 }
 
 pub fn checkout_branch(
@@ -36,6 +37,15 @@ pub fn checkout_branch(
 pub fn switch(
     workspace: &mut Workspace,
     _: &zed_actions::git::Switch,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    open(workspace, &zed_actions::git::Branch, window, cx);
+}
+
+pub fn delete_branch(
+    workspace: &mut Workspace,
+    _: &zed_actions::git::DeleteBranch,
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
@@ -167,6 +177,29 @@ impl BranchList {
         self.picker
             .update(cx, |picker, _| picker.delegate.modifiers = ev.modifiers)
     }
+
+    fn handle_key_down(
+        &mut self,
+        event: &KeyDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if event.keystroke.key == "delete" || event.keystroke.key == "backspace" {
+            self.picker.update(cx, |picker, cx| {
+                let selected_index = picker.delegate.selected_index();
+                if let Some(entry) = picker.delegate.matches.get(selected_index) {
+                    // Only allow deletion of local branches that aren't current and aren't new
+                    if !entry.is_new && !entry.branch.is_remote() && !entry.branch.is_head {
+                        let branch_name = entry.branch.name().to_string();
+                        let force = event.keystroke.modifiers.shift;
+                        picker
+                            .delegate
+                            .delete_branch(branch_name.into(), force, window, cx);
+                    }
+                }
+            });
+        }
+    }
 }
 impl ModalView for BranchList {}
 impl EventEmitter<DismissEvent> for BranchList {}
@@ -183,6 +216,7 @@ impl Render for BranchList {
             .key_context("GitBranchSelector")
             .w(self.width)
             .on_modifiers_changed(cx.listener(Self::handle_modifiers_changed))
+            .on_key_down(cx.listener(Self::handle_key_down))
             .child(self.picker.clone())
             .on_mouse_down_out({
                 cx.listener(move |this, _, window, cx| {
@@ -257,6 +291,34 @@ impl BranchListDelegate {
         .detach_and_prompt_err("Failed to create branch", window, cx, |e, _, _| {
             Some(e.to_string())
         });
+        cx.emit(DismissEvent);
+    }
+
+    fn delete_branch(
+        &self,
+        branch_name: SharedString,
+        force: bool,
+        window: &mut Window,
+        cx: &mut Context<Picker<Self>>,
+    ) {
+        let Some(repo) = self.repo.clone() else {
+            return;
+        };
+
+        let branch_name_str = branch_name.to_string();
+        let action_desc = if force {
+            "Failed force deleting branch"
+        } else {
+            "Failed deleting branch"
+        };
+
+        cx.spawn(async move |_, cx| {
+            let receiver = repo.update(cx, |repo, _| repo.delete_branch(branch_name_str, force))?;
+            receiver.await??;
+
+            Ok(())
+        })
+        .detach_and_prompt_err(&action_desc, window, cx, |e, _, _| Some(e.to_string()));
         cx.emit(DismissEvent);
     }
 }
@@ -469,10 +531,30 @@ impl PickerDelegate for BranchListDelegate {
             })
             .unwrap_or_else(|| (None, None));
 
-        let icon = if let Some(default_branch) = self.default_branch.clone()
+        let mut icons = Vec::new();
+
+        // Add delete button for local branches that aren't current and aren't new
+        if !entry.is_new && !entry.branch.is_remote() && !entry.branch.is_head {
+            icons.push(
+                IconButton::new(("delete-branch", ix), IconName::Trash)
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.delegate.set_selected_index(ix, window, cx);
+                        let branch_name = this.delegate.matches[ix].branch.name().to_string();
+                        // For now, use normal delete (not force)
+                        this.delegate
+                            .delete_branch(branch_name.into(), false, window, cx);
+                    }))
+                    .tooltip(move |window, cx| {
+                        Tooltip::text("Delete branch (Hold Shift for force delete)")(window, cx)
+                    }),
+            );
+        }
+
+        // Add branch-from-default button for new branches
+        if let Some(default_branch) = self.default_branch.clone()
             && entry.is_new
         {
-            Some(
+            icons.push(
                 IconButton::new("branch-from-default", IconName::GitBranchAlt)
                     .on_click(cx.listener(move |this, _, window, cx| {
                         this.delegate.set_selected_index(ix, window, cx);
@@ -486,9 +568,13 @@ impl PickerDelegate for BranchListDelegate {
                             cx,
                         )
                     }),
-            )
-        } else {
+            );
+        }
+
+        let icon_container = if icons.is_empty() {
             None
+        } else {
+            Some(h_flex().gap_1().children(icons))
         };
 
         let branch_name = if entry.is_new {
@@ -557,7 +643,7 @@ impl PickerDelegate for BranchListDelegate {
                             }))
                         }),
                 )
-                .end_slot::<IconButton>(icon),
+                .when_some(icon_container, |item, container| item.end_slot(container)),
         )
     }
 

@@ -1702,6 +1702,40 @@ async fn test_remote_git_branches(cx: &mut TestAppContext, server_cx: &mut TestA
     });
 
     assert_eq!(server_branch.name(), "totally-new-branch");
+
+    // Switch to the previous branch and delete the new branch
+    cx.update(|cx| {
+        repository.update(cx, |repository, _cx| {
+            repository.change_branch(new_branch.to_string())
+        })
+    })
+    .await
+    .unwrap()
+    .unwrap();
+
+    cx.update(|cx| {
+        repository.update(cx, |repo, _cx| {
+            repo.delete_branch("totally-new-branch".to_string(), false)
+        })
+    })
+    .await
+    .unwrap()
+    .unwrap();
+
+    cx.run_until_parked();
+
+    let remote_branches = repository
+        .update(cx, |repository, _| repository.branches())
+        .await
+        .unwrap()
+        .unwrap();
+
+    let remote_branches = remote_branches
+        .into_iter()
+        .map(|branch| branch.name().to_string())
+        .collect::<HashSet<_>>();
+
+    assert_eq!(&remote_branches, &branches_set);
 }
 
 #[gpui::test]

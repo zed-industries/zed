@@ -350,6 +350,18 @@ impl GitRepository for FakeGitRepository {
         })
     }
 
+    fn delete_branch(&self, name: String, _force: bool) -> BoxFuture<'_, Result<()>> {
+        self.with_state_async(true, move |state| {
+            if state.current_branch_name.as_ref() == Some(&name) {
+                anyhow::bail!("Cannot delete the current branch '{}'", name);
+            }
+            if !state.branches.remove(&name) {
+                anyhow::bail!("Branch '{}' not found", name);
+            }
+            Ok(())
+        })
+    }
+
     fn blame(&self, path: RepoPath, _content: Rope) -> BoxFuture<'_, Result<git::blame::Blame>> {
         self.with_state_async(false, move |state| {
             state

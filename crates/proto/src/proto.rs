@@ -312,7 +312,8 @@ messages!(
     (GetDefaultBranch, Background),
     (GetDefaultBranchResponse, Background),
     (GitClone, Background),
-    (GitCloneResponse, Background)
+    (GitCloneResponse, Background),
+    (GitDeleteBranch, Background)
 );
 
 request_messages!(
@@ -481,7 +482,8 @@ request_messages!(
     (GetDocumentDiagnostics, GetDocumentDiagnosticsResponse),
     (PullWorkspaceDiagnostics, Ack),
     (GetDefaultBranch, GetDefaultBranchResponse),
-    (GitClone, GitCloneResponse)
+    (GitClone, GitCloneResponse),
+    (GitDeleteBranch, Ack)
 );
 
 lsp_messages!(
@@ -631,7 +633,8 @@ entity_messages!(
     GetDocumentDiagnostics,
     PullWorkspaceDiagnostics,
     GetDefaultBranch,
-    GitClone
+    GitClone,
+    GitDeleteBranch
 );
 
 entity_messages!(

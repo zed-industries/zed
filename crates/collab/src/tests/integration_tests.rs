@@ -7090,4 +7090,38 @@ async fn test_remote_git_branches(
     });
 
     assert_eq!(host_branch.name(), "totally-new-branch");
+
+    // Switch to the previous branch and delete the new branch
+    cx_b.update(|cx| {
+        repo_b.update(cx, |repository, _cx| {
+            repository.change_branch(new_branch.to_string())
+        })
+    })
+    .await
+    .unwrap()
+    .unwrap();
+
+    cx_b.update(|cx| {
+        repo_b.update(cx, |repo, _cx| {
+            repo.delete_branch("totally-new-branch".to_string(), false)
+        })
+    })
+    .await
+    .unwrap()
+    .unwrap();
+
+    executor.run_until_parked();
+
+    let branches_b = cx_b
+        .update(|cx| repo_b.update(cx, |repository, _| repository.branches()))
+        .await
+        .unwrap()
+        .unwrap();
+
+    let branches_b = branches_b
+        .into_iter()
+        .map(|branch| branch.name().to_string())
+        .collect::<HashSet<_>>();
+
+    assert_eq!(branches_b, branches_set);
 }

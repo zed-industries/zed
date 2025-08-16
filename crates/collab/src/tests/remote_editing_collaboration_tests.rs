@@ -374,6 +374,51 @@ async fn test_ssh_collaboration_git_branches(
 
     assert_eq!(server_branch.name(), "totally-new-branch");
 
+    // Switch to the previous branch and delete the new branch
+    cx_b.update(|cx| {
+        repo_b.update(cx, |repo_b, _cx| {
+            repo_b.change_branch(new_branch.to_string())
+        })
+    })
+    .await
+    .unwrap()
+    .unwrap();
+
+    cx_b.update(|cx| {
+        repo_b.update(cx, |repo_b, _cx| {
+            repo_b.delete_branch("totally-new-branch".to_string(), false)
+        })
+    })
+    .await
+    .unwrap()
+    .unwrap();
+
+    executor.run_until_parked();
+
+    let server_branches = server_cx
+        .update(|cx| {
+            headless_project.update(cx, |headless_project, cx| {
+                headless_project.git_store.update(cx, |git_store, cx| {
+                    git_store
+                        .repositories()
+                        .values()
+                        .next()
+                        .unwrap()
+                        .update(cx, |repository, _| repository.branches())
+                })
+            })
+        })
+        .await
+        .unwrap()
+        .unwrap();
+
+    let remote_branches = server_branches
+        .into_iter()
+        .map(|branch| branch.name().to_string())
+        .collect::<HashSet<_>>();
+
+    assert_eq!(&remote_branches, &branches_set);
+
     // Remove the git repository and check that all participants get the update.
     remote_fs
         .remove_dir("/project/.git".as_ref(), RemoveOptions::default())

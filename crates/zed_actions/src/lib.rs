@@ -175,7 +175,9 @@ pub mod git {
             SelectRepo,
             /// Opens the git branch selector.
             #[action(deprecated_aliases = ["branches::OpenRecent"])]
-            Branch
+            Branch,
+            /// Deletes a git branch.
+            DeleteBranch
         ]
     );
 }

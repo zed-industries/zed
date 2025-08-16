@@ -342,6 +342,7 @@ pub trait GitRepository: Send + Sync {
 
     fn change_branch(&self, name: String) -> BoxFuture<'_, Result<()>>;
     fn create_branch(&self, name: String) -> BoxFuture<'_, Result<()>>;
+    fn delete_branch(&self, name: String, force: bool) -> BoxFuture<'_, Result<()>>;
 
     fn reset(
         &self,
@@ -1087,6 +1088,50 @@ impl GitRepository for RealGitRepository {
                 let repo = repo.lock();
                 let current_commit = repo.head()?.peel_to_commit()?;
                 repo.branch(&name, &current_commit, false)?;
+                Ok(())
+            })
+            .boxed()
+    }
+
+    fn delete_branch(&self, name: String, force: bool) -> BoxFuture<'_, Result<()>> {
+        let repo = self.repository.clone();
+        let working_directory = self.working_directory();
+        let git_binary_path = self.git_binary_path.clone();
+        self.executor
+            .spawn(async move {
+                let working_directory = working_directory?;
+                
+                // Safety checks before running git command
+                {
+                    let repo = repo.lock();
+                    
+                    // Safety check: Don't delete the current branch
+                    if let Ok(head) = repo.head() {
+                        if let Some(branch_ref) = head.shorthand() {
+                            if branch_ref == name {
+                                anyhow::bail!("Cannot delete the current branch '{}'", name);
+                            }
+                        }
+                    }
+                    
+                    // Safety check: Only delete local branches
+                    if name.starts_with("refs/remotes/") || name.contains('/') && !name.starts_with("refs/heads/") {
+                        anyhow::bail!("Cannot delete remote branch '{}'", name);
+                    }
+                } // repo lock is dropped here
+                
+                let flag = if force { "-D" } else { "-d" };
+                let output = new_smol_command(&git_binary_path)
+                    .current_dir(&working_directory)
+                    .args(["branch", flag, &name])
+                    .output()
+                    .await?;
+                
+                if !output.status.success() {
+                    let stderr = String::from_utf8_lossy(&output.stderr);
+                    anyhow::bail!("Failed to delete branch '{}': {}", name, stderr);
+                }
+                
                 Ok(())
             })
             .boxed()
