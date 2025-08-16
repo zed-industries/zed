@@ -4038,6 +4038,8 @@ dependencies = [
  "minidumper",
  "paths",
  "release_channel",
+ "serde",
+ "serde_json",
  "smol",
  "workspace-hack",
 ]

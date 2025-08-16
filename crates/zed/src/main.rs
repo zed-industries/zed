@@ -8,6 +8,7 @@ use cli::FORCE_CLI_MODE_ENV_VAR_NAME;
 use client::{Client, ProxySettings, UserStore, parse_zed_link};
 use collab_ui::channel_view::ChannelView;
 use collections::HashMap;
+use crashes::InitCrashHandler;
 use db::kvp::{GLOBAL_KEY_VALUE_STORE, KEY_VALUE_STORE};
 use editor::Editor;
 use extension::ExtensionHostProxy;
@@ -269,7 +270,15 @@ pub fn main() {
     let session = app.background_executor().block(Session::new());
 
     app.background_executor()
-        .spawn(crashes::init(session_id.clone()))
+        .spawn(crashes::init(InitCrashHandler {
+            session_id: session_id.clone(),
+            zed_version: app_version.to_string(),
+            release_channel: release_channel::RELEASE_CHANNEL_NAME.clone(),
+            commit_sha: app_commit_sha
+                .as_ref()
+                .map(|sha| sha.full())
+                .unwrap_or_else(|| "no sha".to_owned()),
+        }))
         .detach();
     reliability::init_panic_hook(
         app_version,
