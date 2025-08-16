@@ -36,7 +36,6 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     Vim::action(editor, cx, Vim::helix_insert);
     Vim::action(editor, cx, Vim::helix_append);
     Vim::action(editor, cx, Vim::helix_yank);
-    Vim::action(editor, cx, Vim::helix_select_lines);
 }
 
 impl Vim {
