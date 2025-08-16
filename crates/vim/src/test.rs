@@ -8,13 +8,15 @@ use collections::HashMap;
 use command_palette::CommandPalette;
 use editor::{
     AnchorRangeExt, DisplayPoint, Editor, EditorMode, MultiBuffer, actions::DeleteLine,
-    display_map::DisplayRow, test::editor_test_context::EditorTestContext,
+    code_context_menus::CodeContextMenu, display_map::DisplayRow,
+    test::editor_test_context::EditorTestContext,
 };
 use futures::StreamExt;
-use gpui::{KeyBinding, Modifiers, MouseButton, TestAppContext};
+use gpui::{KeyBinding, Modifiers, MouseButton, TestAppContext, px};
 use language::Point;
 pub use neovim_backed_test_context::*;
 use settings::SettingsStore;
+use ui::Pixels;
 use util::test::marked_text_ranges;
 pub use vim_test_context::*;
 
@@ -969,6 +971,87 @@ async fn test_comma_w(cx: &mut gpui::TestAppContext) {
     cx.shared_state()
         .await
         .assert_eq("hellˇo hello\nhello hello");
+}
+
+#[gpui::test]
+async fn test_completion_menu_scroll_aside(cx: &mut TestAppContext) {
+    let mut cx = VimTestContext::new_typescript(cx).await;
+
+    cx.lsp
+        .set_request_handler::<lsp::request::Completion, _, _>(move |_, _| async move {
+            Ok(Some(lsp::CompletionResponse::Array(vec![
+                lsp::CompletionItem {
+                    label: "Test Item".to_string(),
+                    documentation: Some(lsp::Documentation::String(
+                        "This is some very long documentation content that will be displayed in the aside panel for scrolling.\n".repeat(50)
+                    )),
+                    ..Default::default()
+                },
+            ])))
+        });
+
+    cx.set_state("variableˇ", Mode::Insert);
+    cx.simulate_keystroke(".");
+    cx.executor().run_until_parked();
+
+    let mut initial_offset: Pixels = px(0.0);
+
+    cx.update_editor(|editor, _, _| {
+        let binding = editor.context_menu().borrow();
+        let Some(CodeContextMenu::Completions(menu)) = binding.as_ref() else {
+            panic!("Should have completions menu open");
+        };
+
+        initial_offset = menu.scroll_handle_aside.offset().y;
+    });
+
+    // The `ctrl-e` shortcut should scroll the completion menu's aside content
+    // down, so the updated offset should be lower than the initial offset.
+    cx.simulate_keystroke("ctrl-e");
+    cx.update_editor(|editor, _, _| {
+        let binding = editor.context_menu().borrow();
+        let Some(CodeContextMenu::Completions(menu)) = binding.as_ref() else {
+            panic!("Should have completions menu open");
+        };
+
+        assert!(menu.scroll_handle_aside.offset().y < initial_offset);
+    });
+
+    // The `ctrl-y` shortcut should do the inverse scrolling as `ctrl-e`, so the
+    // offset should now be the same as the initial offset.
+    cx.simulate_keystroke("ctrl-y");
+    cx.update_editor(|editor, _, _| {
+        let binding = editor.context_menu().borrow();
+        let Some(CodeContextMenu::Completions(menu)) = binding.as_ref() else {
+            panic!("Should have completions menu open");
+        };
+
+        assert_eq!(menu.scroll_handle_aside.offset().y, initial_offset);
+    });
+
+    // The `ctrl-d` shortcut should scroll the completion menu's aside content
+    // down, so the updated offset should be lower than the initial offset.
+    cx.simulate_keystroke("ctrl-d");
+    cx.update_editor(|editor, _, _| {
+        let binding = editor.context_menu().borrow();
+        let Some(CodeContextMenu::Completions(menu)) = binding.as_ref() else {
+            panic!("Should have completions menu open");
+        };
+
+        assert!(menu.scroll_handle_aside.offset().y < initial_offset);
+    });
+
+    // The `ctrl-u` shortcut should do the inverse scrolling as `ctrl-u`, so the
+    // offset should now be the same as the initial offset.
+    cx.simulate_keystroke("ctrl-u");
+    cx.update_editor(|editor, _, _| {
+        let binding = editor.context_menu().borrow();
+        let Some(CodeContextMenu::Completions(menu)) = binding.as_ref() else {
+            panic!("Should have completions menu open");
+        };
+
+        assert_eq!(menu.scroll_handle_aside.offset().y, initial_offset);
+    });
 }
 
 #[gpui::test]
