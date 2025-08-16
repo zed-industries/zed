@@ -14,12 +14,13 @@ use command_palette_hooks::{
 
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    Action, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
+    Action, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Global,
     ParentElement, Render, Styled, Task, WeakEntity, Window,
 };
 use persistence::COMMAND_PALETTE_HISTORY;
-use picker::{Picker, PickerDelegate};
+use picker::{Direction, Picker, PickerDelegate};
 use postage::{sink::Sink, stream::Stream};
+use project::search_history::{QueryInsertionBehavior, SearchHistory, SearchHistoryCursor};
 use settings::Settings;
 use ui::{HighlightedLabel, KeyBinding, ListItem, ListItemSpacing, h_flex, prelude::*, v_flex};
 use util::ResultExt;
@@ -37,6 +38,21 @@ impl ModalView for CommandPalette {}
 pub struct CommandPalette {
     picker: Entity<Picker<CommandPaletteDelegate>>,
 }
+
+struct CommandPaletteSearchHistory {
+    history: SearchHistory,
+}
+impl Default for CommandPaletteSearchHistory {
+    fn default() -> Self {
+        Self {
+            history: SearchHistory::new(
+                Some(500),
+                QueryInsertionBehavior::ReplacePreviousIfContains,
+            ),
+        }
+    }
+}
+impl Global for CommandPaletteSearchHistory {}
 
 /// Removes subsequent whitespace characters and double colons from the query.
 ///
@@ -145,6 +161,7 @@ impl Render for CommandPalette {
 
 pub struct CommandPaletteDelegate {
     latest_query: String,
+    history_cursor: SearchHistoryCursor,
     command_palette: WeakEntity<CommandPalette>,
     all_commands: Vec<Command>,
     commands: Vec<Command>,
@@ -182,6 +199,7 @@ impl CommandPaletteDelegate {
             all_commands: commands.clone(),
             matches: vec![],
             commands,
+            history_cursor: SearchHistoryCursor::default(),
             selected_ix: 0,
             previous_focus_handle,
             latest_query: String::new(),
@@ -378,11 +396,48 @@ impl PickerDelegate for CommandPaletteDelegate {
             .log_err();
     }
 
+    fn handle_history(
+        &mut self,
+        direction: Direction,
+        _window: &mut Window,
+        cx: &mut Context<Picker<Self>>,
+    ) -> Option<String> {
+        dbg!(self.selected_ix);
+        if self.selected_ix != 0 {
+            return None;
+        }
+        match direction {
+            Direction::Up => {
+                cx.update_default_global(|history: &mut CommandPaletteSearchHistory, _| {
+                    history
+                        .history
+                        .previous(&mut self.history_cursor)
+                        .map(|s| s.to_owned())
+                        .or(Some("".to_owned()))
+                })
+            }
+            Direction::Down => {
+                cx.update_default_global(|history: &mut CommandPaletteSearchHistory, _| {
+                    history
+                        .history
+                        .previous(&mut self.history_cursor)
+                        .map(|s| s.to_owned())
+                })
+            }
+        }
+    }
+
     fn confirm(&mut self, _: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
         if self.matches.is_empty() {
             self.dismissed(window, cx);
             return;
         }
+
+        cx.update_default_global(|history: &mut CommandPaletteSearchHistory, _| {
+            history
+                .history
+                .add(&mut self.history_cursor, self.latest_query.clone())
+        });
         let action_ix = self.matches[self.selected_ix].candidate_id;
         let command = self.commands.swap_remove(action_ix);
         telemetry::event!(

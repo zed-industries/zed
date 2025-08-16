@@ -2584,4 +2584,46 @@ mod test {
             assert_active_item(workspace, path!("/root/dir/file_3.rs"), "", cx);
         });
     }
+
+    #[gpui::test]
+    async fn test_command_history(cx: &mut TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        cx.set_shared_state(indoc! {"
+            The quick
+            brown fox
+            ˇjumps over
+            the lazy dog
+        "})
+            .await;
+
+        cx.simulate_shared_keystrokes(": s / o / a enter").await;
+
+        cx.shared_state().await.assert_eq(indoc! {"
+            The quick
+            brown fox
+            ˇjumps aver
+            the lazy dog
+        "});
+
+        // n.b ^ fixes a selection mismatch after u. should be removable eventually
+        cx.simulate_shared_keystrokes("u ^").await;
+
+        cx.shared_state().await.assert_eq(indoc! {"
+            The quick
+            brown fox
+            ˇjumps over
+            the lazy dog
+        "});
+
+        cx.simulate_shared_keystrokes(": up backspace e enter")
+            .await;
+
+        cx.shared_state().await.assert_eq(indoc! {"
+            The quick
+            brown fox
+            ˇjumps ever
+            the lazy dog
+        "});
+    }
 }
