@@ -81,7 +81,6 @@ members = [
     "crates/http_client_tls",
     "crates/icons",
     "crates/image_viewer",
-    "crates/indexed_docs",
     "crates/edit_prediction",
     "crates/edit_prediction_button",
     "crates/inspector_ui",
@@ -305,7 +304,6 @@ http_client = { path = "crates/http_client" }
 http_client_tls = { path = "crates/http_client_tls" }
 icons = { path = "crates/icons" }
 image_viewer = { path = "crates/image_viewer" }
-indexed_docs = { path = "crates/indexed_docs" }
 edit_prediction = { path = "crates/edit_prediction" }
 edit_prediction_button = { path = "crates/edit_prediction_button" }
 inspector_ui = { path = "crates/inspector_ui" }
