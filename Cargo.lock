@@ -20521,13 +20521,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "zed_emmet"
-version = "0.0.6"
-dependencies = [
- "zed_extension_api 0.1.0",
-]
-
-[[package]]
 name = "zed_extension_api"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
