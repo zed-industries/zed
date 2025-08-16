@@ -5351,26 +5351,22 @@ impl Render for ProjectPanel {
                     .when(show_indent_guides, |list| {
                         list.with_decoration(
                             ui::indent_guides(px(indent_size), IndentGuideColors::panel(cx))
-                                .with_compute_indents_fn(
-                                    cx.entity().clone(),
-                                    |this, range, window, cx| {
-                                        let mut items =
-                                            SmallVec::with_capacity(range.end - range.start);
-                                        this.iter_visible_entries(
-                                            range,
-                                            window,
-                                            cx,
-                                            |entry, _, entries, _, _| {
-                                                let (depth, _) =
-                                                    Self::calculate_depth_and_difference(
-                                                        entry, entries,
-                                                    );
-                                                items.push(depth);
-                                            },
-                                        );
-                                        items
-                                    },
-                                )
+                                .with_compute_indents_fn(cx.entity(), |this, range, window, cx| {
+                                    let mut items =
+                                        SmallVec::with_capacity(range.end - range.start);
+                                    this.iter_visible_entries(
+                                        range,
+                                        window,
+                                        cx,
+                                        |entry, _, entries, _, _| {
+                                            let (depth, _) = Self::calculate_depth_and_difference(
+                                                entry, entries,
+                                            );
+                                            items.push(depth);
+                                        },
+                                    );
+                                    items
+                                })
                                 .on_click(cx.listener(
                                     |this, active_indent_guide: &IndentGuideLayout, window, cx| {
                                         if window.modifiers().secondary() {
@@ -5394,7 +5390,7 @@ impl Render for ProjectPanel {
                                         }
                                     },
                                 ))
-                                .with_render_fn(cx.entity().clone(), move |this, params, _, cx| {
+                                .with_render_fn(cx.entity(), move |this, params, _, cx| {
                                     const LEFT_OFFSET: Pixels = px(14.);
                                     const PADDING_Y: Pixels = px(4.);
                                     const HITBOX_OVERDRAW: Pixels = px(3.);
@@ -5447,7 +5443,7 @@ impl Render for ProjectPanel {
                     })
                     .when(show_sticky_entries, |list| {
                         let sticky_items = ui::sticky_items(
-                            cx.entity().clone(),
+                            cx.entity(),
                             |this, range, window, cx| {
                                 let mut items = SmallVec::with_capacity(range.end - range.start);
                                 this.iter_visible_entries(
@@ -5474,7 +5470,7 @@ impl Render for ProjectPanel {
                         list.with_decoration(if show_indent_guides {
                             sticky_items.with_decoration(
                                 ui::indent_guides(px(indent_size), IndentGuideColors::panel(cx))
-                                    .with_render_fn(cx.entity().clone(), move |_, params, _, _| {
+                                    .with_render_fn(cx.entity(), move |_, params, _, _| {
                                         const LEFT_OFFSET: Pixels = px(14.);
 
                                         let indent_size = params.indent_size;

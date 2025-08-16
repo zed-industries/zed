@@ -1,9 +1,9 @@
 use crate::{
     BufferSearchBar, FocusSearch, NextHistoryQuery, PreviousHistoryQuery, ReplaceAll, ReplaceNext,
-    SearchOption, SearchOptions, SelectNextMatch, SelectPreviousMatch, ToggleCaseSensitive,
-    ToggleIncludeIgnored, ToggleRegex, ToggleReplace, ToggleWholeWord,
+    SearchOption, SearchOptions, SearchSource, SelectNextMatch, SelectPreviousMatch,
+    ToggleCaseSensitive, ToggleIncludeIgnored, ToggleRegex, ToggleReplace, ToggleWholeWord,
     buffer_search::Deploy,
-    search_bar::{input_base_styles, render_action_button, render_text_input},
+    search_bar::{ActionButtonState, input_base_styles, render_action_button, render_text_input},
 };
 use anyhow::Context as _;
 use collections::HashMap;
@@ -1665,7 +1665,7 @@ impl ProjectSearchBar {
         });
     }
 
-    fn toggle_search_option(
+    pub(crate) fn toggle_search_option(
         &mut self,
         option: SearchOptions,
         window: &mut Window,
@@ -1962,17 +1962,69 @@ impl Render for ProjectSearchBar {
             .child(
                 h_flex()
                     .gap_1()
-                    .child(
-                        SearchOption::CaseSensitive
-                            .as_button(search.search_options, focus_handle.clone()),
-                    )
-                    .child(
-                        SearchOption::WholeWord
-                            .as_button(search.search_options, focus_handle.clone()),
-                    )
-                    .child(
-                        SearchOption::Regex.as_button(search.search_options, focus_handle.clone()),
-                    ),
+                    .child(SearchOption::CaseSensitive.as_button(
+                        search.search_options,
+                        SearchSource::Project(cx),
+                        focus_handle.clone(),
+                    ))
+                    .child(SearchOption::WholeWord.as_button(
+                        search.search_options,
+                        SearchSource::Project(cx),
+                        focus_handle.clone(),
+                    ))
+                    .child(SearchOption::Regex.as_button(
+                        search.search_options,
+                        SearchSource::Project(cx),
+                        focus_handle.clone(),
+                    )),
+            );
+
+        let query_focus = search.query_editor.focus_handle(cx);
+
+        let matches_column = h_flex()
+            .pl_2()
+            .ml_2()
+            .border_l_1()
+            .border_color(theme_colors.border_variant)
+            .child(render_action_button(
+                "project-search-nav-button",
+                IconName::ChevronLeft,
+                search
+                    .active_match_index
+                    .is_none()
+                    .then_some(ActionButtonState::Disabled),
+                "Select Previous Match",
+                &SelectPreviousMatch,
+                query_focus.clone(),
+            ))
+            .child(render_action_button(
+                "project-search-nav-button",
+                IconName::ChevronRight,
+                search
+                    .active_match_index
+                    .is_none()
+                    .then_some(ActionButtonState::Disabled),
+                "Select Next Match",
+                &SelectNextMatch,
+                query_focus,
+            ))
+            .child(
+                div()
+                    .id("matches")
+                    .ml_2()
+                    .min_w(rems_from_px(40.))
+                    .child(Label::new(match_text).size(LabelSize::Small).color(
+                        if search.active_match_index.is_some() {
+                            Color::Default
+                        } else {
+                            Color::Disabled
+                        },
+                    ))
+                    .when(limit_reached, |el| {
+                        el.tooltip(Tooltip::text(
+                            "Search limits reached.\nTry narrowing your search.",
+                        ))
+                    }),
             );
 
         let mode_column = h_flex()
@@ -2012,59 +2064,18 @@ impl Render for ProjectSearchBar {
                 self.active_project_search
                     .as_ref()
                     .map(|search| search.read(cx).replace_enabled)
-                    .unwrap_or_default(),
+                    .and_then(|enabled| enabled.then_some(ActionButtonState::Toggled)),
                 "Toggle Replace",
                 &ToggleReplace,
                 focus_handle.clone(),
-            ));
-
-        let query_focus = search.query_editor.focus_handle(cx);
-
-        let matches_column = h_flex()
-            .pl_2()
-            .ml_2()
-            .border_l_1()
-            .border_color(theme_colors.border_variant)
-            .child(render_action_button(
-                "project-search-nav-button",
-                IconName::ChevronLeft,
-                search.active_match_index.is_some(),
-                "Select Previous Match",
-                &SelectPreviousMatch,
-                query_focus.clone(),
             ))
-            .child(render_action_button(
-                "project-search-nav-button",
-                IconName::ChevronRight,
-                search.active_match_index.is_some(),
-                "Select Next Match",
-                &SelectNextMatch,
-                query_focus,
-            ))
-            .child(
-                div()
-                    .id("matches")
-                    .ml_2()
-                    .min_w(rems_from_px(40.))
-                    .child(Label::new(match_text).size(LabelSize::Small).color(
-                        if search.active_match_index.is_some() {
-                            Color::Default
-                        } else {
-                            Color::Disabled
-                        },
-                    ))
-                    .when(limit_reached, |el| {
-                        el.tooltip(Tooltip::text(
-                            "Search limits reached.\nTry narrowing your search.",
-                        ))
-                    }),
-            );
+            .child(matches_column);
 
         let search_line = h_flex()
             .w_full()
             .gap_2()
             .child(query_column)
-            .child(h_flex().min_w_64().child(mode_column).child(matches_column));
+            .child(mode_column);
 
         let replace_line = search.replace_enabled.then(|| {
             let replace_column = input_base_styles(InputPanel::Replacement)
@@ -2078,7 +2089,7 @@ impl Render for ProjectSearchBar {
                 .child(render_action_button(
                     "project-search-replace-button",
                     IconName::ReplaceNext,
-                    true,
+                    Default::default(),
                     "Replace Next Match",
                     &ReplaceNext,
                     focus_handle.clone(),
@@ -2086,7 +2097,7 @@ impl Render for ProjectSearchBar {
                 .child(render_action_button(
                     "project-search-replace-button",
                     IconName::ReplaceAll,
-                    true,
+                    Default::default(),
                     "Replace All Matches",
                     &ReplaceAll,
                     focus_handle,
@@ -2128,10 +2139,11 @@ impl Render for ProjectSearchBar {
                             this.toggle_opened_only(window, cx);
                         })),
                 )
-                .child(
-                    SearchOption::IncludeIgnored
-                        .as_button(search.search_options, focus_handle.clone()),
-                );
+                .child(SearchOption::IncludeIgnored.as_button(
+                    search.search_options,
+                    SearchSource::Project(cx),
+                    focus_handle.clone(),
+                ));
             h_flex()
                 .w_full()
                 .gap_2()

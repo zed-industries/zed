@@ -400,6 +400,7 @@ impl SshSocket {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
+            .args(self.connection_options.additional_args())
             .args(["-o", "ControlMaster=no", "-o"])
             .arg(format!("ControlPath={}", self.socket_path.display()))
     }
@@ -410,6 +411,7 @@ impl SshSocket {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
+            .args(self.connection_options.additional_args())
             .envs(self.envs.clone())
     }
 
@@ -417,22 +419,26 @@ impl SshSocket {
     // On Linux, we use the `ControlPath` option to create a socket file that ssh can use to
     #[cfg(not(target_os = "windows"))]
     fn ssh_args(&self) -> SshArgs {
+        let mut arguments = self.connection_options.additional_args();
+        arguments.extend(vec![
+            "-o".to_string(),
+            "ControlMaster=no".to_string(),
+            "-o".to_string(),
+            format!("ControlPath={}", self.socket_path.display()),
+            self.connection_options.ssh_url(),
+        ]);
         SshArgs {
-            arguments: vec![
-                "-o".to_string(),
-                "ControlMaster=no".to_string(),
-                "-o".to_string(),
-                format!("ControlPath={}", self.socket_path.display()),
-                self.connection_options.ssh_url(),
-            ],
+            arguments,
             envs: None,
         }
     }
 
     #[cfg(target_os = "windows")]
     fn ssh_args(&self) -> SshArgs {
+        let mut arguments = self.connection_options.additional_args();
+        arguments.push(self.connection_options.ssh_url());
         SshArgs {
-            arguments: vec![self.connection_options.ssh_url()],
+            arguments,
             envs: Some(self.envs.clone()),
         }
     }
@@ -1484,20 +1490,17 @@ impl RemoteConnection for SshRemoteConnection {
             identifier = &unique_identifier,
         );
 
-        if let Some(rust_log) = std::env::var("RUST_LOG").ok() {
-            start_proxy_command = format!(
-                "RUST_LOG={} {}",
-                shlex::try_quote(&rust_log).unwrap(),
-                start_proxy_command
-            )
+        for env_var in ["RUST_LOG", "RUST_BACKTRACE", "ZED_GENERATE_MINIDUMPS"] {
+            if let Some(value) = std::env::var(env_var).ok() {
+                start_proxy_command = format!(
+                    "{}={} {} ",
+                    env_var,
+                    shlex::try_quote(&value).unwrap(),
+                    start_proxy_command,
+                );
+            }
         }
-        if let Some(rust_backtrace) = std::env::var("RUST_BACKTRACE").ok() {
-            start_proxy_command = format!(
-                "RUST_BACKTRACE={} {}",
-                shlex::try_quote(&rust_backtrace).unwrap(),
-                start_proxy_command
-            )
-        }
+
         if reconnect {
             start_proxy_command.push_str(" --reconnect");
         }
@@ -2235,8 +2238,7 @@ impl SshRemoteConnection {
 
             #[cfg(not(target_os = "windows"))]
             {
-                run_cmd(Command::new("gzip").args(["-9", "-f", &bin_path.to_string_lossy()]))
-                    .await?;
+                run_cmd(Command::new("gzip").args(["-f", &bin_path.to_string_lossy()])).await?;
             }
             #[cfg(target_os = "windows")]
             {
@@ -2468,7 +2470,7 @@ impl ChannelClient {
             },
             async {
                 smol::Timer::after(timeout).await;
-                anyhow::bail!("Timeout detected")
+                anyhow::bail!("Timed out resyncing remote client")
             },
         )
         .await
@@ -2482,7 +2484,7 @@ impl ChannelClient {
             },
             async {
                 smol::Timer::after(timeout).await;
-                anyhow::bail!("Timeout detected")
+                anyhow::bail!("Timed out pinging remote client")
             },
         )
         .await

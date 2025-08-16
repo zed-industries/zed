@@ -465,7 +465,7 @@ impl AgentConfiguration {
             "modifier-send",
             "Use modifier to submit a message",
             Some(
-                "Make a modifier (cmd-enter on macOS, ctrl-enter on Linux) required to send messages.".into(),
+                "Make a modifier (cmd-enter on macOS, ctrl-enter on Linux or Windows) required to send messages.".into(),
             ),
             use_modifier_to_send,
             move |state, _window, cx| {

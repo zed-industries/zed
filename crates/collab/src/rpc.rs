@@ -1,14 +1,6 @@
 mod connection_pool;
 
-use crate::api::billing::find_or_create_billing_customer;
 use crate::api::{CloudflareIpCountryHeader, SystemIdHeader};
-use crate::db::billing_subscription::SubscriptionKind;
-use crate::llm::db::LlmDatabase;
-use crate::llm::{
-    AGENT_EXTENDED_TRIAL_FEATURE_FLAG, BYPASS_ACCOUNT_AGE_CHECK_FEATURE_FLAG, LlmTokenClaims,
-    MIN_ACCOUNT_AGE_FOR_LLM_USE,
-};
-use crate::stripe_client::StripeCustomerId;
 use crate::{
     AppState, Error, Result, auth,
     db::{
@@ -37,7 +29,6 @@ use axum::{
     response::IntoResponse,
     routing::get,
 };
-use chrono::Utc;
 use collections::{HashMap, HashSet};
 pub use connection_pool::{ConnectionPool, ZedVersion};
 use core::fmt::{self, Debug, Formatter};
@@ -148,13 +139,6 @@ pub enum Principal {
 }
 
 impl Principal {
-    fn user(&self) -> &User {
-        match self {
-            Principal::User(user) => user,
-            Principal::Impersonated { user, .. } => user,
-        }
-    }
-
     fn update_span(&self, span: &tracing::Span) {
         match &self {
             Principal::User(user) => {
@@ -218,6 +202,7 @@ struct Session {
     /// The GeoIP country code for the user.
     #[allow(unused)]
     geoip_country_code: Option<String>,
+    #[allow(unused)]
     system_id: Option<String>,
     _executor: Executor,
 }
@@ -463,9 +448,6 @@ impl Server {
             .add_request_handler(follow)
             .add_message_handler(unfollow)
             .add_message_handler(update_followers)
-            .add_request_handler(get_private_user_info)
-            .add_request_handler(get_llm_api_token)
-            .add_request_handler(accept_terms_of_service)
             .add_message_handler(acknowledge_channel_message)
             .add_message_handler(acknowledge_buffer_version)
             .add_request_handler(get_supermaven_api_key)
@@ -1000,8 +982,6 @@ impl Server {
                         .await?;
                 }
 
-                update_user_plan(session).await?;
-
                 let contacts = self.app_state.db.get_contacts(user.id).await?;
 
                 {
@@ -1079,53 +1059,6 @@ impl Server {
             }
         }
         Ok(())
-    }
-
-    pub async fn update_plan_for_user(
-        self: &Arc<Self>,
-        user_id: UserId,
-        update_user_plan: proto::UpdateUserPlan,
-    ) -> Result<()> {
-        let pool = self.connection_pool.lock();
-        for connection_id in pool.user_connection_ids(user_id) {
-            self.peer
-                .send(connection_id, update_user_plan.clone())
-                .trace_err();
-        }
-
-        Ok(())
-    }
-
-    /// This is the legacy way of updating the user's plan, where we fetch the data to construct the `UpdateUserPlan`
-    /// message on the Collab server.
-    ///
-    /// The new way is to receive the data from Cloud via the `POST /users/:id/update_plan` endpoint.
-    pub async fn update_plan_for_user_legacy(self: &Arc<Self>, user_id: UserId) -> Result<()> {
-        let user = self
-            .app_state
-            .db
-            .get_user_by_id(user_id)
-            .await?
-            .context("user not found")?;
-
-        let update_user_plan = make_update_user_plan_message(
-            &user,
-            user.admin,
-            &self.app_state.db,
-            self.app_state.llm_db.clone(),
-        )
-        .await?;
-
-        self.update_plan_for_user(user_id, update_user_plan).await
-    }
-
-    pub async fn refresh_llm_tokens_for_user(self: &Arc<Self>, user_id: UserId) {
-        let pool = self.connection_pool.lock();
-        for connection_id in pool.user_connection_ids(user_id) {
-            self.peer
-                .send(connection_id, proto::RefreshLlmToken {})
-                .trace_err();
-        }
     }
 
     pub async fn snapshot(self: &Arc<Self>) -> ServerSnapshot<'_> {
@@ -2882,214 +2815,6 @@ fn should_auto_subscribe_to_channels(version: ZedVersion) -> bool {
     version.0.minor() < 139
 }
 
-async fn current_plan(db: &Arc<Database>, user_id: UserId, is_staff: bool) -> Result<proto::Plan> {
-    if is_staff {
-        return Ok(proto::Plan::ZedPro);
-    }
-
-    let subscription = db.get_active_billing_subscription(user_id).await?;
-    let subscription_kind = subscription.and_then(|subscription| subscription.kind);
-
-    let plan = if let Some(subscription_kind) = subscription_kind {
-        match subscription_kind {
-            SubscriptionKind::ZedPro => proto::Plan::ZedPro,
-            SubscriptionKind::ZedProTrial => proto::Plan::ZedProTrial,
-            SubscriptionKind::ZedFree => proto::Plan::Free,
-        }
-    } else {
-        proto::Plan::Free
-    };
-
-    Ok(plan)
-}
-
-async fn make_update_user_plan_message(
-    user: &User,
-    is_staff: bool,
-    db: &Arc<Database>,
-    llm_db: Option<Arc<LlmDatabase>>,
-) -> Result<proto::UpdateUserPlan> {
-    let feature_flags = db.get_user_flags(user.id).await?;
-    let plan = current_plan(db, user.id, is_staff).await?;
-    let billing_customer = db.get_billing_customer_by_user_id(user.id).await?;
-    let billing_preferences = db.get_billing_preferences(user.id).await?;
-
-    let (subscription_period, usage) = if let Some(llm_db) = llm_db {
-        let subscription = db.get_active_billing_subscription(user.id).await?;
-
-        let subscription_period =
-            crate::db::billing_subscription::Model::current_period(subscription, is_staff);
-
-        let usage = if let Some((period_start_at, period_end_at)) = subscription_period {
-            llm_db
-                .get_subscription_usage_for_period(user.id, period_start_at, period_end_at)
-                .await?
-        } else {
-            None
-        };
-
-        (subscription_period, usage)
-    } else {
-        (None, None)
-    };
-
-    let bypass_account_age_check = feature_flags
-        .iter()
-        .any(|flag| flag == BYPASS_ACCOUNT_AGE_CHECK_FEATURE_FLAG);
-    let account_too_young = !matches!(plan, proto::Plan::ZedPro)
-        && !bypass_account_age_check
-        && user.account_age() < MIN_ACCOUNT_AGE_FOR_LLM_USE;
-
-    Ok(proto::UpdateUserPlan {
-        plan: plan.into(),
-        trial_started_at: billing_customer
-            .as_ref()
-            .and_then(|billing_customer| billing_customer.trial_started_at)
-            .map(|trial_started_at| trial_started_at.and_utc().timestamp() as u64),
-        is_usage_based_billing_enabled: if is_staff {
-            Some(true)
-        } else {
-            billing_preferences.map(|preferences| preferences.model_request_overages_enabled)
-        },
-        subscription_period: subscription_period.map(|(started_at, ended_at)| {
-            proto::SubscriptionPeriod {
-                started_at: started_at.timestamp() as u64,
-                ended_at: ended_at.timestamp() as u64,
-            }
-        }),
-        account_too_young: Some(account_too_young),
-        has_overdue_invoices: billing_customer
-            .map(|billing_customer| billing_customer.has_overdue_invoices),
-        usage: Some(
-            usage
-                .map(|usage| subscription_usage_to_proto(plan, usage, &feature_flags))
-                .unwrap_or_else(|| make_default_subscription_usage(plan, &feature_flags)),
-        ),
-    })
-}
-
-fn model_requests_limit(
-    plan: cloud_llm_client::Plan,
-    feature_flags: &Vec<String>,
-) -> cloud_llm_client::UsageLimit {
-    match plan.model_requests_limit() {
-        cloud_llm_client::UsageLimit::Limited(limit) => {
-            let limit = if plan == cloud_llm_client::Plan::ZedProTrial
-                && feature_flags
-                    .iter()
-                    .any(|flag| flag == AGENT_EXTENDED_TRIAL_FEATURE_FLAG)
-            {
-                1_000
-            } else {
-                limit
-            };
-
-            cloud_llm_client::UsageLimit::Limited(limit)
-        }
-        cloud_llm_client::UsageLimit::Unlimited => cloud_llm_client::UsageLimit::Unlimited,
-    }
-}
-
-fn subscription_usage_to_proto(
-    plan: proto::Plan,
-    usage: crate::llm::db::subscription_usage::Model,
-    feature_flags: &Vec<String>,
-) -> proto::SubscriptionUsage {
-    let plan = match plan {
-        proto::Plan::Free => cloud_llm_client::Plan::ZedFree,
-        proto::Plan::ZedPro => cloud_llm_client::Plan::ZedPro,
-        proto::Plan::ZedProTrial => cloud_llm_client::Plan::ZedProTrial,
-    };
-
-    proto::SubscriptionUsage {
-        model_requests_usage_amount: usage.model_requests as u32,
-        model_requests_usage_limit: Some(proto::UsageLimit {
-            variant: Some(match model_requests_limit(plan, feature_flags) {
-                cloud_llm_client::UsageLimit::Limited(limit) => {
-                    proto::usage_limit::Variant::Limited(proto::usage_limit::Limited {
-                        limit: limit as u32,
-                    })
-                }
-                cloud_llm_client::UsageLimit::Unlimited => {
-                    proto::usage_limit::Variant::Unlimited(proto::usage_limit::Unlimited {})
-                }
-            }),
-        }),
-        edit_predictions_usage_amount: usage.edit_predictions as u32,
-        edit_predictions_usage_limit: Some(proto::UsageLimit {
-            variant: Some(match plan.edit_predictions_limit() {
-                cloud_llm_client::UsageLimit::Limited(limit) => {
-                    proto::usage_limit::Variant::Limited(proto::usage_limit::Limited {
-                        limit: limit as u32,
-                    })
-                }
-                cloud_llm_client::UsageLimit::Unlimited => {
-                    proto::usage_limit::Variant::Unlimited(proto::usage_limit::Unlimited {})
-                }
-            }),
-        }),
-    }
-}
-
-fn make_default_subscription_usage(
-    plan: proto::Plan,
-    feature_flags: &Vec<String>,
-) -> proto::SubscriptionUsage {
-    let plan = match plan {
-        proto::Plan::Free => cloud_llm_client::Plan::ZedFree,
-        proto::Plan::ZedPro => cloud_llm_client::Plan::ZedPro,
-        proto::Plan::ZedProTrial => cloud_llm_client::Plan::ZedProTrial,
-    };
-
-    proto::SubscriptionUsage {
-        model_requests_usage_amount: 0,
-        model_requests_usage_limit: Some(proto::UsageLimit {
-            variant: Some(match model_requests_limit(plan, feature_flags) {
-                cloud_llm_client::UsageLimit::Limited(limit) => {
-                    proto::usage_limit::Variant::Limited(proto::usage_limit::Limited {
-                        limit: limit as u32,
-                    })
-                }
-                cloud_llm_client::UsageLimit::Unlimited => {
-                    proto::usage_limit::Variant::Unlimited(proto::usage_limit::Unlimited {})
-                }
-            }),
-        }),
-        edit_predictions_usage_amount: 0,
-        edit_predictions_usage_limit: Some(proto::UsageLimit {
-            variant: Some(match plan.edit_predictions_limit() {
-                cloud_llm_client::UsageLimit::Limited(limit) => {
-                    proto::usage_limit::Variant::Limited(proto::usage_limit::Limited {
-                        limit: limit as u32,
-                    })
-                }
-                cloud_llm_client::UsageLimit::Unlimited => {
-                    proto::usage_limit::Variant::Unlimited(proto::usage_limit::Unlimited {})
-                }
-            }),
-        }),
-    }
-}
-
-async fn update_user_plan(session: &Session) -> Result<()> {
-    let db = session.db().await;
-
-    let update_user_plan = make_update_user_plan_message(
-        session.principal.user(),
-        session.is_staff(),
-        &db.0,
-        session.app_state.llm_db.clone(),
-    )
-    .await?;
-
-    session
-        .peer
-        .send(session.connection_id, update_user_plan)
-        .trace_err();
-
-    Ok(())
-}
-
 async fn subscribe_to_channels(
     _: proto::SubscribeToChannels,
     session: MessageContext,
@@ -4255,139 +3980,6 @@ async fn mark_notification_as_read(
         notifications,
     );
     response.send(proto::Ack {})?;
-    Ok(())
-}
-
-/// Get the current users information
-async fn get_private_user_info(
-    _request: proto::GetPrivateUserInfo,
-    response: Response<proto::GetPrivateUserInfo>,
-    session: MessageContext,
-) -> Result<()> {
-    let db = session.db().await;
-
-    let metrics_id = db.get_user_metrics_id(session.user_id()).await?;
-    let user = db
-        .get_user_by_id(session.user_id())
-        .await?
-        .context("user not found")?;
-    let flags = db.get_user_flags(session.user_id()).await?;
-
-    response.send(proto::GetPrivateUserInfoResponse {
-        metrics_id,
-        staff: user.admin,
-        flags,
-        accepted_tos_at: user.accepted_tos_at.map(|t| t.and_utc().timestamp() as u64),
-    })?;
-    Ok(())
-}
-
-/// Accept the terms of service (tos) on behalf of the current user
-async fn accept_terms_of_service(
-    _request: proto::AcceptTermsOfService,
-    response: Response<proto::AcceptTermsOfService>,
-    session: MessageContext,
-) -> Result<()> {
-    let db = session.db().await;
-
-    let accepted_tos_at = Utc::now();
-    db.set_user_accepted_tos_at(session.user_id(), Some(accepted_tos_at.naive_utc()))
-        .await?;
-
-    response.send(proto::AcceptTermsOfServiceResponse {
-        accepted_tos_at: accepted_tos_at.timestamp() as u64,
-    })?;
-
-    // When the user accepts the terms of service, we want to refresh their LLM
-    // token to grant access.
-    session
-        .peer
-        .send(session.connection_id, proto::RefreshLlmToken {})?;
-
-    Ok(())
-}
-
-async fn get_llm_api_token(
-    _request: proto::GetLlmToken,
-    response: Response<proto::GetLlmToken>,
-    session: MessageContext,
-) -> Result<()> {
-    let db = session.db().await;
-
-    let flags = db.get_user_flags(session.user_id()).await?;
-
-    let user_id = session.user_id();
-    let user = db
-        .get_user_by_id(user_id)
-        .await?
-        .with_context(|| format!("user {user_id} not found"))?;
-
-    if user.accepted_tos_at.is_none() {
-        Err(anyhow!("terms of service not accepted"))?
-    }
-
-    let stripe_client = session
-        .app_state
-        .stripe_client
-        .as_ref()
-        .context("failed to retrieve Stripe client")?;
-
-    let stripe_billing = session
-        .app_state
-        .stripe_billing
-        .as_ref()
-        .context("failed to retrieve Stripe billing object")?;
-
-    let billing_customer = if let Some(billing_customer) =
-        db.get_billing_customer_by_user_id(user.id).await?
-    {
-        billing_customer
-    } else {
-        let customer_id = stripe_billing
-            .find_or_create_customer_by_email(user.email_address.as_deref())
-            .await?;
-
-        find_or_create_billing_customer(&session.app_state, stripe_client.as_ref(), &customer_id)
-            .await?
-            .context("billing customer not found")?
-    };
-
-    let billing_subscription =
-        if let Some(billing_subscription) = db.get_active_billing_subscription(user.id).await? {
-            billing_subscription
-        } else {
-            let stripe_customer_id =
-                StripeCustomerId(billing_customer.stripe_customer_id.clone().into());
-
-            let stripe_subscription = stripe_billing
-                .subscribe_to_zed_free(stripe_customer_id)
-                .await?;
-
-            db.create_billing_subscription(&db::CreateBillingSubscriptionParams {
-                billing_customer_id: billing_customer.id,
-                kind: Some(SubscriptionKind::ZedFree),
-                stripe_subscription_id: stripe_subscription.id.to_string(),
-                stripe_subscription_status: stripe_subscription.status.into(),
-                stripe_cancellation_reason: None,
-                stripe_current_period_start: Some(stripe_subscription.current_period_start),
-                stripe_current_period_end: Some(stripe_subscription.current_period_end),
-            })
-            .await?
-        };
-
-    let billing_preferences = db.get_billing_preferences(user.id).await?;
-
-    let token = LlmTokenClaims::create(
-        &user,
-        session.is_staff(),
-        billing_customer,
-        billing_preferences,
-        &flags,
-        billing_subscription,
-        session.system_id.clone(),
-        &session.app_state.config,
-    )?;
-    response.send(proto::GetLlmTokenResponse { token })?;
     Ok(())
 }
 

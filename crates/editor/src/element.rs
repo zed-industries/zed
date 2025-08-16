@@ -7815,7 +7815,7 @@ impl Element for EditorElement {
                         min_lines,
                         max_lines,
                     } => {
-                        let editor_handle = cx.entity().clone();
+                        let editor_handle = cx.entity();
                         let max_line_number_width =
                             self.max_line_number_width(&editor.snapshot(window, cx), window);
                         window.request_measured_layout(
