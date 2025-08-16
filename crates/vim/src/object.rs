@@ -1444,14 +1444,15 @@ fn paragraph(
                     return None;
                 }
 
-                let paragraph_start_row = paragraph_start.row();
-                if paragraph_start_row.0 != 0 {
+                let paragraph_start_buffer_point = paragraph_start.to_point(map);
+                if paragraph_start_buffer_point.row != 0 {
                     let previous_paragraph_last_line_start =
-                        Point::new(paragraph_start_row.0 - 1, 0).to_display_point(map);
+                        Point::new(paragraph_start_buffer_point.row - 1, 0).to_display_point(map);
                     paragraph_start = start_of_paragraph(map, previous_paragraph_last_line_start);
                 }
             } else {
-                let mut start_row = paragraph_end_row.0 + 1;
+                let paragraph_end_buffer_point = paragraph_end.to_point(map);
+                let mut start_row = paragraph_end_buffer_point.row + 1;
                 if i > 0 {
                     start_row += 1;
                 }
@@ -1901,6 +1902,90 @@ mod test {
                 .await
                 .assert_matches();
         }
+    }
+
+    #[gpui::test]
+    async fn test_change_paragraph_object_with_soft_wrap(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        const WRAPPING_EXAMPLE: &str = indoc! {"
+            ˇFirst paragraph with very long text that will wrap when soft wrap is enabled and line length is ˇlimited making it span multiple display lines.
+
+            ˇSecond paragraph that is also quite long and will definitely wrap under soft wrap conditions and ˇshould be handled correctly.
+
+            ˇThird paragraph with additional long text content that will also wrap when line length is constrained by the wrapping ˇsettings.ˇ
+        "};
+
+        cx.set_shared_wrap(20).await;
+
+        cx.simulate_at_each_offset("c i p", WRAPPING_EXAMPLE)
+            .await
+            .assert_matches();
+        cx.simulate_at_each_offset("c a p", WRAPPING_EXAMPLE)
+            .await
+            .assert_matches();
+    }
+
+    #[gpui::test]
+    async fn test_delete_paragraph_object_with_soft_wrap(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        const WRAPPING_EXAMPLE: &str = indoc! {"
+            ˇFirst paragraph with very long text that will wrap when soft wrap is enabled and line length is ˇlimited making it span multiple display lines.
+
+            ˇSecond paragraph that is also quite long and will definitely wrap under soft wrap conditions and ˇshould be handled correctly.
+
+            ˇThird paragraph with additional long text content that will also wrap when line length is constrained by the wrapping ˇsettings.ˇ
+        "};
+
+        cx.set_shared_wrap(20).await;
+
+        cx.simulate_at_each_offset("d i p", WRAPPING_EXAMPLE)
+            .await
+            .assert_matches();
+        cx.simulate_at_each_offset("d a p", WRAPPING_EXAMPLE)
+            .await
+            .assert_matches();
+    }
+
+    #[gpui::test]
+    async fn test_delete_paragraph_whitespace(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        cx.set_shared_state(indoc! {"
+            a
+                   ˇ•
+            aaaaaaaaaaaaa
+        "})
+            .await;
+
+        cx.simulate_shared_keystrokes("d i p").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+            a
+            aaaaaaaˇaaaaaa
+        "});
+    }
+
+    #[gpui::test]
+    async fn test_visual_paragraph_object_with_soft_wrap(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        const WRAPPING_EXAMPLE: &str = indoc! {"
+            ˇFirst paragraph with very long text that will wrap when soft wrap is enabled and line length is ˇlimited making it span multiple display lines.
+
+            ˇSecond paragraph that is also quite long and will definitely wrap under soft wrap conditions and ˇshould be handled correctly.
+
+            ˇThird paragraph with additional long text content that will also wrap when line length is constrained by the wrapping ˇsettings.ˇ
+        "};
+
+        cx.set_shared_wrap(20).await;
+
+        cx.simulate_at_each_offset("v i p", WRAPPING_EXAMPLE)
+            .await
+            .assert_matches();
+        cx.simulate_at_each_offset("v a p", WRAPPING_EXAMPLE)
+            .await
+            .assert_matches();
     }
 
     // Test string with "`" for opening surrounders and "'" for closing surrounders
