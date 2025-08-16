@@ -2,7 +2,7 @@ use acp_thread::{
     AcpThread, AcpThreadEvent, AgentThreadEntry, AssistantMessage, AssistantMessageChunk,
     LoadError, MentionUri, ThreadStatus, ToolCall, ToolCallContent, ToolCallStatus, UserMessageId,
 };
-use acp_thread::{AgentConnection, Plan};
+use acp_thread::{AgentConnection, AuthAction, Plan};
 use action_log::ActionLog;
 use agent::{TextThreadStore, ThreadStore};
 use agent_client_protocol::{self as acp};
@@ -1828,50 +1828,99 @@ impl AcpThreadView {
                     ),
             );
 
-        if let LoadError::Unsupported {
-            upgrade_message,
-            upgrade_command,
-            ..
-        } = &e
-        {
-            let upgrade_message = upgrade_message.clone();
-            let upgrade_command = upgrade_command.clone();
-            container = container.child(Button::new("upgrade", upgrade_message).on_click(
-                cx.listener(move |this, _, window, cx| {
-                    this.workspace
-                        .update(cx, |workspace, cx| {
-                            let project = workspace.project().read(cx);
-                            let cwd = project.first_project_directory(cx);
-                            let shell = project.terminal_settings(&cwd, cx).shell.clone();
-                            let spawn_in_terminal = task::SpawnInTerminal {
-                                id: task::TaskId("install".to_string()),
-                                full_label: upgrade_command.clone(),
-                                label: upgrade_command.clone(),
-                                command: Some(upgrade_command.clone()),
-                                args: Vec::new(),
-                                command_label: upgrade_command.clone(),
-                                cwd,
-                                env: Default::default(),
-                                use_new_terminal: true,
-                                allow_concurrent_runs: true,
-                                reveal: Default::default(),
-                                reveal_target: Default::default(),
-                                hide: Default::default(),
-                                shell,
-                                show_summary: true,
-                                show_command: true,
-                                show_rerun: false,
-                            };
-                            workspace
-                                .spawn_in_terminal(spawn_in_terminal, window, cx)
-                                .detach();
-                        })
-                        .ok();
-                }),
-            ));
+        match e {
+            LoadError::Unsupported {
+                upgrade_message,
+                upgrade_command,
+                ..
+            } => {
+                let upgrade_message = upgrade_message.clone();
+                let upgrade_command = upgrade_command.clone();
+                container = container.child(Button::new("upgrade", upgrade_message).on_click(
+                    cx.listener(move |this, _, window, cx| {
+                        this.workspace
+                            .update(cx, |workspace, cx| {
+                                let project = workspace.project().read(cx);
+                                let cwd = project.first_project_directory(cx);
+                                // let shell = project.terminal_settings(&cwd, cx).shell.clone();
+                                let cwd_clone = cwd.clone();
+                                let spawn_in_terminal = task::SpawnInTerminal {
+                                    id: task::TaskId("install".to_string()),
+                                    full_label: upgrade_command.clone(),
+                                    label: upgrade_command.clone(),
+                                    command: Some(upgrade_command.clone()),
+                                    args: Vec::new(),
+                                    command_label: upgrade_command.clone(),
+                                    cwd: cwd_clone.clone(),
+                                    env: Default::default(),
+                                    use_new_terminal: true,
+                                    allow_concurrent_runs: true,
+                                    reveal: Default::default(),
+                                    reveal_target: Default::default(),
+                                    hide: Default::default(),
+                                    shell: Default::default(),
+                                    show_summary: true,
+                                    show_command: true,
+                                    show_rerun: true,
+                                };
+                                workspace.project().update(cx, |project, cx| {
+                                    if let Some(task_inventory) = project.task_store().read(cx).task_inventory().cloned() {
+                                        task_inventory.update(cx, |inventory, _| {
+                                            let task_template = task::TaskTemplate {
+                                                label: upgrade_command.clone(),
+                                                command: upgrade_command.clone(),
+                                                args: Vec::new(),
+                                                ..Default::default()
+                                            };
+                                            
+                                            // Create a task context for resolution
+                                            let task_context = task::TaskContext {
+                                                project_env: Default::default(),
+                                                cwd: cwd_clone.clone(),
+                                                task_variables: Default::default(),
+                                            };
+                                            
+                                            // Resolve the task template into a resolved task
+                                            if let Some(resolved_task) = task_template.resolve_task("install", &task_context) {
+                                                inventory.task_scheduled(
+                                                    project::TaskSourceKind::UserInput,
+                                                    resolved_task,
+                                                );
+                                            }
+                                        });
+                                    }
+                                });
+                                let _ = workspace.spawn_in_terminal(spawn_in_terminal, window, cx);
+                            })
+                            .ok();
+                    }),
+                ));
+            }
+            LoadError::AuthenticationRequired {
+                prompt: _,
+                instructions,
+                action,
+            } => {
+                container = container.child(
+                    Label::new(instructions.clone())
+                        .size(LabelSize::Small)
+                        .color(Color::Muted),
+                );
+                
+                if let Some(AuthAction::OpenUrl { url }) = action {
+                    let url = url.clone();
+                    container = container.child(
+                        Button::new("open_url", "Open Qwen Website")
+                            .on_click(cx.listener(move |_, _, _window, cx| {
+                                cx.open_url(&url);
+                            })),
+                    );
+                }
+            }
+            _ => {}
         }
 
-        container.into_any()
+        container.into_any_element()
     }
 
     fn render_activity_bar(
@@ -4208,5 +4257,25 @@ pub(crate) mod tests {
 
             assert_eq!(new_editor.read(cx).text(cx), "Edited message content");
         })
+    }
+}
+
+impl AcpThreadView {
+    /// Check if the thread is unused (no user messages have been sent)
+    pub fn is_unused(&self, cx: &App) -> bool {
+        match &self.thread_state {
+            ThreadState::Ready { thread, .. } => {
+                thread.read(cx).entries().is_empty()
+            }
+            ThreadState::Loading { .. } => true,
+            ThreadState::Unauthenticated { .. } => true,
+            ThreadState::LoadError(_) => true,
+            ThreadState::ServerExited { .. } => false, // Consider exited threads as used
+        }
+    }
+
+    /// Get the name of the agent
+    pub fn agent_name(&self) -> &'static str {
+        self.agent.name()
     }
 }

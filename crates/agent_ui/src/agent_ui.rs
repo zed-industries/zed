@@ -28,6 +28,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use agent::{Thread, ThreadId};
+use agent_servers::Qwen;
 use agent_settings::{AgentProfileId, AgentSettings, LanguageModelSelection};
 use assistant_slash_command::SlashCommandRegistry;
 use client::Client;
@@ -152,6 +153,7 @@ enum ExternalAgent {
     #[default]
     Gemini,
     ClaudeCode,
+    Qwen,
     NativeAgent,
 }
 
@@ -160,6 +162,7 @@ impl ExternalAgent {
         match self {
             ExternalAgent::Gemini => Rc::new(agent_servers::Gemini),
             ExternalAgent::ClaudeCode => Rc::new(agent_servers::ClaudeCode),
+            ExternalAgent::Qwen => Rc::new(Qwen),
             ExternalAgent::NativeAgent => Rc::new(agent2::NativeAgentServer::new(fs)),
         }
     }
