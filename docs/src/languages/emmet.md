@@ -1,6 +1,6 @@
 # Emmet
 
-Elm support is available through the [Emmet extension](https://github.com/zed-extensions/emmet).
+Emmet support is available through the [Emmet extension](https://github.com/zed-extensions/emmet).
 
 [Emmet](https://emmet.io/) is a web-developer’s toolkit that can greatly improve your HTML & CSS workflow.
 
