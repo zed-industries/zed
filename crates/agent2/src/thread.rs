@@ -448,7 +448,7 @@ pub enum AgentResponseEvent {
 
 #[derive(Debug)]
 pub struct ToolCallAuthorization {
-    pub tool_call: acp::ToolCall,
+    pub tool_call: acp::ToolCallUpdate,
     pub options: Vec<acp::PermissionOption>,
     pub response: oneshot::Sender<acp::PermissionOptionId>,
 }
@@ -901,7 +901,7 @@ impl Thread {
 
         let fs = self.project.read(cx).fs().clone();
         let tool_event_stream =
-            ToolCallEventStream::new(&tool_use, tool.kind(), event_stream.clone(), Some(fs));
+            ToolCallEventStream::new(tool_use.id.clone(), event_stream.clone(), Some(fs));
         tool_event_stream.update_fields(acp::ToolCallUpdateFields {
             status: Some(acp::ToolCallStatus::InProgress),
             ..Default::default()
@@ -1344,8 +1344,6 @@ impl AgentResponseEventStream {
 #[derive(Clone)]
 pub struct ToolCallEventStream {
     tool_use_id: LanguageModelToolUseId,
-    kind: acp::ToolKind,
-    input: serde_json::Value,
     stream: AgentResponseEventStream,
     fs: Option<Arc<dyn Fs>>,
 }
@@ -1355,32 +1353,19 @@ impl ToolCallEventStream {
     pub fn test() -> (Self, ToolCallEventStreamReceiver) {
         let (events_tx, events_rx) = mpsc::unbounded::<Result<AgentResponseEvent>>();
 
-        let stream = ToolCallEventStream::new(
-            &LanguageModelToolUse {
-                id: "test_id".into(),
-                name: "test_tool".into(),
-                raw_input: String::new(),
-                input: serde_json::Value::Null,
-                is_input_complete: true,
-            },
-            acp::ToolKind::Other,
-            AgentResponseEventStream(events_tx),
-            None,
-        );
+        let stream =
+            ToolCallEventStream::new("test_id".into(), AgentResponseEventStream(events_tx), None);
 
         (stream, ToolCallEventStreamReceiver(events_rx))
     }
 
     fn new(
-        tool_use: &LanguageModelToolUse,
-        kind: acp::ToolKind,
+        tool_use_id: LanguageModelToolUseId,
         stream: AgentResponseEventStream,
         fs: Option<Arc<dyn Fs>>,
     ) -> Self {
         Self {
-            tool_use_id: tool_use.id.clone(),
-            kind,
-            input: tool_use.input.clone(),
+            tool_use_id,
             stream,
             fs,
         }
@@ -1427,12 +1412,13 @@ impl ToolCallEventStream {
             .0
             .unbounded_send(Ok(AgentResponseEvent::ToolCallAuthorization(
                 ToolCallAuthorization {
-                    tool_call: AgentResponseEventStream::initial_tool_call(
-                        &self.tool_use_id,
-                        title.into(),
-                        self.kind.clone(),
-                        self.input.clone(),
-                    ),
+                    tool_call: acp::ToolCallUpdate {
+                        id: acp::ToolCallId(self.tool_use_id.to_string().into()),
+                        fields: acp::ToolCallUpdateFields {
+                            title: Some(title.into()),
+                            ..Default::default()
+                        },
+                    },
                     options: vec![
                         acp::PermissionOption {
                             id: acp::PermissionOptionId("always_allow".into()),
