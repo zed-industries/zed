@@ -215,7 +215,7 @@ enum ActiveView {
         thread_view: Entity<AcpThreadView>,
     },
     TextThread {
-        context_editor: Entity<ContextEditor>,
+        context_editor: Entity<TextThreadEditor>,
         title_editor: Entity<Editor>,
         buffer_search_bar: Entity<BufferSearchBar>,
         _subscriptions: Vec<gpui::Subscription>,
