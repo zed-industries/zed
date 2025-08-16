@@ -427,7 +427,7 @@ Custom models will be listed in the model dropdown in the Agent Panel.
 Zed supports using [OpenAI compatible APIs](https://platform.openai.com/docs/api-reference/chat) by specifying a custom `api_url` and `available_models` for the OpenAI provider.
 This is useful for connecting to other hosted services (like Together AI, Anyscale, etc.) or local models.
 
-You can add a custom, OpenAI-compatible model via either via the UI or by editing your `settings.json`.
+You can add a custom, OpenAI-compatible model either via the UI or by editing your `settings.json`.
 
 To do it via the UI, go to the Agent Panel settings (`agent: open settings`) and look for the "Add Provider" button to the right of the "LLM Providers" section title.
 Then, fill up the input fields available in the modal.
@@ -446,6 +446,43 @@ To do it via your `settings.json`, add the following snippet under `language_mod
           "max_tokens": 32768
         }
       ]
+    }
+  }
+}
+```
+
+If an OpenAI-compatible model lacks API support for certain features:
+  - In the UI, leave the corresponding capability checkboxes unchecked when adding the model.
+  - Or, in settings.json, set the corresponding fields under `capabilities` to `false` for that model.
+
+By default, OpenAI-compatible models inherit the following capabilities:
+- `tools`: true (supports tool/function calling)
+- `images`: false (does not support image inputs)
+- `parallel_tool_calls`: false (does not support `parallel_tool_calls` parameter)
+- `prompt_cache_key`: false (does not support `prompt_cache_key` parameter)
+
+You can override these defaults by specifying the `capabilities` object for each model.
+
+```json
+{
+  "language_models": {
+    "openai_compatible": {
+      "Cerebras": {
+        "api_url": "https://api.cerebras.ai/v1",
+        "available_models": [
+          {
+            "name": "gpt-oss-120b",
+            "max_tokens": 131000,
+            "max_output_tokens": 32000,
+            "capabilities": {
+              "tools": true,
+              "images": false,
+              "parallel_tool_calls": false,
+              "prompt_cache_key": false
+            }
+          }
+        ]
+      }
     }
   }
 }
