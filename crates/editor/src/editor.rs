@@ -15909,10 +15909,15 @@ impl Editor {
                                     .text_for_range(location.range.clone())
                                     .collect::<String>()
                             })
+                            .filter(|text| !text.contains('\n'))
                             .unique()
                             .take(3)
                             .join(", ");
-                        format!("{tab_kind} for {target}")
+                        if target.is_empty() {
+                            tab_kind.to_owned()
+                        } else {
+                            format!("{tab_kind} for {target}")
+                        }
                     })
                     .context("buffer title")?;
 
@@ -16117,10 +16122,15 @@ impl Editor {
                             .text_for_range(location.range.clone())
                             .collect::<String>()
                     })
+                    .filter(|text| !text.contains('\n'))
                     .unique()
                     .take(3)
                     .join(", ");
-                let title = format!("References to {target}");
+                let title = if target.is_empty() {
+                    "References".to_owned()
+                } else {
+                    format!("References to {target}")
+                };
                 Self::open_locations_in_multibuffer(
                     workspace,
                     locations,
