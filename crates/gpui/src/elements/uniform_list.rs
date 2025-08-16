@@ -5,10 +5,10 @@
 //! elements with uniform height.
 
 use crate::{
-    AnyElement, App, AvailableSpace, Bounds, ContentMask, Element, ElementId, GlobalElementId,
-    Hitbox, InspectorElementId, InteractiveElement, Interactivity, IntoElement, IsZero, LayoutId,
-    ListSizingBehavior, Overflow, Pixels, Point, ScrollHandle, Size, StyleRefinement, Styled,
-    Window, point, size,
+    AnyElement, App, AvailableSpace, Bounds, ContentMask, Element, ElementId, Entity,
+    GlobalElementId, Hitbox, InspectorElementId, InteractiveElement, Interactivity, IntoElement,
+    IsZero, LayoutId, ListSizingBehavior, Overflow, Pixels, Point, ScrollHandle, Size,
+    StyleRefinement, Styled, Window, point, size,
 };
 use smallvec::SmallVec;
 use std::{cell::RefCell, cmp, ops::Range, rc::Rc};
@@ -71,7 +71,7 @@ pub struct UniformList {
 /// Frame state used by the [UniformList].
 pub struct UniformListFrameState {
     items: SmallVec<[AnyElement; 32]>,
-    decorations: SmallVec<[AnyElement; 1]>,
+    decorations: SmallVec<[AnyElement; 2]>,
 }
 
 /// A handle for controlling the scroll position of a uniform list.
@@ -527,6 +527,31 @@ pub trait UniformListDecoration {
         window: &mut Window,
         cx: &mut App,
     ) -> AnyElement;
+}
+
+impl<T: UniformListDecoration + 'static> UniformListDecoration for Entity<T> {
+    fn compute(
+        &self,
+        visible_range: Range<usize>,
+        bounds: Bounds<Pixels>,
+        scroll_offset: Point<Pixels>,
+        item_height: Pixels,
+        item_count: usize,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> AnyElement {
+        self.update(cx, |inner, cx| {
+            inner.compute(
+                visible_range,
+                bounds,
+                scroll_offset,
+                item_height,
+                item_count,
+                window,
+                cx,
+            )
+        })
+    }
 }
 
 impl UniformList {

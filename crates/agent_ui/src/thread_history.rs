@@ -4,14 +4,14 @@ use chrono::{Datelike as _, Local, NaiveDate, TimeDelta};
 use editor::{Editor, EditorEvent};
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    App, ClickEvent, Empty, Entity, FocusHandle, Focusable, ScrollStrategy, Stateful, Task,
+    App, ClickEvent, Empty, Entity, FocusHandle, Focusable, ScrollStrategy, Task,
     UniformListScrollHandle, WeakEntity, Window, uniform_list,
 };
 use std::{fmt::Display, ops::Range, sync::Arc};
 use time::{OffsetDateTime, UtcOffset};
 use ui::{
-    HighlightedLabel, IconButtonShape, ListItem, ListItemSpacing, Scrollbar, ScrollbarState,
-    Tooltip, prelude::*,
+    HighlightedLabel, IconButtonShape, ListItem, ListItemSpacing, ScrollAxes, Scrollbars, Tooltip,
+    WithScrollbar, prelude::*,
 };
 use util::ResultExt;
 
@@ -30,8 +30,6 @@ pub struct ThreadHistory {
     separated_item_indexes: Vec<u32>,
     _separated_items_task: Option<Task<()>>,
     search_state: SearchState,
-    scrollbar_visibility: bool,
-    scrollbar_state: ScrollbarState,
     _subscriptions: Vec<gpui::Subscription>,
 }
 
@@ -90,7 +88,6 @@ impl ThreadHistory {
         });
 
         let scroll_handle = UniformListScrollHandle::default();
-        let scrollbar_state = ScrollbarState::new(scroll_handle.clone());
 
         let mut this = Self {
             agent_panel,
@@ -103,8 +100,6 @@ impl ThreadHistory {
             separated_items: Default::default(),
             separated_item_indexes: Default::default(),
             search_editor,
-            scrollbar_visibility: true,
-            scrollbar_state,
             _subscriptions: vec![search_editor_subscription, history_store_subscription],
             _separated_items_task: None,
         };
@@ -364,43 +359,6 @@ impl ThreadHistory {
         cx.notify();
     }
 
-    fn render_scrollbar(&self, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
-        if !(self.scrollbar_visibility || self.scrollbar_state.is_dragging()) {
-            return None;
-        }
-
-        Some(
-            div()
-                .occlude()
-                .id("thread-history-scroll")
-                .h_full()
-                .bg(cx.theme().colors().panel_background.opacity(0.8))
-                .border_l_1()
-                .border_color(cx.theme().colors().border_variant)
-                .absolute()
-                .right_1()
-                .top_0()
-                .bottom_0()
-                .w_4()
-                .pl_1()
-                .cursor_default()
-                .on_mouse_move(cx.listener(|_, _, _window, cx| {
-                    cx.notify();
-                    cx.stop_propagation()
-                }))
-                .on_hover(|_, _window, cx| {
-                    cx.stop_propagation();
-                })
-                .on_any_mouse_down(|_, _window, cx| {
-                    cx.stop_propagation();
-                })
-                .on_scroll_wheel(cx.listener(|_, _, _window, cx| {
-                    cx.notify();
-                }))
-                .children(Scrollbar::vertical(self.scrollbar_state.clone())),
-        )
-    }
-
     fn confirm(&mut self, _: &menu::Confirm, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(entry) = self.get_match(self.selected_index) {
             let task_result = match entry {
@@ -537,7 +495,7 @@ impl Focusable for ThreadHistory {
 }
 
 impl Render for ThreadHistory {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
             .key_context("ThreadHistory")
             .size_full()
@@ -601,9 +559,14 @@ impl Render for ThreadHistory {
                             .track_scroll(self.scroll_handle.clone())
                             .flex_grow(),
                         )
-                        .when_some(self.render_scrollbar(cx), |div, scrollbar| {
-                            div.child(scrollbar)
-                        })
+                        .custom_scrollbars(
+                            Scrollbars::new(ScrollAxes::Vertical)
+                                .tracked_scroll_handle(self.scroll_handle.clone())
+                                .width_sm()
+                                .with_track_along(ScrollAxes::Vertical),
+                            window,
+                            cx,
+                        )
                 }
             })
     }
