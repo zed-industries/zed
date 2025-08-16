@@ -31,6 +31,16 @@ pub trait AgentConnection {
         return None;
     }
 
+    fn load_thread(
+        self: Rc<Self>,
+        _project: Entity<Project>,
+        _cwd: &Path,
+        _session_id: acp::SessionId,
+        _cx: &mut App,
+    ) -> Task<Result<Entity<AcpThread>>> {
+        Task::ready(Err(anyhow::anyhow!("load thread not implemented")))
+    }
+
     fn auth_methods(&self) -> &[acp::AuthMethod];
 
     fn authenticate(&self, method: acp::AuthMethodId, cx: &mut App) -> Task<Result<()>>;

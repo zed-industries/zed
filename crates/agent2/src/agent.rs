@@ -1,4 +1,3 @@
-use crate::ThreadsDatabase;
 use crate::native_agent_server::NATIVE_AGENT_SERVER_NAME;
 use crate::{
     AgentResponseEvent, ContextServerRegistry, CopyPathTool, CreateDirectoryTool, DeletePathTool,
@@ -6,7 +5,8 @@ use crate::{
     MovePathTool, NowTool, OpenTool, ReadFileTool, TerminalTool, ThinkingTool, Thread,
     ToolCallAuthorization, UserMessageContent, WebSearchTool, templates::Templates,
 };
-use acp_thread::{AcpThreadMetadata, AgentModelSelector};
+use crate::{DbThread, ThreadsDatabase};
+use acp_thread::{AcpThread, AcpThreadMetadata, AgentModelSelector};
 use agent_client_protocol as acp;
 use agent_settings::AgentSettings;
 use anyhow::{Context as _, Result, anyhow};
@@ -18,7 +18,7 @@ use futures::{SinkExt, StreamExt, future};
 use gpui::{
     App, AppContext, AsyncApp, Context, Entity, SharedString, Subscription, Task, WeakEntity,
 };
-use language_model::{LanguageModel, LanguageModelProvider, LanguageModelRegistry};
+use language_model::{LanguageModel, LanguageModelProvider, LanguageModelRegistry, SelectedModel};
 use project::{Project, ProjectItem, ProjectPath, Worktree};
 use prompt_store::{
     ProjectContext, PromptId, PromptStore, RulesFileContext, UserRulesContext, WorktreeContext,
@@ -759,7 +759,6 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
     }
 
     fn list_threads(&self, cx: &mut App) -> Option<UnboundedReceiver<Vec<AcpThreadMetadata>>> {
-        dbg!("listing!");
         let (mut tx, rx) = futures::channel::mpsc::unbounded();
         let database = self.0.update(cx, |this, _| {
             this.history_listeners.push(tx.clone());
@@ -788,6 +787,114 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
             })
             .detach_and_log_err(cx);
         Some(rx)
+    }
+
+    fn load_thread(
+        self: Rc<Self>,
+        project: Entity<Project>,
+        cwd: &Path,
+        session_id: acp::SessionId,
+        cx: &mut App,
+    ) -> Task<Result<Entity<acp_thread::AcpThread>>> {
+        let database = self.0.update(cx, |this, _| this.thread_database.clone());
+        cx.spawn(async move |cx| {
+            let database = database.await.map_err(|e| anyhow!(e))?;
+            let db_thread = database
+                .load_thread(session_id.clone())
+                .await?
+                .context("no such thread found")?;
+
+            let acp_thread = cx.update(|cx| {
+                cx.new(|cx| {
+                    acp_thread::AcpThread::new(
+                        db_thread.title,
+                        self.clone(),
+                        project.clone(),
+                        session_id.clone(),
+                        cx,
+                    )
+                })
+            })?;
+            let action_log = cx.update(|cx| acp_thread.read(cx).action_log().clone())?;
+            let agent = self.0.clone();
+
+            // Create Thread
+            let thread = agent.update(
+                cx,
+                |agent, cx: &mut gpui::Context<NativeAgent>| -> Result<_> {
+                    let configured_model = LanguageModelRegistry::global(cx)
+                        .update(cx, |registry, cx| {
+                            db_thread
+                                .model
+                                .and_then(|model| {
+                                    let model = SelectedModel {
+                                        provider: model.provider.clone().into(),
+                                        model: model.model.clone().into(),
+                                    };
+                                    registry.select_model(&model, cx)
+                                })
+                                .or_else(|| registry.default_model())
+                        })
+                        .context("no default model configured")?;
+
+                    let model = agent
+                        .models
+                        .model_from_id(&LanguageModels::model_id(&configured_model.model))
+                        .context("no model by id")?;
+
+                    let thread = cx.new(|cx| {
+                        let mut thread = Thread::new(
+                            project.clone(),
+                            agent.project_context.clone(),
+                            agent.context_server_registry.clone(),
+                            action_log.clone(),
+                            agent.templates.clone(),
+                            model,
+                            cx,
+                        );
+                        // todo!() factor this out
+                        thread.add_tool(CopyPathTool::new(project.clone()));
+                        thread.add_tool(CreateDirectoryTool::new(project.clone()));
+                        thread.add_tool(DeletePathTool::new(project.clone(), action_log.clone()));
+                        thread.add_tool(DiagnosticsTool::new(project.clone()));
+                        thread.add_tool(EditFileTool::new(cx.entity()));
+                        thread.add_tool(FetchTool::new(project.read(cx).client().http_client()));
+                        thread.add_tool(FindPathTool::new(project.clone()));
+                        thread.add_tool(GrepTool::new(project.clone()));
+                        thread.add_tool(ListDirectoryTool::new(project.clone()));
+                        thread.add_tool(MovePathTool::new(project.clone()));
+                        thread.add_tool(NowTool);
+                        thread.add_tool(OpenTool::new(project.clone()));
+                        thread.add_tool(ReadFileTool::new(project.clone(), action_log));
+                        thread.add_tool(TerminalTool::new(project.clone(), cx));
+                        thread.add_tool(ThinkingTool);
+                        thread.add_tool(WebSearchTool); // TODO: Enable this only if it's a zed model.
+                        thread
+                    });
+
+                    Ok(thread)
+                },
+            )??;
+
+            // Store the session
+            agent.update(cx, |agent, cx| {
+                agent.sessions.insert(
+                    session_id,
+                    Session {
+                        thread,
+                        acp_thread: acp_thread.downgrade(),
+                        _subscription: cx.observe_release(&acp_thread, |this, acp_thread, _cx| {
+                            this.sessions.remove(acp_thread.session_id());
+                        }),
+                    },
+                );
+            })?;
+
+            // we need to actually deserialize the DbThread.
+            todo!()
+
+            Ok(acp_thread)
+        })
     }
 
     fn model_selector(&self) -> Option<Rc<dyn AgentModelSelector>> {

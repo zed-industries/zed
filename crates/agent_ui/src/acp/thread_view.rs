@@ -169,7 +169,14 @@ impl AcpThreadView {
             project: project.clone(),
             thread_store,
             text_thread_store,
-            thread_state: Self::initial_state(agent, workspace, project, window, cx),
+            thread_state: Self::initial_state(
+                agent,
+                restore_thread,
+                workspace,
+                project,
+                window,
+                cx,
+            ),
             message_editor,
             model_selector: None,
             notifications: Vec::new(),
@@ -193,6 +200,7 @@ impl AcpThreadView {
 
     fn initial_state(
         agent: Rc<dyn AgentServer>,
+        restore_thread: Option<AcpThreadMetadata>,
         workspace: WeakEntity<Workspace>,
         project: Entity<Project>,
         window: &mut Window,
@@ -232,19 +240,27 @@ impl AcpThreadView {
             //     .detach();
             // })
             // .ok();
-
-            let Some(result) = cx
-                .update(|_, cx| {
+            //
+            let task = cx.update(|_, cx| {
+                if let Some(restore_thread) = restore_thread {
+                    connection.clone().load_thread(
+                        project.clone(),
+                        &root_dir,
+                        restore_thread.id,
+                        cx,
+                    )
+                } else {
                     connection
                         .clone()
                         .new_thread(project.clone(), &root_dir, cx)
-                })
-                .log_err()
-            else {
+                }
+            });
+
+            let Ok(task) = task else {
                 return;
             };
 
-            let result = match result.await {
+            let result = match task.await {
                 Err(e) => {
                     let mut cx = cx.clone();
                     if e.is::<acp_thread::AuthRequired>() {
@@ -618,6 +634,7 @@ impl AcpThreadView {
                     } else {
                         this.thread_state = Self::initial_state(
                             agent,
+                            None, // todo!()
                             this.workspace.clone(),
                             project.clone(),
                             window,
@@ -3733,6 +3750,7 @@ pub(crate) mod tests {
                     project,
                     thread_store.clone(),
                     text_thread_store.clone(),
+                    None,
                     window,
                     cx,
                 )
@@ -3884,6 +3902,7 @@ pub(crate) mod tests {
                     project.clone(),
                     thread_store.clone(),
                     text_thread_store.clone(),
+                    None,
                     window,
                     cx,
                 )

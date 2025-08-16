@@ -21,7 +21,6 @@ use ui::{
 use util::ResultExt;
 
 pub struct AcpThreadHistory {
-    agent_panel: WeakEntity<AgentPanel>,
     history_store: Entity<HistoryStore>,
     scroll_handle: UniformListScrollHandle,
     selected_index: usize,
@@ -473,16 +472,17 @@ impl AcpThreadHistory {
         let Some(entry) = self.get_match(ix) else {
             return;
         };
-        let task_result = match entry {
-            HistoryEntry::Thread(thread) => todo!(),
-            HistoryEntry::Context(context) => self
-                .agent_panel
-                .update(cx, |this, cx| this.delete_context(context.path.clone(), cx)),
-        };
+        todo!();
+        // let task_result = match entry {
+        //     HistoryEntry::Thread(thread) => todo!(),
+        //     HistoryEntry::Context(context) => self
+        //         .agent_panel
+        //         .update(cx, |this, cx| this.delete_context(context.path.clone(), cx)),
+        // };
 
-        if let Some(task) = task_result.log_err() {
-            task.detach_and_log_err(cx);
-        };
+        // if let Some(task) = task_result.log_err() {
+        //     task.detach_and_log_err(cx);
+        // };
 
         cx.notify();
     }
