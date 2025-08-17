@@ -142,7 +142,7 @@ impl SystemWindowTabs {
             .on_drag(
                 DraggedWindowTab {
                     id: item.id,
-                    handle: item.handle.clone(),
+                    handle: item.handle,
                     title: item.title.to_string(),
                     width,
                     is_active,
@@ -189,13 +189,13 @@ impl SystemWindowTabs {
                                 .icon_color(Color::Muted)
                                 .icon_size(IconSize::XSmall)
                                 .on_click({
-                                    let handle = item.handle.clone();
                                     move |_, window, cx| {
-                                        if handle.window_id() == window.window_handle().window_id()
+                                        if item.handle.window_id()
+                                            == window.window_handle().window_id()
                                         {
                                             window.dispatch_action(Box::new(CloseWindow), cx);
                                         } else {
-                                            let _ = handle.update(cx, |_, window, cx| {
+                                            let _ = item.handle.update(cx, |_, window, cx| {
                                                 window.dispatch_action(Box::new(CloseWindow), cx);
                                             });
                                         }
@@ -272,7 +272,7 @@ impl SystemWindowTabs {
                         );
                     });
 
-                    menu.context(focus_handle.clone())
+                    menu.context(focus_handle)
                 })
             });
 

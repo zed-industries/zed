@@ -295,10 +295,7 @@ impl SystemWindowTabController {
             .iter()
             .find_map(|(group, tabs)| tabs.iter().find(|tab| tab.id == id).map(|_| group));
 
-        let Some(current_group) = current_group else {
-            return None;
-        };
-
+        let current_group = current_group?;
         let mut group_ids: Vec<_> = controller.tab_groups.keys().collect();
         let idx = group_ids.iter().position(|g| *g == current_group)?;
         let next_idx = (idx + 1) % group_ids.len();
@@ -322,10 +319,7 @@ impl SystemWindowTabController {
             .iter()
             .find_map(|(group, tabs)| tabs.iter().find(|tab| tab.id == id).map(|_| group));
 
-        let Some(current_group) = current_group else {
-            return None;
-        };
-
+        let current_group = current_group?;
         let mut group_ids: Vec<_> = controller.tab_groups.keys().collect();
         let idx = group_ids.iter().position(|g| *g == current_group)?;
         let prev_idx = if idx == 0 {
@@ -362,7 +356,7 @@ impl SystemWindowTabController {
     /// Initialize the visibility of the system window tab controller.
     pub fn init_visible(cx: &mut App, visible: bool) {
         let mut controller = cx.global_mut::<SystemWindowTabController>();
-        if !controller.visible.is_some() {
+        if controller.visible.is_none() {
             controller.visible = Some(visible);
         }
     }
