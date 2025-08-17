@@ -1,8 +1,8 @@
 use settings::Settings;
 
 use gpui::{
-    Context, Hsla, InteractiveElement, ParentElement, ScrollHandle, Styled, SystemWindowTab,
-    SystemWindowTabController, Window, WindowId, actions, canvas, div,
+    AnyWindowHandle, Context, Hsla, InteractiveElement, MouseButton, ParentElement, ScrollHandle,
+    Styled, SystemWindowTab, SystemWindowTabController, Window, WindowId, actions, canvas, div,
 };
 
 use theme::ThemeSettings;
@@ -28,6 +28,7 @@ actions!(
 #[derive(Clone)]
 pub struct DraggedWindowTab {
     pub id: WindowId,
+    pub handle: AnyWindowHandle,
     pub title: String,
     pub width: Pixels,
     pub is_active: bool,
@@ -38,6 +39,7 @@ pub struct DraggedWindowTab {
 pub struct SystemWindowTabs {
     tab_bar_scroll_handle: ScrollHandle,
     measured_tab_width: Pixels,
+    last_dragged_tab: Option<DraggedWindowTab>,
 }
 
 impl SystemWindowTabs {
@@ -45,6 +47,7 @@ impl SystemWindowTabs {
         Self {
             tab_bar_scroll_handle: ScrollHandle::new(),
             measured_tab_width: px(0.),
+            last_dragged_tab: None,
         }
     }
 
@@ -105,6 +108,7 @@ impl SystemWindowTabs {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement + use<> {
+        let entity = cx.entity();
         let settings = ItemSettings::get_global(cx);
         let close_side = &settings.close_position;
         let show_close_button = &settings.show_close_button;
@@ -138,19 +142,26 @@ impl SystemWindowTabs {
             .on_drag(
                 DraggedWindowTab {
                     id: item.id,
+                    handle: item.handle.clone(),
                     title: item.title.to_string(),
                     width,
                     is_active,
                     active_background_color,
                     inactive_background_color,
                 },
-                |tab, _, _, cx| cx.new(|_| tab.clone()),
+                move |tab, _, _, cx| {
+                    entity.update(cx, |this, _cx| {
+                        this.last_dragged_tab = Some(tab.clone());
+                    });
+                    cx.new(|_| tab.clone())
+                },
             )
             .drag_over::<DraggedWindowTab>(|element, _, _, cx| {
                 element.bg(cx.theme().colors().drop_target_background)
             })
             .on_drop(
-                cx.listener(move |_this, dragged_tab: &DraggedWindowTab, _window, cx| {
+                cx.listener(move |this, dragged_tab: &DraggedWindowTab, _window, cx| {
+                    this.last_dragged_tab = None;
                     Self::handle_tab_drop(dragged_tab, ix, cx);
                 }),
             )
@@ -348,6 +359,21 @@ impl Render for SystemWindowTabs {
             .w_full()
             .h(Tab::container_height(cx))
             .bg(inactive_background_color)
+            .on_mouse_up_out(
+                MouseButton::Left,
+                cx.listener(|this, _event, window, cx| {
+                    if let Some(tab) = this.last_dragged_tab.take() {
+                        SystemWindowTabController::move_tab_to_new_window(cx, tab.id);
+                        if tab.id == window.window_handle().window_id() {
+                            window.move_tab_to_new_window();
+                        } else {
+                            let _ = tab.handle.update(cx, |_, window, _cx| {
+                                window.move_tab_to_new_window();
+                            });
+                        }
+                    }
+                }),
+            )
             .child(
                 h_flex()
                     .id("window tabs")
