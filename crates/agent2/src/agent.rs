@@ -563,6 +563,30 @@ impl NativeAgentConnection {
             })
         })
     }
+
+    fn register_tools(
+        thread: &mut Thread,
+        project: Entity<Project>,
+        action_log: Entity<action_log::ActionLog>,
+        cx: &mut Context<Thread>,
+    ) {
+        thread.add_tool(CopyPathTool::new(project.clone()));
+        thread.add_tool(CreateDirectoryTool::new(project.clone()));
+        thread.add_tool(DeletePathTool::new(project.clone(), action_log.clone()));
+        thread.add_tool(DiagnosticsTool::new(project.clone()));
+        thread.add_tool(EditFileTool::new(cx.entity()));
+        thread.add_tool(FetchTool::new(project.read(cx).client().http_client()));
+        thread.add_tool(FindPathTool::new(project.clone()));
+        thread.add_tool(GrepTool::new(project.clone()));
+        thread.add_tool(ListDirectoryTool::new(project.clone()));
+        thread.add_tool(MovePathTool::new(project.clone()));
+        thread.add_tool(NowTool);
+        thread.add_tool(OpenTool::new(project.clone()));
+        thread.add_tool(ReadFileTool::new(project.clone(), action_log));
+        thread.add_tool(TerminalTool::new(project.clone(), cx));
+        thread.add_tool(ThinkingTool);
+        thread.add_tool(WebSearchTool); // TODO: Enable this only if it's a zed model.
+    }
 }
 
 impl AgentModelSelector for NativeAgentConnection {
@@ -709,22 +733,7 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
                             default_model,
                             cx,
                         );
-                        thread.add_tool(CopyPathTool::new(project.clone()));
-                        thread.add_tool(CreateDirectoryTool::new(project.clone()));
-                        thread.add_tool(DeletePathTool::new(project.clone(), action_log.clone()));
-                        thread.add_tool(DiagnosticsTool::new(project.clone()));
-                        thread.add_tool(EditFileTool::new(cx.entity()));
-                        thread.add_tool(FetchTool::new(project.read(cx).client().http_client()));
-                        thread.add_tool(FindPathTool::new(project.clone()));
-                        thread.add_tool(GrepTool::new(project.clone()));
-                        thread.add_tool(ListDirectoryTool::new(project.clone()));
-                        thread.add_tool(MovePathTool::new(project.clone()));
-                        thread.add_tool(NowTool);
-                        thread.add_tool(OpenTool::new(project.clone()));
-                        thread.add_tool(ReadFileTool::new(project.clone(), action_log));
-                        thread.add_tool(TerminalTool::new(project.clone(), cx));
-                        thread.add_tool(ThinkingTool);
-                        thread.add_tool(WebSearchTool); // TODO: Enable this only if it's a zed model.
+                        Self::register_tools(&mut thread, project, action_log, cx);
                         thread
                     });
 
@@ -852,23 +861,7 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
                             model,
                             cx,
                         );
-                        // todo!() factor this out
-                        thread.add_tool(CopyPathTool::new(project.clone()));
-                        thread.add_tool(CreateDirectoryTool::new(project.clone()));
-                        thread.add_tool(DeletePathTool::new(project.clone(), action_log.clone()));
-                        thread.add_tool(DiagnosticsTool::new(project.clone()));
-                        thread.add_tool(EditFileTool::new(cx.entity()));
-                        thread.add_tool(FetchTool::new(project.read(cx).client().http_client()));
-                        thread.add_tool(FindPathTool::new(project.clone()));
-                        thread.add_tool(GrepTool::new(project.clone()));
-                        thread.add_tool(ListDirectoryTool::new(project.clone()));
-                        thread.add_tool(MovePathTool::new(project.clone()));
-                        thread.add_tool(NowTool);
-                        thread.add_tool(OpenTool::new(project.clone()));
-                        thread.add_tool(ReadFileTool::new(project.clone(), action_log));
-                        thread.add_tool(TerminalTool::new(project.clone(), cx));
-                        thread.add_tool(ThinkingTool);
-                        thread.add_tool(WebSearchTool); // TODO: Enable this only if it's a zed model.
+                        Self::register_tools(&mut thread, project, action_log, cx);
                         thread
                     });
 
