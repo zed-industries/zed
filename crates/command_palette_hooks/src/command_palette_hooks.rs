@@ -6,7 +6,8 @@ use std::any::TypeId;
 
 use collections::HashSet;
 use derive_more::{Deref, DerefMut};
-use gpui::{Action, App, BorrowAppContext, Global};
+use gpui::{Action, App, BorrowAppContext, Global, Task, WeakEntity};
+use workspace::Workspace;
 
 /// Initializes the command palette hooks.
 pub fn init(cx: &mut App) {
@@ -108,7 +109,7 @@ pub struct CommandInterceptResult {
 /// An interceptor for the command palette.
 #[derive(Default)]
 pub struct CommandPaletteInterceptor(
-    Option<Box<dyn Fn(&str, &App) -> Vec<CommandInterceptResult>>>,
+    Option<Box<dyn Fn(&str, WeakEntity<Workspace>, &App) -> Task<Vec<CommandInterceptResult>>>>,
 );
 
 #[derive(Default)]
@@ -132,11 +133,16 @@ impl CommandPaletteInterceptor {
     }
 
     /// Intercepts the given query from the command palette.
-    pub fn intercept(&self, query: &str, cx: &App) -> Vec<CommandInterceptResult> {
+    pub fn intercept(
+        &self,
+        query: &str,
+        workspace: WeakEntity<Workspace>,
+        cx: &App,
+    ) -> Task<Vec<CommandInterceptResult>> {
         if let Some(handler) = self.0.as_ref() {
-            (handler)(query, cx)
+            handler(query, workspace, cx)
         } else {
-            Vec::new()
+            Task::ready(Vec::new())
         }
     }
 
@@ -148,7 +154,12 @@ impl CommandPaletteInterceptor {
     /// Sets the global interceptor.
     ///
     /// This will override the previous interceptor, if it exists.
-    pub fn set(&mut self, handler: Box<dyn Fn(&str, &App) -> Vec<CommandInterceptResult>>) {
+    pub fn set(
+        &mut self,
+        handler: Box<
+            dyn Fn(&str, WeakEntity<Workspace>, &App) -> Task<Vec<CommandInterceptResult>>,
+        >,
+    ) {
         self.0 = Some(handler);
     }
 }
