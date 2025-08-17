@@ -7,7 +7,7 @@ use std::{
 
 use client::proto;
 use collections::HashSet;
-use editor::{Editor, EditorEvent};
+use editor::{Editor, EditorEvent, EditorSettings};
 use gpui::{Corner, Entity, Subscription, Task, WeakEntity, actions};
 use language::{BinaryStatus, BufferId, ServerHealth};
 use lsp::{LanguageServerId, LanguageServerName, LanguageServerSelector};
@@ -964,7 +964,12 @@ impl StatusItemView for LspTool {
 
 impl Render for LspTool {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl ui::IntoElement {
-        if self.server_state.read(cx).language_servers.is_empty() || self.lsp_menu.is_none() {
+        if self.server_state.read(cx).language_servers.is_empty()
+            || self.lsp_menu.is_none()
+            || !EditorSettings::get_global(cx)
+                .status_bar
+                .language_server_button
+        {
             return div();
         }
 

@@ -320,6 +320,12 @@ TBD: Centered layout related settings
     // Clicking the button brings up an input for jumping to a line and column.
     // Defaults to true.
     "cursor_position_button": true,
+    // Show/hide a button that displays the state of the LSP language server.
+    // Clicking the button brings up a menu with the servers and ability to stop/restart them.
+    // This button will be hidden if "enable_language_server" is set to false.
+    // Activity from enablded language servers will still be displayed in the status bar even if the button is hidden.
+    // Defaults to true.
+    "language_server_button": true,
   },
 ```
 
