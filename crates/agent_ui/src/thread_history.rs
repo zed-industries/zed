@@ -541,6 +541,7 @@ impl Render for ThreadHistory {
         v_flex()
             .key_context("ThreadHistory")
             .size_full()
+            .bg(cx.theme().colors().panel_background)
             .on_action(cx.listener(Self::select_previous))
             .on_action(cx.listener(Self::select_next))
             .on_action(cx.listener(Self::select_first))
