@@ -35,7 +35,7 @@ pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
         (api_url, settings_models)
     };
 
-    let ollama_service = OllamaService::new(client.http_client(), api_url, cx);
+    let ollama_service = OllamaService::new(client.http_client(), api_url, None, cx);
 
     ollama_service.update(cx, |service, cx| {
         service.set_settings_models(settings_models, cx);

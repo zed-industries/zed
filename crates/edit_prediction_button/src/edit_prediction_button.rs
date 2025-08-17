@@ -1365,6 +1365,7 @@ mod tests {
             OllamaService::new(
                 fake_http_client.clone(),
                 "http://localhost:11434".to_string(),
+                None,
                 cx,
             )
         });
@@ -1435,7 +1436,12 @@ mod tests {
 
         // Create and set global service
         let service = cx.update(|cx| {
-            OllamaService::new(fake_http_client, "http://localhost:11434".to_string(), cx)
+            OllamaService::new(
+                fake_http_client,
+                "http://localhost:11434".to_string(),
+                None,
+                cx,
+            )
         });
 
         cx.update(|cx| {
@@ -1469,6 +1475,7 @@ mod tests {
             OllamaService::new(
                 fake_http_client.clone(),
                 "http://localhost:11434".to_string(),
+                None,
                 cx,
             )
         });
@@ -1574,6 +1581,7 @@ mod tests {
             OllamaService::new(
                 fake_http_client.clone(),
                 "http://localhost:11434".to_string(),
+                None,
                 cx,
             )
         });
@@ -1679,6 +1687,7 @@ mod tests {
             OllamaService::new(
                 fake_http_client.clone(),
                 "http://localhost:11434".to_string(),
+                None,
                 cx,
             )
         });
@@ -1791,6 +1800,7 @@ mod tests {
             OllamaService::new(
                 fake_http_client.clone(),
                 "http://localhost:11434".to_string(),
+                None,
                 cx,
             )
         });
@@ -1888,6 +1898,7 @@ mod tests {
             OllamaService::new(
                 fake_http_client.clone(),
                 "http://localhost:11434".to_string(),
+                None,
                 cx,
             )
         });

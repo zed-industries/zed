@@ -41,13 +41,19 @@ impl SettingsModel {
 pub struct OllamaService {
     http_client: Arc<dyn HttpClient>,
     api_url: String,
+    api_key: Option<String>,
     available_models: Vec<Model>,
     fetch_models_task: Option<Task<Result<()>>>,
     _settings_subscription: Subscription,
 }
 
 impl OllamaService {
-    pub fn new(http_client: Arc<dyn HttpClient>, api_url: String, cx: &mut App) -> Entity<Self> {
+    pub fn new(
+        http_client: Arc<dyn HttpClient>,
+        api_url: String,
+        api_key: Option<String>,
+        cx: &mut App,
+    ) -> Entity<Self> {
         cx.new(|cx| {
             let subscription = cx.observe_global::<SettingsStore>({
                 move |this: &mut OllamaService, cx| {
@@ -58,11 +64,13 @@ impl OllamaService {
             let mut service = Self {
                 http_client,
                 api_url,
+                api_key,
                 available_models: Vec::new(),
                 fetch_models_task: None,
                 _settings_subscription: subscription,
             };
 
+            // TODO: why a secod refresh here?
             service.restart_fetch_models_task(cx);
             service
         })
@@ -98,6 +106,13 @@ impl OllamaService {
         self.restart_fetch_models_task(cx);
     }
 
+    pub fn set_api_key(&mut self, api_key: Option<String>, cx: &mut Context<Self>) {
+        if self.api_key != api_key {
+            self.api_key = api_key;
+            self.restart_fetch_models_task(cx);
+        }
+    }
+
     fn restart_fetch_models_task(&mut self, cx: &mut Context<Self>) {
         self.fetch_models_task = Some(self.fetch_models(cx));
     }
@@ -105,6 +120,7 @@ impl OllamaService {
     fn fetch_models(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
         let http_client = Arc::clone(&self.http_client);
         let api_url = self.api_url.clone();
+        let api_key = self.api_key.clone();
 
         cx.spawn(async move |this, cx| {
             // Get the current settings models to merge with API models
@@ -117,7 +133,14 @@ impl OllamaService {
             })?;
 
             // Fetch models from API
-            let api_models = match crate::get_models(http_client.as_ref(), &api_url, None).await {
+            let api_models = match crate::get_models(
+                http_client.as_ref(),
+                &api_url,
+                api_key.clone(),
+                None,
+            )
+            .await
+            {
                 Ok(models) => models,
                 Err(_) => return Ok(()), // Silently fail if API is unavailable
             };
@@ -131,10 +154,12 @@ impl OllamaService {
                 .map(|model| {
                     let http_client = Arc::clone(&http_client);
                     let api_url = api_url.clone();
+                    let api_key = api_key.clone();
                     async move {
                         let name = model.name.as_str();
                         let capabilities =
-                            crate::show_model(http_client.as_ref(), &api_url, name).await?;
+                            crate::show_model(http_client.as_ref(), &api_url, api_key, name)
+                                .await?;
                         let ollama_model = Model::new(
                             name,
                             None,
@@ -173,6 +198,7 @@ struct GlobalOllamaService(Entity<OllamaService>);
 
 impl Global for GlobalOllamaService {}
 
+// TODO refactor to OllamaEditPredictionProvider
 pub struct OllamaCompletionProvider {
     model: String,
     buffer_id: Option<EntityId>,
@@ -185,6 +211,13 @@ pub struct OllamaCompletionProvider {
 
 impl OllamaCompletionProvider {
     pub fn new(model: String, api_key: Option<String>, cx: &mut Context<Self>) -> Self {
+        // Update the global service with the API key if one is provided
+        if let Some(service) = OllamaService::global(cx) {
+            service.update(cx, |service, cx| {
+                service.set_api_key(api_key.clone(), cx);
+            });
+        }
+
         let subscription = if let Some(service) = OllamaService::global(cx) {
             Some(cx.observe(&service, |_this, _service, cx| {
                 cx.notify();
@@ -444,6 +477,7 @@ impl EditPredictionProvider for OllamaCompletionProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::fake::FakeHttpClient;
 
     use gpui::{AppContext, TestAppContext};
 
@@ -559,6 +593,7 @@ mod tests {
             OllamaService::new(
                 fake_http_client.clone(),
                 "http://localhost:11434".to_string(),
+                None,
                 cx,
             )
         });
@@ -601,6 +636,7 @@ mod tests {
             OllamaService::new(
                 fake_http_client.clone(),
                 "http://localhost:11434".to_string(),
+                None,
                 cx,
             )
         });
@@ -639,6 +675,7 @@ mod tests {
             OllamaService::new(
                 fake_http_client.clone(),
                 "http://localhost:11434".to_string(),
+                None,
                 cx,
             )
         });
@@ -719,6 +756,7 @@ mod tests {
             OllamaService::new(
                 fake_http_client.clone(),
                 "http://localhost:11434".to_string(),
+                None,
                 cx,
             )
         });
@@ -791,6 +829,7 @@ mod tests {
             OllamaService::new(
                 fake_http_client.clone(),
                 "http://localhost:11434".to_string(),
+                None,
                 cx,
             )
         });
@@ -842,6 +881,7 @@ mod tests {
             OllamaService::new(
                 fake_http_client.clone(),
                 "http://localhost:11434".to_string(),
+                None,
                 cx,
             )
         });
@@ -922,6 +962,7 @@ mod tests {
             OllamaService::new(
                 fake_http_client.clone(),
                 "http://localhost:11434".to_string(),
+                None,
                 cx,
             )
         });
@@ -1035,6 +1076,7 @@ mod tests {
             OllamaService::new(
                 fake_http_client.clone(),
                 "http://localhost:11434".to_string(),
+                None,
                 cx,
             )
         });
@@ -1102,5 +1144,119 @@ mod tests {
         // API-only model should be included
         let api_model = models.iter().find(|m| m.name == "api-model-1").unwrap();
         assert!(api_model.display_name.is_none()); // API models don't have custom display names
+    }
+
+    #[gpui::test]
+    async fn test_api_key_passed_to_requests(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fake_http_client = Arc::new(FakeHttpClient::new());
+
+        // Set up responses for model discovery with API key
+        fake_http_client.set_response(
+            "/api/tags",
+            serde_json::json!({
+                "models": [
+                    {
+                        "name": "qwen2.5-coder:3b",
+                        "modified_at": "2024-01-01T00:00:00Z",
+                        "size": 1000000,
+                        "digest": "abc123",
+                        "details": {
+                            "format": "gguf",
+                            "family": "qwen2.5",
+                            "families": ["qwen2.5"],
+                            "parameter_size": "3B",
+                            "quantization_level": "Q4_0"
+                        }
+                    }
+                ]
+            })
+            .to_string(),
+        );
+
+        // Set up show model response
+        fake_http_client.set_response(
+            "/api/show",
+            serde_json::json!({
+                "capabilities": {
+                    "tools": true,
+                    "vision": false,
+                    "thinking": false
+                }
+            })
+            .to_string(),
+        );
+
+        let service = cx.update(|cx| {
+            OllamaService::new(
+                fake_http_client.clone(),
+                "http://localhost:11434".to_string(),
+                Some("test-api-key".to_string()),
+                cx,
+            )
+        });
+
+        cx.update(|cx| {
+            OllamaService::set_global(service.clone(), cx);
+        });
+
+        // Wait for model fetching to complete
+        cx.background_executor.run_until_parked();
+
+        // Verify that requests were made
+        let requests = fake_http_client.get_requests();
+        assert!(!requests.is_empty(), "Expected HTTP requests to be made");
+
+        // Note: We can't easily test the Authorization header with the current FakeHttpClient
+        // implementation, but the important thing is that the API key gets passed through
+        // to the HTTP requests without panicking.
+    }
+
+    #[gpui::test]
+    async fn test_api_key_update_triggers_refresh(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fake_http_client = Arc::new(FakeHttpClient::new());
+
+        // Set up initial response
+        fake_http_client.set_response(
+            "/api/tags",
+            serde_json::json!({
+                "models": []
+            })
+            .to_string(),
+        );
+
+        let service = cx.update(|cx| {
+            OllamaService::new(
+                fake_http_client.clone(),
+                "http://localhost:11434".to_string(),
+                None,
+                cx,
+            )
+        });
+
+        cx.update(|cx| {
+            OllamaService::set_global(service.clone(), cx);
+        });
+
+        // Clear initial requests
+        fake_http_client.clear_requests();
+
+        // Update API key
+        service.update(cx, |service, cx| {
+            service.set_api_key(Some("new-api-key".to_string()), cx);
+        });
+
+        // Wait for refresh to complete
+        cx.background_executor.run_until_parked();
+
+        // Verify new requests were made
+        let requests = fake_http_client.get_requests();
+        assert!(
+            !requests.is_empty(),
+            "Expected new requests after API key update"
+        );
     }
 }

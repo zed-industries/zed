@@ -57,6 +57,10 @@ pub struct AvailableModel {
     pub supports_thinking: Option<bool>,
 }
 
+// TODO
+// - Add API key authentication support. OllamaCompletionProvider already supports it
+// - Decide whether / how to integrate the new OllamaService into here, there seems to be
+//   some overlap with State here.
 pub struct OllamaLanguageModelProvider {
     http_client: Arc<dyn HttpClient>,
     state: gpui::Entity<State>,
@@ -81,7 +85,7 @@ impl State {
 
         // As a proxy for the server being "authenticated", we'll check if its up by fetching the models
         cx.spawn(async move |this, cx| {
-            let models = get_models(http_client.as_ref(), &api_url, None).await?;
+            let models = get_models(http_client.as_ref(), &api_url, None, None).await?;
 
             let tasks = models
                 .into_iter()
@@ -94,7 +98,8 @@ impl State {
                     let api_url = api_url.clone();
                     async move {
                         let name = model.name.as_str();
-                        let capabilities = show_model(http_client.as_ref(), &api_url, name).await?;
+                        let capabilities =
+                            show_model(http_client.as_ref(), &api_url, None, name).await?;
                         let ollama_model = ollama::Model::new(
                             name,
                             None,
