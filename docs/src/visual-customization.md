@@ -321,6 +321,12 @@ TBD: Centered layout related settings
     // Defaults to true.
     "cursor_position_button": true,
   },
+  "global_lsp_settings": {
+    // Show/hide the LSP button in the status bar.
+    // Activity from the LSP is still shown.
+    // Button is not shown if "enable_language_server" if false.
+    "button": true
+  },
 ```
 
 ### Multibuffer
