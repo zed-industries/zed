@@ -9,6 +9,46 @@ pub use util::paths::home_dir;
 /// A default editorconfig file name to use when resolving project settings.
 pub const EDITORCONFIG_NAME: &str = ".editorconfig";
 
+// Application and directory name constants
+/// The application name used for directories on Windows and macOS (capitalized).
+const APP_NAME_CAPITALIZED: &str = "Zed";
+
+/// The application name used for directories on Linux and config paths (lowercase).
+const APP_NAME_LOWERCASE: &str = "zed";
+
+// Configuration file name constants
+/// Standard settings file name used across different contexts.
+const SETTINGS_JSON: &str = "settings.json";
+
+/// Standard tasks file name used across different contexts.
+const TASKS_JSON: &str = "tasks.json";
+
+/// Standard debug configuration file name used across different contexts.
+const DEBUG_JSON: &str = "debug.json";
+
+// Directory and path constants
+/// The local Zed configuration folder name within projects.
+const ZED_DIR: &str = ".zed";
+
+/// The VSCode configuration folder name within projects.
+const VSCODE_DIR: &str = ".vscode";
+
+/// User settings path within application data directories.
+const USER_SETTINGS_PATH: &str = "User/settings.json";
+
+/// Combined paths for local project configuration files
+const ZED_SETTINGS_PATH: &str = ".zed/settings.json";
+const ZED_TASKS_PATH: &str = ".zed/tasks.json";
+const ZED_DEBUG_PATH: &str = ".zed/debug.json";
+const VSCODE_TASKS_PATH: &str = ".vscode/tasks.json";
+const VSCODE_LAUNCH_PATH: &str = ".vscode/launch.json";
+
+/// macOS Library/Application Support directory path.
+const MACOS_APP_SUPPORT: &str = "Library/Application Support";
+
+/// macOS Library/Logs directory path.
+const MACOS_LOGS: &str = "Library/Logs";
+
 /// A custom data directory override, set only by `set_custom_data_dir`.
 /// This is used to override the default data directory location.
 /// The directory will be created if it doesn't exist when set.
@@ -78,16 +118,16 @@ pub fn config_dir() -> &'static PathBuf {
         } else if cfg!(target_os = "windows") {
             dirs::config_dir()
                 .expect("failed to determine RoamingAppData directory")
-                .join("Zed")
+                .join(APP_NAME_CAPITALIZED)
         } else if cfg!(any(target_os = "linux", target_os = "freebsd")) {
             if let Ok(flatpak_xdg_config) = std::env::var("FLATPAK_XDG_CONFIG_HOME") {
                 flatpak_xdg_config.into()
             } else {
                 dirs::config_dir().expect("failed to determine XDG_CONFIG_HOME directory")
             }
-            .join("zed")
+            .join(APP_NAME_LOWERCASE)
         } else {
-            home_dir().join(".config").join("zed")
+            home_dir().join(".config").join(APP_NAME_LOWERCASE)
         }
     })
 }
@@ -98,18 +138,18 @@ pub fn data_dir() -> &'static PathBuf {
         if let Some(custom_dir) = CUSTOM_DATA_DIR.get() {
             custom_dir.clone()
         } else if cfg!(target_os = "macos") {
-            home_dir().join("Library/Application Support/Zed")
+            home_dir().join(MACOS_APP_SUPPORT).join(APP_NAME_CAPITALIZED)
         } else if cfg!(any(target_os = "linux", target_os = "freebsd")) {
             if let Ok(flatpak_xdg_data) = std::env::var("FLATPAK_XDG_DATA_HOME") {
                 flatpak_xdg_data.into()
             } else {
                 dirs::data_local_dir().expect("failed to determine XDG_DATA_HOME directory")
             }
-            .join("zed")
+            .join(APP_NAME_LOWERCASE)
         } else if cfg!(target_os = "windows") {
             dirs::data_local_dir()
                 .expect("failed to determine LocalAppData directory")
-                .join("Zed")
+                .join(APP_NAME_CAPITALIZED)
         } else {
             config_dir().clone() // Fallback
         }
@@ -123,13 +163,13 @@ pub fn temp_dir() -> &'static PathBuf {
         if cfg!(target_os = "macos") {
             return dirs::cache_dir()
                 .expect("failed to determine cachesDirectory directory")
-                .join("Zed");
+                .join(APP_NAME_CAPITALIZED);
         }
 
         if cfg!(target_os = "windows") {
             return dirs::cache_dir()
                 .expect("failed to determine LocalAppData directory")
-                .join("Zed");
+                .join(APP_NAME_CAPITALIZED);
         }
 
         if cfg!(any(target_os = "linux", target_os = "freebsd")) {
@@ -138,10 +178,10 @@ pub fn temp_dir() -> &'static PathBuf {
             } else {
                 dirs::cache_dir().expect("failed to determine XDG_CACHE_HOME directory")
             }
-            .join("zed");
+            .join(APP_NAME_LOWERCASE);
         }
 
-        home_dir().join(".cache").join("zed")
+        home_dir().join(".cache").join(APP_NAME_LOWERCASE)
     })
 }
 
@@ -150,7 +190,7 @@ pub fn logs_dir() -> &'static PathBuf {
     static LOGS_DIR: OnceLock<PathBuf> = OnceLock::new();
     LOGS_DIR.get_or_init(|| {
         if cfg!(target_os = "macos") {
-            home_dir().join("Library/Logs/Zed")
+            home_dir().join(MACOS_LOGS).join(APP_NAME_CAPITALIZED)
         } else {
             data_dir().join("logs")
         }
@@ -198,7 +238,7 @@ pub fn crashes_retired_dir() -> &'static Option<PathBuf> {
 /// Returns the path to the `settings.json` file.
 pub fn settings_file() -> &'static PathBuf {
     static SETTINGS_FILE: OnceLock<PathBuf> = OnceLock::new();
-    SETTINGS_FILE.get_or_init(|| config_dir().join("settings.json"))
+    SETTINGS_FILE.get_or_init(|| config_dir().join(SETTINGS_JSON))
 }
 
 /// Returns the path to the global settings file.
@@ -228,13 +268,13 @@ pub fn keymap_backup_file() -> &'static PathBuf {
 /// Returns the path to the `tasks.json` file.
 pub fn tasks_file() -> &'static PathBuf {
     static TASKS_FILE: OnceLock<PathBuf> = OnceLock::new();
-    TASKS_FILE.get_or_init(|| config_dir().join("tasks.json"))
+    TASKS_FILE.get_or_init(|| config_dir().join(TASKS_JSON))
 }
 
 /// Returns the path to the `debug.json` file.
 pub fn debug_scenarios_file() -> &'static PathBuf {
     static DEBUG_SCENARIOS_FILE: OnceLock<PathBuf> = OnceLock::new();
-    DEBUG_SCENARIOS_FILE.get_or_init(|| config_dir().join("debug.json"))
+    DEBUG_SCENARIOS_FILE.get_or_init(|| config_dir().join(DEBUG_JSON))
 }
 
 /// Returns the path to the extensions directory.
@@ -394,46 +434,46 @@ pub fn remote_servers_dir() -> &'static PathBuf {
 
 /// Returns the relative path to a `.zed` folder within a project.
 pub fn local_settings_folder_relative_path() -> &'static Path {
-    Path::new(".zed")
+    Path::new(ZED_DIR)
 }
 
 /// Returns the relative path to a `.vscode` folder within a project.
 pub fn local_vscode_folder_relative_path() -> &'static Path {
-    Path::new(".vscode")
+    Path::new(VSCODE_DIR)
 }
 
 /// Returns the relative path to a `settings.json` file within a project.
 pub fn local_settings_file_relative_path() -> &'static Path {
-    Path::new(".zed/settings.json")
+    Path::new(ZED_SETTINGS_PATH)
 }
 
 /// Returns the relative path to a `tasks.json` file within a project.
 pub fn local_tasks_file_relative_path() -> &'static Path {
-    Path::new(".zed/tasks.json")
+    Path::new(ZED_TASKS_PATH)
 }
 
 /// Returns the relative path to a `.vscode/tasks.json` file within a project.
 pub fn local_vscode_tasks_file_relative_path() -> &'static Path {
-    Path::new(".vscode/tasks.json")
+    Path::new(VSCODE_TASKS_PATH)
 }
 
 pub fn debug_task_file_name() -> &'static str {
-    "debug.json"
+    DEBUG_JSON
 }
 
 pub fn task_file_name() -> &'static str {
-    "tasks.json"
+    TASKS_JSON
 }
 
 /// Returns the relative path to a `debug.json` file within a project.
 /// .zed/debug.json
 pub fn local_debug_file_relative_path() -> &'static Path {
-    Path::new(".zed/debug.json")
+    Path::new(ZED_DEBUG_PATH)
 }
 
 /// Returns the relative path to a `.vscode/launch.json` file within a project.
 pub fn local_vscode_launch_file_relative_path() -> &'static Path {
-    Path::new(".vscode/launch.json")
+    Path::new(VSCODE_LAUNCH_PATH)
 }
 
 pub fn user_ssh_config_file() -> PathBuf {
@@ -448,7 +488,7 @@ pub fn global_ssh_config_file() -> &'static Path {
 pub fn vscode_settings_file_paths() -> Vec<PathBuf> {
     let mut paths = vscode_user_data_paths();
     for path in paths.iter_mut() {
-        path.push("User/settings.json");
+        path.push(USER_SETTINGS_PATH);
     }
     paths
 }
@@ -457,7 +497,7 @@ pub fn vscode_settings_file_paths() -> Vec<PathBuf> {
 pub fn cursor_settings_file_paths() -> Vec<PathBuf> {
     let mut paths = cursor_user_data_paths();
     for path in paths.iter_mut() {
-        path.push("User/settings.json");
+        path.push(USER_SETTINGS_PATH);
     }
     paths
 }
@@ -497,7 +537,7 @@ fn add_vscode_user_data_paths(paths: &mut Vec<PathBuf>, product_name: &str) {
     if cfg!(target_os = "macos") {
         paths.push(
             home_dir()
-                .join("Library/Application Support")
+                .join(MACOS_APP_SUPPORT)
                 .join(product_name),
         );
     } else if cfg!(target_os = "windows") {
