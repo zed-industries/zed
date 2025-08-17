@@ -34,7 +34,7 @@ const ZED_DIR: &str = ".zed";
 const VSCODE_DIR: &str = ".vscode";
 
 /// User settings path within application data directories.
-const USER_SETTINGS_PATH: &str = "User/settings.json";
+const USER_SETTINGS_JSON_PATH: &str = "User/settings.json";
 
 /// Combined paths for local project configuration files
 const ZED_SETTINGS_PATH: &str = ".zed/settings.json";
