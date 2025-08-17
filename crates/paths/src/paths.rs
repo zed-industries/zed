@@ -41,7 +41,7 @@ const ZED_SETTINGS_PATH: &str = ".zed/settings.json";
 const ZED_TASKS_PATH: &str = ".zed/tasks.json";
 const ZED_DEBUG_PATH: &str = ".zed/debug.json";
 const VSCODE_TASKS_PATH: &str = ".vscode/tasks.json";
-const VSCODE_LAUNCH_PATH: &str = concat!(VSCODE_DIR, "/", LAUNCH_JSON);
+const VSCODE_LAUNCH_PATH: &str = ".vscode/launch.json";
 
 /// macOS Library/Application Support directory path.
 const MACOS_APP_SUPPORT: &str = "Library/Application Support";
