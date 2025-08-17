@@ -223,7 +223,7 @@ impl ToolCall {
         }
 
         if let Some(status) = status {
-            self.status = ToolCallStatus::Allowed { status };
+            self.status = status.into();
         }
 
         if let Some(title) = title {
@@ -344,15 +344,35 @@ impl ToolCall {
 
 #[derive(Debug)]
 pub enum ToolCallStatus {
+    /// The tool call hasn't started running yet, but we start showing it to
+    /// the user.
+    Pending,
+    /// The tool call is waiting for confirmation from the user.
     WaitingForConfirmation {
         options: Vec<acp::PermissionOption>,
         respond_tx: oneshot::Sender<acp::PermissionOptionId>,
     },
-    Allowed {
-        status: acp::ToolCallStatus,
-    },
+    /// The tool call is currently running.
+    InProgress,
+    /// The tool call completed successfully.
+    Completed,
+    /// The tool call failed.
+    Failed,
+    /// The user rejected the tool call.
     Rejected,
+    /// The user cancelled generation so the tool call was cancelled.
     Canceled,
+}
+
+impl From<acp::ToolCallStatus> for ToolCallStatus {
+    fn from(status: acp::ToolCallStatus) -> Self {
+        match status {
+            acp::ToolCallStatus::Pending => Self::Pending,
+            acp::ToolCallStatus::InProgress => Self::InProgress,
+            acp::ToolCallStatus::Completed => Self::Completed,
+            acp::ToolCallStatus::Failed => Self::Failed,
+        }
+    }
 }
 
 impl Display for ToolCallStatus {
@@ -361,13 +381,11 @@ impl Display for ToolCallStatus {
             f,
             "{}",
             match self {
+                ToolCallStatus::Pending => "Pending",
                 ToolCallStatus::WaitingForConfirmation { .. } => "Waiting for confirmation",
-                ToolCallStatus::Allowed { status } => match status {
-                    acp::ToolCallStatus::Pending => "Pending",
-                    acp::ToolCallStatus::InProgress => "In Progress",
-                    acp::ToolCallStatus::Completed => "Completed",
-                    acp::ToolCallStatus::Failed => "Failed",
-                },
+                ToolCallStatus::InProgress => "In Progress",
+                ToolCallStatus::Completed => "Completed",
+                ToolCallStatus::Failed => "Failed",
                 ToolCallStatus::Rejected => "Rejected",
                 ToolCallStatus::Canceled => "Canceled",
             }
@@ -759,11 +777,7 @@ impl AcpThread {
                 AgentThreadEntry::UserMessage(_) => return false,
                 AgentThreadEntry::ToolCall(
                     call @ ToolCall {
-                        status:
-                            ToolCallStatus::Allowed {
-                                status:
-                                    acp::ToolCallStatus::InProgress | acp::ToolCallStatus::Pending,
-                            },
+                        status: ToolCallStatus::InProgress | ToolCallStatus::Pending,
                         ..
                     },
                 ) if call.diffs().next().is_some() => {
@@ -945,9 +959,7 @@ impl AcpThread {
         tool_call: acp::ToolCall,
         cx: &mut Context<Self>,
     ) -> Result<(), acp::Error> {
-        let status = ToolCallStatus::Allowed {
-            status: tool_call.status,
-        };
+        let status = tool_call.status.into();
         self.upsert_tool_call_inner(tool_call.into(), status, cx)
     }
 
@@ -1074,9 +1086,7 @@ impl AcpThread {
                 ToolCallStatus::Rejected
             }
             acp::PermissionOptionKind::AllowOnce | acp::PermissionOptionKind::AllowAlways => {
-                ToolCallStatus::Allowed {
-                    status: acp::ToolCallStatus::InProgress,
-                }
+                ToolCallStatus::InProgress
             }
         };
 
@@ -1097,7 +1107,10 @@ impl AcpThread {
             match &entry {
                 AgentThreadEntry::ToolCall(call) => match call.status {
                     ToolCallStatus::WaitingForConfirmation { .. } => return true,
-                    ToolCallStatus::Allowed { .. }
+                    ToolCallStatus::Pending
+                    | ToolCallStatus::InProgress
+                    | ToolCallStatus::Completed
+                    | ToolCallStatus::Failed
                     | ToolCallStatus::Rejected
                     | ToolCallStatus::Canceled => continue,
                 },
@@ -1290,10 +1303,9 @@ impl AcpThread {
             if let AgentThreadEntry::ToolCall(call) = entry {
                 let cancel = matches!(
                     call.status,
-                    ToolCallStatus::WaitingForConfirmation { .. }
-                        | ToolCallStatus::Allowed {
-                            status: acp::ToolCallStatus::InProgress
-                        }
+                    ToolCallStatus::Pending
+                        | ToolCallStatus::WaitingForConfirmation { .. }
+                        | ToolCallStatus::InProgress
                 );
 
                 if cancel {
@@ -1939,10 +1951,7 @@ mod tests {
             assert!(matches!(
                 thread.entries[1],
                 AgentThreadEntry::ToolCall(ToolCall {
-                    status: ToolCallStatus::Allowed {
-                        status: acp::ToolCallStatus::InProgress,
-                        ..
-                    },
+                    status: ToolCallStatus::InProgress,
                     ..
                 })
             ));
@@ -1981,10 +1990,7 @@ mod tests {
             assert!(matches!(
                 thread.entries[1],
                 AgentThreadEntry::ToolCall(ToolCall {
-                    status: ToolCallStatus::Allowed {
-                        status: acp::ToolCallStatus::Completed,
-                        ..
-                    },
+                    status: ToolCallStatus::Completed,
                     ..
                 })
             ));
