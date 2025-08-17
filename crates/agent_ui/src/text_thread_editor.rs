@@ -1,14 +1,11 @@
 use crate::{
-    burn_mode_tooltip::BurnModeTooltip,
     language_model_selector::{LanguageModelSelector, language_model_selector},
+    ui::BurnModeTooltip,
 };
 use agent_settings::{AgentSettings, CompletionMode};
 use anyhow::Result;
 use assistant_slash_command::{SlashCommand, SlashCommandOutputSection, SlashCommandWorkingSet};
-use assistant_slash_commands::{
-    DefaultSlashCommand, DocsSlashCommand, DocsSlashCommandArgs, FileSlashCommand,
-    selections_creases,
-};
+use assistant_slash_commands::{DefaultSlashCommand, FileSlashCommand, selections_creases};
 use client::{proto, zed_urls};
 use collections::{BTreeSet, HashMap, HashSet, hash_map};
 use editor::{
@@ -30,7 +27,6 @@ use gpui::{
     StatefulInteractiveElement, Styled, Subscription, Task, Transformation, WeakEntity, actions,
     div, img, percentage, point, prelude::*, pulsating_between, size,
 };
-use indexed_docs::IndexedDocsStore;
 use language::{
     BufferSnapshot, LspAdapterDelegate, ToOffset,
     language_settings::{SoftWrap, all_language_settings},
@@ -77,7 +73,7 @@ use crate::{slash_command::SlashCommandCompletionProvider, slash_command_picker}
 use assistant_context::{
     AssistantContext, CacheStatus, Content, ContextEvent, ContextId, InvokedSlashCommandId,
     InvokedSlashCommandStatus, Message, MessageId, MessageMetadata, MessageStatus,
-    ParsedSlashCommand, PendingSlashCommandStatus, ThoughtProcessOutputSection,
+    PendingSlashCommandStatus, ThoughtProcessOutputSection,
 };
 
 actions!(
@@ -701,19 +697,7 @@ impl TextThreadEditor {
                                 }
                             };
                             let render_trailer = {
-                                let command = command.clone();
-                                move |row, _unfold, _window: &mut Window, cx: &mut App| {
-                                    // TODO: In the future we should investigate how we can expose
-                                    // this as a hook on the `SlashCommand` trait so that we don't
-                                    // need to special-case it here.
-                                    if command.name == DocsSlashCommand::NAME {
-                                        return render_docs_slash_command_trailer(
-                                            row,
-                                            command.clone(),
-                                            cx,
-                                        );
-                                    }
-
+                                move |_row, _unfold, _window: &mut Window, _cx: &mut App| {
                                     Empty.into_any()
                                 }
                             };
@@ -2396,70 +2380,6 @@ fn render_pending_slash_command_gutter_decoration(
     }
 
     icon.into_any_element()
-}
-
-fn render_docs_slash_command_trailer(
-    row: MultiBufferRow,
-    command: ParsedSlashCommand,
-    cx: &mut App,
-) -> AnyElement {
-    if command.arguments.is_empty() {
-        return Empty.into_any();
-    }
-    let args = DocsSlashCommandArgs::parse(&command.arguments);
-
-    let Some(store) = args
-        .provider()
-        .and_then(|provider| IndexedDocsStore::try_global(provider, cx).ok())
-    else {
-        return Empty.into_any();
-    };
-
-    let Some(package) = args.package() else {
-        return Empty.into_any();
-    };
-
-    let mut children = Vec::new();
-
-    if store.is_indexing(&package) {
-        children.push(
-            div()
-                .id(("crates-being-indexed", row.0))
-                .child(Icon::new(IconName::ArrowCircle).with_animation(
-                    "arrow-circle",
-                    Animation::new(Duration::from_secs(4)).repeat(),
-                    |icon, delta| icon.transform(Transformation::rotate(percentage(delta))),
-                ))
-                .tooltip({
-                    let package = package.clone();
-                    Tooltip::text(format!("Indexing {package}…"))
-                })
-                .into_any_element(),
-        );
-    }
-
-    if let Some(latest_error) = store.latest_error_for_package(&package) {
-        children.push(
-            div()
-                .id(("latest-error", row.0))
-                .child(
-                    Icon::new(IconName::Warning)
-                        .size(IconSize::Small)
-                        .color(Color::Warning),
-                )
-                .tooltip(Tooltip::text(format!("Failed to index: {latest_error}")))
-                .into_any_element(),
-        )
-    }
-
-    let is_indexing = store.is_indexing(&package);
-    let latest_error = store.latest_error_for_package(&package);
-
-    if !is_indexing && latest_error.is_none() {
-        return Empty.into_any();
-    }
-
-    h_flex().gap_2().children(children).into_any_element()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

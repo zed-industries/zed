@@ -27,7 +27,6 @@ globset.workspace = true
 gpui.workspace = true
 html_to_markdown.workspace = true
 http_client.workspace = true
-indexed_docs.workspace = true
 language.workspace = true
 project.workspace = true
 prompt_store.workspace = true

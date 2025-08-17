@@ -112,7 +112,7 @@ fn excerpt_for_buffer_updated(
 }
 
 fn buffer_added(editor: &mut Editor, buffer: Entity<Buffer>, cx: &mut Context<Editor>) {
-    let Some(project) = &editor.project else {
+    let Some(project) = editor.project() else {
         return;
     };
     let git_store = project.read(cx).git_store().clone();
@@ -469,7 +469,7 @@ pub(crate) fn resolve_conflict(
         let Some((workspace, project, multibuffer, buffer)) = editor
             .update(cx, |editor, cx| {
                 let workspace = editor.workspace()?;
-                let project = editor.project.clone()?;
+                let project = editor.project()?.clone();
                 let multibuffer = editor.buffer().clone();
                 let buffer_id = resolved_conflict.ours.end.buffer_id?;
                 let buffer = multibuffer.read(cx).buffer(buffer_id)?;

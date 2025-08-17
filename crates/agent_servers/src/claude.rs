@@ -6,6 +6,7 @@ use context_server::listener::McpServerTool;
 use project::Project;
 use settings::SettingsStore;
 use smol::process::Child;
+use std::any::Any;
 use std::cell::RefCell;
 use std::fmt::Display;
 use std::path::Path;
@@ -13,7 +14,7 @@ use std::rc::Rc;
 use uuid::Uuid;
 
 use agent_client_protocol as acp;
-use anyhow::{Result, anyhow};
+use anyhow::{Context as _, Result, anyhow};
 use futures::channel::oneshot;
 use futures::{AsyncBufReadExt, AsyncWriteExt};
 use futures::{
@@ -74,7 +75,7 @@ impl AgentConnection for ClaudeAgentConnection {
         self: Rc<Self>,
         project: Entity<Project>,
         cwd: &Path,
-        cx: &mut AsyncApp,
+        cx: &mut App,
     ) -> Task<Result<Entity<AcpThread>>> {
         let cwd = cwd.to_owned();
         cx.spawn(async move |cx| {
@@ -129,11 +130,24 @@ impl AgentConnection for ClaudeAgentConnection {
                 &cwd,
             )?;
 
-            let stdin = child.stdin.take().unwrap();
-            let stdout = child.stdout.take().unwrap();
+            let stdout = child.stdout.take().context("Failed to take stdout")?;
+            let stdin = child.stdin.take().context("Failed to take stdin")?;
+            let stderr = child.stderr.take().context("Failed to take stderr")?;
 
             let pid = child.id();
             log::trace!("Spawned (pid: {})", pid);
+
+            cx.background_spawn(async move {
+                let mut stderr = BufReader::new(stderr);
+                let mut line = String::new();
+                while let Ok(n) = stderr.read_line(&mut line).await
+                    && n > 0
+                {
+                    log::warn!("agent stderr: {}", &line);
+                    line.clear();
+                }
+            })
+            .detach();
 
             cx.background_spawn(async move {
                 let mut outgoing_rx = Some(outgoing_rx);
@@ -210,6 +224,7 @@ impl AgentConnection for ClaudeAgentConnection {
 
     fn prompt(
         &self,
+        _id: Option<acp_thread::UserMessageId>,
         params: acp::PromptRequest,
         cx: &mut App,
     ) -> Task<Result<acp::PromptResponse>> {
@@ -288,6 +303,10 @@ impl AgentConnection for ClaudeAgentConnection {
             })
             .log_err();
     }
+
+    fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
+        self
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -339,7 +358,7 @@ fn spawn_claude(
         .current_dir(root_dir)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::inherit())
+        .stderr(std::process::Stdio::piped())
         .kill_on_drop(true)
         .spawn()?;
 
@@ -423,7 +442,7 @@ impl ClaudeAgentSession {
                             if !turn_state.borrow().is_cancelled() {
                                 thread
                                     .update(cx, |thread, cx| {
-                                        thread.push_user_content_block(text.into(), cx)
+                                        thread.push_user_content_block(None, text.into(), cx)
                                     })
                                     .log_err();
                             }
@@ -541,8 +560,9 @@ impl ClaudeAgentSession {
                                         thread.upsert_tool_call(
                                             claude_tool.as_acp(acp::ToolCallId(id.into())),
                                             cx,
-                                        );
+                                        )?;
                                     }
+                                    anyhow::Ok(())
                                 })
                                 .log_err();
                         }

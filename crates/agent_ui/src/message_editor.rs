@@ -6,7 +6,7 @@ use crate::agent_diff::AgentDiffThread;
 use crate::agent_model_selector::AgentModelSelector;
 use crate::tool_compatibility::{IncompatibleToolsState, IncompatibleToolsTooltip};
 use crate::ui::{
-    MaxModeTooltip,
+    BurnModeTooltip,
     preview::{AgentPreview, UsageCallout},
 };
 use agent::history_store::HistoryStore;
@@ -14,7 +14,7 @@ use agent::{
     context::{AgentContextKey, ContextLoadResult, load_context},
     context_store::ContextStoreEvent,
 };
-use agent_settings::{AgentSettings, CompletionMode};
+use agent_settings::{AgentProfileId, AgentSettings, CompletionMode};
 use ai_onboarding::ApiKeysWithProviders;
 use buffer_diff::BufferDiff;
 use cloud_llm_client::CompletionIntent;
@@ -55,7 +55,7 @@ use zed_actions::agent::ToggleModelSelector;
 
 use crate::context_picker::{ContextPicker, ContextPickerCompletionProvider, crease_for_mention};
 use crate::context_strip::{ContextStrip, ContextStripEvent, SuggestContextKind};
-use crate::profile_selector::ProfileSelector;
+use crate::profile_selector::{ProfileProvider, ProfileSelector};
 use crate::{
     ActiveThread, AgentDiffPane, ChatWithFollow, ExpandMessageEditor, Follow, KeepAll,
     ModelUsageContext, NewThread, OpenAgentDiff, RejectAll, RemoveAllContext, ToggleBurnMode,
@@ -152,6 +152,24 @@ pub(crate) fn create_editor(
     editor
 }
 
+impl ProfileProvider for Entity<Thread> {
+    fn profiles_supported(&self, cx: &App) -> bool {
+        self.read(cx)
+            .configured_model()
+            .map_or(false, |model| model.model.supports_tools())
+    }
+
+    fn profile_id(&self, cx: &App) -> AgentProfileId {
+        self.read(cx).profile().id().clone()
+    }
+
+    fn set_profile(&self, profile_id: AgentProfileId, cx: &mut App) {
+        self.update(cx, |this, cx| {
+            this.set_profile(profile_id, cx);
+        });
+    }
+}
+
 impl MessageEditor {
     pub fn new(
         fs: Arc<dyn Fs>,
@@ -221,8 +239,9 @@ impl MessageEditor {
             )
         });
 
-        let profile_selector =
-            cx.new(|cx| ProfileSelector::new(fs, thread.clone(), editor.focus_handle(cx), cx));
+        let profile_selector = cx.new(|cx| {
+            ProfileSelector::new(fs, Arc::new(thread.clone()), editor.focus_handle(cx), cx)
+        });
 
         Self {
             editor: editor.clone(),
@@ -605,7 +624,7 @@ impl MessageEditor {
                     this.toggle_burn_mode(&ToggleBurnMode, window, cx);
                 }))
                 .tooltip(move |_window, cx| {
-                    cx.new(|_| MaxModeTooltip::new().selected(burn_mode_enabled))
+                    cx.new(|_| BurnModeTooltip::new().selected(burn_mode_enabled))
                         .into()
                 })
                 .into_any_element(),

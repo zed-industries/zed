@@ -355,7 +355,16 @@ impl LanguageModel for OpenAiCompatibleLanguageModel {
             LanguageModelCompletionError,
         >,
     > {
-        let request = into_open_ai(request, &self.model.name, true, self.max_output_tokens());
+        let supports_parallel_tool_call = true;
+        let supports_prompt_cache_key = false;
+        let request = into_open_ai(
+            request,
+            &self.model.name,
+            supports_parallel_tool_call,
+            supports_prompt_cache_key,
+            self.max_output_tokens(),
+            None,
+        );
         let completions = self.stream_completion(request, cx);
         async move {
             let mapper = OpenAiEventMapper::new();

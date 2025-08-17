@@ -133,7 +133,7 @@ impl Render for EditPredictionButton {
                             }),
                     );
                 }
-                let this = cx.entity().clone();
+                let this = cx.entity();
 
                 div().child(
                     PopoverMenu::new("copilot")
@@ -188,7 +188,7 @@ impl Render for EditPredictionButton {
                 let icon = status.to_icon();
                 let tooltip_text = status.to_tooltip();
                 let has_menu = status.has_menu();
-                let this = cx.entity().clone();
+                let this = cx.entity();
                 let fs = self.fs.clone();
 
                 return div().child(
@@ -337,7 +337,7 @@ impl Render for EditPredictionButton {
                         })
                     });
 
-                let this = cx.entity().clone();
+                let this = cx.entity();
 
                 let mut popover_menu = PopoverMenu::new("zeta")
                     .menu(move |window, cx| {

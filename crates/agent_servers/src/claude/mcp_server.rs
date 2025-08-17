@@ -154,7 +154,7 @@ impl McpServerTool for PermissionTool {
         let chosen_option = thread
             .update(cx, |thread, cx| {
                 thread.request_tool_call_authorization(
-                    claude_tool.as_acp(tool_call_id),
+                    claude_tool.as_acp(tool_call_id).into(),
                     vec![
                         acp::PermissionOption {
                             id: allow_option_id.clone(),
@@ -169,7 +169,7 @@ impl McpServerTool for PermissionTool {
                     ],
                     cx,
                 )
-            })?
+            })??
             .await?;
 
         let response = if chosen_option == allow_option_id {
