@@ -250,6 +250,24 @@ pub type RenderDiffHunkControlsFn = Arc<
     ) -> AnyElement,
 >;
 
+enum ReportEditorEvent {
+    Saved { auto_saved: bool },
+    EditorOpened,
+    ZetaTosClicked,
+    Closed,
+}
+
+impl ReportEditorEvent {
+    pub fn event_type(&self) -> &'static str {
+        match self {
+            Self::Saved { .. } => "Editor Saved",
+            Self::EditorOpened => "Editor Opened",
+            Self::ZetaTosClicked => "Edit Prediction Provider ToS Clicked",
+            Self::Closed => "Editor Closed",
+        }
+    }
+}
+
 struct InlineValueCache {
     enabled: bool,
     inlays: Vec<InlayId>,
@@ -1021,9 +1039,7 @@ pub struct Editor {
     inline_diagnostics: Vec<(Anchor, InlineDiagnostic)>,
     soft_wrap_mode_override: Option<language_settings::SoftWrap>,
     hard_wrap: Option<usize>,
-
-    // TODO: make this a access method
-    pub project: Option<Entity<Project>>,
+    project: Option<Entity<Project>>,
     semantics_provider: Option<Rc<dyn SemanticsProvider>>,
     completion_provider: Option<Rc<dyn CompletionProvider>>,
     collaboration_hub: Option<Box<dyn CollaborationHub>>,
@@ -2308,7 +2324,7 @@ impl Editor {
             editor.go_to_active_debug_line(window, cx);
 
             if let Some(buffer) = buffer.read(cx).as_singleton() {
-                if let Some(project) = editor.project.as_ref() {
+                if let Some(project) = editor.project() {
                     let handle = project.update(cx, |project, cx| {
                         project.register_buffer_with_language_servers(&buffer, cx)
                     });
@@ -2325,7 +2341,7 @@ impl Editor {
         }
 
         if editor.mode.is_full() {
-            editor.report_editor_event("Editor Opened", None, cx);
+            editor.report_editor_event(ReportEditorEvent::EditorOpened, None, cx);
         }
 
         editor
@@ -2351,6 +2367,34 @@ impl Editor {
         self.mouse_context_menu
             .as_ref()
             .is_some_and(|menu| menu.context_menu.focus_handle(cx).is_focused(window))
+    }
+
+    pub fn is_range_selected(&mut self, range: &Range<Anchor>, cx: &mut Context<Self>) -> bool {
+        if self
+            .selections
+            .pending
+            .as_ref()
+            .is_some_and(|pending_selection| {
+                let snapshot = self.buffer().read(cx).snapshot(cx);
+                pending_selection
+                    .selection
+                    .range()
+                    .includes(&range, &snapshot)
+            })
+        {
+            return true;
+        }
+
+        self.selections
+            .disjoint_in_range::<usize>(range.clone(), cx)
+            .into_iter()
+            .any(|selection| {
+                // This is needed to cover a corner case, if we just check for an existing
+                // selection in the fold range, having a cursor at the start of the fold
+                // marks it as selected. Non-empty selections don't cause this.
+                let length = selection.end - selection.start;
+                length > 0
+            })
     }
 
     pub fn key_context(&self, window: &Window, cx: &App) -> KeyContext {
@@ -2606,6 +2650,10 @@ impl Editor {
 
     pub fn buffer(&self) -> &Entity<MultiBuffer> {
         &self.buffer
+    }
+
+    pub fn project(&self) -> Option<&Entity<Project>> {
+        self.project.as_ref()
     }
 
     pub fn workspace(&self) -> Option<Entity<Workspace>> {
@@ -5194,7 +5242,7 @@ impl Editor {
         restrict_to_languages: Option<&HashSet<Arc<Language>>>,
         cx: &mut Context<Editor>,
     ) -> HashMap<ExcerptId, (Entity<Buffer>, clock::Global, Range<usize>)> {
-        let Some(project) = self.project.as_ref() else {
+        let Some(project) = self.project() else {
             return HashMap::default();
         };
         let project = project.read(cx);
@@ -5276,7 +5324,7 @@ impl Editor {
             return None;
         }
 
-        let project = self.project.as_ref()?;
+        let project = self.project()?;
         let position = self.selections.newest_anchor().head();
         let (buffer, buffer_position) = self
             .buffer
@@ -6123,7 +6171,7 @@ impl Editor {
         cx: &mut App,
     ) -> Task<Vec<task::DebugScenario>> {
         maybe!({
-            let project = self.project.as_ref()?;
+            let project = self.project()?;
             let dap_store = project.read(cx).dap_store();
             let mut scenarios = vec![];
             let resolved_tasks = resolved_tasks.as_ref()?;
@@ -7889,7 +7937,7 @@ impl Editor {
         let snapshot = self.snapshot(window, cx);
 
         let multi_buffer_snapshot = &snapshot.display_snapshot.buffer_snapshot;
-        let Some(project) = self.project.as_ref() else {
+        let Some(project) = self.project() else {
             return breakpoint_display_points;
         };
 
@@ -9124,7 +9172,7 @@ impl Editor {
                     .on_mouse_down(MouseButton::Left, |_, window, _| window.prevent_default())
                     .on_click(cx.listener(|this, _event, window, cx| {
                         cx.stop_propagation();
-                        this.report_editor_event("Edit Prediction Provider ToS Clicked", None, cx);
+                        this.report_editor_event(ReportEditorEvent::ZetaTosClicked, None, cx);
                         window.dispatch_action(
                             zed_actions::OpenZedPredictOnboarding.boxed_clone(),
                             cx,
@@ -10483,7 +10531,7 @@ impl Editor {
     ) {
         if let Some(working_directory) = self.active_excerpt(cx).and_then(|(_, buffer, _)| {
             let project_path = buffer.read(cx).project_path(cx)?;
-            let project = self.project.as_ref()?.read(cx);
+            let project = self.project()?.read(cx);
             let entry = project.entry_for_path(&project_path, cx)?;
             let parent = match &entry.canonical_path {
                 Some(canonical_path) => canonical_path.to_path_buf(),
@@ -12158,6 +12206,8 @@ impl Editor {
         let clipboard_text = Cow::Borrowed(text);
 
         self.transact(window, cx, |this, window, cx| {
+            let had_active_edit_prediction = this.has_active_edit_prediction();
+
             if let Some(mut clipboard_selections) = clipboard_selections {
                 let old_selections = this.selections.all::<usize>(cx);
                 let all_selections_were_entire_line =
@@ -12230,6 +12280,11 @@ impl Editor {
             } else {
                 this.insert(&clipboard_text, window, cx);
             }
+
+            let trigger_in_words =
+                this.show_edit_predictions_in_menu() || !had_active_edit_prediction;
+
+            this.trigger_completion_on_input(&text, trigger_in_words, window, cx);
         });
     }
 
@@ -13587,7 +13642,7 @@ impl Editor {
 
     pub fn split_selection_into_lines(
         &mut self,
-        _: &SplitSelectionIntoLines,
+        action: &SplitSelectionIntoLines,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -13604,8 +13659,21 @@ impl Editor {
             let buffer = self.buffer.read(cx).read(cx);
             for selection in selections {
                 for row in selection.start.row..selection.end.row {
-                    let cursor = Point::new(row, buffer.line_len(MultiBufferRow(row)));
-                    new_selection_ranges.push(cursor..cursor);
+                    let line_start = Point::new(row, 0);
+                    let line_end = Point::new(row, buffer.line_len(MultiBufferRow(row)));
+
+                    if action.keep_selections {
+                        // Keep the selection range for each line
+                        let selection_start = if row == selection.start.row {
+                            selection.start
+                        } else {
+                            line_start
+                        };
+                        new_selection_ranges.push(selection_start..line_end);
+                    } else {
+                        // Collapse to cursor at end of line
+                        new_selection_ranges.push(line_end..line_end);
+                    }
                 }
 
                 let is_multiline_selection = selection.start.row != selection.end.row;
@@ -13613,7 +13681,16 @@ impl Editor {
                 // so this action feels more ergonomic when paired with other selection operations
                 let should_skip_last = is_multiline_selection && selection.end.column == 0;
                 if !should_skip_last {
-                    new_selection_ranges.push(selection.end..selection.end);
+                    if action.keep_selections {
+                        if is_multiline_selection {
+                            let line_start = Point::new(selection.end.row, 0);
+                            new_selection_ranges.push(line_start..selection.end);
+                        } else {
+                            new_selection_ranges.push(selection.start..selection.end);
+                        }
+                    } else {
+                        new_selection_ranges.push(selection.end..selection.end);
+                    }
                 }
             }
         }
@@ -14828,7 +14905,7 @@ impl Editor {
             self.clear_tasks();
             return Task::ready(());
         }
-        let project = self.project.as_ref().map(Entity::downgrade);
+        let project = self.project().map(Entity::downgrade);
         let task_sources = self.lsp_task_sources(cx);
         let multi_buffer = self.buffer.downgrade();
         cx.spawn_in(window, async move |editor, cx| {
@@ -15817,19 +15894,30 @@ impl Editor {
 
                 let tab_kind = match kind {
                     Some(GotoDefinitionKind::Implementation) => "Implementations",
-                    _ => "Definitions",
+                    Some(GotoDefinitionKind::Symbol) | None => "Definitions",
+                    Some(GotoDefinitionKind::Declaration) => "Declarations",
+                    Some(GotoDefinitionKind::Type) => "Types",
                 };
                 let title = editor
                     .update_in(acx, |_, _, cx| {
-                        let origin = locations.first().unwrap();
-                        let buffer = origin.buffer.read(cx);
-                        format!(
-                            "{} for {}",
-                            tab_kind,
-                            buffer
-                                .text_for_range(origin.range.clone())
-                                .collect::<String>()
-                        )
+                        let target = locations
+                            .iter()
+                            .map(|location| {
+                                location
+                                    .buffer
+                                    .read(cx)
+                                    .text_for_range(location.range.clone())
+                                    .collect::<String>()
+                            })
+                            .filter(|text| !text.contains('\n'))
+                            .unique()
+                            .take(3)
+                            .join(", ");
+                        if target.is_empty() {
+                            tab_kind.to_owned()
+                        } else {
+                            format!("{tab_kind} for {target}")
+                        }
                     })
                     .context("buffer title")?;
 
@@ -16025,19 +16113,24 @@ impl Editor {
             }
 
             workspace.update_in(cx, |workspace, window, cx| {
-                let title = locations
-                    .first()
-                    .as_ref()
+                let target = locations
+                    .iter()
                     .map(|location| {
-                        let buffer = location.buffer.read(cx);
-                        format!(
-                            "References to `{}`",
-                            buffer
-                                .text_for_range(location.range.clone())
-                                .collect::<String>()
-                        )
+                        location
+                            .buffer
+                            .read(cx)
+                            .text_for_range(location.range.clone())
+                            .collect::<String>()
                     })
-                    .unwrap();
+                    .filter(|text| !text.contains('\n'))
+                    .unique()
+                    .take(3)
+                    .join(", ");
+                let title = if target.is_empty() {
+                    "References".to_owned()
+                } else {
+                    format!("References to {target}")
+                };
                 Self::open_locations_in_multibuffer(
                     workspace,
                     locations,
@@ -17001,7 +17094,7 @@ impl Editor {
         if !pull_diagnostics_settings.enabled {
             return None;
         }
-        let project = self.project.as_ref()?.downgrade();
+        let project = self.project()?.downgrade();
         let debounce = Duration::from_millis(pull_diagnostics_settings.debounce_ms);
         let mut buffers = self.buffer.read(cx).all_buffers();
         if let Some(buffer_id) = buffer_id {
@@ -17965,7 +18058,7 @@ impl Editor {
         hunks: impl Iterator<Item = MultiBufferDiffHunk>,
         cx: &mut App,
     ) -> Option<()> {
-        let project = self.project.as_ref()?;
+        let project = self.project()?;
         let buffer = project.read(cx).buffer_for_id(buffer_id, cx)?;
         let diff = self.buffer.read(cx).diff_for(buffer_id)?;
         let buffer_snapshot = buffer.read(cx).snapshot();
@@ -18625,7 +18718,7 @@ impl Editor {
         self.active_excerpt(cx).and_then(|(_, buffer, _)| {
             let buffer = buffer.read(cx);
             if let Some(project_path) = buffer.project_path(cx) {
-                let project = self.project.as_ref()?.read(cx);
+                let project = self.project()?.read(cx);
                 project.absolute_path(&project_path, cx)
             } else {
                 buffer
@@ -18638,7 +18731,7 @@ impl Editor {
     fn target_file_path(&self, cx: &mut Context<Self>) -> Option<PathBuf> {
         self.active_excerpt(cx).and_then(|(_, buffer, _)| {
             let project_path = buffer.read(cx).project_path(cx)?;
-            let project = self.project.as_ref()?.read(cx);
+            let project = self.project()?.read(cx);
             let entry = project.entry_for_path(&project_path, cx)?;
             let path = entry.path.to_path_buf();
             Some(path)
@@ -18859,7 +18952,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(project) = self.project.as_ref() {
+        if let Some(project) = self.project() {
             let Some(buffer) = self.buffer().read(cx).as_singleton() else {
                 return;
             };
@@ -18975,7 +19068,7 @@ impl Editor {
             return Task::ready(Err(anyhow!("failed to determine buffer and selection")));
         };
 
-        let Some(project) = self.project.as_ref() else {
+        let Some(project) = self.project() else {
             return Task::ready(Err(anyhow!("editor does not have project")));
         };
 
@@ -20182,6 +20275,7 @@ impl Editor {
         );
 
         let old_cursor_shape = self.cursor_shape;
+        let old_show_breadcrumbs = self.show_breadcrumbs;
 
         {
             let editor_settings = EditorSettings::get_global(cx);
@@ -20193,6 +20287,10 @@ impl Editor {
 
         if old_cursor_shape != self.cursor_shape {
             cx.emit(EditorEvent::CursorShapeChanged);
+        }
+
+        if old_show_breadcrumbs != self.show_breadcrumbs {
+            cx.emit(EditorEvent::BreadcrumbsChanged);
         }
 
         let project_settings = ProjectSettings::get_global(cx);
@@ -20547,7 +20645,7 @@ impl Editor {
 
     fn report_editor_event(
         &self,
-        event_type: &'static str,
+        reported_event: ReportEditorEvent,
         file_extension: Option<String>,
         cx: &App,
     ) {
@@ -20581,15 +20679,30 @@ impl Editor {
             .show_edit_predictions;
 
         let project = project.read(cx);
-        telemetry::event!(
-            event_type,
-            file_extension,
-            vim_mode,
-            copilot_enabled,
-            copilot_enabled_for_language,
-            edit_predictions_provider,
-            is_via_ssh = project.is_via_ssh(),
-        );
+        let event_type = reported_event.event_type();
+
+        if let ReportEditorEvent::Saved { auto_saved } = reported_event {
+            telemetry::event!(
+                event_type,
+                type = if auto_saved {"autosave"} else {"manual"},
+                file_extension,
+                vim_mode,
+                copilot_enabled,
+                copilot_enabled_for_language,
+                edit_predictions_provider,
+                is_via_ssh = project.is_via_ssh(),
+            );
+        } else {
+            telemetry::event!(
+                event_type,
+                file_extension,
+                vim_mode,
+                copilot_enabled,
+                copilot_enabled_for_language,
+                edit_predictions_provider,
+                is_via_ssh = project.is_via_ssh(),
+            );
+        };
     }
 
     /// Copy the highlighted chunks to the clipboard as JSON. The format is an array of lines,
@@ -20942,7 +21055,7 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         let workspace = self.workspace();
-        let project = self.project.as_ref();
+        let project = self.project();
         let save_tasks = self.buffer().update(cx, |multi_buffer, cx| {
             let mut tasks = Vec::new();
             for (buffer_id, changes) in revert_changes {
@@ -22801,6 +22914,7 @@ pub enum EditorEvent {
     },
     Reloaded,
     CursorShapeChanged,
+    BreadcrumbsChanged,
     PushedToNavHistory {
         anchor: Anchor,
         is_deactivate: bool,

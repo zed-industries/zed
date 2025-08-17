@@ -239,6 +239,7 @@
       "ctrl-shift-a": "agent::ToggleContextPicker",
       "ctrl-shift-j": "agent::ToggleNavigationMenu",
       "ctrl-shift-i": "agent::ToggleOptionsMenu",
+      "ctrl-alt-shift-n": "agent::ToggleNewThreadMenu",
       "shift-alt-escape": "agent::ExpandMessageEditor",
       "ctrl->": "assistant::QuoteSelection",
       "ctrl-alt-e": "agent::RemoveAllContext",
@@ -330,8 +331,6 @@
     "use_key_equivalents": true,
     "bindings": {
       "enter": "agent::Chat",
-      "up": "agent::PreviousHistoryMessage",
-      "down": "agent::NextHistoryMessage",
       "shift-ctrl-r": "agent::OpenAgentDiff",
       "ctrl-shift-y": "agent::KeepAll",
       "ctrl-shift-n": "agent::RejectAll"

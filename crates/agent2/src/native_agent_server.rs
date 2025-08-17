@@ -1,8 +1,8 @@
-use std::path::Path;
-use std::rc::Rc;
+use std::{path::Path, rc::Rc, sync::Arc};
 
 use agent_servers::AgentServer;
 use anyhow::Result;
+use fs::Fs;
 use gpui::{App, Entity, Task};
 use project::Project;
 use prompt_store::PromptStore;
@@ -10,7 +10,15 @@ use prompt_store::PromptStore;
 use crate::{NativeAgent, NativeAgentConnection, templates::Templates};
 
 #[derive(Clone)]
-pub struct NativeAgentServer;
+pub struct NativeAgentServer {
+    fs: Arc<dyn Fs>,
+}
+
+impl NativeAgentServer {
+    pub fn new(fs: Arc<dyn Fs>) -> Self {
+        Self { fs }
+    }
+}
 
 impl AgentServer for NativeAgentServer {
     fn name(&self) -> &'static str {
@@ -41,6 +49,7 @@ impl AgentServer for NativeAgentServer {
             _root_dir
         );
         let project = project.clone();
+        let fs = self.fs.clone();
         let prompt_store = PromptStore::global(cx);
         cx.spawn(async move |cx| {
             log::debug!("Creating templates for native agent");
@@ -48,7 +57,7 @@ impl AgentServer for NativeAgentServer {
             let prompt_store = prompt_store.await?;
 
             log::debug!("Creating native agent entity");
-            let agent = NativeAgent::new(project, templates, Some(prompt_store), cx).await?;
+            let agent = NativeAgent::new(project, templates, Some(prompt_store), fs, cx).await?;
 
             // Create the connection wrapper
             let connection = NativeAgentConnection(agent);

@@ -13,7 +13,7 @@ use language::{LanguageName, ManifestName, ManifestProvider, ManifestQuery};
 use language::{Toolchain, WorkspaceFoldersContent};
 use lsp::LanguageServerBinary;
 use lsp::LanguageServerName;
-use node_runtime::NodeRuntime;
+use node_runtime::{NodeRuntime, VersionStrategy};
 use pet_core::Configuration;
 use pet_core::os_environment::Environment;
 use pet_core::python_environment::PythonEnvironmentKind;
@@ -205,7 +205,7 @@ impl LspAdapter for PythonLspAdapter {
                 Self::SERVER_NAME.as_ref(),
                 &server_path,
                 &container_dir,
-                &version,
+                VersionStrategy::Latest(version),
             )
             .await;
 

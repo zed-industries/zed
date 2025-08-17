@@ -321,7 +321,7 @@ impl NotificationPanel {
                                             .justify_end()
                                             .child(Button::new("decline", "Decline").on_click({
                                                 let notification = notification.clone();
-                                                let entity = cx.entity().clone();
+                                                let entity = cx.entity();
                                                 move |_, _, cx| {
                                                     entity.update(cx, |this, cx| {
                                                         this.respond_to_notification(
@@ -334,7 +334,7 @@ impl NotificationPanel {
                                             }))
                                             .child(Button::new("accept", "Accept").on_click({
                                                 let notification = notification.clone();
-                                                let entity = cx.entity().clone();
+                                                let entity = cx.entity();
                                                 move |_, _, cx| {
                                                     entity.update(cx, |this, cx| {
                                                         this.respond_to_notification(

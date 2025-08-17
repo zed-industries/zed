@@ -35,7 +35,7 @@ use super::symbol_context_picker::search_symbols;
 use super::thread_context_picker::{ThreadContextEntry, ThreadMatch, search_threads};
 use super::{
     ContextPickerAction, ContextPickerEntry, ContextPickerMode, MentionLink, RecentEntry,
-    available_context_picker_entries, recent_context_picker_entries, selection_ranges,
+    available_context_picker_entries, recent_context_picker_entries_with_store, selection_ranges,
 };
 use crate::message_editor::ContextCreasesAddon;
 
@@ -787,7 +787,7 @@ impl CompletionProvider for ContextPickerCompletionProvider {
             .and_then(|b| b.read(cx).file())
             .map(|file| ProjectPath::from_file(file.as_ref(), cx));
 
-        let recent_entries = recent_context_picker_entries(
+        let recent_entries = recent_context_picker_entries_with_store(
             context_store.clone(),
             thread_store.clone(),
             text_thread_store.clone(),

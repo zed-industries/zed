@@ -390,13 +390,17 @@ impl LocalLspStore {
                         delegate.update_status(
                             adapter.name(),
                             BinaryStatus::Failed {
-                                error: format!("{err}\n-- stderr--\n{log}"),
+                                error: if log.is_empty() {
+                                    format!("{err:#}")
+                                } else {
+                                    format!("{err:#}\n-- stderr --\n{log}")
+                                },
                             },
                         );
-                        let message =
-                            format!("Failed to start language server {server_name:?}: {err:#?}");
-                        log::error!("{message}");
-                        log::error!("server stderr: {log}");
+                        log::error!("Failed to start language server {server_name:?}: {err:?}");
+                        if !log.is_empty() {
+                            log::error!("server stderr: {log}");
+                        }
                         None
                     }
                 }
@@ -11813,14 +11817,16 @@ impl LspStore {
                         notify_server_capabilities_updated(&server, cx);
                     }
                 }
-                "textDocument/synchronization" => {
-                    if let Some(caps) = reg
+                "textDocument/didChange" => {
+                    if let Some(sync_kind) = reg
                         .register_options
-                        .map(serde_json::from_value)
+                        .and_then(|opts| opts.get("syncKind").cloned())
+                        .map(serde_json::from_value::<lsp::TextDocumentSyncKind>)
                         .transpose()?
                     {
                         server.update_capabilities(|capabilities| {
-                            capabilities.text_document_sync = Some(caps);
+                            capabilities.text_document_sync =
+                                Some(lsp::TextDocumentSyncCapability::Kind(sync_kind));
                         });
                         notify_server_capabilities_updated(&server, cx);
                     }
@@ -11970,7 +11976,7 @@ impl LspStore {
                     });
                     notify_server_capabilities_updated(&server, cx);
                 }
-                "textDocument/synchronization" => {
+                "textDocument/didChange" => {
                     server.update_capabilities(|capabilities| {
                         capabilities.text_document_sync = None;
                     });

@@ -2105,7 +2105,7 @@ impl GitPanel {
                 Ok(_) => cx.update(|window, cx| {
                     window.prompt(
                         PromptLevel::Info,
-                        "Git Clone",
+                        &format!("Git Clone: {}", repo_name),
                         None,
                         &["Add repo to project", "Open repo in new project"],
                         cx,
@@ -3410,7 +3410,7 @@ impl GitPanel {
             * MAX_PANEL_EDITOR_LINES
             + gap;
 
-        let git_panel = cx.entity().clone();
+        let git_panel = cx.entity();
         let display_name = SharedString::from(Arc::from(
             active_repository
                 .read(cx)

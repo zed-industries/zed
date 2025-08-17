@@ -15,6 +15,8 @@ use futures::{FutureExt, SinkExt, StreamExt};
 use git_ui::file_diff_view::FileDiffView;
 use gpui::{App, AsyncApp, Global, WindowHandle};
 use language::Point;
+use onboarding::FIRST_OPEN;
+use onboarding::show_onboarding_view;
 use recent_projects::{SshSettings, open_ssh_project};
 use remote::SshConnectionOptions;
 use settings::Settings;
@@ -24,7 +26,6 @@ use std::thread;
 use std::time::Duration;
 use util::ResultExt;
 use util::paths::PathWithPosition;
-use welcome::{FIRST_OPEN, show_welcome_view};
 use workspace::item::ItemHandle;
 use workspace::{AppState, OpenOptions, SerializedWorkspaceLocation, Workspace};
 
@@ -378,7 +379,7 @@ async fn open_workspaces(
     if grouped_locations.is_empty() {
         // If we have no paths to open, show the welcome screen if this is the first launch
         if matches!(KEY_VALUE_STORE.read_kvp(FIRST_OPEN), Ok(None)) {
-            cx.update(|cx| show_welcome_view(app_state, cx).detach())
+            cx.update(|cx| show_onboarding_view(app_state, cx).detach())
                 .log_err();
         }
         // If not the first launch, show an empty window with empty editor

@@ -72,7 +72,7 @@ pub fn init(
         let Some(window) = window else {
             return;
         };
-        let workspace = cx.entity().clone();
+        let workspace = cx.entity();
         InlineAssistant::update_global(cx, |inline_assistant, cx| {
             inline_assistant.register_workspace(&workspace, window, cx)
         });

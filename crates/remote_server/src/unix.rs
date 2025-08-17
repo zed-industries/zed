@@ -34,10 +34,10 @@ use smol::io::AsyncReadExt;
 
 use smol::Async;
 use smol::{net::unix::UnixListener, stream::StreamExt as _};
-use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::ops::ControlFlow;
 use std::str::FromStr;
+use std::sync::LazyLock;
 use std::{env, thread};
 use std::{
     io::Write,
@@ -47,6 +47,13 @@ use std::{
 };
 use telemetry_events::LocationData;
 use util::ResultExt;
+
+pub static VERSION: LazyLock<&str> = LazyLock::new(|| match *RELEASE_CHANNEL {
+    ReleaseChannel::Stable | ReleaseChannel::Preview => env!("ZED_PKG_VERSION"),
+    ReleaseChannel::Nightly | ReleaseChannel::Dev => {
+        option_env!("ZED_COMMIT_SHA").unwrap_or("missing-zed-commit-sha")
+    }
+});
 
 fn init_logging_proxy() {
     env_logger::builder()
@@ -113,13 +120,14 @@ fn init_logging_server(log_file_path: PathBuf) -> Result<Receiver<Vec<u8>>> {
 
 fn init_panic_hook(session_id: String) {
     std::panic::set_hook(Box::new(move |info| {
-        crashes::handle_panic();
         let payload = info
             .payload()
             .downcast_ref::<&str>()
             .map(|s| s.to_string())
             .or_else(|| info.payload().downcast_ref::<String>().cloned())
             .unwrap_or_else(|| "Box<Any>".to_string());
+
+        crashes::handle_panic(payload.clone(), info.location());
 
         let backtrace = backtrace::Backtrace::new();
         let mut backtrace = backtrace
@@ -150,14 +158,6 @@ fn init_panic_hook(session_id: String) {
             (&backtrace).join("\n")
         );
 
-        let release_channel = *RELEASE_CHANNEL;
-        let version = match release_channel {
-            ReleaseChannel::Stable | ReleaseChannel::Preview => env!("ZED_PKG_VERSION"),
-            ReleaseChannel::Nightly | ReleaseChannel::Dev => {
-                option_env!("ZED_COMMIT_SHA").unwrap_or("missing-zed-commit-sha")
-            }
-        };
-
         let panic_data = telemetry_events::Panic {
             thread: thread_name.into(),
             payload: payload.clone(),
@@ -165,9 +165,9 @@ fn init_panic_hook(session_id: String) {
                 file: location.file().into(),
                 line: location.line(),
             }),
-            app_version: format!("remote-server-{version}"),
+            app_version: format!("remote-server-{}", *VERSION),
             app_commit_sha: option_env!("ZED_COMMIT_SHA").map(|sha| sha.into()),
-            release_channel: release_channel.dev_name().into(),
+            release_channel: RELEASE_CHANNEL.dev_name().into(),
             target: env!("TARGET").to_owned().into(),
             os_name: telemetry::os_name(),
             os_version: Some(telemetry::os_version()),
@@ -204,8 +204,8 @@ fn handle_crash_files_requests(project: &Entity<HeadlessProject>, client: &Arc<C
     client.add_request_handler(
         project.downgrade(),
         |_, _: TypedEnvelope<proto::GetCrashFiles>, _cx| async move {
+            let mut legacy_panics = Vec::new();
             let mut crashes = Vec::new();
-            let mut minidumps_by_session_id = HashMap::new();
             let mut children = smol::fs::read_dir(paths::logs_dir()).await?;
             while let Some(child) = children.next().await {
                 let child = child?;
@@ -227,41 +227,31 @@ fn handle_crash_files_requests(project: &Entity<HeadlessProject>, client: &Arc<C
                         .await
                         .context("error reading panic file")?;
 
-                    crashes.push(proto::CrashReport {
-                        panic_contents: Some(file_contents),
-                        minidump_contents: None,
-                    });
+                    legacy_panics.push(file_contents);
+                    smol::fs::remove_file(&child_path)
+                        .await
+                        .context("error removing panic")
+                        .log_err();
                 } else if extension == Some(OsStr::new("dmp")) {
-                    let session_id = child_path.file_stem().unwrap().to_string_lossy();
-                    minidumps_by_session_id
-                        .insert(session_id.to_string(), smol::fs::read(&child_path).await?);
-                }
-
-                // We've done what we can, delete the file
-                smol::fs::remove_file(&child_path)
-                    .await
-                    .context("error removing panic")
-                    .log_err();
-            }
-
-            for crash in &mut crashes {
-                let panic: telemetry_events::Panic =
-                    serde_json::from_str(crash.panic_contents.as_ref().unwrap())?;
-                if let dump @ Some(_) = minidumps_by_session_id.remove(&panic.session_id) {
-                    crash.minidump_contents = dump;
+                    let mut json_path = child_path.clone();
+                    json_path.set_extension("json");
+                    if let Ok(json_content) = smol::fs::read_to_string(&json_path).await {
+                        crashes.push(CrashReport {
+                            metadata: json_content,
+                            minidump_contents: smol::fs::read(&child_path).await?,
+                        });
+                        smol::fs::remove_file(&child_path).await.log_err();
+                        smol::fs::remove_file(&json_path).await.log_err();
+                    } else {
+                        log::error!("Couldn't find json metadata for crash: {child_path:?}");
+                    }
                 }
             }
 
-            crashes.extend(
-                minidumps_by_session_id
-                    .into_values()
-                    .map(|dmp| CrashReport {
-                        panic_contents: None,
-                        minidump_contents: Some(dmp),
-                    }),
-            );
-
-            anyhow::Ok(proto::GetCrashFilesResponse { crashes })
+            anyhow::Ok(proto::GetCrashFilesResponse {
+                crashes,
+                legacy_panics,
+            })
         },
     );
 }
@@ -442,7 +432,12 @@ pub fn execute_run(
     let app = gpui::Application::headless();
     let id = std::process::id().to_string();
     app.background_executor()
-        .spawn(crashes::init(id.clone()))
+        .spawn(crashes::init(crashes::InitCrashHandler {
+            session_id: id.clone(),
+            zed_version: VERSION.to_owned(),
+            release_channel: release_channel::RELEASE_CHANNEL_NAME.clone(),
+            commit_sha: option_env!("ZED_COMMIT_SHA").unwrap_or("no_sha").to_owned(),
+        }))
         .detach();
     init_panic_hook(id);
     let log_rx = init_logging_server(log_file)?;
@@ -569,7 +564,13 @@ pub fn execute_proxy(identifier: String, is_reconnecting: bool) -> Result<()> {
     let server_paths = ServerPaths::new(&identifier)?;
 
     let id = std::process::id().to_string();
-    smol::spawn(crashes::init(id.clone())).detach();
+    smol::spawn(crashes::init(crashes::InitCrashHandler {
+        session_id: id.clone(),
+        zed_version: VERSION.to_owned(),
+        release_channel: release_channel::RELEASE_CHANNEL_NAME.clone(),
+        commit_sha: option_env!("ZED_COMMIT_SHA").unwrap_or("no_sha").to_owned(),
+    }))
+    .detach();
     init_panic_hook(id);
 
     log::info!("starting proxy process. PID: {}", std::process::id());
