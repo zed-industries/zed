@@ -5,6 +5,7 @@ use gpui::{
     SystemWindowTabController, Window, WindowId, actions, canvas, div,
 };
 
+use theme::ThemeSettings;
 use ui::{
     Color, ContextMenu, DynamicSpacing, IconButton, IconButtonShape, IconName, IconSize, Label,
     LabelSize, Tab, h_flex, prelude::*, right_click_menu,
@@ -405,6 +406,7 @@ impl Render for DraggedWindowTab {
         _window: &mut gpui::Window,
         cx: &mut gpui::Context<Self>,
     ) -> impl gpui::IntoElement {
+        let ui_font = ThemeSettings::get_global(cx).ui_font.clone();
         let label = Label::new(self.title.clone())
             .size(LabelSize::Small)
             .truncate()
@@ -426,6 +428,7 @@ impl Render for DraggedWindowTab {
             })
             .border_1()
             .border_color(cx.theme().colors().border)
+            .font(ui_font)
             .child(label)
     }
 }
