@@ -1058,6 +1058,8 @@ impl MentionSet {
 
     pub fn drain(&mut self) -> impl Iterator<Item = CreaseId> {
         self.fetch_results.clear();
+        self.thread_summaries.clear();
+        self.text_thread_summaries.clear();
         self.uri_by_crease_id
             .drain()
             .map(|(id, _)| id)
