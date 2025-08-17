@@ -8,9 +8,10 @@ use crate::{
     },
     tool_use::{PendingToolUse, ToolUse, ToolUseMetadata, ToolUseState},
 };
+use action_log::ActionLog;
 use agent_settings::{AgentProfileId, AgentSettings, CompletionMode, SUMMARIZE_THREAD_PROMPT};
 use anyhow::{Result, anyhow};
-use assistant_tool::{ActionLog, AnyToolCard, Tool, ToolWorkingSet};
+use assistant_tool::{AnyToolCard, Tool, ToolWorkingSet};
 use chrono::{DateTime, Utc};
 use client::{ModelRequestUsage, RequestUsage};
 use cloud_llm_client::{CompletionIntent, CompletionRequestStatus, Plan, UsageLimit};
@@ -843,11 +844,17 @@ impl Thread {
                     .await
                     .unwrap_or(false);
 
-                if !equal {
-                    this.update(cx, |this, cx| {
-                        this.insert_checkpoint(pending_checkpoint, cx)
-                    })?;
-                }
+                this.update(cx, |this, cx| {
+                    this.pending_checkpoint = if equal {
+                        Some(pending_checkpoint)
+                    } else {
+                        this.insert_checkpoint(pending_checkpoint, cx);
+                        Some(ThreadCheckpoint {
+                            message_id: this.next_message_id,
+                            git_checkpoint: final_checkpoint,
+                        })
+                    }
+                })?;
 
                 Ok(())
             }
@@ -2266,6 +2273,15 @@ impl Thread {
                     delay: BASE_RETRY_DELAY,
                     max_attempts: 3,
                 })
+            }
+            Other(err)
+                if err.is::<PaymentRequiredError>()
+                    || err.is::<ModelRequestLimitReachedError>() =>
+            {
+                // Retrying won't help for Payment Required or Model Request Limit errors (where
+                // the user must upgrade to usage-based billing to get more requests, or else wait
+                // for a significant amount of time for the request limit to reset).
+                None
             }
             // Conservatively assume that any other errors are non-retryable
             HttpResponseError { .. } | Other(..) => Some(RetryStrategy::Fixed {

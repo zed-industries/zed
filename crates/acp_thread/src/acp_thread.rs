@@ -1,85 +1,63 @@
 mod connection;
 mod diff;
+mod mention;
+mod terminal;
 
 pub use connection::*;
 pub use diff::*;
+pub use mention::*;
+pub use terminal::*;
 
+use action_log::ActionLog;
 use agent_client_protocol as acp;
-use anyhow::{Context as _, Result};
-use assistant_tool::ActionLog;
+use anyhow::{Context as _, Result, anyhow};
 use editor::Bias;
 use futures::{FutureExt, channel::oneshot, future::BoxFuture};
-use gpui::{AppContext, Context, Entity, EventEmitter, SharedString, Task};
+use gpui::{AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Task, WeakEntity};
 use itertools::Itertools;
-use language::{Anchor, Buffer, BufferSnapshot, LanguageRegistry, Point, text_diff};
+use language::{Anchor, Buffer, BufferSnapshot, LanguageRegistry, Point, ToPoint, text_diff};
 use markdown::Markdown;
-use project::{AgentLocation, Project};
+use project::{AgentLocation, Project, git_store::GitStoreCheckpoint};
 use std::collections::HashMap;
 use std::error::Error;
-use std::fmt::Formatter;
+use std::fmt::{Formatter, Write};
+use std::ops::Range;
 use std::process::ExitStatus;
 use std::rc::Rc;
-use std::{
-    fmt::Display,
-    mem,
-    path::{Path, PathBuf},
-    sync::Arc,
-};
+use std::{fmt::Display, mem, path::PathBuf, sync::Arc};
 use ui::App;
 use util::ResultExt;
 
 #[derive(Debug)]
 pub struct UserMessage {
+    pub id: Option<UserMessageId>,
     pub content: ContentBlock,
-}
-
-impl UserMessage {
-    pub fn from_acp(
-        message: impl IntoIterator<Item = acp::ContentBlock>,
-        language_registry: Arc<LanguageRegistry>,
-        cx: &mut App,
-    ) -> Self {
-        let mut content = ContentBlock::Empty;
-        for chunk in message {
-            content.append(chunk, &language_registry, cx)
-        }
-        Self { content: content }
-    }
-
-    fn to_markdown(&self, cx: &App) -> String {
-        format!("## User\n\n{}\n\n", self.content.to_markdown(cx))
-    }
+    pub chunks: Vec<acp::ContentBlock>,
+    pub checkpoint: Option<Checkpoint>,
 }
 
 #[derive(Debug)]
-pub struct MentionPath<'a>(&'a Path);
-
-impl<'a> MentionPath<'a> {
-    const PREFIX: &'static str = "@file:";
-
-    pub fn new(path: &'a Path) -> Self {
-        MentionPath(path)
-    }
-
-    pub fn try_parse(url: &'a str) -> Option<Self> {
-        let path = url.strip_prefix(Self::PREFIX)?;
-        Some(MentionPath(Path::new(path)))
-    }
-
-    pub fn path(&self) -> &Path {
-        self.0
-    }
+pub struct Checkpoint {
+    git_checkpoint: GitStoreCheckpoint,
+    pub show: bool,
 }
 
-impl Display for MentionPath<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "[@{}]({}{})",
-            self.0.file_name().unwrap_or_default().display(),
-            Self::PREFIX,
-            self.0.display()
-        )
+impl UserMessage {
+    fn to_markdown(&self, cx: &App) -> String {
+        let mut markdown = String::new();
+        if self
+            .checkpoint
+            .as_ref()
+            .map_or(false, |checkpoint| checkpoint.show)
+        {
+            writeln!(markdown, "## User (checkpoint)").unwrap();
+        } else {
+            writeln!(markdown, "## User").unwrap();
+        }
+        writeln!(markdown).unwrap();
+        writeln!(markdown, "{}", self.content.to_markdown(cx)).unwrap();
+        writeln!(markdown).unwrap();
+        markdown
     }
 }
 
@@ -131,11 +109,19 @@ pub enum AgentThreadEntry {
 }
 
 impl AgentThreadEntry {
-    fn to_markdown(&self, cx: &App) -> String {
+    pub fn to_markdown(&self, cx: &App) -> String {
         match self {
             Self::UserMessage(message) => message.to_markdown(cx),
             Self::AssistantMessage(message) => message.to_markdown(cx),
             Self::ToolCall(tool_call) => tool_call.to_markdown(cx),
+        }
+    }
+
+    pub fn user_message(&self) -> Option<&UserMessage> {
+        if let AgentThreadEntry::UserMessage(message) = self {
+            Some(message)
+        } else {
+            None
         }
     }
 
@@ -147,9 +133,25 @@ impl AgentThreadEntry {
         }
     }
 
-    pub fn locations(&self) -> Option<&[acp::ToolCallLocation]> {
-        if let AgentThreadEntry::ToolCall(ToolCall { locations, .. }) = self {
-            Some(locations)
+    pub fn terminals(&self) -> impl Iterator<Item = &Entity<Terminal>> {
+        if let AgentThreadEntry::ToolCall(call) = self {
+            itertools::Either::Left(call.terminals())
+        } else {
+            itertools::Either::Right(std::iter::empty())
+        }
+    }
+
+    pub fn location(&self, ix: usize) -> Option<(acp::ToolCallLocation, AgentLocation)> {
+        if let AgentThreadEntry::ToolCall(ToolCall {
+            locations,
+            resolved_locations,
+            ..
+        }) = self
+        {
+            Some((
+                locations.get(ix)?.clone(),
+                resolved_locations.get(ix)?.clone()?,
+            ))
         } else {
             None
         }
@@ -164,6 +166,7 @@ pub struct ToolCall {
     pub content: Vec<ToolCallContent>,
     pub status: ToolCallStatus,
     pub locations: Vec<acp::ToolCallLocation>,
+    pub resolved_locations: Vec<Option<AgentLocation>>,
     pub raw_input: Option<serde_json::Value>,
     pub raw_output: Option<serde_json::Value>,
 }
@@ -192,6 +195,7 @@ impl ToolCall {
                 .map(|content| ToolCallContent::from_acp(content, language_registry.clone(), cx))
                 .collect(),
             locations: tool_call.locations,
+            resolved_locations: Vec::default(),
             status,
             raw_input: tool_call.raw_input,
             raw_output: tool_call.raw_output,
@@ -244,14 +248,32 @@ impl ToolCall {
         }
 
         if let Some(raw_output) = raw_output {
+            if self.content.is_empty() {
+                if let Some(markdown) = markdown_for_raw_output(&raw_output, &language_registry, cx)
+                {
+                    self.content
+                        .push(ToolCallContent::ContentBlock(ContentBlock::Markdown {
+                            markdown,
+                        }));
+                }
+            }
             self.raw_output = Some(raw_output);
         }
     }
 
     pub fn diffs(&self) -> impl Iterator<Item = &Entity<Diff>> {
         self.content.iter().filter_map(|content| match content {
-            ToolCallContent::ContentBlock { .. } => None,
-            ToolCallContent::Diff { diff } => Some(diff),
+            ToolCallContent::Diff(diff) => Some(diff),
+            ToolCallContent::ContentBlock(_) => None,
+            ToolCallContent::Terminal(_) => None,
+        })
+    }
+
+    pub fn terminals(&self) -> impl Iterator<Item = &Entity<Terminal>> {
+        self.content.iter().filter_map(|content| match content {
+            ToolCallContent::Terminal(terminal) => Some(terminal),
+            ToolCallContent::ContentBlock(_) => None,
+            ToolCallContent::Diff(_) => None,
         })
     }
 
@@ -266,6 +288,57 @@ impl ToolCall {
             markdown.push_str("\n\n");
         }
         markdown
+    }
+
+    async fn resolve_location(
+        location: acp::ToolCallLocation,
+        project: WeakEntity<Project>,
+        cx: &mut AsyncApp,
+    ) -> Option<AgentLocation> {
+        let buffer = project
+            .update(cx, |project, cx| {
+                if let Some(path) = project.project_path_for_absolute_path(&location.path, cx) {
+                    Some(project.open_buffer(path, cx))
+                } else {
+                    None
+                }
+            })
+            .ok()??;
+        let buffer = buffer.await.log_err()?;
+        let position = buffer
+            .update(cx, |buffer, _| {
+                if let Some(row) = location.line {
+                    let snapshot = buffer.snapshot();
+                    let column = snapshot.indent_size_for_line(row).len;
+                    let point = snapshot.clip_point(Point::new(row, column), Bias::Left);
+                    snapshot.anchor_before(point)
+                } else {
+                    Anchor::MIN
+                }
+            })
+            .ok()?;
+
+        Some(AgentLocation {
+            buffer: buffer.downgrade(),
+            position,
+        })
+    }
+
+    fn resolve_locations(
+        &self,
+        project: Entity<Project>,
+        cx: &mut App,
+    ) -> Task<Vec<Option<AgentLocation>>> {
+        let locations = self.locations.clone();
+        project.update(cx, |_, cx| {
+            cx.spawn(async move |project, cx| {
+                let mut new_locations = Vec::new();
+                for location in locations {
+                    new_locations.push(Self::resolve_location(location, project.clone(), cx).await);
+                }
+                new_locations
+            })
+        })
     }
 }
 
@@ -306,6 +379,7 @@ impl Display for ToolCallStatus {
 pub enum ContentBlock {
     Empty,
     Markdown { markdown: Entity<Markdown> },
+    ResourceLink { resource_link: acp::ResourceLink },
 }
 
 impl ContentBlock {
@@ -337,43 +411,78 @@ impl ContentBlock {
         language_registry: &Arc<LanguageRegistry>,
         cx: &mut App,
     ) {
-        let new_content = match block {
-            acp::ContentBlock::Text(text_content) => text_content.text.clone(),
-            acp::ContentBlock::ResourceLink(resource_link) => {
-                if let Some(path) = resource_link.uri.strip_prefix("file://") {
-                    format!("{}", MentionPath(path.as_ref()))
-                } else {
-                    resource_link.uri.clone()
-                }
+        if matches!(self, ContentBlock::Empty) {
+            if let acp::ContentBlock::ResourceLink(resource_link) = block {
+                *self = ContentBlock::ResourceLink { resource_link };
+                return;
             }
-            acp::ContentBlock::Image(_)
-            | acp::ContentBlock::Audio(_)
-            | acp::ContentBlock::Resource(_) => String::new(),
-        };
+        }
+
+        let new_content = self.block_string_contents(block);
 
         match self {
             ContentBlock::Empty => {
-                *self = ContentBlock::Markdown {
-                    markdown: cx.new(|cx| {
-                        Markdown::new(
-                            new_content.into(),
-                            Some(language_registry.clone()),
-                            None,
-                            cx,
-                        )
-                    }),
-                };
+                *self = Self::create_markdown_block(new_content, language_registry, cx);
             }
             ContentBlock::Markdown { markdown } => {
                 markdown.update(cx, |markdown, cx| markdown.append(&new_content, cx));
             }
+            ContentBlock::ResourceLink { resource_link } => {
+                let existing_content = Self::resource_link_md(&resource_link.uri);
+                let combined = format!("{}\n{}", existing_content, new_content);
+
+                *self = Self::create_markdown_block(combined, language_registry, cx);
+            }
         }
+    }
+
+    fn create_markdown_block(
+        content: String,
+        language_registry: &Arc<LanguageRegistry>,
+        cx: &mut App,
+    ) -> ContentBlock {
+        ContentBlock::Markdown {
+            markdown: cx
+                .new(|cx| Markdown::new(content.into(), Some(language_registry.clone()), None, cx)),
+        }
+    }
+
+    fn block_string_contents(&self, block: acp::ContentBlock) -> String {
+        match block {
+            acp::ContentBlock::Text(text_content) => text_content.text.clone(),
+            acp::ContentBlock::ResourceLink(resource_link) => {
+                Self::resource_link_md(&resource_link.uri)
+            }
+            acp::ContentBlock::Resource(acp::EmbeddedResource {
+                resource:
+                    acp::EmbeddedResourceResource::TextResourceContents(acp::TextResourceContents {
+                        uri,
+                        ..
+                    }),
+                ..
+            }) => Self::resource_link_md(&uri),
+            acp::ContentBlock::Image(image) => Self::image_md(&image),
+            acp::ContentBlock::Audio(_) | acp::ContentBlock::Resource(_) => String::new(),
+        }
+    }
+
+    fn resource_link_md(uri: &str) -> String {
+        if let Some(uri) = MentionUri::parse(&uri).log_err() {
+            uri.as_link().to_string()
+        } else {
+            uri.to_string()
+        }
+    }
+
+    fn image_md(_image: &acp::ImageContent) -> String {
+        "`Image`".into()
     }
 
     fn to_markdown<'a>(&'a self, cx: &'a App) -> &'a str {
         match self {
             ContentBlock::Empty => "",
             ContentBlock::Markdown { markdown } => markdown.read(cx).source(),
+            ContentBlock::ResourceLink { resource_link } => &resource_link.uri,
         }
     }
 
@@ -381,14 +490,23 @@ impl ContentBlock {
         match self {
             ContentBlock::Empty => None,
             ContentBlock::Markdown { markdown } => Some(markdown),
+            ContentBlock::ResourceLink { .. } => None,
+        }
+    }
+
+    pub fn resource_link(&self) -> Option<&acp::ResourceLink> {
+        match self {
+            ContentBlock::ResourceLink { resource_link } => Some(resource_link),
+            _ => None,
         }
     }
 }
 
 #[derive(Debug)]
 pub enum ToolCallContent {
-    ContentBlock { content: ContentBlock },
-    Diff { diff: Entity<Diff> },
+    ContentBlock(ContentBlock),
+    Diff(Entity<Diff>),
+    Terminal(Entity<Terminal>),
 }
 
 impl ToolCallContent {
@@ -398,19 +516,20 @@ impl ToolCallContent {
         cx: &mut App,
     ) -> Self {
         match content {
-            acp::ToolCallContent::Content { content } => Self::ContentBlock {
-                content: ContentBlock::new(content, &language_registry, cx),
-            },
-            acp::ToolCallContent::Diff { diff } => Self::Diff {
-                diff: cx.new(|cx| Diff::from_acp(diff, language_registry, cx)),
-            },
+            acp::ToolCallContent::Content { content } => {
+                Self::ContentBlock(ContentBlock::new(content, &language_registry, cx))
+            }
+            acp::ToolCallContent::Diff { diff } => {
+                Self::Diff(cx.new(|cx| Diff::from_acp(diff, language_registry, cx)))
+            }
         }
     }
 
     pub fn to_markdown(&self, cx: &App) -> String {
         match self {
-            Self::ContentBlock { content } => content.to_markdown(cx).to_string(),
-            Self::Diff { diff } => diff.read(cx).to_markdown(cx),
+            Self::ContentBlock(content) => content.to_markdown(cx).to_string(),
+            Self::Diff(diff) => diff.read(cx).to_markdown(cx),
+            Self::Terminal(terminal) => terminal.read(cx).to_markdown(cx),
         }
     }
 }
@@ -419,6 +538,7 @@ impl ToolCallContent {
 pub enum ToolCallUpdate {
     UpdateFields(acp::ToolCallUpdate),
     UpdateDiff(ToolCallUpdateDiff),
+    UpdateTerminal(ToolCallUpdateTerminal),
 }
 
 impl ToolCallUpdate {
@@ -426,6 +546,7 @@ impl ToolCallUpdate {
         match self {
             Self::UpdateFields(update) => &update.id,
             Self::UpdateDiff(diff) => &diff.id,
+            Self::UpdateTerminal(terminal) => &terminal.id,
         }
     }
 }
@@ -446,6 +567,18 @@ impl From<ToolCallUpdateDiff> for ToolCallUpdate {
 pub struct ToolCallUpdateDiff {
     pub id: acp::ToolCallId,
     pub diff: Entity<Diff>,
+}
+
+impl From<ToolCallUpdateTerminal> for ToolCallUpdate {
+    fn from(terminal: ToolCallUpdateTerminal) -> Self {
+        Self::UpdateTerminal(terminal)
+    }
+}
+
+#[derive(Debug, PartialEq)]
+pub struct ToolCallUpdateTerminal {
+    pub id: acp::ToolCallId,
+    pub terminal: Entity<Terminal>,
 }
 
 #[derive(Debug, Default)]
@@ -522,6 +655,7 @@ pub struct AcpThread {
 pub enum AcpThreadEvent {
     NewEntry,
     EntryUpdated(usize),
+    EntriesRemoved(Range<usize>),
     ToolAuthorizationRequired,
     Stopped,
     Error,
@@ -581,6 +715,10 @@ impl AcpThread {
             connection,
             session_id,
         }
+    }
+
+    pub fn connection(&self) -> &Rc<dyn AgentConnection> {
+        &self.connection
     }
 
     pub fn action_log(&self) -> &Entity<ActionLog> {
@@ -654,10 +792,10 @@ impl AcpThread {
         &mut self,
         update: acp::SessionUpdate,
         cx: &mut Context<Self>,
-    ) -> Result<()> {
+    ) -> Result<(), acp::Error> {
         match update {
             acp::SessionUpdate::UserMessageChunk { content } => {
-                self.push_user_content_block(content, cx);
+                self.push_user_content_block(None, content, cx);
             }
             acp::SessionUpdate::AgentMessageChunk { content } => {
                 self.push_assistant_content_block(content, false, cx);
@@ -666,7 +804,7 @@ impl AcpThread {
                 self.push_assistant_content_block(content, true, cx);
             }
             acp::SessionUpdate::ToolCall(tool_call) => {
-                self.upsert_tool_call(tool_call, cx);
+                self.upsert_tool_call(tool_call, cx)?;
             }
             acp::SessionUpdate::ToolCallUpdate(tool_call_update) => {
                 self.update_tool_call(tool_call_update, cx)?;
@@ -678,18 +816,39 @@ impl AcpThread {
         Ok(())
     }
 
-    pub fn push_user_content_block(&mut self, chunk: acp::ContentBlock, cx: &mut Context<Self>) {
+    pub fn push_user_content_block(
+        &mut self,
+        message_id: Option<UserMessageId>,
+        chunk: acp::ContentBlock,
+        cx: &mut Context<Self>,
+    ) {
         let language_registry = self.project.read(cx).languages().clone();
         let entries_len = self.entries.len();
 
         if let Some(last_entry) = self.entries.last_mut()
-            && let AgentThreadEntry::UserMessage(UserMessage { content }) = last_entry
+            && let AgentThreadEntry::UserMessage(UserMessage {
+                id,
+                content,
+                chunks,
+                ..
+            }) = last_entry
         {
-            content.append(chunk, &language_registry, cx);
-            cx.emit(AcpThreadEvent::EntryUpdated(entries_len - 1));
+            *id = message_id.or(id.take());
+            content.append(chunk.clone(), &language_registry, cx);
+            chunks.push(chunk);
+            let idx = entries_len - 1;
+            cx.emit(AcpThreadEvent::EntryUpdated(idx));
         } else {
-            let content = ContentBlock::new(chunk, &language_registry, cx);
-            self.push_entry(AgentThreadEntry::UserMessage(UserMessage { content }), cx);
+            let content = ContentBlock::new(chunk.clone(), &language_registry, cx);
+            self.push_entry(
+                AgentThreadEntry::UserMessage(UserMessage {
+                    id: message_id,
+                    content,
+                    chunks: vec![chunk],
+                    checkpoint: None,
+                }),
+                cx,
+            );
         }
     }
 
@@ -704,7 +863,8 @@ impl AcpThread {
         if let Some(last_entry) = self.entries.last_mut()
             && let AgentThreadEntry::AssistantMessage(AssistantMessage { chunks }) = last_entry
         {
-            cx.emit(AcpThreadEvent::EntryUpdated(entries_len - 1));
+            let idx = entries_len - 1;
+            cx.emit(AcpThreadEvent::EntryUpdated(idx));
             match (chunks.last_mut(), is_thought) {
                 (Some(AssistantMessageChunk::Message { block }), false)
                 | (Some(AssistantMessageChunk::Thought { block }), true) => {
@@ -754,13 +914,23 @@ impl AcpThread {
             .context("Tool call not found")?;
         match update {
             ToolCallUpdate::UpdateFields(update) => {
+                let location_updated = update.fields.locations.is_some();
                 current_call.update_fields(update.fields, languages, cx);
+                if location_updated {
+                    self.resolve_locations(update.id.clone(), cx);
+                }
             }
             ToolCallUpdate::UpdateDiff(update) => {
                 current_call.content.clear();
                 current_call
                     .content
-                    .push(ToolCallContent::Diff { diff: update.diff });
+                    .push(ToolCallContent::Diff(update.diff));
+            }
+            ToolCallUpdate::UpdateTerminal(update) => {
+                current_call.content.clear();
+                current_call
+                    .content
+                    .push(ToolCallContent::Terminal(update.terminal));
             }
         }
 
@@ -770,35 +940,40 @@ impl AcpThread {
     }
 
     /// Updates a tool call if id matches an existing entry, otherwise inserts a new one.
-    pub fn upsert_tool_call(&mut self, tool_call: acp::ToolCall, cx: &mut Context<Self>) {
+    pub fn upsert_tool_call(
+        &mut self,
+        tool_call: acp::ToolCall,
+        cx: &mut Context<Self>,
+    ) -> Result<(), acp::Error> {
         let status = ToolCallStatus::Allowed {
             status: tool_call.status,
         };
-        self.upsert_tool_call_inner(tool_call, status, cx)
+        self.upsert_tool_call_inner(tool_call.into(), status, cx)
     }
 
+    /// Fails if id does not match an existing entry.
     pub fn upsert_tool_call_inner(
         &mut self,
-        tool_call: acp::ToolCall,
+        tool_call_update: acp::ToolCallUpdate,
         status: ToolCallStatus,
         cx: &mut Context<Self>,
-    ) {
+    ) -> Result<(), acp::Error> {
         let language_registry = self.project.read(cx).languages().clone();
-        let call = ToolCall::from_acp(tool_call, status, language_registry, cx);
+        let id = tool_call_update.id.clone();
 
-        let location = call.locations.last().cloned();
-
-        if let Some((ix, current_call)) = self.tool_call_mut(&call.id) {
-            *current_call = call;
+        if let Some((ix, current_call)) = self.tool_call_mut(&id) {
+            current_call.update_fields(tool_call_update.fields, language_registry, cx);
+            current_call.status = status;
 
             cx.emit(AcpThreadEvent::EntryUpdated(ix));
         } else {
+            let call =
+                ToolCall::from_acp(tool_call_update.try_into()?, status, language_registry, cx);
             self.push_entry(AgentThreadEntry::ToolCall(call), cx);
-        }
+        };
 
-        if let Some(location) = location {
-            self.set_project_location(location, cx)
-        }
+        self.resolve_locations(id, cx);
+        Ok(())
     }
 
     fn tool_call_mut(&mut self, id: &acp::ToolCallId) -> Option<(usize, &mut ToolCall)> {
@@ -819,43 +994,58 @@ impl AcpThread {
             })
     }
 
-    pub fn set_project_location(&self, location: acp::ToolCallLocation, cx: &mut Context<Self>) {
-        self.project.update(cx, |project, cx| {
-            let Some(path) = project.project_path_for_absolute_path(&location.path, cx) else {
-                return;
-            };
-            let buffer = project.open_buffer(path, cx);
-            cx.spawn(async move |project, cx| {
-                let buffer = buffer.await?;
-
-                project.update(cx, |project, cx| {
-                    let position = if let Some(line) = location.line {
-                        let snapshot = buffer.read(cx).snapshot();
-                        let point = snapshot.clip_point(Point::new(line, 0), Bias::Left);
-                        snapshot.anchor_before(point)
-                    } else {
-                        Anchor::MIN
-                    };
-
-                    project.set_agent_location(
-                        Some(AgentLocation {
-                            buffer: buffer.downgrade(),
-                            position,
-                        }),
-                        cx,
-                    );
-                })
+    pub fn resolve_locations(&mut self, id: acp::ToolCallId, cx: &mut Context<Self>) {
+        let project = self.project.clone();
+        let Some((_, tool_call)) = self.tool_call_mut(&id) else {
+            return;
+        };
+        let task = tool_call.resolve_locations(project, cx);
+        cx.spawn(async move |this, cx| {
+            let resolved_locations = task.await;
+            this.update(cx, |this, cx| {
+                let project = this.project.clone();
+                let Some((ix, tool_call)) = this.tool_call_mut(&id) else {
+                    return;
+                };
+                if let Some(Some(location)) = resolved_locations.last() {
+                    project.update(cx, |project, cx| {
+                        if let Some(agent_location) = project.agent_location() {
+                            let should_ignore = agent_location.buffer == location.buffer
+                                && location
+                                    .buffer
+                                    .update(cx, |buffer, _| {
+                                        let snapshot = buffer.snapshot();
+                                        let old_position =
+                                            agent_location.position.to_point(&snapshot);
+                                        let new_position = location.position.to_point(&snapshot);
+                                        // ignore this so that when we get updates from the edit tool
+                                        // the position doesn't reset to the startof line
+                                        old_position.row == new_position.row
+                                            && old_position.column > new_position.column
+                                    })
+                                    .ok()
+                                    .unwrap_or_default();
+                            if !should_ignore {
+                                project.set_agent_location(Some(location.clone()), cx);
+                            }
+                        }
+                    });
+                }
+                if tool_call.resolved_locations != resolved_locations {
+                    tool_call.resolved_locations = resolved_locations;
+                    cx.emit(AcpThreadEvent::EntryUpdated(ix));
+                }
             })
-            .detach_and_log_err(cx);
-        });
+        })
+        .detach();
     }
 
     pub fn request_tool_call_authorization(
         &mut self,
-        tool_call: acp::ToolCall,
+        tool_call: acp::ToolCallUpdate,
         options: Vec<acp::PermissionOption>,
         cx: &mut Context<Self>,
-    ) -> oneshot::Receiver<acp::PermissionOptionId> {
+    ) -> Result<oneshot::Receiver<acp::PermissionOptionId>, acp::Error> {
         let (tx, rx) = oneshot::channel();
 
         let status = ToolCallStatus::WaitingForConfirmation {
@@ -863,9 +1053,9 @@ impl AcpThread {
             respond_tx: tx,
         };
 
-        self.upsert_tool_call_inner(tool_call, status, cx);
+        self.upsert_tool_call_inner(tool_call, status, cx)?;
         cx.emit(AcpThreadEvent::ToolAuthorizationRequired);
-        rx
+        Ok(rx)
     }
 
     pub fn authorize_tool_call(
@@ -981,66 +1171,112 @@ impl AcpThread {
             self.project.read(cx).languages().clone(),
             cx,
         );
+        let request = acp::PromptRequest {
+            prompt: message.clone(),
+            session_id: self.session_id.clone(),
+        };
+        let git_store = self.project.read(cx).git_store().clone();
+
+        let message_id = if self
+            .connection
+            .session_editor(&self.session_id, cx)
+            .is_some()
+        {
+            Some(UserMessageId::new())
+        } else {
+            None
+        };
         self.push_entry(
-            AgentThreadEntry::UserMessage(UserMessage { content: block }),
+            AgentThreadEntry::UserMessage(UserMessage {
+                id: message_id.clone(),
+                content: block,
+                chunks: message,
+                checkpoint: None,
+            }),
             cx,
         );
+
+        self.run_turn(cx, async move |this, cx| {
+            let old_checkpoint = git_store
+                .update(cx, |git, cx| git.checkpoint(cx))?
+                .await
+                .context("failed to get old checkpoint")
+                .log_err();
+            this.update(cx, |this, cx| {
+                if let Some((_ix, message)) = this.last_user_message() {
+                    message.checkpoint = old_checkpoint.map(|git_checkpoint| Checkpoint {
+                        git_checkpoint,
+                        show: false,
+                    });
+                }
+                this.connection.prompt(message_id, request, cx)
+            })?
+            .await
+        })
+    }
+
+    pub fn resume(&mut self, cx: &mut Context<Self>) -> BoxFuture<'static, Result<()>> {
+        self.run_turn(cx, async move |this, cx| {
+            this.update(cx, |this, cx| {
+                this.connection
+                    .resume(&this.session_id, cx)
+                    .map(|resume| resume.run(cx))
+            })?
+            .context("resuming a session is not supported")?
+            .await
+        })
+    }
+
+    fn run_turn(
+        &mut self,
+        cx: &mut Context<Self>,
+        f: impl 'static + AsyncFnOnce(WeakEntity<Self>, &mut AsyncApp) -> Result<acp::PromptResponse>,
+    ) -> BoxFuture<'static, Result<()>> {
         self.clear_completed_plan_entries(cx);
 
         let (tx, rx) = oneshot::channel();
         let cancel_task = self.cancel(cx);
 
         self.send_task = Some(cx.spawn(async move |this, cx| {
-            async {
-                cancel_task.await;
-
-                let result = this
-                    .update(cx, |this, cx| {
-                        this.connection.prompt(
-                            acp::PromptRequest {
-                                prompt: message,
-                                session_id: this.session_id.clone(),
-                            },
-                            cx,
-                        )
-                    })?
-                    .await;
-
-                tx.send(result).log_err();
-
-                anyhow::Ok(())
-            }
-            .await
-            .log_err();
+            cancel_task.await;
+            tx.send(f(this, cx).await).ok();
         }));
 
-        cx.spawn(async move |this, cx| match rx.await {
-            Ok(Err(e)) => {
-                this.update(cx, |_, cx| cx.emit(AcpThreadEvent::Error))
-                    .log_err();
-                Err(e)?
-            }
-            result => {
-                let cancelled = matches!(
-                    result,
-                    Ok(Ok(acp::PromptResponse {
-                        stop_reason: acp::StopReason::Cancelled
-                    }))
-                );
+        cx.spawn(async move |this, cx| {
+            let response = rx.await;
 
-                // We only take the task if the current prompt wasn't cancelled.
-                //
-                // This prompt may have been cancelled because another one was sent
-                // while it was still generating. In these cases, dropping `send_task`
-                // would cause the next generation to be cancelled.
-                if !cancelled {
-                    this.update(cx, |this, _cx| this.send_task.take()).ok();
+            this.update(cx, |this, cx| this.update_last_checkpoint(cx))?
+                .await?;
+
+            this.update(cx, |this, cx| {
+                match response {
+                    Ok(Err(e)) => {
+                        this.send_task.take();
+                        cx.emit(AcpThreadEvent::Error);
+                        Err(e)
+                    }
+                    result => {
+                        let cancelled = matches!(
+                            result,
+                            Ok(Ok(acp::PromptResponse {
+                                stop_reason: acp::StopReason::Cancelled
+                            }))
+                        );
+
+                        // We only take the task if the current prompt wasn't cancelled.
+                        //
+                        // This prompt may have been cancelled because another one was sent
+                        // while it was still generating. In these cases, dropping `send_task`
+                        // would cause the next generation to be cancelled.
+                        if !cancelled {
+                            this.send_task.take();
+                        }
+
+                        cx.emit(AcpThreadEvent::Stopped);
+                        Ok(())
+                    }
                 }
-
-                this.update(cx, |_, cx| cx.emit(AcpThreadEvent::Stopped))
-                    .log_err();
-                Ok(())
-            }
+            })?
         })
         .boxed()
     }
@@ -1070,6 +1306,122 @@ impl AcpThread {
 
         // Wait for the send task to complete
         cx.foreground_executor().spawn(send_task)
+    }
+
+    /// Rewinds this thread to before the entry at `index`, removing it and all
+    /// subsequent entries while reverting any changes made from that point.
+    pub fn rewind(&mut self, id: UserMessageId, cx: &mut Context<Self>) -> Task<Result<()>> {
+        let Some(session_editor) = self.connection.session_editor(&self.session_id, cx) else {
+            return Task::ready(Err(anyhow!("not supported")));
+        };
+        let Some(message) = self.user_message(&id) else {
+            return Task::ready(Err(anyhow!("message not found")));
+        };
+
+        let checkpoint = message
+            .checkpoint
+            .as_ref()
+            .map(|c| c.git_checkpoint.clone());
+
+        let git_store = self.project.read(cx).git_store().clone();
+        cx.spawn(async move |this, cx| {
+            if let Some(checkpoint) = checkpoint {
+                git_store
+                    .update(cx, |git, cx| git.restore_checkpoint(checkpoint, cx))?
+                    .await?;
+            }
+
+            cx.update(|cx| session_editor.truncate(id.clone(), cx))?
+                .await?;
+            this.update(cx, |this, cx| {
+                if let Some((ix, _)) = this.user_message_mut(&id) {
+                    let range = ix..this.entries.len();
+                    this.entries.truncate(ix);
+                    cx.emit(AcpThreadEvent::EntriesRemoved(range));
+                }
+            })
+        })
+    }
+
+    fn update_last_checkpoint(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
+        let git_store = self.project.read(cx).git_store().clone();
+
+        let old_checkpoint = if let Some((_, message)) = self.last_user_message() {
+            if let Some(checkpoint) = message.checkpoint.as_ref() {
+                checkpoint.git_checkpoint.clone()
+            } else {
+                return Task::ready(Ok(()));
+            }
+        } else {
+            return Task::ready(Ok(()));
+        };
+
+        let new_checkpoint = git_store.update(cx, |git, cx| git.checkpoint(cx));
+        cx.spawn(async move |this, cx| {
+            let new_checkpoint = new_checkpoint
+                .await
+                .context("failed to get new checkpoint")
+                .log_err();
+            if let Some(new_checkpoint) = new_checkpoint {
+                let equal = git_store
+                    .update(cx, |git, cx| {
+                        git.compare_checkpoints(old_checkpoint.clone(), new_checkpoint, cx)
+                    })?
+                    .await
+                    .unwrap_or(true);
+                this.update(cx, |this, cx| {
+                    let (ix, message) = this.last_user_message().context("no user message")?;
+                    let checkpoint = message.checkpoint.as_mut().context("no checkpoint")?;
+                    checkpoint.show = !equal;
+                    cx.emit(AcpThreadEvent::EntryUpdated(ix));
+                    anyhow::Ok(())
+                })??;
+            }
+
+            Ok(())
+        })
+    }
+
+    fn last_user_message(&mut self) -> Option<(usize, &mut UserMessage)> {
+        self.entries
+            .iter_mut()
+            .enumerate()
+            .rev()
+            .find_map(|(ix, entry)| {
+                if let AgentThreadEntry::UserMessage(message) = entry {
+                    Some((ix, message))
+                } else {
+                    None
+                }
+            })
+    }
+
+    fn user_message(&self, id: &UserMessageId) -> Option<&UserMessage> {
+        self.entries.iter().find_map(|entry| {
+            if let AgentThreadEntry::UserMessage(message) = entry {
+                if message.id.as_ref() == Some(&id) {
+                    Some(message)
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        })
+    }
+
+    fn user_message_mut(&mut self, id: &UserMessageId) -> Option<(usize, &mut UserMessage)> {
+        self.entries.iter_mut().enumerate().find_map(|(ix, entry)| {
+            if let AgentThreadEntry::UserMessage(message) = entry {
+                if message.id.as_ref() == Some(&id) {
+                    Some((ix, message))
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        })
     }
 
     pub fn read_text_file(
@@ -1225,6 +1577,48 @@ impl AcpThread {
     }
 }
 
+fn markdown_for_raw_output(
+    raw_output: &serde_json::Value,
+    language_registry: &Arc<LanguageRegistry>,
+    cx: &mut App,
+) -> Option<Entity<Markdown>> {
+    match raw_output {
+        serde_json::Value::Null => None,
+        serde_json::Value::Bool(value) => Some(cx.new(|cx| {
+            Markdown::new(
+                value.to_string().into(),
+                Some(language_registry.clone()),
+                None,
+                cx,
+            )
+        })),
+        serde_json::Value::Number(value) => Some(cx.new(|cx| {
+            Markdown::new(
+                value.to_string().into(),
+                Some(language_registry.clone()),
+                None,
+                cx,
+            )
+        })),
+        serde_json::Value::String(value) => Some(cx.new(|cx| {
+            Markdown::new(
+                value.clone().into(),
+                Some(language_registry.clone()),
+                None,
+                cx,
+            )
+        })),
+        value => Some(cx.new(|cx| {
+            Markdown::new(
+                format!("```json\n{}\n```", value).into(),
+                Some(language_registry.clone()),
+                None,
+                cx,
+            )
+        })),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1232,13 +1626,19 @@ mod tests {
     use futures::{channel::mpsc, future::LocalBoxFuture, select};
     use gpui::{AsyncApp, TestAppContext, WeakEntity};
     use indoc::indoc;
-    use project::FakeFs;
+    use project::{FakeFs, Fs};
     use rand::Rng as _;
     use serde_json::json;
     use settings::SettingsStore;
     use smol::stream::StreamExt as _;
-    use std::{cell::RefCell, rc::Rc, time::Duration};
-
+    use std::{
+        any::Any,
+        cell::RefCell,
+        path::Path,
+        rc::Rc,
+        sync::atomic::{AtomicBool, AtomicUsize, Ordering::SeqCst},
+        time::Duration,
+    };
     use util::path;
 
     fn init_test(cx: &mut TestAppContext) {
@@ -1259,17 +1659,14 @@ mod tests {
         let project = Project::test(fs, [], cx).await;
         let connection = Rc::new(FakeAgentConnection::new());
         let thread = cx
-            .spawn(async move |mut cx| {
-                connection
-                    .new_thread(project, Path::new(path!("/test")), &mut cx)
-                    .await
-            })
+            .update(|cx| connection.new_thread(project, Path::new(path!("/test")), cx))
             .await
             .unwrap();
 
         // Test creating a new user message
         thread.update(cx, |thread, cx| {
             thread.push_user_content_block(
+                None,
                 acp::ContentBlock::Text(acp::TextContent {
                     annotations: None,
                     text: "Hello, ".to_string(),
@@ -1281,6 +1678,7 @@ mod tests {
         thread.update(cx, |thread, cx| {
             assert_eq!(thread.entries.len(), 1);
             if let AgentThreadEntry::UserMessage(user_msg) = &thread.entries[0] {
+                assert_eq!(user_msg.id, None);
                 assert_eq!(user_msg.content.to_markdown(cx), "Hello, ");
             } else {
                 panic!("Expected UserMessage");
@@ -1288,8 +1686,10 @@ mod tests {
         });
 
         // Test appending to existing user message
+        let message_1_id = UserMessageId::new();
         thread.update(cx, |thread, cx| {
             thread.push_user_content_block(
+                Some(message_1_id.clone()),
                 acp::ContentBlock::Text(acp::TextContent {
                     annotations: None,
                     text: "world!".to_string(),
@@ -1301,6 +1701,7 @@ mod tests {
         thread.update(cx, |thread, cx| {
             assert_eq!(thread.entries.len(), 1);
             if let AgentThreadEntry::UserMessage(user_msg) = &thread.entries[0] {
+                assert_eq!(user_msg.id, Some(message_1_id));
                 assert_eq!(user_msg.content.to_markdown(cx), "Hello, world!");
             } else {
                 panic!("Expected UserMessage");
@@ -1319,8 +1720,10 @@ mod tests {
             );
         });
 
+        let message_2_id = UserMessageId::new();
         thread.update(cx, |thread, cx| {
             thread.push_user_content_block(
+                Some(message_2_id.clone()),
                 acp::ContentBlock::Text(acp::TextContent {
                     annotations: None,
                     text: "New user message".to_string(),
@@ -1332,6 +1735,7 @@ mod tests {
         thread.update(cx, |thread, cx| {
             assert_eq!(thread.entries.len(), 3);
             if let AgentThreadEntry::UserMessage(user_msg) = &thread.entries[2] {
+                assert_eq!(user_msg.id, Some(message_2_id));
                 assert_eq!(user_msg.content.to_markdown(cx), "New user message");
             } else {
                 panic!("Expected UserMessage at index 2");
@@ -1375,11 +1779,7 @@ mod tests {
         ));
 
         let thread = cx
-            .spawn(async move |mut cx| {
-                connection
-                    .new_thread(project, Path::new(path!("/test")), &mut cx)
-                    .await
-            })
+            .update(|cx| connection.new_thread(project, Path::new(path!("/test")), cx))
             .await
             .unwrap();
 
@@ -1462,7 +1862,7 @@ mod tests {
             .unwrap();
 
         let thread = cx
-            .spawn(|mut cx| connection.new_thread(project, Path::new(path!("/tmp")), &mut cx))
+            .update(|cx| connection.new_thread(project, Path::new(path!("/tmp")), cx))
             .await
             .unwrap();
 
@@ -1525,11 +1925,7 @@ mod tests {
         }));
 
         let thread = cx
-            .spawn(async move |mut cx| {
-                connection
-                    .new_thread(project, Path::new(path!("/test")), &mut cx)
-                    .await
-            })
+            .update(|cx| connection.new_thread(project, Path::new(path!("/test")), cx))
             .await
             .unwrap();
 
@@ -1637,15 +2033,190 @@ mod tests {
             }
         }));
 
-        let thread = connection
-            .new_thread(project, Path::new(path!("/test")), &mut cx.to_async())
+        let thread = cx
+            .update(|cx| connection.new_thread(project, Path::new(path!("/test")), cx))
             .await
             .unwrap();
+
         cx.update(|cx| thread.update(cx, |thread, cx| thread.send(vec!["Hi".into()], cx)))
             .await
             .unwrap();
 
         assert!(cx.read(|cx| !thread.read(cx).has_pending_edit_tool_calls()));
+    }
+
+    #[gpui::test(iterations = 10)]
+    async fn test_checkpoints(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/test"),
+            json!({
+                ".git": {}
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [path!("/test").as_ref()], cx).await;
+
+        let simulate_changes = Arc::new(AtomicBool::new(true));
+        let next_filename = Arc::new(AtomicUsize::new(0));
+        let connection = Rc::new(FakeAgentConnection::new().on_user_message({
+            let simulate_changes = simulate_changes.clone();
+            let next_filename = next_filename.clone();
+            let fs = fs.clone();
+            move |request, thread, mut cx| {
+                let fs = fs.clone();
+                let simulate_changes = simulate_changes.clone();
+                let next_filename = next_filename.clone();
+                async move {
+                    if simulate_changes.load(SeqCst) {
+                        let filename = format!("/test/file-{}", next_filename.fetch_add(1, SeqCst));
+                        fs.write(Path::new(&filename), b"").await?;
+                    }
+
+                    let acp::ContentBlock::Text(content) = &request.prompt[0] else {
+                        panic!("expected text content block");
+                    };
+                    thread.update(&mut cx, |thread, cx| {
+                        thread
+                            .handle_session_update(
+                                acp::SessionUpdate::AgentMessageChunk {
+                                    content: content.text.to_uppercase().into(),
+                                },
+                                cx,
+                            )
+                            .unwrap();
+                    })?;
+                    Ok(acp::PromptResponse {
+                        stop_reason: acp::StopReason::EndTurn,
+                    })
+                }
+                .boxed_local()
+            }
+        }));
+        let thread = cx
+            .update(|cx| connection.new_thread(project, Path::new(path!("/test")), cx))
+            .await
+            .unwrap();
+
+        cx.update(|cx| thread.update(cx, |thread, cx| thread.send(vec!["Lorem".into()], cx)))
+            .await
+            .unwrap();
+        thread.read_with(cx, |thread, cx| {
+            assert_eq!(
+                thread.to_markdown(cx),
+                indoc! {"
+                    ## User (checkpoint)
+
+                    Lorem
+
+                    ## Assistant
+
+                    LOREM
+
+                "}
+            );
+        });
+        assert_eq!(fs.files(), vec![Path::new("/test/file-0")]);
+
+        cx.update(|cx| thread.update(cx, |thread, cx| thread.send(vec!["ipsum".into()], cx)))
+            .await
+            .unwrap();
+        thread.read_with(cx, |thread, cx| {
+            assert_eq!(
+                thread.to_markdown(cx),
+                indoc! {"
+                    ## User (checkpoint)
+
+                    Lorem
+
+                    ## Assistant
+
+                    LOREM
+
+                    ## User (checkpoint)
+
+                    ipsum
+
+                    ## Assistant
+
+                    IPSUM
+
+                "}
+            );
+        });
+        assert_eq!(
+            fs.files(),
+            vec![Path::new("/test/file-0"), Path::new("/test/file-1")]
+        );
+
+        // Checkpoint isn't stored when there are no changes.
+        simulate_changes.store(false, SeqCst);
+        cx.update(|cx| thread.update(cx, |thread, cx| thread.send(vec!["dolor".into()], cx)))
+            .await
+            .unwrap();
+        thread.read_with(cx, |thread, cx| {
+            assert_eq!(
+                thread.to_markdown(cx),
+                indoc! {"
+                    ## User (checkpoint)
+
+                    Lorem
+
+                    ## Assistant
+
+                    LOREM
+
+                    ## User (checkpoint)
+
+                    ipsum
+
+                    ## Assistant
+
+                    IPSUM
+
+                    ## User
+
+                    dolor
+
+                    ## Assistant
+
+                    DOLOR
+
+                "}
+            );
+        });
+        assert_eq!(
+            fs.files(),
+            vec![Path::new("/test/file-0"), Path::new("/test/file-1")]
+        );
+
+        // Rewinding the conversation truncates the history and restores the checkpoint.
+        thread
+            .update(cx, |thread, cx| {
+                let AgentThreadEntry::UserMessage(message) = &thread.entries[2] else {
+                    panic!("unexpected entries {:?}", thread.entries)
+                };
+                thread.rewind(message.id.clone().unwrap(), cx)
+            })
+            .await
+            .unwrap();
+        thread.read_with(cx, |thread, cx| {
+            assert_eq!(
+                thread.to_markdown(cx),
+                indoc! {"
+                    ## User (checkpoint)
+
+                    Lorem
+
+                    ## Assistant
+
+                    LOREM
+
+                "}
+            );
+        });
+        assert_eq!(fs.files(), vec![Path::new("/test/file-0")]);
     }
 
     async fn run_until_first_tool_call(
@@ -1729,7 +2300,7 @@ mod tests {
             self: Rc<Self>,
             project: Entity<Project>,
             _cwd: &Path,
-            cx: &mut gpui::AsyncApp,
+            cx: &mut gpui::App,
         ) -> Task<gpui::Result<Entity<AcpThread>>> {
             let session_id = acp::SessionId(
                 rand::thread_rng()
@@ -1739,9 +2310,8 @@ mod tests {
                     .collect::<String>()
                     .into(),
             );
-            let thread = cx
-                .new(|cx| AcpThread::new("Test", self.clone(), project, session_id.clone(), cx))
-                .unwrap();
+            let thread =
+                cx.new(|cx| AcpThread::new("Test", self.clone(), project, session_id.clone(), cx));
             self.sessions.lock().insert(session_id, thread.downgrade());
             Task::ready(Ok(thread))
         }
@@ -1756,6 +2326,7 @@ mod tests {
 
         fn prompt(
             &self,
+            _id: Option<UserMessageId>,
             params: acp::PromptRequest,
             cx: &mut App,
         ) -> Task<gpui::Result<acp::PromptResponse>> {
@@ -1783,6 +2354,30 @@ mod tests {
                     .await
             })
             .detach();
+        }
+
+        fn session_editor(
+            &self,
+            session_id: &acp::SessionId,
+            _cx: &mut App,
+        ) -> Option<Rc<dyn AgentSessionEditor>> {
+            Some(Rc::new(FakeAgentSessionEditor {
+                _session_id: session_id.clone(),
+            }))
+        }
+
+        fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
+            self
+        }
+    }
+
+    struct FakeAgentSessionEditor {
+        _session_id: acp::SessionId,
+    }
+
+    impl AgentSessionEditor for FakeAgentSessionEditor {
+        fn truncate(&self, _message_id: UserMessageId, _cx: &mut App) -> Task<Result<()>> {
+            Task::ready(Ok(()))
         }
     }
 }

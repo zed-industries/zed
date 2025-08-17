@@ -16,9 +16,9 @@ pub use extension::ExtensionManifest;
 use extension::extension_builder::{CompileExtensionOptions, ExtensionBuilder};
 use extension::{
     ExtensionContextServerProxy, ExtensionDebugAdapterProviderProxy, ExtensionEvents,
-    ExtensionGrammarProxy, ExtensionHostProxy, ExtensionIndexedDocsProviderProxy,
-    ExtensionLanguageProxy, ExtensionLanguageServerProxy, ExtensionSlashCommandProxy,
-    ExtensionSnippetProxy, ExtensionThemeProxy,
+    ExtensionGrammarProxy, ExtensionHostProxy, ExtensionLanguageProxy,
+    ExtensionLanguageServerProxy, ExtensionSlashCommandProxy, ExtensionSnippetProxy,
+    ExtensionThemeProxy,
 };
 use fs::{Fs, RemoveOptions};
 use futures::future::join_all;
@@ -1118,15 +1118,17 @@ impl ExtensionStore {
             extensions_to_unload.len() - reload_count
         );
 
-        for extension_id in &extensions_to_load {
-            if let Some(extension) = new_index.extensions.get(extension_id) {
-                telemetry::event!(
-                    "Extension Loaded",
-                    extension_id,
-                    version = extension.manifest.version
-                );
-            }
-        }
+        let extension_ids = extensions_to_load
+            .iter()
+            .filter_map(|id| {
+                Some((
+                    id.clone(),
+                    new_index.extensions.get(id)?.manifest.version.clone(),
+                ))
+            })
+            .collect::<Vec<_>>();
+
+        telemetry::event!("Extensions Loaded", id_and_versions = extension_ids);
 
         let themes_to_remove = old_index
             .themes
@@ -1189,10 +1191,6 @@ impl ExtensionStore {
             }
             for (command_name, _) in &extension.manifest.slash_commands {
                 self.proxy.unregister_slash_command(command_name.clone());
-            }
-            for (provider_id, _) in &extension.manifest.indexed_docs_providers {
-                self.proxy
-                    .unregister_indexed_docs_provider(provider_id.clone());
             }
         }
 
@@ -1395,11 +1393,6 @@ impl ExtensionStore {
                     for (id, _context_server_entry) in &manifest.context_servers {
                         this.proxy
                             .register_context_server(extension.clone(), id.clone(), cx);
-                    }
-
-                    for (provider_id, _provider) in &manifest.indexed_docs_providers {
-                        this.proxy
-                            .register_indexed_docs_provider(extension.clone(), provider_id.clone());
                     }
 
                     for (debug_adapter, meta) in &manifest.debug_adapters {

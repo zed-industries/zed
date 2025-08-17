@@ -273,6 +273,16 @@ pub enum UuidVersion {
     V7,
 }
 
+/// Splits selection into individual lines.
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
+#[action(namespace = editor)]
+#[serde(deny_unknown_fields)]
+pub struct SplitSelectionIntoLines {
+    /// Keep the text selected after splitting instead of collapsing to cursors.
+    #[serde(default)]
+    pub keep_selections: bool,
+}
+
 /// Goes to the next diagnostic in the file.
 #[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema, Action)]
 #[action(namespace = editor)]
@@ -672,8 +682,6 @@ actions!(
         SortLinesCaseInsensitive,
         /// Sorts selected lines case-sensitively.
         SortLinesCaseSensitive,
-        /// Splits selection into individual lines.
-        SplitSelectionIntoLines,
         /// Stops the language server for the current file.
         StopLanguageServer,
         /// Switches between source and header files.

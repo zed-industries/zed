@@ -3,7 +3,7 @@ use crate::{
 };
 use collections::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
-use std::fmt::Debug;
+use std::{fmt::Debug, ops::Range};
 use taffy::{
     TaffyTree, TraversePartialTree as _,
     geometry::{Point as TaffyPoint, Rect as TaffyRect, Size as TaffySize},
@@ -251,6 +251,25 @@ trait ToTaffy<Output> {
 
 impl ToTaffy<taffy::style::Style> for Style {
     fn to_taffy(&self, rem_size: Pixels) -> taffy::style::Style {
+        use taffy::style_helpers::{fr, length, minmax, repeat};
+
+        fn to_grid_line(
+            placement: &Range<crate::GridPlacement>,
+        ) -> taffy::Line<taffy::GridPlacement> {
+            taffy::Line {
+                start: placement.start.into(),
+                end: placement.end.into(),
+            }
+        }
+
+        fn to_grid_repeat<T: taffy::style::CheapCloneStr>(
+            unit: &Option<u16>,
+        ) -> Vec<taffy::GridTemplateComponent<T>> {
+            // grid-template-columns: repeat(<number>, minmax(0, 1fr));
+            unit.map(|count| vec![repeat(count, vec![minmax(length(0.0), fr(1.0))])])
+                .unwrap_or_default()
+        }
+
         taffy::style::Style {
             display: self.display.into(),
             overflow: self.overflow.into(),
@@ -274,7 +293,19 @@ impl ToTaffy<taffy::style::Style> for Style {
             flex_basis: self.flex_basis.to_taffy(rem_size),
             flex_grow: self.flex_grow,
             flex_shrink: self.flex_shrink,
-            ..Default::default() // Ignore grid properties for now
+            grid_template_rows: to_grid_repeat(&self.grid_rows),
+            grid_template_columns: to_grid_repeat(&self.grid_cols),
+            grid_row: self
+                .grid_location
+                .as_ref()
+                .map(|location| to_grid_line(&location.row))
+                .unwrap_or_default(),
+            grid_column: self
+                .grid_location
+                .as_ref()
+                .map(|location| to_grid_line(&location.column))
+                .unwrap_or_default(),
+            ..Default::default()
         }
     }
 }

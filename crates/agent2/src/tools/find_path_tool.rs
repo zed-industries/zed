@@ -1,6 +1,6 @@
 use crate::{AgentTool, ToolCallEventStream};
 use agent_client_protocol as acp;
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use gpui::{App, AppContext, Entity, SharedString, Task};
 use language_model::LanguageModelToolResultContent;
 use project::Project;
@@ -139,9 +139,6 @@ impl AgentTool for FindPathTool {
                         })
                         .collect(),
                 ),
-                raw_output: Some(serde_json::json!({
-                    "paths": &matches,
-                })),
                 ..Default::default()
             });
 

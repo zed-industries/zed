@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "crates/acp_thread",
+    "crates/action_log",
     "crates/activity_indicator",
     "crates/agent",
     "crates/agent2",
@@ -80,7 +81,6 @@ members = [
     "crates/http_client_tls",
     "crates/icons",
     "crates/image_viewer",
-    "crates/indexed_docs",
     "crates/edit_prediction",
     "crates/edit_prediction_button",
     "crates/inspector_ui",
@@ -184,7 +184,6 @@ members = [
     "crates/watch",
     "crates/web_search",
     "crates/web_search_providers",
-    "crates/welcome",
     "crates/workspace",
     "crates/worktree",
     "crates/x_ai",
@@ -199,7 +198,6 @@ members = [
     # Extensions
     #
 
-    "extensions/emmet",
     "extensions/glsl",
     "extensions/html",
     "extensions/proto",
@@ -229,6 +227,7 @@ edition = "2024"
 #
 
 acp_thread = { path = "crates/acp_thread" }
+action_log = { path = "crates/action_log" }
 agent = { path = "crates/agent" }
 agent2 = { path = "crates/agent2" }
 activity_indicator = { path = "crates/activity_indicator" }
@@ -305,7 +304,6 @@ http_client = { path = "crates/http_client" }
 http_client_tls = { path = "crates/http_client_tls" }
 icons = { path = "crates/icons" }
 image_viewer = { path = "crates/image_viewer" }
-indexed_docs = { path = "crates/indexed_docs" }
 edit_prediction = { path = "crates/edit_prediction" }
 edit_prediction_button = { path = "crates/edit_prediction_button" }
 inspector_ui = { path = "crates/inspector_ui" }
@@ -362,6 +360,7 @@ remote_server = { path = "crates/remote_server" }
 repl = { path = "crates/repl" }
 reqwest_client = { path = "crates/reqwest_client" }
 rich_text = { path = "crates/rich_text" }
+rodio = { version = "0.21.1", default-features = false }
 rope = { path = "crates/rope" }
 rpc = { path = "crates/rpc" }
 rules_library = { path = "crates/rules_library" }
@@ -410,7 +409,6 @@ vim_mode_setting = { path = "crates/vim_mode_setting" }
 watch = { path = "crates/watch" }
 web_search = { path = "crates/web_search" }
 web_search_providers = { path = "crates/web_search_providers" }
-welcome = { path = "crates/welcome" }
 workspace = { path = "crates/workspace" }
 worktree = { path = "crates/worktree" }
 x_ai = { path = "crates/x_ai" }
@@ -425,7 +423,7 @@ zlog_settings = { path = "crates/zlog_settings" }
 #
 
 agentic-coding-protocol = "0.0.10"
-agent-client-protocol = "0.0.23"
+agent-client-protocol = "0.0.25"
 aho-corasick = "1.1"
 alacritty_terminal = { git = "https://github.com/zed-industries/alacritty.git", branch = "add-hush-login-flag" }
 any_vec = "0.14"
@@ -666,20 +664,6 @@ workspace-hack = "0.1.0"
 yawc = { git = "https://github.com/deviant-forks/yawc", rev = "1899688f3e69ace4545aceb97b2a13881cf26142" }
 zstd = "0.11"
 
-[workspace.dependencies.async-stripe]
-git = "https://github.com/zed-industries/async-stripe"
-rev = "3672dd4efb7181aa597bf580bf5a2f5d23db6735"
-default-features = false
-features = [
-    "runtime-tokio-hyper-rustls",
-    "billing",
-    "checkout",
-    "events",
-    # The features below are only enabled to get the `events` feature to build.
-    "chrono",
-    "connect",
-]
-
 [workspace.dependencies.windows]
 version = "0.61"
 features = [
@@ -712,6 +696,7 @@ features = [
     "Win32_System_LibraryLoader",
     "Win32_System_Memory",
     "Win32_System_Ole",
+    "Win32_System_Performance",
     "Win32_System_Pipes",
     "Win32_System_SystemInformation",
     "Win32_System_SystemServices",
@@ -839,6 +824,7 @@ style = { level = "allow", priority = -1 }
 module_inception = { level = "deny" }
 question_mark = { level = "deny" }
 redundant_closure = { level = "deny" }
+declare_interior_mutable_const = { level = "deny" }
 # Individual rules that have violations in the codebase:
 type_complexity = "allow"
 # We often return trait objects from `new` functions.

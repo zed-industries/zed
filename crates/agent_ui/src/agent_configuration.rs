@@ -465,7 +465,7 @@ impl AgentConfiguration {
             "modifier-send",
             "Use modifier to submit a message",
             Some(
-                "Make a modifier (cmd-enter on macOS, ctrl-enter on Linux) required to send messages.".into(),
+                "Make a modifier (cmd-enter on macOS, ctrl-enter on Linux or Windows) required to send messages.".into(),
             ),
             use_modifier_to_send,
             move |state, _window, cx| {
@@ -1035,7 +1035,6 @@ fn extension_only_provides_context_server(manifest: &ExtensionManifest) -> bool 
         && manifest.grammars.is_empty()
         && manifest.language_servers.is_empty()
         && manifest.slash_commands.is_empty()
-        && manifest.indexed_docs_providers.is_empty()
         && manifest.snippets.is_none()
         && manifest.debug_locators.is_empty()
 }

@@ -6,29 +6,29 @@ You can do that by either subscribing to [one of Zed's plans](./plans-and-usage.
 
 ## Use Your Own Keys {#use-your-own-keys}
 
-If you already have an API key for an existing LLM provider—say Anthropic or OpenAI, for example—you can insert them in Zed and use the Agent Panel **_for free_**.
+If you already have an API key for an existing LLM provider—say Anthropic or OpenAI, for example—you can insert them into Zed and use the full power of the Agent Panel **_for free_**.
 
-You can add your API key to a given provider either via the Agent Panel's settings UI or directly via the `settings.json` through the `language_models` key.
+To add an existing API key to a given provider, go to the Agent Panel settings (`agent: open settings`), look for the desired provider, paste the key into the input, and hit enter.
+
+> Note: API keys are _not_ stored as plain text in your `settings.json`, but rather in your OS's secure credential storage.
 
 ## Supported Providers
 
 Here's all the supported LLM providers for which you can use your own API keys:
 
-| Provider                                        |
-| ----------------------------------------------- |
-| [Amazon Bedrock](#amazon-bedrock)               |
-| [Anthropic](#anthropic)                         |
-| [DeepSeek](#deepseek)                           |
-| [GitHub Copilot Chat](#github-copilot-chat)     |
-| [Google AI](#google-ai)                         |
-| [LM Studio](#lmstudio)                          |
-| [Mistral](#mistral)                             |
-| [Ollama](#ollama)                               |
-| [OpenAI](#openai)                               |
-| [OpenAI API Compatible](#openai-api-compatible) |
-| [OpenRouter](#openrouter)                       |
-| [Vercel](#vercel-v0)                            |
-| [xAI](#xai)                                     |
+- [Amazon Bedrock](#amazon-bedrock)
+- [Anthropic](#anthropic)
+- [DeepSeek](#deepseek)
+- [GitHub Copilot Chat](#github-copilot-chat)
+- [Google AI](#google-ai)
+- [LM Studio](#lmstudio)
+- [Mistral](#mistral)
+- [Ollama](#ollama)
+- [OpenAI](#openai)
+- [OpenAI API Compatible](#openai-api-compatible)
+- [OpenRouter](#openrouter)
+- [Vercel](#vercel-v0)
+- [xAI](#xai)
 
 ### Amazon Bedrock {#amazon-bedrock}
 
@@ -391,8 +391,8 @@ Zed will also use the `OPENAI_API_KEY` environment variable if it's defined.
 
 #### Custom Models {#openai-custom-models}
 
-The Zed agent comes pre-configured to use the latest version for common models (GPT-3.5 Turbo, GPT-4, GPT-4 Turbo, GPT-4o, GPT-4o mini).
-To use alternate models, perhaps a preview release or a dated model release, or if you wish to control the request parameters, you can do so by adding the following to your Zed `settings.json`:
+The Zed agent comes pre-configured to use the latest version for common models (GPT-5, GPT-5 mini, o4-mini, GPT-4.1, and others).
+To use alternate models, perhaps a preview release, or if you wish to control the request parameters, you can do so by adding the following to your Zed `settings.json`:
 
 ```json
 {
@@ -400,18 +400,18 @@ To use alternate models, perhaps a preview release or a dated model release, or 
     "openai": {
       "available_models": [
         {
+          "name": "gpt-5",
+          "display_name": "gpt-5 high",
+          "reasoning_effort": "high",
+          "max_tokens": 272000,
+          "max_completion_tokens": 20000
+        },
+        {
           "name": "gpt-4o-2024-08-06",
           "display_name": "GPT 4o Summer 2024",
           "max_tokens": 128000
-        },
-        {
-          "name": "o1-mini",
-          "display_name": "o1-mini",
-          "max_tokens": 128000,
-          "max_completion_tokens": 20000
         }
-      ],
-      "version": "1"
+      ]
     }
   }
 }

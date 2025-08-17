@@ -595,7 +595,7 @@ impl TitleBar {
                         .on_click(|_, window, cx| {
                             if let Some(auto_updater) = auto_update::AutoUpdater::get(cx) {
                                 if auto_updater.read(cx).status().is_updated() {
-                                    workspace::reload(&Default::default(), cx);
+                                    workspace::reload(cx);
                                     return;
                                 }
                             }

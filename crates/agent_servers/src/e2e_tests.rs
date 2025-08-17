@@ -422,8 +422,8 @@ pub async fn new_test_thread(
         .await
         .unwrap();
 
-    let thread = connection
-        .new_thread(project.clone(), current_dir.as_ref(), &mut cx.to_async())
+    let thread = cx
+        .update(|cx| connection.new_thread(project.clone(), current_dir.as_ref(), cx))
         .await
         .unwrap();
 

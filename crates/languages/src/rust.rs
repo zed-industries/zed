@@ -23,7 +23,7 @@ use std::{
     sync::{Arc, LazyLock},
 };
 use task::{TaskTemplate, TaskTemplates, TaskVariables, VariableName};
-use util::fs::make_file_executable;
+use util::fs::{make_file_executable, remove_matching};
 use util::merge_json_value_into;
 use util::{ResultExt, maybe};
 
@@ -162,13 +162,13 @@ impl LspAdapter for RustLspAdapter {
         let asset_name = Self::build_asset_name();
         let asset = release
             .assets
-            .iter()
+            .into_iter()
             .find(|asset| asset.name == asset_name)
             .with_context(|| format!("no asset found matching `{asset_name:?}`"))?;
         Ok(Box::new(GitHubLspBinaryVersion {
             name: release.tag_name,
-            url: asset.browser_download_url.clone(),
-            digest: asset.digest.clone(),
+            url: asset.browser_download_url,
+            digest: asset.digest,
         }))
     }
 
@@ -178,11 +178,11 @@ impl LspAdapter for RustLspAdapter {
         container_dir: PathBuf,
         delegate: &dyn LspAdapterDelegate,
     ) -> Result<LanguageServerBinary> {
-        let GitHubLspBinaryVersion { name, url, digest } =
-            &*version.downcast::<GitHubLspBinaryVersion>().unwrap();
-        let expected_digest = digest
-            .as_ref()
-            .and_then(|digest| digest.strip_prefix("sha256:"));
+        let GitHubLspBinaryVersion {
+            name,
+            url,
+            digest: expected_digest,
+        } = *version.downcast::<GitHubLspBinaryVersion>().unwrap();
         let destination_path = container_dir.join(format!("rust-analyzer-{name}"));
         let server_path = match Self::GITHUB_ASSET_KIND {
             AssetKind::TarGz | AssetKind::Gz => destination_path.clone(), // Tar and gzip extract in place.
@@ -213,7 +213,7 @@ impl LspAdapter for RustLspAdapter {
                     })
             };
             if let (Some(actual_digest), Some(expected_digest)) =
-                (&metadata.digest, expected_digest)
+                (&metadata.digest, &expected_digest)
             {
                 if actual_digest == expected_digest {
                     if validity_check().await.is_ok() {
@@ -229,20 +229,20 @@ impl LspAdapter for RustLspAdapter {
             }
         }
 
-        _ = fs::remove_dir_all(&destination_path).await;
         download_server_binary(
             delegate,
-            url,
-            expected_digest,
+            &url,
+            expected_digest.as_deref(),
             &destination_path,
             Self::GITHUB_ASSET_KIND,
         )
         .await?;
         make_file_executable(&server_path).await?;
+        remove_matching(&container_dir, |path| path != destination_path).await;
         GithubBinaryMetadata::write_to_file(
             &GithubBinaryMetadata {
                 metadata_version: 1,
-                digest: expected_digest.map(ToString::to_string),
+                digest: expected_digest,
             },
             &metadata_path,
         )
@@ -1023,8 +1023,14 @@ async fn get_cached_server_binary(container_dir: PathBuf) -> Option<LanguageServ
             last = Some(path);
         }
 
+        let path = last.context("no cached binary")?;
+        let path = match RustLspAdapter::GITHUB_ASSET_KIND {
+            AssetKind::TarGz | AssetKind::Gz => path.clone(), // Tar and gzip extract in place.
+            AssetKind::Zip => path.clone().join("rust-analyzer.exe"), // zip contains a .exe
+        };
+
         anyhow::Ok(LanguageServerBinary {
-            path: last.context("no cached binary")?,
+            path,
             env: None,
             arguments: Default::default(),
         })
