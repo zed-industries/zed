@@ -143,7 +143,12 @@ impl MentionUri {
                 is_directory,
             } => {
                 if *is_directory {
-                    FileIcons::get_folder_icon(false, cx)
+                    let name = abs_path
+                        .file_name()
+                        .and_then(|name| name.to_str())
+                        .unwrap_or_default();
+
+                    FileIcons::get_folder_icon(false, name, cx)
                         .unwrap_or_else(|| IconName::Folder.path().into())
                 } else {
                     FileIcons::get_icon(&abs_path, cx)
