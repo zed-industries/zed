@@ -300,6 +300,7 @@ impl AgentConfiguration {
             )
             .child(
                 div()
+                    .w_full()
                     .px_2()
                     .when(is_expanded, |parent| match configuration_view {
                         Some(configuration_view) => parent.child(configuration_view),
