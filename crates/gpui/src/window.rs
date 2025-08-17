@@ -1098,6 +1098,8 @@ impl Window {
 
                         window.bounds_changed(cx);
                         window.refresh();
+
+                        SystemWindowTabController::update_last_active(cx, window.handle.id);
                     })
                     .log_err();
             }

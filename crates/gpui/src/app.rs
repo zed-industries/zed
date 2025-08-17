@@ -7,7 +7,7 @@ use std::{
     path::{Path, PathBuf},
     rc::{Rc, Weak},
     sync::{Arc, atomic::Ordering::SeqCst},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use anyhow::{Context as _, Result, anyhow};
@@ -244,6 +244,7 @@ pub struct SystemWindowTab {
     pub id: WindowId,
     pub title: SharedString,
     pub handle: AnyWindowHandle,
+    pub last_active_at: Instant,
 }
 
 impl SystemWindowTab {
@@ -253,6 +254,7 @@ impl SystemWindowTab {
             id: handle.id,
             title,
             handle,
+            last_active_at: Instant::now(),
         }
     }
 }
@@ -283,6 +285,64 @@ impl SystemWindowTabController {
     /// Get all tab groups.
     pub fn tab_groups(&self) -> &FxHashMap<usize, Vec<SystemWindowTab>> {
         &self.tab_groups
+    }
+
+    /// Get the next tab group window handle.
+    pub fn get_next_tab_group_window(cx: &mut App, id: WindowId) -> Option<&AnyWindowHandle> {
+        let controller = cx.global::<SystemWindowTabController>();
+        let current_group = controller
+            .tab_groups
+            .iter()
+            .find_map(|(group, tabs)| tabs.iter().find(|tab| tab.id == id).map(|_| group));
+
+        let Some(current_group) = current_group else {
+            return None;
+        };
+
+        let mut group_ids: Vec<_> = controller.tab_groups.keys().collect();
+        let idx = group_ids.iter().position(|g| *g == current_group)?;
+        let next_idx = (idx + 1) % group_ids.len();
+
+        controller
+            .tab_groups
+            .get(&group_ids[next_idx])
+            .and_then(|tabs| {
+                tabs.iter()
+                    .max_by_key(|tab| tab.last_active_at)
+                    .or_else(|| tabs.first())
+                    .map(|tab| &tab.handle)
+            })
+    }
+
+    /// Get the previous tab group window handle.
+    pub fn get_prev_tab_group_window(cx: &mut App, id: WindowId) -> Option<&AnyWindowHandle> {
+        let controller = cx.global::<SystemWindowTabController>();
+        let current_group = controller
+            .tab_groups
+            .iter()
+            .find_map(|(group, tabs)| tabs.iter().find(|tab| tab.id == id).map(|_| group));
+
+        let Some(current_group) = current_group else {
+            return None;
+        };
+
+        let mut group_ids: Vec<_> = controller.tab_groups.keys().collect();
+        let idx = group_ids.iter().position(|g| *g == current_group)?;
+        let prev_idx = if idx == 0 {
+            group_ids.len() - 1
+        } else {
+            idx - 1
+        };
+
+        controller
+            .tab_groups
+            .get(&group_ids[prev_idx])
+            .and_then(|tabs| {
+                tabs.iter()
+                    .max_by_key(|tab| tab.last_active_at)
+                    .or_else(|| tabs.first())
+                    .map(|tab| &tab.handle)
+            })
     }
 
     /// Get all tabs in the same window.
@@ -316,6 +376,18 @@ impl SystemWindowTabController {
     pub fn set_visible(cx: &mut App, visible: bool) {
         let mut controller = cx.global_mut::<SystemWindowTabController>();
         controller.visible = Some(visible);
+    }
+
+    /// Update the last active of a window.
+    pub fn update_last_active(cx: &mut App, id: WindowId) {
+        let mut controller = cx.global_mut::<SystemWindowTabController>();
+        for windows in controller.tab_groups.values_mut() {
+            for tab in windows.iter_mut() {
+                if tab.id == id {
+                    tab.last_active_at = Instant::now();
+                }
+            }
+        }
     }
 
     /// Update the position of a tab within its group.

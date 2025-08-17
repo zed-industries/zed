@@ -5864,17 +5864,22 @@ impl Workspace {
             return;
         };
         let windows = cx.windows();
-        let Some(next_window) = windows
-            .iter()
-            .cycle()
-            .skip_while(|window| window.window_id() != current_window_id)
-            .nth(1)
-        else {
-            return;
-        };
-        next_window
-            .update(cx, |_, window, _| window.activate_window())
-            .ok();
+        let next_window =
+            SystemWindowTabController::get_next_tab_group_window(cx, current_window_id).or_else(
+                || {
+                    windows
+                        .iter()
+                        .cycle()
+                        .skip_while(|window| window.window_id() != current_window_id)
+                        .nth(1)
+                },
+            );
+
+        if let Some(window) = next_window {
+            window
+                .update(cx, |_, window, _| window.activate_window())
+                .ok();
+        }
     }
 
     pub fn activate_previous_window(&mut self, cx: &mut Context<Self>) {
@@ -5882,18 +5887,23 @@ impl Workspace {
             return;
         };
         let windows = cx.windows();
-        let Some(prev_window) = windows
-            .iter()
-            .rev()
-            .cycle()
-            .skip_while(|window| window.window_id() != current_window_id)
-            .nth(1)
-        else {
-            return;
-        };
-        prev_window
-            .update(cx, |_, window, _| window.activate_window())
-            .ok();
+        let prev_window =
+            SystemWindowTabController::get_prev_tab_group_window(cx, current_window_id).or_else(
+                || {
+                    windows
+                        .iter()
+                        .rev()
+                        .cycle()
+                        .skip_while(|window| window.window_id() != current_window_id)
+                        .nth(1)
+                },
+            );
+
+        if let Some(window) = prev_window {
+            window
+                .update(cx, |_, window, _| window.activate_window())
+                .ok();
+        }
     }
 
     pub fn cancel(&mut self, _: &menu::Cancel, window: &mut Window, cx: &mut Context<Self>) {
