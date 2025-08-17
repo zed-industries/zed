@@ -594,7 +594,7 @@ impl AcpThreadView {
 
         for (range, project_path, filename) in mentions {
             let crease_icon_path = if project_path.path.is_dir() {
-                FileIcons::get_folder_icon(false, cx)
+                FileIcons::get_folder_icon(false, &filename, cx)
                     .unwrap_or_else(|| IconName::Folder.path().into())
             } else {
                 FileIcons::get_icon(Path::new(project_path.path.as_ref()), cx)

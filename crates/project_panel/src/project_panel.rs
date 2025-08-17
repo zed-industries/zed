@@ -4662,7 +4662,12 @@ impl ProjectPanel {
             }
             _ => {
                 if show_folder_icons {
-                    FileIcons::get_folder_icon(is_expanded, cx)
+                    let name = entry
+                        .path
+                        .file_name()
+                        .and_then(|name| name.to_str())
+                        .unwrap_or_default();
+                    FileIcons::get_folder_icon(is_expanded, name, cx)
                 } else {
                     FileIcons::get_chevron_icon(is_expanded, cx)
                 }

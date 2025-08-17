@@ -83,18 +83,49 @@ impl FileIcons {
         })
     }
 
-    pub fn get_folder_icon(expanded: bool, cx: &App) -> Option<SharedString> {
-        fn get_folder_icon(icon_theme: &Arc<IconTheme>, expanded: bool) -> Option<SharedString> {
+    pub fn get_folder_icon(expanded: bool, name: &str, cx: &App) -> Option<SharedString> {
+        fn get_folder_icon(
+            icon_theme: &Arc<IconTheme>,
+            name: &str,
+            expanded: bool,
+        ) -> Option<SharedString> {
             if expanded {
+                let named_icon = icon_theme
+                    .named_directory_icons
+                    .expanded
+                    .get(name)
+                    .and_then(|key| icon_theme.file_icons.get(key))
+                    .map(|icon_definition| icon_definition.path.clone());
+
+                if let Some(named_icon) = named_icon {
+                    return Some(named_icon);
+                }
+
                 icon_theme.directory_icons.expanded.clone()
             } else {
+                let named_icon = icon_theme
+                    .named_directory_icons
+                    .collapsed
+                    .get(name)
+                    .and_then(|key| icon_theme.file_icons.get(key))
+                    .map(|icon_definition| icon_definition.path.clone());
+
+                if let Some(named_icon) = named_icon {
+                    return Some(named_icon);
+                }
+
                 icon_theme.directory_icons.collapsed.clone()
             }
         }
 
-        get_folder_icon(&ThemeSettings::get_global(cx).active_icon_theme, expanded).or_else(|| {
+        get_folder_icon(
+            &ThemeSettings::get_global(cx).active_icon_theme,
+            name,
+            expanded,
+        )
+        .or_else(|| {
             Self::default_icon_theme(cx)
-                .and_then(|icon_theme| get_folder_icon(&icon_theme, expanded))
+                .and_then(|icon_theme| get_folder_icon(&icon_theme, name, expanded))
         })
     }
 
