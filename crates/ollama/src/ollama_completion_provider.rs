@@ -415,12 +415,10 @@ impl EditPredictionProvider for OllamaCompletionProvider {
 
     fn accept(&mut self, _cx: &mut Context<Self>) {
         self.current_completion = None;
-        // TODO: Could send accept telemetry to Ollama if supported
     }
 
     fn discard(&mut self, _cx: &mut Context<Self>) {
         self.current_completion = None;
-        // TODO: Could send discard telemetry to Ollama if supported
     }
 
     fn suggest(
