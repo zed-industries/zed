@@ -815,16 +815,16 @@ impl MessageEditor {
                 }
                 MentionUri::TextThread { path, .. } => {
                     self.mention_set
-                        .insert_text_thread(path, Task::ready(Ok(text.into())).shared());
+                        .insert_text_thread(path, Task::ready(Ok(text)).shared());
                 }
                 MentionUri::Fetch { url } => {
                     self.mention_set
-                        .add_fetch_result(url, Task::ready(Ok(text.into())).shared());
+                        .add_fetch_result(url, Task::ready(Ok(text)).shared());
                 }
                 MentionUri::File { .. }
                 | MentionUri::Symbol { .. }
                 | MentionUri::Rule { .. }
-                | MentionUri::Selection { .. } => todo!(),
+                | MentionUri::Selection { .. } => {}
             }
         }
         for (range, content) in images {
