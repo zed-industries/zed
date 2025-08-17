@@ -430,7 +430,7 @@ pub async fn generate(
     let mut response = match client.send(request).await {
         Ok(response) => response,
         Err(err) => {
-            log::warn!("Ollama server unavailable at {}: {}", api_url, err);
+            log::error!("Ollama server unavailable at {}: {}", api_url, err);
             return Err(err);
         }
     };
