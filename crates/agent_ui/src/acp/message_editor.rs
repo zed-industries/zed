@@ -771,7 +771,7 @@ impl MessageEditor {
                         let start = text.len();
                         write!(&mut text, "{}", mention_uri.as_link()).ok();
                         let end = text.len();
-                        mentions.push((start..end, mention_uri));
+                        mentions.push((start..end, mention_uri, resource.text));
                     }
                 }
                 acp::ContentBlock::Image(content) => {
@@ -791,7 +791,7 @@ impl MessageEditor {
             editor.buffer().read(cx).snapshot(cx)
         });
 
-        for (range, mention_uri) in mentions {
+        for (range, mention_uri, text) in mentions {
             let anchor = snapshot.anchor_before(range.start);
             let crease_id = crate::context_picker::insert_crease_for_mention(
                 anchor.excerpt_id,
@@ -805,7 +805,26 @@ impl MessageEditor {
             );
 
             if let Some(crease_id) = crease_id {
-                self.mention_set.insert_uri(crease_id, mention_uri);
+                self.mention_set.insert_uri(crease_id, mention_uri.clone());
+            }
+
+            match mention_uri {
+                MentionUri::Thread { id, .. } => {
+                    self.mention_set
+                        .insert_thread(id, Task::ready(Ok(text.into())).shared());
+                }
+                MentionUri::TextThread { path, .. } => {
+                    self.mention_set
+                        .insert_text_thread(path, Task::ready(Ok(text.into())).shared());
+                }
+                MentionUri::Fetch { url } => {
+                    self.mention_set
+                        .add_fetch_result(url, Task::ready(Ok(text.into())).shared());
+                }
+                MentionUri::File { .. }
+                | MentionUri::Symbol { .. }
+                | MentionUri::Rule { .. }
+                | MentionUri::Selection { .. } => todo!(),
             }
         }
         for (range, content) in images {
