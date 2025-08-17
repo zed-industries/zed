@@ -22,7 +22,7 @@ use itertools::Itertools as _;
 use picker::{Picker, PickerDelegate, highlighted_match_with_paths::HighlightedMatch};
 use project::{DebugScenarioContext, TaskContexts, TaskSourceKind, task_store::TaskStore};
 use settings::Settings;
-use task::{DebugScenario, RevealTarget, ZedDebugConfig};
+use task::{DebugScenario, RevealTarget, VariableName, ZedDebugConfig};
 use theme::ThemeSettings;
 use ui::{
     ActiveTheme, Button, ButtonCommon, ButtonSize, CheckboxWithLabel, Clickable, Color, Context,
@@ -1429,7 +1429,8 @@ impl PickerDelegate for DebugDelegate {
         window: &mut Window,
         cx: &mut Context<picker::Picker<Self>>,
     ) -> Option<Self::ListItem> {
-        let hit = &self.matches[ix];
+        let hit = self.matches.get(ix)?;
+        let (task_kind, _scenario, context) = &self.candidates[hit.candidate_id];
 
         let highlighted_location = HighlightedMatch {
             text: hit.string.clone(),
@@ -1437,44 +1438,79 @@ impl PickerDelegate for DebugDelegate {
             char_count: hit.string.chars().count(),
             color: Color::Default,
         };
-        let task_kind = &self.candidates[hit.candidate_id].0;
 
-        let icon = match task_kind {
-            Some(TaskSourceKind::UserInput) => Some(Icon::new(IconName::Terminal)),
-            Some(TaskSourceKind::AbsPath { .. }) => Some(Icon::new(IconName::Settings)),
-            Some(TaskSourceKind::Worktree { .. }) => Some(Icon::new(IconName::FileTree)),
-            Some(TaskSourceKind::Lsp {
-                language_name: name,
+        let subtitle = match task_kind {
+            Some(TaskSourceKind::Worktree {
+                directory_in_worktree,
                 ..
-            })
-            | Some(TaskSourceKind::Language { name }) => file_icons::FileIcons::get(cx)
-                .get_icon_for_type(&name.to_lowercase(), cx)
-                .map(Icon::from_path),
-            None => Some(Icon::new(IconName::HistoryRerun)),
-        }
-        .map(|icon| icon.color(Color::Muted).size(IconSize::Small));
-        let indicator = if matches!(task_kind, Some(TaskSourceKind::Lsp { .. })) {
-            Some(Indicator::icon(
-                Icon::new(IconName::BoltFilled)
-                    .color(Color::Muted)
-                    .size(IconSize::Small),
-            ))
-        } else {
-            None
+            }) => Some(directory_in_worktree.display().to_string()),
+            Some(TaskSourceKind::AbsPath { abs_path, .. }) => abs_path
+                .file_name()
+                .map(|n| format!("From Global {}", n.to_string_lossy())),
+            Some(TaskSourceKind::Lsp { language_name, .. }) => {
+                Some(format!("LSP: {language_name}"))
+            }
+            Some(TaskSourceKind::Language { name }) => Some(format!("Language: {name}")),
+            _ => context.clone().and_then(|ctx| {
+                ctx.task_context
+                    .task_variables
+                    .get(&VariableName::RelativeFile)
+                    .map(|f| format!("in {f}"))
+                    .or_else(|| {
+                        ctx.task_context
+                            .task_variables
+                            .get(&VariableName::Dirname)
+                            .map(|d| format!("in {d}/"))
+                    })
+            }),
         };
+
+        let (icon, indicator) = match task_kind {
+            Some(TaskSourceKind::UserInput) => (Some(Icon::new(IconName::Terminal)), None),
+            Some(TaskSourceKind::AbsPath { .. }) => (Some(Icon::new(IconName::Settings)), None),
+            Some(TaskSourceKind::Worktree { .. }) => (Some(Icon::new(IconName::FileTree)), None),
+            Some(TaskSourceKind::Lsp { language_name, .. }) => (
+                file_icons::FileIcons::get(cx)
+                    .get_icon_for_type(&language_name.to_lowercase(), cx)
+                    .map(Icon::from_path),
+                Some(Indicator::icon(
+                    Icon::new(IconName::BoltFilled)
+                        .color(Color::Muted)
+                        .size(IconSize::Small),
+                )),
+            ),
+            Some(TaskSourceKind::Language { name }) => (
+                file_icons::FileIcons::get(cx)
+                    .get_icon_for_type(&name.to_lowercase(), cx)
+                    .map(Icon::from_path),
+                None,
+            ),
+            None => (Some(Icon::new(IconName::HistoryRerun)), None),
+        };
+
         let icon = icon.map(|icon| {
-            IconWithIndicator::new(icon, indicator)
+            IconWithIndicator::new(icon.color(Color::Muted).size(IconSize::Small), indicator)
                 .indicator_border_color(Some(cx.theme().colors().border_transparent))
         });
 
-        Some(
+        let mut list_item =
             ListItem::new(SharedString::from(format!("debug-scenario-selection-{ix}")))
                 .inset(true)
                 .start_slot::<IconWithIndicator>(icon)
                 .spacing(ListItemSpacing::Sparse)
                 .toggle_state(selected)
-                .child(highlighted_location.render(window, cx)),
-        )
+                .child(highlighted_location.render(window, cx));
+
+        if let Some(subtitle_text) = subtitle {
+            list_item = list_item.child(
+                div()
+                    .text_xs()
+                    .text_color(cx.theme().colors().text_muted)
+                    .child(subtitle_text),
+            );
+        }
+
+        Some(list_item)
     }
 }
 
