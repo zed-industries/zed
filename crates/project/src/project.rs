@@ -904,10 +904,16 @@ impl DirectoryLister {
         })
     }
 
-    pub fn list_directory(&self, path: String, cx: &mut App) -> Task<Result<Vec<DirectoryItem>>> {
+    pub fn list_directory(&self, path: String, cx: &App) -> Task<Result<Vec<DirectoryItem>>> {
         match self {
             DirectoryLister::Project(project) => {
-                project.update(cx, |project, cx| project.list_directory(path, cx))
+                let is_local = project.read(cx).is_local();
+                if is_local {
+                    DirectoryLister::Local(project.clone(), project.read(cx).fs.clone())
+                        .list_directory(path, cx)
+                } else {
+                    project.read(cx).list_remote_directory(path, cx)
+                }
             }
             DirectoryLister::Local(_, fs) => {
                 let fs = fs.clone();
@@ -4312,14 +4318,12 @@ impl Project {
             .ok()?
     }
 
-    pub fn list_directory(
+    pub fn list_remote_directory(
         &self,
         query: String,
-        cx: &mut Context<Self>,
+        cx: &App,
     ) -> Task<Result<Vec<DirectoryItem>>> {
-        if self.is_local() {
-            DirectoryLister::Local(cx.entity(), self.fs.clone()).list_directory(query, cx)
-        } else if let Some(session) = self.remote_client.as_ref() {
+        if let Some(session) = self.remote_client.as_ref() {
             let path_buf = PathBuf::from(query);
             let request = proto::ListRemoteDirectory {
                 dev_server_id: REMOTE_SERVER_PROJECT_ID,

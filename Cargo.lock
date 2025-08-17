@@ -3494,6 +3494,7 @@ dependencies = [
  "collections",
  "derive_more",
  "gpui",
+ "workspace",
  "workspace-hack",
 ]
 

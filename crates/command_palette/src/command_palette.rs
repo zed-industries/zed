@@ -81,14 +81,17 @@ impl CommandPalette {
         let Some(previous_focus_handle) = window.focused(cx) else {
             return;
         };
+
+        let entity = cx.weak_entity();
         workspace.toggle_modal(window, cx, move |window, cx| {
-            CommandPalette::new(previous_focus_handle, query, window, cx)
+            CommandPalette::new(previous_focus_handle, query, entity, window, cx)
         });
     }
 
     fn new(
         previous_focus_handle: FocusHandle,
         query: &str,
+        entity: WeakEntity<Workspace>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -109,8 +112,12 @@ impl CommandPalette {
             })
             .collect();
 
-        let delegate =
-            CommandPaletteDelegate::new(cx.entity().downgrade(), commands, previous_focus_handle);
+        let delegate = CommandPaletteDelegate::new(
+            cx.entity().downgrade(),
+            entity,
+            commands,
+            previous_focus_handle,
+        );
 
         let picker = cx.new(|cx| {
             let picker = Picker::uniform_list(delegate, window, cx);
@@ -146,6 +153,7 @@ impl Render for CommandPalette {
 pub struct CommandPaletteDelegate {
     latest_query: String,
     command_palette: WeakEntity<CommandPalette>,
+    workspace: WeakEntity<Workspace>,
     all_commands: Vec<Command>,
     commands: Vec<Command>,
     matches: Vec<StringMatch>,
@@ -153,7 +161,7 @@ pub struct CommandPaletteDelegate {
     previous_focus_handle: FocusHandle,
     updating_matches: Option<(
         Task<()>,
-        postage::dispatch::Receiver<(Vec<Command>, Vec<StringMatch>)>,
+        postage::dispatch::Receiver<(Vec<Command>, Vec<StringMatch>, Vec<CommandInterceptResult>)>,
     )>,
 }
 
@@ -174,11 +182,13 @@ impl Clone for Command {
 impl CommandPaletteDelegate {
     fn new(
         command_palette: WeakEntity<CommandPalette>,
+        workspace: WeakEntity<Workspace>,
         commands: Vec<Command>,
         previous_focus_handle: FocusHandle,
     ) -> Self {
         Self {
             command_palette,
+            workspace,
             all_commands: commands.clone(),
             matches: vec![],
             commands,
@@ -194,22 +204,11 @@ impl CommandPaletteDelegate {
         query: String,
         mut commands: Vec<Command>,
         mut matches: Vec<StringMatch>,
-        cx: &mut Context<Picker<Self>>,
+        intercept_results: Vec<CommandInterceptResult>,
+        _: &mut Context<Picker<Self>>,
     ) {
         self.updating_matches.take();
-        self.latest_query = query.clone();
-
-        let mut intercept_results = CommandPaletteInterceptor::try_global(cx)
-            .map(|interceptor| interceptor.intercept(&query, cx))
-            .unwrap_or_default();
-
-        if parse_zed_link(&query, cx).is_some() {
-            intercept_results = vec![CommandInterceptResult {
-                action: OpenZedUrl { url: query.clone() }.boxed_clone(),
-                string: query,
-                positions: vec![],
-            }]
-        }
+        self.latest_query = query;
 
         let mut new_matches = Vec::new();
 
@@ -295,12 +294,23 @@ impl PickerDelegate for CommandPaletteDelegate {
         if let Some(alias) = settings.command_aliases.get(&query) {
             query = alias.to_string();
         }
+
+        let workspace = self.workspace.clone();
+
+        let intercept_task = CommandPaletteInterceptor::try_global(cx)
+            .map(|interceptor| interceptor.intercept(&query, workspace, cx));
+
         let (mut tx, mut rx) = postage::dispatch::channel(1);
+
+        let query_str = query.as_str();
+        let is_zed_link = parse_zed_link(query_str, cx).is_some();
+
         let task = cx.background_spawn({
             let mut commands = self.all_commands.clone();
             let hit_counts = self.hit_counts();
             let executor = cx.background_executor().clone();
-            let query = normalize_action_query(query.as_str());
+            let query = normalize_action_query(query_str);
+            let query_for_link = query_str.to_string();
             async move {
                 commands.sort_by_key(|action| {
                     (
@@ -326,13 +336,33 @@ impl PickerDelegate for CommandPaletteDelegate {
                 )
                 .await;
 
-                tx.send((commands, matches)).await.log_err();
+                let intercept_results = if is_zed_link {
+                    vec![CommandInterceptResult {
+                        action: OpenZedUrl {
+                            url: query_for_link.clone(),
+                        }
+                        .boxed_clone(),
+                        string: query_for_link,
+                        positions: vec![],
+                    }]
+                } else {
+                    if let Some(task) = intercept_task {
+                        task.await
+                    } else {
+                        Vec::new()
+                    }
+                };
+
+                tx.send((commands, matches, intercept_results))
+                    .await
+                    .log_err();
             }
         });
+
         self.updating_matches = Some((task, rx.clone()));
 
         cx.spawn_in(window, async move |picker, cx| {
-            let Some((commands, matches)) = rx.recv().await else {
+            let Some((commands, matches, intercept_results)) = rx.recv().await else {
                 return;
             };
 
@@ -340,7 +370,7 @@ impl PickerDelegate for CommandPaletteDelegate {
                 .update(cx, |picker, cx| {
                     picker
                         .delegate
-                        .matches_updated(query, commands, matches, cx)
+                        .matches_updated(query, commands, matches, intercept_results, cx)
                 })
                 .log_err();
         })
@@ -361,8 +391,8 @@ impl PickerDelegate for CommandPaletteDelegate {
             .background_executor()
             .block_with_timeout(duration, rx.clone().recv())
         {
-            Ok(Some((commands, matches))) => {
-                self.matches_updated(query, commands, matches, cx);
+            Ok(Some((commands, matches, interceptor_results))) => {
+                self.matches_updated(query, commands, matches, interceptor_results, cx);
                 true
             }
             _ => {
