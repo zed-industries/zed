@@ -414,26 +414,28 @@ impl PickerDelegate for StashListDelegate {
             Self::format_message(entry_match.entry.index, &entry_match.entry.message);
         let mut positions = entry_match.positions.clone();
 
-        if stash_message.is_ascii() {
-            let max_width = self.max_width.to_pixels(window.rem_size());
-            let normal_em = {
-                let style = window.text_style();
-                let font_id = window.text_system().resolve_font(&style.font());
-                let font_size = ui::TextSize::Default.rems(cx).to_pixels(window.rem_size());
-                let normal = cx
-                    .text_system()
-                    .em_width(font_id, font_size)
-                    .unwrap_or(px(16.));
-                normal
-            };
+        let max_width = self.max_width.to_pixels(window.rem_size());
+        let normal_em = {
+            let style = window.text_style();
+            let font_id = window.text_system().resolve_font(&style.font());
+            let font_size = ui::TextSize::Default.rems(cx).to_pixels(window.rem_size());
+            let normal = cx
+                .text_system()
+                .em_width(font_id, font_size)
+                .unwrap_or(px(16.));
+            normal
+        };
 
-            let max_chars = ((max_width * 0.8) / normal_em) as usize;
+        let max_chars = ((max_width * 0.8) / normal_em) as usize;
 
-            if stash_message.len() > max_chars && max_chars > 3 {
-                stash_message.truncate(max_chars - 3);
-                stash_message.push_str("…");
-                positions.retain(|&pos| pos < max_chars - 3);
+        if stash_message.len() > max_chars && max_chars > 1 {
+            let mut index = max_chars - 1;
+            while !stash_message.is_char_boundary(index) && index != 0 {
+                index -= 1;
             }
+            stash_message.truncate(index);
+            stash_message.push_str("…");
+            positions.retain(|&pos| pos < index);
         }
 
         let stash_name = HighlightedLabel::new(stash_message, positions).into_any_element();
