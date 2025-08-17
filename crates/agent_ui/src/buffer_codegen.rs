@@ -6,6 +6,7 @@ use agent::{
 use agent_settings::AgentSettings;
 use anyhow::{Context as _, Result};
 use client::telemetry::Telemetry;
+use cloud_llm_client::CompletionIntent;
 use collections::HashSet;
 use editor::{Anchor, AnchorRangeExt, MultiBuffer, MultiBufferSnapshot, ToOffset as _, ToPoint};
 use futures::{
@@ -35,7 +36,6 @@ use std::{
 };
 use streaming_diff::{CharOperation, LineDiff, LineOperation, StreamingDiff};
 use telemetry_events::{AssistantEventData, AssistantKind, AssistantPhase};
-use zed_llm_client::CompletionIntent;
 
 pub struct BufferCodegen {
     alternatives: Vec<Entity<CodegenAlternative>>,

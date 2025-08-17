@@ -41,6 +41,9 @@ use std::{
 };
 use util::ResultExt as _;
 
+pub static ZED_STATELESS: std::sync::LazyLock<bool> =
+    std::sync::LazyLock::new(|| std::env::var("ZED_STATELESS").map_or(false, |v| !v.is_empty()));
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum DataType {
     #[serde(rename = "json")]
@@ -200,6 +203,22 @@ impl ThreadStore {
         this.register_context_server_handlers(cx);
         this.reload(cx).detach_and_log_err(cx);
         (this, ready_rx)
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn fake(project: Entity<Project>, cx: &mut App) -> Self {
+        Self {
+            project,
+            tools: cx.new(|_| ToolWorkingSet::default()),
+            prompt_builder: Arc::new(PromptBuilder::new(None).unwrap()),
+            prompt_store: None,
+            context_server_tool_ids: HashMap::default(),
+            threads: Vec::new(),
+            project_context: SharedProjectContext::default(),
+            reload_system_prompt_tx: mpsc::channel(0).0,
+            _reload_system_prompt_task: Task::ready(()),
+            _subscriptions: vec![],
+        }
     }
 
     fn handle_project_event(
@@ -874,7 +893,11 @@ impl ThreadsDatabase {
 
         let needs_migration_from_heed = mdb_path.exists();
 
-        let connection = Connection::open_file(&sqlite_path.to_string_lossy());
+        let connection = if *ZED_STATELESS {
+            Connection::open_memory(Some("THREAD_FALLBACK_DB"))
+        } else {
+            Connection::open_file(&sqlite_path.to_string_lossy())
+        };
 
         connection.exec(indoc! {"
                 CREATE TABLE IF NOT EXISTS threads (

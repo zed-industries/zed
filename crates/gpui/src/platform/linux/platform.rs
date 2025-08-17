@@ -327,26 +327,35 @@ impl<P: LinuxClient + 'static> Platform for P {
         done_rx
     }
 
-    fn prompt_for_new_path(&self, directory: &Path) -> oneshot::Receiver<Result<Option<PathBuf>>> {
+    fn prompt_for_new_path(
+        &self,
+        directory: &Path,
+        suggested_name: Option<&str>,
+    ) -> oneshot::Receiver<Result<Option<PathBuf>>> {
         let (done_tx, done_rx) = oneshot::channel();
 
         #[cfg(not(any(feature = "wayland", feature = "x11")))]
-        let _ = (done_tx.send(Ok(None)), directory);
+        let _ = (done_tx.send(Ok(None)), directory, suggested_name);
 
         #[cfg(any(feature = "wayland", feature = "x11"))]
         self.foreground_executor()
             .spawn({
                 let directory = directory.to_owned();
+                let suggested_name = suggested_name.map(|s| s.to_owned());
 
                 async move {
-                    let request = match ashpd::desktop::file_chooser::SaveFileRequest::default()
-                        .modal(true)
-                        .title("Save File")
-                        .current_folder(directory)
-                        .expect("pathbuf should not be nul terminated")
-                        .send()
-                        .await
-                    {
+                    let mut request_builder =
+                        ashpd::desktop::file_chooser::SaveFileRequest::default()
+                            .modal(true)
+                            .title("Save File")
+                            .current_folder(directory)
+                            .expect("pathbuf should not be nul terminated");
+
+                    if let Some(suggested_name) = suggested_name {
+                        request_builder = request_builder.current_name(suggested_name.as_str());
+                    }
+
+                    let request = match request_builder.send().await {
                         Ok(request) => request,
                         Err(err) => {
                             let result = match err {
@@ -828,6 +837,13 @@ impl crate::Keystroke {
             Keysym::Delete => "delete".to_owned(),
             Keysym::Escape => "escape".to_owned(),
 
+            Keysym::Left => "left".to_owned(),
+            Keysym::Right => "right".to_owned(),
+            Keysym::Up => "up".to_owned(),
+            Keysym::Down => "down".to_owned(),
+            Keysym::Home => "home".to_owned(),
+            Keysym::End => "end".to_owned(),
+
             _ => {
                 let name = xkb::keysym_get_name(key_sym).to_lowercase();
                 if key_sym.is_keypad_key() {
@@ -838,9 +854,15 @@ impl crate::Keystroke {
                 {
                     if key.is_ascii_graphic() {
                         key_utf8.to_lowercase()
-                    // map ctrl-a to a
-                    } else if key_utf32 <= 0x1f {
-                        ((key_utf32 as u8 + 0x60) as char).to_string()
+                    // map ctrl-a to `a`
+                    // ctrl-0..9 may emit control codes like ctrl-[, but
+                    // we don't want to map them to `[`
+                    } else if key_utf32 <= 0x1f
+                        && !name.chars().next().is_some_and(|c| c.is_ascii_digit())
+                    {
+                        ((key_utf32 as u8 + 0x40) as char)
+                            .to_ascii_lowercase()
+                            .to_string()
                     } else {
                         name
                     }

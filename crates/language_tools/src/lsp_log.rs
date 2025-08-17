@@ -253,8 +253,8 @@ impl LogStore {
 
         let copilot_subscription = Copilot::global(cx).map(|copilot| {
             let copilot = &copilot;
-            cx.subscribe(copilot, |this, copilot, inline_completion_event, cx| {
-                if let copilot::Event::CopilotLanguageServerStarted = inline_completion_event {
+            cx.subscribe(copilot, |this, copilot, edit_prediction_event, cx| {
+                if let copilot::Event::CopilotLanguageServerStarted = edit_prediction_event {
                     if let Some(server) = copilot.read(cx).language_server() {
                         let server_id = server.server_id();
                         let weak_this = cx.weak_entity();
@@ -867,7 +867,7 @@ impl LspLogView {
             BINARY = server.binary(),
             WORKSPACE_FOLDERS = server
                 .workspace_folders()
-                .iter()
+                .into_iter()
                 .filter_map(|path| path
                     .to_file_path()
                     .ok()
@@ -1358,7 +1358,7 @@ impl Render for LspLogToolbarItemView {
             })
             .collect();
 
-        let log_toolbar_view = cx.entity().clone();
+        let log_toolbar_view = cx.entity();
 
         let lsp_menu = PopoverMenu::new("LspLogView")
             .anchor(Corner::TopLeft)

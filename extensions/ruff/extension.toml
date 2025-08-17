@@ -1,7 +1,7 @@
 id = "ruff"
 name = "Ruff"
 description = "Support for Ruff, the Python linter and formatter"
-version = "0.1.0"
+version = "0.1.1"
 schema_version = 1
 authors = []
 repository = "https://github.com/zed-industries/zed"

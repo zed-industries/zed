@@ -1,4 +1,4 @@
-use editor::{Editor, MultiBufferSnapshot};
+use editor::{Editor, EditorSettings, MultiBufferSnapshot};
 use gpui::{App, Entity, FocusHandle, Focusable, Subscription, Task, WeakEntity};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -209,6 +209,13 @@ impl CursorPosition {
 
 impl Render for CursorPosition {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if !EditorSettings::get_global(cx)
+            .status_bar
+            .cursor_position_button
+        {
+            return div();
+        }
+
         div().when_some(self.position, |el, position| {
             let mut text = format!(
                 "{}{FILE_ROW_COLUMN_DELIMITER}{}",
@@ -308,10 +315,14 @@ impl Settings for LineIndicatorFormat {
     type FileContent = Option<LineIndicatorFormatContent>;
 
     fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> anyhow::Result<Self> {
-        let format = [sources.release_channel, sources.user]
-            .into_iter()
-            .find_map(|value| value.copied().flatten())
-            .unwrap_or(sources.default.ok_or_else(Self::missing_default)?);
+        let format = [
+            sources.release_channel,
+            sources.operating_system,
+            sources.user,
+        ]
+        .into_iter()
+        .find_map(|value| value.copied().flatten())
+        .unwrap_or(sources.default.ok_or_else(Self::missing_default)?);
 
         Ok(format.0)
     }

@@ -231,7 +231,6 @@ impl ActivityIndicator {
                 status,
             } => {
                 let create_buffer = project.update(cx, |project, cx| project.create_buffer(cx));
-                let project = project.clone();
                 let status = status.clone();
                 let server_name = server_name.clone();
                 cx.spawn_in(window, async move |workspace, cx| {
@@ -247,8 +246,7 @@ impl ActivityIndicator {
                     workspace.update_in(cx, |workspace, window, cx| {
                         workspace.add_item_to_active_pane(
                             Box::new(cx.new(|cx| {
-                                let mut editor =
-                                    Editor::for_buffer(buffer, Some(project.clone()), window, cx);
+                                let mut editor = Editor::for_buffer(buffer, None, window, cx);
                                 editor.set_read_only(true);
                                 editor
                             })),
@@ -718,18 +716,10 @@ impl ActivityIndicator {
                     })),
                     tooltip_message: Some(Self::version_tooltip_message(&version)),
                 }),
-                AutoUpdateStatus::Updated {
-                    binary_path,
-                    version,
-                } => Some(Content {
+                AutoUpdateStatus::Updated { version } => Some(Content {
                     icon: None,
                     message: "Click to restart and update Zed".to_string(),
-                    on_click: Some(Arc::new({
-                        let reload = workspace::Reload {
-                            binary_path: Some(binary_path.clone()),
-                        };
-                        move |_, _, cx| workspace::reload(&reload, cx)
-                    })),
+                    on_click: Some(Arc::new(move |_, _, cx| workspace::reload(cx))),
                     tooltip_message: Some(Self::version_tooltip_message(&version)),
                 }),
                 AutoUpdateStatus::Errored => Some(Content {

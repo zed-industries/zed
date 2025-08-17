@@ -104,7 +104,7 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
         let count = Vim::take_count(cx).unwrap_or(1);
         Vim::take_forced_motion(cx);
         for _ in 0..count {
-            vim.update_editor(window, cx, |_, editor, window, cx| {
+            vim.update_editor(cx, |_, editor, cx| {
                 editor.select_larger_syntax_node(&Default::default(), window, cx);
             });
         }
@@ -117,7 +117,7 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
             let count = Vim::take_count(cx).unwrap_or(1);
             Vim::take_forced_motion(cx);
             for _ in 0..count {
-                vim.update_editor(window, cx, |_, editor, window, cx| {
+                vim.update_editor(cx, |_, editor, cx| {
                     editor.select_smaller_syntax_node(&Default::default(), window, cx);
                 });
             }
@@ -129,7 +129,7 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
             return;
         };
         let marks = vim
-            .update_editor(window, cx, |vim, editor, window, cx| {
+            .update_editor(cx, |vim, editor, cx| {
                 vim.get_mark("<", editor, window, cx)
                     .zip(vim.get_mark(">", editor, window, cx))
             })
@@ -148,7 +148,7 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
             vim.create_visual_marks(vim.mode, window, cx);
         }
 
-        vim.update_editor(window, cx, |_, editor, window, cx| {
+        vim.update_editor(cx, |_, editor, cx| {
             editor.set_clip_at_line_ends(false, cx);
             editor.change_selections(Default::default(), window, cx, |s| {
                 let map = s.display_map();
@@ -189,7 +189,7 @@ impl Vim {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.update_editor(window, cx, |vim, editor, window, cx| {
+        self.update_editor(cx, |vim, editor, cx| {
             let text_layout_details = editor.text_layout_details(window);
             if vim.mode == Mode::VisualBlock
                 && !matches!(
@@ -397,7 +397,7 @@ impl Vim {
                 self.switch_mode(target_mode, true, window, cx);
             }
 
-            self.update_editor(window, cx, |_, editor, window, cx| {
+            self.update_editor(cx, |_, editor, cx| {
                 editor.change_selections(Default::default(), window, cx, |s| {
                     s.move_with(|map, selection| {
                         let mut mut_selection = selection.clone();
@@ -475,7 +475,7 @@ impl Vim {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.update_editor(window, cx, |_, editor, window, cx| {
+        self.update_editor(cx, |_, editor, cx| {
             editor.split_selection_into_lines(&Default::default(), window, cx);
             editor.change_selections(Default::default(), window, cx, |s| {
                 s.move_cursors_with(|map, cursor, _| {
@@ -493,7 +493,7 @@ impl Vim {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.update_editor(window, cx, |_, editor, window, cx| {
+        self.update_editor(cx, |_, editor, cx| {
             editor.split_selection_into_lines(&Default::default(), window, cx);
             editor.change_selections(Default::default(), window, cx, |s| {
                 s.move_cursors_with(|map, cursor, _| {
@@ -517,7 +517,7 @@ impl Vim {
     }
 
     pub fn other_end(&mut self, _: &OtherEnd, window: &mut Window, cx: &mut Context<Self>) {
-        self.update_editor(window, cx, |_, editor, window, cx| {
+        self.update_editor(cx, |_, editor, cx| {
             editor.change_selections(Default::default(), window, cx, |s| {
                 s.move_with(|_, selection| {
                     selection.reversed = !selection.reversed;
@@ -533,7 +533,7 @@ impl Vim {
         cx: &mut Context<Self>,
     ) {
         let mode = self.mode;
-        self.update_editor(window, cx, |_, editor, window, cx| {
+        self.update_editor(cx, |_, editor, cx| {
             editor.change_selections(Default::default(), window, cx, |s| {
                 s.move_with(|_, selection| {
                     selection.reversed = !selection.reversed;
@@ -547,7 +547,7 @@ impl Vim {
 
     pub fn visual_delete(&mut self, line_mode: bool, window: &mut Window, cx: &mut Context<Self>) {
         self.store_visual_marks(window, cx);
-        self.update_editor(window, cx, |vim, editor, window, cx| {
+        self.update_editor(cx, |vim, editor, cx| {
             let mut original_columns: HashMap<_, _> = Default::default();
             let line_mode = line_mode || editor.selections.line_mode;
             editor.selections.line_mode = false;
@@ -631,7 +631,7 @@ impl Vim {
 
     pub fn visual_yank(&mut self, line_mode: bool, window: &mut Window, cx: &mut Context<Self>) {
         self.store_visual_marks(window, cx);
-        self.update_editor(window, cx, |vim, editor, window, cx| {
+        self.update_editor(cx, |vim, editor, cx| {
             let line_mode = line_mode || editor.selections.line_mode;
 
             // For visual line mode, adjust selections to avoid yanking the next line when on \n
@@ -679,7 +679,7 @@ impl Vim {
         cx: &mut Context<Self>,
     ) {
         self.stop_recording(cx);
-        self.update_editor(window, cx, |_, editor, window, cx| {
+        self.update_editor(cx, |_, editor, cx| {
             editor.transact(window, cx, |editor, window, cx| {
                 let (display_map, selections) = editor.selections.all_adjusted_display(cx);
 
@@ -722,7 +722,7 @@ impl Vim {
         Vim::take_forced_motion(cx);
         let count =
             Vim::take_count(cx).unwrap_or_else(|| if self.mode.is_visual() { 1 } else { 2 });
-        self.update_editor(window, cx, |_, editor, window, cx| {
+        self.update_editor(cx, |_, editor, cx| {
             editor.set_clip_at_line_ends(false, cx);
             for _ in 0..count {
                 if editor
@@ -745,7 +745,7 @@ impl Vim {
         Vim::take_forced_motion(cx);
         let count =
             Vim::take_count(cx).unwrap_or_else(|| if self.mode.is_visual() { 1 } else { 2 });
-        self.update_editor(window, cx, |_, editor, window, cx| {
+        self.update_editor(cx, |_, editor, cx| {
             for _ in 0..count {
                 if editor
                     .select_previous(&Default::default(), window, cx)
@@ -773,7 +773,7 @@ impl Vim {
         let mut start_selection = 0usize;
         let mut end_selection = 0usize;
 
-        self.update_editor(window, cx, |_, editor, _, _| {
+        self.update_editor(cx, |_, editor, _| {
             editor.set_collapse_matches(false);
         });
         if vim_is_normal {
@@ -791,7 +791,7 @@ impl Vim {
                 }
             });
         }
-        self.update_editor(window, cx, |_, editor, _, cx| {
+        self.update_editor(cx, |_, editor, cx| {
             let latest = editor.selections.newest::<usize>(cx);
             start_selection = latest.start;
             end_selection = latest.end;
@@ -812,7 +812,7 @@ impl Vim {
             self.stop_replaying(cx);
             return;
         }
-        self.update_editor(window, cx, |_, editor, window, cx| {
+        self.update_editor(cx, |_, editor, cx| {
             let latest = editor.selections.newest::<usize>(cx);
             if vim_is_normal {
                 start_selection = latest.start;

@@ -1,9 +1,13 @@
-use crate::stdio_agent_server::StdioAgentServer;
-use crate::{AgentServerCommand, AgentServerVersion};
-use anyhow::{Context as _, Result};
-use gpui::{AsyncApp, Entity};
+use std::path::Path;
+use std::rc::Rc;
+
+use crate::{AgentServer, AgentServerCommand};
+use acp_thread::{AgentConnection, LoadError};
+use anyhow::Result;
+use gpui::{Entity, Task};
 use project::Project;
 use settings::SettingsStore;
+use ui::App;
 
 use crate::AllAgentServersSettings;
 
@@ -12,7 +16,7 @@ pub struct Gemini;
 
 const ACP_ARG: &str = "--experimental-acp";
 
-impl StdioAgentServer for Gemini {
+impl AgentServer for Gemini {
     fn name(&self) -> &'static str {
         "Gemini"
     }
@@ -25,78 +29,62 @@ impl StdioAgentServer for Gemini {
         "Ask questions, edit files, run commands.\nBe specific for the best results."
     }
 
-    fn supports_always_allow(&self) -> bool {
-        true
-    }
-
     fn logo(&self) -> ui::IconName {
         ui::IconName::AiGemini
     }
 
-    async fn command(
+    fn connect(
         &self,
+        root_dir: &Path,
         project: &Entity<Project>,
-        cx: &mut AsyncApp,
-    ) -> Result<AgentServerCommand> {
-        let settings = cx.read_global(|settings: &SettingsStore, _| {
-            settings.get::<AllAgentServersSettings>(None).gemini.clone()
-        })?;
+        cx: &mut App,
+    ) -> Task<Result<Rc<dyn AgentConnection>>> {
+        let project = project.clone();
+        let root_dir = root_dir.to_path_buf();
+        let server_name = self.name();
+        cx.spawn(async move |cx| {
+            let settings = cx.read_global(|settings: &SettingsStore, _| {
+                settings.get::<AllAgentServersSettings>(None).gemini.clone()
+            })?;
 
-        if let Some(command) =
-            AgentServerCommand::resolve("gemini", &[ACP_ARG], settings, &project, cx).await
-        {
-            return Ok(command);
-        };
+            let Some(command) =
+                AgentServerCommand::resolve("gemini", &[ACP_ARG], None, settings, &project, cx).await
+            else {
+                anyhow::bail!("Failed to find gemini binary");
+            };
 
-        let (fs, node_runtime) = project.update(cx, |project, _| {
-            (project.fs().clone(), project.node_runtime().cloned())
-        })?;
-        let node_runtime = node_runtime.context("gemini not found on path")?;
+            let result = crate::acp::connect(server_name, command.clone(), &root_dir, cx).await;
+            if result.is_err() {
+                let version_fut = util::command::new_smol_command(&command.path)
+                    .args(command.args.iter())
+                    .arg("--version")
+                    .kill_on_drop(true)
+                    .output();
 
-        let directory = ::paths::agent_servers_dir().join("gemini");
-        fs.create_dir(&directory).await?;
-        node_runtime
-            .npm_install_packages(&directory, &[("@google/gemini-cli", "latest")])
-            .await?;
-        let path = directory.join("node_modules/.bin/gemini");
+                let help_fut = util::command::new_smol_command(&command.path)
+                    .args(command.args.iter())
+                    .arg("--help")
+                    .kill_on_drop(true)
+                    .output();
 
-        Ok(AgentServerCommand {
-            path,
-            args: vec![ACP_ARG.into()],
-            env: None,
+                let (version_output, help_output) = futures::future::join(version_fut, help_fut).await;
+
+                let current_version = String::from_utf8(version_output?.stdout)?;
+                let supported = String::from_utf8(help_output?.stdout)?.contains(ACP_ARG);
+
+                if !supported {
+                    return Err(LoadError::Unsupported {
+                        error_message: format!(
+                            "Your installed version of Gemini {} doesn't support the Agentic Coding Protocol (ACP).",
+                            current_version
+                        ).into(),
+                        upgrade_message: "Upgrade Gemini to Latest".into(),
+                        upgrade_command: "npm install -g @google/gemini-cli@latest".into(),
+                    }.into())
+                }
+            }
+            result
         })
-    }
-
-    async fn version(&self, command: &AgentServerCommand) -> Result<AgentServerVersion> {
-        let version_fut = util::command::new_smol_command(&command.path)
-            .args(command.args.iter())
-            .arg("--version")
-            .kill_on_drop(true)
-            .output();
-
-        let help_fut = util::command::new_smol_command(&command.path)
-            .args(command.args.iter())
-            .arg("--help")
-            .kill_on_drop(true)
-            .output();
-
-        let (version_output, help_output) = futures::future::join(version_fut, help_fut).await;
-
-        let current_version = String::from_utf8(version_output?.stdout)?;
-        let supported = String::from_utf8(help_output?.stdout)?.contains(ACP_ARG);
-
-        if supported {
-            Ok(AgentServerVersion::Supported)
-        } else {
-            Ok(AgentServerVersion::Unsupported {
-                error_message: format!(
-                    "Your installed version of Gemini {} doesn't support the Agentic Coding Protocol (ACP).",
-                    current_version
-                ).into(),
-                upgrade_message: "Upgrade Gemini to Latest".into(),
-                upgrade_command: "npm install -g @google/gemini-cli@latest".into(),
-            })
-        }
     }
 }
 
@@ -106,7 +94,7 @@ pub(crate) mod tests {
     use crate::AgentServerCommand;
     use std::path::Path;
 
-    crate::common_e2e_tests!(Gemini);
+    crate::common_e2e_tests!(Gemini, allow_option_id = "proceed_once");
 
     pub fn local_command() -> AgentServerCommand {
         let cli_path = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -116,7 +104,7 @@ pub(crate) mod tests {
 
         AgentServerCommand {
             path: "node".into(),
-            args: vec![cli_path, ACP_ARG.into()],
+            args: vec![cli_path],
             env: None,
         }
     }

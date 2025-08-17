@@ -319,7 +319,7 @@ impl PickerDelegate for RulePickerDelegate {
                             })
                             .into_any()
                     } else {
-                        IconButton::new("delete-rule", IconName::TrashAlt)
+                        IconButton::new("delete-rule", IconName::Trash)
                             .icon_color(Color::Muted)
                             .icon_size(IconSize::Small)
                             .shape(IconButtonShape::Square)
@@ -1102,7 +1102,7 @@ impl RulesLibrary {
                                                 inlay_hints_style: editor::make_inlay_hints_style(
                                                     cx,
                                                 ),
-                                                inline_completion_styles:
+                                                edit_prediction_styles:
                                                     editor::make_suggestion_styles(cx),
                                                 ..EditorStyle::default()
                                             },
@@ -1164,7 +1164,7 @@ impl RulesLibrary {
                                                 })
                                                 .into_any()
                                         } else {
-                                            IconButton::new("delete-rule", IconName::TrashAlt)
+                                            IconButton::new("delete-rule", IconName::Trash)
                                                 .icon_size(IconSize::Small)
                                                 .tooltip(move |window, cx| {
                                                     Tooltip::for_action(

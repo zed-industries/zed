@@ -46,8 +46,8 @@
       # outside the nix store instead of to `$src`
       FONTCONFIG_FILE = makeFontsConf {
         fontDirectories = [
-          "./assets/fonts/plex-mono"
-          "./assets/fonts/plex-sans"
+          "./assets/fonts/lilex"
+          "./assets/fonts/ibm-plex-sans"
         ];
       };
       PROTOC = "${protobuf}/bin/protoc";

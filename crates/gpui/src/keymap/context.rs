@@ -461,6 +461,8 @@ fn skip_whitespace(source: &str) -> &str {
 
 #[cfg(test)]
 mod tests {
+    use core::slice;
+
     use super::*;
     use crate as gpui;
     use KeyBindingContextPredicate::*;
@@ -674,11 +676,11 @@ mod tests {
         assert!(predicate.eval(&contexts));
 
         assert!(!predicate.eval(&[]));
-        assert!(!predicate.eval(&[child_context.clone()]));
+        assert!(!predicate.eval(slice::from_ref(&child_context)));
         assert!(!predicate.eval(&[parent_context]));
 
         let zany_predicate = KeyBindingContextPredicate::parse("child > child").unwrap();
-        assert!(!zany_predicate.eval(&[child_context.clone()]));
+        assert!(!zany_predicate.eval(slice::from_ref(&child_context)));
         assert!(zany_predicate.eval(&[child_context.clone(), child_context.clone()]));
     }
 
@@ -690,13 +692,13 @@ mod tests {
         let parent_context = KeyContext::try_from("parent").unwrap();
         let child_context = KeyContext::try_from("child").unwrap();
 
-        assert!(not_predicate.eval(&[workspace_context.clone()]));
-        assert!(!not_predicate.eval(&[editor_context.clone()]));
+        assert!(not_predicate.eval(slice::from_ref(&workspace_context)));
+        assert!(!not_predicate.eval(slice::from_ref(&editor_context)));
         assert!(!not_predicate.eval(&[editor_context.clone(), workspace_context.clone()]));
         assert!(!not_predicate.eval(&[workspace_context.clone(), editor_context.clone()]));
 
         let complex_not = KeyBindingContextPredicate::parse("!editor && workspace").unwrap();
-        assert!(complex_not.eval(&[workspace_context.clone()]));
+        assert!(complex_not.eval(slice::from_ref(&workspace_context)));
         assert!(!complex_not.eval(&[editor_context.clone(), workspace_context.clone()]));
 
         let not_mode_predicate = KeyBindingContextPredicate::parse("!(mode == full)").unwrap();
@@ -709,18 +711,18 @@ mod tests {
         assert!(not_mode_predicate.eval(&[other_mode_context]));
 
         let not_descendant = KeyBindingContextPredicate::parse("!(parent > child)").unwrap();
-        assert!(not_descendant.eval(&[parent_context.clone()]));
-        assert!(not_descendant.eval(&[child_context.clone()]));
+        assert!(not_descendant.eval(slice::from_ref(&parent_context)));
+        assert!(not_descendant.eval(slice::from_ref(&child_context)));
         assert!(!not_descendant.eval(&[parent_context.clone(), child_context.clone()]));
 
         let not_descendant = KeyBindingContextPredicate::parse("parent > !child").unwrap();
-        assert!(!not_descendant.eval(&[parent_context.clone()]));
-        assert!(!not_descendant.eval(&[child_context.clone()]));
+        assert!(!not_descendant.eval(slice::from_ref(&parent_context)));
+        assert!(!not_descendant.eval(slice::from_ref(&child_context)));
         assert!(!not_descendant.eval(&[parent_context.clone(), child_context.clone()]));
 
         let double_not = KeyBindingContextPredicate::parse("!!editor").unwrap();
-        assert!(double_not.eval(&[editor_context.clone()]));
-        assert!(!double_not.eval(&[workspace_context.clone()]));
+        assert!(double_not.eval(slice::from_ref(&editor_context)));
+        assert!(!double_not.eval(slice::from_ref(&workspace_context)));
 
         // Test complex descendant cases
         let workspace_context = KeyContext::try_from("Workspace").unwrap();
@@ -754,9 +756,9 @@ mod tests {
 
         // !Workspace - shouldn't match when Workspace is in the context
         let not_workspace = KeyBindingContextPredicate::parse("!Workspace").unwrap();
-        assert!(!not_workspace.eval(&[workspace_context.clone()]));
-        assert!(not_workspace.eval(&[pane_context.clone()]));
-        assert!(not_workspace.eval(&[editor_context.clone()]));
+        assert!(!not_workspace.eval(slice::from_ref(&workspace_context)));
+        assert!(not_workspace.eval(slice::from_ref(&pane_context)));
+        assert!(not_workspace.eval(slice::from_ref(&editor_context)));
         assert!(!not_workspace.eval(&workspace_pane_editor));
     }
 }

@@ -1,23 +1,31 @@
 use crate::{ManageProfiles, ToggleProfileSelector};
-use agent::{
-    Thread,
-    agent_profile::{AgentProfile, AvailableProfiles},
-};
-use agent_settings::{AgentDockPosition, AgentProfileId, AgentSettings, builtin_profiles};
+use agent::agent_profile::{AgentProfile, AvailableProfiles};
+use agent_settings::{builtin_profiles, AgentDockPosition, AgentProfileId, AgentSettings};
 use fs::Fs;
-use gpui::{Action, Empty, Entity, FocusHandle, Subscription, prelude::*};
-use language_model::LanguageModelRegistry;
-use settings::{Settings as _, SettingsStore, update_settings_file};
+use gpui::{prelude::*, Action, Entity, FocusHandle, Subscription};
+use settings::{update_settings_file, Settings as _, SettingsStore};
 use std::sync::Arc;
 use ui::{
-    ContextMenu, ContextMenuEntry, DocumentationSide, PopoverMenu, PopoverMenuHandle, Tooltip,
-    prelude::*,
+    prelude::*, ContextMenu, ContextMenuEntry, DocumentationSide, PopoverMenu, PopoverMenuHandle,
+    Tooltip,
 };
+
+/// Trait for types that can provide and manage agent profiles
+pub trait ProfileProvider {
+    /// Get the current profile ID
+    fn profile_id(&self, cx: &App) -> AgentProfileId;
+
+    /// Set the profile ID
+    fn set_profile(&self, profile_id: AgentProfileId, cx: &mut App);
+
+    /// Check if profiles are supported in the current context (e.g. if the model that is selected has tool support)
+    fn profiles_supported(&self, cx: &App) -> bool;
+}
 
 pub struct ProfileSelector {
     profiles: AvailableProfiles,
     fs: Arc<dyn Fs>,
-    thread: Entity<Thread>,
+    provider: Arc<dyn ProfileProvider>,
     menu_handle: PopoverMenuHandle<ContextMenu>,
     focus_handle: FocusHandle,
     _subscriptions: Vec<Subscription>,
@@ -26,7 +34,7 @@ pub struct ProfileSelector {
 impl ProfileSelector {
     pub fn new(
         fs: Arc<dyn Fs>,
-        thread: Entity<Thread>,
+        provider: Arc<dyn ProfileProvider>,
         focus_handle: FocusHandle,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -37,7 +45,7 @@ impl ProfileSelector {
         Self {
             profiles: AgentProfile::available_profiles(cx),
             fs,
-            thread,
+            provider,
             menu_handle: PopoverMenuHandle::default(),
             focus_handle,
             _subscriptions: vec![settings_subscription],
@@ -113,10 +121,10 @@ impl ProfileSelector {
             builtin_profiles::MINIMAL => Some("Chat about anything with no tools."),
             _ => None,
         };
-        let thread_profile_id = self.thread.read(cx).profile().id();
+        let thread_profile_id = self.provider.profile_id(cx);
 
         let entry = ContextMenuEntry::new(profile_name.clone())
-            .toggleable(IconPosition::End, &profile_id == thread_profile_id);
+            .toggleable(IconPosition::End, profile_id == thread_profile_id);
 
         let entry = if let Some(doc_text) = documentation {
             entry.documentation_aside(documentation_side(settings.dock), move |_| {
@@ -128,7 +136,7 @@ impl ProfileSelector {
 
         entry.handler({
             let fs = self.fs.clone();
-            let thread = self.thread.clone();
+            let provider = self.provider.clone();
             let profile_id = profile_id.clone();
             move |_window, cx| {
                 update_settings_file::<AgentSettings>(fs.clone(), cx, {
@@ -138,9 +146,7 @@ impl ProfileSelector {
                     }
                 });
 
-                thread.update(cx, |this, cx| {
-                    this.set_profile(profile_id.clone(), cx);
-                });
+                provider.set_profile(profile_id.clone(), cx);
             }
         })
     }
@@ -149,8 +155,8 @@ impl ProfileSelector {
 impl Render for ProfileSelector {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let settings = AgentSettings::get_global(cx);
-        let profile_id = self.thread.read(cx).profile().id();
-        let profile = settings.profiles.get(profile_id);
+        let profile_id = self.provider.profile_id(cx);
+        let profile = settings.profiles.get(&profile_id);
 
         let selected_profile = profile
             .map(|profile| profile.name.clone())
@@ -165,7 +171,7 @@ impl Render for ProfileSelector {
         };
         let endpoint = self.thread.read(cx).endpoint();
 
-        if configured_model.model.supports_tools() && endpoint.supports_tools() {
+        if self.provider.profiles_supported(cx) && endpoint.supports_tools() {
             let this = cx.entity().clone();
             let focus_handle = self.focus_handle.clone();
             let trigger_button = Button::new("profile-selector-model", selected_profile)

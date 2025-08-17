@@ -259,11 +259,28 @@ pub struct SpawnNearestTask {
     pub reveal: task::RevealStrategy,
 }
 
+#[derive(Clone, PartialEq, Action)]
+#[action(no_json, no_register)]
+pub struct DiffClipboardWithSelectionData {
+    pub clipboard_text: String,
+    pub editor: Entity<Editor>,
+}
+
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Deserialize, Default)]
 pub enum UuidVersion {
     #[default]
     V4,
     V7,
+}
+
+/// Splits selection into individual lines.
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
+#[action(namespace = editor)]
+#[serde(deny_unknown_fields)]
+pub struct SplitSelectionIntoLines {
+    /// Keep the text selected after splitting instead of collapsing to cursors.
+    #[serde(default)]
+    pub keep_selections: bool,
 }
 
 /// Goes to the next diagnostic in the file.
@@ -308,9 +325,8 @@ actions!(
     [
         /// Accepts the full edit prediction.
         AcceptEditPrediction,
-        /// Accepts a partial Copilot suggestion.
-        AcceptPartialCopilotSuggestion,
         /// Accepts a partial edit prediction.
+        #[action(deprecated_aliases = ["editor::AcceptPartialCopilotSuggestion"])]
         AcceptPartialEditPrediction,
         /// Adds a cursor above the current selection.
         AddSelectionAbove,
@@ -322,6 +338,8 @@ actions!(
         ApplyDiffHunk,
         /// Deletes the character before the cursor.
         Backspace,
+        /// Shows git blame information for the current line.
+        BlameHover,
         /// Cancels the current operation.
         Cancel,
         /// Cancels the running flycheck operation.
@@ -356,6 +374,8 @@ actions!(
         ConvertToLowerCase,
         /// Toggles the case of selected text.
         ConvertToOppositeCase,
+        /// Converts selected text to sentence case.
+        ConvertToSentenceCase,
         /// Converts selected text to snake_case.
         ConvertToSnakeCase,
         /// Converts selected text to Title Case.
@@ -396,6 +416,8 @@ actions!(
         DeleteToNextSubwordEnd,
         /// Deletes to the start of the previous subword.
         DeleteToPreviousSubwordStart,
+        /// Diffs the text stored in the clipboard against the current selection.
+        DiffClipboardWithSelection,
         /// Displays names of all active cursors.
         DisplayCursorNames,
         /// Duplicates the current line below.
@@ -660,8 +682,6 @@ actions!(
         SortLinesCaseInsensitive,
         /// Sorts selected lines case-sensitively.
         SortLinesCaseSensitive,
-        /// Splits selection into individual lines.
-        SplitSelectionIntoLines,
         /// Stops the language server for the current file.
         StopLanguageServer,
         /// Switches between source and header files.
@@ -733,5 +753,6 @@ actions!(
         UniqueLinesCaseInsensitive,
         /// Removes duplicate lines (case-sensitive).
         UniqueLinesCaseSensitive,
+        UnwrapSyntaxNode
     ]
 );

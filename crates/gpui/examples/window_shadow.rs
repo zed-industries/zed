@@ -165,8 +165,8 @@ impl Render for WindowShadow {
                                                     },
                                                 )
                                                 .on_click(|e, window, _| {
-                                                    if e.down.button == MouseButton::Right {
-                                                        window.show_window_menu(e.up.position);
+                                                    if e.is_right_click() {
+                                                        window.show_window_menu(e.position());
                                                     }
                                                 })
                                                 .text_color(black())
