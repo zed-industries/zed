@@ -440,16 +440,20 @@ impl PickerDelegate for StashListDelegate {
 
         let stash_name = HighlightedLabel::new(stash_message, positions).into_any_element();
 
-        let stash_index_label = Label::new(
-            entry_match
-                .entry
-                .branch
-                .clone()
-                .unwrap_or_default()
-                .to_string(),
-        )
-        .size(LabelSize::Small)
-        .color(Color::Muted);
+        let mut branch_name = entry_match.entry.branch.clone().unwrap_or_default();
+        let max_branch_chars = ((max_width * 0.2) / normal_em) as usize;
+        if branch_name.len() > max_branch_chars && max_branch_chars > 1 {
+            let mut index = max_branch_chars - 1;
+            while !branch_name.is_char_boundary(index) && index != 0 {
+                index -= 1;
+            }
+            branch_name.truncate(index);
+            branch_name.push_str("…");
+        }
+
+        let stash_index_label = Label::new(branch_name)
+            .size(LabelSize::Small)
+            .color(Color::Muted);
 
         let tooltip_text = format!(
             "stash@{{{}}} created {}",
