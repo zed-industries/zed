@@ -207,11 +207,13 @@ impl MessageEditor {
                     cx,
                 );
             }
-            MentionUri::Symbol { .. }
-            | MentionUri::Thread { .. }
-            | MentionUri::TextThread { .. }
-            | MentionUri::Rule { .. }
-            | MentionUri::Selection { .. } => {
+            MentionUri::Thread { id, name } => {
+                self.confirm_mention_for_thread(crease_id, anchor, id, name, window, cx);
+            }
+            MentionUri::TextThread { path, name } => {
+                self.confirm_mention_for_text_thread(crease_id, anchor, path, name, window, cx);
+            }
+            MentionUri::Symbol { .. } | MentionUri::Rule { .. } | MentionUri::Selection { .. } => {
                 self.mention_set.insert_uri(crease_id, mention_uri.clone());
             }
         }
@@ -363,13 +365,9 @@ impl MessageEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<Vec<acp::ContentBlock>>> {
-        let contents = self.mention_set.contents(
-            self.project.clone(),
-            self.thread_store.clone(),
-            self.text_thread_store.clone(),
-            window,
-            cx,
-        );
+        let contents =
+            self.mention_set
+                .contents(self.project.clone(), self.thread_store.clone(), window, cx);
         let editor = self.editor.clone();
 
         cx.spawn(async move |_, cx| {
@@ -591,52 +589,154 @@ impl MessageEditor {
     ) {
         let editor = self.editor.clone();
         let task = cx
-            .spawn_in(window, async move |this, cx| {
-                let image = image.await.map_err(|e| e.to_string())?;
-                let format = image.format;
-                let image = cx
-                    .update(|_, cx| LanguageModelImage::from_image(image, cx))
-                    .map_err(|e| e.to_string())?
-                    .await;
-                if let Some(image) = image {
-                    if let Some(abs_path) = abs_path.clone() {
-                        this.update(cx, |this, _cx| {
-                            this.mention_set.insert_uri(
-                                crease_id,
-                                MentionUri::File {
-                                    abs_path,
-                                    is_directory: false,
-                                },
-                            );
+            .spawn_in(window, {
+                let abs_path = abs_path.clone();
+                async move |_, cx| {
+                    let image = image.await.map_err(|e| e.to_string())?;
+                    let format = image.format;
+                    let image = cx
+                        .update(|_, cx| LanguageModelImage::from_image(image, cx))
+                        .map_err(|e| e.to_string())?
+                        .await;
+                    if let Some(image) = image {
+                        Ok(MentionImage {
+                            abs_path,
+                            data: image.source,
+                            format,
                         })
-                        .map_err(|e| e.to_string())?;
+                    } else {
+                        Err("Failed to convert image".into())
                     }
-                    Ok(MentionImage {
-                        abs_path,
-                        data: image.source,
-                        format,
-                    })
-                } else {
-                    editor
-                        .update(cx, |editor, cx| {
-                            editor.display_map.update(cx, |display_map, cx| {
-                                display_map.unfold_intersecting(vec![anchor..anchor], true, cx);
-                            });
-                            editor.remove_creases([crease_id], cx);
-                        })
-                        .ok();
-                    Err("Failed to convert image".to_string())
                 }
             })
             .shared();
 
-        cx.spawn_in(window, {
-            let task = task.clone();
-            async move |_, cx| task.clone().await.notify_async_err(cx)
+        self.mention_set.insert_image(crease_id, task.clone());
+
+        cx.spawn_in(window, async move |this, cx| {
+            if task.await.notify_async_err(cx).is_some() {
+                if let Some(abs_path) = abs_path.clone() {
+                    this.update(cx, |this, _cx| {
+                        this.mention_set.insert_uri(
+                            crease_id,
+                            MentionUri::File {
+                                abs_path,
+                                is_directory: false,
+                            },
+                        );
+                    })
+                    .ok();
+                }
+            } else {
+                editor
+                    .update(cx, |editor, cx| {
+                        editor.display_map.update(cx, |display_map, cx| {
+                            display_map.unfold_intersecting(vec![anchor..anchor], true, cx);
+                        });
+                        editor.remove_creases([crease_id], cx);
+                    })
+                    .ok();
+            }
         })
         .detach();
+    }
 
-        self.mention_set.insert_image(crease_id, task);
+    fn confirm_mention_for_thread(
+        &mut self,
+        crease_id: CreaseId,
+        anchor: Anchor,
+        id: ThreadId,
+        name: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let uri = MentionUri::Thread {
+            id: id.clone(),
+            name,
+        };
+        let open_task = self.thread_store.update(cx, |thread_store, cx| {
+            thread_store.open_thread(&id, window, cx)
+        });
+        let task = cx
+            .spawn(async move |_, cx| {
+                let thread = open_task.await.map_err(|e| e.to_string())?;
+                let content = thread
+                    .read_with(cx, |thread, _cx| thread.latest_detailed_summary_or_text())
+                    .map_err(|e| e.to_string())?;
+                Ok(content)
+            })
+            .shared();
+
+        self.mention_set.insert_thread(id, task.clone());
+
+        let editor = self.editor.clone();
+        cx.spawn_in(window, async move |this, cx| {
+            if task.await.notify_async_err(cx).is_some() {
+                this.update(cx, |this, _| {
+                    this.mention_set.insert_uri(crease_id, uri);
+                })
+                .ok();
+            } else {
+                editor
+                    .update(cx, |editor, cx| {
+                        editor.display_map.update(cx, |display_map, cx| {
+                            display_map.unfold_intersecting(vec![anchor..anchor], true, cx);
+                        });
+                        editor.remove_creases([crease_id], cx);
+                    })
+                    .ok();
+            }
+        })
+        .detach();
+    }
+
+    fn confirm_mention_for_text_thread(
+        &mut self,
+        crease_id: CreaseId,
+        anchor: Anchor,
+        path: PathBuf,
+        name: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let uri = MentionUri::TextThread {
+            path: path.clone(),
+            name,
+        };
+        let context = self.text_thread_store.update(cx, |text_thread_store, cx| {
+            text_thread_store.open_local_context(path.as_path().into(), cx)
+        });
+        let task = cx
+            .spawn(async move |_, cx| {
+                let context = context.await.map_err(|e| e.to_string())?;
+                let xml = context
+                    .update(cx, |context, cx| context.to_xml(cx))
+                    .map_err(|e| e.to_string())?;
+                Ok(xml)
+            })
+            .shared();
+
+        self.mention_set.insert_text_thread(path, task.clone());
+
+        let editor = self.editor.clone();
+        cx.spawn_in(window, async move |this, cx| {
+            if task.await.notify_async_err(cx).is_some() {
+                this.update(cx, |this, _| {
+                    this.mention_set.insert_uri(crease_id, uri);
+                })
+                .ok();
+            } else {
+                editor
+                    .update(cx, |editor, cx| {
+                        editor.display_map.update(cx, |display_map, cx| {
+                            display_map.unfold_intersecting(vec![anchor..anchor], true, cx);
+                        });
+                        editor.remove_creases([crease_id], cx);
+                    })
+                    .ok();
+            }
+        })
+        .detach();
     }
 
     pub fn set_mode(&mut self, mode: EditorMode, cx: &mut Context<Self>) {
@@ -671,7 +771,7 @@ impl MessageEditor {
                         let start = text.len();
                         write!(&mut text, "{}", mention_uri.as_link()).ok();
                         let end = text.len();
-                        mentions.push((start..end, mention_uri));
+                        mentions.push((start..end, mention_uri, resource.text));
                     }
                 }
                 acp::ContentBlock::Image(content) => {
@@ -691,7 +791,7 @@ impl MessageEditor {
             editor.buffer().read(cx).snapshot(cx)
         });
 
-        for (range, mention_uri) in mentions {
+        for (range, mention_uri, text) in mentions {
             let anchor = snapshot.anchor_before(range.start);
             let crease_id = crate::context_picker::insert_crease_for_mention(
                 anchor.excerpt_id,
@@ -705,7 +805,26 @@ impl MessageEditor {
             );
 
             if let Some(crease_id) = crease_id {
-                self.mention_set.insert_uri(crease_id, mention_uri);
+                self.mention_set.insert_uri(crease_id, mention_uri.clone());
+            }
+
+            match mention_uri {
+                MentionUri::Thread { id, .. } => {
+                    self.mention_set
+                        .insert_thread(id, Task::ready(Ok(text.into())).shared());
+                }
+                MentionUri::TextThread { path, .. } => {
+                    self.mention_set
+                        .insert_text_thread(path, Task::ready(Ok(text)).shared());
+                }
+                MentionUri::Fetch { url } => {
+                    self.mention_set
+                        .add_fetch_result(url, Task::ready(Ok(text)).shared());
+                }
+                MentionUri::File { .. }
+                | MentionUri::Symbol { .. }
+                | MentionUri::Rule { .. }
+                | MentionUri::Selection { .. } => {}
             }
         }
         for (range, content) in images {
@@ -905,9 +1024,11 @@ pub struct MentionImage {
 
 #[derive(Default)]
 pub struct MentionSet {
-    pub(crate) uri_by_crease_id: HashMap<CreaseId, MentionUri>,
+    uri_by_crease_id: HashMap<CreaseId, MentionUri>,
     fetch_results: HashMap<Url, Shared<Task<Result<String, String>>>>,
     images: HashMap<CreaseId, Shared<Task<Result<MentionImage, String>>>>,
+    thread_summaries: HashMap<ThreadId, Shared<Task<Result<SharedString, String>>>>,
+    text_thread_summaries: HashMap<PathBuf, Shared<Task<Result<String, String>>>>,
 }
 
 impl MentionSet {
@@ -927,8 +1048,18 @@ impl MentionSet {
         self.images.insert(crease_id, task);
     }
 
+    fn insert_thread(&mut self, id: ThreadId, task: Shared<Task<Result<SharedString, String>>>) {
+        self.thread_summaries.insert(id, task);
+    }
+
+    fn insert_text_thread(&mut self, path: PathBuf, task: Shared<Task<Result<String, String>>>) {
+        self.text_thread_summaries.insert(path, task);
+    }
+
     pub fn drain(&mut self) -> impl Iterator<Item = CreaseId> {
         self.fetch_results.clear();
+        self.thread_summaries.clear();
+        self.text_thread_summaries.clear();
         self.uri_by_crease_id
             .drain()
             .map(|(id, _)| id)
@@ -939,8 +1070,7 @@ impl MentionSet {
         &self,
         project: Entity<Project>,
         thread_store: Entity<ThreadStore>,
-        text_thread_store: Entity<TextThreadStore>,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut App,
     ) -> Task<Result<HashMap<CreaseId, Mention>>> {
         let mut processed_image_creases = HashSet::default();
@@ -1010,30 +1140,40 @@ impl MentionSet {
                             anyhow::Ok((crease_id, Mention::Text { uri, content }))
                         })
                     }
-                    MentionUri::Thread { id: thread_id, .. } => {
-                        let open_task = thread_store.update(cx, |thread_store, cx| {
-                            thread_store.open_thread(&thread_id, window, cx)
-                        });
-
+                    MentionUri::Thread { id, .. } => {
+                        let Some(content) = self.thread_summaries.get(id).cloned() else {
+                            return Task::ready(Err(anyhow!("missing thread summary")));
+                        };
                         let uri = uri.clone();
-                        cx.spawn(async move |cx| {
-                            let thread = open_task.await?;
-                            let content = thread.read_with(cx, |thread, _cx| {
-                                thread.latest_detailed_summary_or_text().to_string()
-                            })?;
-
-                            anyhow::Ok((crease_id, Mention::Text { uri, content }))
+                        cx.spawn(async move |_| {
+                            Ok((
+                                crease_id,
+                                Mention::Text {
+                                    uri,
+                                    content: content
+                                        .await
+                                        .map_err(|e| anyhow::anyhow!("{e}"))?
+                                        .to_string(),
+                                },
+                            ))
                         })
                     }
                     MentionUri::TextThread { path, .. } => {
-                        let context = text_thread_store.update(cx, |text_thread_store, cx| {
-                            text_thread_store.open_local_context(path.as_path().into(), cx)
-                        });
+                        let Some(content) = self.text_thread_summaries.get(path).cloned() else {
+                            return Task::ready(Err(anyhow!("missing text thread summary")));
+                        };
                         let uri = uri.clone();
-                        cx.spawn(async move |cx| {
-                            let context = context.await?;
-                            let xml = context.update(cx, |context, cx| context.to_xml(cx))?;
-                            anyhow::Ok((crease_id, Mention::Text { uri, content: xml }))
+                        cx.spawn(async move |_| {
+                            Ok((
+                                crease_id,
+                                Mention::Text {
+                                    uri,
+                                    content: content
+                                        .await
+                                        .map_err(|e| anyhow::anyhow!("{e}"))?
+                                        .to_string(),
+                                },
+                            ))
                         })
                     }
                     MentionUri::Rule { id: prompt_id, .. } => {
@@ -1427,7 +1567,6 @@ mod tests {
                 message_editor.mention_set().contents(
                     project.clone(),
                     thread_store.clone(),
-                    text_thread_store.clone(),
                     window,
                     cx,
                 )
@@ -1495,7 +1634,6 @@ mod tests {
                 message_editor.mention_set().contents(
                     project.clone(),
                     thread_store.clone(),
-                    text_thread_store.clone(),
                     window,
                     cx,
                 )
@@ -1616,13 +1754,9 @@ mod tests {
 
         let contents = message_editor
             .update_in(&mut cx, |message_editor, window, cx| {
-                message_editor.mention_set().contents(
-                    project.clone(),
-                    thread_store,
-                    text_thread_store,
-                    window,
-                    cx,
-                )
+                message_editor
+                    .mention_set()
+                    .contents(project.clone(), thread_store, window, cx)
             })
             .await
             .unwrap()
