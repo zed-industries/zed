@@ -57,9 +57,9 @@ use std::{
 };
 use theme::ThemeSettings;
 use ui::{
-    Color, ContextMenu, DecoratedIcon, Icon, IconDecoration, IconDecorationKind, IndentGuideColors,
-    IndentGuideLayout, KeyBinding, Label, LabelSize, ListItem, ListItemSpacing, ScrollableHandle,
-    Scrollbar, ScrollbarState, StickyCandidate, Tooltip, prelude::*, v_flex,
+    Color, ContextMenu, DecoratedIcon, Divider, Icon, IconDecoration, IconDecorationKind,
+    IndentGuideColors, IndentGuideLayout, KeyBinding, Label, LabelSize, ListItem, ListItemSpacing,
+    ScrollableHandle, Scrollbar, ScrollbarState, StickyCandidate, Tooltip, prelude::*, v_flex,
 };
 use util::{ResultExt, TakeUntilExt, TryFutureExt, maybe, paths::compare_paths};
 use workspace::{
@@ -69,7 +69,6 @@ use workspace::{
     notifications::{DetachAndPromptErr, NotifyTaskExt},
 };
 use worktree::CreatedEntry;
-use zed_actions::OpenRecent;
 
 const PROJECT_PANEL_KEY: &str = "ProjectPanel";
 const NEW_ENTRY_ID: ProjectEntryId = ProjectEntryId::MAX;
@@ -5521,24 +5520,48 @@ impl Render for ProjectPanel {
                     .with_priority(3)
                 }))
         } else {
+            let focus_handle = self.focus_handle(cx).clone();
+
             v_flex()
                 .id("empty-project_panel")
-                .size_full()
                 .p_4()
+                .size_full()
+                .items_center()
+                .justify_center()
+                .gap_1()
                 .track_focus(&self.focus_handle(cx))
                 .child(
-                    Button::new("open_project", "Open a project")
+                    Button::new("open_project", "Open Project")
                         .full_width()
                         .key_binding(KeyBinding::for_action_in(
-                            &OpenRecent::default(),
-                            &self.focus_handle,
+                            &workspace::Open,
+                            &focus_handle,
                             window,
                             cx,
                         ))
                         .on_click(cx.listener(|this, _, window, cx| {
                             this.workspace
                                 .update(cx, |_, cx| {
-                                    window.dispatch_action(OpenRecent::default().boxed_clone(), cx);
+                                    window.dispatch_action(workspace::Open.boxed_clone(), cx);
+                                })
+                                .log_err();
+                        })),
+                )
+                .child(
+                    h_flex()
+                        .w_1_2()
+                        .gap_2()
+                        .child(Divider::horizontal())
+                        .child(Label::new("or").size(LabelSize::XSmall).color(Color::Muted))
+                        .child(Divider::horizontal()),
+                )
+                .child(
+                    Button::new("clone_repo", "Clone Repository")
+                        .full_width()
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.workspace
+                                .update(cx, |_, cx| {
+                                    window.dispatch_action(git::Clone.boxed_clone(), cx);
                                 })
                                 .log_err();
                         })),
