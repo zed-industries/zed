@@ -322,7 +322,7 @@ fn assign_edit_prediction_provider(
 
             // Get model from settings or use discovered models
             let model = if let Some(first_model) = settings.available_models.first() {
-                first_model.name.clone()
+                Some(first_model.name.clone())
             } else if let Some(service) = OllamaService::global(cx) {
                 // Use first discovered model
                 service
@@ -330,13 +330,67 @@ fn assign_edit_prediction_provider(
                     .available_models()
                     .first()
                     .map(|m| m.name.clone())
-                    .unwrap_or_else(|| "qwen2.5-coder:3b".to_string())
             } else {
-                "qwen2.5-coder:3b".to_string()
+                None
             };
 
-            let provider = cx.new(|cx| OllamaCompletionProvider::new(model, api_key, cx));
-            editor.set_edit_prediction_provider(Some(provider), window, cx);
+            if let Some(model) = model {
+                let provider = cx.new(|cx| OllamaCompletionProvider::new(model, api_key, cx));
+                editor.set_edit_prediction_provider(Some(provider), window, cx);
+            } else {
+                log::error!(
+                    "No Ollama models available. Please configure models in settings or pull models using 'ollama pull <model-name>'"
+                );
+                editor.set_edit_prediction_provider::<OllamaCompletionProvider>(None, window, cx);
+            }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::zed::tests::init_test;
+    use editor::{Editor, MultiBuffer};
+    use gpui::TestAppContext;
+    use language::Buffer;
+    use language_models::{AllLanguageModelSettings, provider::ollama::OllamaSettings};
+
+    #[gpui::test]
+    async fn test_assign_edit_prediction_provider_with_no_ollama_models(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+
+        let buffer = cx.new(|cx| Buffer::local("test content", cx));
+        let multibuffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+        let (editor, cx) =
+            cx.add_window_view(|window, cx| Editor::for_multibuffer(multibuffer, None, window, cx));
+
+        // Override settings to have empty available_models
+        cx.update(|_, cx| {
+            let new_settings = AllLanguageModelSettings {
+                ollama: OllamaSettings {
+                    api_url: "http://localhost:11434".to_string(),
+                    available_models: vec![], // Empty models list
+                },
+                ..Default::default()
+            };
+            AllLanguageModelSettings::override_global(new_settings, cx);
+        });
+
+        // Call assign_edit_prediction_provider with Ollama provider
+        // This should complete without panicking even when no models are available
+        let result = editor.update_in(cx, |editor, window, cx| {
+            assign_edit_prediction_provider(
+                editor,
+                language::language_settings::EditPredictionProvider::Ollama,
+                &app_state.client,
+                app_state.user_store.clone(),
+                window,
+                cx,
+            )
+        });
+
+        // Assert that assign_edit_prediction_provider returns ()
+        assert_eq!(result, ());
     }
 }
