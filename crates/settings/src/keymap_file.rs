@@ -928,14 +928,14 @@ impl<'a> KeybindUpdateTarget<'a> {
         }
         let action_name: Value = self.action_name.into();
         let value = match self.action_arguments {
-            Some(args) => {
+            Some(args) if !args.is_empty() => {
                 let args = serde_json::from_str::<Value>(args)
                     .context("Failed to parse action arguments as JSON")?;
                 serde_json::json!([action_name, args])
             }
-            None => action_name,
+            _ => action_name,
         };
-        return Ok(value);
+        Ok(value)
     }
 
     fn keystrokes_unparsed(&self) -> String {
@@ -1073,6 +1073,24 @@ mod tests {
                 action_name: "zed::SomeAction",
                 context: None,
                 action_arguments: None,
+            }),
+            r#"[
+                {
+                    "bindings": {
+                        "ctrl-a": "zed::SomeAction"
+                    }
+                }
+            ]"#
+            .unindent(),
+        );
+
+        check_keymap_update(
+            "[]",
+            KeybindUpdateOperation::add(KeybindUpdateTarget {
+                keystrokes: &parse_keystrokes("ctrl-a"),
+                action_name: "zed::SomeAction",
+                context: None,
+                action_arguments: Some(""),
             }),
             r#"[
                 {
