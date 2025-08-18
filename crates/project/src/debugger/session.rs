@@ -1630,7 +1630,7 @@ impl Session {
         + 'static,
         cx: &mut Context<Self>,
     ) -> Task<Option<T::Response>> {
-        if !T::is_supported(&capabilities) {
+        if !T::is_supported(capabilities) {
             log::warn!(
                 "Attempted to send a DAP request that isn't supported: {:?}",
                 request
@@ -1688,7 +1688,7 @@ impl Session {
         self.requests
             .entry((&*key.0 as &dyn Any).type_id())
             .and_modify(|request_map| {
-                request_map.remove(&key);
+                request_map.remove(key);
             });
     }
 

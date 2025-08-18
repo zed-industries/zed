@@ -858,7 +858,7 @@ impl GitRepository for RealGitRepository {
                     let output = new_smol_command(&git_binary_path)
                         .current_dir(&working_directory)
                         .envs(env.iter())
-                        .args(["update-index", "--add", "--cacheinfo", "100644", &sha])
+                        .args(["update-index", "--add", "--cacheinfo", "100644", sha])
                         .arg(path.to_unix_style())
                         .output()
                         .await?;
@@ -959,7 +959,7 @@ impl GitRepository for RealGitRepository {
             Ok(working_directory) => working_directory,
             Err(e) => return Task::ready(Err(e)),
         };
-        let args = git_status_args(&path_prefixes);
+        let args = git_status_args(path_prefixes);
         log::debug!("Checking for git status in {path_prefixes:?}");
         self.executor.spawn(async move {
             let output = new_std_command(&git_binary_path)
@@ -1056,7 +1056,7 @@ impl GitRepository for RealGitRepository {
                 let (_, branch_name) = name.split_once("/").context("Unexpected branch format")?;
                 let revision = revision.get();
                 let branch_commit = revision.peel_to_commit()?;
-                let mut branch = repo.branch(&branch_name, &branch_commit, false)?;
+                let mut branch = repo.branch(branch_name, &branch_commit, false)?;
                 branch.set_upstream(Some(&name))?;
                 branch
             } else {
@@ -2349,7 +2349,7 @@ mod tests {
         #[allow(clippy::octal_escapes)]
         let input = "*\0060964da10574cd9bf06463a53bf6e0769c5c45e\0\0refs/heads/zed-patches\0refs/remotes/origin/zed-patches\0\01733187470\0generated protobuf\n";
         assert_eq!(
-            parse_branch_input(&input).unwrap(),
+            parse_branch_input(input).unwrap(),
             vec![Branch {
                 is_head: true,
                 ref_name: "refs/heads/zed-patches".into(),

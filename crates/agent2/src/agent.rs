@@ -91,7 +91,7 @@ impl LanguageModels {
         for provider in &providers {
             for model in provider.recommended_models(cx) {
                 recommended_models.insert(model.id());
-                recommended.push(Self::map_language_model_to_info(&model, &provider));
+                recommended.push(Self::map_language_model_to_info(&model, provider));
             }
         }
         if !recommended.is_empty() {

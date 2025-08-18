@@ -397,7 +397,7 @@ impl X11WindowState {
             .display_id
             .map_or(x_main_screen_index, |did| did.0 as usize);
 
-        let visual_set = find_visuals(&xcb, x_screen_index);
+        let visual_set = find_visuals(xcb, x_screen_index);
 
         let visual = match visual_set.transparent {
             Some(visual) => visual,
@@ -604,7 +604,7 @@ impl X11WindowState {
                 ),
             )?;
 
-            xcb_flush(&xcb);
+            xcb_flush(xcb);
 
             let renderer = {
                 let raw_window = RawWindow {
@@ -664,7 +664,7 @@ impl X11WindowState {
                 || "X11 DestroyWindow failed while cleaning it up after setup failure.",
                 xcb.destroy_window(x_window),
             )?;
-            xcb_flush(&xcb);
+            xcb_flush(xcb);
         }
 
         setup_result

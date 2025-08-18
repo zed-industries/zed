@@ -173,7 +173,7 @@ impl UserMessage {
                                 &mut symbol_context,
                                 "\n{}",
                                 MarkdownCodeBlock {
-                                    tag: &codeblock_tag(&abs_path, None),
+                                    tag: &codeblock_tag(abs_path, None),
                                     text: &content.to_string(),
                                 }
                             )
@@ -189,8 +189,8 @@ impl UserMessage {
                                 &mut rules_context,
                                 "\n{}",
                                 MarkdownCodeBlock {
-                                    tag: &codeblock_tag(&path, Some(line_range)),
-                                    text: &content
+                                    tag: &codeblock_tag(path, Some(line_range)),
+                                    text: content
                                 }
                             )
                             .ok();
@@ -207,7 +207,7 @@ impl UserMessage {
                                 "\n{}",
                                 MarkdownCodeBlock {
                                     tag: "",
-                                    text: &content
+                                    text: content
                                 }
                             )
                             .ok();
@@ -1048,7 +1048,7 @@ impl Thread {
             tools,
             tool_choice: None,
             stop: Vec::new(),
-            temperature: AgentSettings::temperature_for_model(&model, cx),
+            temperature: AgentSettings::temperature_for_model(model, cx),
             thinking_allowed: true,
         };
 

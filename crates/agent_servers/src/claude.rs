@@ -291,7 +291,7 @@ impl AgentConnection for ClaudeAgentConnection {
 
     fn cancel(&self, session_id: &acp::SessionId, _cx: &mut App) {
         let sessions = self.sessions.borrow();
-        let Some(session) = sessions.get(&session_id) else {
+        let Some(session) = sessions.get(session_id) else {
             log::warn!("Attempted to cancel nonexistent session {}", session_id);
             return;
         };

@@ -1044,12 +1044,12 @@ impl ActiveThread {
                 );
             }
             ThreadEvent::StreamedAssistantText(message_id, text) => {
-                if let Some(rendered_message) = self.rendered_messages_by_id.get_mut(&message_id) {
+                if let Some(rendered_message) = self.rendered_messages_by_id.get_mut(message_id) {
                     rendered_message.append_text(text, cx);
                 }
             }
             ThreadEvent::StreamedAssistantThinking(message_id, text) => {
-                if let Some(rendered_message) = self.rendered_messages_by_id.get_mut(&message_id) {
+                if let Some(rendered_message) = self.rendered_messages_by_id.get_mut(message_id) {
                     rendered_message.append_thinking(text, cx);
                 }
             }
@@ -2473,7 +2473,7 @@ impl ActiveThread {
                                 message_id,
                                 index,
                                 content.clone(),
-                                &scroll_handle,
+                                scroll_handle,
                                 Some(index) == pending_thinking_segment_index,
                                 window,
                                 cx,

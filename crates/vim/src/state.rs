@@ -540,7 +540,7 @@ impl MarksState {
         cx: &mut Context<Self>,
     ) {
         let buffer = multibuffer.read(cx).as_singleton();
-        let abs_path = buffer.as_ref().and_then(|b| self.path_for_buffer(&b, cx));
+        let abs_path = buffer.as_ref().and_then(|b| self.path_for_buffer(b, cx));
 
         let Some(abs_path) = abs_path else {
             self.multibuffer_marks
@@ -606,7 +606,7 @@ impl MarksState {
 
         match target? {
             MarkLocation::Buffer(entity_id) => {
-                let anchors = self.multibuffer_marks.get(&entity_id)?;
+                let anchors = self.multibuffer_marks.get(entity_id)?;
                 return Some(Mark::Buffer(*entity_id, anchors.get(name)?.clone()));
             }
             MarkLocation::Path(path) => {
@@ -636,7 +636,7 @@ impl MarksState {
             match target {
                 MarkLocation::Buffer(entity_id) => {
                     self.multibuffer_marks
-                        .get_mut(&entity_id)
+                        .get_mut(entity_id)
                         .map(|m| m.remove(&mark_name.clone()));
                     return;
                 }
@@ -1042,7 +1042,7 @@ impl Operator {
             } => format!("^K{}", make_visible(&first_char.to_string())),
             Operator::Literal {
                 prefix: Some(prefix),
-            } => format!("^V{}", make_visible(&prefix)),
+            } => format!("^V{}", make_visible(prefix)),
             Operator::AutoIndent => "=".to_string(),
             Operator::ShellCommand => "=".to_string(),
             _ => self.id().to_string(),

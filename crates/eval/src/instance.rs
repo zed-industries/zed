@@ -459,8 +459,8 @@ impl ExampleInstance {
         let mut output_file =
             File::create(self.run_directory.join("judge.md")).expect("failed to create judge.md");
 
-        let diff_task = self.judge_diff(model.clone(), &run_output, cx);
-        let thread_task = self.judge_thread(model.clone(), &run_output, cx);
+        let diff_task = self.judge_diff(model.clone(), run_output, cx);
+        let thread_task = self.judge_thread(model.clone(), run_output, cx);
 
         let (diff_result, thread_result) = futures::join!(diff_task, thread_task);
 
@@ -661,7 +661,7 @@ pub fn wait_for_lang_server(
         .update(cx, |buffer, cx| {
             lsp_store.update(cx, |lsp_store, cx| {
                 lsp_store
-                    .language_servers_for_local_buffer(&buffer, cx)
+                    .language_servers_for_local_buffer(buffer, cx)
                     .next()
                     .is_some()
             })
@@ -693,7 +693,7 @@ pub fn wait_for_lang_server(
                     _ => {}
                 }
             }),
-            cx.subscribe(&project, {
+            cx.subscribe(project, {
                 let buffer = buffer.clone();
                 move |project, event, cx| match event {
                     project::Event::LanguageServerAdded(_, _, _) => {
@@ -838,7 +838,7 @@ fn messages_to_markdown<'a>(message_iter: impl IntoIterator<Item = &'a Message>)
         for segment in &message.segments {
             match segment {
                 MessageSegment::Text(text) => {
-                    messages.push_str(&text);
+                    messages.push_str(text);
                     messages.push_str("\n\n");
                 }
                 MessageSegment::Thinking { text, signature } => {
@@ -846,7 +846,7 @@ fn messages_to_markdown<'a>(message_iter: impl IntoIterator<Item = &'a Message>)
                     if let Some(sig) = signature {
                         messages.push_str(&format!("Signature: {}\n\n", sig));
                     }
-                    messages.push_str(&text);
+                    messages.push_str(text);
                     messages.push_str("\n");
                 }
                 MessageSegment::RedactedThinking(items) => {
@@ -878,7 +878,7 @@ pub async fn send_language_model_request(
     request: LanguageModelRequest,
     cx: &AsyncApp,
 ) -> anyhow::Result<String> {
-    match model.stream_completion_text(request, &cx).await {
+    match model.stream_completion_text(request, cx).await {
         Ok(mut stream) => {
             let mut full_response = String::new();
             while let Some(chunk_result) = stream.stream.next().await {

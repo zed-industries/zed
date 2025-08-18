@@ -697,7 +697,7 @@ impl ConsoleQueryBarCompletionProvider {
         new_bytes: &[u8],
         snapshot: &TextBufferSnapshot,
     ) -> Range<Anchor> {
-        let buffer_offset = buffer_position.to_offset(&snapshot);
+        let buffer_offset = buffer_position.to_offset(snapshot);
         let buffer_bytes = &buffer_text.as_bytes()[0..buffer_offset];
 
         let mut prefix_len = 0;
@@ -977,7 +977,7 @@ mod tests {
             &cx.buffer_text(),
             snapshot.anchor_before(buffer_position),
             replacement.as_bytes(),
-            &snapshot,
+            snapshot,
         );
 
         cx.update_editor(|editor, _, cx| {

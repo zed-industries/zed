@@ -162,7 +162,7 @@ pub fn init(client: &Arc<Client>, cx: &mut App) {
         let client = client.clone();
         move |_: &SignIn, cx| {
             if let Some(client) = client.upgrade() {
-                cx.spawn(async move |cx| client.sign_in_with_optional_connect(true, &cx).await)
+                cx.spawn(async move |cx| client.sign_in_with_optional_connect(true, cx).await)
                     .detach_and_log_err(cx);
             }
         }
@@ -173,7 +173,7 @@ pub fn init(client: &Arc<Client>, cx: &mut App) {
         move |_: &SignOut, cx| {
             if let Some(client) = client.upgrade() {
                 cx.spawn(async move |cx| {
-                    client.sign_out(&cx).await;
+                    client.sign_out(cx).await;
                 })
                 .detach();
             }
@@ -185,7 +185,7 @@ pub fn init(client: &Arc<Client>, cx: &mut App) {
         move |_: &Reconnect, cx| {
             if let Some(client) = client.upgrade() {
                 cx.spawn(async move |cx| {
-                    client.reconnect(&cx);
+                    client.reconnect(cx);
                 })
                 .detach();
             }
@@ -677,7 +677,7 @@ impl Client {
 
                     let mut delay = INITIAL_RECONNECTION_DELAY;
                     loop {
-                        match client.connect(true, &cx).await {
+                        match client.connect(true, cx).await {
                             ConnectionResult::Timeout => {
                                 log::error!("client connect attempt timed out")
                             }
@@ -701,7 +701,7 @@ impl Client {
                                 Status::ReconnectionError {
                                     next_reconnection: Instant::now() + delay,
                                 },
-                                &cx,
+                                cx,
                             );
                             let jitter =
                                 Duration::from_millis(rng.gen_range(0..delay.as_millis() as u64));
@@ -1151,7 +1151,7 @@ impl Client {
             let this = self.clone();
             async move |cx| {
                 while let Some(message) = incoming.next().await {
-                    this.handle_message(message, &cx);
+                    this.handle_message(message, cx);
                     // Don't starve the main thread when receiving lots of messages at once.
                     smol::future::yield_now().await;
                 }
@@ -1169,12 +1169,12 @@ impl Client {
                             peer_id,
                         })
                     {
-                        this.set_status(Status::SignedOut, &cx);
+                        this.set_status(Status::SignedOut, cx);
                     }
                 }
                 Err(err) => {
                     log::error!("connection error: {:?}", err);
-                    this.set_status(Status::ConnectionLost, &cx);
+                    this.set_status(Status::ConnectionLost, cx);
                 }
             }
         })

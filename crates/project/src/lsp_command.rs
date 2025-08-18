@@ -1165,7 +1165,7 @@ pub async fn location_link_from_lsp(
     server_id: LanguageServerId,
     cx: &mut AsyncApp,
 ) -> Result<LocationLink> {
-    let (_, language_server) = language_server_for_buffer(&lsp_store, &buffer, server_id, cx)?;
+    let (_, language_server) = language_server_for_buffer(lsp_store, buffer, server_id, cx)?;
 
     let (origin_range, target_uri, target_range) = (
         link.origin_selection_range,

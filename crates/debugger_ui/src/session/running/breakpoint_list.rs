@@ -494,7 +494,7 @@ impl BreakpointList {
     fn toggle_data_breakpoint(&mut self, id: &str, cx: &mut Context<Self>) {
         if let Some(session) = &self.session {
             session.update(cx, |this, cx| {
-                this.toggle_data_breakpoint(&id, cx);
+                this.toggle_data_breakpoint(id, cx);
             });
         }
     }
@@ -502,7 +502,7 @@ impl BreakpointList {
     fn toggle_exception_breakpoint(&mut self, id: &str, cx: &mut Context<Self>) {
         if let Some(session) = &self.session {
             session.update(cx, |this, cx| {
-                this.toggle_exception_breakpoint(&id, cx);
+                this.toggle_exception_breakpoint(id, cx);
             });
             cx.notify();
             const EXCEPTION_SERIALIZATION_INTERVAL: Duration = Duration::from_secs(1);

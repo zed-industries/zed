@@ -730,7 +730,7 @@ impl SshRemoteClient {
                     cx,
                 );
 
-                let multiplex_task = Self::monitor(this.downgrade(), io_task, &cx);
+                let multiplex_task = Self::monitor(this.downgrade(), io_task, cx);
 
                 if let Err(error) = client.ping(HEARTBEAT_TIMEOUT).await {
                     log::error!("failed to establish connection: {}", error);
@@ -918,8 +918,8 @@ impl SshRemoteClient {
                 }
             };
 
-            let multiplex_task = Self::monitor(this.clone(), io_task, &cx);
-            client.reconnect(incoming_rx, outgoing_tx, &cx);
+            let multiplex_task = Self::monitor(this.clone(), io_task, cx);
+            client.reconnect(incoming_rx, outgoing_tx, cx);
 
             if let Err(error) = client.resync(HEARTBEAT_TIMEOUT).await {
                 failed!(error, attempts, ssh_connection, delegate);
@@ -1005,8 +1005,8 @@ impl SshRemoteClient {
 
                             if missed_heartbeats != 0 {
                                 missed_heartbeats = 0;
-                                let _ =this.update(cx, |this, mut cx| {
-                                    this.handle_heartbeat_result(missed_heartbeats, &mut cx)
+                                let _ =this.update(cx, |this, cx| {
+                                    this.handle_heartbeat_result(missed_heartbeats, cx)
                                 })?;
                             }
                         }
@@ -1036,8 +1036,8 @@ impl SshRemoteClient {
                                 continue;
                             }
 
-                            let result = this.update(cx, |this, mut cx| {
-                                this.handle_heartbeat_result(missed_heartbeats, &mut cx)
+                            let result = this.update(cx, |this, cx| {
+                                this.handle_heartbeat_result(missed_heartbeats, cx)
                             })?;
                             if result.is_break() {
                                 return Ok(());
@@ -1214,7 +1214,7 @@ impl SshRemoteClient {
                 .await
                 .unwrap();
 
-            connection.simulate_disconnect(&cx);
+            connection.simulate_disconnect(cx);
         })
     }
 
@@ -1523,7 +1523,7 @@ impl RemoteConnection for SshRemoteConnection {
             incoming_tx,
             outgoing_rx,
             connection_activity_tx,
-            &cx,
+            cx,
         )
     }
 
@@ -1908,8 +1908,8 @@ impl SshRemoteConnection {
                     "-H",
                     "Content-Type: application/json",
                     "-d",
-                    &body,
-                    &url,
+                    body,
+                    url,
                     "-o",
                     &tmp_path_gz.to_string(),
                 ],
@@ -1930,8 +1930,8 @@ impl SshRemoteConnection {
                             "--method=GET",
                             "--header=Content-Type: application/json",
                             "--body-data",
-                            &body,
-                            &url,
+                            body,
+                            url,
                             "-O",
                             &tmp_path_gz.to_string(),
                         ],
@@ -1982,7 +1982,7 @@ impl SshRemoteConnection {
             tmp_path_gz,
             size / 1024
         );
-        self.upload_file(&src_path, &tmp_path_gz)
+        self.upload_file(src_path, tmp_path_gz)
             .await
             .context("failed to upload server binary")?;
         log::info!("uploaded remote development server in {:?}", t0.elapsed());
@@ -2654,7 +2654,7 @@ mod fake {
             let (outgoing_tx, _) = mpsc::unbounded::<Envelope>();
             let (_, incoming_rx) = mpsc::unbounded::<Envelope>();
             self.server_channel
-                .reconnect(incoming_rx, outgoing_tx, &self.server_cx.get(&cx));
+                .reconnect(incoming_rx, outgoing_tx, &self.server_cx.get(cx));
         }
 
         fn start_proxy(

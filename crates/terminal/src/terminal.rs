@@ -890,15 +890,15 @@ impl Terminal {
                 if self.vi_mode_enabled {
                     match *scroll {
                         AlacScroll::Delta(delta) => {
-                            term.vi_mode_cursor = term.vi_mode_cursor.scroll(&term, delta);
+                            term.vi_mode_cursor = term.vi_mode_cursor.scroll(term, delta);
                         }
                         AlacScroll::PageUp => {
                             let lines = term.screen_lines() as i32;
-                            term.vi_mode_cursor = term.vi_mode_cursor.scroll(&term, lines);
+                            term.vi_mode_cursor = term.vi_mode_cursor.scroll(term, lines);
                         }
                         AlacScroll::PageDown => {
                             let lines = -(term.screen_lines() as i32);
-                            term.vi_mode_cursor = term.vi_mode_cursor.scroll(&term, lines);
+                            term.vi_mode_cursor = term.vi_mode_cursor.scroll(term, lines);
                         }
                         AlacScroll::Top => {
                             let point = AlacPoint::new(term.topmost_line(), Column(0));

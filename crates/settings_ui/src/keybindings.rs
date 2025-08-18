@@ -270,7 +270,7 @@ impl ConflictState {
 
             for origin in indices.iter() {
                 conflicts[origin.index] =
-                    origin.get_conflict_with(if origin == fst { &snd } else { &fst })
+                    origin.get_conflict_with(if origin == fst { snd } else { fst })
             }
 
             has_user_conflicts |= fst.override_source == KeybindSource::User
@@ -673,8 +673,8 @@ impl KeymapEditor {
                 action_name,
                 action_arguments,
                 &actions_with_schemas,
-                &action_documentation,
-                &humanized_action_names,
+                action_documentation,
+                humanized_action_names,
             );
 
             let index = processed_bindings.len();
@@ -696,8 +696,8 @@ impl KeymapEditor {
                 action_name,
                 None,
                 &actions_with_schemas,
-                &action_documentation,
-                &humanized_action_names,
+                action_documentation,
+                humanized_action_names,
             );
             let string_match_candidate =
                 StringMatchCandidate::new(index, &action_information.humanized_name);
@@ -2187,7 +2187,7 @@ impl KeybindingEditorModal {
             })
             .transpose()?;
 
-        cx.build_action(&self.editing_keybind.action().name, value)
+        cx.build_action(self.editing_keybind.action().name, value)
             .context("Failed to validate action arguments")?;
         Ok(action_arguments)
     }
@@ -2862,11 +2862,8 @@ impl CompletionProvider for KeyContextCompletionProvider {
                 break;
             }
         }
-        let start_anchor = buffer.anchor_before(
-            buffer_position
-                .to_offset(&buffer)
-                .saturating_sub(count_back),
-        );
+        let start_anchor =
+            buffer.anchor_before(buffer_position.to_offset(buffer).saturating_sub(count_back));
         let replace_range = start_anchor..buffer_position;
         gpui::Task::ready(Ok(vec![project::CompletionResponse {
             completions: self
@@ -2983,14 +2980,14 @@ async fn save_keybinding_update(
     let target = settings::KeybindUpdateTarget {
         context: existing_context,
         keystrokes: existing_keystrokes,
-        action_name: &existing.action().name,
+        action_name: existing.action().name,
         action_arguments: existing_args,
     };
 
     let source = settings::KeybindUpdateTarget {
         context: action_mapping.context.as_ref().map(|a| &***a),
         keystrokes: &action_mapping.keystrokes,
-        action_name: &existing.action().name,
+        action_name: existing.action().name,
         action_arguments: new_args,
     };
 
@@ -3044,7 +3041,7 @@ async fn remove_keybinding(
         target: settings::KeybindUpdateTarget {
             context: existing.context().and_then(KeybindContextString::local_str),
             keystrokes,
-            action_name: &existing.action().name,
+            action_name: existing.action().name,
             action_arguments: existing
                 .action()
                 .arguments
