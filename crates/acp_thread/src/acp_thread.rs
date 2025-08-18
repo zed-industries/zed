@@ -670,6 +670,7 @@ pub struct AcpThread {
     session_id: acp::SessionId,
 }
 
+#[derive(Debug)]
 pub enum AcpThreadEvent {
     NewEntry,
     EntryUpdated(usize),

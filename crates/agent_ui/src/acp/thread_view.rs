@@ -3567,7 +3567,7 @@ pub(crate) mod tests {
     async fn test_drop(cx: &mut TestAppContext) {
         init_test(cx);
 
-        let (thread_view, _cx) = setup_thread_view(StubAgentServer::default(), cx).await;
+        let (thread_view, _cx) = setup_thread_view(StubAgentServer::default_response(), cx).await;
         let weak_view = thread_view.downgrade();
         drop(thread_view);
         assert!(!weak_view.is_upgradable());
@@ -3577,7 +3577,7 @@ pub(crate) mod tests {
     async fn test_notification_for_stop_event(cx: &mut TestAppContext) {
         init_test(cx);
 
-        let (thread_view, cx) = setup_thread_view(StubAgentServer::default(), cx).await;
+        let (thread_view, cx) = setup_thread_view(StubAgentServer::default_response(), cx).await;
 
         let message_editor = cx.read(|cx| thread_view.read(cx).message_editor.clone());
         message_editor.update_in(cx, |editor, window, cx| {
@@ -3761,8 +3761,12 @@ pub(crate) mod tests {
     }
 
     impl StubAgentServer<StubAgentConnection> {
-        fn default() -> Self {
-            Self::new(StubAgentConnection::default())
+        fn default_response() -> Self {
+            let conn = StubAgentConnection::new();
+            conn.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk {
+                content: "Default response".into(),
+            }]);
+            Self::new(conn)
         }
     }
 
@@ -4173,6 +4177,89 @@ pub(crate) mod tests {
             });
 
             assert_eq!(new_editor.read(cx).text(cx), "Edited message content");
+        })
+    }
+
+    #[gpui::test]
+    async fn test_message_editing_while_generating(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let connection = StubAgentConnection::new();
+
+        let (thread_view, cx) =
+            setup_thread_view(StubAgentServer::new(connection.clone()), cx).await;
+        add_to_workspace(thread_view.clone(), cx);
+
+        let message_editor = cx.read(|cx| thread_view.read(cx).message_editor.clone());
+        message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("Original message to edit", window, cx);
+        });
+        thread_view.update_in(cx, |thread_view, window, cx| {
+            thread_view.send(window, cx);
+        });
+
+        cx.run_until_parked();
+
+        let (user_message_editor, session_id) = thread_view.read_with(cx, |view, cx| {
+            let thread = view.thread().unwrap().read(cx);
+            assert_eq!(thread.entries().len(), 1);
+
+            let editor = view
+                .entry_view_state
+                .read(cx)
+                .entry(0)
+                .unwrap()
+                .message_editor()
+                .unwrap()
+                .clone();
+
+            (editor, thread.session_id().clone())
+        });
+
+        // Focus
+        cx.focus(&user_message_editor);
+
+        thread_view.read_with(cx, |view, _cx| {
+            assert_eq!(view.editing_message, Some(0));
+        });
+
+        // Edit
+        user_message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("Edited message content", window, cx);
+        });
+
+        thread_view.read_with(cx, |view, _cx| {
+            assert_eq!(view.editing_message, Some(0));
+        });
+
+        // Finish streaming response
+        cx.update(|_, cx| {
+            connection.send_update(
+                session_id.clone(),
+                acp::SessionUpdate::AgentMessageChunk {
+                    content: acp::ContentBlock::Text(acp::TextContent {
+                        text: "Response".into(),
+                        annotations: None,
+                    }),
+                },
+                cx,
+            );
+            connection.end_turn(session_id);
+        });
+
+        thread_view.read_with(cx, |view, _cx| {
+            assert_eq!(view.editing_message, Some(0));
+        });
+
+        cx.run_until_parked();
+
+        // Should still be editing
+        thread_view.read_with(cx, |view, cx| {
+            assert_eq!(view.editing_message, Some(0));
+            assert_eq!(
+                user_message_editor.read(cx).text(cx),
+                "Edited message content"
+            );
         })
     }
 }
