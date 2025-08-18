@@ -1143,6 +1143,7 @@ mod tests {
             tools: vec![],
             tool_choice: None,
             thinking_allowed: true,
+            provider: None,
         };
 
         let anthropic_request = into_anthropic(

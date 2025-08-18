@@ -9,13 +9,15 @@ use gpui::{
 use http_client::HttpClient;
 use language_model::{
     AuthenticateError, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
-    LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
-    LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
-    LanguageModelToolChoice, LanguageModelToolResultContent, LanguageModelToolSchemaFormat,
-    LanguageModelToolUse, MessageContent, RateLimiter, Role, StopReason, TokenUsage,
+    LanguageModelEndpoint, LanguageModelId, LanguageModelName, LanguageModelProvider,
+    LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
+    LanguageModelRequest, LanguageModelToolChoice, LanguageModelToolResultContent,
+    LanguageModelToolSchemaFormat, LanguageModelToolUse, MessageContent, RateLimiter, Role,
+    StopReason, TokenUsage,
 };
 use open_router::{
-    Model, ModelMode as OpenRouterModelMode, ResponseStreamEvent, list_models, stream_completion,
+    Model, ModelMode as OpenRouterModelMode, ResponseStreamEvent, get_model_endpoints, list_models,
+    stream_completion,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -41,6 +43,7 @@ pub struct OpenRouterSettings {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct AvailableModel {
     pub name: String,
+    pub canonical_slug: Option<String>,
     pub display_name: Option<String>,
     pub max_tokens: u64,
     pub max_output_tokens: Option<u64>,
@@ -274,6 +277,7 @@ impl LanguageModelProvider for OpenRouterLanguageModelProvider {
             settings_models.push(open_router::Model {
                 name: model.name.clone(),
                 display_name: model.display_name.clone(),
+                canonical_slug: model.canonical_slug.clone(),
                 max_tokens: model.max_tokens,
                 supports_tools: model.supports_tools,
                 supports_images: model.supports_images,
@@ -442,6 +446,41 @@ impl LanguageModel for OpenRouterLanguageModel {
         }
         .boxed()
     }
+
+    fn supports_different_endpoints(&self) -> bool {
+        true
+    }
+
+    fn endpoints(&self, _cx: &AsyncApp) -> BoxFuture<'static, Result<Vec<LanguageModelEndpoint>>> {
+        let model = self.model.clone();
+        let http_client = self.http_client.clone();
+
+        async move {
+            let openrouter_endpoints = get_model_endpoints(&model, http_client.as_ref()).await?;
+
+            let mut endpoints = Vec::with_capacity(openrouter_endpoints.len() + 1);
+            endpoints.push(LanguageModelEndpoint::Default);
+            endpoints.extend(openrouter_endpoints.iter().filter_map(|e| {
+                let e = e.clone();
+                Some(LanguageModelEndpoint::Specified {
+                    name: e.provider_name,
+                    display_name: e.provider_display_name,
+                    context_length: Some(e.context_length as u64),
+                    quantization: e.quantization,
+                    supports_tools: e.supported_parameters.contains(&String::from("tools")),
+                    throughput: e.stats.as_ref().map(|x| x.p50_throughput),
+                    latency: e.stats.as_ref().map(|x| x.p50_latency),
+                    input_price: Some(f32::from_str(&e.pricing.prompt).log_err()? * 1_000_000.0),
+                    output_price: Some(
+                        f32::from_str(&e.pricing.completion).log_err()? * 1_000_000.0,
+                    ),
+                })
+            }));
+
+            Ok(endpoints)
+        }
+        .boxed()
+    }
 }
 
 pub fn into_open_router(
@@ -556,6 +595,13 @@ pub fn into_open_router(
             LanguageModelToolChoice::Any => open_router::ToolChoice::Required,
             LanguageModelToolChoice::None => open_router::ToolChoice::None,
         }),
+        provider: match request.provider {
+            None => None,
+            Some(provider) => Some(open_router::ProviderSetting {
+                allow_fallbacks: false,
+                order: vec![provider],
+            }),
+        },
     }
 }
 

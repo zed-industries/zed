@@ -592,6 +592,14 @@ pub trait LanguageModel: Send + Sync {
     fn as_fake(&self) -> &fake_provider::FakeLanguageModel {
         unimplemented!()
     }
+
+    fn supports_different_endpoints(&self) -> bool {
+        false
+    }
+
+    fn endpoints(&self, _cx: &AsyncApp) -> BoxFuture<'static, Result<Vec<LanguageModelEndpoint>>> {
+        async { Ok(vec![]) }.boxed()
+    }
 }
 
 pub trait LanguageModelExt: LanguageModel {

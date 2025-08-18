@@ -571,6 +571,7 @@ impl SummaryIndex {
             stop: Vec::new(),
             temperature: None,
             thinking_allowed: true,
+            provider: None,
         };
 
         let code_len = code.len();

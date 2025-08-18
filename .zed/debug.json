@@ -5,7 +5,10 @@
     "build": {
       "label": "Build Zed",
       "command": "cargo",
-      "args": ["build"]
+      "args": ["build", "--profile", "release-fast"]
+    },
+    "env": {
+      "RUST_LOG": "warning,agent_ui=debug"
     }
   },
   {

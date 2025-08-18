@@ -1950,6 +1950,7 @@ impl GitPanel {
                     stop: Vec::new(),
                     temperature,
                     thinking_allowed: false,
+                    provider: None,
                 };
 
                 let stream = model.stream_completion_text(request, &cx);

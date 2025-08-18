@@ -399,12 +399,62 @@ pub struct LanguageModelRequest {
     pub stop: Vec<String>,
     pub temperature: Option<f32>,
     pub thinking_allowed: bool,
+    pub provider: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
 pub struct LanguageModelResponseMessage {
     pub role: Option<Role>,
     pub content: Option<String>,
+}
+
+/// Also called "provider" in OpenRouter, or "inference provider" sometimes.
+#[derive(Default, Debug, Clone, PartialEq, Deserialize)]
+pub enum LanguageModelEndpoint {
+    /// Don't specify an endpoint, use the default one
+    #[default]
+    Default,
+    /// Use this endpoint. `name` is used when sending requests, the rest
+    /// is used for displaying extra info in the selector menu.
+    Specified {
+        name: String,
+
+        display_name: String,
+        context_length: Option<u64>,
+        quantization: Option<String>,
+        /// in tokens per second
+        throughput: Option<f32>,
+        /// in seconds
+        latency: Option<f32>,
+        /// in dollars per million token
+        input_price: Option<f32>,
+        /// in dollars per million token
+        output_price: Option<f32>,
+        supports_tools: bool,
+    },
+}
+
+impl LanguageModelEndpoint {
+    pub fn name(&self) -> &str {
+        match self {
+            LanguageModelEndpoint::Default => "Default",
+            LanguageModelEndpoint::Specified { name, .. } => name.as_str(),
+        }
+    }
+
+    /// Whether this endpoint supports tool calls.
+    ///
+    /// When endpoint is [`Default`], this always returns true, so you
+    /// need to do an AND with model.support_tools to really determine
+    /// the capability.
+    pub fn supports_tools(&self) -> bool {
+        match self {
+            // The default endpoint doens't always support tool calls.
+            // The profile selector should do an AND with model.support_tools().
+            LanguageModelEndpoint::Default => true,
+            LanguageModelEndpoint::Specified { supports_tools, .. } => *supports_tools,
+        }
+    }
 }
 
 #[cfg(test)]

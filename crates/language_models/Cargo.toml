@@ -60,6 +60,9 @@ ui_input.workspace = true
 util.workspace = true
 vercel = { workspace = true, features = ["schemars"] }
 workspace-hack.workspace = true
+zed_llm_client.workspace = true
+language.workspace = true
+async-trait.workspace = true
 x_ai = { workspace = true, features = ["schemars"] }
 
 [dev-dependencies]

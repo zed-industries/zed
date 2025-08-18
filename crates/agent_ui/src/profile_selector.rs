@@ -1,13 +1,13 @@
 use crate::{ManageProfiles, ToggleProfileSelector};
 use agent::agent_profile::{AgentProfile, AvailableProfiles};
-use agent_settings::{AgentDockPosition, AgentProfileId, AgentSettings, builtin_profiles};
+use agent_settings::{builtin_profiles, AgentDockPosition, AgentProfileId, AgentSettings};
 use fs::Fs;
-use gpui::{Action, Entity, FocusHandle, Subscription, prelude::*};
-use settings::{Settings as _, SettingsStore, update_settings_file};
+use gpui::{prelude::*, Action, Entity, FocusHandle, Subscription};
+use settings::{update_settings_file, Settings as _, SettingsStore};
 use std::sync::Arc;
 use ui::{
-    ContextMenu, ContextMenuEntry, DocumentationSide, PopoverMenu, PopoverMenuHandle, Tooltip,
-    prelude::*,
+    prelude::*, ContextMenu, ContextMenuEntry, DocumentationSide, PopoverMenu, PopoverMenuHandle,
+    Tooltip,
 };
 
 /// Trait for types that can provide and manage agent profiles
@@ -162,8 +162,17 @@ impl Render for ProfileSelector {
             .map(|profile| profile.name.clone())
             .unwrap_or_else(|| "Unknown".into());
 
-        if self.provider.profiles_supported(cx) {
-            let this = cx.entity();
+        let configured_model = self.thread.read(cx).configured_model().or_else(|| {
+            let model_registry = LanguageModelRegistry::read_global(cx);
+            model_registry.default_model()
+        });
+        let Some(configured_model) = configured_model else {
+            return Empty.into_any_element();
+        };
+        let endpoint = self.thread.read(cx).endpoint();
+
+        if self.provider.profiles_supported(cx) && endpoint.supports_tools() {
+            let this = cx.entity().clone();
             let focus_handle = self.focus_handle.clone();
             let trigger_button = Button::new("profile-selector-model", selected_profile)
                 .label_size(LabelSize::Small)

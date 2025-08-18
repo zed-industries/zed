@@ -26,11 +26,11 @@ use gpui::{
 use http_client::StatusCode;
 use language_model::{
     ConfiguredModel, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
-    LanguageModelExt as _, LanguageModelId, LanguageModelRegistry, LanguageModelRequest,
-    LanguageModelRequestMessage, LanguageModelRequestTool, LanguageModelToolResult,
-    LanguageModelToolResultContent, LanguageModelToolUse, LanguageModelToolUseId, MessageContent,
-    ModelRequestLimitReachedError, PaymentRequiredError, Role, SelectedModel, StopReason,
-    TokenUsage,
+    LanguageModelEndpoint, LanguageModelExt as _, LanguageModelId, LanguageModelRegistry,
+    LanguageModelRequest, LanguageModelRequestMessage, LanguageModelRequestTool,
+    LanguageModelToolResult, LanguageModelToolResultContent, LanguageModelToolUse,
+    LanguageModelToolUseId, MessageContent, ModelRequestLimitReachedError, PaymentRequiredError,
+    Role, SelectedModel, StopReason, TokenUsage,
 };
 use postage::stream::Stream as _;
 use project::{
@@ -396,6 +396,8 @@ pub struct Thread {
     remaining_turns: u32,
     configured_model: Option<ConfiguredModel>,
     profile: AgentProfile,
+    /// The endpoint (provider) for API gateways like OpenRouter.
+    endpoint: LanguageModelEndpoint,
     last_error_context: Option<(Arc<dyn LanguageModel>, CompletionIntent)>,
 }
 
@@ -496,6 +498,7 @@ impl Thread {
             remaining_turns: u32::MAX,
             configured_model: configured_model.clone(),
             profile: AgentProfile::new(profile_id, tools),
+            endpoint: LanguageModelEndpoint::Default,
         }
     }
 
@@ -621,6 +624,7 @@ impl Thread {
             remaining_turns: u32::MAX,
             configured_model,
             profile: AgentProfile::new(profile_id, tools),
+            endpoint: LanguageModelEndpoint::Default,
         }
     }
 
@@ -644,6 +648,24 @@ impl Thread {
         if &id != self.profile.id() {
             self.profile = AgentProfile::new(id, self.tools.clone());
             cx.emit(ThreadEvent::ProfileChanged);
+        }
+    }
+
+    pub fn endpoint(&self) -> &LanguageModelEndpoint {
+        &self.endpoint
+    }
+
+    /// Get endpoint id (provider id) from endpoint settings
+    pub fn provider(&self) -> Option<String> {
+        match &self.endpoint {
+            LanguageModelEndpoint::Default => None,
+            LanguageModelEndpoint::Specified { name, .. } => Some(name.clone()),
+        }
+    }
+
+    pub fn set_endpoint(&mut self, endpoint: LanguageModelEndpoint) {
+        if endpoint != self.endpoint {
+            self.endpoint = endpoint;
         }
     }
 
@@ -981,8 +1003,9 @@ impl Thread {
         &self,
         cx: &App,
         model: Arc<dyn LanguageModel>,
+        endpoint: &LanguageModelEndpoint,
     ) -> Vec<LanguageModelRequestTool> {
-        if model.supports_tools() {
+        if model.supports_tools() && endpoint.supports_tools() {
             self.profile
                 .enabled_tools(cx)
                 .into_iter()
@@ -1275,7 +1298,7 @@ impl Thread {
 
         let _checkpoint = self.finalize_pending_checkpoint(cx);
         self.stream_completion(
-            self.to_completion_request(model.clone(), intent, cx),
+            self.to_completion_request(model.clone(), &self.endpoint, intent, cx),
             model,
             intent,
             window,
@@ -1342,6 +1365,7 @@ impl Thread {
     pub fn to_completion_request(
         &self,
         model: Arc<dyn LanguageModel>,
+        endpoint: &LanguageModelEndpoint,
         intent: CompletionIntent,
         cx: &mut Context<Self>,
     ) -> LanguageModelRequest {
@@ -1356,9 +1380,10 @@ impl Thread {
             stop: Vec::new(),
             temperature: AgentSettings::temperature_for_model(&model, cx),
             thinking_allowed: true,
+            provider: self.provider(),
         };
 
-        let available_tools = self.available_tools(cx, model.clone());
+        let available_tools = self.available_tools(cx, model.clone(), endpoint);
         let available_tool_names = available_tools
             .iter()
             .map(|tool| tool.name.clone())
@@ -1522,6 +1547,7 @@ impl Thread {
             stop: Vec::new(),
             temperature: AgentSettings::temperature_for_model(model, cx),
             thinking_allowed: false,
+            provider: self.provider(),
         };
 
         for message in &self.messages {
@@ -2537,8 +2563,12 @@ impl Thread {
         cx: &mut Context<Self>,
     ) -> Vec<PendingToolUse> {
         self.auto_capture_telemetry(cx);
-        let request =
-            Arc::new(self.to_completion_request(model.clone(), CompletionIntent::ToolResults, cx));
+        let request = Arc::new(self.to_completion_request(
+            model.clone(),
+            &self.endpoint,
+            CompletionIntent::ToolResults,
+            cx,
+        ));
         let pending_tool_uses = self
             .tool_use
             .pending_tool_uses()

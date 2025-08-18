@@ -9100,6 +9100,7 @@ version = "0.1.0"
 dependencies = [
  "anthropic",
  "anyhow",
+ "async-trait",
  "base64 0.22.1",
  "client",
  "cloud_api_types",
@@ -9130,6 +9131,7 @@ dependencies = [
  "ai_onboarding",
  "anthropic",
  "anyhow",
+ "async-trait",
  "aws-config",
  "aws-credential-types",
  "aws_http_client",
