@@ -494,8 +494,7 @@ pub struct Thread {
     profile_id: AgentProfileId,
     project_context: Rc<RefCell<ProjectContext>>,
     templates: Arc<Templates>,
-    model: Arc<dyn LanguageModel>,
-    summarization_model: Option<Arc<dyn LanguageModel>>,
+    model: Option<Arc<dyn LanguageModel>>,
     project: Entity<Project>,
     action_log: Entity<ActionLog>,
 }
@@ -508,8 +507,7 @@ impl Thread {
         context_server_registry: Entity<ContextServerRegistry>,
         action_log: Entity<ActionLog>,
         templates: Arc<Templates>,
-        model: Arc<dyn LanguageModel>,
-        summarization_model: Option<Arc<dyn LanguageModel>>,
+        model: Option<Arc<dyn LanguageModel>>,
         cx: &mut Context<Self>,
     ) -> Self {
         let profile_id = AgentSettings::get_global(cx).default_profile.clone();
@@ -848,22 +846,12 @@ impl Thread {
         &self.action_log
     }
 
-    pub fn model(&self) -> &Arc<dyn LanguageModel> {
-        &self.model
+    pub fn model(&self) -> Option<&Arc<dyn LanguageModel>> {
+        self.model.as_ref()
     }
 
-    pub fn set_model(&mut self, model: Arc<dyn LanguageModel>, cx: &mut Context<Self>) {
-        self.model = model;
-        cx.notify()
-    }
-
-    pub fn set_summarization_model(
-        &mut self,
-        model: Option<Arc<dyn LanguageModel>>,
-        cx: &mut Context<Self>,
-    ) {
-        self.summarization_model = model;
-        cx.notify()
+    pub fn set_model(&mut self, model: Arc<dyn LanguageModel>) {
+        self.model = Some(model);
     }
 
     pub fn completion_mode(&self) -> CompletionMode {
@@ -932,7 +920,7 @@ impl Thread {
         cx.notify();
 
         log::info!("Total messages in thread: {}", self.messages.len());
-        Ok(self.run_turn(cx))
+        self.run_turn(cx)
     }
 
     /// Sending a message results in the model streaming a response, which could include tool calls.
@@ -947,7 +935,9 @@ impl Thread {
     where
         T: Into<UserMessageContent>,
     {
-        log::info!("Thread::send called with model: {:?}", self.model.name());
+        let model = self.model().context("No language model configured")?;
+
+        log::info!("Thread::send called with model: {:?}", model.name());
         self.advance_prompt_id();
 
         let content = content.into_iter().map(Into::into).collect::<Vec<_>>();
@@ -982,7 +972,7 @@ impl Thread {
                         );
                         let request = this.update(cx, |this, cx| {
                             this.build_completion_request(completion_intent, cx)
-                        })?;
+                        })??;
 
                         log::info!("Calling model.stream_completion");
                         let mut events = model.stream_completion(request, cx).await?;
@@ -1074,7 +1064,7 @@ impl Thread {
                 .ok();
             }),
         });
-        events_rx
+        Ok(events_rx)
     }
 
     pub fn generate_title_if_needed(&mut self, cx: &mut Context<Self>) {
@@ -1342,7 +1332,7 @@ impl Thread {
             status: Some(acp::ToolCallStatus::InProgress),
             ..Default::default()
         });
-        let supports_images = self.model.supports_images();
+        let supports_images = self.model().map_or(false, |model| model.supports_images());
         let tool_result = tool.run(tool_use.input, tool_event_stream, cx);
         log::info!("Running tool {}", tool_use.name);
         Some(cx.foreground_executor().spawn(async move {
@@ -1429,7 +1419,9 @@ impl Thread {
         &self,
         completion_intent: CompletionIntent,
         cx: &mut App,
-    ) -> LanguageModelRequest {
+    ) -> Result<LanguageModelRequest> {
+        let model = self.model().context("No language model configured")?;
+
         log::debug!("Building completion request");
         log::debug!("Completion intent: {:?}", completion_intent);
         log::debug!("Completion mode: {:?}", self.completion_mode);
@@ -1445,9 +1437,7 @@ impl Thread {
                     Some(LanguageModelRequestTool {
                         name: tool_name,
                         description: tool.description().to_string(),
-                        input_schema: tool
-                            .input_schema(self.model.tool_input_format())
-                            .log_err()?,
+                        input_schema: tool.input_schema(model.tool_input_format()).log_err()?,
                     })
                 })
                 .collect()
@@ -1466,20 +1456,22 @@ impl Thread {
             tools,
             tool_choice: None,
             stop: Vec::new(),
-            temperature: AgentSettings::temperature_for_model(self.model(), cx),
+            temperature: AgentSettings::temperature_for_model(&model, cx),
             thinking_allowed: true,
         };
 
         log::debug!("Completion request built successfully");
-        request
+        Ok(request)
     }
 
     fn tools<'a>(&'a self, cx: &'a App) -> Result<impl Iterator<Item = &'a Arc<dyn AnyAgentTool>>> {
+        let model = self.model().context("No language model configured")?;
+
         let profile = AgentSettings::get_global(cx)
             .profiles
             .get(&self.profile_id)
             .context("profile not found")?;
-        let provider_id = self.model.provider_id();
+        let provider_id = model.provider_id();
 
         Ok(self
             .tools

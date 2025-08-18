@@ -550,7 +550,8 @@ async fn upload_previous_panics(
 
 pub async fn upload_previous_minidumps(http: Arc<HttpClientWithUrl>) -> anyhow::Result<()> {
     let Some(minidump_endpoint) = MINIDUMP_ENDPOINT.as_ref() else {
-        return Err(anyhow::anyhow!("Minidump endpoint not set"));
+        log::warn!("Minidump endpoint not set");
+        return Ok(());
     };
 
     let mut children = smol::fs::read_dir(paths::logs_dir()).await?;

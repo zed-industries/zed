@@ -577,6 +577,7 @@ impl AgentPanel {
                         panel.width = serialized_panel.width.map(|w| w.round());
                         if let Some(selected_agent) = serialized_panel.selected_agent {
                             panel.selected_agent = selected_agent;
+                            panel.new_agent_thread(selected_agent, window, cx);
                         }
                         cx.notify();
                     });
@@ -1659,15 +1660,52 @@ impl AgentPanel {
         menu
     }
 
-    pub fn set_selected_agent(&mut self, agent: AgentType, cx: &mut Context<Self>) {
+    pub fn set_selected_agent(
+        &mut self,
+        agent: AgentType,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if self.selected_agent != agent {
             self.selected_agent = agent;
             self.serialize(cx);
+            self.new_agent_thread(agent, window, cx);
         }
     }
 
     pub fn selected_agent(&self) -> AgentType {
         self.selected_agent
+    }
+
+    pub fn new_agent_thread(
+        &mut self,
+        agent: AgentType,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match agent {
+            AgentType::Zed => {
+                window.dispatch_action(
+                    NewThread {
+                        from_thread_id: None,
+                    }
+                    .boxed_clone(),
+                    cx,
+                );
+            }
+            AgentType::TextThread => {
+                window.dispatch_action(NewTextThread.boxed_clone(), cx);
+            }
+            AgentType::NativeAgent => {
+                self.new_external_thread(Some(crate::ExternalAgent::NativeAgent), window, cx)
+            }
+            AgentType::Gemini => {
+                self.new_external_thread(Some(crate::ExternalAgent::Gemini), window, cx)
+            }
+            AgentType::ClaudeCode => {
+                self.new_external_thread(Some(crate::ExternalAgent::ClaudeCode), window, cx)
+            }
+        }
     }
 }
 
@@ -2256,16 +2294,13 @@ impl AgentPanel {
                                                         panel.update(cx, |panel, cx| {
                                                             panel.set_selected_agent(
                                                                 AgentType::Zed,
+                                                                window,
                                                                 cx,
                                                             );
                                                         });
                                                     }
                                                 });
                                             }
-                                            window.dispatch_action(
-                                                NewThread::default().boxed_clone(),
-                                                cx,
-                                            );
                                         }
                                     }),
                             )
@@ -2285,13 +2320,13 @@ impl AgentPanel {
                                                         panel.update(cx, |panel, cx| {
                                                             panel.set_selected_agent(
                                                                 AgentType::TextThread,
+                                                                window,
                                                                 cx,
                                                             );
                                                         });
                                                     }
                                                 });
                                             }
-                                            window.dispatch_action(NewTextThread.boxed_clone(), cx);
                                         }
                                     }),
                             )
@@ -2310,19 +2345,13 @@ impl AgentPanel {
                                                         panel.update(cx, |panel, cx| {
                                                             panel.set_selected_agent(
                                                                 AgentType::NativeAgent,
+                                                                window,
                                                                 cx,
                                                             );
                                                         });
                                                     }
                                                 });
                                             }
-                                            window.dispatch_action(
-                                                NewExternalAgentThread {
-                                                    agent: Some(crate::ExternalAgent::NativeAgent),
-                                                }
-                                                .boxed_clone(),
-                                                cx,
-                                            );
                                         }
                                     }),
                             )
@@ -2343,19 +2372,13 @@ impl AgentPanel {
                                                         panel.update(cx, |panel, cx| {
                                                             panel.set_selected_agent(
                                                                 AgentType::Gemini,
+                                                                window,
                                                                 cx,
                                                             );
                                                         });
                                                     }
                                                 });
                                             }
-                                            window.dispatch_action(
-                                                NewExternalAgentThread {
-                                                    agent: Some(crate::ExternalAgent::Gemini),
-                                                }
-                                                .boxed_clone(),
-                                                cx,
-                                            );
                                         }
                                     }),
                             )
@@ -2374,19 +2397,13 @@ impl AgentPanel {
                                                         panel.update(cx, |panel, cx| {
                                                             panel.set_selected_agent(
                                                                 AgentType::ClaudeCode,
+                                                                window,
                                                                 cx,
                                                             );
                                                         });
                                                     }
                                                 });
                                             }
-                                            window.dispatch_action(
-                                                NewExternalAgentThread {
-                                                    agent: Some(crate::ExternalAgent::ClaudeCode),
-                                                }
-                                                .boxed_clone(),
-                                                cx,
-                                            );
                                         }
                                     }),
                             );
@@ -2637,7 +2654,13 @@ impl AgentPanel {
         }
 
         match &self.active_view {
-            ActiveView::Thread { .. } | ActiveView::TextThread { .. } => {
+            ActiveView::History | ActiveView::Configuration => false,
+            ActiveView::ExternalAgentThread { thread_view, .. }
+                if thread_view.read(cx).as_native_thread(cx).is_none() =>
+            {
+                false
+            }
+            _ => {
                 let history_is_empty = self
                     .history_store
                     .update(cx, |store, cx| store.recent_entries(1, cx).is_empty());
@@ -2652,9 +2675,6 @@ impl AgentPanel {
 
                 history_is_empty || !has_configured_non_zed_providers
             }
-            ActiveView::ExternalAgentThread { .. }
-            | ActiveView::History
-            | ActiveView::Configuration => false,
         }
     }
 

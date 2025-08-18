@@ -1833,7 +1833,9 @@ impl GitPanel {
 
         let git_status_entry = if let Some(staged_entry) = &self.single_staged_entry {
             Some(staged_entry)
-        } else if let Some(single_tracked_entry) = &self.single_tracked_entry {
+        } else if self.total_staged_count() == 0
+            && let Some(single_tracked_entry) = &self.single_tracked_entry
+        {
             Some(single_tracked_entry)
         } else {
             None
@@ -2086,6 +2088,7 @@ impl GitPanel {
             files: false,
             directories: true,
             multiple: false,
+            prompt: Some("Select as Repository Destination".into()),
         });
 
         let workspace = self.workspace.clone();
