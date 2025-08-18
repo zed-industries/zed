@@ -1212,7 +1212,7 @@ impl X11Client {
 
                 state = self.0.borrow_mut();
                 if let Some(mut pointer) = state.pointer_device_states.get_mut(&event.sourceid) {
-                    let scroll_delta = get_scroll_delta_and_update_state(&mut pointer, &event);
+                    let scroll_delta = get_scroll_delta_and_update_state(pointer, &event);
                     drop(state);
                     if let Some(scroll_delta) = scroll_delta {
                         window.handle_input(PlatformInput::ScrollWheel(make_scroll_wheel_event(
@@ -1271,7 +1271,7 @@ impl X11Client {
             Event::XinputDeviceChanged(event) => {
                 let mut state = self.0.borrow_mut();
                 if let Some(mut pointer) = state.pointer_device_states.get_mut(&event.sourceid) {
-                    reset_pointer_device_scroll_positions(&mut pointer);
+                    reset_pointer_device_scroll_positions(pointer);
                 }
             }
             _ => {}
@@ -2038,7 +2038,7 @@ fn xdnd_get_supported_atom(
     {
         if let Some(atoms) = reply.value32() {
             for atom in atoms {
-                if xdnd_is_atom_supported(atom, &supported_atoms) {
+                if xdnd_is_atom_supported(atom, supported_atoms) {
                     return atom;
                 }
             }
