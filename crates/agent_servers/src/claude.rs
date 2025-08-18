@@ -111,7 +111,8 @@ impl AgentConnection for ClaudeAgentConnection {
                     })?;
 
             let (mut thread_tx, thread_rx) = watch::channel(WeakEntity::new_invalid());
-            let permission_mcp_server = ClaudeZedMcpServer::new(thread_rx.clone(), cx).await?;
+            let fs = project.read_with(cx, |project, _cx| project.fs().clone())?;
+            let permission_mcp_server = ClaudeZedMcpServer::new(thread_rx.clone(), fs, cx).await?;
 
             let mut mcp_servers = HashMap::default();
             mcp_servers.insert(
