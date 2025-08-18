@@ -1200,17 +1200,21 @@ impl AcpThread {
         } else {
             None
         };
-        self.push_entry(
-            AgentThreadEntry::UserMessage(UserMessage {
-                id: message_id.clone(),
-                content: block,
-                chunks: message,
-                checkpoint: None,
-            }),
-            cx,
-        );
 
         self.run_turn(cx, async move |this, cx| {
+            this.update(cx, |this, cx| {
+                this.push_entry(
+                    AgentThreadEntry::UserMessage(UserMessage {
+                        id: message_id.clone(),
+                        content: block,
+                        chunks: message,
+                        checkpoint: None,
+                    }),
+                    cx,
+                );
+            })
+            .ok();
+
             let old_checkpoint = git_store
                 .update(cx, |git, cx| git.checkpoint(cx))?
                 .await
