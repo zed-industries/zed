@@ -5,7 +5,7 @@ use acp_thread::{MentionUri, UserMessageId};
 use action_log::ActionLog;
 use agent::thread::{DetailedSummaryState, GitState, ProjectSnapshot, WorktreeSnapshot};
 use agent_client_protocol as acp;
-use agent_settings::{AgentProfileId, AgentSettings, CompletionMode};
+use agent_settings::{AgentProfileId, AgentSettings, CompletionMode, SUMMARIZE_THREAD_PROMPT};
 use anyhow::{Context as _, Result, anyhow};
 use assistant_tool::adapt_schema_to_format;
 use chrono::{DateTime, Utc};
@@ -24,7 +24,7 @@ use language_model::{
     LanguageModel, LanguageModelCompletionEvent, LanguageModelImage, LanguageModelProviderId,
     LanguageModelRequest, LanguageModelRequestMessage, LanguageModelRequestTool,
     LanguageModelToolResult, LanguageModelToolResultContent, LanguageModelToolSchemaFormat,
-    LanguageModelToolUse, LanguageModelToolUseId, Role, StopReason, TokenUsage,
+    LanguageModelToolUse, LanguageModelToolUseId, MessageContent, Role, StopReason, TokenUsage,
 };
 use project::{
     Project,
@@ -75,11 +75,30 @@ impl Message {
         }
     }
 
+    pub fn to_request(&self) -> Vec<LanguageModelRequestMessage> {
+        match self {
+            Message::User(message) => vec![message.to_request()],
+            Message::Agent(message) => message.to_request(),
+            Message::Resume => vec![LanguageModelRequestMessage {
+                role: Role::User,
+                content: vec!["Continue where you left off".into()],
+                cache: false,
+            }],
+        }
+    }
+
     pub fn to_markdown(&self) -> String {
         match self {
             Message::User(message) => message.to_markdown(),
             Message::Agent(message) => message.to_markdown(),
             Message::Resume => "[resumed after tool use limit was reached]".into(),
+        }
+    }
+
+    pub fn role(&self) -> Role {
+        match self {
+            Message::User(_) | Message::Resume => Role::User,
+            Message::Agent(_) => Role::Assistant,
         }
     }
 }
@@ -426,6 +445,7 @@ pub enum ThreadEvent {
     ToolCall(acp::ToolCall),
     ToolCallUpdate(acp_thread::ToolCallUpdate),
     ToolCallAuthorization(ToolCallAuthorization),
+    TitleUpdate(SharedString),
     Stop(acp::StopReason),
 }
 
@@ -475,6 +495,7 @@ pub struct Thread {
     project_context: Rc<RefCell<ProjectContext>>,
     templates: Arc<Templates>,
     model: Arc<dyn LanguageModel>,
+    summarization_model: Option<Arc<dyn LanguageModel>>,
     project: Entity<Project>,
     action_log: Entity<ActionLog>,
 }
@@ -488,6 +509,7 @@ impl Thread {
         action_log: Entity<ActionLog>,
         templates: Arc<Templates>,
         model: Arc<dyn LanguageModel>,
+        summarization_model: Option<Arc<dyn LanguageModel>>,
         cx: &mut Context<Self>,
     ) -> Self {
         let profile_id = AgentSettings::get_global(cx).default_profile.clone();
@@ -516,9 +538,35 @@ impl Thread {
             project_context,
             templates,
             model,
+            summarization_model,
             project,
             action_log,
         }
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn test(
+        model: Arc<dyn LanguageModel>,
+        project: Entity<Project>,
+        action_log: Entity<ActionLog>,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        use crate::generate_session_id;
+
+        let context_server_registry =
+            cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
+
+        Self::new(
+            generate_session_id(),
+            project,
+            Rc::default(),
+            context_server_registry,
+            action_log,
+            Templates::new(),
+            model,
+            None,
+            cx,
+        )
     }
 
     pub fn id(&self) -> &acp::SessionId {
@@ -534,6 +582,7 @@ impl Thread {
         action_log: Entity<ActionLog>,
         templates: Arc<Templates>,
         model: Arc<dyn LanguageModel>,
+        summarization_model: Option<Arc<dyn LanguageModel>>,
         cx: &mut Context<Self>,
     ) -> Self {
         let profile_id = db_thread
@@ -558,6 +607,7 @@ impl Thread {
             project_context,
             templates,
             model,
+            summarization_model,
             project,
             action_log,
             updated_at: db_thread.updated_at, // todo!(figure out if we can remove the "recently opened" list)
@@ -807,6 +857,15 @@ impl Thread {
         cx.notify()
     }
 
+    pub fn set_summarization_model(
+        &mut self,
+        model: Option<Arc<dyn LanguageModel>>,
+        cx: &mut Context<Self>,
+    ) {
+        self.summarization_model = model;
+        cx.notify()
+    }
+
     pub fn completion_mode(&self) -> CompletionMode {
         self.completion_mode
     }
@@ -1016,6 +1075,86 @@ impl Thread {
             }),
         });
         events_rx
+    }
+
+    pub fn generate_title_if_needed(&mut self, cx: &mut Context<Self>) {
+        if !matches!(self.title, ThreadTitle::None) {
+            return;
+        }
+
+        // todo!() copy logic from agent1 re: tool calls, etc.?
+        if self.messages.len() < 2 {
+            return;
+        }
+
+        self.generate_title(cx);
+    }
+
+    fn generate_title(&mut self, cx: &mut Context<Self>) {
+        let Some(model) = self.summarization_model.clone() else {
+            println!("No thread summary model");
+            return;
+        };
+        let mut request = LanguageModelRequest {
+            intent: Some(CompletionIntent::ThreadSummarization),
+            temperature: AgentSettings::temperature_for_model(&model, cx),
+            ..Default::default()
+        };
+
+        for message in &self.messages {
+            request.messages.extend(message.to_request());
+        }
+
+        request.messages.push(LanguageModelRequestMessage {
+            role: Role::User,
+            content: vec![MessageContent::Text(SUMMARIZE_THREAD_PROMPT.into())],
+            cache: false,
+        });
+
+        let task = cx.spawn(async move |this, cx| {
+            let result = async {
+                let mut messages = model.stream_completion(request, &cx).await?;
+
+                let mut new_summary = String::new();
+                while let Some(event) = messages.next().await {
+                    let Ok(event) = event else {
+                        continue;
+                    };
+                    let text = match event {
+                        LanguageModelCompletionEvent::Text(text) => text,
+                        LanguageModelCompletionEvent::StatusUpdate(
+                            CompletionRequestStatus::UsageUpdated { .. },
+                        ) => {
+                            // this.update(cx, |thread, cx| {
+                            //     thread.update_model_request_usage(amount as u32, limit, cx);
+                            // })?;
+                            // todo!()? not sure if this is the right place to do this.
+                            continue;
+                        }
+                        _ => continue,
+                    };
+
+                    let mut lines = text.lines();
+                    new_summary.extend(lines.next());
+
+                    // Stop if the LLM generated multiple lines.
+                    if lines.next().is_some() {
+                        break;
+                    }
+                }
+
+                anyhow::Ok(new_summary.into())
+            }
+            .await;
+
+            this.update(cx, |this, cx| {
+                this.title = ThreadTitle::Done(result);
+                cx.notify();
+            })
+            .log_err();
+        });
+
+        self.title = ThreadTitle::Pending(task);
     }
 
     pub fn build_system_message(&self) -> LanguageModelRequestMessage {
@@ -1373,15 +1512,7 @@ impl Thread {
         );
         let mut messages = vec![self.build_system_message()];
         for message in &self.messages {
-            match message {
-                Message::User(message) => messages.push(message.to_request()),
-                Message::Agent(message) => messages.extend(message.to_request()),
-                Message::Resume => messages.push(LanguageModelRequestMessage {
-                    role: Role::User,
-                    content: vec!["Continue where you left off".into()],
-                    cache: false,
-                }),
-            }
+            messages.extend(message.to_request());
         }
 
         if let Some(message) = self.pending_message.as_ref() {
@@ -1924,7 +2055,7 @@ impl From<UserMessageContent> for acp::ContentBlock {
                 annotations: None,
                 uri: None,
             }),
-            UserMessageContent::Mention { uri, content } => {
+            UserMessageContent::Mention { .. } => {
                 todo!()
             }
         }

@@ -687,6 +687,7 @@ impl AcpThreadView {
             AcpThreadEvent::ServerExited(status) => {
                 self.thread_state = ThreadState::ServerExited { status: *status };
             }
+            AcpThreadEvent::TitleUpdated => {}
         }
         cx.notify();
     }

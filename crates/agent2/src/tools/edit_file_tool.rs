@@ -521,7 +521,6 @@ fn resolve_path(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{ContextServerRegistry, Templates, generate_session_id};
     use action_log::ActionLog;
     use client::TelemetrySettings;
     use fs::Fs;
@@ -529,7 +528,6 @@ mod tests {
     use language_model::fake_provider::FakeLanguageModel;
     use serde_json::json;
     use settings::SettingsStore;
-    use std::rc::Rc;
     use util::path;
 
     #[gpui::test]
@@ -541,21 +539,8 @@ mod tests {
         let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
         let language_registry = project.read_with(cx, |project, _cx| project.languages().clone());
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
-        let context_server_registry =
-            cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
         let model = Arc::new(FakeLanguageModel::default());
-        let thread = cx.new(|cx| {
-            Thread::new(
-                generate_session_id(),
-                project,
-                Rc::default(),
-                context_server_registry,
-                action_log,
-                Templates::new(),
-                model,
-                cx,
-            )
-        });
+        let thread = cx.new(|cx| Thread::test(model, project, action_log, cx));
         let result = cx
             .update(|cx| {
                 let input = EditFileToolInput {
@@ -743,21 +728,8 @@ mod tests {
         });
 
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
-        let context_server_registry =
-            cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
         let model = Arc::new(FakeLanguageModel::default());
-        let thread = cx.new(|cx| {
-            Thread::new(
-                generate_session_id(),
-                project,
-                Rc::default(),
-                context_server_registry,
-                action_log.clone(),
-                Templates::new(),
-                model.clone(),
-                cx,
-            )
-        });
+        let thread = cx.new(|cx| Thread::test(model.clone(), project, action_log.clone(), cx));
 
         // First, test with format_on_save enabled
         cx.update(|cx| {
@@ -885,22 +857,9 @@ mod tests {
 
         let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
         let language_registry = project.read_with(cx, |project, _cx| project.languages().clone());
-        let context_server_registry =
-            cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
         let model = Arc::new(FakeLanguageModel::default());
-        let thread = cx.new(|cx| {
-            Thread::new(
-                generate_session_id(),
-                project,
-                Rc::default(),
-                context_server_registry,
-                action_log.clone(),
-                Templates::new(),
-                model.clone(),
-                cx,
-            )
-        });
+        let thread = cx.new(|cx| Thread::test(model.clone(), project, action_log, cx));
 
         // First, test with remove_trailing_whitespace_on_save enabled
         cx.update(|cx| {
@@ -1015,22 +974,10 @@ mod tests {
         let fs = project::FakeFs::new(cx.executor());
         let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
         let language_registry = project.read_with(cx, |project, _cx| project.languages().clone());
-        let context_server_registry =
-            cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
         let model = Arc::new(FakeLanguageModel::default());
-        let thread = cx.new(|cx| {
-            Thread::new(
-                generate_session_id(),
-                project,
-                Rc::default(),
-                context_server_registry,
-                action_log.clone(),
-                Templates::new(),
-                model.clone(),
-                cx,
-            )
-        });
+        let thread = cx.new(|cx| Thread::test(model, project, action_log, cx));
+
         let tool = Arc::new(EditFileTool::new(thread.downgrade(), language_registry));
         fs.insert_tree("/root", json!({})).await;
 
@@ -1154,22 +1101,10 @@ mod tests {
         fs.insert_tree("/project", json!({})).await;
         let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
         let language_registry = project.read_with(cx, |project, _cx| project.languages().clone());
-        let context_server_registry =
-            cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
         let model = Arc::new(FakeLanguageModel::default());
-        let thread = cx.new(|cx| {
-            Thread::new(
-                generate_session_id(),
-                project,
-                Rc::default(),
-                context_server_registry,
-                action_log.clone(),
-                Templates::new(),
-                model.clone(),
-                cx,
-            )
-        });
+        let thread = cx.new(|cx| Thread::test(model, project, action_log, cx));
+
         let tool = Arc::new(EditFileTool::new(thread.downgrade(), language_registry));
 
         // Test global config paths - these should require confirmation if they exist and are outside the project
@@ -1266,21 +1201,9 @@ mod tests {
         .await;
         let language_registry = project.read_with(cx, |project, _cx| project.languages().clone());
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
-        let context_server_registry =
-            cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
         let model = Arc::new(FakeLanguageModel::default());
-        let thread = cx.new(|cx| {
-            Thread::new(
-                generate_session_id(),
-                project.clone(),
-                Rc::default(),
-                context_server_registry.clone(),
-                action_log.clone(),
-                Templates::new(),
-                model.clone(),
-                cx,
-            )
-        });
+        let thread = cx.new(|cx| Thread::test(model, project, action_log, cx));
+
         let tool = Arc::new(EditFileTool::new(thread.downgrade(), language_registry));
 
         // Test files in different worktrees
@@ -1349,21 +1272,9 @@ mod tests {
         let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
         let language_registry = project.read_with(cx, |project, _cx| project.languages().clone());
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
-        let context_server_registry =
-            cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
         let model = Arc::new(FakeLanguageModel::default());
-        let thread = cx.new(|cx| {
-            Thread::new(
-                generate_session_id(),
-                project.clone(),
-                Rc::default(),
-                context_server_registry.clone(),
-                action_log.clone(),
-                Templates::new(),
-                model.clone(),
-                cx,
-            )
-        });
+        let thread = cx.new(|cx| Thread::test(model, project, action_log, cx));
+
         let tool = Arc::new(EditFileTool::new(thread.downgrade(), language_registry));
 
         // Test edge cases
@@ -1435,21 +1346,9 @@ mod tests {
         let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
         let language_registry = project.read_with(cx, |project, _cx| project.languages().clone());
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
-        let context_server_registry =
-            cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
         let model = Arc::new(FakeLanguageModel::default());
-        let thread = cx.new(|cx| {
-            Thread::new(
-                generate_session_id(),
-                project.clone(),
-                Rc::default(),
-                context_server_registry.clone(),
-                action_log.clone(),
-                Templates::new(),
-                model.clone(),
-                cx,
-            )
-        });
+        let thread = cx.new(|cx| Thread::test(model, project, action_log, cx));
+
         let tool = Arc::new(EditFileTool::new(thread.downgrade(), language_registry));
 
         // Test different EditFileMode values
@@ -1518,21 +1417,9 @@ mod tests {
         let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
         let language_registry = project.read_with(cx, |project, _cx| project.languages().clone());
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
-        let context_server_registry =
-            cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
         let model = Arc::new(FakeLanguageModel::default());
-        let thread = cx.new(|cx| {
-            Thread::new(
-                generate_session_id(),
-                project.clone(),
-                Rc::default(),
-                context_server_registry,
-                action_log.clone(),
-                Templates::new(),
-                model.clone(),
-                cx,
-            )
-        });
+        let thread = cx.new(|cx| Thread::test(model, project, action_log, cx));
+
         let tool = Arc::new(EditFileTool::new(thread.downgrade(), language_registry));
 
         assert_eq!(

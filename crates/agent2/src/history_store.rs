@@ -1,12 +1,11 @@
 use acp_thread::{AcpThreadMetadata, AgentConnection, AgentServerName};
 use agent_client_protocol as acp;
-use anyhow::{Context as _, Result};
 use assistant_context::SavedContextMetadata;
 use chrono::{DateTime, Utc};
 use collections::HashMap;
 use gpui::{SharedString, Task, prelude::*};
 use serde::{Deserialize, Serialize};
-use smol::stream::StreamExt;
+
 use std::{path::Path, sync::Arc, time::Duration};
 
 const MAX_RECENTLY_OPENED_ENTRIES: usize = 6;

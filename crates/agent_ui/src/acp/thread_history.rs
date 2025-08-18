@@ -1,15 +1,12 @@
-use crate::{AgentPanel, RemoveSelectedThread};
+use crate::RemoveSelectedThread;
 use agent_servers::AgentServer;
-use agent2::{
-    NativeAgentServer,
-    history_store::{HistoryEntry, HistoryStore},
-};
+use agent2::{HistoryEntry, HistoryStore, NativeAgentServer};
 use chrono::{Datelike as _, Local, NaiveDate, TimeDelta};
 use editor::{Editor, EditorEvent};
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     App, Empty, Entity, EventEmitter, FocusHandle, Focusable, ScrollStrategy, Stateful, Task,
-    UniformListScrollHandle, WeakEntity, Window, uniform_list,
+    UniformListScrollHandle, Window, uniform_list,
 };
 use project::Project;
 use std::{fmt::Display, ops::Range, sync::Arc};
@@ -72,7 +69,7 @@ impl AcpThreadHistory {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let history_store = cx.new(|cx| agent2::history_store::HistoryStore::new(cx));
+        let history_store = cx.new(|cx| agent2::HistoryStore::new(cx));
 
         let agent = NativeAgentServer::new(project.read(cx).fs().clone());
 

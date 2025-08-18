@@ -255,6 +255,9 @@ impl NativeAgent {
                         this.sessions.remove(acp_thread.session_id());
                     }),
                     cx.observe(&thread, |this, thread, cx| {
+                        thread.update(cx, |thread, cx| {
+                            thread.generate_title_if_needed(cx);
+                        });
                         this.save_thread(thread.clone(), cx)
                     }),
                 ],
@@ -262,13 +265,14 @@ impl NativeAgent {
         );
     }
 
-    fn save_thread(&mut self, thread: Entity<Thread>, cx: &mut Context<Self>) {
-        let id = thread.read(cx).id().clone();
+    fn save_thread(&mut self, thread_handle: Entity<Thread>, cx: &mut Context<Self>) {
+        let thread = thread_handle.read(cx);
+        let id = thread.id().clone();
         let Some(session) = self.sessions.get_mut(&id) else {
             return;
         };
 
-        let thread = thread.downgrade();
+        let thread = thread_handle.downgrade();
         let thread_database = self.thread_database.clone();
         session.save_task = cx.spawn(async move |this, cx| {
             cx.background_executor().timer(SAVE_THREAD_DEBOUNCE).await;
@@ -507,7 +511,7 @@ impl NativeAgent {
 
     fn handle_models_updated_event(
         &mut self,
-        _registry: Entity<LanguageModelRegistry>,
+        registry: Entity<LanguageModelRegistry>,
         _event: &language_model::Event,
         cx: &mut Context<Self>,
     ) {
@@ -518,6 +522,11 @@ impl NativeAgent {
                 if let Some(model) = self.models.model_from_id(&model_id) {
                     thread.set_model(model.clone(), cx);
                 }
+                let summarization_model = registry
+                    .read(cx)
+                    .thread_summary_model()
+                    .map(|model| model.model.clone());
+                thread.set_summarization_model(summarization_model, cx);
             });
         }
     }
@@ -640,6 +649,10 @@ impl NativeAgentConnection {
                                 acp_thread.update(cx, |thread, cx| {
                                     thread.update_tool_call(update, cx)
                                 })??;
+                            }
+                            ThreadEvent::TitleUpdate(title) => {
+                                acp_thread
+                                    .update(cx, |thread, cx| thread.update_title(title, cx))??;
                             }
                             ThreadEvent::Stop(stop_reason) => {
                                 log::debug!("Assistant message complete: {:?}", stop_reason);
@@ -821,6 +834,8 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
                             )
                         })?;
 
+                    let summarization_model = registry.thread_summary_model().map(|c| c.model);
+
                     let thread = cx.new(|cx| {
                         let mut thread = Thread::new(
                             session_id.clone(),
@@ -830,6 +845,7 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
                             action_log.clone(),
                             agent.templates.clone(),
                             default_model,
+                            summarization_model,
                             cx,
                         );
                         Self::register_tools(&mut thread, project, action_log, cx);
@@ -894,7 +910,8 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
 
             // Create Thread
             let thread = agent.update(cx, |agent, cx| {
-                let configured_model = LanguageModelRegistry::global(cx)
+                let language_model_registry = LanguageModelRegistry::global(cx);
+                let configured_model = language_model_registry
                     .update(cx, |registry, cx| {
                         db_thread
                             .model
@@ -915,6 +932,11 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
                     .model_from_id(&LanguageModels::model_id(&configured_model.model))
                     .context("no model by id")?;
 
+                let summarization_model = language_model_registry
+                    .read(cx)
+                    .thread_summary_model()
+                    .map(|c| c.model);
+
                 let thread = cx.new(|cx| {
                     let mut thread = Thread::from_db(
                         session_id,
@@ -925,6 +947,7 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
                         action_log.clone(),
                         agent.templates.clone(),
                         model,
+                        summarization_model,
                         cx,
                     );
                     Self::register_tools(&mut thread, project, action_log, cx);
@@ -1047,12 +1070,13 @@ impl acp_thread::AgentSessionResume for NativeAgentSessionResume {
 
 #[cfg(test)]
 mod tests {
-    use crate::{HistoryEntry, HistoryStore};
+    use crate::HistoryStore;
 
     use super::*;
     use acp_thread::{AgentConnection, AgentModelGroupName, AgentModelId, AgentModelInfo};
     use fs::FakeFs;
     use gpui::TestAppContext;
+    use language_model::fake_provider::FakeLanguageModel;
     use serde_json::json;
     use settings::SettingsStore;
     use util::path;
@@ -1245,13 +1269,6 @@ mod tests {
         )
         .await
         .unwrap();
-        let model = cx.update(|cx| {
-            LanguageModelRegistry::global(cx)
-                .read(cx)
-                .default_model()
-                .unwrap()
-                .model
-        });
         let connection = NativeAgentConnection(agent.clone());
         let history_store = cx.new(|cx| {
             let mut store = HistoryStore::new(cx);
@@ -1268,6 +1285,16 @@ mod tests {
         let session_id = acp_thread.read_with(cx, |thread, _| thread.session_id().clone());
         let selector = connection.model_selector().unwrap();
 
+        let summarization_model: Arc<dyn LanguageModel> =
+            Arc::new(FakeLanguageModel::default()) as _;
+
+        agent.update(cx, |agent, cx| {
+            let thread = agent.sessions.get(&session_id).unwrap().thread.clone();
+            thread.update(cx, |thread, cx| {
+                thread.set_summarization_model(Some(summarization_model.clone()), cx);
+            })
+        });
+
         let model = cx
             .update(|cx| selector.selected_model(&session_id, cx))
             .await
@@ -1283,11 +1310,16 @@ mod tests {
         model.send_last_completion_stream_text_chunk("Hey");
         model.end_last_completion_stream();
         send.await.unwrap();
+
+        summarization_model
+            .as_fake()
+            .send_last_completion_stream_text_chunk("Saying Hello");
+        summarization_model.as_fake().end_last_completion_stream();
         cx.executor().advance_clock(SAVE_THREAD_DEBOUNCE);
 
         let history = history_store.update(cx, |store, cx| store.entries(cx));
         assert_eq!(history.len(), 1);
-        assert_eq!(history[0].title(), "Hi");
+        assert_eq!(history[0].title(), "Saying Hello");
     }
 
     fn init_test(cx: &mut TestAppContext) {
