@@ -7,7 +7,7 @@ use gpui::{
     InteractiveElement, IntoElement, Modifiers, ModifiersChangedEvent, ParentElement, Render,
     SharedString, Styled, Subscription, Task, Window, actions, px, rems,
 };
-use picker::{Picker, PickerDelegate, PickerEditorPosition};
+use picker::{Picker, PickerDelegate};
 use project::git_store::{Repository, RepositoryEvent};
 use std::sync::Arc;
 use time::{OffsetDateTime, UtcOffset};
@@ -38,28 +38,9 @@ pub fn open(
     cx: &mut Context<Workspace>,
 ) {
     let repository = workspace.project().read(cx).active_repository(cx).clone();
-    let style = StashListStyle::Modal;
     workspace.toggle_modal(window, cx, |window, cx| {
-        StashList::new(repository, style, rems(34.), window, cx)
+        StashList::new(repository, rems(34.), window, cx)
     })
-}
-
-pub fn popover(
-    repository: Option<Entity<Repository>>,
-    window: &mut Window,
-    cx: &mut App,
-) -> Entity<StashList> {
-    cx.new(|cx| {
-        let list = StashList::new(repository, StashListStyle::Popover, rems(20.), window, cx);
-        list.focus_handle(cx).focus(window);
-        list
-    })
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-enum StashListStyle {
-    Modal,
-    Popover,
 }
 
 pub struct StashList {
@@ -72,7 +53,6 @@ pub struct StashList {
 impl StashList {
     fn new(
         repository: Option<Entity<Repository>>,
-        style: StashListStyle,
         width: Rems,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -80,21 +60,18 @@ impl StashList {
         let mut _subscriptions = Vec::new();
         let stash_request = repository
             .clone()
-            .map(|repository| repository.read_with(cx, |repo, _| repo.stash_entries.clone()));
+            .map(|repository| repository.read_with(cx, |repo, _| repo.cached_stash()));
 
         if let Some(repo) = repository.clone() {
             _subscriptions.push(
                 cx.subscribe_in(&repo, window, |this, _, event, window, cx| {
                     if matches!(event, RepositoryEvent::Updated { .. }) {
                         let stash_entries = this.picker.read_with(cx, |picker, cx| {
-                            picker.delegate.repo.clone().map(|repo| {
-                                repo.read(cx)
-                                    .snapshot()
-                                    .stash_entries
-                                    .entries
-                                    .to_vec()
-                                    .clone()
-                            })
+                            picker
+                                .delegate
+                                .repo
+                                .clone()
+                                .map(|repo| repo.read(cx).cached_stash().entries.to_vec())
                         });
                         this.picker.update(cx, |this, cx| {
                             this.delegate.all_stash_entries = stash_entries;
@@ -121,7 +98,7 @@ impl StashList {
         })
         .detach_and_log_err(cx);
 
-        let delegate = StashListDelegate::new(repository.clone(), style, width, window, cx);
+        let delegate = StashListDelegate::new(repository.clone(), width, window, cx);
         let picker = cx.new(|cx| Picker::uniform_list(delegate, window, cx));
         let picker_focus_handle = picker.focus_handle(cx);
         picker.update(cx, |picker, _| {
@@ -195,7 +172,6 @@ pub struct StashListDelegate {
     matches: Vec<StashEntryMatch>,
     all_stash_entries: Option<Vec<StashEntry>>,
     repo: Option<Entity<Repository>>,
-    style: StashListStyle,
     selected_index: usize,
     last_query: String,
     modifiers: Modifiers,
@@ -207,7 +183,6 @@ pub struct StashListDelegate {
 impl StashListDelegate {
     fn new(
         repo: Option<Entity<Repository>>,
-        style: StashListStyle,
         max_width: Rems,
         _window: &mut Window,
         cx: &mut Context<StashList>,
@@ -219,7 +194,6 @@ impl StashListDelegate {
         Self {
             matches: vec![],
             repo,
-            style,
             all_stash_entries: None,
             selected_index: 0,
             last_query: Default::default(),
@@ -286,13 +260,6 @@ impl PickerDelegate for StashListDelegate {
 
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
         "Select a stash…".into()
-    }
-
-    fn editor_position(&self) -> PickerEditorPosition {
-        match self.style {
-            StashListStyle::Modal => PickerEditorPosition::Start,
-            StashListStyle::Popover => PickerEditorPosition::End,
-        }
     }
 
     fn match_count(&self) -> usize {
