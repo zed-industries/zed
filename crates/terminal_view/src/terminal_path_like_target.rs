@@ -790,7 +790,6 @@ mod tests {
                 vec![path!("/test")],
                 {
                     test!("file.txt", "/file.txt", "/");
-                    test!("file.txt", "/fiile.txt", "/");
                 }
             )
         }
