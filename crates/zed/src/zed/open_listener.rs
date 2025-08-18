@@ -178,10 +178,10 @@ pub fn listen_for_cli_connections(opener: OpenListener) -> Result<()> {
 
     let sock_path = paths::data_dir().join(format!("zed-{}.sock", *RELEASE_CHANNEL_NAME));
     // remove the socket if the process listening on it has died
-    if let Err(e) = UnixDatagram::unbound()?.connect(&sock_path) {
-        if e.kind() == std::io::ErrorKind::ConnectionRefused {
-            std::fs::remove_file(&sock_path)?;
-        }
+    if let Err(e) = UnixDatagram::unbound()?.connect(&sock_path)
+        && e.kind() == std::io::ErrorKind::ConnectionRefused
+    {
+        std::fs::remove_file(&sock_path)?;
     }
     let listener = UnixDatagram::bind(&sock_path)?;
     thread::spawn(move || {
