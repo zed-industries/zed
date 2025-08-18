@@ -644,7 +644,6 @@ impl Thread {
         cx: &mut Context<Self>,
     ) -> Result<mpsc::UnboundedReceiver<Result<AgentResponseEvent>>> {
         self.cancel();
-        dbg!("`12313");
 
         let model = self
             .model()
@@ -748,7 +747,6 @@ impl Thread {
         tool_use_limit_reached: &mut bool,
         cx: &mut AsyncApp,
     ) -> Result<FuturesUnordered<Task<LanguageModelToolResult>>> {
-        dbg!("123123");
         let mut events = model.stream_completion(request, cx).await?;
         log::debug!("Stream completion started successfully");
 
@@ -756,7 +754,7 @@ impl Thread {
         'retry: loop {
             let mut tool_uses = FuturesUnordered::new();
             while let Some(event) = events.next().await {
-                match dbg!(event) {
+                match event {
                     Ok(LanguageModelCompletionEvent::StatusUpdate(
                         CompletionRequestStatus::ToolUseLimitReached,
                     )) => {
@@ -796,8 +794,6 @@ impl Thread {
                         let attempt = attempt.get_or_insert(0u8);
 
                         *attempt += 1;
-
-                        dbg!(&attempt);
 
                         let attempt = *attempt;
                         if attempt > max_attempts {
