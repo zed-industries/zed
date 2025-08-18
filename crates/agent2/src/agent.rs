@@ -574,7 +574,7 @@ impl NativeAgentConnection {
         thread.add_tool(CreateDirectoryTool::new(project.clone()));
         thread.add_tool(DeletePathTool::new(project.clone(), action_log.clone()));
         thread.add_tool(DiagnosticsTool::new(project.clone()));
-        thread.add_tool(EditFileTool::new(cx.entity()));
+        thread.add_tool(EditFileTool::new(cx.weak_entity()));
         thread.add_tool(FetchTool::new(project.read(cx).client().http_client()));
         thread.add_tool(FindPathTool::new(project.clone()));
         thread.add_tool(GrepTool::new(project.clone()));
@@ -801,7 +801,7 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
     fn load_thread(
         self: Rc<Self>,
         project: Entity<Project>,
-        cwd: &Path,
+        _cwd: &Path,
         session_id: acp::SessionId,
         cx: &mut App,
     ) -> Task<Result<Entity<acp_thread::AcpThread>>> {
@@ -828,46 +828,43 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
             let agent = self.0.clone();
 
             // Create Thread
-            let thread = agent.update(
-                cx,
-                |agent, cx: &mut gpui::Context<NativeAgent>| -> Result<_> {
-                    let configured_model = LanguageModelRegistry::global(cx)
-                        .update(cx, |registry, cx| {
-                            db_thread
-                                .model
-                                .and_then(|model| {
-                                    let model = SelectedModel {
-                                        provider: model.provider.clone().into(),
-                                        model: model.model.clone().into(),
-                                    };
-                                    registry.select_model(&model, cx)
-                                })
-                                .or_else(|| registry.default_model())
-                        })
-                        .context("no default model configured")?;
+            let thread = agent.update(cx, |agent, cx| {
+                let configured_model = LanguageModelRegistry::global(cx)
+                    .update(cx, |registry, cx| {
+                        db_thread
+                            .model
+                            .and_then(|model| {
+                                let model = SelectedModel {
+                                    provider: model.provider.clone().into(),
+                                    model: model.model.clone().into(),
+                                };
+                                registry.select_model(&model, cx)
+                            })
+                            .or_else(|| registry.default_model())
+                    })
+                    .context("no default model configured")?;
 
-                    let model = agent
-                        .models
-                        .model_from_id(&LanguageModels::model_id(&configured_model.model))
-                        .context("no model by id")?;
+                let model = agent
+                    .models
+                    .model_from_id(&LanguageModels::model_id(&configured_model.model))
+                    .context("no model by id")?;
 
-                    let thread = cx.new(|cx| {
-                        let mut thread = Thread::new(
-                            project.clone(),
-                            agent.project_context.clone(),
-                            agent.context_server_registry.clone(),
-                            action_log.clone(),
-                            agent.templates.clone(),
-                            model,
-                            cx,
-                        );
-                        Self::register_tools(&mut thread, project, action_log, cx);
-                        thread
-                    });
+                let thread = cx.new(|cx| {
+                    let mut thread = Thread::new(
+                        project.clone(),
+                        agent.project_context.clone(),
+                        agent.context_server_registry.clone(),
+                        action_log.clone(),
+                        agent.templates.clone(),
+                        model,
+                        cx,
+                    );
+                    Self::register_tools(&mut thread, project, action_log, cx);
+                    thread
+                });
 
-                    Ok(thread)
-                },
-            )??;
+                anyhow::Ok(thread)
+            })??;
 
             // Store the session
             agent.update(cx, |agent, cx| {
@@ -884,7 +881,7 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
             })?;
 
             // we need to actually deserialize the DbThread.
-            todo!()
+            // todo!()
 
             Ok(acp_thread)
         })

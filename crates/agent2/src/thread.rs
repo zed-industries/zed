@@ -441,7 +441,7 @@ impl Thread {
         cx: &mut Context<Self>,
     ) -> Self {
         let profile_id = AgentSettings::get_global(cx).default_profile.clone();
-        let this = Self {
+        Self {
             messages: Vec::new(),
             completion_mode: CompletionMode::Normal,
             running_turn: None,
@@ -455,7 +455,7 @@ impl Thread {
             model,
             project,
             action_log,
-        };
+        }
     }
 
     pub fn project(&self) -> &Entity<Project> {
