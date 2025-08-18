@@ -624,7 +624,7 @@ impl AgentModelSelector for NativeAgentConnection {
         else {
             return Task::ready(Err(anyhow!("Session not found")));
         };
-        let Some(model) = thread.read(cx).model().clone() else {
+        let Some(model) = thread.read(cx).model() else {
             return Task::ready(Err(anyhow!("Model not found")));
         };
         let Some(provider) = LanguageModelRegistry::read_global(cx).provider(&model.provider_id())
@@ -632,7 +632,7 @@ impl AgentModelSelector for NativeAgentConnection {
             return Task::ready(Err(anyhow!("Provider not found")));
         };
         Task::ready(Ok(LanguageModels::map_language_model_to_info(
-            &model, &provider,
+            model, &provider,
         )))
     }
 
