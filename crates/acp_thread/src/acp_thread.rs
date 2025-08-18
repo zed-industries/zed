@@ -539,9 +539,15 @@ impl ToolCallContent {
             acp::ToolCallContent::Content { content } => {
                 Self::ContentBlock(ContentBlock::new(content, &language_registry, cx))
             }
-            acp::ToolCallContent::Diff { diff } => {
-                Self::Diff(cx.new(|cx| Diff::from_acp(diff, language_registry, cx)))
-            }
+            acp::ToolCallContent::Diff { diff } => Self::Diff(cx.new(|cx| {
+                Diff::finalized(
+                    diff.path,
+                    diff.old_text,
+                    diff.new_text,
+                    language_registry,
+                    cx,
+                )
+            })),
         }
     }
 

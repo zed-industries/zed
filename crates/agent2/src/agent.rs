@@ -587,11 +587,12 @@ impl NativeAgentConnection {
         action_log: Entity<action_log::ActionLog>,
         cx: &mut Context<Thread>,
     ) {
+        let language_registry = project.read(cx).languages().clone();
         thread.add_tool(CopyPathTool::new(project.clone()));
         thread.add_tool(CreateDirectoryTool::new(project.clone()));
         thread.add_tool(DeletePathTool::new(project.clone(), action_log.clone()));
         thread.add_tool(DiagnosticsTool::new(project.clone()));
-        thread.add_tool(EditFileTool::new(cx.weak_entity()));
+        thread.add_tool(EditFileTool::new(cx.weak_entity(), language_registry));
         thread.add_tool(FetchTool::new(project.read(cx).client().http_client()));
         thread.add_tool(FindPathTool::new(project.clone()));
         thread.add_tool(GrepTool::new(project.clone()));
