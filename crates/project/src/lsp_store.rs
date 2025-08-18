@@ -11825,7 +11825,8 @@ impl LspStore {
                         .transpose()?
                     {
                         server.update_capabilities(|capabilities| {
-                            let mut sync_options = Self::take_text_document_sync_options(capabilities);
+                            let mut sync_options =
+                                Self::take_text_document_sync_options(capabilities);
                             sync_options.change = Some(sync_kind);
                             capabilities.text_document_sync =
                                 Some(lsp::TextDocumentSyncCapability::Options(sync_options));
@@ -11834,20 +11835,16 @@ impl LspStore {
                     }
                 }
                 "textDocument/didSave" => {
-                    if let Some(include_text) = reg
+                    if let Some(save_options) = reg
                         .register_options
                         .and_then(|opts| opts.get("includeText").cloned())
-                        .map(serde_json::from_value::<bool>)
+                        .map(serde_json::from_value::<lsp::TextDocumentSyncSaveOptions>)
                         .transpose()?
                     {
                         server.update_capabilities(|capabilities| {
-                            let mut sync_options = Self::take_text_document_sync_options(capabilities);
-                            sync_options.save =
-                                Some(lsp::TextDocumentSyncSaveOptions::SaveOptions(
-                                    lsp::SaveOptions {
-                                        include_text: Some(include_text),
-                                    },
-                                ));
+                            let mut sync_options =
+                                Self::take_text_document_sync_options(capabilities);
+                            sync_options.save = Some(save_options);
                             capabilities.text_document_sync =
                                 Some(lsp::TextDocumentSyncCapability::Options(sync_options));
                         });
@@ -12046,11 +12043,11 @@ impl LspStore {
         capabilities: &mut lsp::ServerCapabilities,
     ) -> lsp::TextDocumentSyncOptions {
         match capabilities.text_document_sync.take() {
-            Some(lsp::TextDocumentSyncCapability::Options(opts)) => opts,
-            Some(lsp::TextDocumentSyncCapability::Kind(kind)) => {
-                let mut opts = lsp::TextDocumentSyncOptions::default();
-                opts.change = Some(kind);
-                opts
+            Some(lsp::TextDocumentSyncCapability::Options(sync_options)) => sync_options,
+            Some(lsp::TextDocumentSyncCapability::Kind(sync_kind)) => {
+                let mut sync_options = lsp::TextDocumentSyncOptions::default();
+                sync_options.change = Some(sync_kind);
+                sync_options
             }
             None => lsp::TextDocumentSyncOptions::default(),
         }
