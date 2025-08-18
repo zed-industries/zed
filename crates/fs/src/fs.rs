@@ -420,18 +420,19 @@ impl Fs for RealFs {
 
     async fn remove_file(&self, path: &Path, options: RemoveOptions) -> Result<()> {
         #[cfg(windows)]
-        if let Ok(Some(metadata)) = self.metadata(path).await {
-            if metadata.is_symlink && metadata.is_dir {
-                self.remove_dir(
-                    path,
-                    RemoveOptions {
-                        recursive: false,
-                        ignore_if_not_exists: true,
-                    },
-                )
-                .await?;
-                return Ok(());
-            }
+        if let Ok(Some(metadata)) = self.metadata(path).await
+            && metadata.is_symlink
+            && metadata.is_dir
+        {
+            self.remove_dir(
+                path,
+                RemoveOptions {
+                    recursive: false,
+                    ignore_if_not_exists: true,
+                },
+            )
+            .await?;
+            return Ok(());
         }
 
         match smol::fs::remove_file(path).await {
@@ -766,24 +767,23 @@ impl Fs for RealFs {
         let pending_paths: Arc<Mutex<Vec<PathEvent>>> = Default::default();
         let watcher = Arc::new(fs_watcher::FsWatcher::new(tx, pending_paths.clone()));
 
-        if watcher.add(path).is_err() {
-            // If the path doesn't exist yet (e.g. settings.json), watch the parent dir to learn when it's created.
-            if let Some(parent) = path.parent() {
-                if let Err(e) = watcher.add(parent) {
-                    log::warn!("Failed to watch: {e}");
-                }
-            }
+        // If the path doesn't exist yet (e.g. settings.json), watch the parent dir to learn when it's created.
+        if watcher.add(path).is_err()
+            && let Some(parent) = path.parent()
+            && let Err(e) = watcher.add(parent)
+        {
+            log::warn!("Failed to watch: {e}");
         }
 
         // Check if path is a symlink and follow the target parent
         if let Some(mut target) = self.read_link(path).await.ok() {
             // Check if symlink target is relative path, if so make it absolute
-            if target.is_relative() {
-                if let Some(parent) = path.parent() {
-                    target = parent.join(target);
-                    if let Ok(canonical) = self.canonicalize(&target).await {
-                        target = SanitizedPath::from(canonical).as_path().to_path_buf();
-                    }
+            if target.is_relative()
+                && let Some(parent) = path.parent()
+            {
+                target = parent.join(target);
+                if let Ok(canonical) = self.canonicalize(&target).await {
+                    target = SanitizedPath::from(canonical).as_path().to_path_buf();
                 }
             }
             watcher.add(&target).ok();
