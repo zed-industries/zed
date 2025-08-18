@@ -445,19 +445,20 @@ impl ContextPickerCompletionProvider {
 
         let abs_path = project.read(cx).absolute_path(&project_path, cx)?;
 
-        let file_uri = MentionUri::File {
-            abs_path,
-            is_directory,
+        let uri = if is_directory {
+            MentionUri::Directory { abs_path }
+        } else {
+            MentionUri::File { abs_path }
         };
 
-        let crease_icon_path = file_uri.icon_path(cx);
+        let crease_icon_path = uri.icon_path(cx);
         let completion_icon_path = if is_recent {
             IconName::HistoryRerun.path().into()
         } else {
             crease_icon_path.clone()
         };
 
-        let new_text = format!("{} ", file_uri.as_link());
+        let new_text = format!("{} ", uri.as_link());
         let new_text_len = new_text.len();
         Some(Completion {
             replace_range: source_range.clone(),
@@ -472,7 +473,7 @@ impl ContextPickerCompletionProvider {
                 source_range.start,
                 new_text_len - 1,
                 message_editor,
-                file_uri,
+                uri,
             )),
         })
     }

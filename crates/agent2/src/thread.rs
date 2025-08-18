@@ -168,7 +168,7 @@ impl UserMessage {
                 }
                 UserMessageContent::Mention { uri, content } => {
                     match uri {
-                        MentionUri::File { abs_path, .. } => {
+                        MentionUri::File { abs_path } => {
                             write!(
                                 &mut symbol_context,
                                 "\n{}",
@@ -178,6 +178,9 @@ impl UserMessage {
                                 }
                             )
                             .ok();
+                        }
+                        MentionUri::Directory { abs_path } => {
+                            todo!()
                         }
                         MentionUri::Symbol {
                             path, line_range, ..

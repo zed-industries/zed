@@ -194,18 +194,11 @@ impl MessageEditor {
             MentionUri::Fetch { url } => {
                 self.confirm_mention_for_fetch(crease_id, anchor, url, window, cx);
             }
-            MentionUri::File {
-                abs_path,
-                is_directory,
-            } => {
-                self.confirm_mention_for_file(
-                    crease_id,
-                    anchor,
-                    abs_path,
-                    is_directory,
-                    window,
-                    cx,
-                );
+            MentionUri::File { abs_path } => {
+                self.confirm_mention_for_file(crease_id, anchor, abs_path, window, cx);
+            }
+            MentionUri::Directory { abs_path } => {
+                self.confirm_mention_for_directory(crease_id, anchor, abs_path, window, cx);
             }
             MentionUri::Thread { id, name } => {
                 self.confirm_mention_for_thread(crease_id, anchor, id, name, window, cx);
@@ -224,7 +217,6 @@ impl MessageEditor {
         crease_id: CreaseId,
         anchor: Anchor,
         abs_path: PathBuf,
-        is_directory: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -249,14 +241,20 @@ impl MessageEditor {
             });
             self.confirm_mention_for_image(crease_id, anchor, Some(abs_path), image, window, cx);
         } else {
-            self.mention_set.insert_uri(
-                crease_id,
-                MentionUri::File {
-                    abs_path,
-                    is_directory,
-                },
-            );
+            self.mention_set
+                .insert_uri(crease_id, MentionUri::File { abs_path });
         }
+    }
+
+    fn confirm_mention_for_directory(
+        &self,
+        crease_id: CreaseId,
+        anchor: Anchor,
+        abs_path: PathBuf,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        todo!()
     }
 
     fn confirm_mention_for_fetch(
@@ -617,13 +615,8 @@ impl MessageEditor {
             if task.await.notify_async_err(cx).is_some() {
                 if let Some(abs_path) = abs_path.clone() {
                     this.update(cx, |this, _cx| {
-                        this.mention_set.insert_uri(
-                            crease_id,
-                            MentionUri::File {
-                                abs_path,
-                                is_directory: false,
-                            },
-                        );
+                        this.mention_set
+                            .insert_uri(crease_id, MentionUri::File { abs_path });
                     })
                     .ok();
                 }
@@ -821,6 +814,7 @@ impl MessageEditor {
                     self.mention_set
                         .add_fetch_result(url, Task::ready(Ok(text)).shared());
                 }
+                MentionUri::Directory { abs_path } => todo!(),
                 MentionUri::File { .. }
                 | MentionUri::Symbol { .. }
                 | MentionUri::Rule { .. }
@@ -1081,7 +1075,6 @@ impl MentionSet {
             .map(|(&crease_id, uri)| {
                 match uri {
                     MentionUri::File { abs_path, .. } => {
-                        // TODO directories
                         let uri = uri.clone();
                         let abs_path = abs_path.to_path_buf();
 
@@ -1105,6 +1098,9 @@ impl MentionSet {
 
                             anyhow::Ok((crease_id, Mention::Text { uri, content }))
                         })
+                    }
+                    MentionUri::Directory { abs_path } => {
+                        todo!()
                     }
                     MentionUri::Symbol {
                         path, line_range, ..
