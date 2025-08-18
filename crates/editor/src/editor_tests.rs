@@ -8015,7 +8015,7 @@ async fn test_select_larger_smaller_syntax_node_for_string(cx: &mut TestAppConte
 }
 
 #[gpui::test]
-async fn test_unwrap_syntax_node(cx: &mut gpui::TestAppContext) {
+async fn test_unwrap_syntax_nodes(cx: &mut gpui::TestAppContext) {
     init_test(cx, |_| {});
 
     let mut cx = EditorTestContext::new(cx).await;
@@ -8029,21 +8029,12 @@ async fn test_unwrap_syntax_node(cx: &mut gpui::TestAppContext) {
         buffer.set_language(Some(language), cx);
     });
 
-    cx.set_state(
-        &r#"
-            use mod1::mod2::{«mod3ˇ», mod4};
-        "#
-        .unindent(),
-    );
+    cx.set_state(indoc! { r#"use mod1::{mod2::{«mod3ˇ», mod4}, mod5::{mod6, «mod7ˇ»}};"# });
     cx.update_editor(|editor, window, cx| {
         editor.unwrap_syntax_node(&UnwrapSyntaxNode, window, cx);
     });
-    cx.assert_editor_state(
-        &r#"
-            use mod1::mod2::«mod3ˇ»;
-        "#
-        .unindent(),
-    );
+
+    cx.assert_editor_state(indoc! { r#"use mod1::{mod2::«mod3ˇ», mod5::«mod7ˇ»};"# });
 }
 
 #[gpui::test]
