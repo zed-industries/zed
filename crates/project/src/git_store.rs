@@ -414,6 +414,7 @@ impl GitStore {
     pub fn init(client: &AnyProtoClient) {
         client.add_entity_request_handler(Self::handle_get_remotes);
         client.add_entity_request_handler(Self::handle_get_branches);
+        client.add_entity_request_handler(Self::handle_get_default_branch);
         client.add_entity_request_handler(Self::handle_change_branch);
         client.add_entity_request_handler(Self::handle_create_branch);
         client.add_entity_request_handler(Self::handle_git_init);
@@ -1894,6 +1895,23 @@ impl GitStore {
                 .collect::<Vec<_>>(),
         })
     }
+    async fn handle_get_default_branch(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::GetDefaultBranch>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::GetDefaultBranchResponse> {
+        let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
+        let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
+
+        let branch = repository_handle
+            .update(&mut cx, |repository_handle, _| {
+                repository_handle.default_branch()
+            })?
+            .await??
+            .map(Into::into);
+
+        Ok(proto::GetDefaultBranchResponse { branch })
+    }
     async fn handle_create_branch(
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::GitCreateBranch>,
@@ -2331,7 +2349,7 @@ impl GitStore {
                         return None;
                     };
 
-                    let mut paths = vec![];
+                    let mut paths = Vec::new();
                     // All paths prefixed by a given repo will constitute a continuous range.
                     while let Some(path) = entries.get(ix)
                         && let Some(repo_path) =
@@ -2340,7 +2358,11 @@ impl GitStore {
                         paths.push((repo_path, ix));
                         ix += 1;
                     }
-                    Some((repo, paths))
+                    if paths.is_empty() {
+                        None
+                    } else {
+                        Some((repo, paths))
+                    }
                 });
                 tasks.push_back(task);
             }
@@ -4320,7 +4342,8 @@ impl Repository {
                     bail!("not a local repository")
                 };
                 let (snapshot, events) = this
-                    .read_with(&mut cx, |this, _| {
+                    .update(&mut cx, |this, _| {
+                        this.paths_needing_status_update.clear();
                         compute_snapshot(
                             this.id,
                             this.work_directory_abs_path.clone(),
@@ -4550,6 +4573,9 @@ impl Repository {
                 };
 
                 let paths = changed_paths.iter().cloned().collect::<Vec<_>>();
+                if paths.is_empty() {
+                    return Ok(());
+                }
                 let statuses = backend.status(&paths).await?;
 
                 let changed_path_statuses = cx

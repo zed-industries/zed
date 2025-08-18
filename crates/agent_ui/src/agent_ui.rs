@@ -5,7 +5,6 @@ mod agent_diff;
 mod agent_model_selector;
 mod agent_panel;
 mod buffer_codegen;
-mod burn_mode_tooltip;
 mod context_picker;
 mod context_server_configuration;
 mod context_strip;
@@ -147,7 +146,7 @@ pub struct NewExternalAgentThread {
     agent: Option<ExternalAgent>,
 }
 
-#[derive(Default, Clone, Copy, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Default, Debug, Clone, Copy, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 enum ExternalAgent {
     #[default]
@@ -243,7 +242,6 @@ pub fn init(
         client.telemetry().clone(),
         cx,
     );
-    indexed_docs::init(cx);
     cx.observe_new(move |workspace, window, cx| {
         ConfigureContextServerModal::register(workspace, language_registry.clone(), window, cx)
     })
@@ -409,12 +407,6 @@ fn register_slash_commands(cx: &mut App) {
 fn update_slash_commands_from_settings(cx: &mut App) {
     let slash_command_registry = SlashCommandRegistry::global(cx);
     let settings = SlashCommandSettings::get_global(cx);
-
-    if settings.docs.enabled {
-        slash_command_registry.register_command(assistant_slash_commands::DocsSlashCommand, true);
-    } else {
-        slash_command_registry.unregister_command(assistant_slash_commands::DocsSlashCommand);
-    }
 
     if settings.cargo_workspace.enabled {
         slash_command_registry

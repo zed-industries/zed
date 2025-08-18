@@ -237,11 +237,17 @@ impl AgentTool for EditFileTool {
             });
         }
 
-        let request = self.thread.update(cx, |thread, cx| {
-            thread.build_completion_request(CompletionIntent::ToolResults, cx)
-        });
+        let Some(request) = self.thread.update(cx, |thread, cx| {
+            thread
+                .build_completion_request(CompletionIntent::ToolResults, cx)
+                .ok()
+        }) else {
+            return Task::ready(Err(anyhow!("Failed to build completion request")));
+        };
         let thread = self.thread.read(cx);
-        let model = thread.selected_model.clone();
+        let Some(model) = thread.model().cloned() else {
+            return Task::ready(Err(anyhow!("No language model configured")));
+        };
         let action_log = thread.action_log().clone();
 
         let authorize = self.authorize(&input, &event_stream, cx);
@@ -520,7 +526,7 @@ mod tests {
                 context_server_registry,
                 action_log,
                 Templates::new(),
-                model,
+                Some(model),
                 cx,
             )
         });
@@ -717,7 +723,7 @@ mod tests {
                 context_server_registry,
                 action_log.clone(),
                 Templates::new(),
-                model.clone(),
+                Some(model.clone()),
                 cx,
             )
         });
@@ -853,7 +859,7 @@ mod tests {
                 context_server_registry,
                 action_log.clone(),
                 Templates::new(),
-                model.clone(),
+                Some(model.clone()),
                 cx,
             )
         });
@@ -979,7 +985,7 @@ mod tests {
                 context_server_registry,
                 action_log.clone(),
                 Templates::new(),
-                model.clone(),
+                Some(model.clone()),
                 cx,
             )
         });
@@ -1001,7 +1007,10 @@ mod tests {
         });
 
         let event = stream_rx.expect_authorization().await;
-        assert_eq!(event.tool_call.title, "test 1 (local settings)");
+        assert_eq!(
+            event.tool_call.fields.title,
+            Some("test 1 (local settings)".into())
+        );
 
         // Test 2: Path outside project should require confirmation
         let (stream_tx, mut stream_rx) = ToolCallEventStream::test();
@@ -1018,7 +1027,7 @@ mod tests {
         });
 
         let event = stream_rx.expect_authorization().await;
-        assert_eq!(event.tool_call.title, "test 2");
+        assert_eq!(event.tool_call.fields.title, Some("test 2".into()));
 
         // Test 3: Relative path without .zed should not require confirmation
         let (stream_tx, mut stream_rx) = ToolCallEventStream::test();
@@ -1051,7 +1060,10 @@ mod tests {
             )
         });
         let event = stream_rx.expect_authorization().await;
-        assert_eq!(event.tool_call.title, "test 4 (local settings)");
+        assert_eq!(
+            event.tool_call.fields.title,
+            Some("test 4 (local settings)".into())
+        );
 
         // Test 5: When always_allow_tool_actions is enabled, no confirmation needed
         cx.update(|cx| {
@@ -1110,7 +1122,7 @@ mod tests {
                 context_server_registry,
                 action_log.clone(),
                 Templates::new(),
-                model.clone(),
+                Some(model.clone()),
                 cx,
             )
         });
@@ -1220,7 +1232,7 @@ mod tests {
                 context_server_registry.clone(),
                 action_log.clone(),
                 Templates::new(),
-                model.clone(),
+                Some(model.clone()),
                 cx,
             )
         });
@@ -1301,7 +1313,7 @@ mod tests {
                 context_server_registry.clone(),
                 action_log.clone(),
                 Templates::new(),
-                model.clone(),
+                Some(model.clone()),
                 cx,
             )
         });
@@ -1385,7 +1397,7 @@ mod tests {
                 context_server_registry.clone(),
                 action_log.clone(),
                 Templates::new(),
-                model.clone(),
+                Some(model.clone()),
                 cx,
             )
         });
@@ -1466,7 +1478,7 @@ mod tests {
                 context_server_registry,
                 action_log.clone(),
                 Templates::new(),
-                model.clone(),
+                Some(model.clone()),
                 cx,
             )
         });

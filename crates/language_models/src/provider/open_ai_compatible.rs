@@ -38,6 +38,27 @@ pub struct AvailableModel {
     pub max_tokens: u64,
     pub max_output_tokens: Option<u64>,
     pub max_completion_tokens: Option<u64>,
+    #[serde(default)]
+    pub capabilities: ModelCapabilities,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct ModelCapabilities {
+    pub tools: bool,
+    pub images: bool,
+    pub parallel_tool_calls: bool,
+    pub prompt_cache_key: bool,
+}
+
+impl Default for ModelCapabilities {
+    fn default() -> Self {
+        Self {
+            tools: true,
+            images: false,
+            parallel_tool_calls: false,
+            prompt_cache_key: false,
+        }
+    }
 }
 
 pub struct OpenAiCompatibleLanguageModelProvider {
@@ -293,17 +314,17 @@ impl LanguageModel for OpenAiCompatibleLanguageModel {
     }
 
     fn supports_tools(&self) -> bool {
-        true
+        self.model.capabilities.tools
     }
 
     fn supports_images(&self) -> bool {
-        false
+        self.model.capabilities.images
     }
 
     fn supports_tool_choice(&self, choice: LanguageModelToolChoice) -> bool {
         match choice {
-            LanguageModelToolChoice::Auto => true,
-            LanguageModelToolChoice::Any => true,
+            LanguageModelToolChoice::Auto => self.model.capabilities.tools,
+            LanguageModelToolChoice::Any => self.model.capabilities.tools,
             LanguageModelToolChoice::None => true,
         }
     }
@@ -358,7 +379,8 @@ impl LanguageModel for OpenAiCompatibleLanguageModel {
         let request = into_open_ai(
             request,
             &self.model.name,
-            true,
+            self.model.capabilities.parallel_tool_calls,
+            self.model.capabilities.prompt_cache_key,
             self.max_output_tokens(),
             None,
         );

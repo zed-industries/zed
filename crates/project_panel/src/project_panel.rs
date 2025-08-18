@@ -57,9 +57,9 @@ use std::{
 };
 use theme::ThemeSettings;
 use ui::{
-    Color, ContextMenu, DecoratedIcon, Icon, IconDecoration, IconDecorationKind, IndentGuideColors,
-    IndentGuideLayout, KeyBinding, Label, LabelSize, ListItem, ListItemSpacing, ScrollableHandle,
-    Scrollbar, ScrollbarState, StickyCandidate, Tooltip, prelude::*, v_flex,
+    Color, ContextMenu, DecoratedIcon, Divider, Icon, IconDecoration, IconDecorationKind,
+    IndentGuideColors, IndentGuideLayout, KeyBinding, Label, LabelSize, ListItem, ListItemSpacing,
+    ScrollableHandle, Scrollbar, ScrollbarState, StickyCandidate, Tooltip, prelude::*, v_flex,
 };
 use util::{ResultExt, TakeUntilExt, TryFutureExt, maybe, paths::compare_paths};
 use workspace::{
@@ -69,7 +69,6 @@ use workspace::{
     notifications::{DetachAndPromptErr, NotifyTaskExt},
 };
 use worktree::CreatedEntry;
-use zed_actions::OpenRecent;
 
 const PROJECT_PANEL_KEY: &str = "ProjectPanel";
 const NEW_ENTRY_ID: ProjectEntryId = ProjectEntryId::MAX;
@@ -5351,26 +5350,22 @@ impl Render for ProjectPanel {
                     .when(show_indent_guides, |list| {
                         list.with_decoration(
                             ui::indent_guides(px(indent_size), IndentGuideColors::panel(cx))
-                                .with_compute_indents_fn(
-                                    cx.entity().clone(),
-                                    |this, range, window, cx| {
-                                        let mut items =
-                                            SmallVec::with_capacity(range.end - range.start);
-                                        this.iter_visible_entries(
-                                            range,
-                                            window,
-                                            cx,
-                                            |entry, _, entries, _, _| {
-                                                let (depth, _) =
-                                                    Self::calculate_depth_and_difference(
-                                                        entry, entries,
-                                                    );
-                                                items.push(depth);
-                                            },
-                                        );
-                                        items
-                                    },
-                                )
+                                .with_compute_indents_fn(cx.entity(), |this, range, window, cx| {
+                                    let mut items =
+                                        SmallVec::with_capacity(range.end - range.start);
+                                    this.iter_visible_entries(
+                                        range,
+                                        window,
+                                        cx,
+                                        |entry, _, entries, _, _| {
+                                            let (depth, _) = Self::calculate_depth_and_difference(
+                                                entry, entries,
+                                            );
+                                            items.push(depth);
+                                        },
+                                    );
+                                    items
+                                })
                                 .on_click(cx.listener(
                                     |this, active_indent_guide: &IndentGuideLayout, window, cx| {
                                         if window.modifiers().secondary() {
@@ -5394,7 +5389,7 @@ impl Render for ProjectPanel {
                                         }
                                     },
                                 ))
-                                .with_render_fn(cx.entity().clone(), move |this, params, _, cx| {
+                                .with_render_fn(cx.entity(), move |this, params, _, cx| {
                                     const LEFT_OFFSET: Pixels = px(14.);
                                     const PADDING_Y: Pixels = px(4.);
                                     const HITBOX_OVERDRAW: Pixels = px(3.);
@@ -5447,7 +5442,7 @@ impl Render for ProjectPanel {
                     })
                     .when(show_sticky_entries, |list| {
                         let sticky_items = ui::sticky_items(
-                            cx.entity().clone(),
+                            cx.entity(),
                             |this, range, window, cx| {
                                 let mut items = SmallVec::with_capacity(range.end - range.start);
                                 this.iter_visible_entries(
@@ -5474,7 +5469,7 @@ impl Render for ProjectPanel {
                         list.with_decoration(if show_indent_guides {
                             sticky_items.with_decoration(
                                 ui::indent_guides(px(indent_size), IndentGuideColors::panel(cx))
-                                    .with_render_fn(cx.entity().clone(), move |_, params, _, _| {
+                                    .with_render_fn(cx.entity(), move |_, params, _, _| {
                                         const LEFT_OFFSET: Pixels = px(14.);
 
                                         let indent_size = params.indent_size;
@@ -5525,24 +5520,48 @@ impl Render for ProjectPanel {
                     .with_priority(3)
                 }))
         } else {
+            let focus_handle = self.focus_handle(cx).clone();
+
             v_flex()
                 .id("empty-project_panel")
-                .size_full()
                 .p_4()
+                .size_full()
+                .items_center()
+                .justify_center()
+                .gap_1()
                 .track_focus(&self.focus_handle(cx))
                 .child(
-                    Button::new("open_project", "Open a project")
+                    Button::new("open_project", "Open Project")
                         .full_width()
                         .key_binding(KeyBinding::for_action_in(
-                            &OpenRecent::default(),
-                            &self.focus_handle,
+                            &workspace::Open,
+                            &focus_handle,
                             window,
                             cx,
                         ))
                         .on_click(cx.listener(|this, _, window, cx| {
                             this.workspace
                                 .update(cx, |_, cx| {
-                                    window.dispatch_action(OpenRecent::default().boxed_clone(), cx);
+                                    window.dispatch_action(workspace::Open.boxed_clone(), cx);
+                                })
+                                .log_err();
+                        })),
+                )
+                .child(
+                    h_flex()
+                        .w_1_2()
+                        .gap_2()
+                        .child(Divider::horizontal())
+                        .child(Label::new("or").size(LabelSize::XSmall).color(Color::Muted))
+                        .child(Divider::horizontal()),
+                )
+                .child(
+                    Button::new("clone_repo", "Clone Repository")
+                        .full_width()
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.workspace
+                                .update(cx, |_, cx| {
+                                    window.dispatch_action(git::Clone.boxed_clone(), cx);
                                 })
                                 .log_err();
                         })),

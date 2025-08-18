@@ -1,4 +1,4 @@
-use editor::{Editor, MultiBufferSnapshot};
+use editor::{Editor, EditorSettings, MultiBufferSnapshot};
 use gpui::{App, Entity, FocusHandle, Focusable, Subscription, Task, WeakEntity};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -209,6 +209,13 @@ impl CursorPosition {
 
 impl Render for CursorPosition {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if !EditorSettings::get_global(cx)
+            .status_bar
+            .cursor_position_button
+        {
+            return div();
+        }
+
         div().when_some(self.position, |el, position| {
             let mut text = format!(
                 "{}{FILE_ROW_COLUMN_DELIMITER}{}",

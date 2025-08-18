@@ -299,7 +299,7 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
 
     Vim::action(editor, cx, |vim, action: &VimSave, window, cx| {
         vim.update_editor(cx, |_, editor, cx| {
-            let Some(project) = editor.project.clone() else {
+            let Some(project) = editor.project().cloned() else {
                 return;
             };
             let Some(worktree) = project.read(cx).visible_worktrees(cx).next() else {
@@ -436,7 +436,7 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
             let Some(workspace) = vim.workspace(window) else {
                 return;
             };
-            let Some(project) = editor.project.clone() else {
+            let Some(project) = editor.project().cloned() else {
                 return;
             };
             let Some(worktree) = project.read(cx).visible_worktrees(cx).next() else {

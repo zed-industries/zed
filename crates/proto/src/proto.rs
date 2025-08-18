@@ -20,8 +20,6 @@ pub const SSH_PEER_ID: PeerId = PeerId { owner_id: 0, id: 0 };
 pub const SSH_PROJECT_ID: u64 = 0;
 
 messages!(
-    (AcceptTermsOfService, Foreground),
-    (AcceptTermsOfServiceResponse, Foreground),
     (Ack, Foreground),
     (AckBufferOperation, Background),
     (AckChannelMessage, Background),
@@ -105,8 +103,6 @@ messages!(
     (GetPathMetadataResponse, Background),
     (GetPermalinkToLine, Foreground),
     (GetPermalinkToLineResponse, Foreground),
-    (GetPrivateUserInfo, Foreground),
-    (GetPrivateUserInfoResponse, Foreground),
     (GetProjectSymbols, Background),
     (GetProjectSymbolsResponse, Background),
     (GetReferences, Background),
@@ -119,8 +115,6 @@ messages!(
     (GetTypeDefinitionResponse, Background),
     (GetImplementation, Background),
     (GetImplementationResponse, Background),
-    (GetLlmToken, Background),
-    (GetLlmTokenResponse, Background),
     (OpenUnstagedDiff, Foreground),
     (OpenUnstagedDiffResponse, Foreground),
     (OpenUncommittedDiff, Foreground),
@@ -196,7 +190,6 @@ messages!(
     (PrepareRenameResponse, Background),
     (ProjectEntryResponse, Foreground),
     (RefreshInlayHints, Foreground),
-    (RefreshLlmToken, Background),
     (RegisterBufferWithLanguageServers, Background),
     (RejoinChannelBuffers, Foreground),
     (RejoinChannelBuffersResponse, Foreground),
@@ -280,7 +273,6 @@ messages!(
     (UpdateProject, Foreground),
     (UpdateProjectCollaborator, Foreground),
     (UpdateUserChannels, Foreground),
-    (UpdateUserPlan, Foreground),
     (UpdateWorktree, Foreground),
     (UpdateWorktreeSettings, Foreground),
     (UpdateRepository, Foreground),
@@ -321,7 +313,6 @@ messages!(
 );
 
 request_messages!(
-    (AcceptTermsOfService, AcceptTermsOfServiceResponse),
     (ApplyCodeAction, ApplyCodeActionResponse),
     (
         ApplyCompletionAdditionalEdits,
@@ -354,9 +345,7 @@ request_messages!(
     (GetDocumentHighlights, GetDocumentHighlightsResponse),
     (GetDocumentSymbols, GetDocumentSymbolsResponse),
     (GetHover, GetHoverResponse),
-    (GetLlmToken, GetLlmTokenResponse),
     (GetNotifications, GetNotificationsResponse),
-    (GetPrivateUserInfo, GetPrivateUserInfoResponse),
     (GetProjectSymbols, GetProjectSymbolsResponse),
     (GetReferences, GetReferencesResponse),
     (GetSignatureHelp, GetSignatureHelpResponse),

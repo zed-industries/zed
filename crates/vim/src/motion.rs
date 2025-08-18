@@ -2639,7 +2639,8 @@ fn find_backward(
     }
 }
 
-fn is_character_match(target: char, other: char, smartcase: bool) -> bool {
+/// Returns true if one char is equal to the other or its uppercase variant (if smartcase is true).
+pub fn is_character_match(target: char, other: char, smartcase: bool) -> bool {
     if smartcase {
         if target.is_uppercase() {
             target == other

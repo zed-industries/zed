@@ -229,8 +229,7 @@ fn assign_edit_prediction_provider(
                     if let Some(file) = buffer.read(cx).file() {
                         let id = file.worktree_id(cx);
                         if let Some(inner_worktree) = editor
-                            .project
-                            .as_ref()
+                            .project()
                             .and_then(|project| project.read(cx).worktree_for_id(id, cx))
                         {
                             worktree = Some(inner_worktree);

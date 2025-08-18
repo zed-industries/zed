@@ -251,7 +251,7 @@ fn show_hover(
 
     let (excerpt_id, _, _) = editor.buffer().read(cx).excerpt_containing(anchor, cx)?;
 
-    let language_registry = editor.project.as_ref()?.read(cx).languages().clone();
+    let language_registry = editor.project()?.read(cx).languages().clone();
     let provider = editor.semantics_provider.clone()?;
 
     if !ignore_timeout {

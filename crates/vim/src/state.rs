@@ -1028,13 +1028,21 @@ impl Operator {
     }
 
     pub fn status(&self) -> String {
+        fn make_visible(c: &str) -> &str {
+            match c {
+                "\n" => "enter",
+                "\t" => "tab",
+                " " => "space",
+                c => c,
+            }
+        }
         match self {
             Operator::Digraph {
                 first_char: Some(first_char),
-            } => format!("^K{first_char}"),
+            } => format!("^K{}", make_visible(&first_char.to_string())),
             Operator::Literal {
                 prefix: Some(prefix),
-            } => format!("^V{prefix}"),
+            } => format!("^V{}", make_visible(&prefix)),
             Operator::AutoIndent => "=".to_string(),
             Operator::ShellCommand => "=".to_string(),
             _ => self.id().to_string(),
