@@ -503,9 +503,9 @@ mod tests {
     use fs::Fs;
     use gpui::{TestAppContext, UpdateGlobal};
     use language_model::fake_provider::FakeLanguageModel;
+    use prompt_store::ProjectContext;
     use serde_json::json;
     use settings::SettingsStore;
-    use std::rc::Rc;
     use util::path;
 
     #[gpui::test]
@@ -522,7 +522,7 @@ mod tests {
         let thread = cx.new(|cx| {
             Thread::new(
                 project,
-                Rc::default(),
+                cx.new(|_cx| ProjectContext::default()),
                 context_server_registry,
                 action_log,
                 Templates::new(),
@@ -719,7 +719,7 @@ mod tests {
         let thread = cx.new(|cx| {
             Thread::new(
                 project,
-                Rc::default(),
+                cx.new(|_cx| ProjectContext::default()),
                 context_server_registry,
                 action_log.clone(),
                 Templates::new(),
@@ -855,7 +855,7 @@ mod tests {
         let thread = cx.new(|cx| {
             Thread::new(
                 project,
-                Rc::default(),
+                cx.new(|_cx| ProjectContext::default()),
                 context_server_registry,
                 action_log.clone(),
                 Templates::new(),
@@ -981,7 +981,7 @@ mod tests {
         let thread = cx.new(|cx| {
             Thread::new(
                 project,
-                Rc::default(),
+                cx.new(|_cx| ProjectContext::default()),
                 context_server_registry,
                 action_log.clone(),
                 Templates::new(),
@@ -1118,7 +1118,7 @@ mod tests {
         let thread = cx.new(|cx| {
             Thread::new(
                 project,
-                Rc::default(),
+                cx.new(|_cx| ProjectContext::default()),
                 context_server_registry,
                 action_log.clone(),
                 Templates::new(),
@@ -1228,7 +1228,7 @@ mod tests {
         let thread = cx.new(|cx| {
             Thread::new(
                 project.clone(),
-                Rc::default(),
+                cx.new(|_cx| ProjectContext::default()),
                 context_server_registry.clone(),
                 action_log.clone(),
                 Templates::new(),
@@ -1309,7 +1309,7 @@ mod tests {
         let thread = cx.new(|cx| {
             Thread::new(
                 project.clone(),
-                Rc::default(),
+                cx.new(|_cx| ProjectContext::default()),
                 context_server_registry.clone(),
                 action_log.clone(),
                 Templates::new(),
@@ -1393,7 +1393,7 @@ mod tests {
         let thread = cx.new(|cx| {
             Thread::new(
                 project.clone(),
-                Rc::default(),
+                cx.new(|_cx| ProjectContext::default()),
                 context_server_registry.clone(),
                 action_log.clone(),
                 Templates::new(),
@@ -1474,7 +1474,7 @@ mod tests {
         let thread = cx.new(|cx| {
             Thread::new(
                 project.clone(),
-                Rc::default(),
+                cx.new(|_cx| ProjectContext::default()),
                 context_server_registry,
                 action_log.clone(),
                 Templates::new(),
