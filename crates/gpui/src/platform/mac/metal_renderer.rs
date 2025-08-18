@@ -314,6 +314,15 @@ impl MetalRenderer {
     }
 
     fn update_path_intermediate_textures(&mut self, size: Size<DevicePixels>) {
+        // We are uncertain when this happens, but sometimes size can be 0 here. Most likely before
+        // the layout pass on window creation. Zero-sized texture creation causes SIGABRT.
+        // https://github.com/zed-industries/zed/issues/36229
+        if size.width.0 <= 0 || size.height.0 <= 0 {
+            self.path_intermediate_texture = None;
+            self.path_intermediate_msaa_texture = None;
+            return;
+        }
+
         let texture_descriptor = metal::TextureDescriptor::new();
         texture_descriptor.set_width(size.width.0 as u64);
         texture_descriptor.set_height(size.height.0 as u64);
