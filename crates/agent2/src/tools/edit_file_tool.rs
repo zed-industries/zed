@@ -440,7 +440,6 @@ impl AgentTool for EditFileTool {
         event_stream: ToolCallEventStream,
         cx: &mut App,
     ) -> Result<()> {
-        dbg!(&output);
         event_stream.update_diff(cx.new(|cx| {
             Diff::finalized(
                 output.input_path,

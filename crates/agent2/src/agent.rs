@@ -263,20 +263,15 @@ impl NativeAgent {
     }
 
     fn save_thread(&mut self, thread: Entity<Thread>, cx: &mut Context<Self>) {
-        dbg!();
         let id = thread.read(cx).id().clone();
-        dbg!();
         let Some(session) = self.sessions.get_mut(&id) else {
             return;
         };
-        dbg!();
 
         let thread = thread.downgrade();
         let thread_database = self.thread_database.clone();
-        dbg!();
         session.save_task = cx.spawn(async move |this, cx| {
             cx.background_executor().timer(SAVE_THREAD_DEBOUNCE).await;
-            dbg!();
             let db_thread = thread.update(cx, |thread, cx| thread.to_db(cx))?.await;
             thread_database.save_thread(id, db_thread).await?;
             this.update(cx, |this, cx| this.reload_history(cx))?;
@@ -285,13 +280,11 @@ impl NativeAgent {
     }
 
     fn reload_history(&mut self, cx: &mut Context<Self>) {
-        dbg!("");
         let thread_database = self.thread_database.clone();
         self.load_history = cx.spawn(async move |this, cx| {
             let results = cx
                 .background_spawn(async move {
                     let results = thread_database.list_threads().await?;
-                    dbg!(&results);
                     anyhow::Ok(
                         results
                             .into_iter()
@@ -1289,7 +1282,7 @@ mod tests {
         cx.run_until_parked();
         model.send_last_completion_stream_text_chunk("Hey");
         model.end_last_completion_stream();
-        dbg!(send.await.unwrap());
+        send.await.unwrap();
         cx.executor().advance_clock(SAVE_THREAD_DEBOUNCE);
 
         let history = history_store.update(cx, |store, cx| store.entries(cx));
