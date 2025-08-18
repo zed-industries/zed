@@ -1001,6 +1001,35 @@ async fn test_in_progress_send_cancelled_by_next_send(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_subsequent_successful_sends_dont_cancel(cx: &mut TestAppContext) {
+    let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
+    let fake_model = model.as_fake();
+
+    let events_1 = thread.update(cx, |thread, cx| {
+        thread.send(UserMessageId::new(), ["Hello 1"], cx)
+    });
+    cx.run_until_parked();
+    fake_model.send_last_completion_stream_text_chunk("Hey 1!");
+    fake_model
+        .send_last_completion_stream_event(LanguageModelCompletionEvent::Stop(StopReason::EndTurn));
+    fake_model.end_last_completion_stream();
+    let events_1 = events_1.collect::<Vec<_>>().await;
+
+    let events_2 = thread.update(cx, |thread, cx| {
+        thread.send(UserMessageId::new(), ["Hello 2"], cx)
+    });
+    cx.run_until_parked();
+    fake_model.send_last_completion_stream_text_chunk("Hey 2!");
+    fake_model
+        .send_last_completion_stream_event(LanguageModelCompletionEvent::Stop(StopReason::EndTurn));
+    fake_model.end_last_completion_stream();
+    let events_2 = events_2.collect::<Vec<_>>().await;
+
+    assert_eq!(stop_events(events_1), vec![acp::StopReason::EndTurn]);
+    assert_eq!(stop_events(events_2), vec![acp::StopReason::EndTurn]);
+}
+
+#[gpui::test]
 async fn test_refusal(cx: &mut TestAppContext) {
     let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
     let fake_model = model.as_fake();
