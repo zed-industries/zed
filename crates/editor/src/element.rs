@@ -916,7 +916,12 @@ impl EditorElement {
             cx.stop_propagation();
         } else if cfg!(any(target_os = "linux", target_os = "freebsd"))
             && event.button == MouseButton::Middle
-            && (!text_hitbox.is_hovered(window) || editor.read_only(cx)) {
+        {
+            #[allow(
+                clippy::collapsible_if,
+                reason = "The cfg-block below makes this a false positive"
+            )]
+            if !text_hitbox.is_hovered(window) || editor.read_only(cx) {
                 return;
             }
 
@@ -939,6 +944,7 @@ impl EditorElement {
                 }
                 cx.stop_propagation()
             }
+        }
     }
 
     fn click(
@@ -1386,27 +1392,27 @@ impl EditorElement {
                     ref hide_drop_cursor,
                 } = editor.selection_drag_state
                     && !hide_drop_cursor
-                        && (drop_cursor
-                            .start
-                            .cmp(&selection.start, &snapshot.buffer_snapshot)
-                            .eq(&Ordering::Less)
-                            || drop_cursor
-                                .end
-                                .cmp(&selection.end, &snapshot.buffer_snapshot)
-                                .eq(&Ordering::Greater))
-                    {
-                        let drag_cursor_layout = SelectionLayout::new(
-                            drop_cursor.clone(),
-                            false,
-                            CursorShape::Bar,
-                            &snapshot.display_snapshot,
-                            false,
-                            false,
-                            None,
-                        );
-                        let absent_color = cx.theme().players().absent();
-                        selections.push((absent_color, vec![drag_cursor_layout]));
-                    }
+                    && (drop_cursor
+                        .start
+                        .cmp(&selection.start, &snapshot.buffer_snapshot)
+                        .eq(&Ordering::Less)
+                        || drop_cursor
+                            .end
+                            .cmp(&selection.end, &snapshot.buffer_snapshot)
+                            .eq(&Ordering::Greater))
+                {
+                    let drag_cursor_layout = SelectionLayout::new(
+                        drop_cursor.clone(),
+                        false,
+                        CursorShape::Bar,
+                        &snapshot.display_snapshot,
+                        false,
+                        false,
+                        None,
+                    );
+                    let absent_color = cx.theme().players().absent();
+                    selections.push((absent_color, vec![drag_cursor_layout]));
+                }
             }
 
             if let Some(collaboration_hub) = &editor.collaboration_hub {
@@ -1419,13 +1425,13 @@ impl EditorElement {
                                 && let Some(participant_index) = collaboration_hub
                                     .user_participant_indices(cx)
                                     .get(&collaborator.user_id)
-                                    && let Some((local_selection_style, _)) = selections.first_mut()
-                                    {
-                                        *local_selection_style = cx
-                                            .theme()
-                                            .players()
-                                            .color_for_participant(participant_index.0);
-                                    }
+                                && let Some((local_selection_style, _)) = selections.first_mut()
+                            {
+                                *local_selection_style = cx
+                                    .theme()
+                                    .players()
+                                    .color_for_participant(participant_index.0);
+                            }
                         }
                         CollaboratorId::Agent => {
                             if let Some((local_selection_style, _)) = selections.first_mut() {
@@ -3511,32 +3517,34 @@ impl EditorElement {
         let mut is_block = true;
 
         if let BlockId::Custom(custom_block_id) = block_id
-            && block.has_height() {
-                if block.place_near()
-                    && let Some((x_target, line_width)) = x_position {
-                        let margin = em_width * 2;
-                        if line_width + final_size.width + margin
-                            < editor_width + editor_margins.gutter.full_width()
-                            && !row_block_types.contains_key(&(row - 1))
-                            && element_height_in_lines == 1
-                        {
-                            x_offset = line_width + margin;
-                            row = row - 1;
-                            is_block = false;
-                            element_height_in_lines = 0;
-                            row_block_types.insert(row, is_block);
-                        } else {
-                            let max_offset = editor_width + editor_margins.gutter.full_width()
-                                - final_size.width;
-                            let min_offset = (x_target + em_width - final_size.width)
-                                .max(editor_margins.gutter.full_width());
-                            x_offset = x_target.min(max_offset).max(min_offset);
-                        }
-                    };
-                if element_height_in_lines != block.height() {
-                    resized_blocks.insert(custom_block_id, element_height_in_lines);
+            && block.has_height()
+        {
+            if block.place_near()
+                && let Some((x_target, line_width)) = x_position
+            {
+                let margin = em_width * 2;
+                if line_width + final_size.width + margin
+                    < editor_width + editor_margins.gutter.full_width()
+                    && !row_block_types.contains_key(&(row - 1))
+                    && element_height_in_lines == 1
+                {
+                    x_offset = line_width + margin;
+                    row = row - 1;
+                    is_block = false;
+                    element_height_in_lines = 0;
+                    row_block_types.insert(row, is_block);
+                } else {
+                    let max_offset =
+                        editor_width + editor_margins.gutter.full_width() - final_size.width;
+                    let min_offset = (x_target + em_width - final_size.width)
+                        .max(editor_margins.gutter.full_width());
+                    x_offset = x_target.min(max_offset).max(min_offset);
                 }
+            };
+            if element_height_in_lines != block.height() {
+                resized_blocks.insert(custom_block_id, element_height_in_lines);
             }
+        }
         for i in 0..element_height_in_lines {
             row_block_types.insert(row + i, is_block);
         }
@@ -3979,57 +3987,58 @@ impl EditorElement {
 
         if let Some(focused_block) = focused_block
             && let Some(focus_handle) = focused_block.focus_handle.upgrade()
-                && focus_handle.is_focused(window)
-                    && let Some(block) = snapshot.block_for_id(focused_block.id) {
-                        let style = block.style();
-                        let width = match style {
-                            BlockStyle::Fixed => AvailableSpace::MinContent,
-                            BlockStyle::Flex => AvailableSpace::Definite(
-                                hitbox
-                                    .size
-                                    .width
-                                    .max(fixed_block_max_width)
-                                    .max(editor_margins.gutter.width + *scroll_width),
-                            ),
-                            BlockStyle::Sticky => AvailableSpace::Definite(hitbox.size.width),
-                        };
+            && focus_handle.is_focused(window)
+            && let Some(block) = snapshot.block_for_id(focused_block.id)
+        {
+            let style = block.style();
+            let width = match style {
+                BlockStyle::Fixed => AvailableSpace::MinContent,
+                BlockStyle::Flex => AvailableSpace::Definite(
+                    hitbox
+                        .size
+                        .width
+                        .max(fixed_block_max_width)
+                        .max(editor_margins.gutter.width + *scroll_width),
+                ),
+                BlockStyle::Sticky => AvailableSpace::Definite(hitbox.size.width),
+            };
 
-                        if let Some((element, element_size, _, x_offset)) = self.render_block(
-                            &block,
-                            width,
-                            focused_block.id,
-                            rows.end,
-                            snapshot,
-                            text_x,
-                            &rows,
-                            line_layouts,
-                            editor_margins,
-                            line_height,
-                            em_width,
-                            text_hitbox,
-                            editor_width,
-                            scroll_width,
-                            &mut resized_blocks,
-                            &mut row_block_types,
-                            selections,
-                            selected_buffer_ids,
-                            is_row_soft_wrapped,
-                            sticky_header_excerpt_id,
-                            window,
-                            cx,
-                        ) {
-                            blocks.push(BlockLayout {
-                                id: block.id(),
-                                x_offset,
-                                row: None,
-                                element,
-                                available_space: size(width, element_size.height.into()),
-                                style,
-                                overlaps_gutter: true,
-                                is_buffer_header: block.is_buffer_header(),
-                            });
-                        }
-                    }
+            if let Some((element, element_size, _, x_offset)) = self.render_block(
+                &block,
+                width,
+                focused_block.id,
+                rows.end,
+                snapshot,
+                text_x,
+                &rows,
+                line_layouts,
+                editor_margins,
+                line_height,
+                em_width,
+                text_hitbox,
+                editor_width,
+                scroll_width,
+                &mut resized_blocks,
+                &mut row_block_types,
+                selections,
+                selected_buffer_ids,
+                is_row_soft_wrapped,
+                sticky_header_excerpt_id,
+                window,
+                cx,
+            ) {
+                blocks.push(BlockLayout {
+                    id: block.id(),
+                    x_offset,
+                    row: None,
+                    element,
+                    available_space: size(width, element_size.height.into()),
+                    style,
+                    overlaps_gutter: true,
+                    is_buffer_header: block.is_buffer_header(),
+                });
+            }
+        }
 
         if resized_blocks.is_empty() {
             *scroll_width =
@@ -4191,18 +4200,19 @@ impl EditorElement {
             }
 
             if editor.context_menu_visible()
-                && let Some(crate::ContextMenuOrigin::Cursor) = editor.context_menu_origin() {
-                    let (min_height_in_lines, max_height_in_lines) = editor
-                        .context_menu_options
-                        .as_ref()
-                        .map_or((3, 12), |options| {
-                            (options.min_entries_visible, options.max_entries_visible)
-                        });
+                && let Some(crate::ContextMenuOrigin::Cursor) = editor.context_menu_origin()
+            {
+                let (min_height_in_lines, max_height_in_lines) = editor
+                    .context_menu_options
+                    .as_ref()
+                    .map_or((3, 12), |options| {
+                        (options.min_entries_visible, options.max_entries_visible)
+                    });
 
-                    min_menu_height += line_height * min_height_in_lines as f32 + POPOVER_Y_PADDING;
-                    max_menu_height += line_height * max_height_in_lines as f32 + POPOVER_Y_PADDING;
-                    context_menu_visible = true;
-                }
+                min_menu_height += line_height * min_height_in_lines as f32 + POPOVER_Y_PADDING;
+                max_menu_height += line_height * max_height_in_lines as f32 + POPOVER_Y_PADDING;
+                context_menu_visible = true;
+            }
             context_menu_placement = editor
                 .context_menu_options
                 .as_ref()
@@ -5754,9 +5764,9 @@ impl EditorElement {
                     .buffer()
                     .read(cx)
                     .all_diff_hunks_expanded()
-                {
-                    window.set_cursor_style(CursorStyle::PointingHand, hunk_hitbox);
-                }
+            {
+                window.set_cursor_style(CursorStyle::PointingHand, hunk_hitbox);
+            }
         }
 
         let show_git_gutter = layout
@@ -10138,9 +10148,10 @@ fn compute_auto_height_layout(
 
     let editor_width = text_width - gutter_dimensions.margin - overscroll.width - em_width;
     if !matches!(editor.soft_wrap_mode(cx), SoftWrap::None)
-        && editor.set_wrap_width(Some(editor_width), cx) {
-            snapshot = editor.snapshot(window, cx);
-        }
+        && editor.set_wrap_width(Some(editor_width), cx)
+    {
+        snapshot = editor.snapshot(window, cx);
+    }
 
     let scroll_height = (snapshot.max_point().row().next_row().0 as f32) * line_height;
 
