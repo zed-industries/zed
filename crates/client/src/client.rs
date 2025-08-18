@@ -1430,7 +1430,9 @@ impl Client {
                                         .context("failed to parse login notification url")?;
                                     let callback_params: CallbackParams =
                                         serde_urlencoded::from_str(url.query().unwrap_or_default())
-                                            .context("failed to parse query parameters")?;
+                                            .context(
+                                                "failed to parse sign-in callback query parameters",
+                                            )?;
 
                                     let post_auth_url =
                                         http.build_url("/native_app_signin_succeeded");
