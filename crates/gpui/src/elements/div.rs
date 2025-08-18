@@ -648,6 +648,61 @@ pub trait InteractiveElement: Sized {
         self
     }
 
+    /// Apply the given style when container width is is less than or equal to 256.0 Pixels
+    fn container_3xs(mut self, f: impl Fn(StyleRefinement) -> StyleRefinement + 'static) -> Self {
+        self.container_query_with(256.0, f)
+    }
+
+    /// Apply the given style when container width is is less than or equal to 288.0 Pixels
+    fn container_2xs(mut self, f: impl Fn(StyleRefinement) -> StyleRefinement + 'static) -> Self {
+        self.container_query_with(288.0, f)
+    }
+
+    /// Apply the given style when container width is is less than or equal to 320.0 Pixels
+    fn container_xs(mut self, f: impl Fn(StyleRefinement) -> StyleRefinement + 'static) -> Self {
+        self.container_query_with(320.0, f)
+    }
+
+    /// Apply the given style when container width is is less than or equal to 384.0 Pixels
+    fn container_sm(mut self, f: impl Fn(StyleRefinement) -> StyleRefinement + 'static) -> Self {
+        self.container_query_with(384.0, f)
+    }
+
+    /// Apply the given style when container width is is less than or equal to 448.0 Pixels
+    fn container_md(mut self, f: impl Fn(StyleRefinement) -> StyleRefinement + 'static) -> Self {
+        self.container_query_with(448.0, f)
+    }
+
+    /// Apply the given style when container width is is less than or equal to 512.0 Pixels
+    fn container_lg(mut self, f: impl Fn(StyleRefinement) -> StyleRefinement + 'static) -> Self {
+        self.container_query_with(512.0, f)
+    }
+
+    /// Apply the given style when container width is is less than or equal to 576.0 Pixels
+    fn container_xl(mut self, f: impl Fn(StyleRefinement) -> StyleRefinement + 'static) -> Self {
+        self.container_query_with(576.0, f)
+    }
+
+    /// Apply the given style when width is less than or equal to the current value
+    fn container_query_with(
+        mut self,
+        width: impl Into<Pixels>,
+        f: impl Fn(StyleRefinement) -> StyleRefinement + 'static,
+    ) -> Self {
+        let width = width.into();
+
+        self.interactivity()
+            .container_queries
+            .push(Box::new(move |layout_width, style| {
+                if layout_width >= width {
+                    f(style)
+                } else {
+                    style
+                }
+            }));
+        self
+    }
+
     /// Apply the given style to this element when the mouse hovers over a group member
     fn group_hover(
         mut self,
@@ -1464,6 +1519,7 @@ pub struct Interactivity {
     pub(crate) click_listeners: Vec<ClickListener>,
     pub(crate) drag_listener: Option<(Arc<dyn Any>, DragListener)>,
     pub(crate) hover_listener: Option<Box<dyn Fn(&bool, &mut Window, &mut App)>>,
+    pub(crate) container_queries: Vec<Box<dyn Fn(Pixels, StyleRefinement) -> StyleRefinement>>,
     pub(crate) tooltip_builder: Option<TooltipBuilder>,
     pub(crate) window_control: Option<WindowControlArea>,
     pub(crate) hitbox_behavior: HitboxBehavior,
@@ -1556,7 +1612,22 @@ impl Interactivity {
                     }
                 }
 
-                let style = self.compute_style_internal(None, element_state.as_mut(), window, cx);
+                let mut style =
+                    self.compute_style_internal(None, element_state.as_mut(), window, cx);
+
+                let mut style_refinement = StyleRefinement::default();
+
+                if let Some(element_state) = element_state.as_ref()
+                    && let Some(bounds) = element_state.cached_bounds
+                {
+                    let current_width = bounds.size.width;
+
+                    for query in self.container_queries.iter() {
+                        style_refinement = query(current_width, style_refinement);
+                    }
+
+                    style.refine(&style_refinement);
+                }
                 let layout_id = f(style, window, cx);
                 (layout_id, element_state)
             },
@@ -1737,6 +1808,10 @@ impl Interactivity {
             |element_state, window| {
                 let mut element_state =
                     element_state.map(|element_state| element_state.unwrap_or_default());
+
+                if let Some(element_state) = element_state.as_mut() {
+                    element_state.cached_bounds = Some(bounds);
+                }
 
                 let style = self.compute_style_internal(hitbox, element_state.as_mut(), window, cx);
 
@@ -2517,6 +2592,7 @@ pub struct InteractiveElementState {
     pub(crate) pending_mouse_down: Option<Rc<RefCell<Option<MouseDownEvent>>>>,
     pub(crate) scroll_offset: Option<Rc<RefCell<Point<Pixels>>>>,
     pub(crate) active_tooltip: Option<Rc<RefCell<Option<ActiveTooltip>>>>,
+    pub(crate) cached_bounds: Option<Bounds<Pixels>>,
 }
 
 /// Whether or not the element or a group that contains it is clicked by the mouse.
