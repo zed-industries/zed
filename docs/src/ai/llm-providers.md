@@ -427,7 +427,7 @@ Custom models will be listed in the model dropdown in the Agent Panel.
 Zed supports using [OpenAI compatible APIs](https://platform.openai.com/docs/api-reference/chat) by specifying a custom `api_url` and `available_models` for the OpenAI provider.
 This is useful for connecting to other hosted services (like Together AI, Anyscale, etc.) or local models.
 
-You can add a custom, OpenAI-compatible model via either via the UI or by editing your `settings.json`.
+You can add a custom, OpenAI-compatible model either via the UI or by editing your `settings.json`.
 
 To do it via the UI, go to the Agent Panel settings (`agent: open settings`) and look for the "Add Provider" button to the right of the "LLM Providers" section title.
 Then, fill up the input fields available in the modal.
@@ -443,13 +443,26 @@ To do it via your `settings.json`, add the following snippet under `language_mod
         {
           "name": "mistralai/Mixtral-8x7B-Instruct-v0.1",
           "display_name": "Together Mixtral 8x7B",
-          "max_tokens": 32768
+          "max_tokens": 32768,
+          "capabilities": {
+            "tools": true,
+            "images": false,
+            "parallel_tool_calls": false,
+            "prompt_cache_key": false
+          }
         }
       ]
     }
   }
 }
 ```
+
+By default, OpenAI-compatible models inherit the following capabilities:
+
+- `tools`: true (supports tool/function calling)
+- `images`: false (does not support image inputs)
+- `parallel_tool_calls`: false (does not support `parallel_tool_calls` parameter)
+- `prompt_cache_key`: false (does not support `prompt_cache_key` parameter)
 
 Note that LLM API keys aren't stored in your settings file.
 So, ensure you have it set in your environment variables (`OPENAI_API_KEY=<your api key>`) so your settings can pick it up.
