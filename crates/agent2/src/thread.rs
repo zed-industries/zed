@@ -607,10 +607,10 @@ impl Thread {
         let kind = tool.kind();
         stream.send_tool_call(&tool_use.id, title, kind, tool_use.input.clone());
 
-        if let Some(output) = tool_result
+        let output = tool_result
             .as_ref()
-            .and_then(|result| result.output.clone())
-        {
+            .and_then(|result| result.output.clone());
+        if let Some(output) = output.clone() {
             let tool_event_stream = ToolCallEventStream::new(
                 tool_use.id.clone(),
                 stream.clone(),
@@ -624,6 +624,7 @@ impl Thread {
             &tool_use.id,
             acp::ToolCallUpdateFields {
                 status: Some(acp::ToolCallStatus::Completed),
+                raw_output: output,
                 ..Default::default()
             },
         );
