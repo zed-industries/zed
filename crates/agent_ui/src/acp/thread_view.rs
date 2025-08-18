@@ -94,7 +94,9 @@ impl ProfileProvider for Entity<agent2::Thread> {
     }
 
     fn profiles_supported(&self, cx: &App) -> bool {
-        self.read(cx).model().supports_tools()
+        self.read(cx)
+            .model()
+            .map_or(false, |model| model.supports_tools())
     }
 }
 
@@ -2475,7 +2477,10 @@ impl AcpThreadView {
     fn render_burn_mode_toggle(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let thread = self.as_native_thread(cx)?.read(cx);
 
-        if !thread.model().supports_burn_mode() {
+        if thread
+            .model()
+            .map_or(true, |model| !model.supports_burn_mode())
+        {
             return None;
         }
 
@@ -3219,7 +3224,10 @@ impl AcpThreadView {
         cx: &mut Context<Self>,
     ) -> Option<Callout> {
         let thread = self.as_native_thread(cx)?;
-        let supports_burn_mode = thread.read(cx).model().supports_burn_mode();
+        let supports_burn_mode = thread
+            .read(cx)
+            .model()
+            .map_or(false, |model| model.supports_burn_mode());
 
         let focus_handle = self.focus_handle(cx);
 
