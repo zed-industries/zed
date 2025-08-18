@@ -253,15 +253,12 @@ impl AnyProtoClient {
         async move {
             let _request_enqueued: proto::Ack =
                 request.await.context("sending LSP proto request")?;
-            dbg!("ack1");
             // TODO kb timeout
             match rx.await {
                 Ok(response) => {
-                    dbg!("~~~~~~~~");
                     let response = response
                         .context("waiting for LSP proto response")?
                         .map(|response| {
-                            dbg!(&response.original_sender_id, &response.sender_id);
                             anyhow::Ok(TypedEnvelope {
                                 payload: response
                                     .payload
@@ -278,10 +275,7 @@ impl AnyProtoClient {
                         .context("converting LSP proto response")?;
                     Ok(response)
                 }
-                Err(_cancelled) => {
-                    dbg!("##OPIK#JLKHLKh");
-                    Ok(None)
-                }
+                Err(_cancelled) => Ok(None),
             }
         }
     }
@@ -292,25 +286,6 @@ impl AnyProtoClient {
         lsp_request_id: LspRequestId,
         response: HashMap<proto::LanguageServerId, T::Response>,
     ) -> Result<()> {
-        dbg!(("send_lsp_response", &response.len()));
-        // let envelope = Envelope {
-        //     id: 0,
-        //     responding_to: (),
-        //     original_sender_id: (),
-        //     ack_id: None,
-        //     payload: proto::LspQueryResponse {
-        //         project_id,
-        //         lsp_request_id: lsp_request_id.to_proto(),
-        //         responses: response
-        //             .into_iter()
-        //             .map(|(server_id, response)| proto::LspResponse2 {
-        //                 server_id: server_id.to_proto(),
-        //                 response: Some(T::response_to_proto_query(response)),
-        //             })
-        //             .collect(),
-        //     },
-        // };
-        // self.0.client.send(envelope, T::NAME)
         self.send(proto::LspQueryResponse {
             project_id,
             lsp_request_id: lsp_request_id.to_proto(),
@@ -325,12 +300,8 @@ impl AnyProtoClient {
     }
 
     pub fn handle_lsp_response(&self, envelope: TypedEnvelope<proto::LspQueryResponse>) {
-        dbg!(("handle_lsp_response", &envelope));
         let request_id = LspRequestId(envelope.payload.lsp_request_id);
         let mut a = self.0.request_ids.lock();
-        // TODO kb (!!!) there's a wrong sequence of addresses used when sending the responses back from the local Zed instance.
-        // Check why is that wrong — could be that we have specified wrong envelopes' ids?
-        dbg!(&a);
         if let Some(tx) = a.remove(&request_id) {
             tx.send(Ok(Some(proto::TypedEnvelope {
                 sender_id: envelope.sender_id,

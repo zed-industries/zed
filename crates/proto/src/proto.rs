@@ -818,7 +818,6 @@ impl LspQuery {
             // Some(lsp_query::Request::GetDocumentDiagnostics(_)) => {
             //     ("GetDocumentDiagnostics", false)
             // }
-            // Some(lsp_query::Request::GetDocumentColor(_)) => ("GetDocumentColor", false),
             // Some(lsp_query::Request::GetDefinition(_)) => ("GetDefinition", false),
             // Some(lsp_query::Request::GetDeclaration(_)) => ("GetDeclaration", false),
             // Some(lsp_query::Request::GetTypeDefinition(_)) => ("GetTypeDefinition", false),
