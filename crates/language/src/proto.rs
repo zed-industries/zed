@@ -385,12 +385,10 @@ pub fn deserialize_undo_map_entry(
 
 /// Deserializes selections from the RPC representation.
 pub fn deserialize_selections(selections: Vec<proto::Selection>) -> Arc<[Selection<Anchor>]> {
-    Arc::from(
-        selections
-            .into_iter()
-            .filter_map(deserialize_selection)
-            .collect::<Vec<_>>(),
-    )
+    selections
+        .into_iter()
+        .filter_map(deserialize_selection)
+        .collect()
 }
 
 /// Deserializes a [`Selection`] from the RPC representation.
