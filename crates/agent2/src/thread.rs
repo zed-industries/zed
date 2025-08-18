@@ -443,6 +443,7 @@ pub enum AgentResponseEvent {
     ToolCall(acp::ToolCall),
     ToolCallUpdate(acp_thread::ToolCallUpdate),
     ToolCallAuthorization(ToolCallAuthorization),
+    Retry(acp_thread::RetryStatus),
     Stop(acp::StopReason),
 }
 
@@ -1348,6 +1349,12 @@ impl AgentResponseEventStream {
                 }
                 .into(),
             )))
+            .ok();
+    }
+
+    fn send_retry(&self, status: acp_thread::RetryStatus) {
+        self.0
+            .unbounded_send(Ok(AgentResponseEvent::Retry(status)))
             .ok();
     }
 
