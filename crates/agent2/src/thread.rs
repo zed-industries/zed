@@ -782,6 +782,12 @@ impl Thread {
                         .ok();
                     }
                     Err(error) => {
+                        let completion_mode =
+                            this.read_with(cx, |thread, _cx| thread.completion_mode())?;
+                        if completion_mode == CompletionMode::Normal {
+                            return Err(error.into());
+                        }
+
                         let Some(strategy) = Self::retry_strategy_for(&error) else {
                             return Err(error.into());
                         };

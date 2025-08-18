@@ -1440,6 +1440,7 @@ async fn test_send_retry_on_error(cx: &mut TestAppContext) {
 
     let mut events = thread
         .update(cx, |thread, cx| {
+            thread.set_completion_mode(agent_settings::CompletionMode::Burn);
             thread.send(UserMessageId::new(), ["Hello!"], cx)
         })
         .unwrap();
@@ -1495,6 +1496,7 @@ async fn test_send_max_retries_exceeded(cx: &mut TestAppContext) {
 
     let mut events = thread
         .update(cx, |thread, cx| {
+            thread.set_completion_mode(agent_settings::CompletionMode::Burn);
             thread.send(UserMessageId::new(), ["Hello!"], cx)
         })
         .unwrap();
