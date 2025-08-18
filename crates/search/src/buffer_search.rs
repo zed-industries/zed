@@ -51,6 +51,8 @@ const MAX_BUFFER_SEARCH_HISTORY_SIZE: usize = 50;
 /// value.
 /// When any of the patterns is present in the search query, the corresponding
 /// search option, and value, is applied.
+// TODO: Should this be updated to an HashMap so we can easily determine the
+// search option for a given pattern?
 static PATTERN_ITEMS: [(&str, &SearchOptions, bool); 2] = [
     ("\\c", &SearchOptions::CASE_SENSITIVE, false),
     ("\\C", &SearchOptions::CASE_SENSITIVE, true),
@@ -1526,10 +1528,16 @@ impl BufferSearchBar {
             let mut pattern_item_options = Vec::new();
             let query = self.raw_query(cx);
 
-            PATTERN_ITEMS
-                .iter()
-                .filter(|(pattern, _, _)| query.contains(pattern))
-                .for_each(|(_pattern, search_option, value)| {
+            self.pattern_items_regex
+                .captures_iter(&query)
+                .map(|capture| capture.extract())
+                .map(|(str, [])| {
+                    PATTERN_ITEMS
+                        .iter()
+                        .find(|(pattern, _, _)| *pattern == str)
+                        .expect("should only capture valid pattern items")
+                })
+                .for_each(|(_, search_option, value)| {
                     match (search_options.contains(**search_option), value) {
                         (true, false) => {
                             search_options.toggle(**search_option);
@@ -3017,6 +3025,50 @@ mod tests {
             );
         });
 
+        cx.simulate_input("\\C");
+        cx.run_until_parked();
+        search_bar.update(cx, |search_bar, cx| {
+            assert_eq!(search_bar.raw_query(cx), "test\\c\\C");
+            assert_eq!(
+                search_bar.search_options,
+                SearchOptions::REGEX | SearchOptions::CASE_SENSITIVE,
+                "Should have case sensitivity enabled when \\C pattern item is present, even if preceeded by \\c"
+            );
+        });
+
+        cx.simulate_input("\\c");
+        cx.run_until_parked();
+        search_bar.update(cx, |search_bar, cx| {
+            assert_eq!(search_bar.raw_query(cx), "test\\c\\C\\c");
+            assert_eq!(
+                search_bar.search_options,
+                SearchOptions::REGEX,
+                "Should have no case sensitivity enabled when \\c pattern item is present, even if preceeded by \\C"
+            );
+        });
+
+        cx.simulate_keystrokes("backspace backspace");
+
+        search_bar.update(cx, |search_bar, cx| {
+            assert_eq!(search_bar.raw_query(cx), "test\\c\\C");
+            assert_eq!(
+                search_bar.search_options,
+                SearchOptions::REGEX | SearchOptions::CASE_SENSITIVE,
+                "Should have case sensitivity enabled when suffix \\c pattern item is removed"
+            );
+        });
+
+        cx.simulate_keystrokes("backspace backspace");
+
+        search_bar.update(cx, |search_bar, cx| {
+            assert_eq!(search_bar.raw_query(cx), "test\\c");
+            assert_eq!(
+                search_bar.search_options,
+                SearchOptions::REGEX,
+                "Should have case sensitivity disabled when suffix \\C pattern item is removed and a \\c pattern item is still present"
+            );
+        });
+
         cx.simulate_keystrokes("backspace backspace");
 
         search_bar.update(cx, |search_bar, cx| {
@@ -3024,7 +3076,7 @@ mod tests {
             assert_eq!(
                 search_bar.search_options,
                 SearchOptions::REGEX | SearchOptions::CASE_SENSITIVE,
-                "Should have case sensitivity enabled when \\c pattern item is removed"
+                "Should have case sensitivity enabled when all pattern items are removed and original search options are restored"
             );
         });
     }
