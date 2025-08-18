@@ -426,7 +426,7 @@ impl PickerDelegate for StashListDelegate {
             normal
         };
 
-        let max_chars = ((max_width * 0.8) / normal_em) as usize;
+        let max_chars = ((max_width * 0.7) / normal_em) as usize;
 
         if stash_message.len() > max_chars && max_chars > 1 {
             let mut index = max_chars - 1;
@@ -441,7 +441,7 @@ impl PickerDelegate for StashListDelegate {
         let stash_name = HighlightedLabel::new(stash_message, positions).into_any_element();
 
         let mut branch_name = entry_match.entry.branch.clone().unwrap_or_default();
-        let max_branch_chars = ((max_width * 0.2) / normal_em) as usize;
+        let max_branch_chars = ((max_width * 0.3) / normal_em) as usize;
         if branch_name.len() > max_branch_chars && max_branch_chars > 1 {
             let mut index = max_branch_chars - 1;
             while !branch_name.is_char_boundary(index) && index != 0 {
