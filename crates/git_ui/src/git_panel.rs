@@ -2088,6 +2088,7 @@ impl GitPanel {
             files: false,
             directories: true,
             multiple: false,
+            prompt: Some("Select as Repository Destination".into()),
         });
 
         let workspace = self.workspace.clone();

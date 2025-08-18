@@ -294,6 +294,7 @@ impl<P: LinuxClient + 'static> Platform for P {
                 let request = match ashpd::desktop::file_chooser::OpenFileRequest::default()
                     .modal(true)
                     .title(title)
+                    .accept_label(options.prompt.as_ref().map(crate::SharedString::as_str))
                     .multiple(options.multiple)
                     .directory(options.directories)
                     .send()
