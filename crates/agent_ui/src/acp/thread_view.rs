@@ -26,7 +26,7 @@ use gpui::{
 };
 use language::Buffer;
 use markdown::{HeadingLevelStyles, Markdown, MarkdownElement, MarkdownStyle};
-use project::Project;
+use project::{Project, ProjectEntryId};
 use prompt_store::PromptId;
 use rope::Point;
 use settings::{Settings as _, SettingsStore};
@@ -632,6 +632,38 @@ impl AcpThreadView {
         diff.update(cx, |diff, cx| {
             diff.move_to_path(PathKey::for_buffer(&buffer, cx), window, cx)
         })
+    }
+
+    fn handle_open_rules(&mut self, _: &ClickEvent, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(thread) = self.as_native_thread(cx) else {
+            return;
+        };
+        let project_context = thread.read(cx).project_context().read(cx);
+
+        let project_entry_ids = project_context
+            .worktrees
+            .iter()
+            .flat_map(|worktree| worktree.rules_file.as_ref())
+            .map(|rules_file| ProjectEntryId::from_usize(rules_file.project_entry_id))
+            .collect::<Vec<_>>();
+
+        self.workspace
+            .update(cx, move |workspace, cx| {
+                // TODO: Open a multibuffer instead? In some cases this doesn't make the set of rules
+                // files clear. For example, if rules file 1 is already open but rules file 2 is not,
+                // this would open and focus rules file 2 in a tab that is not next to rules file 1.
+                let project = workspace.project().read(cx);
+                let project_paths = project_entry_ids
+                    .into_iter()
+                    .flat_map(|entry_id| project.path_for_entry(entry_id, cx))
+                    .collect::<Vec<_>>();
+                for project_path in project_paths {
+                    workspace
+                        .open_path(project_path, None, true, window, cx)
+                        .detach_and_log_err(cx);
+                }
+            })
+            .ok();
     }
 
     fn handle_thread_error(&mut self, error: anyhow::Error, cx: &mut Context<Self>) {
@@ -1910,7 +1942,7 @@ impl AcpThreadView {
                                     .shape(ui::IconButtonShape::Square)
                                     .icon_size(IconSize::XSmall)
                                     .icon_color(Color::Ignored)
-                                    // .on_click(cx.listener(Self::handle_open_rules))
+                                    .on_click(cx.listener(Self::handle_open_rules))
                                     .tooltip(Tooltip::text("View Rules")),
                             ),
                     )
