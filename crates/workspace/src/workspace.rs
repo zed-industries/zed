@@ -256,11 +256,6 @@ actions!(
     ]
 );
 
-#[derive(Clone, PartialEq)]
-pub struct OpenPaths {
-    pub paths: Vec<PathBuf>,
-}
-
 /// Activates a specific pane by its index.
 #[derive(Clone, Deserialize, PartialEq, JsonSchema, Action)]
 #[action(namespace = workspace)]
@@ -6820,14 +6815,6 @@ impl WorkspaceHandle for Entity<Workspace> {
                 })
             })
             .collect::<Vec<_>>()
-    }
-}
-
-impl std::fmt::Debug for OpenPaths {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("OpenPaths")
-            .field("paths", &self.paths)
-            .finish()
     }
 }
 
