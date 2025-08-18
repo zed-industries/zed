@@ -990,6 +990,7 @@ impl Database {
                         head_commit_details,
                         scan_id: db_repository_entry.scan_id as u64,
                         is_last_update: true,
+                        merge_message: None,
                     });
                 }
             }

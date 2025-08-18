@@ -2774,6 +2774,7 @@ impl RepositorySnapshot {
                 .iter()
                 .map(|repo_path| repo_path.to_proto())
                 .collect(),
+            merge_message: self.merge.message.as_ref().map(|msg| msg.to_string()),
             project_id,
             id: self.id.to_proto(),
             abs_path: self.work_directory_abs_path.to_proto(),
@@ -2836,6 +2837,7 @@ impl RepositorySnapshot {
                 .iter()
                 .map(|path| path.as_ref().to_proto())
                 .collect(),
+            merge_message: self.merge.message.as_ref().map(|msg| msg.to_string()),
             project_id,
             id: self.id.to_proto(),
             abs_path: self.work_directory_abs_path.to_proto(),
@@ -4266,6 +4268,7 @@ impl Repository {
             .map(proto_to_commit_details);
 
         self.snapshot.merge.conflicted_paths = conflicted_paths;
+        self.snapshot.merge.message = update.merge_message.map(SharedString::from);
 
         let edits = update
             .removed_statuses
