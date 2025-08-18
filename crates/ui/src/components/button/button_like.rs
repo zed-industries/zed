@@ -400,6 +400,7 @@ pub struct ButtonLike {
     size: ButtonSize,
     rounding: Option<ButtonLikeRounding>,
     tooltip: Option<Box<dyn Fn(&mut Window, &mut App) -> AnyView>>,
+    hoverable_tooltip: Option<Box<dyn Fn(&mut Window, &mut App) -> AnyView>>,
     cursor_style: CursorStyle,
     on_click: Option<Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
     on_right_click: Option<Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
@@ -420,6 +421,7 @@ impl ButtonLike {
             size: ButtonSize::Default,
             rounding: Some(ButtonLikeRounding::All),
             tooltip: None,
+            hoverable_tooltip: None,
             children: SmallVec::new(),
             cursor_style: CursorStyle::PointingHand,
             on_click: None,
@@ -461,6 +463,14 @@ impl ButtonLike {
         handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
     ) -> Self {
         self.on_right_click = Some(Box::new(handler));
+        self
+    }
+
+    pub fn hoverable_tooltip(
+        mut self,
+        tooltip: impl Fn(&mut Window, &mut App) -> AnyView + 'static,
+    ) -> Self {
+        self.hoverable_tooltip = Some(Box::new(tooltip));
         self
     }
 }
@@ -653,6 +663,9 @@ impl RenderOnce for ButtonLike {
             )
             .when_some(self.tooltip, |this, tooltip| {
                 this.tooltip(move |window, cx| tooltip(window, cx))
+            })
+            .when_some(self.hoverable_tooltip, |this, tooltip| {
+                this.hoverable_tooltip(move |window, cx| tooltip(window, cx))
             })
             .children(self.children)
     }
