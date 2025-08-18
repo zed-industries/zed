@@ -121,8 +121,8 @@ where
     func(cursor.deref_mut())
 }
 
-static NEXT_LANGUAGE_ID: LazyLock<AtomicUsize> = LazyLock::new(Default::default);
-static NEXT_GRAMMAR_ID: LazyLock<AtomicUsize> = LazyLock::new(Default::default);
+static NEXT_LANGUAGE_ID: AtomicUsize = AtomicUsize::new(0);
+static NEXT_GRAMMAR_ID: AtomicUsize = AtomicUsize::new(0);
 static WASM_ENGINE: LazyLock<wasmtime::Engine> = LazyLock::new(|| {
     wasmtime::Engine::new(&wasmtime::Config::new()).expect("Failed to create Wasmtime engine")
 });
@@ -964,11 +964,11 @@ where
 
 fn deserialize_regex_vec<'de, D: Deserializer<'de>>(d: D) -> Result<Vec<Regex>, D::Error> {
     let sources = Vec::<String>::deserialize(d)?;
-    let mut regexes = Vec::new();
-    for source in sources {
-        regexes.push(regex::Regex::new(&source).map_err(de::Error::custom)?);
-    }
-    Ok(regexes)
+    sources
+        .into_iter()
+        .map(|source| regex::Regex::new(&source))
+        .collect::<Result<_, _>>()
+        .map_err(de::Error::custom)
 }
 
 fn regex_vec_json_schema(_: &mut SchemaGenerator) -> schemars::Schema {
@@ -1034,12 +1034,10 @@ impl<'de> Deserialize<'de> for BracketPairConfig {
         D: Deserializer<'de>,
     {
         let result = Vec::<BracketPairContent>::deserialize(deserializer)?;
-        let mut brackets = Vec::with_capacity(result.len());
-        let mut disabled_scopes_by_bracket_ix = Vec::with_capacity(result.len());
-        for entry in result {
-            brackets.push(entry.bracket_pair);
-            disabled_scopes_by_bracket_ix.push(entry.not_in);
-        }
+        let (brackets, disabled_scopes_by_bracket_ix) = result
+            .into_iter()
+            .map(|entry| (entry.bracket_pair, entry.not_in))
+            .unzip();
 
         Ok(BracketPairConfig {
             pairs: brackets,
@@ -1379,16 +1377,14 @@ impl Language {
         let grammar = self.grammar_mut().context("cannot mutate grammar")?;
 
         let query = Query::new(&grammar.ts_language, source)?;
-        let mut extra_captures = Vec::with_capacity(query.capture_names().len());
-
-        for name in query.capture_names().iter() {
-            let kind = if *name == "run" {
-                RunnableCapture::Run
-            } else {
-                RunnableCapture::Named(name.to_string().into())
-            };
-            extra_captures.push(kind);
-        }
+        let extra_captures: Vec<_> = query
+            .capture_names()
+            .iter()
+            .map(|&name| match name {
+                "run" => RunnableCapture::Run,
+                name => RunnableCapture::Named(name.to_string().into()),
+            })
+            .collect();
 
         grammar.runnable_config = Some(RunnableConfig {
             extra_captures,
