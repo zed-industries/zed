@@ -146,7 +146,7 @@ pub struct NewExternalAgentThread {
     agent: Option<ExternalAgent>,
 }
 
-#[derive(Default, Clone, Copy, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Default, Debug, Clone, Copy, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 enum ExternalAgent {
     #[default]

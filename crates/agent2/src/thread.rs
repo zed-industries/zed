@@ -622,7 +622,10 @@ impl Thread {
     ) -> Result<mpsc::UnboundedReceiver<Result<AgentResponseEvent>>> {
         self.cancel();
 
-        let model = self.model.clone().context("No language model configured")?;
+        let model = self
+            .model()
+            .cloned()
+            .context("No language model configured")?;
         let (events_tx, events_rx) = mpsc::unbounded::<Result<AgentResponseEvent>>();
         let event_stream = AgentResponseEventStream(events_tx);
         let message_ix = self.messages.len().saturating_sub(1);
