@@ -159,6 +159,7 @@ impl AcpThreadView {
                 project.clone(),
                 thread_store.clone(),
                 text_thread_store.clone(),
+                "Message the agent － @ to include context",
                 editor::EditorMode::AutoHeight {
                     min_lines: MIN_EDITOR_LINES,
                     max_lines: Some(MAX_EDITOR_LINES),
@@ -426,7 +427,9 @@ impl AcpThreadView {
         match event {
             MessageEditorEvent::Send => self.send(window, cx),
             MessageEditorEvent::Cancel => self.cancel_generation(cx),
-            MessageEditorEvent::Focus => {}
+            MessageEditorEvent::Focus => {
+                self.cancel_editing(&Default::default(), window, cx);
+            }
         }
     }
 
@@ -742,44 +745,98 @@ impl AcpThreadView {
         cx: &Context<Self>,
     ) -> AnyElement {
         let primary = match &entry {
-            AgentThreadEntry::UserMessage(message) => div()
-                .id(("user_message", entry_ix))
-                .py_4()
-                .px_2()
-                .children(message.id.clone().and_then(|message_id| {
-                    message.checkpoint.as_ref()?.show.then(|| {
-                        Button::new("restore-checkpoint", "Restore Checkpoint")
-                            .icon(IconName::Undo)
-                            .icon_size(IconSize::XSmall)
-                            .icon_position(IconPosition::Start)
-                            .label_size(LabelSize::XSmall)
-                            .on_click(cx.listener(move |this, _, _window, cx| {
-                                this.rewind(&message_id, cx);
-                            }))
-                    })
-                }))
-                .child(
-                    v_flex()
-                        .p_3()
-                        .gap_1p5()
-                        .rounded_lg()
-                        .shadow_md()
-                        .bg(cx.theme().colors().editor_background)
-                        .border_1()
-                        .border_color(cx.theme().colors().border)
-                        .text_xs()
-                        .children(
-                            self.entry_view_state
-                                .read(cx)
-                                .entry(entry_ix)
-                                .and_then(|entry| entry.message_editor())
-                                .map(|editor| {
-                                    self.render_sent_message_editor(entry_ix, editor, cx)
-                                        .into_any_element()
-                                }),
-                        ),
-                )
-                .into_any(),
+            AgentThreadEntry::UserMessage(message) => {
+                let Some(editor) = self
+                    .entry_view_state
+                    .read(cx)
+                    .entry(entry_ix)
+                    .and_then(|entry| entry.message_editor())
+                    .cloned()
+                else {
+                    return Empty.into_any_element();
+                };
+
+                let editing = self.editing_message == Some(entry_ix);
+                let editor_focus = editor.focus_handle(cx).is_focused(window);
+                let focus_border = cx.theme().colors().border_focused;
+
+                div()
+                    .id(("user_message", entry_ix))
+                    .py_4()
+                    .px_2()
+                    .children(message.id.clone().and_then(|message_id| {
+                        message.checkpoint.as_ref()?.show.then(|| {
+                            Button::new("restore-checkpoint", "Restore Checkpoint")
+                                .icon(IconName::Undo)
+                                .icon_size(IconSize::XSmall)
+                                .icon_position(IconPosition::Start)
+                                .label_size(LabelSize::XSmall)
+                                .on_click(cx.listener(move |this, _, _window, cx| {
+                                    this.rewind(&message_id, cx);
+                                }))
+                        })
+                    }))
+                    .child(
+                        div()
+                            .relative()
+                            .child(
+                                div()
+                                    .p_3()
+                                    .rounded_lg()
+                                    .shadow_md()
+                                    .bg(cx.theme().colors().editor_background)
+                                    .border_1()
+                                    .when(editing && !editor_focus, |this| this.border_dashed())
+                                    .border_color(cx.theme().colors().border)
+                                    .map(|this|{
+                                        if editor_focus {
+                                            this.border_color(focus_border)
+                                        } else {
+                                            this.hover(|s| s.border_color(focus_border.opacity(0.8)))
+                                        }
+                                    })
+                                    .text_xs()
+                                    .child(editor.clone().into_any_element()),
+                            )
+                            .when(editor_focus, |this|
+                                this.child(
+                                    h_flex()
+                                        .absolute()
+                                        .top_neg_3p5()
+                                        .right_3()
+                                        .gap_1()
+                                        .rounded_sm()
+                                        .border_1()
+                                        .border_color(cx.theme().colors().border)
+                                        .bg(cx.theme().colors().editor_background)
+                                        .overflow_hidden()
+                                        .child(
+                                            IconButton::new("cancel", IconName::Close)
+                                                .icon_color(Color::Error)
+                                                .icon_size(IconSize::XSmall)
+                                                .on_click(cx.listener(Self::cancel_editing))
+                                        )
+                                        .child(
+                                            IconButton::new("regenerate", IconName::Return)
+                                                .icon_color(Color::Muted)
+                                                .icon_size(IconSize::XSmall)
+                                                .tooltip(Tooltip::text(
+                                                    "Editing will restart the thread from this point."
+                                                ))
+                                                .on_click(cx.listener({
+                                                    let editor = editor.clone();
+                                                    move |this, _, window, cx| {
+                                                        this.regenerate(
+                                                            entry_ix, &editor, window, cx,
+                                                        );
+                                                    }
+                                                })),
+                                        )
+                                )
+                            ),
+                    )
+                    .into_any()
+            }
             AgentThreadEntry::AssistantMessage(AssistantMessage { chunks }) => {
                 let style = default_markdown_style(false, window, cx);
                 let message_body = v_flex()
@@ -854,20 +911,12 @@ impl AcpThreadView {
         if let Some(editing_index) = self.editing_message.as_ref()
             && *editing_index < entry_ix
         {
-            let backdrop = div()
-                .id(("backdrop", entry_ix))
-                .size_full()
-                .absolute()
-                .inset_0()
-                .bg(cx.theme().colors().panel_background)
-                .opacity(0.8)
-                .block_mouse_except_scroll()
-                .on_click(cx.listener(Self::cancel_editing));
-
             div()
-                .relative()
                 .child(primary)
-                .child(backdrop)
+                .opacity(0.2)
+                .block_mouse_except_scroll()
+                .id("overlay")
+                .on_click(cx.listener(Self::cancel_editing))
                 .into_any_element()
         } else {
             primary
@@ -2510,90 +2559,6 @@ impl AcpThreadView {
                 })
                 .into_any_element(),
         )
-    }
-
-    fn render_sent_message_editor(
-        &self,
-        entry_ix: usize,
-        editor: &Entity<MessageEditor>,
-        cx: &Context<Self>,
-    ) -> Div {
-        v_flex().w_full().gap_2().child(editor.clone()).when(
-            self.editing_message == Some(entry_ix),
-            |el| {
-                el.child(
-                    h_flex()
-                        .gap_1()
-                        .child(
-                            Icon::new(IconName::Warning)
-                                .color(Color::Warning)
-                                .size(IconSize::XSmall),
-                        )
-                        .child(
-                            Label::new("Editing will restart the thread from this point.")
-                                .color(Color::Muted)
-                                .size(LabelSize::XSmall),
-                        )
-                        .child(self.render_sent_message_editor_buttons(entry_ix, editor, cx)),
-                )
-            },
-        )
-    }
-
-    fn render_sent_message_editor_buttons(
-        &self,
-        entry_ix: usize,
-        editor: &Entity<MessageEditor>,
-        cx: &Context<Self>,
-    ) -> Div {
-        h_flex()
-            .gap_0p5()
-            .flex_1()
-            .justify_end()
-            .child(
-                IconButton::new("cancel-edit-message", IconName::Close)
-                    .shape(ui::IconButtonShape::Square)
-                    .icon_color(Color::Error)
-                    .icon_size(IconSize::Small)
-                    .tooltip({
-                        let focus_handle = editor.focus_handle(cx);
-                        move |window, cx| {
-                            Tooltip::for_action_in(
-                                "Cancel Edit",
-                                &menu::Cancel,
-                                &focus_handle,
-                                window,
-                                cx,
-                            )
-                        }
-                    })
-                    .on_click(cx.listener(Self::cancel_editing)),
-            )
-            .child(
-                IconButton::new("confirm-edit-message", IconName::Return)
-                    .disabled(editor.read(cx).is_empty(cx))
-                    .shape(ui::IconButtonShape::Square)
-                    .icon_color(Color::Muted)
-                    .icon_size(IconSize::Small)
-                    .tooltip({
-                        let focus_handle = editor.focus_handle(cx);
-                        move |window, cx| {
-                            Tooltip::for_action_in(
-                                "Regenerate",
-                                &menu::Confirm,
-                                &focus_handle,
-                                window,
-                                cx,
-                            )
-                        }
-                    })
-                    .on_click(cx.listener({
-                        let editor = editor.clone();
-                        move |this, _, window, cx| {
-                            this.regenerate(entry_ix, &editor, window, cx);
-                        }
-                    })),
-            )
     }
 
     fn render_send_button(&self, cx: &mut Context<Self>) -> AnyElement {
