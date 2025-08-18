@@ -12,7 +12,7 @@ use futures::{
     channel::{mpsc, oneshot},
     stream::FuturesUnordered,
 };
-use gpui::{App, Context, Entity, SharedString, Task};
+use gpui::{App, AppContext, Context, Entity, SharedString, Task};
 use language_model::{
     LanguageModel, LanguageModelCompletionEvent, LanguageModelImage, LanguageModelProviderId,
     LanguageModelRequest, LanguageModelRequestMessage, LanguageModelRequestTool,
@@ -545,7 +545,10 @@ impl Thread {
         }
     }
 
-    pub fn replay(&self, cx: &mut Context<Self>) -> mpsc::UnboundedReceiver<Result<ThreadEvent>> {
+    pub fn replay(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> mpsc::UnboundedReceiver<Result<ThreadEvent>> {
         let (tx, rx) = mpsc::unbounded();
         let stream = ThreadEventStream(tx);
         for message in &self.messages {
@@ -615,16 +618,15 @@ impl Thread {
             );
             tool.replay(tool_use.input.clone(), output, tool_event_stream, cx)
                 .log_err();
-        } else {
-            stream.update_tool_call_fields(
-                &tool_use.id,
-                acp::ToolCallUpdateFields {
-                    content: Some(vec![TOOL_CANCELED_MESSAGE.into()]),
-                    status: Some(acp::ToolCallStatus::Failed),
-                    ..Default::default()
-                },
-            );
         }
+
+        stream.update_tool_call_fields(
+            &tool_use.id,
+            acp::ToolCallUpdateFields {
+                status: Some(acp::ToolCallStatus::Completed),
+                ..Default::default()
+            },
+        );
     }
 
     pub fn project(&self) -> &Entity<Project> {
@@ -1740,6 +1742,26 @@ impl From<acp::ContentBlock> for UserMessageContent {
                     Self::Text("[blob]".to_string())
                 }
             },
+        }
+    }
+}
+
+impl From<UserMessageContent> for acp::ContentBlock {
+    fn from(content: UserMessageContent) -> Self {
+        match content {
+            UserMessageContent::Text(text) => acp::ContentBlock::Text(acp::TextContent {
+                text,
+                annotations: None,
+            }),
+            UserMessageContent::Image(image) => acp::ContentBlock::Image(acp::ImageContent {
+                data: image.source.to_string(),
+                mime_type: "image/png".to_string(),
+                annotations: None,
+                uri: None,
+            }),
+            UserMessageContent::Mention { uri, content } => {
+                todo!()
+            }
         }
     }
 }
