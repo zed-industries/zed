@@ -13108,24 +13108,18 @@ async fn populate_labels_for_symbols(
 
 fn include_text(server: &lsp::LanguageServer) -> Option<bool> {
     match server.capabilities().text_document_sync.as_ref()? {
-        lsp::TextDocumentSyncCapability::Kind(kind) => match *kind {
-            lsp::TextDocumentSyncKind::NONE => None,
-            lsp::TextDocumentSyncKind::FULL => Some(true),
-            lsp::TextDocumentSyncKind::INCREMENTAL => Some(false),
-            _ => None,
-        },
-        lsp::TextDocumentSyncCapability::Options(options) => match options.save.as_ref()? {
-            lsp::TextDocumentSyncSaveOptions::Supported(supported) => {
-                if *supported {
-                    Some(true)
-                } else {
-                    None
-                }
-            }
+        lsp::TextDocumentSyncCapability::Options(opts) => match opts.save.as_ref()? {
+            // Server wants didSave but didn't specify includeText.
+            lsp::TextDocumentSyncSaveOptions::Supported(true) => Some(false),
+            // Server doesn't want didSave at all.
+            lsp::TextDocumentSyncSaveOptions::Supported(false) => None,
+            // Server provided SaveOptions.
             lsp::TextDocumentSyncSaveOptions::SaveOptions(save_options) => {
                 Some(save_options.include_text.unwrap_or(false))
             }
         },
+        // We do not have any save info. Kind affects didChange only.
+        lsp::TextDocumentSyncCapability::Kind(_) => None,
     }
 }
 
