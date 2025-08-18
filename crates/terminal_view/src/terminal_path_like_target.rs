@@ -537,9 +537,26 @@ mod tests {
         };
     }
 
+    #[doc = "test_path_likes!(<cx>, <trees>, <worktrees>, { $(<tests>;)+ })"]
+    macro_rules! test_path_likes {
+        ($cx:expr, $trees:expr, $worktrees:expr, { $($tests:expr;)+ }) => { {
+            let mut test_path_like = init_test($cx, $trees, $worktrees).await;
+            #[doc ="test!(<hovered maybe_path>, <expected tooltip>, <terminal cwd>)"]
+            macro_rules! test {
+                ($maybe_path:literal, $tooltip:literal) => {
+                    test_path_like!(test_path_like, $maybe_path, $tooltip)
+                };
+                ($maybe_path:literal, $tooltip:literal, $cwd:literal) => {
+                    test_path_like!(test_path_like, $maybe_path, $tooltip, $cwd)
+                }
+            }
+            $($tests);+
+        } }
+    }
+
     #[gpui::test]
     async fn one_folder_worktree(cx: &mut TestAppContext) {
-        let mut test_path_like = init_test(
+        test_path_likes!(
             cx,
             vec![(
                 path!("/test"),
@@ -549,18 +566,16 @@ mod tests {
                 }),
             )],
             vec![path!("/test")],
+            {
+                test!("lib.rs", "/test/lib.rs");
+                test!("test.rs", "/test/test.rs");
+            }
         )
-        .await;
-
-        macro_rules! test { ($($args:tt),+) => { test_path_like!(test_path_like, $($args),+) } }
-
-        test!("lib.rs", "/test/lib.rs");
-        test!("test.rs", "/test/test.rs");
     }
 
     #[gpui::test]
     async fn mixed_worktrees(cx: &mut TestAppContext) {
-        let mut test_path_like = init_test(
+        test_path_likes!(
             cx,
             vec![
                 (
@@ -579,20 +594,18 @@ mod tests {
                 ),
             ],
             vec![path!("/file.txt"), path!("/test")],
+            {
+                test!("file.txt", "/file.txt", "/");
+                test!("lib.rs", "/test/lib.rs", "/test");
+                test!("test.rs", "/test/test.rs", "/test");
+                test!("file.txt", "/test/file.txt", "/test");
+            }
         )
-        .await;
-
-        macro_rules! test { ($($args:tt),+) => { test_path_like!(test_path_like, $($args),+) } }
-
-        test!("file.txt", "/file.txt", "/");
-        test!("lib.rs", "/test/lib.rs", "/test");
-        test!("test.rs", "/test/test.rs", "/test");
-        test!("file.txt", "/test/file.txt", "/test");
     }
 
     #[gpui::test]
     async fn worktree_file_preferred(cx: &mut TestAppContext) {
-        let mut test_path_like = init_test(
+        test_path_likes!(
             cx,
             vec![
                 (
@@ -609,12 +622,10 @@ mod tests {
                 ),
             ],
             vec![path!("/test")],
+            {
+                test!("file.txt", "/test/file.txt", "/test");
+            }
         )
-        .await;
-
-        macro_rules! test { ($($args:tt),+) => { test_path_like!(test_path_like, $($args),+) } }
-
-        test!("file.txt", "/test/file.txt", "/test");
     }
 
     mod issues {
@@ -623,7 +634,7 @@ mod tests {
         // https://github.com/zed-industries/zed/issues/28407
         #[gpui::test]
         async fn issue_28407_siblings(cx: &mut TestAppContext) {
-            let mut test_path_like = init_test(
+            test_path_likes!(
                 cx,
                 vec![(
                     path!("/dir1"),
@@ -637,14 +648,12 @@ mod tests {
                     }),
                 )],
                 vec![path!("/dir1")],
+                {
+                    test!("C.py", "/dir1/dir 2/C.py", "/dir1");
+                    test!("C.py", "/dir1/dir 2/C.py", "/dir1/dir 2");
+                    test!("C.py", "/dir1/dir 3/C.py", "/dir1/dir 3");
+                }
             )
-            .await;
-
-            macro_rules! test { ($($args:tt),+) => { test_path_like!(test_path_like, $($args),+) } }
-
-            test!("C.py", "/dir1/dir 2/C.py", "/dir1");
-            test!("C.py", "/dir1/dir 2/C.py", "/dir1/dir 2");
-            test!("C.py", "/dir1/dir 3/C.py", "/dir1/dir 3");
         }
 
         // https://github.com/zed-industries/zed/issues/28407
@@ -653,7 +662,7 @@ mod tests {
         #[gpui::test]
         #[should_panic(expected = "Tooltip mismatch")]
         async fn issue_28407_nesting(cx: &mut TestAppContext) {
-            let mut test_path_like = init_test(
+            test_path_likes!(
                 cx,
                 vec![(
                     path!("/project"),
@@ -669,50 +678,48 @@ mod tests {
                     }),
                 )],
                 vec![path!("/project")],
+                {
+                    // Failing currently
+                    test!("main.rs", "/project/src/main.rs", "/project");
+                    test!("main.rs", "/project/src/main.rs", "/project/src");
+                    test!("main.rs", "/project/lib/src/main.rs", "/project/lib");
+                    test!("main.rs", "/project/lib/src/main.rs", "/project/lib/src");
+
+                    test!("src/main.rs", "/project/src/main.rs", "/project");
+                    test!("src/main.rs", "/project/src/main.rs", "/project/src");
+                    // Failing currently
+                    test!("src/main.rs", "/project/lib/src/main.rs", "/project/lib");
+                    // Failing currently
+                    test!(
+                        "src/main.rs",
+                        "/project/lib/src/main.rs",
+                        "/project/lib/src"
+                    );
+
+                    test!("lib/src/main.rs", "/project/lib/src/main.rs", "/project");
+                    test!(
+                        "lib/src/main.rs",
+                        "/project/lib/src/main.rs",
+                        "/project/src"
+                    );
+                    test!(
+                        "lib/src/main.rs",
+                        "/project/lib/src/main.rs",
+                        "/project/lib"
+                    );
+                    test!(
+                        "lib/src/main.rs",
+                        "/project/lib/src/main.rs",
+                        "/project/lib/src"
+                    );
+                }
             )
-            .await;
-
-            macro_rules! test { ($($args:tt),+) => { test_path_like!(test_path_like, $($args),+) } }
-
-            // Failing currently
-            test!("main.rs", "/project/src/main.rs", "/project");
-            test!("main.rs", "/project/src/main.rs", "/project/src");
-            test!("main.rs", "/project/lib/src/main.rs", "/project/lib");
-            test!("main.rs", "/project/lib/src/main.rs", "/project/lib/src");
-
-            test!("src/main.rs", "/project/src/main.rs", "/project");
-            test!("src/main.rs", "/project/src/main.rs", "/project/src");
-            // Failing currently
-            test!("src/main.rs", "/project/lib/src/main.rs", "/project/lib");
-            // Failing currently
-            test!(
-                "src/main.rs",
-                "/project/lib/src/main.rs",
-                "/project/lib/src"
-            );
-
-            test!("lib/src/main.rs", "/project/lib/src/main.rs", "/project");
-            test!(
-                "lib/src/main.rs",
-                "/project/lib/src/main.rs",
-                "/project/src"
-            );
-            test!(
-                "lib/src/main.rs",
-                "/project/lib/src/main.rs",
-                "/project/lib"
-            );
-            test!(
-                "lib/src/main.rs",
-                "/project/lib/src/main.rs",
-                "/project/lib/src"
-            );
         }
 
         // https://github.com/zed-industries/zed/issues/28339
         #[gpui::test]
         async fn issue_28339(cx: &mut TestAppContext) {
-            let mut test_path_like = init_test(
+            test_path_likes!(
                 cx,
                 vec![(
                     path!("/tmp"),
@@ -725,48 +732,46 @@ mod tests {
                     }),
                 )],
                 vec![path!("/tmp")],
+                {
+                    test!(
+                        "foo/./bar.txt",
+                        "/tmp/issue28339/foo/bar.txt",
+                        "/tmp/issue28339"
+                    );
+                    test!(
+                        "foo/../foo/bar.txt",
+                        "/tmp/issue28339/foo/bar.txt",
+                        "/tmp/issue28339"
+                    );
+                    test!(
+                        "foo/..///foo/bar.txt",
+                        "/tmp/issue28339/foo/bar.txt",
+                        "/tmp/issue28339"
+                    );
+                    test!(
+                        "issue28339/../issue28339/foo/../foo/bar.txt",
+                        "/tmp/issue28339/foo/bar.txt",
+                        "/tmp/issue28339"
+                    );
+                    test!(
+                        "./bar.txt",
+                        "/tmp/issue28339/foo/bar.txt",
+                        "/tmp/issue28339/foo"
+                    );
+                    test!(
+                        "../foo/bar.txt",
+                        "/tmp/issue28339/foo/bar.txt",
+                        "/tmp/issue28339/foo"
+                    );
+                }
             )
-            .await;
-
-            macro_rules! test { ($($args:tt),+) => { test_path_like!(test_path_like, $($args),+) } }
-
-            test!(
-                "foo/./bar.txt",
-                "/tmp/issue28339/foo/bar.txt",
-                "/tmp/issue28339"
-            );
-            test!(
-                "foo/../foo/bar.txt",
-                "/tmp/issue28339/foo/bar.txt",
-                "/tmp/issue28339"
-            );
-            test!(
-                "foo/..///foo/bar.txt",
-                "/tmp/issue28339/foo/bar.txt",
-                "/tmp/issue28339"
-            );
-            test!(
-                "issue28339/../issue28339/foo/../foo/bar.txt",
-                "/tmp/issue28339/foo/bar.txt",
-                "/tmp/issue28339"
-            );
-            test!(
-                "./bar.txt",
-                "/tmp/issue28339/foo/bar.txt",
-                "/tmp/issue28339/foo"
-            );
-            test!(
-                "../foo/bar.txt",
-                "/tmp/issue28339/foo/bar.txt",
-                "/tmp/issue28339/foo"
-            );
         }
 
         // https://github.com/zed-industries/zed/issues/34027
         #[gpui::test]
         #[should_panic(expected = "Tooltip mismatch")]
         async fn issue_34027_non_worktree_file(cx: &mut TestAppContext) {
-            let mut test_path_like = init_test(
+            test_path_likes!(
                 cx,
                 vec![
                     (
@@ -783,12 +788,11 @@ mod tests {
                     ),
                 ],
                 vec![path!("/test")],
+                {
+                    test!("file.txt", "/file.txt", "/");
+                    test!("file.txt", "/fiile.txt", "/");
+                }
             )
-            .await;
-
-            macro_rules! test { ($($args:tt),+) => { test_path_like!(test_path_like, $($args),+) } }
-
-            test!("file.txt", "/file.txt", "/");
         }
     }
 }
