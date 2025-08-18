@@ -98,7 +98,7 @@ impl AgentConnection for ClaudeAgentConnection {
             };
 
             let api_key =
-                cx.update(|cx| AnthropicLanguageModelProvider::api_key(cx))?
+                cx.update(AnthropicLanguageModelProvider::api_key)?
                     .await
                     .map_err(|err| {
                         if err.is::<language_model::AuthenticateError>() {
