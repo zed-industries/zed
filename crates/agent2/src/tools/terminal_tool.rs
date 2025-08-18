@@ -80,7 +80,7 @@ impl AgentTool for TerminalTool {
             let first_line = lines.next().unwrap_or_default();
             let remaining_line_count = lines.count();
             match remaining_line_count {
-                0 => MarkdownInlineCode(&first_line).to_string().into(),
+                0 => MarkdownInlineCode(first_line).to_string().into(),
                 1 => MarkdownInlineCode(&format!(
                     "{} - {} more line",
                     first_line, remaining_line_count

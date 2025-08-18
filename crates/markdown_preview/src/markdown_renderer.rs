@@ -459,13 +459,13 @@ fn render_markdown_table(parsed: &ParsedMarkdownTable, cx: &mut RenderContext) -
     let mut max_lengths: Vec<usize> = vec![0; parsed.header.children.len()];
 
     for (index, cell) in parsed.header.children.iter().enumerate() {
-        let length = paragraph_len(&cell);
+        let length = paragraph_len(cell);
         max_lengths[index] = length;
     }
 
     for row in &parsed.body {
         for (index, cell) in row.children.iter().enumerate() {
-            let length = paragraph_len(&cell);
+            let length = paragraph_len(cell);
 
             if length > max_lengths[index] {
                 max_lengths[index] = length;

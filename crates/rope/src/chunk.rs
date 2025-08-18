@@ -49,7 +49,7 @@ impl Chunk {
         self.chars_utf16 |= slice.chars_utf16 << base_ix;
         self.newlines |= slice.newlines << base_ix;
         self.tabs |= slice.tabs << base_ix;
-        self.text.push_str(&slice.text);
+        self.text.push_str(slice.text);
     }
 
     #[inline(always)]
@@ -623,7 +623,7 @@ mod tests {
         let text = &text[..ix];
 
         log::info!("Chunk: {:?}", text);
-        let chunk = Chunk::new(&text);
+        let chunk = Chunk::new(text);
         verify_chunk(chunk.as_slice(), text);
 
         for _ in 0..10 {

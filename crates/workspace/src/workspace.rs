@@ -647,7 +647,7 @@ impl ProjectItemRegistry {
             .build_project_item_for_path_fns
             .iter()
             .rev()
-            .find_map(|open_project_item| open_project_item(&project, &path, window, cx))
+            .find_map(|open_project_item| open_project_item(project, path, window, cx))
         else {
             return Task::ready(Err(anyhow!("cannot open file {:?}", path.path)));
         };
@@ -2431,7 +2431,7 @@ impl Workspace {
                         );
                         window.prompt(
                             PromptLevel::Warning,
-                            &"Do you want to save all changes in the following files?",
+                            "Do you want to save all changes in the following files?",
                             Some(&detail),
                             &["Save all", "Discard all", "Cancel"],
                             cx,
@@ -2767,9 +2767,9 @@ impl Workspace {
         let item = pane.read(cx).active_item();
         let pane = pane.downgrade();
 
-        window.spawn(cx, async move |mut cx| {
+        window.spawn(cx, async move |cx| {
             if let Some(item) = item {
-                Pane::save_item(project, &pane, item.as_ref(), save_intent, &mut cx)
+                Pane::save_item(project, &pane, item.as_ref(), save_intent, cx)
                     .await
                     .map(|_| ())
             } else {
@@ -3889,14 +3889,14 @@ impl Workspace {
                     pane.track_alternate_file_items();
                 });
                 if *local {
-                    self.unfollow_in_pane(&pane, window, cx);
+                    self.unfollow_in_pane(pane, window, cx);
                 }
                 serialize_workspace = *focus_changed || pane != self.active_pane();
                 if pane == self.active_pane() {
                     self.active_item_path_changed(window, cx);
                     self.update_active_view_for_followers(window, cx);
                 } else if *local {
-                    self.set_active_pane(&pane, window, cx);
+                    self.set_active_pane(pane, window, cx);
                 }
             }
             pane::Event::UserSavedItem { item, save_intent } => {
@@ -7182,9 +7182,9 @@ pub fn open_paths(
                 .collect::<Vec<_>>();
 
             cx.update(|cx| {
-                for window in local_workspace_windows(&cx) {
-                    if let Ok(workspace) = window.read(&cx) {
-                        let m = workspace.project.read(&cx).visibility_for_paths(
+                for window in local_workspace_windows(cx) {
+                    if let Ok(workspace) = window.read(cx) {
+                        let m = workspace.project.read(cx).visibility_for_paths(
                             &abs_paths,
                             &all_metadatas,
                             open_options.open_new_workspace == None,
@@ -7341,7 +7341,7 @@ pub fn open_ssh_project_with_new_connection(
 ) -> Task<Result<()>> {
     cx.spawn(async move |cx| {
         let (serialized_ssh_project, workspace_id, serialized_workspace) =
-            serialize_ssh_project(connection_options.clone(), paths.clone(), &cx).await?;
+            serialize_ssh_project(connection_options.clone(), paths.clone(), cx).await?;
 
         let session = match cx
             .update(|cx| {
@@ -7395,7 +7395,7 @@ pub fn open_ssh_project_with_existing_connection(
 ) -> Task<Result<()>> {
     cx.spawn(async move |cx| {
         let (serialized_ssh_project, workspace_id, serialized_workspace) =
-            serialize_ssh_project(connection_options.clone(), paths.clone(), &cx).await?;
+            serialize_ssh_project(connection_options.clone(), paths.clone(), cx).await?;
 
         open_ssh_project_inner(
             project,

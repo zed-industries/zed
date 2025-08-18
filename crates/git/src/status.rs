@@ -468,7 +468,7 @@ impl FromStr for GitStatus {
                 Some((path, status))
             })
             .collect::<Vec<_>>();
-        entries.sort_unstable_by(|(a, _), (b, _)| a.cmp(&b));
+        entries.sort_unstable_by(|(a, _), (b, _)| a.cmp(b));
         // When a file exists in HEAD, is deleted in the index, and exists again in the working copy,
         // git produces two lines for it, one reading `D ` (deleted in index, unmodified in working copy)
         // and the other reading `??` (untracked). Merge these two into the equivalent of `DA`.

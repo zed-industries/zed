@@ -2923,7 +2923,7 @@ impl AgentPanel {
                         .style(ButtonStyle::Tinted(ui::TintColor::Warning))
                         .label_size(LabelSize::Small)
                         .key_binding(
-                            KeyBinding::for_action_in(&OpenSettings, &focus_handle, window, cx)
+                            KeyBinding::for_action_in(&OpenSettings, focus_handle, window, cx)
                                 .map(|kb| kb.size(rems_from_px(12.))),
                         )
                         .on_click(|_event, window, cx| {
@@ -3329,7 +3329,7 @@ impl AgentPanel {
                     .paths()
                     .into_iter()
                     .map(|path| {
-                        Workspace::project_path_for_path(this.project.clone(), &path, false, cx)
+                        Workspace::project_path_for_path(this.project.clone(), path, false, cx)
                     })
                     .collect::<Vec<_>>();
                 cx.spawn_in(window, async move |this, cx| {
@@ -3599,7 +3599,7 @@ impl rules_library::InlineAssistDelegate for PromptLibraryInlineAssist {
             let text_thread_store = None;
             let context_store = cx.new(|_| ContextStore::new(project.clone(), None));
             assistant.assist(
-                &prompt_editor,
+                prompt_editor,
                 self.workspace.clone(),
                 context_store,
                 project,

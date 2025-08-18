@@ -686,7 +686,7 @@ mod tests {
 
         let project = Project::test(fs, [project_root.as_ref()], cx).await;
 
-        let (workspace, mut cx) =
+        let (workspace, cx) =
             cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
         let buffer = project
@@ -725,7 +725,7 @@ mod tests {
 
         assert_state_with_diff(
             &diff_view.read_with(cx, |diff_view, _| diff_view.diff_editor.clone()),
-            &mut cx,
+            cx,
             expected_diff,
         );
 

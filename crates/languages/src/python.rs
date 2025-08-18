@@ -204,7 +204,7 @@ impl LspAdapter for PythonLspAdapter {
             .should_install_npm_package(
                 Self::SERVER_NAME.as_ref(),
                 &server_path,
-                &container_dir,
+                container_dir,
                 VersionStrategy::Latest(version),
             )
             .await;

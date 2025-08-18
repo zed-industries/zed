@@ -1162,7 +1162,7 @@ impl EditorElement {
                 .map_or(false, |state| state.keyboard_grace);
 
             if mouse_over_inline_blame || mouse_over_popover {
-                editor.show_blame_popover(&blame_entry, event.position, false, cx);
+                editor.show_blame_popover(blame_entry, event.position, false, cx);
             } else if !keyboard_grace {
                 editor.hide_blame_popover(cx);
             }
@@ -2818,7 +2818,7 @@ impl EditorElement {
                     }
 
                     let row =
-                        MultiBufferRow(DisplayPoint::new(display_row, 0).to_point(&snapshot).row);
+                        MultiBufferRow(DisplayPoint::new(display_row, 0).to_point(snapshot).row);
                     if snapshot.is_line_folded(row) {
                         return None;
                     }
@@ -3312,7 +3312,7 @@ impl EditorElement {
             let chunks = snapshot.highlighted_chunks(rows.clone(), true, style);
             LineWithInvisibles::from_chunks(
                 chunks,
-                &style,
+                style,
                 MAX_LINE_LEN,
                 rows.len(),
                 &snapshot.mode,
@@ -3393,7 +3393,7 @@ impl EditorElement {
                 let line_ix = align_to.row().0.checked_sub(rows.start.0);
                 x_position =
                     if let Some(layout) = line_ix.and_then(|ix| line_layouts.get(ix as usize)) {
-                        x_and_width(&layout)
+                        x_and_width(layout)
                     } else {
                         x_and_width(&layout_line(
                             align_to.row(),
@@ -5549,9 +5549,9 @@ impl EditorElement {
             // In singleton buffers, we select corresponding lines on the line number click, so use | -like cursor.
             // In multi buffers, we open file at the line number clicked, so use a pointing hand cursor.
             if is_singleton {
-                window.set_cursor_style(CursorStyle::IBeam, &hitbox);
+                window.set_cursor_style(CursorStyle::IBeam, hitbox);
             } else {
-                window.set_cursor_style(CursorStyle::PointingHand, &hitbox);
+                window.set_cursor_style(CursorStyle::PointingHand, hitbox);
             }
         }
     }
@@ -5570,7 +5570,7 @@ impl EditorElement {
                             &layout.position_map.snapshot,
                             line_height,
                             layout.gutter_hitbox.bounds,
-                            &hunk,
+                            hunk,
                         );
                         Some((
                             hunk_bounds,
@@ -6092,10 +6092,10 @@ impl EditorElement {
 
                     if axis == ScrollbarAxis::Vertical {
                         let fast_markers =
-                            self.collect_fast_scrollbar_markers(layout, &scrollbar_layout, cx);
+                            self.collect_fast_scrollbar_markers(layout, scrollbar_layout, cx);
                         // Refresh slow scrollbar markers in the background. Below, we
                         // paint whatever markers have already been computed.
-                        self.refresh_slow_scrollbar_markers(layout, &scrollbar_layout, window, cx);
+                        self.refresh_slow_scrollbar_markers(layout, scrollbar_layout, window, cx);
 
                         let markers = self.editor.read(cx).scrollbar_marker_state.markers.clone();
                         for marker in markers.iter().chain(&fast_markers) {
@@ -6129,7 +6129,7 @@ impl EditorElement {
                         if any_scrollbar_dragged {
                             window.set_window_cursor_style(CursorStyle::Arrow);
                         } else {
-                            window.set_cursor_style(CursorStyle::Arrow, &hitbox);
+                            window.set_cursor_style(CursorStyle::Arrow, hitbox);
                         }
                     }
                 })
@@ -9782,7 +9782,7 @@ pub fn layout_line(
     let chunks = snapshot.highlighted_chunks(row..row + DisplayRow(1), true, style);
     LineWithInvisibles::from_chunks(
         chunks,
-        &style,
+        style,
         MAX_LINE_LEN,
         1,
         &snapshot.mode,
