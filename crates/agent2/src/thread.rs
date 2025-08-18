@@ -802,16 +802,18 @@ impl Thread {
         &self.model
     }
 
-    pub fn set_model(&mut self, model: Arc<dyn LanguageModel>) {
+    pub fn set_model(&mut self, model: Arc<dyn LanguageModel>, cx: &mut Context<Self>) {
         self.model = model;
+        cx.notify()
     }
 
     pub fn completion_mode(&self) -> CompletionMode {
         self.completion_mode
     }
 
-    pub fn set_completion_mode(&mut self, mode: CompletionMode) {
+    pub fn set_completion_mode(&mut self, mode: CompletionMode, cx: &mut Context<Self>) {
         self.completion_mode = mode;
+        cx.notify()
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -839,21 +841,22 @@ impl Thread {
         self.profile_id = profile_id;
     }
 
-    pub fn cancel(&mut self) {
+    pub fn cancel(&mut self, cx: &mut Context<Self>) {
         if let Some(running_turn) = self.running_turn.take() {
             running_turn.cancel();
         }
-        self.flush_pending_message();
+        self.flush_pending_message(cx);
     }
 
-    pub fn truncate(&mut self, message_id: UserMessageId) -> Result<()> {
-        self.cancel();
+    pub fn truncate(&mut self, message_id: UserMessageId, cx: &mut Context<Self>) -> Result<()> {
+        self.cancel(cx);
         let Some(position) = self.messages.iter().position(
             |msg| matches!(msg, Message::User(UserMessage { id, .. }) if id == &message_id),
         ) else {
             return Err(anyhow!("Message not found"));
         };
         self.messages.truncate(position);
+        cx.notify();
         Ok(())
     }
 
@@ -900,7 +903,7 @@ impl Thread {
     }
 
     fn run_turn(&mut self, cx: &mut Context<Self>) -> mpsc::UnboundedReceiver<Result<ThreadEvent>> {
-        self.cancel();
+        self.cancel(cx);
 
         let model = self.model.clone();
         let (events_tx, events_rx) = mpsc::unbounded::<Result<ThreadEvent>>();
@@ -938,8 +941,8 @@ impl Thread {
                                 LanguageModelCompletionEvent::Stop(reason) => {
                                     event_stream.send_stop(reason);
                                     if reason == StopReason::Refusal {
-                                        this.update(cx, |this, _cx| {
-                                            this.flush_pending_message();
+                                        this.update(cx, |this, cx| {
+                                            this.flush_pending_message(cx);
                                             this.messages.truncate(message_ix);
                                         })?;
                                         return Ok(());
@@ -991,7 +994,7 @@ impl Thread {
                             log::info!("No tool uses found, completing turn");
                             return Ok(());
                         } else {
-                            this.update(cx, |this, _| this.flush_pending_message())?;
+                            this.update(cx, |this, cx| this.flush_pending_message(cx))?;
                             completion_intent = CompletionIntent::ToolResults;
                         }
                     }
@@ -1005,8 +1008,8 @@ impl Thread {
                     log::info!("Turn execution completed successfully");
                 }
 
-                this.update(cx, |this, _| {
-                    this.flush_pending_message();
+                this.update(cx, |this, cx| {
+                    this.flush_pending_message(cx);
                     this.running_turn.take();
                 })
                 .ok();
@@ -1046,7 +1049,7 @@ impl Thread {
 
         match event {
             StartMessage { .. } => {
-                self.flush_pending_message();
+                self.flush_pending_message(cx);
                 self.pending_message = Some(AgentMessage::default());
             }
             Text(new_text) => self.handle_text_event(new_text, event_stream, cx),
@@ -1255,7 +1258,7 @@ impl Thread {
         self.pending_message.get_or_insert_default()
     }
 
-    fn flush_pending_message(&mut self) {
+    fn flush_pending_message(&mut self, cx: &mut Context<Self>) {
         let Some(mut message) = self.pending_message.take() else {
             return;
         };
@@ -1280,6 +1283,7 @@ impl Thread {
         }
 
         self.messages.push(Message::Agent(message));
+        cx.notify()
     }
 
     pub(crate) fn build_completion_request(

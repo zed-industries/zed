@@ -1,17 +1,13 @@
 use acp_thread::{AcpThreadMetadata, AgentConnection, AgentServerName};
-use agent::{ThreadId, thread_store::ThreadStore};
 use agent_client_protocol as acp;
 use anyhow::{Context as _, Result};
 use assistant_context::SavedContextMetadata;
 use chrono::{DateTime, Utc};
 use collections::HashMap;
-use gpui::{App, AsyncApp, Entity, SharedString, Task, prelude::*};
-use itertools::Itertools;
-use paths::contexts_dir;
+use gpui::{SharedString, Task, prelude::*};
 use serde::{Deserialize, Serialize};
 use smol::stream::StreamExt;
-use std::{collections::VecDeque, path::Path, sync::Arc, time::Duration};
-use util::ResultExt as _;
+use std::{path::Path, sync::Arc, time::Duration};
 
 const MAX_RECENTLY_OPENED_ENTRIES: usize = 6;
 const NAVIGATION_HISTORY_PATH: &str = "agent-navigation-history.json";
@@ -64,16 +60,16 @@ enum SerializedRecentOpen {
 }
 
 pub struct AgentHistory {
-    entries: HashMap<acp::SessionId, AcpThreadMetadata>,
-    _task: Task<Result<()>>,
+    entries: watch::Receiver<Option<Vec<AcpThreadMetadata>>>,
+    _task: Task<()>,
 }
 
 pub struct HistoryStore {
-    agents: HashMap<AgentServerName, AgentHistory>,
+    agents: HashMap<AgentServerName, AgentHistory>, // todo!() text threads
 }
 
 impl HistoryStore {
-    pub fn new(cx: &mut Context<Self>) -> Self {
+    pub fn new(_cx: &mut Context<Self>) -> Self {
         Self {
             agents: HashMap::default(),
         }
@@ -88,33 +84,18 @@ impl HistoryStore {
         let Some(mut history) = connection.list_threads(cx) else {
             return;
         };
-        let task = cx.spawn(async move |this, cx| {
-            while let Some(updated_history) = history.next().await {
-                dbg!(&updated_history);
-                this.update(cx, |this, cx| {
-                    for entry in updated_history {
-                        let agent = this
-                            .agents
-                            .get_mut(&entry.agent)
-                            .context("agent not found")?;
-                        agent.entries.insert(entry.id.clone(), entry);
-                    }
-                    cx.notify();
-                    anyhow::Ok(())
-                })??
-            }
-            Ok(())
-        });
-        self.agents.insert(
-            agent_name,
-            AgentHistory {
-                entries: Default::default(),
-                _task: task,
-            },
-        );
+        let history = AgentHistory {
+            entries: history.clone(),
+            _task: cx.spawn(async move |this, cx| {
+                while history.changed().await.is_ok() {
+                    this.update(cx, |_, cx| cx.notify()).ok();
+                }
+            }),
+        };
+        self.agents.insert(agent_name.clone(), history);
     }
 
-    pub fn entries(&self, cx: &mut Context<Self>) -> Vec<HistoryEntry> {
+    pub fn entries(&mut self, _cx: &mut Context<Self>) -> Vec<HistoryEntry> {
         let mut history_entries = Vec::new();
 
         #[cfg(debug_assertions)]
@@ -124,9 +105,8 @@ impl HistoryStore {
 
         history_entries.extend(
             self.agents
-                .values()
-                .flat_map(|agent| agent.entries.values())
-                .cloned()
+                .values_mut()
+                .flat_map(|history| history.entries.borrow().clone().unwrap_or_default()) // todo!("surface the loading state?")
                 .map(HistoryEntry::Thread),
         );
         // todo!() include the text threads in here.
@@ -135,7 +115,7 @@ impl HistoryStore {
         history_entries
     }
 
-    pub fn recent_entries(&self, limit: usize, cx: &mut Context<Self>) -> Vec<HistoryEntry> {
+    pub fn recent_entries(&mut self, limit: usize, cx: &mut Context<Self>) -> Vec<HistoryEntry> {
         self.entries(cx).into_iter().take(limit).collect()
     }
 }

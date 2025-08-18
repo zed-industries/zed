@@ -2,7 +2,6 @@ use crate::{AcpThread, AcpThreadMetadata};
 use agent_client_protocol::{self as acp};
 use anyhow::Result;
 use collections::IndexMap;
-use futures::channel::mpsc::UnboundedReceiver;
 use gpui::{Entity, SharedString, Task};
 use project::Project;
 use serde::{Deserialize, Serialize};
@@ -27,6 +26,8 @@ pub trait AgentConnection {
         cx: &mut App,
     ) -> Task<Result<Entity<AcpThread>>>;
 
+    // todo!(expose a history trait, and include list_threads and load_thread)
+    // todo!(write a test)
     fn list_threads(
         &self,
         _cx: &mut App,

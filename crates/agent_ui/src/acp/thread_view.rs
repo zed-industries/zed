@@ -2487,12 +2487,15 @@ impl AcpThreadView {
             return;
         };
 
-        thread.update(cx, |thread, _cx| {
+        thread.update(cx, |thread, cx| {
             let current_mode = thread.completion_mode();
-            thread.set_completion_mode(match current_mode {
-                CompletionMode::Burn => CompletionMode::Normal,
-                CompletionMode::Normal => CompletionMode::Burn,
-            });
+            thread.set_completion_mode(
+                match current_mode {
+                    CompletionMode::Burn => CompletionMode::Normal,
+                    CompletionMode::Normal => CompletionMode::Burn,
+                },
+                cx,
+            );
         });
     }
 
@@ -3274,8 +3277,8 @@ impl AcpThreadView {
                             .tooltip(Tooltip::text("Enable Burn Mode for unlimited tool use."))
                             .on_click({
                                 cx.listener(move |this, _, _window, cx| {
-                                    thread.update(cx, |thread, _cx| {
-                                        thread.set_completion_mode(CompletionMode::Burn);
+                                    thread.update(cx, |thread, cx| {
+                                        thread.set_completion_mode(CompletionMode::Burn, cx);
                                     });
                                     this.resume_chat(cx);
                                 })

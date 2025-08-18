@@ -938,7 +938,7 @@ async fn test_cancellation(cx: &mut TestAppContext) {
 
     // Cancel the current send and ensure that the event stream is closed, even
     // if one of the tools is still running.
-    thread.update(cx, |thread, _cx| thread.cancel());
+    thread.update(cx, |thread, cx| thread.cancel(cx));
     let events = events.collect::<Vec<_>>().await;
     let last_event = events.last();
     assert!(
@@ -1113,7 +1113,7 @@ async fn test_truncate(cx: &mut TestAppContext) {
     });
 
     thread
-        .update(cx, |thread, _cx| thread.truncate(message_id))
+        .update(cx, |thread, cx| thread.truncate(message_id, cx))
         .unwrap();
     cx.run_until_parked();
     thread.read_with(cx, |thread, _| {

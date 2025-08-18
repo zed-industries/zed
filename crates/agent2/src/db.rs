@@ -1,4 +1,4 @@
-use crate::{AgentMessage, AgentMessageContent, ThreadId, UserMessage, UserMessageContent};
+use crate::{AgentMessage, AgentMessageContent, UserMessage, UserMessageContent};
 use agent::thread_store;
 use agent_client_protocol as acp;
 use agent_settings::{AgentProfileId, CompletionMode};
@@ -24,7 +24,7 @@ pub type DbLanguageModel = thread_store::SerializedLanguageModel;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DbThreadMetadata {
-    pub id: ThreadId,
+    pub id: acp::SessionId,
     #[serde(alias = "summary")]
     pub title: SharedString,
     pub updated_at: DateTime<Utc>,
@@ -323,7 +323,7 @@ impl ThreadsDatabase {
 
             for (id, summary, updated_at) in rows {
                 threads.push(DbThreadMetadata {
-                    id: ThreadId(id),
+                    id: acp::SessionId(id),
                     title: summary.into(),
                     updated_at: DateTime::parse_from_rfc3339(&updated_at)?.with_timezone(&Utc),
                 });
@@ -333,7 +333,7 @@ impl ThreadsDatabase {
         })
     }
 
-    pub fn load_thread(&self, id: ThreadId) -> Task<Result<Option<DbThread>>> {
+    pub fn load_thread(&self, id: acp::SessionId) -> Task<Result<Option<DbThread>>> {
         let connection = self.connection.clone();
 
         self.executor.spawn(async move {
