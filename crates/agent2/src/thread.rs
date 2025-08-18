@@ -621,12 +621,12 @@ impl Thread {
 
         let model = self.model.clone();
         let (events_tx, events_rx) = mpsc::unbounded::<Result<AgentResponseEvent>>();
-        let event_stream = Rc::new(AgentResponseEventStream(events_tx));
+        let event_stream = AgentResponseEventStream(events_tx);
         let message_ix = self.messages.len().saturating_sub(1);
         self.tool_use_limit_reached = false;
         self.running_turn = Some(RunningTurn {
-            event_stream: Rc::downgrade(&event_stream),
-            task: cx.spawn(async move |this, cx| {
+            event_stream: event_stream.clone(),
+            _task: cx.spawn(async move |this, cx| {
                 log::info!("Starting agent turn execution");
                 let turn_result: Result<()> = async {
                     let mut completion_intent = CompletionIntent::UserPrompt;
@@ -715,13 +715,18 @@ impl Thread {
                 }
                 .await;
 
-                this.update(cx, |this, _| this.flush_pending_message()).ok();
                 if let Err(error) = turn_result {
                     log::error!("Turn execution failed: {:?}", error);
                     event_stream.send_error(error);
                 } else {
                     log::info!("Turn execution completed successfully");
                 }
+
+                this.update(cx, |this, _| {
+                    this.flush_pending_message();
+                    this.running_turn.take();
+                })
+                .ok();
             }),
         });
         events_rx
@@ -1135,21 +1140,16 @@ struct RunningTurn {
     /// Holds the task that handles agent interaction until the end of the turn.
     /// Survives across multiple requests as the model performs tool calls and
     /// we run tools, report their results.
-    task: Task<()>,
+    _task: Task<()>,
     /// The current event stream for the running turn. Used to report a final
     /// cancellation event if we cancel the turn.
-    event_stream: std::rc::Weak<AgentResponseEventStream>,
+    event_stream: AgentResponseEventStream,
 }
 
 impl RunningTurn {
     fn cancel(self) {
-        let RunningTurn { task, event_stream } = self;
-        // Check if the task was finished by whether the event stream is still alive
-        if let Some(event_stream) = event_stream.upgrade() {
-            drop(task);
-            log::debug!("Cancelling in progress turn");
-            event_stream.send_canceled();
-        }
+        log::debug!("Cancelling in progress turn");
+        self.event_stream.send_canceled();
     }
 }
 
