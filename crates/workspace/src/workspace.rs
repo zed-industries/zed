@@ -561,6 +561,7 @@ pub fn init(app_state: Arc<AppState>, cx: &mut App) {
                         files: true,
                         directories: true,
                         multiple: true,
+                        prompt: None,
                     },
                     cx,
                 );
@@ -578,6 +579,7 @@ pub fn init(app_state: Arc<AppState>, cx: &mut App) {
                         files: true,
                         directories,
                         multiple: true,
+                        prompt: None,
                     },
                     cx,
                 );
@@ -2655,6 +2657,7 @@ impl Workspace {
                 files: false,
                 directories: true,
                 multiple: true,
+                prompt: None,
             },
             DirectoryLister::Project(self.project.clone()),
             window,
