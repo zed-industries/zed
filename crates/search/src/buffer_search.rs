@@ -13,6 +13,7 @@ use editor::{
     DisplayPoint, Editor, EditorSettings,
     actions::{Backtab, Tab},
 };
+use fancy_regex::Regex;
 use futures::channel::oneshot;
 use gpui::{
     Action, App, ClickEvent, Context, Entity, EventEmitter, Focusable, InteractiveElement as _,
@@ -24,7 +25,6 @@ use project::{
     search::SearchQuery,
     search_history::{SearchHistory, SearchHistoryCursor},
 };
-use regex::Regex;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use settings::Settings;
@@ -54,8 +54,8 @@ const MAX_BUFFER_SEARCH_HISTORY_SIZE: usize = 50;
 // TODO: Should this be updated to an HashMap so we can easily determine the
 // search option for a given pattern?
 static PATTERN_ITEMS: [(&str, &SearchOptions, bool); 2] = [
-    ("\\c", &SearchOptions::CASE_SENSITIVE, false),
-    ("\\C", &SearchOptions::CASE_SENSITIVE, true),
+    ("c", &SearchOptions::CASE_SENSITIVE, false),
+    ("C", &SearchOptions::CASE_SENSITIVE, true),
 ];
 
 /// Opens the buffer search interface with the specified configuration.
@@ -661,13 +661,13 @@ impl BufferSearchBar {
             .detach_and_log_err(cx);
         }
 
-        let pattern_items_regex = Regex::new(
-            &PATTERN_ITEMS
+        let pattern_items_regex = Regex::new(&format!(
+            r"(?<!\\)(\\[{}])",
+            PATTERN_ITEMS
                 .iter()
-                .map(|(pattern, _, _)| regex::escape(pattern))
-                .collect::<Vec<_>>()
-                .join("|"),
-        )
+                .map(|(pattern, _, _)| *pattern)
+                .collect::<String>()
+        ))
         .unwrap();
 
         Self {
@@ -1528,13 +1528,16 @@ impl BufferSearchBar {
             let mut pattern_item_options = Vec::new();
             let query = self.raw_query(cx);
 
+            // TODO: Maybe avoid so many unwrap/expect calls here.
             self.pattern_items_regex
                 .captures_iter(&query)
-                .map(|capture| capture.extract())
-                .map(|(str, [])| {
+                .map(|capture| capture.unwrap())
+                .map(|capture| {
+                    let pattern_item = capture.get(1).unwrap().as_str();
+
                     PATTERN_ITEMS
                         .iter()
-                        .find(|(pattern, _, _)| *pattern == str)
+                        .find(|(pattern, _, _)| pattern_item.ends_with(*pattern))
                         .expect("should only capture valid pattern items")
                 })
                 .for_each(|(_, search_option, value)| {
@@ -3077,6 +3080,17 @@ mod tests {
                 search_bar.search_options,
                 SearchOptions::REGEX | SearchOptions::CASE_SENSITIVE,
                 "Should have case sensitivity enabled when all pattern items are removed and original search options are restored"
+            );
+        });
+
+        cx.simulate_input("\\\\c");
+        cx.run_until_parked();
+        search_bar.update(cx, |search_bar, cx| {
+            assert_eq!(search_bar.raw_query(cx), "test\\\\c");
+            assert_eq!(
+                search_bar.search_options,
+                SearchOptions::REGEX | SearchOptions::CASE_SENSITIVE,
+                "Should still have case sensitivity enabled when pattern item is preceded by another \\"
             );
         });
     }
