@@ -832,6 +832,8 @@ new_ret_no_self = { level = "allow" }
 # compared to Iterator::next. Yet, clippy complains about those.
 should_implement_trait = { level = "allow" }
 let_underscore_future = "allow"
+# It doesn't make sense to implement `Default` unilaterally.
+new_without_default = "allow"
 
 # in Rust it can be very tedious to reduce argument count without
 # running afoul of the borrow checker.
