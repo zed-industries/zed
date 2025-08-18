@@ -13,7 +13,7 @@ use anyhow::{Result, anyhow};
 use collections::HashSet;
 pub use completion_provider::ContextPickerCompletionProvider;
 use editor::display_map::{Crease, CreaseId, CreaseMetadata, FoldId};
-use editor::{Anchor, AnchorRangeExt as _, Editor, ExcerptId, FoldPlaceholder, ToOffset};
+use editor::{Anchor, Editor, ExcerptId, FoldPlaceholder, ToOffset};
 use fetch_context_picker::FetchContextPicker;
 use file_context_picker::FileContextPicker;
 use file_context_picker::render_file_context_entry;
@@ -228,7 +228,7 @@ impl ContextPicker {
     }
 
     fn build_menu(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Entity<ContextMenu> {
-        let context_picker = cx.entity().clone();
+        let context_picker = cx.entity();
 
         let menu = ContextMenu::build(window, cx, move |menu, _window, cx| {
             let recent = self.recent_entries(cx);
@@ -837,42 +837,9 @@ fn render_fold_icon_button(
 ) -> Arc<dyn Send + Sync + Fn(FoldId, Range<Anchor>, &mut App) -> AnyElement> {
     Arc::new({
         move |fold_id, fold_range, cx| {
-            let is_in_text_selection = editor.upgrade().is_some_and(|editor| {
-                editor.update(cx, |editor, cx| {
-                    let snapshot = editor
-                        .buffer()
-                        .update(cx, |multi_buffer, cx| multi_buffer.snapshot(cx));
-
-                    let is_in_pending_selection = || {
-                        editor
-                            .selections
-                            .pending
-                            .as_ref()
-                            .is_some_and(|pending_selection| {
-                                pending_selection
-                                    .selection
-                                    .range()
-                                    .includes(&fold_range, &snapshot)
-                            })
-                    };
-
-                    let mut is_in_complete_selection = || {
-                        editor
-                            .selections
-                            .disjoint_in_range::<usize>(fold_range.clone(), cx)
-                            .into_iter()
-                            .any(|selection| {
-                                // This is needed to cover a corner case, if we just check for an existing
-                                // selection in the fold range, having a cursor at the start of the fold
-                                // marks it as selected. Non-empty selections don't cause this.
-                                let length = selection.end - selection.start;
-                                length > 0
-                            })
-                    };
-
-                    is_in_pending_selection() || is_in_complete_selection()
-                })
-            });
+            let is_in_text_selection = editor
+                .update(cx, |editor, cx| editor.is_range_selected(&fold_range, cx))
+                .unwrap_or_default();
 
             ButtonLike::new(fold_id)
                 .style(ButtonStyle::Filled)

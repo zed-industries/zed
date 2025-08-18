@@ -816,8 +816,9 @@ impl App {
     pub fn prompt_for_new_path(
         &self,
         directory: &Path,
+        suggested_name: Option<&str>,
     ) -> oneshot::Receiver<Result<Option<PathBuf>>> {
-        self.platform.prompt_for_new_path(directory)
+        self.platform.prompt_for_new_path(directory, suggested_name)
     }
 
     /// Reveals the specified path at the platform level, such as in Finder on macOS.

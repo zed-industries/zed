@@ -34,7 +34,6 @@ workspace-members = [
     "zed_extension_api",
 
     # exclude all extensions
-    "zed_emmet",
     "zed_glsl",
     "zed_html",
     "zed_proto",

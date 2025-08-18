@@ -402,7 +402,7 @@ impl Vim {
     const NAMESPACE: &'static str = "vim";
 
     pub fn new(window: &mut Window, cx: &mut Context<Editor>) -> Entity<Self> {
-        let editor = cx.entity().clone();
+        let editor = cx.entity();
 
         let mut initial_mode = VimSettings::get_global(cx).default_mode;
         if initial_mode == Mode::Normal && HelixModeSetting::get_global(cx).0 {

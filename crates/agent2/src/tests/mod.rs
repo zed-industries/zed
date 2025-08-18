@@ -16,6 +16,7 @@ use language_model::{
     LanguageModelRequestMessage, LanguageModelToolResult, LanguageModelToolUse, MessageContent,
     Role, StopReason, fake_provider::FakeLanguageModel,
 };
+use pretty_assertions::assert_eq;
 use project::Project;
 use prompt_store::ProjectContext;
 use reqwest_client::ReqwestClient;
@@ -126,6 +127,134 @@ async fn test_system_prompt(cx: &mut TestAppContext) {
         system_prompt.contains("## Fixing Diagnostics"),
         "unexpected system message: {:?}",
         system_message
+    );
+}
+
+#[gpui::test]
+async fn test_prompt_caching(cx: &mut TestAppContext) {
+    let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
+    let fake_model = model.as_fake();
+
+    // Send initial user message and verify it's cached
+    thread.update(cx, |thread, cx| {
+        thread.send(UserMessageId::new(), ["Message 1"], cx)
+    });
+    cx.run_until_parked();
+
+    let completion = fake_model.pending_completions().pop().unwrap();
+    assert_eq!(
+        completion.messages[1..],
+        vec![LanguageModelRequestMessage {
+            role: Role::User,
+            content: vec!["Message 1".into()],
+            cache: true
+        }]
+    );
+    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::Text(
+        "Response to Message 1".into(),
+    ));
+    fake_model.end_last_completion_stream();
+    cx.run_until_parked();
+
+    // Send another user message and verify only the latest is cached
+    thread.update(cx, |thread, cx| {
+        thread.send(UserMessageId::new(), ["Message 2"], cx)
+    });
+    cx.run_until_parked();
+
+    let completion = fake_model.pending_completions().pop().unwrap();
+    assert_eq!(
+        completion.messages[1..],
+        vec![
+            LanguageModelRequestMessage {
+                role: Role::User,
+                content: vec!["Message 1".into()],
+                cache: false
+            },
+            LanguageModelRequestMessage {
+                role: Role::Assistant,
+                content: vec!["Response to Message 1".into()],
+                cache: false
+            },
+            LanguageModelRequestMessage {
+                role: Role::User,
+                content: vec!["Message 2".into()],
+                cache: true
+            }
+        ]
+    );
+    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::Text(
+        "Response to Message 2".into(),
+    ));
+    fake_model.end_last_completion_stream();
+    cx.run_until_parked();
+
+    // Simulate a tool call and verify that the latest tool result is cached
+    thread.update(cx, |thread, _| thread.add_tool(EchoTool));
+    thread.update(cx, |thread, cx| {
+        thread.send(UserMessageId::new(), ["Use the echo tool"], cx)
+    });
+    cx.run_until_parked();
+
+    let tool_use = LanguageModelToolUse {
+        id: "tool_1".into(),
+        name: EchoTool.name().into(),
+        raw_input: json!({"text": "test"}).to_string(),
+        input: json!({"text": "test"}),
+        is_input_complete: true,
+    };
+    fake_model
+        .send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(tool_use.clone()));
+    fake_model.end_last_completion_stream();
+    cx.run_until_parked();
+
+    let completion = fake_model.pending_completions().pop().unwrap();
+    let tool_result = LanguageModelToolResult {
+        tool_use_id: "tool_1".into(),
+        tool_name: EchoTool.name().into(),
+        is_error: false,
+        content: "test".into(),
+        output: Some("test".into()),
+    };
+    assert_eq!(
+        completion.messages[1..],
+        vec![
+            LanguageModelRequestMessage {
+                role: Role::User,
+                content: vec!["Message 1".into()],
+                cache: false
+            },
+            LanguageModelRequestMessage {
+                role: Role::Assistant,
+                content: vec!["Response to Message 1".into()],
+                cache: false
+            },
+            LanguageModelRequestMessage {
+                role: Role::User,
+                content: vec!["Message 2".into()],
+                cache: false
+            },
+            LanguageModelRequestMessage {
+                role: Role::Assistant,
+                content: vec!["Response to Message 2".into()],
+                cache: false
+            },
+            LanguageModelRequestMessage {
+                role: Role::User,
+                content: vec!["Use the echo tool".into()],
+                cache: false
+            },
+            LanguageModelRequestMessage {
+                role: Role::Assistant,
+                content: vec![MessageContent::ToolUse(tool_use)],
+                cache: false
+            },
+            LanguageModelRequestMessage {
+                role: Role::User,
+                content: vec![MessageContent::ToolResult(tool_result)],
+                cache: true
+            }
+        ]
     );
 }
 
@@ -440,7 +569,7 @@ async fn test_resume_after_tool_use_limit(cx: &mut TestAppContext) {
             LanguageModelRequestMessage {
                 role: Role::User,
                 content: vec![MessageContent::ToolResult(tool_result.clone())],
-                cache: false
+                cache: true
             },
         ]
     );
@@ -481,7 +610,7 @@ async fn test_resume_after_tool_use_limit(cx: &mut TestAppContext) {
             LanguageModelRequestMessage {
                 role: Role::User,
                 content: vec!["Continue where you left off".into()],
-                cache: false
+                cache: true
             }
         ]
     );
@@ -574,7 +703,7 @@ async fn test_send_after_tool_use_limit(cx: &mut TestAppContext) {
             LanguageModelRequestMessage {
                 role: Role::User,
                 content: vec!["ghi".into()],
-                cache: false
+                cache: true
             }
         ]
     );
@@ -812,7 +941,15 @@ async fn test_cancellation(cx: &mut TestAppContext) {
     // Cancel the current send and ensure that the event stream is closed, even
     // if one of the tools is still running.
     thread.update(cx, |thread, _cx| thread.cancel());
-    events.collect::<Vec<_>>().await;
+    let events = events.collect::<Vec<_>>().await;
+    let last_event = events.last();
+    assert!(
+        matches!(
+            last_event,
+            Some(Ok(AgentResponseEvent::Stop(acp::StopReason::Canceled)))
+        ),
+        "unexpected event {last_event:?}"
+    );
 
     // Ensure we can still send a new message after cancellation.
     let events = thread
@@ -834,6 +971,62 @@ async fn test_cancellation(cx: &mut TestAppContext) {
         );
     });
     assert_eq!(stop_events(events), vec![acp::StopReason::EndTurn]);
+}
+
+#[gpui::test]
+async fn test_in_progress_send_canceled_by_next_send(cx: &mut TestAppContext) {
+    let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
+    let fake_model = model.as_fake();
+
+    let events_1 = thread.update(cx, |thread, cx| {
+        thread.send(UserMessageId::new(), ["Hello 1"], cx)
+    });
+    cx.run_until_parked();
+    fake_model.send_last_completion_stream_text_chunk("Hey 1!");
+    cx.run_until_parked();
+
+    let events_2 = thread.update(cx, |thread, cx| {
+        thread.send(UserMessageId::new(), ["Hello 2"], cx)
+    });
+    cx.run_until_parked();
+    fake_model.send_last_completion_stream_text_chunk("Hey 2!");
+    fake_model
+        .send_last_completion_stream_event(LanguageModelCompletionEvent::Stop(StopReason::EndTurn));
+    fake_model.end_last_completion_stream();
+
+    let events_1 = events_1.collect::<Vec<_>>().await;
+    assert_eq!(stop_events(events_1), vec![acp::StopReason::Canceled]);
+    let events_2 = events_2.collect::<Vec<_>>().await;
+    assert_eq!(stop_events(events_2), vec![acp::StopReason::EndTurn]);
+}
+
+#[gpui::test]
+async fn test_subsequent_successful_sends_dont_cancel(cx: &mut TestAppContext) {
+    let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
+    let fake_model = model.as_fake();
+
+    let events_1 = thread.update(cx, |thread, cx| {
+        thread.send(UserMessageId::new(), ["Hello 1"], cx)
+    });
+    cx.run_until_parked();
+    fake_model.send_last_completion_stream_text_chunk("Hey 1!");
+    fake_model
+        .send_last_completion_stream_event(LanguageModelCompletionEvent::Stop(StopReason::EndTurn));
+    fake_model.end_last_completion_stream();
+    let events_1 = events_1.collect::<Vec<_>>().await;
+
+    let events_2 = thread.update(cx, |thread, cx| {
+        thread.send(UserMessageId::new(), ["Hello 2"], cx)
+    });
+    cx.run_until_parked();
+    fake_model.send_last_completion_stream_text_chunk("Hey 2!");
+    fake_model
+        .send_last_completion_stream_event(LanguageModelCompletionEvent::Stop(StopReason::EndTurn));
+    fake_model.end_last_completion_stream();
+    let events_2 = events_2.collect::<Vec<_>>().await;
+
+    assert_eq!(stop_events(events_1), vec![acp::StopReason::EndTurn]);
+    assert_eq!(stop_events(events_2), vec![acp::StopReason::EndTurn]);
 }
 
 #[gpui::test]

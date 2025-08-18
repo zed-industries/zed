@@ -37,7 +37,7 @@ const CONTENT: (Section<4>, Section<3>) = (
             },
             SectionEntry {
                 icon: IconName::CloudDownload,
-                title: "Clone a Repo",
+                title: "Clone Repository",
                 action: &git::Clone,
             },
             SectionEntry {

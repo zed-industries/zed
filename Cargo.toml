@@ -81,7 +81,6 @@ members = [
     "crates/http_client_tls",
     "crates/icons",
     "crates/image_viewer",
-    "crates/indexed_docs",
     "crates/edit_prediction",
     "crates/edit_prediction_button",
     "crates/inspector_ui",
@@ -199,7 +198,6 @@ members = [
     # Extensions
     #
 
-    "extensions/emmet",
     "extensions/glsl",
     "extensions/html",
     "extensions/proto",
@@ -306,7 +304,6 @@ http_client = { path = "crates/http_client" }
 http_client_tls = { path = "crates/http_client_tls" }
 icons = { path = "crates/icons" }
 image_viewer = { path = "crates/image_viewer" }
-indexed_docs = { path = "crates/indexed_docs" }
 edit_prediction = { path = "crates/edit_prediction" }
 edit_prediction_button = { path = "crates/edit_prediction_button" }
 inspector_ui = { path = "crates/inspector_ui" }
@@ -426,7 +423,7 @@ zlog_settings = { path = "crates/zlog_settings" }
 #
 
 agentic-coding-protocol = "0.0.10"
-agent-client-protocol = "0.0.24"
+agent-client-protocol = "0.0.26"
 aho-corasick = "1.1"
 alacritty_terminal = { git = "https://github.com/zed-industries/alacritty.git", branch = "add-hush-login-flag" }
 any_vec = "0.14"
@@ -666,20 +663,6 @@ workspace-hack = "0.1.0"
 # version is released.
 yawc = { git = "https://github.com/deviant-forks/yawc", rev = "1899688f3e69ace4545aceb97b2a13881cf26142" }
 zstd = "0.11"
-
-[workspace.dependencies.async-stripe]
-git = "https://github.com/zed-industries/async-stripe"
-rev = "3672dd4efb7181aa597bf580bf5a2f5d23db6735"
-default-features = false
-features = [
-    "runtime-tokio-hyper-rustls",
-    "billing",
-    "checkout",
-    "events",
-    # The features below are only enabled to get the `events` feature to build.
-    "chrono",
-    "connect",
-]
 
 [workspace.dependencies.windows]
 version = "0.61"

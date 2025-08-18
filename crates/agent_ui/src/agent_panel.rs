@@ -68,8 +68,8 @@ use theme::ThemeSettings;
 use time::UtcOffset;
 use ui::utils::WithRemSize;
 use ui::{
-    Banner, Callout, ContextMenu, ContextMenuEntry, ElevationIndex, KeyBinding, PopoverMenu,
-    PopoverMenuHandle, ProgressBar, Tab, Tooltip, prelude::*,
+    Banner, Callout, ContextMenu, ContextMenuEntry, Divider, ElevationIndex, KeyBinding,
+    PopoverMenu, PopoverMenuHandle, ProgressBar, Tab, Tooltip, prelude::*,
 };
 use util::ResultExt as _;
 use workspace::{
@@ -246,9 +246,9 @@ pub enum AgentType {
 impl AgentType {
     fn label(self) -> impl Into<SharedString> {
         match self {
-            Self::Zed | Self::TextThread => "Zed",
+            Self::Zed | Self::TextThread => "Zed Agent",
             Self::NativeAgent => "Agent 2",
-            Self::Gemini => "Gemini",
+            Self::Gemini => "Google Gemini",
             Self::ClaudeCode => "Claude Code",
         }
     }
@@ -844,12 +844,10 @@ impl AgentPanel {
             ActiveView::Thread { thread, .. } => {
                 thread.update(cx, |thread, cx| thread.cancel_last_completion(window, cx));
             }
-            ActiveView::ExternalAgentThread { thread_view, .. } => {
-                thread_view.update(cx, |thread_element, cx| {
-                    thread_element.cancel_generation(cx)
-                });
-            }
-            ActiveView::TextThread { .. } | ActiveView::History | ActiveView::Configuration => {}
+            ActiveView::ExternalAgentThread { .. }
+            | ActiveView::TextThread { .. }
+            | ActiveView::History
+            | ActiveView::Configuration => {}
         }
     }
 
@@ -1287,13 +1285,11 @@ impl AgentPanel {
                                 ThemeSettings::get_global(cx).agent_font_size(cx) + delta;
                             let _ = settings
                                 .agent_font_size
-                                .insert(theme::clamp_font_size(agent_font_size).0);
+                                .insert(Some(theme::clamp_font_size(agent_font_size).into()));
                         },
                     );
                 } else {
-                    theme::adjust_agent_font_size(cx, |size| {
-                        *size += delta;
-                    });
+                    theme::adjust_agent_font_size(cx, |size| size + delta);
                 }
             }
             WhichFontSize::BufferFont => {
@@ -1823,7 +1819,8 @@ impl AgentPanel {
                         .w_full()
                         .child(change_title_editor.clone())
                         .child(
-                            ui::IconButton::new("retry-summary-generation", IconName::RotateCcw)
+                            IconButton::new("retry-summary-generation", IconName::RotateCcw)
+                                .icon_size(IconSize::Small)
                                 .on_click({
                                     let active_thread = active_thread.clone();
                                     move |_, _window, cx| {
@@ -1875,7 +1872,8 @@ impl AgentPanel {
                         .w_full()
                         .child(title_editor.clone())
                         .child(
-                            ui::IconButton::new("retry-summary-generation", IconName::RotateCcw)
+                            IconButton::new("retry-summary-generation", IconName::RotateCcw)
+                                .icon_size(IconSize::Small)
                                 .on_click({
                                     let context_editor = context_editor.clone();
                                     move |_, _window, cx| {
@@ -2013,21 +2011,17 @@ impl AgentPanel {
             })
     }
 
-    fn render_recent_entries_menu(
-        &self,
-        icon: IconName,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement {
+    fn render_recent_entries_menu(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let focus_handle = self.focus_handle(cx);
 
         PopoverMenu::new("agent-nav-menu")
             .trigger_with_tooltip(
-                IconButton::new("agent-nav-menu", icon).icon_size(IconSize::Small),
+                IconButton::new("agent-nav-menu", IconName::MenuAlt).icon_size(IconSize::Small),
                 {
                     let focus_handle = focus_handle.clone();
                     move |window, cx| {
                         Tooltip::for_action_in(
-                            "Toggle Panel Menu",
+                            "Toggle Recent Threads",
                             &ToggleNavigationMenu,
                             &focus_handle,
                             window,
@@ -2163,9 +2157,7 @@ impl AgentPanel {
                             .pl(DynamicSpacing::Base04.rems(cx))
                             .child(self.render_toolbar_back_button(cx))
                             .into_any_element(),
-                        _ => self
-                            .render_recent_entries_menu(IconName::MenuAlt, cx)
-                            .into_any_element(),
+                        _ => self.render_recent_entries_menu(cx).into_any_element(),
                     })
                     .child(self.render_title_view(window, cx)),
             )
@@ -2403,6 +2395,22 @@ impl AgentPanel {
                 }
             });
 
+        let selected_agent_label = self.selected_agent.label().into();
+        let selected_agent = div()
+            .id("selected_agent_icon")
+            .px(DynamicSpacing::Base02.rems(cx))
+            .child(Icon::new(self.selected_agent.icon()).color(Color::Muted))
+            .tooltip(move |window, cx| {
+                Tooltip::with_meta(
+                    selected_agent_label.clone(),
+                    None,
+                    "Selected Agent",
+                    window,
+                    cx,
+                )
+            })
+            .into_any_element();
+
         h_flex()
             .id("agent-panel-toolbar")
             .h(Tab::container_height(cx))
@@ -2416,26 +2424,17 @@ impl AgentPanel {
             .child(
                 h_flex()
                     .size_full()
-                    .gap(DynamicSpacing::Base08.rems(cx))
+                    .gap(DynamicSpacing::Base04.rems(cx))
+                    .pl(DynamicSpacing::Base04.rems(cx))
                     .child(match &self.active_view {
-                        ActiveView::History | ActiveView::Configuration => div()
-                            .pl(DynamicSpacing::Base04.rems(cx))
-                            .child(self.render_toolbar_back_button(cx))
-                            .into_any_element(),
+                        ActiveView::History | ActiveView::Configuration => {
+                            self.render_toolbar_back_button(cx).into_any_element()
+                        }
                         _ => h_flex()
-                            .h_full()
-                            .px(DynamicSpacing::Base04.rems(cx))
-                            .border_r_1()
-                            .border_color(cx.theme().colors().border)
-                            .child(
-                                h_flex()
-                                    .px_0p5()
-                                    .gap_1p5()
-                                    .child(
-                                        Icon::new(self.selected_agent.icon()).color(Color::Muted),
-                                    )
-                                    .child(Label::new(self.selected_agent.label())),
-                            )
+                            .gap_1()
+                            .child(self.render_recent_entries_menu(cx))
+                            .child(Divider::vertical())
+                            .child(selected_agent)
                             .into_any_element(),
                     })
                     .child(self.render_title_view(window, cx)),
@@ -2454,7 +2453,6 @@ impl AgentPanel {
                             .border_l_1()
                             .border_color(cx.theme().colors().border)
                             .child(new_thread_menu)
-                            .child(self.render_recent_entries_menu(IconName::HistoryRerun, cx))
                             .child(self.render_panel_options_menu(window, cx)),
                     ),
             )

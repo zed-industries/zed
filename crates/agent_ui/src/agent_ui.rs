@@ -242,7 +242,6 @@ pub fn init(
         client.telemetry().clone(),
         cx,
     );
-    indexed_docs::init(cx);
     cx.observe_new(move |workspace, window, cx| {
         ConfigureContextServerModal::register(workspace, language_registry.clone(), window, cx)
     })
@@ -408,12 +407,6 @@ fn register_slash_commands(cx: &mut App) {
 fn update_slash_commands_from_settings(cx: &mut App) {
     let slash_command_registry = SlashCommandRegistry::global(cx);
     let settings = SlashCommandSettings::get_global(cx);
-
-    if settings.docs.enabled {
-        slash_command_registry.register_command(assistant_slash_commands::DocsSlashCommand, true);
-    } else {
-        slash_command_registry.unregister_command(assistant_slash_commands::DocsSlashCommand);
-    }
 
     if settings.cargo_workspace.enabled {
         slash_command_registry

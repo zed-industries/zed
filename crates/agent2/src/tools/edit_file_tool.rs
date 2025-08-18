@@ -1018,7 +1018,10 @@ mod tests {
         });
 
         let event = stream_rx.expect_authorization().await;
-        assert_eq!(event.tool_call.title, "test 1 (local settings)");
+        assert_eq!(
+            event.tool_call.fields.title,
+            Some("test 1 (local settings)".into())
+        );
 
         // Test 2: Path outside project should require confirmation
         let (stream_tx, mut stream_rx) = ToolCallEventStream::test();
@@ -1035,7 +1038,7 @@ mod tests {
         });
 
         let event = stream_rx.expect_authorization().await;
-        assert_eq!(event.tool_call.title, "test 2");
+        assert_eq!(event.tool_call.fields.title, Some("test 2".into()));
 
         // Test 3: Relative path without .zed should not require confirmation
         let (stream_tx, mut stream_rx) = ToolCallEventStream::test();
@@ -1068,7 +1071,10 @@ mod tests {
             )
         });
         let event = stream_rx.expect_authorization().await;
-        assert_eq!(event.tool_call.title, "test 4 (local settings)");
+        assert_eq!(
+            event.tool_call.fields.title,
+            Some("test 4 (local settings)".into())
+        );
 
         // Test 5: When always_allow_tool_actions is enabled, no confirmation needed
         cx.update(|cx| {

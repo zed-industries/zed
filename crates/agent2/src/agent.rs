@@ -521,10 +521,11 @@ impl NativeAgentConnection {
                                     thread.request_tool_call_authorization(tool_call, options, cx)
                                 })?;
                                 cx.background_spawn(async move {
-                                    if let Some(option) = recv
-                                        .await
-                                        .context("authorization sender was dropped")
-                                        .log_err()
+                                    if let Some(recv) = recv.log_err()
+                                        && let Some(option) = recv
+                                            .await
+                                            .context("authorization sender was dropped")
+                                            .log_err()
                                     {
                                         response
                                             .send(option)
@@ -537,7 +538,7 @@ impl NativeAgentConnection {
                             AgentResponseEvent::ToolCall(tool_call) => {
                                 acp_thread.update(cx, |thread, cx| {
                                     thread.upsert_tool_call(tool_call, cx)
-                                })?;
+                                })??;
                             }
                             AgentResponseEvent::ToolCallUpdate(update) => {
                                 acp_thread.update(cx, |thread, cx| {
