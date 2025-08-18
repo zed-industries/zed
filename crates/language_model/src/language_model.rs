@@ -20,6 +20,7 @@ use icons::IconName;
 use parking_lot::Mutex;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
+use std::any::Any;
 use std::ops::{Add, Sub};
 use std::str::FromStr;
 use std::sync::Arc;
@@ -620,7 +621,7 @@ pub enum AuthenticateError {
     Other(#[from] anyhow::Error),
 }
 
-pub trait LanguageModelProvider: 'static {
+pub trait LanguageModelProvider: Any + Send + Sync {
     fn id(&self) -> LanguageModelProviderId;
     fn name(&self) -> LanguageModelProviderName;
     fn icon(&self) -> IconName {

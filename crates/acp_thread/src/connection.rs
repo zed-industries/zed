@@ -80,12 +80,35 @@ pub trait AgentSessionResume {
 }
 
 #[derive(Debug)]
-pub struct AuthRequired;
+pub struct AuthRequired {
+    pub description: Option<String>,
+    /// A Task that resolves when authentication is updated
+    pub update_task: Option<Task<()>>,
+}
+
+impl AuthRequired {
+    pub fn new() -> Self {
+        Self {
+            description: None,
+            update_task: None,
+        }
+    }
+
+    pub fn with_description(mut self, description: String) -> Self {
+        self.description = Some(description);
+        self
+    }
+
+    pub fn with_update(mut self, update: Task<()>) -> Self {
+        self.update_task = Some(update);
+        self
+    }
+}
 
 impl Error for AuthRequired {}
 impl fmt::Display for AuthRequired {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "AuthRequired")
+        write!(f, "Authentication required")
     }
 }
 

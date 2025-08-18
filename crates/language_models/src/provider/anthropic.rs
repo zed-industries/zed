@@ -153,7 +153,7 @@ impl State {
             return Task::ready(Ok(()));
         }
 
-        let key = ApiKey::get(cx);
+        let key = AnthropicLanguageModelProvider::api_key(cx);
 
         cx.spawn(async move |this, cx| {
             let key = key.await?;
@@ -174,8 +174,30 @@ pub struct ApiKey {
     pub from_env: bool,
 }
 
-impl ApiKey {
-    pub fn get(cx: &mut App) -> Task<Result<Self>> {
+impl AnthropicLanguageModelProvider {
+    pub fn new(http_client: Arc<dyn HttpClient>, cx: &mut App) -> Self {
+        let state = cx.new(|cx| State {
+            api_key: None,
+            api_key_from_env: false,
+            _subscription: cx.observe_global::<SettingsStore>(|_, cx| {
+                cx.notify();
+            }),
+        });
+
+        Self { http_client, state }
+    }
+
+    fn create_language_model(&self, model: anthropic::Model) -> Arc<dyn LanguageModel> {
+        Arc::new(AnthropicModel {
+            id: LanguageModelId::from(model.id().to_string()),
+            model,
+            state: self.state.clone(),
+            http_client: self.http_client.clone(),
+            request_limiter: RateLimiter::new(4),
+        })
+    }
+
+    pub fn api_key(cx: &mut App) -> Task<Result<ApiKey>> {
         let credentials_provider = <dyn CredentialsProvider>::global(cx);
         let api_url = AllLanguageModelSettings::get_global(cx)
             .anthropic
@@ -201,29 +223,13 @@ impl ApiKey {
             })
         }
     }
-}
 
-impl AnthropicLanguageModelProvider {
-    pub fn new(http_client: Arc<dyn HttpClient>, cx: &mut App) -> Self {
-        let state = cx.new(|cx| State {
-            api_key: None,
-            api_key_from_env: false,
-            _subscription: cx.observe_global::<SettingsStore>(|_, cx| {
-                cx.notify();
-            }),
-        });
-
-        Self { http_client, state }
-    }
-
-    fn create_language_model(&self, model: anthropic::Model) -> Arc<dyn LanguageModel> {
-        Arc::new(AnthropicModel {
-            id: LanguageModelId::from(model.id().to_string()),
-            model,
-            state: self.state.clone(),
-            http_client: self.http_client.clone(),
-            request_limiter: RateLimiter::new(4),
-        })
+    pub fn observe(
+        &self,
+        mut on_notify: impl FnMut(&mut App) + 'static,
+        cx: &mut App,
+    ) -> Subscription {
+        cx.observe(&self.state, move |_, cx| on_notify(cx))
     }
 }
 

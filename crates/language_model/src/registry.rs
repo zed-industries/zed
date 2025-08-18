@@ -108,6 +108,7 @@ pub enum Event {
     CommitMessageModelChanged,
     ThreadSummaryModelChanged,
     ProviderStateChanged,
+    ProviderAuthUpdated,
     AddedProvider(LanguageModelProviderId),
     RemovedProvider(LanguageModelProviderId),
 }

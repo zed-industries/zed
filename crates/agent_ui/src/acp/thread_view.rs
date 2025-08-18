@@ -137,6 +137,7 @@ enum ThreadState {
     LoadError(LoadError),
     Unauthenticated {
         connection: Rc<dyn AgentConnection>,
+        description: Option<Entity<Markdown>>,
     },
     ServerExited {
         status: ExitStatus,
@@ -269,15 +270,40 @@ impl AcpThreadView {
             let result = match result.await {
                 Err(e) => {
                     let mut cx = cx.clone();
-                    if e.is::<acp_thread::AuthRequired>() {
-                        this.update(&mut cx, |this, cx| {
-                            this.thread_state = ThreadState::Unauthenticated { connection };
-                            cx.notify();
-                        })
-                        .ok();
-                        return;
-                    } else {
-                        Err(e)
+                    match e.downcast::<acp_thread::AuthRequired>() {
+                        Ok(mut err) => {
+                            if let Some(update_task) = err.update_task.take() {
+                                let this = this.clone();
+                                let project = project.clone();
+                                cx.spawn(async move |cx| {
+                                    update_task.await;
+                                    this.update_in(cx, |this, window, cx| {
+                                        this.thread_state = Self::initial_state(
+                                            agent,
+                                            this.workspace.clone(),
+                                            project.clone(),
+                                            window,
+                                            cx,
+                                        );
+                                        cx.notify();
+                                    })
+                                    .ok();
+                                })
+                                .detach();
+                            }
+                            this.update(&mut cx, |this, cx| {
+                                this.thread_state = ThreadState::Unauthenticated {
+                                    connection,
+                                    description: err.description.clone().map(|desc| {
+                                        cx.new(|cx| Markdown::new(desc.into(), None, None, cx))
+                                    }),
+                                };
+                                cx.notify();
+                            })
+                            .ok();
+                            return;
+                        }
+                        Err(err) => Err(err),
                     }
                 }
                 Ok(thread) => Ok(thread),
@@ -369,7 +395,7 @@ impl AcpThreadView {
             ThreadState::Ready { thread, .. } => thread.read(cx).title(),
             ThreadState::Loading { .. } => "Loading…".into(),
             ThreadState::LoadError(_) => "Failed to load".into(),
-            ThreadState::Unauthenticated { .. } => "Not authenticated".into(),
+            ThreadState::Unauthenticated { .. } => "Authentication Required".into(),
             ThreadState::ServerExited { .. } => "Server exited unexpectedly".into(),
         }
     }
@@ -708,7 +734,7 @@ impl AcpThreadView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let ThreadState::Unauthenticated { ref connection } = self.thread_state else {
+        let ThreadState::Unauthenticated { ref connection, .. } = self.thread_state else {
             return;
         };
 
@@ -1851,7 +1877,7 @@ impl AcpThreadView {
                     .mt_4()
                     .mb_1()
                     .justify_center()
-                    .child(Headline::new("Not Authenticated").size(HeadlineSize::Medium)),
+                    .child(Headline::new("Authentication Required").size(HeadlineSize::Medium)),
             )
             .into_any()
     }
@@ -2778,6 +2804,13 @@ impl AcpThreadView {
                     cx.open_url(url.as_str());
                 }
             })
+        } else if url == "zed:///agent/settings" {
+            workspace.update(cx, |workspace, cx| {
+                if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
+                    workspace.focus_panel::<AgentPanel>(window, cx);
+                    panel.update(cx, |panel, cx| panel.open_configuration(window, cx));
+                }
+            });
         } else {
             cx.open_url(&url);
         }
@@ -3347,12 +3380,22 @@ impl Render for AcpThreadView {
             .on_action(cx.listener(Self::toggle_burn_mode))
             .bg(cx.theme().colors().panel_background)
             .child(match &self.thread_state {
-                ThreadState::Unauthenticated { connection } => v_flex()
+                ThreadState::Unauthenticated {
+                    connection,
+                    description,
+                } => v_flex()
                     .p_2()
+                    .gap_2()
                     .flex_1()
                     .items_center()
                     .justify_center()
                     .child(self.render_pending_auth_state())
+                    .text_ui(cx)
+                    .text_center()
+                    .text_color(cx.theme().colors().text_muted)
+                    .children(description.clone().map(|desc| {
+                        self.render_markdown(desc, default_markdown_style(false, window, cx))
+                    }))
                     .child(h_flex().mt_1p5().justify_center().children(
                         connection.auth_methods().into_iter().map(|method| {
                             Button::new(
