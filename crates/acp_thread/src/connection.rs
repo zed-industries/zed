@@ -186,7 +186,7 @@ mod test_support {
     use std::sync::Arc;
 
     use collections::HashMap;
-    use futures::future::try_join_all;
+    use futures::{channel::oneshot, future::try_join_all};
     use gpui::{AppContext as _, WeakEntity};
     use parking_lot::Mutex;
 
@@ -194,9 +194,14 @@ mod test_support {
 
     #[derive(Clone, Default)]
     pub struct StubAgentConnection {
-        sessions: Arc<Mutex<HashMap<acp::SessionId, WeakEntity<AcpThread>>>>,
+        sessions: Arc<Mutex<HashMap<acp::SessionId, Session>>>,
         permission_requests: HashMap<acp::ToolCallId, Vec<acp::PermissionOption>>,
         next_prompt_updates: Arc<Mutex<Vec<acp::SessionUpdate>>>,
+    }
+
+    struct Session {
+        thread: WeakEntity<AcpThread>,
+        response_tx: Option<oneshot::Sender<()>>,
     }
 
     impl StubAgentConnection {
@@ -226,13 +231,31 @@ mod test_support {
             update: acp::SessionUpdate,
             cx: &mut App,
         ) {
+            assert!(
+                self.next_prompt_updates.lock().is_empty(),
+                "Use either send_update or set_next_prompt_updates"
+            );
+
             self.sessions
                 .lock()
                 .get(&session_id)
                 .unwrap()
+                .thread
                 .update(cx, |thread, cx| {
                     thread.handle_session_update(update.clone(), cx).unwrap();
                 })
+                .unwrap();
+        }
+
+        pub fn end_turn(&self, session_id: acp::SessionId) {
+            self.sessions
+                .lock()
+                .get_mut(&session_id)
+                .unwrap()
+                .response_tx
+                .take()
+                .expect("No pending turn")
+                .send(())
                 .unwrap();
         }
     }
@@ -251,7 +274,13 @@ mod test_support {
             let session_id = acp::SessionId(self.sessions.lock().len().to_string().into());
             let thread =
                 cx.new(|cx| AcpThread::new("Test", self.clone(), project, session_id.clone(), cx));
-            self.sessions.lock().insert(session_id, thread.downgrade());
+            self.sessions.lock().insert(
+                session_id,
+                Session {
+                    thread: thread.downgrade(),
+                    response_tx: None,
+                },
+            );
             Task::ready(Ok(thread))
         }
 
@@ -269,43 +298,59 @@ mod test_support {
             params: acp::PromptRequest,
             cx: &mut App,
         ) -> Task<gpui::Result<acp::PromptResponse>> {
-            let sessions = self.sessions.lock();
-            let thread = sessions.get(&params.session_id).unwrap();
+            let mut sessions = self.sessions.lock();
+            let Session {
+                thread,
+                response_tx,
+            } = sessions.get_mut(&params.session_id).unwrap();
             let mut tasks = vec![];
-            for update in self.next_prompt_updates.lock().drain(..) {
-                let thread = thread.clone();
-                let update = update.clone();
-                let permission_request = if let acp::SessionUpdate::ToolCall(tool_call) = &update
-                    && let Some(options) = self.permission_requests.get(&tool_call.id)
-                {
-                    Some((tool_call.clone(), options.clone()))
-                } else {
-                    None
-                };
-                let task = cx.spawn(async move |cx| {
-                    if let Some((tool_call, options)) = permission_request {
-                        let permission = thread.update(cx, |thread, cx| {
-                            thread.request_tool_call_authorization(
-                                tool_call.clone().into(),
-                                options.clone(),
-                                cx,
-                            )
-                        })?;
-                        permission?.await?;
-                    }
-                    thread.update(cx, |thread, cx| {
-                        thread.handle_session_update(update.clone(), cx).unwrap();
-                    })?;
-                    anyhow::Ok(())
-                });
-                tasks.push(task);
-            }
-            cx.spawn(async move |_| {
-                try_join_all(tasks).await?;
-                Ok(acp::PromptResponse {
-                    stop_reason: acp::StopReason::EndTurn,
+            if self.next_prompt_updates.lock().is_empty() {
+                let (tx, rx) = oneshot::channel();
+                response_tx.replace(tx);
+                cx.spawn(async move |_| {
+                    rx.await?;
+                    Ok(acp::PromptResponse {
+                        stop_reason: acp::StopReason::EndTurn,
+                    })
                 })
-            })
+            } else {
+                for update in self.next_prompt_updates.lock().drain(..) {
+                    let thread = thread.clone();
+                    let update = update.clone();
+                    let permission_request = if let acp::SessionUpdate::ToolCall(tool_call) =
+                        &update
+                        && let Some(options) = self.permission_requests.get(&tool_call.id)
+                    {
+                        Some((tool_call.clone(), options.clone()))
+                    } else {
+                        None
+                    };
+                    let task = cx.spawn(async move |cx| {
+                        if let Some((tool_call, options)) = permission_request {
+                            let permission = thread.update(cx, |thread, cx| {
+                                thread.request_tool_call_authorization(
+                                    tool_call.clone().into(),
+                                    options.clone(),
+                                    cx,
+                                )
+                            })?;
+                            permission?.await?;
+                        }
+                        thread.update(cx, |thread, cx| {
+                            thread.handle_session_update(update.clone(), cx).unwrap();
+                        })?;
+                        anyhow::Ok(())
+                    });
+                    tasks.push(task);
+                }
+
+                cx.spawn(async move |_| {
+                    try_join_all(tasks).await?;
+                    Ok(acp::PromptResponse {
+                        stop_reason: acp::StopReason::EndTurn,
+                    })
+                })
+            }
         }
 
         fn cancel(&self, _session_id: &acp::SessionId, _cx: &mut App) {
