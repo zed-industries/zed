@@ -5337,7 +5337,7 @@ fn main() {{
     }
 
     #[gpui::test]
-    async fn test_retry_cancelled_on_stop(cx: &mut TestAppContext) {
+    async fn test_retry_canceled_on_stop(cx: &mut TestAppContext) {
         init_test_settings(cx);
 
         let project = create_test_project(cx, json!({})).await;
@@ -5393,7 +5393,7 @@ fn main() {{
             "Should have no pending completions after cancellation"
         );
 
-        // Verify the retry was cancelled by checking retry state
+        // Verify the retry was canceled by checking retry state
         thread.read_with(cx, |thread, _| {
             if let Some(retry_state) = &thread.retry_state {
                 panic!(

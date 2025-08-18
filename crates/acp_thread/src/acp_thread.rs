@@ -360,7 +360,7 @@ pub enum ToolCallStatus {
     Failed,
     /// The user rejected the tool call.
     Rejected,
-    /// The user cancelled generation so the tool call was cancelled.
+    /// The user canceled generation so the tool call was canceled.
     Canceled,
 }
 
@@ -1269,19 +1269,19 @@ impl AcpThread {
                         Err(e)
                     }
                     result => {
-                        let cancelled = matches!(
+                        let canceled = matches!(
                             result,
                             Ok(Ok(acp::PromptResponse {
-                                stop_reason: acp::StopReason::Cancelled
+                                stop_reason: acp::StopReason::Canceled
                             }))
                         );
 
-                        // We only take the task if the current prompt wasn't cancelled.
+                        // We only take the task if the current prompt wasn't canceled.
                         //
-                        // This prompt may have been cancelled because another one was sent
+                        // This prompt may have been canceled because another one was sent
                         // while it was still generating. In these cases, dropping `send_task`
-                        // would cause the next generation to be cancelled.
-                        if !cancelled {
+                        // would cause the next generation to be canceled.
+                        if !canceled {
                             this.send_task.take();
                         }
 
