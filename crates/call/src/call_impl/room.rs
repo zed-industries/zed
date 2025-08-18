@@ -10,16 +10,19 @@ use client::{
 };
 use collections::{BTreeMap, HashMap, HashSet};
 use fs::Fs;
-use futures::{FutureExt, StreamExt};
-use gpui::{App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, Task, WeakEntity};
+use futures::StreamExt;
+use gpui::{
+    App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, FutureExt as _,
+    ScreenCaptureSource, ScreenCaptureStream, Task, Timeout, WeakEntity,
+};
 use gpui_tokio::Tokio;
 use language::LanguageRegistry;
 use livekit::{LocalTrackPublication, ParticipantIdentity, RoomEvent};
-use livekit_client::{self as livekit, TrackSid};
+use livekit_client::{self as livekit, AudioStream, TrackSid};
 use postage::{sink::Sink, stream::Stream, watch};
 use project::Project;
 use settings::Settings as _;
-use std::{any::Any, future::Future, mem, rc::Rc, sync::Arc, time::Duration};
+use std::{future::Future, mem, rc::Rc, sync::Arc, time::Duration};
 use util::{ResultExt, TryFutureExt, post_inc};
 
 pub const RECONNECT_TIMEOUT: Duration = Duration::from_secs(30);
@@ -367,57 +370,53 @@ impl Room {
                     })?;
 
                 // Wait for client to re-establish a connection to the server.
-                {
-                    let mut reconnection_timeout =
-                        cx.background_executor().timer(RECONNECT_TIMEOUT).fuse();
-                    let client_reconnection = async {
-                        let mut remaining_attempts = 3;
-                        while remaining_attempts > 0 {
-                            if client_status.borrow().is_connected() {
-                                log::info!("client reconnected, attempting to rejoin room");
+                let executor = cx.background_executor().clone();
+                let client_reconnection = async {
+                    let mut remaining_attempts = 3;
+                    while remaining_attempts > 0 {
+                        if client_status.borrow().is_connected() {
+                            log::info!("client reconnected, attempting to rejoin room");
 
-                                let Some(this) = this.upgrade() else { break };
-                                match this.update(cx, |this, cx| this.rejoin(cx)) {
-                                    Ok(task) => {
-                                        if task.await.log_err().is_some() {
-                                            return true;
-                                        } else {
-                                            remaining_attempts -= 1;
-                                        }
+                            let Some(this) = this.upgrade() else { break };
+                            match this.update(cx, |this, cx| this.rejoin(cx)) {
+                                Ok(task) => {
+                                    if task.await.log_err().is_some() {
+                                        return true;
+                                    } else {
+                                        remaining_attempts -= 1;
                                     }
-                                    Err(_app_dropped) => return false,
                                 }
-                            } else if client_status.borrow().is_signed_out() {
-                                return false;
+                                Err(_app_dropped) => return false,
                             }
-
-                            log::info!(
-                                "waiting for client status change, remaining attempts {}",
-                                remaining_attempts
-                            );
-                            client_status.next().await;
+                        } else if client_status.borrow().is_signed_out() {
+                            return false;
                         }
-                        false
+
+                        log::info!(
+                            "waiting for client status change, remaining attempts {}",
+                            remaining_attempts
+                        );
+                        client_status.next().await;
                     }
-                    .fuse();
-                    futures::pin_mut!(client_reconnection);
+                    false
+                };
 
-                    futures::select_biased! {
-                        reconnected = client_reconnection => {
-                            if reconnected {
-                                log::info!("successfully reconnected to room");
-                                // If we successfully joined the room, go back around the loop
-                                // waiting for future connection status changes.
-                                continue;
-                            }
-                        }
-                        _ = reconnection_timeout => {
-                            log::info!("room reconnection timeout expired");
-                        }
+                match client_reconnection
+                    .with_timeout(RECONNECT_TIMEOUT, &executor)
+                    .await
+                {
+                    Ok(true) => {
+                        log::info!("successfully reconnected to room");
+                        // If we successfully joined the room, go back around the loop
+                        // waiting for future connection status changes.
+                        continue;
+                    }
+                    Ok(false) => break,
+                    Err(Timeout) => {
+                        log::info!("room reconnection timeout expired");
+                        break;
                     }
                 }
-
-                break;
             }
         }
 
@@ -1251,9 +1250,18 @@ impl Room {
         })
     }
 
-    pub fn is_screen_sharing(&self) -> bool {
+    pub fn is_sharing_screen(&self) -> bool {
         self.live_kit.as_ref().map_or(false, |live_kit| {
             !matches!(live_kit.screen_track, LocalTrack::None)
+        })
+    }
+
+    pub fn shared_screen_id(&self) -> Option<u64> {
+        self.live_kit.as_ref().and_then(|lk| match lk.screen_track {
+            LocalTrack::Published { ref _stream, .. } => {
+                _stream.metadata().ok().map(|meta| meta.id)
+            }
+            _ => None,
         })
     }
 
@@ -1369,11 +1377,15 @@ impl Room {
         })
     }
 
-    pub fn share_screen(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
+    pub fn share_screen(
+        &mut self,
+        source: Rc<dyn ScreenCaptureSource>,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<()>> {
         if self.status.is_offline() {
             return Task::ready(Err(anyhow!("room is offline")));
         }
-        if self.is_screen_sharing() {
+        if self.is_sharing_screen() {
             return Task::ready(Err(anyhow!("screen was already shared")));
         }
 
@@ -1386,20 +1398,8 @@ impl Room {
             return Task::ready(Err(anyhow!("live-kit was not initialized")));
         };
 
-        let sources = cx.screen_capture_sources();
-
         cx.spawn(async move |this, cx| {
-            let sources = sources
-                .await
-                .map_err(|error| error.into())
-                .and_then(|sources| sources);
-            let source =
-                sources.and_then(|sources| sources.into_iter().next().context("no display found"));
-
-            let publication = match source {
-                Ok(source) => participant.publish_screenshare_track(&*source, cx).await,
-                Err(error) => Err(error),
-            };
+            let publication = participant.publish_screenshare_track(&*source, cx).await;
 
             this.update(cx, |this, cx| {
                 let live_kit = this
@@ -1426,7 +1426,7 @@ impl Room {
                         } else {
                             live_kit.screen_track = LocalTrack::Published {
                                 track_publication: publication,
-                                _stream: Box::new(stream),
+                                _stream: stream,
                             };
                             cx.notify();
                         }
@@ -1492,7 +1492,7 @@ impl Room {
         }
     }
 
-    pub fn unshare_screen(&mut self, cx: &mut Context<Self>) -> Result<()> {
+    pub fn unshare_screen(&mut self, play_sound: bool, cx: &mut Context<Self>) -> Result<()> {
         anyhow::ensure!(!self.status.is_offline(), "room is offline");
 
         let live_kit = self
@@ -1516,7 +1516,10 @@ impl Room {
                     cx.notify();
                 }
 
-                Audio::play_sound(Sound::StopScreenshare, cx);
+                if play_sound {
+                    Audio::play_sound(Sound::StopScreenshare, cx);
+                }
+
                 Ok(())
             }
         }
@@ -1624,8 +1627,8 @@ fn spawn_room_connection(
 
 struct LiveKitRoom {
     room: Rc<livekit::Room>,
-    screen_track: LocalTrack,
-    microphone_track: LocalTrack,
+    screen_track: LocalTrack<dyn ScreenCaptureStream>,
+    microphone_track: LocalTrack<AudioStream>,
     /// Tracks whether we're currently in a muted state due to auto-mute from deafening or manual mute performed by user.
     muted_by_user: bool,
     deafened: bool,
@@ -1663,18 +1666,18 @@ impl LiveKitRoom {
     }
 }
 
-enum LocalTrack {
+enum LocalTrack<Stream: ?Sized> {
     None,
     Pending {
         publish_id: usize,
     },
     Published {
         track_publication: LocalTrackPublication,
-        _stream: Box<dyn Any>,
+        _stream: Box<Stream>,
     },
 }
 
-impl Default for LocalTrack {
+impl<T: ?Sized> Default for LocalTrack<T> {
     fn default() -> Self {
         Self::None
     }

@@ -107,6 +107,8 @@ pub fn init(themes_to_load: LoadThemes, cx: &mut App) {
     let mut prev_buffer_font_size_settings =
         ThemeSettings::get_global(cx).buffer_font_size_settings();
     let mut prev_ui_font_size_settings = ThemeSettings::get_global(cx).ui_font_size_settings();
+    let mut prev_agent_font_size_settings =
+        ThemeSettings::get_global(cx).agent_font_size_settings();
     cx.observe_global::<SettingsStore>(move |cx| {
         let buffer_font_size_settings = ThemeSettings::get_global(cx).buffer_font_size_settings();
         if buffer_font_size_settings != prev_buffer_font_size_settings {
@@ -118,6 +120,12 @@ pub fn init(themes_to_load: LoadThemes, cx: &mut App) {
         if ui_font_size_settings != prev_ui_font_size_settings {
             prev_ui_font_size_settings = ui_font_size_settings;
             reset_ui_font_size(cx);
+        }
+
+        let agent_font_size_settings = ThemeSettings::get_global(cx).agent_font_size_settings();
+        if agent_font_size_settings != prev_agent_font_size_settings {
+            prev_agent_font_size_settings = agent_font_size_settings;
+            reset_agent_font_size(cx);
         }
     })
     .detach();

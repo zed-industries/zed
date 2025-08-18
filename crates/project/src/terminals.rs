@@ -1,7 +1,7 @@
 use crate::{Project, ProjectPath};
 use anyhow::{Context as _, Result};
 use collections::HashMap;
-use gpui::{AnyWindowHandle, App, AppContext as _, Context, Entity, Task, WeakEntity};
+use gpui::{App, AppContext as _, Context, Entity, Task, WeakEntity};
 use itertools::Itertools;
 use language::LanguageName;
 use remote::ssh_session::SshArgs;
@@ -98,7 +98,6 @@ impl Project {
     pub fn create_terminal(
         &mut self,
         kind: TerminalKind,
-        window: AnyWindowHandle,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Terminal>>> {
         let path: Option<Arc<Path>> = match &kind {
@@ -134,7 +133,7 @@ impl Project {
                 None
             };
             project.update(cx, |project, cx| {
-                project.create_terminal_with_venv(kind, python_venv_directory, window, cx)
+                project.create_terminal_with_venv(kind, python_venv_directory, cx)
             })?
         })
     }
@@ -209,21 +208,27 @@ impl Project {
         &mut self,
         kind: TerminalKind,
         python_venv_directory: Option<PathBuf>,
-        window: AnyWindowHandle,
         cx: &mut Context<Self>,
     ) -> Result<Entity<Terminal>> {
         let this = &mut *self;
+        let ssh_details = this.ssh_details(cx);
         let path: Option<Arc<Path>> = match &kind {
             TerminalKind::Shell(path) => path.as_ref().map(|path| Arc::from(path.as_ref())),
             TerminalKind::Task(spawn_task) => {
                 if let Some(cwd) = &spawn_task.cwd {
-                    Some(Arc::from(cwd.as_ref()))
+                    if ssh_details.is_some() {
+                        Some(Arc::from(cwd.as_ref()))
+                    } else {
+                        let cwd = cwd.to_string_lossy();
+                        let tilde_substituted = shellexpand::tilde(&cwd);
+                        Some(Arc::from(Path::new(tilde_substituted.as_ref())))
+                    }
                 } else {
                     this.active_project_directory(cx)
                 }
             }
         };
-        let ssh_details = this.ssh_details(cx);
+
         let is_ssh_terminal = ssh_details.is_some();
 
         let mut settings_location = None;
@@ -251,7 +256,7 @@ impl Project {
 
         let local_path = if is_ssh_terminal { None } else { path.clone() };
 
-        let mut python_venv_activate_command = None;
+        let mut python_venv_activate_command = Task::ready(None);
 
         let (spawn_task, shell) = match kind {
             TerminalKind::Shell(_) => {
@@ -260,6 +265,7 @@ impl Project {
                         python_venv_directory,
                         &settings.detect_venv,
                         &settings.shell,
+                        cx,
                     );
                 }
 
@@ -389,7 +395,7 @@ impl Project {
             settings.alternate_scroll,
             settings.max_scroll_history_lines,
             is_ssh_terminal,
-            window,
+            cx.entity_id().as_u64(),
             completion_tx,
             cx,
         )
@@ -414,9 +420,12 @@ impl Project {
             })
             .detach();
 
-            if let Some(activate_command) = python_venv_activate_command {
-                this.activate_python_virtual_environment(activate_command, &terminal_handle, cx);
-            }
+            this.activate_python_virtual_environment(
+                python_venv_activate_command,
+                &terminal_handle,
+                cx,
+            );
+
             terminal_handle
         })
     }
@@ -534,12 +543,15 @@ impl Project {
         venv_base_directory: &Path,
         venv_settings: &VenvSettings,
         shell: &Shell,
-    ) -> Option<String> {
-        let venv_settings = venv_settings.as_option()?;
+        cx: &mut App,
+    ) -> Task<Option<String>> {
+        let Some(venv_settings) = venv_settings.as_option() else {
+            return Task::ready(None);
+        };
         let activate_keyword = match venv_settings.activate_script {
             terminal_settings::ActivateScript::Default => match std::env::consts::OS {
                 "windows" => ".",
-                _ => "source",
+                _ => ".",
             },
             terminal_settings::ActivateScript::Nushell => "overlay use",
             terminal_settings::ActivateScript::PowerShell => ".",
@@ -584,30 +596,44 @@ impl Project {
                 .join(activate_script_name)
                 .to_string_lossy()
                 .to_string();
-            let quoted = shlex::try_quote(&path).ok()?;
-            smol::block_on(self.fs.metadata(path.as_ref()))
-                .ok()
-                .flatten()?;
 
-            Some(format!(
-                "{} {} ; clear{}",
-                activate_keyword, quoted, line_ending
-            ))
+            let is_valid_path = self.resolve_abs_path(path.as_ref(), cx);
+            cx.background_spawn(async move {
+                let quoted = shlex::try_quote(&path).ok()?;
+                if is_valid_path.await.is_some_and(|meta| meta.is_file()) {
+                    Some(format!(
+                        "{} {} ; clear{}",
+                        activate_keyword, quoted, line_ending
+                    ))
+                } else {
+                    None
+                }
+            })
         } else {
-            Some(format!(
+            Task::ready(Some(format!(
                 "{activate_keyword} {activate_script_name} {name}; clear{line_ending}",
                 name = venv_settings.venv_name
-            ))
+            )))
         }
     }
 
     fn activate_python_virtual_environment(
         &self,
-        command: String,
+        command: Task<Option<String>>,
         terminal_handle: &Entity<Terminal>,
         cx: &mut App,
     ) {
-        terminal_handle.update(cx, |terminal, _| terminal.input(command.into_bytes()));
+        terminal_handle.update(cx, |_, cx| {
+            cx.spawn(async move |this, cx| {
+                if let Some(command) = command.await {
+                    this.update(cx, |this, _| {
+                        this.input(command.into_bytes());
+                    })
+                    .ok();
+                }
+            })
+            .detach()
+        });
     }
 
     pub fn local_terminal_handles(&self) -> &Vec<WeakEntity<terminal::Terminal>> {
@@ -662,7 +688,7 @@ pub fn wrap_for_ssh(
 
             format!("cd \"$HOME/{trimmed_path}\"; {env_changes} {to_run}")
         } else {
-            format!("cd {path}; {env_changes} {to_run}")
+            format!("cd \"{path}\"; {env_changes} {to_run}")
         }
     } else {
         format!("cd; {env_changes} {to_run}")

@@ -1,6 +1,6 @@
 use anyhow::{Context as _, Result};
 
-use cpal::traits::{DeviceTrait, HostTrait, StreamTrait as _};
+use cpal::traits::{DeviceTrait, StreamTrait as _};
 use futures::channel::mpsc::UnboundedSender;
 use futures::{Stream, StreamExt as _};
 use gpui::{
@@ -165,7 +165,7 @@ impl AudioStack {
     ) -> Result<()> {
         loop {
             let mut device_change_listener = DeviceChangeListener::new(false)?;
-            let (output_device, output_config) = default_device(false)?;
+            let (output_device, output_config) = crate::default_device(false)?;
             let (end_on_drop_tx, end_on_drop_rx) = std::sync::mpsc::channel::<()>();
             let mixer = mixer.clone();
             let apm = apm.clone();
@@ -237,7 +237,7 @@ impl AudioStack {
     ) -> Result<()> {
         loop {
             let mut device_change_listener = DeviceChangeListener::new(true)?;
-            let (device, config) = default_device(true)?;
+            let (device, config) = crate::default_device(true)?;
             let (end_on_drop_tx, end_on_drop_rx) = std::sync::mpsc::channel::<()>();
             let apm = apm.clone();
             let frame_tx = frame_tx.clone();
@@ -258,9 +258,15 @@ impl AudioStack {
                     let stream = device
                         .build_input_stream_raw(
                             &config.config(),
-                            cpal::SampleFormat::I16,
+                            config.sample_format(),
                             move |data, _: &_| {
-                                let mut data = data.as_slice::<i16>().unwrap();
+                                let data =
+                                    crate::get_sample_data(config.sample_format(), data).log_err();
+                                let Some(data) = data else {
+                                    return;
+                                };
+                                let mut data = data.as_slice();
+
                                 while data.len() > 0 {
                                     let remainder = (buf.capacity() - buf.len()).min(data.len());
                                     buf.extend_from_slice(&data[..remainder]);
@@ -326,11 +332,11 @@ pub(crate) async fn capture_local_video_track(
     capture_source: &dyn ScreenCaptureSource,
     cx: &mut gpui::AsyncApp,
 ) -> Result<(crate::LocalVideoTrack, Box<dyn ScreenCaptureStream>)> {
-    let resolution = capture_source.resolution()?;
+    let metadata = capture_source.metadata()?;
     let track_source = gpui_tokio::Tokio::spawn(cx, async move {
         NativeVideoSource::new(VideoResolution {
-            width: resolution.width.0 as u32,
-            height: resolution.height.0 as u32,
+            width: metadata.resolution.width.0 as u32,
+            height: metadata.resolution.height.0 as u32,
         })
     })?
     .await?;
@@ -357,27 +363,6 @@ pub(crate) async fn capture_local_video_track(
         )),
         capture_stream,
     ))
-}
-
-fn default_device(input: bool) -> Result<(cpal::Device, cpal::SupportedStreamConfig)> {
-    let device;
-    let config;
-    if input {
-        device = cpal::default_host()
-            .default_input_device()
-            .context("no audio input device available")?;
-        config = device
-            .default_input_config()
-            .context("failed to get default input config")?;
-    } else {
-        device = cpal::default_host()
-            .default_output_device()
-            .context("no audio output device available")?;
-        config = device
-            .default_output_config()
-            .context("failed to get default output config")?;
-    }
-    Ok((device, config))
 }
 
 #[derive(Clone)]

@@ -8,7 +8,7 @@
       "cmd-shift-i": "agent::ToggleFocus",
       "cmd-l": "agent::ToggleFocus",
       "cmd-shift-l": "agent::ToggleFocus",
-      "cmd-shift-j": "agent::OpenConfiguration"
+      "cmd-shift-j": "agent::OpenSettings"
     }
   },
   {

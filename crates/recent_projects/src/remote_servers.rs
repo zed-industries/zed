@@ -953,7 +953,7 @@ impl RemoteServerProjects {
                     )
                     .child(Label::new(project.paths.join(", ")))
                     .on_click(cx.listener(move |this, e: &ClickEvent, window, cx| {
-                        let secondary_confirm = e.down.modifiers.platform;
+                        let secondary_confirm = e.modifiers().platform;
                         callback(this, secondary_confirm, window, cx)
                     }))
                     .when(is_from_zed, |server_list_item| {
@@ -963,7 +963,7 @@ impl RemoteServerProjects {
                                 .child({
                                     let project = project.clone();
                                     // Right-margin to offset it from the Scrollbar
-                                    IconButton::new("remove-remote-project", IconName::TrashAlt)
+                                    IconButton::new("remove-remote-project", IconName::Trash)
                                         .icon_size(IconSize::Small)
                                         .shape(IconButtonShape::Square)
                                         .size(ButtonSize::Large)
@@ -1094,11 +1094,10 @@ impl RemoteServerProjects {
                                         .size(LabelSize::Small),
                                     )
                                     .child(
-                                        Button::new("learn-more", "Learn more…")
+                                        Button::new("learn-more", "Learn More")
                                             .label_size(LabelSize::Small)
-                                            .size(ButtonSize::None)
-                                            .color(Color::Accent)
-                                            .style(ButtonStyle::Transparent)
+                                            .icon(IconName::ArrowUpRight)
+                                            .icon_size(IconSize::XSmall)
                                             .on_click(|_, _, cx| {
                                                 cx.open_url(
                                                     "https://zed.dev/docs/remote-development",
@@ -1292,7 +1291,7 @@ impl RemoteServerProjects {
                                     let connection_string = connection_string.clone();
                                     move |_, _: &menu::Confirm, window, cx| {
                                         remove_ssh_server(
-                                            cx.entity().clone(),
+                                            cx.entity(),
                                             server_index,
                                             connection_string.clone(),
                                             window,
@@ -1312,7 +1311,7 @@ impl RemoteServerProjects {
                                         .child(Label::new("Remove Server").color(Color::Error))
                                         .on_click(cx.listener(move |_, _, window, cx| {
                                             remove_ssh_server(
-                                                cx.entity().clone(),
+                                                cx.entity(),
                                                 server_index,
                                                 connection_string.clone(),
                                                 window,

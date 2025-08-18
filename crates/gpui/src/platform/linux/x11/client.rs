@@ -642,13 +642,7 @@ impl X11Client {
                 let xim_connected = xim_handler.connected;
                 drop(state);
 
-                let xim_filtered = match ximc.filter_event(&event, &mut xim_handler) {
-                    Ok(handled) => handled,
-                    Err(err) => {
-                        log::error!("XIMClientError: {}", err);
-                        false
-                    }
-                };
+                let xim_filtered = ximc.filter_event(&event, &mut xim_handler);
                 let xim_callback_event = xim_handler.last_callback_event.take();
 
                 let mut state = self.0.borrow_mut();
@@ -659,14 +653,28 @@ impl X11Client {
                     self.handle_xim_callback_event(event);
                 }
 
-                if xim_filtered {
-                    continue;
-                }
-
-                if xim_connected {
-                    self.xim_handle_event(event);
-                } else {
-                    self.handle_event(event);
+                match xim_filtered {
+                    Ok(handled) => {
+                        if handled {
+                            continue;
+                        }
+                        if xim_connected {
+                            self.xim_handle_event(event);
+                        } else {
+                            self.handle_event(event);
+                        }
+                    }
+                    Err(err) => {
+                        // this might happen when xim server crashes on one of the events
+                        // we do lose 1-2 keys when crash happens since there is no reliable way to get that info
+                        // luckily, x11 sends us window not found error when xim server crashes upon further key press
+                        // hence we fall back to handle_event
+                        log::error!("XIMClientError: {}", err);
+                        let mut state = self.0.borrow_mut();
+                        state.take_xim();
+                        drop(state);
+                        self.handle_event(event);
+                    }
                 }
             }
         }
@@ -1004,12 +1012,13 @@ impl X11Client {
                     let mut keystroke = crate::Keystroke::from_xkb(&state.xkb, modifiers, code);
                     let keysym = state.xkb.key_get_one_sym(code);
 
-                    // should be called after key_get_one_sym
-                    state.xkb.update_key(code, xkbc::KeyDirection::Down);
-
                     if keysym.is_modifier_key() {
                         return Some(());
                     }
+
+                    // should be called after key_get_one_sym
+                    state.xkb.update_key(code, xkbc::KeyDirection::Down);
+
                     if let Some(mut compose_state) = state.compose_state.take() {
                         compose_state.feed(keysym);
                         match compose_state.status() {
@@ -1067,12 +1076,13 @@ impl X11Client {
                     let keystroke = crate::Keystroke::from_xkb(&state.xkb, modifiers, code);
                     let keysym = state.xkb.key_get_one_sym(code);
 
-                    // should be called after key_get_one_sym
-                    state.xkb.update_key(code, xkbc::KeyDirection::Up);
-
                     if keysym.is_modifier_key() {
                         return Some(());
                     }
+
+                    // should be called after key_get_one_sym
+                    state.xkb.update_key(code, xkbc::KeyDirection::Up);
+
                     keystroke
                 };
                 drop(state);
@@ -1448,7 +1458,7 @@ impl LinuxClient for X11Client {
     #[cfg(feature = "screen-capture")]
     fn screen_capture_sources(
         &self,
-    ) -> futures::channel::oneshot::Receiver<anyhow::Result<Vec<Box<dyn crate::ScreenCaptureSource>>>>
+    ) -> futures::channel::oneshot::Receiver<anyhow::Result<Vec<Rc<dyn crate::ScreenCaptureSource>>>>
     {
         crate::platform::scap_screen_capture::scap_screen_sources(
             &self.0.borrow().common.foreground_executor,
@@ -1793,6 +1803,7 @@ impl X11ClientState {
                             drop(state);
                             window.refresh(RequestFrameOptions {
                                 require_presentation: expose_event_received,
+                                force_render: false,
                             });
                         }
                         xcb_connection

@@ -1,9 +1,9 @@
 use std::sync::Arc;
 
-use ai_onboarding::{AgentPanelOnboardingCard, BulletItem};
+use ai_onboarding::{AgentPanelOnboardingCard, PlanDefinitions};
 use client::zed_urls;
 use gpui::{AnyElement, App, IntoElement, RenderOnce, Window};
-use ui::{Divider, List, prelude::*};
+use ui::{Divider, Tooltip, prelude::*};
 
 #[derive(IntoElement, RegisterComponent)]
 pub struct EndTrialUpsell {
@@ -18,6 +18,8 @@ impl EndTrialUpsell {
 
 impl RenderOnce for EndTrialUpsell {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let plan_definitions = PlanDefinitions;
+
         let pro_section = v_flex()
             .gap_1()
             .child(
@@ -31,16 +33,15 @@ impl RenderOnce for EndTrialUpsell {
                     )
                     .child(Divider::horizontal()),
             )
-            .child(
-                List::new()
-                    .child(BulletItem::new("500 prompts per month with Claude models"))
-                    .child(BulletItem::new("Unlimited edit predictions")),
-            )
+            .child(plan_definitions.pro_plan(false))
             .child(
                 Button::new("cta-button", "Upgrade to Zed Pro")
                     .full_width()
                     .style(ButtonStyle::Tinted(ui::TintColor::Accent))
-                    .on_click(|_, _, cx| cx.open_url(&zed_urls::upgrade_to_zed_pro_url(cx))),
+                    .on_click(move |_, _window, cx| {
+                        telemetry::event!("Upgrade To Pro Clicked", state = "end-of-trial");
+                        cx.open_url(&zed_urls::upgrade_to_zed_pro_url(cx))
+                    }),
             );
 
         let free_section = v_flex()
@@ -55,54 +56,58 @@ impl RenderOnce for EndTrialUpsell {
                             .color(Color::Muted)
                             .buffer_font(cx),
                     )
+                    .child(
+                        Label::new("(Current Plan)")
+                            .size(LabelSize::Small)
+                            .color(Color::Custom(cx.theme().colors().text_muted.opacity(0.6)))
+                            .buffer_font(cx),
+                    )
                     .child(Divider::horizontal()),
             )
-            .child(
-                List::new()
-                    .child(BulletItem::new(
-                        "50 prompts per month with the Claude models",
-                    ))
-                    .child(BulletItem::new(
-                        "2000 accepted edit predictions using our open-source Zeta model",
-                    )),
-            )
-            .child(
-                Button::new("dismiss-button", "Stay on Free")
-                    .full_width()
-                    .style(ButtonStyle::Outlined)
-                    .on_click({
-                        let callback = self.dismiss_upsell.clone();
-                        move |_, window, cx| callback(window, cx)
-                    }),
-            );
+            .child(plan_definitions.free_plan());
 
         AgentPanelOnboardingCard::new()
-            .child(Headline::new("Your Zed Pro trial has expired."))
+            .child(Headline::new("Your Zed Pro Trial has expired"))
             .child(
                 Label::new("You've been automatically reset to the Free plan.")
-                    .size(LabelSize::Small)
                     .color(Color::Muted)
-                    .mb_1(),
+                    .mb_2(),
             )
             .child(pro_section)
             .child(free_section)
+            .child(
+                h_flex().absolute().top_4().right_4().child(
+                    IconButton::new("dismiss_onboarding", IconName::Close)
+                        .icon_size(IconSize::Small)
+                        .tooltip(Tooltip::text("Dismiss"))
+                        .on_click({
+                            let callback = self.dismiss_upsell.clone();
+                            move |_, window, cx| {
+                                telemetry::event!("Banner Dismissed", source = "AI Onboarding");
+                                callback(window, cx)
+                            }
+                        }),
+                ),
+            )
     }
 }
 
 impl Component for EndTrialUpsell {
     fn scope() -> ComponentScope {
-        ComponentScope::Agent
+        ComponentScope::Onboarding
+    }
+
+    fn name() -> &'static str {
+        "End of Trial Upsell Banner"
     }
 
     fn sort_name() -> &'static str {
-        "AgentEndTrialUpsell"
+        "End of Trial Upsell Banner"
     }
 
     fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
         Some(
             v_flex()
-                .p_4()
-                .gap_4()
                 .child(EndTrialUpsell {
                     dismiss_upsell: Arc::new(|_, _| {}),
                 })

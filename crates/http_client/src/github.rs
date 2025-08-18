@@ -8,6 +8,7 @@ use url::Url;
 pub struct GitHubLspBinaryVersion {
     pub name: String,
     pub url: String,
+    pub digest: Option<String>,
 }
 
 #[derive(Deserialize, Debug)]
@@ -24,6 +25,7 @@ pub struct GithubRelease {
 pub struct GithubReleaseAsset {
     pub name: String,
     pub browser_download_url: String,
+    pub digest: Option<String>,
 }
 
 pub async fn latest_github_release(
@@ -69,11 +71,19 @@ pub async fn latest_github_release(
         }
     };
 
-    releases
+    let mut release = releases
         .into_iter()
         .filter(|release| !require_assets || !release.assets.is_empty())
         .find(|release| release.pre_release == pre_release)
-        .context("finding a prerelease")
+        .context("finding a prerelease")?;
+    release.assets.iter_mut().for_each(|asset| {
+        if let Some(digest) = &mut asset.digest {
+            if let Some(stripped) = digest.strip_prefix("sha256:") {
+                *digest = stripped.to_owned();
+            }
+        }
+    });
+    Ok(release)
 }
 
 pub async fn get_release_by_tag_name(

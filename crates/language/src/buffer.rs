@@ -1571,6 +1571,7 @@ impl Buffer {
             diagnostics: diagnostics.iter().cloned().collect(),
             lamport_timestamp,
         };
+
         self.apply_diagnostic_update(server_id, diagnostics, lamport_timestamp, cx);
         self.send_operation(op, true, cx);
     }
@@ -2072,6 +2073,21 @@ impl Buffer {
         self.text.push_transaction(transaction, now);
     }
 
+    /// Differs from `push_transaction` in that it does not clear the redo
+    /// stack. Intended to be used to create a parent transaction to merge
+    /// potential child transactions into.
+    ///
+    /// The caller is responsible for removing it from the undo history using
+    /// `forget_transaction` if no edits are merged into it. Otherwise, if edits
+    /// are merged into this transaction, the caller is responsible for ensuring
+    /// the redo stack is cleared. The easiest way to ensure the redo stack is
+    /// cleared is to create transactions with the usual `start_transaction` and
+    /// `end_transaction` methods and merging the resulting transactions into
+    /// the transaction created by this method
+    pub fn push_empty_transaction(&mut self, now: Instant) -> TransactionId {
+        self.text.push_empty_transaction(now)
+    }
+
     /// Prevent the last transaction from being grouped with any subsequent transactions,
     /// even if they occur with the buffer's undo grouping duration.
     pub fn finalize_last_transaction(&mut self) -> Option<&Transaction> {
@@ -2255,13 +2271,11 @@ impl Buffer {
             }
             let new_text = new_text.into();
             if !new_text.is_empty() || !range.is_empty() {
-                if let Some((prev_range, prev_text)) = edits.last_mut() {
-                    if prev_range.end >= range.start {
-                        prev_range.end = cmp::max(prev_range.end, range.end);
-                        *prev_text = format!("{prev_text}{new_text}").into();
-                    } else {
-                        edits.push((range, new_text));
-                    }
+                if let Some((prev_range, prev_text)) = edits.last_mut()
+                    && prev_range.end >= range.start
+                {
+                    prev_range.end = cmp::max(prev_range.end, range.end);
+                    *prev_text = format!("{prev_text}{new_text}").into();
                 } else {
                     edits.push((range, new_text));
                 }
@@ -2281,10 +2295,27 @@ impl Buffer {
 
         if let Some((before_edit, mode)) = autoindent_request {
             let mut delta = 0isize;
-            let entries = edits
+            let mut previous_setting = None;
+            let entries: Vec<_> = edits
                 .into_iter()
                 .enumerate()
                 .zip(&edit_operation.as_edit().unwrap().new_text)
+                .filter(|((_, (range, _)), _)| {
+                    let language = before_edit.language_at(range.start);
+                    let language_id = language.map(|l| l.id());
+                    if let Some((cached_language_id, auto_indent)) = previous_setting
+                        && cached_language_id == language_id
+                    {
+                        auto_indent
+                    } else {
+                        // The auto-indent setting is not present in editorconfigs, hence
+                        // we can avoid passing the file here.
+                        let auto_indent =
+                            language_settings(language.map(|l| l.name()), None, cx).auto_indent;
+                        previous_setting = Some((language_id, auto_indent));
+                        auto_indent
+                    }
+                })
                 .map(|((ix, (range, _)), new_text)| {
                     let new_text_length = new_text.len();
                     let old_start = range.start.to_point(&before_edit);
@@ -2358,12 +2389,14 @@ impl Buffer {
                 })
                 .collect();
 
-            self.autoindent_requests.push(Arc::new(AutoindentRequest {
-                before_edit,
-                entries,
-                is_block_mode: matches!(mode, AutoindentMode::Block { .. }),
-                ignore_empty_lines: false,
-            }));
+            if !entries.is_empty() {
+                self.autoindent_requests.push(Arc::new(AutoindentRequest {
+                    before_edit,
+                    entries,
+                    is_block_mode: matches!(mode, AutoindentMode::Block { .. }),
+                    ignore_empty_lines: false,
+                }));
+            }
         }
 
         self.end_transaction(cx);

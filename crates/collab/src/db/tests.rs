@@ -1,4 +1,3 @@
-mod billing_subscription_tests;
 mod buffer_tests;
 mod channel_tests;
 mod contributor_tests;
@@ -9,7 +8,6 @@ mod embedding_tests;
 mod extension_tests;
 mod feature_flag_tests;
 mod message_tests;
-mod processed_stripe_event_tests;
 mod user_tests;
 
 use crate::migrations::run_database_migrations;

@@ -118,16 +118,7 @@ impl NotificationPanel {
             })
             .detach();
 
-            let entity = cx.entity().downgrade();
-            let notification_list =
-                ListState::new(0, ListAlignment::Top, px(1000.), move |ix, window, cx| {
-                    entity
-                        .upgrade()
-                        .and_then(|entity| {
-                            entity.update(cx, |this, cx| this.render_notification(ix, window, cx))
-                        })
-                        .unwrap_or_else(|| div().into_any())
-                });
+            let notification_list = ListState::new(0, ListAlignment::Top, px(1000.));
             notification_list.set_scroll_handler(cx.listener(
                 |this, event: &ListScrollEvent, _, cx| {
                     if event.count.saturating_sub(event.visible_range.end) < LOADING_THRESHOLD {
@@ -330,7 +321,7 @@ impl NotificationPanel {
                                             .justify_end()
                                             .child(Button::new("decline", "Decline").on_click({
                                                 let notification = notification.clone();
-                                                let entity = cx.entity().clone();
+                                                let entity = cx.entity();
                                                 move |_, _, cx| {
                                                     entity.update(cx, |this, cx| {
                                                         this.respond_to_notification(
@@ -343,7 +334,7 @@ impl NotificationPanel {
                                             }))
                                             .child(Button::new("accept", "Accept").on_click({
                                                 let notification = notification.clone();
-                                                let entity = cx.entity().clone();
+                                                let entity = cx.entity();
                                                 move |_, _, cx| {
                                                     entity.update(cx, |this, cx| {
                                                         this.respond_to_notification(
@@ -634,13 +625,13 @@ impl Render for NotificationPanel {
                     .child(Icon::new(IconName::Envelope)),
             )
             .map(|this| {
-                if self.client.user_id().is_none() {
+                if !self.client.status().borrow().is_connected() {
                     this.child(
                         v_flex()
                             .gap_2()
                             .p_4()
                             .child(
-                                Button::new("sign_in_prompt_button", "Sign in")
+                                Button::new("connect_prompt_button", "Connect")
                                     .icon_color(Color::Muted)
                                     .icon(IconName::Github)
                                     .icon_position(IconPosition::Start)
@@ -652,10 +643,7 @@ impl Render for NotificationPanel {
                                             let client = client.clone();
                                             window
                                                 .spawn(cx, async move |cx| {
-                                                    match client
-                                                        .authenticate_and_connect(true, &cx)
-                                                        .await
-                                                    {
+                                                    match client.connect(true, &cx).await {
                                                         util::ConnectionResult::Timeout => {
                                                             log::error!("Connection timeout");
                                                         }
@@ -673,7 +661,7 @@ impl Render for NotificationPanel {
                             )
                             .child(
                                 div().flex().w_full().items_center().child(
-                                    Label::new("Sign in to view notifications.")
+                                    Label::new("Connect to view notifications.")
                                         .color(Color::Muted)
                                         .size(LabelSize::Small),
                                 ),
@@ -690,7 +678,16 @@ impl Render for NotificationPanel {
                         ),
                     )
                 } else {
-                    this.child(list(self.notification_list.clone()).size_full())
+                    this.child(
+                        list(
+                            self.notification_list.clone(),
+                            cx.processor(|this, ix, window, cx| {
+                                this.render_notification(ix, window, cx)
+                                    .unwrap_or_else(|| div().into_any())
+                            }),
+                        )
+                        .size_full(),
+                    )
                 }
             })
     }

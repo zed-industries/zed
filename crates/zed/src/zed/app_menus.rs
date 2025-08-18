@@ -25,16 +25,18 @@ pub fn app_menus() -> Vec<Menu> {
                         ),
                         MenuItem::action("Open Project Settings", super::OpenProjectSettings),
                         MenuItem::action(
+                            "Select Settings Profile...",
+                            zed_actions::settings_profile_selector::Toggle,
+                        ),
+                        MenuItem::action(
                             "Select Theme...",
                             zed_actions::theme_selector::Toggle::default(),
                         ),
                     ],
                 }),
                 MenuItem::separator(),
-                MenuItem::submenu(Menu {
-                    name: "Services".into(),
-                    items: vec![],
-                }),
+                #[cfg(target_os = "macos")]
+                MenuItem::os_submenu("Services", gpui::SystemMenuType::Services),
                 MenuItem::separator(),
                 MenuItem::action("Extensions", zed_actions::Extensions::default()),
                 MenuItem::action("Install CLI", install_cli::Install),
@@ -145,15 +147,15 @@ pub fn app_menus() -> Vec<Menu> {
             items: vec![
                 MenuItem::action(
                     "Zoom In",
-                    zed_actions::IncreaseBufferFontSize { persist: true },
+                    zed_actions::IncreaseBufferFontSize { persist: false },
                 ),
                 MenuItem::action(
                     "Zoom Out",
-                    zed_actions::DecreaseBufferFontSize { persist: true },
+                    zed_actions::DecreaseBufferFontSize { persist: false },
                 ),
                 MenuItem::action(
                     "Reset Zoom",
-                    zed_actions::ResetBufferFontSize { persist: true },
+                    zed_actions::ResetBufferFontSize { persist: false },
                 ),
                 MenuItem::separator(),
                 MenuItem::action("Toggle Left Dock", workspace::ToggleLeftDock),
@@ -248,7 +250,7 @@ pub fn app_menus() -> Vec<Menu> {
                 ),
                 MenuItem::action("View Telemetry", zed_actions::OpenTelemetryLog),
                 MenuItem::action("View Dependency Licenses", zed_actions::OpenLicenses),
-                MenuItem::action("Show Welcome", workspace::Welcome),
+                MenuItem::action("Show Welcome", onboarding::ShowWelcome),
                 MenuItem::action("Give Feedback...", zed_actions::feedback::GiveFeedback),
                 MenuItem::separator(),
                 MenuItem::action(

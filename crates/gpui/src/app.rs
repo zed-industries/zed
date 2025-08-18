@@ -277,6 +277,8 @@ pub struct App {
     pub(crate) release_listeners: SubscriberSet<EntityId, ReleaseListener>,
     pub(crate) global_observers: SubscriberSet<TypeId, Handler>,
     pub(crate) quit_observers: SubscriberSet<(), QuitHandler>,
+    pub(crate) restart_observers: SubscriberSet<(), Handler>,
+    pub(crate) restart_path: Option<PathBuf>,
     pub(crate) window_closed_observers: SubscriberSet<(), WindowClosedHandler>,
     pub(crate) layout_id_buffer: Vec<LayoutId>, // We recycle this memory across layout requests.
     pub(crate) propagate_event: bool,
@@ -349,6 +351,8 @@ impl App {
                 keyboard_layout_observers: SubscriberSet::new(),
                 global_observers: SubscriberSet::new(),
                 quit_observers: SubscriberSet::new(),
+                restart_observers: SubscriberSet::new(),
+                restart_path: None,
                 window_closed_observers: SubscriberSet::new(),
                 layout_id_buffer: Default::default(),
                 propagate_event: true,
@@ -696,7 +700,7 @@ impl App {
     /// Returns a list of available screen capture sources.
     pub fn screen_capture_sources(
         &self,
-    ) -> oneshot::Receiver<Result<Vec<Box<dyn ScreenCaptureSource>>>> {
+    ) -> oneshot::Receiver<Result<Vec<Rc<dyn ScreenCaptureSource>>>> {
         self.platform.screen_capture_sources()
     }
 
@@ -812,8 +816,9 @@ impl App {
     pub fn prompt_for_new_path(
         &self,
         directory: &Path,
+        suggested_name: Option<&str>,
     ) -> oneshot::Receiver<Result<Option<PathBuf>>> {
-        self.platform.prompt_for_new_path(directory)
+        self.platform.prompt_for_new_path(directory, suggested_name)
     }
 
     /// Reveals the specified path at the platform level, such as in Finder on macOS.
@@ -832,8 +837,16 @@ impl App {
     }
 
     /// Restarts the application.
-    pub fn restart(&self, binary_path: Option<PathBuf>) {
-        self.platform.restart(binary_path)
+    pub fn restart(&mut self) {
+        self.restart_observers
+            .clone()
+            .retain(&(), |observer| observer(self));
+        self.platform.restart(self.restart_path.take())
+    }
+
+    /// Sets the path to use when restarting the application.
+    pub fn set_restart_path(&mut self, path: PathBuf) {
+        self.restart_path = Some(path);
     }
 
     /// Returns the HTTP client for the application.
@@ -954,8 +967,8 @@ impl App {
         self.focus_handles
             .clone()
             .write()
-            .retain(|handle_id, count| {
-                if count.load(SeqCst) == 0 {
+            .retain(|handle_id, focus| {
+                if focus.ref_count.load(SeqCst) == 0 {
                     for window_handle in self.windows() {
                         window_handle
                             .update(self, |_, window, _| {
@@ -1370,7 +1383,9 @@ impl App {
         self.keymap.clone()
     }
 
-    /// Register a global listener for actions invoked via the keyboard.
+    /// Register a global handler for actions invoked via the keyboard. These handlers are run at
+    /// the end of the bubble phase for actions, and so will only be invoked if there are no other
+    /// handlers or if they called `cx.propagate()`.
     pub fn on_action<A: Action>(&mut self, listener: impl Fn(&A, &mut Self) + 'static) {
         self.global_action_listeners
             .entry(TypeId::of::<A>())
@@ -1458,6 +1473,21 @@ impl App {
             Box::new(move |cx| {
                 let future = on_quit(cx);
                 future.boxed_local()
+            }),
+        );
+        activate();
+        subscription
+    }
+
+    /// Register a callback to be invoked when the application is about to restart.
+    ///
+    /// These callbacks are called before any `on_app_quit` callbacks.
+    pub fn on_app_restart(&self, mut on_restart: impl 'static + FnMut(&mut App)) -> Subscription {
+        let (subscription, activate) = self.restart_observers.insert(
+            (),
+            Box::new(move |cx| {
+                on_restart(cx);
+                true
             }),
         );
         activate();
@@ -2019,6 +2049,10 @@ impl HttpClient for NullHttpClient {
             anyhow::bail!("No HttpClient available");
         }
         .boxed()
+    }
+
+    fn user_agent(&self) -> Option<&http_client::http::HeaderValue> {
+        None
     }
 
     fn proxy(&self) -> Option<&Url> {

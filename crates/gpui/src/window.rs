@@ -12,10 +12,11 @@ use crate::{
     PlatformInputHandler, PlatformWindow, Point, PolychromeSprite, PromptButton, PromptLevel, Quad,
     Render, RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams, Replay, ResizeEdge,
     SMOOTH_SVG_SCALE_FACTOR, SUBPIXEL_VARIANTS, ScaledPixels, Scene, Shadow, SharedString, Size,
-    StrikethroughStyle, Style, SubscriberSet, Subscription, TaffyLayoutEngine, Task, TextStyle,
-    TextStyleRefinement, TransformationMatrix, Underline, UnderlineStyle, WindowAppearance,
-    WindowBackgroundAppearance, WindowBounds, WindowControls, WindowDecorations, WindowOptions,
-    WindowParams, WindowTextSystem, point, prelude::*, px, rems, size, transparent_black,
+    StrikethroughStyle, Style, SubscriberSet, Subscription, TabHandles, TaffyLayoutEngine, Task,
+    TextStyle, TextStyleRefinement, TransformationMatrix, Underline, UnderlineStyle,
+    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControls, WindowDecorations,
+    WindowOptions, WindowParams, WindowTextSystem, point, prelude::*, px, rems, size,
+    transparent_black,
 };
 use anyhow::{Context as _, Result, anyhow};
 use collections::{FxHashMap, FxHashSet};
@@ -78,11 +79,13 @@ pub enum DispatchPhase {
 
 impl DispatchPhase {
     /// Returns true if this represents the "bubble" phase.
+    #[inline]
     pub fn bubble(self) -> bool {
         self == DispatchPhase::Bubble
     }
 
     /// Returns true if this represents the "capture" phase.
+    #[inline]
     pub fn capture(self) -> bool {
         self == DispatchPhase::Capture
     }
@@ -222,7 +225,12 @@ impl ArenaClearNeeded {
     }
 }
 
-pub(crate) type FocusMap = RwLock<SlotMap<FocusId, AtomicUsize>>;
+pub(crate) type FocusMap = RwLock<SlotMap<FocusId, FocusRef>>;
+pub(crate) struct FocusRef {
+    pub(crate) ref_count: AtomicUsize,
+    pub(crate) tab_index: isize,
+    pub(crate) tab_stop: bool,
+}
 
 impl FocusId {
     /// Obtains whether the element associated with this handle is currently focused.
@@ -258,6 +266,10 @@ impl FocusId {
 pub struct FocusHandle {
     pub(crate) id: FocusId,
     handles: Arc<FocusMap>,
+    /// The index of this element in the tab order.
+    pub tab_index: isize,
+    /// Whether this element can be focused by tab navigation.
+    pub tab_stop: bool,
 }
 
 impl std::fmt::Debug for FocusHandle {
@@ -268,23 +280,52 @@ impl std::fmt::Debug for FocusHandle {
 
 impl FocusHandle {
     pub(crate) fn new(handles: &Arc<FocusMap>) -> Self {
-        let id = handles.write().insert(AtomicUsize::new(1));
+        let id = handles.write().insert(FocusRef {
+            ref_count: AtomicUsize::new(1),
+            tab_index: 0,
+            tab_stop: false,
+        });
+
         Self {
             id,
+            tab_index: 0,
+            tab_stop: false,
             handles: handles.clone(),
         }
     }
 
     pub(crate) fn for_id(id: FocusId, handles: &Arc<FocusMap>) -> Option<Self> {
         let lock = handles.read();
-        let ref_count = lock.get(id)?;
-        if atomic_incr_if_not_zero(ref_count) == 0 {
+        let focus = lock.get(id)?;
+        if atomic_incr_if_not_zero(&focus.ref_count) == 0 {
             return None;
         }
         Some(Self {
             id,
+            tab_index: focus.tab_index,
+            tab_stop: focus.tab_stop,
             handles: handles.clone(),
         })
+    }
+
+    /// Sets the tab index of the element associated with this handle.
+    pub fn tab_index(mut self, index: isize) -> Self {
+        self.tab_index = index;
+        if let Some(focus) = self.handles.write().get_mut(self.id) {
+            focus.tab_index = index;
+        }
+        self
+    }
+
+    /// Sets whether the element associated with this handle is a tab stop.
+    ///
+    /// When `false`, the element will not be included in the tab order.
+    pub fn tab_stop(mut self, tab_stop: bool) -> Self {
+        self.tab_stop = tab_stop;
+        if let Some(focus) = self.handles.write().get_mut(self.id) {
+            focus.tab_stop = tab_stop;
+        }
+        self
     }
 
     /// Converts this focus handle into a weak variant, which does not prevent it from being released.
@@ -354,6 +395,7 @@ impl Drop for FocusHandle {
             .read()
             .get(self.id)
             .unwrap()
+            .ref_count
             .fetch_sub(1, SeqCst);
     }
 }
@@ -642,6 +684,7 @@ pub(crate) struct Frame {
     pub(crate) next_inspector_instance_ids: FxHashMap<Rc<crate::InspectorElementPath>, usize>,
     #[cfg(any(feature = "inspector", debug_assertions))]
     pub(crate) inspector_hitboxes: FxHashMap<HitboxId, crate::InspectorElementId>,
+    pub(crate) tab_handles: TabHandles,
 }
 
 #[derive(Clone, Default)]
@@ -661,6 +704,7 @@ pub(crate) struct PaintIndex {
     input_handlers_index: usize,
     cursor_styles_index: usize,
     accessed_element_states_index: usize,
+    tab_handle_index: usize,
     line_layout_index: LineLayoutIndex,
 }
 
@@ -689,6 +733,7 @@ impl Frame {
 
             #[cfg(any(feature = "inspector", debug_assertions))]
             inspector_hitboxes: FxHashMap::default(),
+            tab_handles: TabHandles::default(),
         }
     }
 
@@ -704,6 +749,7 @@ impl Frame {
         self.hitboxes.clear();
         self.window_control_hitboxes.clear();
         self.deferred_draws.clear();
+        self.tab_handles.clear();
         self.focus = None;
 
         #[cfg(any(feature = "inspector", debug_assertions))]
@@ -976,7 +1022,7 @@ impl Window {
                     || (active.get()
                         && last_input_timestamp.get().elapsed() < Duration::from_secs(1));
 
-                if invalidator.is_dirty() {
+                if invalidator.is_dirty() || request_frame_options.force_render {
                     measure("frame duration", || {
                         handle
                             .update(&mut cx, |_, window, cx| {
@@ -1287,6 +1333,28 @@ impl Window {
     pub fn disable_focus(&mut self) {
         self.blur();
         self.focus_enabled = false;
+    }
+
+    /// Move focus to next tab stop.
+    pub fn focus_next(&mut self) {
+        if !self.focus_enabled {
+            return;
+        }
+
+        if let Some(handle) = self.rendered_frame.tab_handles.next(self.focus.as_ref()) {
+            self.focus(&handle)
+        }
+    }
+
+    /// Move focus to previous tab stop.
+    pub fn focus_prev(&mut self) {
+        if !self.focus_enabled {
+            return;
+        }
+
+        if let Some(handle) = self.rendered_frame.tab_handles.prev(self.focus.as_ref()) {
+            self.focus(&handle)
+        }
     }
 
     /// Accessor for the text system.
@@ -2143,6 +2211,7 @@ impl Window {
             input_handlers_index: self.next_frame.input_handlers.len(),
             cursor_styles_index: self.next_frame.cursor_styles.len(),
             accessed_element_states_index: self.next_frame.accessed_element_states.len(),
+            tab_handle_index: self.next_frame.tab_handles.handles.len(),
             line_layout_index: self.text_system.layout_index(),
         }
     }
@@ -2171,6 +2240,12 @@ impl Window {
                 ..range.end.accessed_element_states_index]
                 .iter()
                 .map(|(id, type_id)| (GlobalElementId(id.0.clone()), *type_id)),
+        );
+        self.next_frame.tab_handles.handles.extend(
+            self.rendered_frame.tab_handles.handles
+                [range.start.tab_handle_index..range.end.tab_handle_index]
+                .iter()
+                .cloned(),
         );
 
         self.text_system
@@ -2739,7 +2814,7 @@ impl Window {
             content_mask: content_mask.scale(scale_factor),
             color: style.color.unwrap_or_default().opacity(element_opacity),
             thickness: style.thickness.scale(scale_factor),
-            wavy: style.wavy,
+            wavy: if style.wavy { 1 } else { 0 },
         });
     }
 
@@ -2770,7 +2845,7 @@ impl Window {
             content_mask: content_mask.scale(scale_factor),
             thickness: style.thickness.scale(scale_factor),
             color: style.color.unwrap_or_default().opacity(opacity),
-            wavy: false,
+            wavy: 0,
         });
     }
 
@@ -3613,7 +3688,8 @@ impl Window {
         );
 
         if !match_result.to_replay.is_empty() {
-            self.replay_pending_input(match_result.to_replay, cx)
+            self.replay_pending_input(match_result.to_replay, cx);
+            cx.propagate_event = true;
         }
 
         if !match_result.pending.is_empty() {
@@ -4173,6 +4249,25 @@ impl Window {
             .on_action(action_type, Rc::new(listener));
     }
 
+    /// Register an action listener on the window for the next frame if the condition is true.
+    /// The type of action is determined by the first parameter of the given listener.
+    /// When the next frame is rendered the listener will be cleared.
+    ///
+    /// This is a fairly low-level method, so prefer using action handlers on elements unless you have
+    /// a specific need to register a global listener.
+    pub fn on_action_when(
+        &mut self,
+        condition: bool,
+        action_type: TypeId,
+        listener: impl Fn(&dyn Any, DispatchPhase, &mut Window, &mut App) + 'static,
+    ) {
+        if condition {
+            self.next_frame
+                .dispatch_tree
+                .on_action(action_type, Rc::new(listener));
+        }
+    }
+
     /// Read information about the GPU backing this window.
     /// Currently returns None on Mac and Windows.
     pub fn gpu_specs(&self) -> Option<GpuSpecs> {
@@ -4626,6 +4721,8 @@ pub enum ElementId {
     Path(Arc<std::path::Path>),
     /// A code location.
     CodeLocation(core::panic::Location<'static>),
+    /// A labeled child of an element.
+    NamedChild(Box<ElementId>, SharedString),
 }
 
 impl ElementId {
@@ -4646,6 +4743,7 @@ impl Display for ElementId {
             ElementId::Uuid(uuid) => write!(f, "{}", uuid)?,
             ElementId::Path(path) => write!(f, "{}", path.display())?,
             ElementId::CodeLocation(location) => write!(f, "{}", location)?,
+            ElementId::NamedChild(id, name) => write!(f, "{}-{}", id, name)?,
         }
 
         Ok(())
@@ -4733,6 +4831,12 @@ impl From<Uuid> for ElementId {
 impl From<(&'static str, u32)> for ElementId {
     fn from((name, id): (&'static str, u32)) -> Self {
         ElementId::NamedInteger(name.into(), id.into())
+    }
+}
+
+impl<T: Into<SharedString>> From<(ElementId, T)> for ElementId {
+    fn from((id, name): (ElementId, T)) -> Self {
+        ElementId::NamedChild(Box::new(id), name.into())
     }
 }
 

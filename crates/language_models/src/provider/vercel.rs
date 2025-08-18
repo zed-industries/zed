@@ -355,7 +355,9 @@ impl LanguageModel for VercelLanguageModel {
             request,
             self.model.id(),
             self.model.supports_parallel_tool_calls(),
+            self.model.supports_prompt_cache_key(),
             self.max_output_tokens(),
+            None,
         );
         let completions = self.stream_completion(request, cx);
         async move {
