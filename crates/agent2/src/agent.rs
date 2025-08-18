@@ -425,13 +425,18 @@ impl NativeAgent {
         cx: &mut Context<Self>,
     ) {
         self.models.refresh_list(cx);
+
+        let default_model = LanguageModelRegistry::read_global(cx)
+            .default_model()
+            .map(|m| m.model.clone());
+
         for session in self.sessions.values_mut() {
-            session.thread.update(cx, |thread, _| {
-                if let Some(model) = thread.model() {
-                    let model_id = LanguageModels::model_id(model);
-                    if let Some(model) = self.models.model_from_id(&model_id) {
-                        thread.set_model(model.clone());
-                    }
+            session.thread.update(cx, |thread, cx| {
+                if thread.model().is_none()
+                    && let Some(model) = default_model.clone()
+                {
+                    thread.set_model(model);
+                    cx.notify();
                 }
             });
         }
