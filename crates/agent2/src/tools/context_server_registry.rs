@@ -228,4 +228,14 @@ impl AnyAgentTool for ContextServerTool {
             })
         })
     }
+
+    fn replay(
+        &self,
+        _input: serde_json::Value,
+        _output: serde_json::Value,
+        _event_stream: ToolCallEventStream,
+        _cx: &mut App,
+    ) -> Result<()> {
+        Ok(())
+    }
 }

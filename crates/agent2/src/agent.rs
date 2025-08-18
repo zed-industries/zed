@@ -1,9 +1,9 @@
 use crate::native_agent_server::NATIVE_AGENT_SERVER_NAME;
 use crate::{
-    AgentResponseEvent, ContextServerRegistry, CopyPathTool, CreateDirectoryTool, DeletePathTool,
-    DiagnosticsTool, EditFileTool, FetchTool, FindPathTool, GrepTool, ListDirectoryTool,
-    MovePathTool, NowTool, OpenTool, ReadFileTool, TerminalTool, ThinkingTool, Thread,
-    ToolCallAuthorization, UserMessageContent, WebSearchTool, templates::Templates,
+    ContextServerRegistry, CopyPathTool, CreateDirectoryTool, DeletePathTool, DiagnosticsTool,
+    EditFileTool, FetchTool, FindPathTool, GrepTool, ListDirectoryTool, MovePathTool, NowTool,
+    OpenTool, ReadFileTool, TerminalTool, ThinkingTool, Thread, ThreadEvent, ToolCallAuthorization,
+    UserMessageContent, WebSearchTool, templates::Templates,
 };
 use crate::{DbThread, ThreadsDatabase};
 use acp_thread::{AcpThread, AcpThreadMetadata, AgentModelSelector};
@@ -461,10 +461,7 @@ impl NativeAgentConnection {
         session_id: acp::SessionId,
         cx: &mut App,
         f: impl 'static
-        + FnOnce(
-            Entity<Thread>,
-            &mut App,
-        ) -> Result<mpsc::UnboundedReceiver<Result<AgentResponseEvent>>>,
+        + FnOnce(Entity<Thread>, &mut App) -> Result<mpsc::UnboundedReceiver<Result<ThreadEvent>>>,
     ) -> Task<Result<acp::PromptResponse>> {
         let Some((thread, acp_thread)) = self.0.update(cx, |agent, _cx| {
             agent
@@ -488,7 +485,10 @@ impl NativeAgentConnection {
                         log::trace!("Received completion event: {:?}", event);
 
                         match event {
-                            AgentResponseEvent::Text(text) => {
+                            ThreadEvent::UserMessage(message) => {
+                                todo!()
+                            }
+                            ThreadEvent::AgentText(text) => {
                                 acp_thread.update(cx, |thread, cx| {
                                     thread.push_assistant_content_block(
                                         acp::ContentBlock::Text(acp::TextContent {
@@ -500,7 +500,7 @@ impl NativeAgentConnection {
                                     )
                                 })?;
                             }
-                            AgentResponseEvent::Thinking(text) => {
+                            ThreadEvent::AgentThinking(text) => {
                                 acp_thread.update(cx, |thread, cx| {
                                     thread.push_assistant_content_block(
                                         acp::ContentBlock::Text(acp::TextContent {
@@ -512,7 +512,7 @@ impl NativeAgentConnection {
                                     )
                                 })?;
                             }
-                            AgentResponseEvent::ToolCallAuthorization(ToolCallAuthorization {
+                            ThreadEvent::ToolCallAuthorization(ToolCallAuthorization {
                                 tool_call,
                                 options,
                                 response,
@@ -535,17 +535,17 @@ impl NativeAgentConnection {
                                 })
                                 .detach();
                             }
-                            AgentResponseEvent::ToolCall(tool_call) => {
+                            ThreadEvent::ToolCall(tool_call) => {
                                 acp_thread.update(cx, |thread, cx| {
                                     thread.upsert_tool_call(tool_call, cx)
                                 })??;
                             }
-                            AgentResponseEvent::ToolCallUpdate(update) => {
+                            ThreadEvent::ToolCallUpdate(update) => {
                                 acp_thread.update(cx, |thread, cx| {
                                     thread.update_tool_call(update, cx)
                                 })??;
                             }
-                            AgentResponseEvent::Stop(stop_reason) => {
+                            ThreadEvent::Stop(stop_reason) => {
                                 log::debug!("Assistant message complete: {:?}", stop_reason);
                                 return Ok(acp::PromptResponse { stop_reason });
                             }
@@ -786,7 +786,7 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
                         .into_iter()
                         .map(|thread| AcpThreadMetadata {
                             agent: NATIVE_AGENT_SERVER_NAME.clone(),
-                            id: thread.id,
+                            id: thread.id.into(),
                             title: thread.title,
                             updated_at: thread.updated_at,
                         })
@@ -806,11 +806,12 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
         session_id: acp::SessionId,
         cx: &mut App,
     ) -> Task<Result<Entity<acp_thread::AcpThread>>> {
+        let thread_id = session_id.clone().into();
         let database = self.0.update(cx, |this, _| this.thread_database.clone());
         cx.spawn(async move |cx| {
             let database = database.await.map_err(|e| anyhow!(e))?;
             let db_thread = database
-                .load_thread(session_id.clone())
+                .load_thread(thread_id)
                 .await?
                 .context("no such thread found")?;
 

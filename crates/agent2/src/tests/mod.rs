@@ -329,7 +329,7 @@ async fn test_streaming_tool_calls(cx: &mut TestAppContext) {
 
     let mut saw_partial_tool_use = false;
     while let Some(event) = events.next().await {
-        if let Ok(AgentResponseEvent::ToolCall(tool_call)) = event {
+        if let Ok(ThreadEvent::ToolCall(tool_call)) = event {
             thread.update(cx, |thread, _cx| {
                 // Look for a tool use in the thread's last message
                 let message = thread.last_message().unwrap();
@@ -710,7 +710,7 @@ async fn test_send_after_tool_use_limit(cx: &mut TestAppContext) {
 }
 
 async fn expect_tool_call(
-    events: &mut UnboundedReceiver<Result<AgentResponseEvent>>,
+    events: &mut UnboundedReceiver<Result<ThreadEvent>>,
 ) -> acp::ToolCall {
     let event = events
         .next()
@@ -718,7 +718,7 @@ async fn expect_tool_call(
         .expect("no tool call authorization event received")
         .unwrap();
     match event {
-        AgentResponseEvent::ToolCall(tool_call) => return tool_call,
+        ThreadEvent::ToolCall(tool_call) => return tool_call,
         event => {
             panic!("Unexpected event {event:?}");
         }
@@ -726,7 +726,7 @@ async fn expect_tool_call(
 }
 
 async fn expect_tool_call_update_fields(
-    events: &mut UnboundedReceiver<Result<AgentResponseEvent>>,
+    events: &mut UnboundedReceiver<Result<ThreadEvent>>,
 ) -> acp::ToolCallUpdate {
     let event = events
         .next()
@@ -734,7 +734,7 @@ async fn expect_tool_call_update_fields(
         .expect("no tool call authorization event received")
         .unwrap();
     match event {
-        AgentResponseEvent::ToolCallUpdate(acp_thread::ToolCallUpdate::UpdateFields(update)) => {
+        ThreadEvent::ToolCallUpdate(acp_thread::ToolCallUpdate::UpdateFields(update)) => {
             return update;
         }
         event => {
@@ -744,7 +744,7 @@ async fn expect_tool_call_update_fields(
 }
 
 async fn next_tool_call_authorization(
-    events: &mut UnboundedReceiver<Result<AgentResponseEvent>>,
+    events: &mut UnboundedReceiver<Result<ThreadEvent>>,
 ) -> ToolCallAuthorization {
     loop {
         let event = events
@@ -752,7 +752,7 @@ async fn next_tool_call_authorization(
             .await
             .expect("no tool call authorization event received")
             .unwrap();
-        if let AgentResponseEvent::ToolCallAuthorization(tool_call_authorization) = event {
+        if let ThreadEvent::ToolCallAuthorization(tool_call_authorization) = event {
             let permission_kinds = tool_call_authorization
                 .options
                 .iter()
@@ -912,13 +912,13 @@ async fn test_cancellation(cx: &mut TestAppContext) {
     let mut echo_completed = false;
     while let Some(event) = events.next().await {
         match event.unwrap() {
-            AgentResponseEvent::ToolCall(tool_call) => {
+            ThreadEvent::ToolCall(tool_call) => {
                 assert_eq!(tool_call.title, expected_tools.remove(0));
                 if tool_call.title == "Echo" {
                     echo_id = Some(tool_call.id);
                 }
             }
-            AgentResponseEvent::ToolCallUpdate(acp_thread::ToolCallUpdate::UpdateFields(
+            ThreadEvent::ToolCallUpdate(acp_thread::ToolCallUpdate::UpdateFields(
                 acp::ToolCallUpdate {
                     id,
                     fields:
@@ -946,7 +946,7 @@ async fn test_cancellation(cx: &mut TestAppContext) {
     assert!(
         matches!(
             last_event,
-            Some(Ok(AgentResponseEvent::Stop(acp::StopReason::Canceled)))
+            Some(Ok(ThreadEvent::Stop(acp::StopReason::Canceled)))
         ),
         "unexpected event {last_event:?}"
     );
@@ -1386,11 +1386,11 @@ async fn test_tool_updates_to_completion(cx: &mut TestAppContext) {
 }
 
 /// Filters out the stop events for asserting against in tests
-fn stop_events(result_events: Vec<Result<AgentResponseEvent>>) -> Vec<acp::StopReason> {
+fn stop_events(result_events: Vec<Result<ThreadEvent>>) -> Vec<acp::StopReason> {
     result_events
         .into_iter()
         .filter_map(|event| match event.unwrap() {
-            AgentResponseEvent::Stop(stop_reason) => Some(stop_reason),
+            ThreadEvent::Stop(stop_reason) => Some(stop_reason),
             _ => None,
         })
         .collect()
