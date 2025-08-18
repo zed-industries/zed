@@ -11815,14 +11815,18 @@ impl LspStore {
                         notify_server_capabilities_updated(&server, cx);
                     }
                 }
-                "textDocument/didChange" => {
-                    if let Some(sync_kind) = reg
+                "textDocument/didSave" => {
+                    if let Some(save_registration) = reg
                         .register_options
-                        .and_then(|opts| opts.get("syncKind").cloned())
-                        .map(serde_json::from_value::<lsp::TextDocumentSyncKind>)
+                        .map(serde_json::from_value::<lsp::TextDocumentSaveRegistrationOptions>)
                         .transpose()?
                     {
                         server.update_capabilities(|capabilities| {
+                            let sync_kind = match save_registration.include_text {
+                                Some(true) => lsp::TextDocumentSyncKind::FULL,
+                                Some(false) => lsp::TextDocumentSyncKind::INCREMENTAL,
+                                None => lsp::TextDocumentSyncKind::NONE,
+                            };
                             capabilities.text_document_sync =
                                 Some(lsp::TextDocumentSyncCapability::Kind(sync_kind));
                         });
@@ -11974,7 +11978,7 @@ impl LspStore {
                     });
                     notify_server_capabilities_updated(&server, cx);
                 }
-                "textDocument/didChange" => {
+                "textDocument/didSave" => {
                     server.update_capabilities(|capabilities| {
                         capabilities.text_document_sync = None;
                     });
