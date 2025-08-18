@@ -441,11 +441,11 @@ impl MessageEditor {
             thread.cancel_editing(cx);
         });
 
-        let cancelled = self.thread.update(cx, |thread, cx| {
+        let canceled = self.thread.update(cx, |thread, cx| {
             thread.cancel_last_completion(Some(window.window_handle()), cx)
         });
 
-        if cancelled {
+        if canceled {
             self.set_editor_is_expanded(false, cx);
             self.send_to_model(window, cx);
         }
@@ -1404,7 +1404,7 @@ impl MessageEditor {
             })
             .ok();
         });
-        // Replace existing load task, if any, causing it to be cancelled.
+        // Replace existing load task, if any, causing it to be canceled.
         let load_task = load_task.shared();
         self.load_context_task = Some(load_task.clone());
         cx.spawn(async move |this, cx| {
