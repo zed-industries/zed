@@ -2,21 +2,18 @@ use super::*;
 use acp_thread::{AgentConnection, AgentModelGroupName, AgentModelList, UserMessageId};
 use action_log::ActionLog;
 use agent_client_protocol::{self as acp};
-use agent_settings::{AgentProfileId, CompletionMode};
+use agent_settings::AgentProfileId;
 use anyhow::Result;
-use client::{Client, ErrorExt, UserStore};
+use client::{Client, UserStore};
 use fs::{FakeFs, Fs};
-use futures::{
-    FutureExt, StreamExt, channel::mpsc::UnboundedReceiver, future::BoxFuture, stream::BoxStream,
-};
+use futures::{StreamExt, channel::mpsc::UnboundedReceiver};
 use gpui::{
     App, AppContext, Entity, Task, TestAppContext, UpdateGlobal, http_client::FakeHttpClient,
 };
 use indoc::indoc;
 use language_model::{
     LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelId,
-    LanguageModelName, LanguageModelProviderId, LanguageModelProviderName, LanguageModelRegistry,
-    LanguageModelRequest, LanguageModelRequestMessage, LanguageModelToolChoice,
+    LanguageModelProviderName, LanguageModelRegistry, LanguageModelRequestMessage,
     LanguageModelToolResult, LanguageModelToolUse, MessageContent, Role, StopReason,
     fake_provider::FakeLanguageModel,
 };
