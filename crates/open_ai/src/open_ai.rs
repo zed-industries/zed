@@ -433,10 +433,15 @@ pub struct ChoiceDelta {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
+pub struct OpenAiError {
+    message: String,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
 #[serde(untagged)]
 pub enum ResponseStreamResult {
     Ok(ResponseStreamEvent),
-    Err { error: String },
+    Err { error: OpenAiError },
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -475,7 +480,7 @@ pub async fn stream_completion(
                             match serde_json::from_str(line) {
                                 Ok(ResponseStreamResult::Ok(response)) => Some(Ok(response)),
                                 Ok(ResponseStreamResult::Err { error }) => {
-                                    Some(Err(anyhow!(error)))
+                                    Some(Err(anyhow!(error.message)))
                                 }
                                 Err(error) => {
                                     log::error!(
@@ -500,11 +505,6 @@ pub async fn stream_completion(
         #[derive(Deserialize)]
         struct OpenAiResponse {
             error: OpenAiError,
-        }
-
-        #[derive(Deserialize)]
-        struct OpenAiError {
-            message: String,
         }
 
         match serde_json::from_str::<OpenAiResponse>(&body) {

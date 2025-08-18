@@ -3983,7 +3983,7 @@ mod tests {
 
         cx.run_until_parked();
 
-        // Verify that the previous completion was cancelled
+        // Verify that the previous completion was canceled
         assert_eq!(cancellation_events.lock().unwrap().len(), 1);
 
         // Verify that a new request was started after cancellation

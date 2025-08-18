@@ -44,6 +44,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use serde_json::Value;
 use settings::WorktreeId;
 use smol::future::FutureExt as _;
+use std::num::NonZeroU32;
 use std::{
     any::Any,
     ffi::OsStr,
@@ -59,7 +60,6 @@ use std::{
         atomic::{AtomicU64, AtomicUsize, Ordering::SeqCst},
     },
 };
-use std::{num::NonZeroU32, sync::OnceLock};
 use syntax_map::{QueryCursorHandle, SyntaxSnapshot};
 use task::RunnableTag;
 pub use task_context::{ContextLocation, ContextProvider, RunnableRange};
@@ -67,7 +67,9 @@ pub use text_diff::{
     DiffOptions, apply_diff_patch, line_diff, text_diff, text_diff_with_options, unified_diff,
 };
 use theme::SyntaxTheme;
-pub use toolchain::{LanguageToolchainStore, Toolchain, ToolchainList, ToolchainLister};
+pub use toolchain::{
+    LanguageToolchainStore, LocalLanguageToolchainStore, Toolchain, ToolchainList, ToolchainLister,
+};
 use tree_sitter::{self, Query, QueryCursor, WasmStore, wasmtime};
 use util::serde::default_true;
 
@@ -165,7 +167,6 @@ pub struct CachedLspAdapter {
     pub adapter: Arc<dyn LspAdapter>,
     pub reinstall_attempt_count: AtomicU64,
     cached_binary: futures::lock::Mutex<Option<LanguageServerBinary>>,
-    manifest_name: OnceLock<Option<ManifestName>>,
 }
 
 impl Debug for CachedLspAdapter {
@@ -201,7 +202,6 @@ impl CachedLspAdapter {
             adapter,
             cached_binary: Default::default(),
             reinstall_attempt_count: AtomicU64::new(0),
-            manifest_name: Default::default(),
         })
     }
 
@@ -212,7 +212,7 @@ impl CachedLspAdapter {
     pub async fn get_language_server_command(
         self: Arc<Self>,
         delegate: Arc<dyn LspAdapterDelegate>,
-        toolchains: Arc<dyn LanguageToolchainStore>,
+        toolchains: Option<Toolchain>,
         binary_options: LanguageServerBinaryOptions,
         cx: &mut AsyncApp,
     ) -> Result<LanguageServerBinary> {
@@ -281,21 +281,6 @@ impl CachedLspAdapter {
             .cloned()
             .unwrap_or_else(|| language_name.lsp_id())
     }
-
-    pub fn manifest_name(&self) -> Option<ManifestName> {
-        self.manifest_name
-            .get_or_init(|| self.adapter.manifest_name())
-            .clone()
-    }
-}
-
-/// Determines what gets sent out as a workspace folders content
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub enum WorkspaceFoldersContent {
-    /// Send out a single entry with the root of the workspace.
-    WorktreeRoot,
-    /// Send out a list of subproject roots.
-    SubprojectRoots,
 }
 
 /// [`LspAdapterDelegate`] allows [`LspAdapter]` implementations to interface with the application
@@ -327,7 +312,7 @@ pub trait LspAdapter: 'static + Send + Sync {
     fn get_language_server_command<'a>(
         self: Arc<Self>,
         delegate: Arc<dyn LspAdapterDelegate>,
-        toolchains: Arc<dyn LanguageToolchainStore>,
+        toolchains: Option<Toolchain>,
         binary_options: LanguageServerBinaryOptions,
         mut cached_binary: futures::lock::MutexGuard<'a, Option<LanguageServerBinary>>,
         cx: &'a mut AsyncApp,
@@ -402,7 +387,7 @@ pub trait LspAdapter: 'static + Send + Sync {
     async fn check_if_user_installed(
         &self,
         _: &dyn LspAdapterDelegate,
-        _: Arc<dyn LanguageToolchainStore>,
+        _: Option<Toolchain>,
         _: &AsyncApp,
     ) -> Option<LanguageServerBinary> {
         None
@@ -535,7 +520,7 @@ pub trait LspAdapter: 'static + Send + Sync {
         self: Arc<Self>,
         _: &dyn Fs,
         _: &Arc<dyn LspAdapterDelegate>,
-        _: Arc<dyn LanguageToolchainStore>,
+        _: Option<Toolchain>,
         _cx: &mut AsyncApp,
     ) -> Result<Value> {
         Ok(serde_json::json!({}))
@@ -555,7 +540,6 @@ pub trait LspAdapter: 'static + Send + Sync {
         _target_language_server_id: LanguageServerName,
         _: &dyn Fs,
         _: &Arc<dyn LspAdapterDelegate>,
-        _: Arc<dyn LanguageToolchainStore>,
         _cx: &mut AsyncApp,
     ) -> Result<Option<Value>> {
         Ok(None)
@@ -585,17 +569,6 @@ pub trait LspAdapter: 'static + Send + Sync {
         _: &App,
     ) -> Result<InitializeParams> {
         Ok(original)
-    }
-
-    /// Determines whether a language server supports workspace folders.
-    ///
-    /// And does not trip over itself in the process.
-    fn workspace_folders_content(&self) -> WorkspaceFoldersContent {
-        WorkspaceFoldersContent::SubprojectRoots
-    }
-
-    fn manifest_name(&self) -> Option<ManifestName> {
-        None
     }
 
     /// Method only implemented by the default JSON language server adapter.
@@ -1108,6 +1081,7 @@ pub struct Language {
     pub(crate) grammar: Option<Arc<Grammar>>,
     pub(crate) context_provider: Option<Arc<dyn ContextProvider>>,
     pub(crate) toolchain: Option<Arc<dyn ToolchainLister>>,
+    pub(crate) manifest_name: Option<ManifestName>,
 }
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
@@ -1318,6 +1292,7 @@ impl Language {
             }),
             context_provider: None,
             toolchain: None,
+            manifest_name: None,
         }
     }
 
@@ -1331,6 +1306,10 @@ impl Language {
         self
     }
 
+    pub fn with_manifest(mut self, name: Option<ManifestName>) -> Self {
+        self.manifest_name = name;
+        self
+    }
     pub fn with_queries(mut self, queries: LanguageQueries) -> Result<Self> {
         if let Some(query) = queries.highlights {
             self = self
@@ -1763,6 +1742,9 @@ impl Language {
 
     pub fn name(&self) -> LanguageName {
         self.config.name.clone()
+    }
+    pub fn manifest(&self) -> Option<&ManifestName> {
+        self.manifest_name.as_ref()
     }
 
     pub fn code_fence_block_name(&self) -> Arc<str> {
@@ -2209,7 +2191,7 @@ impl LspAdapter for FakeLspAdapter {
     async fn check_if_user_installed(
         &self,
         _: &dyn LspAdapterDelegate,
-        _: Arc<dyn LanguageToolchainStore>,
+        _: Option<Toolchain>,
         _: &AsyncApp,
     ) -> Option<LanguageServerBinary> {
         Some(self.language_server_binary.clone())
@@ -2218,7 +2200,7 @@ impl LspAdapter for FakeLspAdapter {
     fn get_language_server_command<'a>(
         self: Arc<Self>,
         _: Arc<dyn LspAdapterDelegate>,
-        _: Arc<dyn LanguageToolchainStore>,
+        _: Option<Toolchain>,
         _: LanguageServerBinaryOptions,
         _: futures::lock::MutexGuard<'a, Option<LanguageServerBinary>>,
         _: &'a mut AsyncApp,

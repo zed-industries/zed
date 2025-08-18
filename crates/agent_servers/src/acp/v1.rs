@@ -233,11 +233,11 @@ impl acp::Client for ClientDelegate {
                 thread.request_tool_call_authorization(arguments.tool_call, arguments.options, cx)
             })?;
 
-        let result = rx.await;
+        let result = rx?.await;
 
         let outcome = match result {
             Ok(option) => acp::RequestPermissionOutcome::Selected { option_id: option },
-            Err(oneshot::Canceled) => acp::RequestPermissionOutcome::Cancelled,
+            Err(oneshot::Canceled) => acp::RequestPermissionOutcome::Canceled,
         };
 
         Ok(acp::RequestPermissionResponse { outcome })

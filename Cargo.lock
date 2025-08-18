@@ -172,9 +172,9 @@ dependencies = [
 
 [[package]]
 name = "agent-client-protocol"
-version = "0.0.24"
+version = "0.0.26"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8fd68bbbef8e424fb8a605c5f0b00c360f682c4528b0a5feb5ec928aaf5ce28e"
+checksum = "160971bb53ca0b2e70ebc857c21e24eb448745f1396371015f4c59e9a9e51ed0"
 dependencies = [
  "anyhow",
  "futures 0.3.31",
@@ -347,7 +347,6 @@ dependencies = [
  "gpui",
  "html_to_markdown",
  "http_client",
- "indexed_docs",
  "indoc",
  "inventory",
  "itertools 0.14.0",
@@ -872,7 +871,6 @@ dependencies = [
  "gpui",
  "html_to_markdown",
  "http_client",
- "indexed_docs",
  "language",
  "pretty_assertions",
  "project",
@@ -3270,7 +3268,6 @@ dependencies = [
  "chrono",
  "client",
  "clock",
- "cloud_llm_client",
  "collab_ui",
  "collections",
  "command_palette_hooks",
@@ -4039,6 +4036,8 @@ dependencies = [
  "minidumper",
  "paths",
  "release_channel",
+ "serde",
+ "serde_json",
  "smol",
  "workspace-hack",
 ]
@@ -8381,34 +8380,6 @@ name = "imgref"
 version = "1.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d0263a3d970d5c054ed9312c0057b4f3bde9c0b33836d3637361d4a9e6e7a408"
-
-[[package]]
-name = "indexed_docs"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "cargo_metadata",
- "collections",
- "derive_more 0.99.19",
- "extension",
- "fs",
- "futures 0.3.31",
- "fuzzy",
- "gpui",
- "heed",
- "html_to_markdown",
- "http_client",
- "indexmap",
- "indoc",
- "parking_lot",
- "paths",
- "pretty_assertions",
- "serde",
- "strum 0.27.1",
- "util",
- "workspace-hack",
-]
 
 [[package]]
 name = "indexmap"
@@ -20518,13 +20489,6 @@ dependencies = [
  "serde",
  "uuid",
  "workspace-hack",
-]
-
-[[package]]
-name = "zed_emmet"
-version = "0.0.6"
-dependencies = [
- "zed_extension_api 0.1.0",
 ]
 
 [[package]]

@@ -137,7 +137,7 @@ impl ToolUseState {
     }
 
     pub fn cancel_pending(&mut self) -> Vec<PendingToolUse> {
-        let mut cancelled_tool_uses = Vec::new();
+        let mut canceled_tool_uses = Vec::new();
         self.pending_tool_uses_by_id
             .retain(|tool_use_id, tool_use| {
                 if matches!(tool_use.status, PendingToolUseStatus::Error { .. }) {
@@ -155,10 +155,10 @@ impl ToolUseState {
                         is_error: true,
                     },
                 );
-                cancelled_tool_uses.push(tool_use.clone());
+                canceled_tool_uses.push(tool_use.clone());
                 false
             });
-        cancelled_tool_uses
+        canceled_tool_uses
     }
 
     pub fn pending_tool_uses(&self) -> Vec<&PendingToolUse> {
