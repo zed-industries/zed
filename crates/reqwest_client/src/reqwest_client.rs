@@ -80,6 +80,12 @@ impl ReqwestClient {
     }
 }
 
+impl Default for ReqwestClient {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl From<reqwest::Client> for ReqwestClient {
     fn from(client: reqwest::Client) -> Self {
         let handle = tokio::runtime::Handle::try_current().unwrap_or_else(|_| {

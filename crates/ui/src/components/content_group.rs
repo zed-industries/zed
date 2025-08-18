@@ -55,6 +55,12 @@ impl ContentGroup {
     }
 }
 
+impl Default for ContentGroup {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ParentElement for ContentGroup {
     fn extend(&mut self, elements: impl IntoIterator<Item = AnyElement>) {
         self.children.extend(elements)

@@ -46,6 +46,13 @@ impl FakeSystemClock {
 }
 
 #[cfg(any(test, feature = "test-support"))]
+impl Default for FakeSystemClock {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[cfg(any(test, feature = "test-support"))]
 impl SystemClock for FakeSystemClock {
     fn utc_now(&self) -> Instant {
         self.state.lock().now

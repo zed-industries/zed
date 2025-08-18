@@ -318,6 +318,7 @@ pub fn read_proxy_from_env() -> Option<Url> {
         .and_then(|env| env.parse().ok())
 }
 
+#[derive(Default)]
 pub struct BlockedHttpClient;
 
 impl BlockedHttpClient {

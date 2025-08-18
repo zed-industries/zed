@@ -40,7 +40,7 @@ pub(crate) struct TestPlatform {
     weak: Weak<Self>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 /// A fake screen capture source, used for testing.
 pub struct TestScreenCaptureSource {}
 

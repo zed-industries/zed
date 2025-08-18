@@ -68,6 +68,12 @@ impl PromptId {
     }
 }
 
+impl Default for PromptId {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl From<UserPromptId> for PromptId {
     fn from(uuid: UserPromptId) -> Self {
         PromptId::User { uuid }
@@ -81,6 +87,12 @@ pub struct UserPromptId(pub Uuid);
 impl UserPromptId {
     pub fn new() -> UserPromptId {
         UserPromptId(Uuid::new_v4())
+    }
+}
+
+impl Default for UserPromptId {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

@@ -571,6 +571,12 @@ pub struct MistralEventMapper {
     tool_calls_by_index: HashMap<usize, RawToolCall>,
 }
 
+impl Default for MistralEventMapper {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MistralEventMapper {
     pub fn new() -> Self {
         Self {

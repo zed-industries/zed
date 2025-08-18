@@ -5,6 +5,7 @@ use workspace::{ItemHandle, StatusItemView};
 
 pub const SEARCH_ICON: IconName = IconName::MagnifyingGlass;
 
+#[derive(Default)]
 pub struct SearchButton;
 
 impl SearchButton {

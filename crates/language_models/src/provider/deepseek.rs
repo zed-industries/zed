@@ -447,6 +447,7 @@ pub fn into_deepseek(
     }
 }
 
+#[derive(Default)]
 pub struct DeepSeekEventMapper {
     tool_calls_by_index: HashMap<usize, RawToolCall>,
 }

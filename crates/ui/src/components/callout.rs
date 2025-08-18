@@ -17,7 +17,7 @@ use crate::prelude::*;
 ///     .secondary_action(Button::new("remind", "Remind Me Later"))
 /// ```
 ///
-#[derive(IntoElement, RegisterComponent)]
+#[derive(IntoElement, RegisterComponent, Default)]
 pub struct Callout {
     icon: Option<Icon>,
     title: Option<SharedString>,
@@ -32,16 +32,7 @@ pub struct Callout {
 impl Callout {
     /// Creates a new `Callout` component with default styling.
     pub fn new() -> Self {
-        Self {
-            icon: None,
-            title: None,
-            description: None,
-            primary_action: None,
-            secondary_action: None,
-            tertiary_action: None,
-            line_height: None,
-            bg_color: None,
-        }
+        Self::default()
     }
 
     /// Sets the icon to display in the callout.

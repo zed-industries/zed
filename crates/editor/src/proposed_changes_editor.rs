@@ -35,6 +35,7 @@ struct BufferEntry {
     _subscription: Subscription,
 }
 
+#[derive(Default)]
 pub struct ProposedChangesEditorToolbar {
     current_editor: Option<Entity<ProposedChangesEditor>>,
 }

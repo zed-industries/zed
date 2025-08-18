@@ -698,6 +698,12 @@ pub struct AnthropicEventMapper {
     stop_reason: StopReason,
 }
 
+impl Default for AnthropicEventMapper {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl AnthropicEventMapper {
     pub fn new() -> Self {
         Self {

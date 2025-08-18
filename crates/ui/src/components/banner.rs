@@ -58,6 +58,12 @@ impl Banner {
     }
 }
 
+impl Default for Banner {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ParentElement for Banner {
     fn extend(&mut self, elements: impl IntoIterator<Item = AnyElement>) {
         self.children.extend(elements)

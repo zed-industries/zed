@@ -603,6 +603,12 @@ pub struct GoogleEventMapper {
     stop_reason: StopReason,
 }
 
+impl Default for GoogleEventMapper {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl GoogleEventMapper {
     pub fn new() -> Self {
         Self {

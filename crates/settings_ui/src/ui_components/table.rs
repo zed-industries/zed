@@ -893,6 +893,12 @@ impl<const COLS: usize> Table<COLS> {
     }
 }
 
+impl<const COLS: usize> Default for Table<COLS> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 fn base_cell_style(width: Option<Length>) -> Div {
     div()
         .px_1p5()

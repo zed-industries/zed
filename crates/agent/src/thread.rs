@@ -77,6 +77,12 @@ impl ThreadId {
     }
 }
 
+impl Default for ThreadId {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl std::fmt::Display for ThreadId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.0)
@@ -98,6 +104,12 @@ pub struct PromptId(Arc<str>);
 impl PromptId {
     pub fn new() -> Self {
         Self(Uuid::new_v4().to_string().into())
+    }
+}
+
+impl Default for PromptId {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

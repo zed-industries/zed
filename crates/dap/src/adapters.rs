@@ -395,6 +395,7 @@ pub trait DebugAdapter: 'static + Send + Sync {
 }
 
 #[cfg(any(test, feature = "test-support"))]
+#[derive(Default)]
 pub struct FakeAdapter {}
 
 #[cfg(any(test, feature = "test-support"))]

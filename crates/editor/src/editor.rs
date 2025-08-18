@@ -887,6 +887,7 @@ impl ChangeLocation {
 }
 
 /// A set of caret positions, registered when the editor was edited.
+#[derive(Default)]
 pub struct ChangeList {
     changes: Vec<ChangeLocation>,
     /// Currently "selected" change.

@@ -17,6 +17,12 @@ impl UserMessageId {
     }
 }
 
+impl Default for UserMessageId {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 pub trait AgentConnection {
     fn new_thread(
         self: Rc<Self>,

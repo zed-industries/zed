@@ -490,6 +490,7 @@ impl LogStore {
     }
 }
 
+#[derive(Default)]
 pub struct DapLogToolbarItemView {
     log_view: Option<Entity<DapLogView>>,
 }

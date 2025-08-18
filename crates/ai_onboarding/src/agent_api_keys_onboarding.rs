@@ -101,7 +101,7 @@ impl Render for ApiKeysWithProviders {
     }
 }
 
-#[derive(IntoElement)]
+#[derive(IntoElement, Default)]
 pub struct ApiKeysWithoutProviders;
 
 impl ApiKeysWithoutProviders {

@@ -538,6 +538,7 @@ fn add_message_content_part(
     }
 }
 
+#[derive(Default)]
 pub struct OpenAiEventMapper {
     tool_calls_by_index: HashMap<usize, RawToolCall>,
 }

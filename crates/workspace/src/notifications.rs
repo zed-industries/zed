@@ -476,14 +476,7 @@ pub struct NotificationFrame {
 
 impl NotificationFrame {
     pub fn new() -> Self {
-        Self {
-            title: None,
-            contents: None,
-            suffix: None,
-            show_suppress_button: true,
-            show_close_button: true,
-            close: None,
-        }
+        Self::default()
     }
 
     pub fn with_title(mut self, title: Option<impl Into<SharedString>>) -> Self {
@@ -520,6 +513,19 @@ impl NotificationFrame {
     pub fn with_suffix(mut self, suffix: impl IntoElement) -> Self {
         self.suffix = Some(suffix.into_any_element());
         self
+    }
+}
+
+impl Default for NotificationFrame {
+    fn default() -> Self {
+        Self {
+            title: None,
+            contents: None,
+            suffix: None,
+            show_suppress_button: true,
+            show_close_button: true,
+            close: None,
+        }
     }
 }
 

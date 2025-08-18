@@ -823,6 +823,7 @@ module_inception = { level = "deny" }
 question_mark = { level = "deny" }
 redundant_closure = { level = "deny" }
 declare_interior_mutable_const = { level = "deny" }
+new_without_default = { level = "warn" }
 # Individual rules that have violations in the codebase:
 type_complexity = "allow"
 # We often return trait objects from `new` functions.

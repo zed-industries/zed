@@ -2,7 +2,7 @@ use gpui::{AnyElement, IntoElement, ParentElement, linear_color_stop, linear_gra
 use smallvec::SmallVec;
 use ui::{Vector, VectorName, prelude::*};
 
-#[derive(IntoElement)]
+#[derive(IntoElement, Default)]
 pub struct AgentPanelOnboardingCard {
     children: SmallVec<[AnyElement; 2]>,
 }

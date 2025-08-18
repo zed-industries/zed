@@ -71,6 +71,12 @@ impl ContextId {
     }
 }
 
+impl Default for ContextId {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct MessageId(pub clock::Lamport);
 
