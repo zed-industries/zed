@@ -107,7 +107,7 @@ pub enum Event {
     InlineAssistantModelChanged,
     CommitMessageModelChanged,
     ThreadSummaryModelChanged,
-    ProviderStateChanged,
+    ProviderStateChanged(LanguageModelProviderId),
     AddedProvider(LanguageModelProviderId),
     RemovedProvider(LanguageModelProviderId),
 }
@@ -148,8 +148,11 @@ impl LanguageModelRegistry {
     ) {
         let id = provider.id();
 
-        let subscription = provider.subscribe(cx, |_, cx| {
-            cx.emit(Event::ProviderStateChanged);
+        let subscription = provider.subscribe(cx, {
+            let id = id.clone();
+            move |_, cx| {
+                cx.emit(Event::ProviderStateChanged(id.clone()));
+            }
         });
         if let Some(subscription) = subscription {
             subscription.detach();

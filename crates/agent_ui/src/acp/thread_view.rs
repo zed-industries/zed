@@ -1,6 +1,7 @@
 use acp_thread::{
     AcpThread, AcpThreadEvent, AgentThreadEntry, AssistantMessage, AssistantMessageChunk,
-    LoadError, MentionUri, ThreadStatus, ToolCall, ToolCallContent, ToolCallStatus, UserMessageId,
+    AuthRequired, LoadError, MentionUri, ThreadStatus, ToolCall, ToolCallContent, ToolCallStatus,
+    UserMessageId,
 };
 use acp_thread::{AgentConnection, Plan};
 use action_log::ActionLog;
@@ -18,13 +19,16 @@ use editor::{Editor, EditorMode, MultiBuffer, PathKey, SelectionEffects};
 use file_icons::FileIcons;
 use fs::Fs;
 use gpui::{
-    Action, Animation, AnimationExt, App, BorderStyle, ClickEvent, ClipboardItem, EdgesRefinement,
-    Empty, Entity, FocusHandle, Focusable, Hsla, Length, ListOffset, ListState, MouseButton,
-    PlatformDisplay, SharedString, Stateful, StyleRefinement, Subscription, Task, TextStyle,
-    TextStyleRefinement, Transformation, UnderlineStyle, WeakEntity, Window, WindowHandle, div,
-    linear_color_stop, linear_gradient, list, percentage, point, prelude::*, pulsating_between,
+    Action, Animation, AnimationExt, AnyView, App, BorderStyle, ClickEvent, ClipboardItem,
+    EdgesRefinement, Empty, Entity, FocusHandle, Focusable, Hsla, Length, ListOffset, ListState,
+    MouseButton, PlatformDisplay, SharedString, Stateful, StyleRefinement, Subscription, Task,
+    TextStyle, TextStyleRefinement, Transformation, UnderlineStyle, WeakEntity, Window,
+    WindowHandle, div, linear_color_stop, linear_gradient, list, percentage, point, prelude::*,
+    pulsating_between,
 };
 use language::Buffer;
+
+use language_model::LanguageModelRegistry;
 use markdown::{HeadingLevelStyles, Markdown, MarkdownElement, MarkdownStyle};
 use project::Project;
 use prompt_store::PromptId;
@@ -137,6 +141,9 @@ enum ThreadState {
     LoadError(LoadError),
     Unauthenticated {
         connection: Rc<dyn AgentConnection>,
+        description: Option<Entity<Markdown>>,
+        configuration_view: Option<AnyView>,
+        _subscription: Option<Subscription>,
     },
     ServerExited {
         status: ExitStatus,
@@ -267,19 +274,16 @@ impl AcpThreadView {
             };
 
             let result = match result.await {
-                Err(e) => {
-                    let mut cx = cx.clone();
-                    if e.is::<acp_thread::AuthRequired>() {
-                        this.update(&mut cx, |this, cx| {
-                            this.thread_state = ThreadState::Unauthenticated { connection };
-                            cx.notify();
+                Err(e) => match e.downcast::<acp_thread::AuthRequired>() {
+                    Ok(err) => {
+                        cx.update(|window, cx| {
+                            Self::handle_auth_required(this, err, agent, connection, window, cx)
                         })
-                        .ok();
+                        .log_err();
                         return;
-                    } else {
-                        Err(e)
                     }
-                }
+                    Err(err) => Err(err),
+                },
                 Ok(thread) => Ok(thread),
             };
 
@@ -345,6 +349,68 @@ impl AcpThreadView {
         ThreadState::Loading { _task: load_task }
     }
 
+    fn handle_auth_required(
+        this: WeakEntity<Self>,
+        err: AuthRequired,
+        agent: Rc<dyn AgentServer>,
+        connection: Rc<dyn AgentConnection>,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        let agent_name = agent.name();
+        let (configuration_view, subscription) = if let Some(provider_id) = err.provider_id {
+            let registry = LanguageModelRegistry::global(cx);
+
+            let sub = window.subscribe(&registry, cx, {
+                let provider_id = provider_id.clone();
+                let this = this.clone();
+                move |_, ev, window, cx| {
+                    if let language_model::Event::ProviderStateChanged(updated_provider_id) = &ev {
+                        if &provider_id == updated_provider_id {
+                            this.update(cx, |this, cx| {
+                                this.thread_state = Self::initial_state(
+                                    agent.clone(),
+                                    this.workspace.clone(),
+                                    this.project.clone(),
+                                    window,
+                                    cx,
+                                );
+                                cx.notify();
+                            })
+                            .ok();
+                        }
+                    }
+                }
+            });
+
+            let view = registry.read(cx).provider(&provider_id).map(|provider| {
+                provider.configuration_view(
+                    language_model::ConfigurationViewTargetAgent::Other(agent_name),
+                    window,
+                    cx,
+                )
+            });
+
+            (view, Some(sub))
+        } else {
+            (None, None)
+        };
+
+        this.update(cx, |this, cx| {
+            this.thread_state = ThreadState::Unauthenticated {
+                connection,
+                configuration_view,
+                description: err
+                    .description
+                    .clone()
+                    .map(|desc| cx.new(|cx| Markdown::new(desc.into(), None, None, cx))),
+                _subscription: subscription,
+            };
+            cx.notify();
+        })
+        .ok();
+    }
+
     fn handle_load_error(&mut self, err: anyhow::Error, cx: &mut Context<Self>) {
         if let Some(load_err) = err.downcast_ref::<LoadError>() {
             self.thread_state = ThreadState::LoadError(load_err.clone());
@@ -369,7 +435,7 @@ impl AcpThreadView {
             ThreadState::Ready { thread, .. } => thread.read(cx).title(),
             ThreadState::Loading { .. } => "Loading…".into(),
             ThreadState::LoadError(_) => "Failed to load".into(),
-            ThreadState::Unauthenticated { .. } => "Not authenticated".into(),
+            ThreadState::Unauthenticated { .. } => "Authentication Required".into(),
             ThreadState::ServerExited { .. } => "Server exited unexpectedly".into(),
         }
     }
@@ -708,7 +774,7 @@ impl AcpThreadView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let ThreadState::Unauthenticated { ref connection } = self.thread_state else {
+        let ThreadState::Unauthenticated { ref connection, .. } = self.thread_state else {
             return;
         };
 
@@ -1841,19 +1907,53 @@ impl AcpThreadView {
             .into_any()
     }
 
-    fn render_pending_auth_state(&self) -> AnyElement {
+    fn render_auth_required_state(
+        &self,
+        connection: &Rc<dyn AgentConnection>,
+        description: Option<&Entity<Markdown>>,
+        configuration_view: Option<&AnyView>,
+        window: &mut Window,
+        cx: &Context<Self>,
+    ) -> Div {
         v_flex()
+            .p_2()
+            .gap_2()
+            .flex_1()
             .items_center()
             .justify_center()
-            .child(self.render_error_agent_logo())
             .child(
-                h_flex()
-                    .mt_4()
-                    .mb_1()
+                v_flex()
+                    .items_center()
                     .justify_center()
-                    .child(Headline::new("Not Authenticated").size(HeadlineSize::Medium)),
+                    .child(self.render_error_agent_logo())
+                    .child(
+                        h_flex().mt_4().mb_1().justify_center().child(
+                            Headline::new("Authentication Required").size(HeadlineSize::Medium),
+                        ),
+                    )
+                    .into_any(),
             )
-            .into_any()
+            .children(description.map(|desc| {
+                div().text_ui(cx).text_center().child(
+                    self.render_markdown(desc.clone(), default_markdown_style(false, window, cx)),
+                )
+            }))
+            .children(
+                configuration_view
+                    .cloned()
+                    .map(|view| div().px_4().w_full().max_w_128().child(view)),
+            )
+            .child(h_flex().mt_1p5().justify_center().children(
+                connection.auth_methods().into_iter().map(|method| {
+                    Button::new(SharedString::from(method.id.0.clone()), method.name.clone())
+                        .on_click({
+                            let method_id = method.id.clone();
+                            cx.listener(move |this, _, window, cx| {
+                                this.authenticate(method_id.clone(), window, cx)
+                            })
+                        })
+                }),
+            ))
     }
 
     fn render_server_exited(&self, status: ExitStatus, _cx: &Context<Self>) -> AnyElement {
@@ -3347,26 +3447,18 @@ impl Render for AcpThreadView {
             .on_action(cx.listener(Self::toggle_burn_mode))
             .bg(cx.theme().colors().panel_background)
             .child(match &self.thread_state {
-                ThreadState::Unauthenticated { connection } => v_flex()
-                    .p_2()
-                    .flex_1()
-                    .items_center()
-                    .justify_center()
-                    .child(self.render_pending_auth_state())
-                    .child(h_flex().mt_1p5().justify_center().children(
-                        connection.auth_methods().into_iter().map(|method| {
-                            Button::new(
-                                SharedString::from(method.id.0.clone()),
-                                method.name.clone(),
-                            )
-                            .on_click({
-                                let method_id = method.id.clone();
-                                cx.listener(move |this, _, window, cx| {
-                                    this.authenticate(method_id.clone(), window, cx)
-                                })
-                            })
-                        }),
-                    )),
+                ThreadState::Unauthenticated {
+                    connection,
+                    description,
+                    configuration_view,
+                    ..
+                } => self.render_auth_required_state(
+                    &connection,
+                    description.as_ref(),
+                    configuration_view.as_ref(),
+                    window,
+                    cx,
+                ),
                 ThreadState::Loading { .. } => v_flex().flex_1().child(self.render_empty_state(cx)),
                 ThreadState::LoadError(e) => v_flex()
                     .p_2()
