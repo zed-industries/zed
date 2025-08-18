@@ -1,4 +1,4 @@
-use std::{fmt::Debug, marker::PhantomData, ops::Not, time::Duration};
+use std::{any::Any, fmt::Debug, marker::PhantomData, ops::Not, time::Duration};
 
 use gpui::{
     Along, App, AppContext as _, Axis as ScrollbarAxis, BorderStyle, Bounds, ContentMask, Context,
@@ -220,6 +220,11 @@ where
     div.when_some(state.read(cx).handle_to_track(), |this, handle| {
         this.track_scroll(handle)
     })
+    .when_some(state.read(cx).visible_axes(), |this, axes| match axes {
+        ScrollAxes::Horizontal => this.overflow_x_scroll(),
+        ScrollAxes::Vertical => this.overflow_y_scroll(),
+        ScrollAxes::Both => this.overflow_scroll(),
+    })
     .when_some(
         state
             .read(cx)
@@ -257,6 +262,7 @@ impl<S: ScrollbarVisibilitySetting, T: ScrollableHandle> UniformListDecoration
 impl WithScrollbar for UniformList {
     type Output = Self;
 
+    #[track_caller]
     fn custom_scrollbars<S, T>(
         self,
         config: Scrollbars<S, T>,
@@ -268,7 +274,17 @@ impl WithScrollbar for UniformList {
         T: ScrollableHandle,
     {
         let scrollbar = get_scrollbar_state(config, std::panic::Location::caller(), window, cx);
-        self.with_decoration(scrollbar)
+        self.when_some(
+            scrollbar.read_with(cx, |wrapper, cx| {
+                wrapper
+                    .0
+                    .read(cx)
+                    .handle_to_track::<UniformListScrollHandle>()
+                    .cloned()
+            }),
+            |this, handle| this.track_scroll(handle),
+        )
+        .with_decoration(scrollbar)
     }
 }
 
@@ -276,7 +292,7 @@ impl WithScrollbar for UniformList {
 pub enum ScrollAxes {
     Horizontal,
     Vertical,
-    BothAxes,
+    Both,
 }
 
 impl ScrollAxes {
@@ -287,7 +303,7 @@ impl ScrollAxes {
         match self {
             Self::Horizontal => point.apply_along(ScrollbarAxis::Horizontal, |_| value),
             Self::Vertical => point.apply_along(ScrollbarAxis::Vertical, |_| value),
-            Self::BothAxes => Point::new(value.clone(), value),
+            Self::Both => Point::new(value.clone(), value),
         }
     }
 }
@@ -347,7 +363,7 @@ impl Scrollbars {
     }
 
     pub fn for_settings<S: ScrollbarVisibilitySetting>() -> Scrollbars<S> {
-        Scrollbars::<S>::new_with_setting(ScrollAxes::BothAxes)
+        Scrollbars::<S>::new_with_setting(ScrollAxes::Both)
     }
 }
 
@@ -553,6 +569,16 @@ impl<S: ScrollbarVisibilitySetting, T: ScrollableHandle> ScrollbarState<S, T> {
         }
     }
 
+    #[inline]
+    fn visible_axes(&self) -> Option<ScrollAxes> {
+        match (&self.visibility.x, &self.visibility.y) {
+            (ReservedSpace::None, ReservedSpace::None) => None,
+            (ReservedSpace::None, _) => Some(ScrollAxes::Vertical),
+            (_, ReservedSpace::None) => Some(ScrollAxes::Horizontal),
+            _ => Some(ScrollAxes::Both),
+        }
+    }
+
     fn space_to_reserve_for(&self, axis: ScrollbarAxis) -> Option<Pixels> {
         (self.show_state.is_disabled().not() && self.visibility.along(axis).needs_scroll_track())
             .then(|| self.space_to_reserve())
@@ -562,9 +588,9 @@ impl<S: ScrollbarVisibilitySetting, T: ScrollableHandle> ScrollbarState<S, T> {
         self.width.to_pixels() + 2 * SCROLLBAR_PADDING
     }
 
-    fn handle_to_track(&self) -> Option<&ScrollHandle> {
+    fn handle_to_track<Handle: ScrollableHandle>(&self) -> Option<&Handle> {
         (!self.manually_added)
-            .then(|| self.scroll_handle.trackable_handle())
+            .then(|| (self.scroll_handle() as &dyn Any).downcast_ref::<Handle>())
             .flatten()
     }
 
@@ -779,13 +805,9 @@ impl ScrollableHandle for ScrollHandle {
     fn viewport(&self) -> Bounds<Pixels> {
         self.bounds()
     }
-
-    fn trackable_handle(&self) -> Option<&ScrollHandle> {
-        Some(self)
-    }
 }
 
-pub trait ScrollableHandle: 'static {
+pub trait ScrollableHandle: 'static + Any + Sized {
     fn max_offset(&self) -> Size<Pixels>;
     fn set_offset(&self, point: Point<Pixels>);
     fn offset(&self) -> Point<Pixels>;
@@ -798,9 +820,6 @@ pub trait ScrollableHandle: 'static {
     }
     fn content_size(&self) -> Size<Pixels> {
         self.viewport().size + self.max_offset()
-    }
-    fn trackable_handle(&self) -> Option<&ScrollHandle> {
-        None
     }
 }
 
