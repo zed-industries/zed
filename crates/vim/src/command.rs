@@ -95,7 +95,7 @@ impl VimOption {
             }
         }
 
-        Self::possibilities(&prefix)
+        Self::possibilities(prefix)
             .map(|possible| {
                 let mut options = prefix_of_options.clone();
                 options.push(possible);

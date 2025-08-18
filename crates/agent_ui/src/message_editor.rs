@@ -1166,7 +1166,7 @@ impl MessageEditor {
                                     .buffer_font(cx)
                             });
 
-                            let file_icon = FileIcons::get_icon(&path, cx)
+                            let file_icon = FileIcons::get_icon(path, cx)
                                 .map(Icon::from_path)
                                 .map(|icon| icon.color(Color::Muted).size(IconSize::Small))
                                 .unwrap_or_else(|| {
@@ -1560,7 +1560,7 @@ impl ContextCreasesAddon {
     ) {
         self.creases.entry(key).or_default().extend(creases);
         self._subscription = Some(cx.subscribe(
-            &context_store,
+            context_store,
             |editor, _, event, cx| match event {
                 ContextStoreEvent::ContextRemoved(key) => {
                     let Some(this) = editor.addon_mut::<Self>() else {

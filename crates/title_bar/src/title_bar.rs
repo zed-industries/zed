@@ -478,7 +478,7 @@ impl TitleBar {
             repo.branch
                 .as_ref()
                 .map(|branch| branch.name())
-                .map(|name| util::truncate_and_trailoff(&name, MAX_BRANCH_NAME_LENGTH))
+                .map(|name| util::truncate_and_trailoff(name, MAX_BRANCH_NAME_LENGTH))
                 .or_else(|| {
                     repo.head_commit.as_ref().map(|commit| {
                         commit
@@ -617,7 +617,7 @@ impl TitleBar {
                 window
                     .spawn(cx, async move |cx| {
                         client
-                            .sign_in_with_optional_connect(true, &cx)
+                            .sign_in_with_optional_connect(true, cx)
                             .await
                             .notify_async_err(cx);
                     })

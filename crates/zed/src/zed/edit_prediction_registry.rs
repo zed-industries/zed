@@ -147,7 +147,7 @@ fn assign_edit_prediction_providers(
                 assign_edit_prediction_provider(
                     editor,
                     provider,
-                    &client,
+                    client,
                     user_store.clone(),
                     window,
                     cx,
@@ -248,7 +248,7 @@ fn assign_edit_prediction_provider(
                 if let Some(buffer) = &singleton_buffer {
                     if buffer.read(cx).file().is_some() {
                         zeta.update(cx, |zeta, cx| {
-                            zeta.register_buffer(&buffer, cx);
+                            zeta.register_buffer(buffer, cx);
                         });
                     }
                 }

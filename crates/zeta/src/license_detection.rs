@@ -198,7 +198,7 @@ mod tests {
 
     #[test]
     fn test_mit_positive_detection() {
-        assert!(is_license_eligible_for_data_collection(&MIT_LICENSE));
+        assert!(is_license_eligible_for_data_collection(MIT_LICENSE));
     }
 
     #[test]

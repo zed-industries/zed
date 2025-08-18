@@ -35,12 +35,12 @@ pub fn apply_related_actions(editor: &Entity<Editor>, window: &mut Window, cx: &
         .filter_map(|buffer| buffer.read(cx).language())
         .any(|language| is_rust_language(language))
     {
-        register_action(&editor, window, go_to_parent_module);
-        register_action(&editor, window, expand_macro_recursively);
-        register_action(&editor, window, open_docs);
-        register_action(&editor, window, cancel_flycheck_action);
-        register_action(&editor, window, run_flycheck_action);
-        register_action(&editor, window, clear_flycheck_action);
+        register_action(editor, window, go_to_parent_module);
+        register_action(editor, window, expand_macro_recursively);
+        register_action(editor, window, open_docs);
+        register_action(editor, window, cancel_flycheck_action);
+        register_action(editor, window, run_flycheck_action);
+        register_action(editor, window, clear_flycheck_action);
     }
 }
 

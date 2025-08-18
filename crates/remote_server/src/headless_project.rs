@@ -348,7 +348,7 @@ impl HeadlessProject {
                         .iter()
                         .map(|action| action.title.to_string())
                         .collect(),
-                    level: Some(prompt_to_proto(&prompt)),
+                    level: Some(prompt_to_proto(prompt)),
                     lsp_name: prompt.lsp_name.clone(),
                     message: prompt.message.clone(),
                 });
@@ -388,7 +388,7 @@ impl HeadlessProject {
                 let parent = fs.canonicalize(parent).await.map_err(|_| {
                     anyhow!(
                         proto::ErrorCode::DevServerProjectPathDoesNotExist
-                            .with_tag("path", &path.to_string_lossy().as_ref())
+                            .with_tag("path", path.to_string_lossy().as_ref())
                     )
                 })?;
                 parent.join(path.file_name().unwrap())

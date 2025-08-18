@@ -189,7 +189,7 @@ pub fn editor_content_with_blocks(editor: &Entity<Editor>, cx: &mut VisualTestCo
                         continue;
                     }
                 };
-                let content = block_content_for_tests(&editor, custom_block.id, cx)
+                let content = block_content_for_tests(editor, custom_block.id, cx)
                     .expect("block content not found");
                 // 2: "related info 1 for diagnostic 0"
                 if let Some(height) = custom_block.height {

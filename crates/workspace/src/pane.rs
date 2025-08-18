@@ -1628,7 +1628,7 @@ impl Pane {
                     .iter()
                     .filter(|item| {
                         item.is_dirty(cx)
-                            && !Self::skip_save_on_close(item.as_ref(), &workspace, cx)
+                            && !Self::skip_save_on_close(item.as_ref(), workspace, cx)
                     })
                     .map(|item| item.boxed_clone())
                     .collect::<Vec<_>>()
@@ -1657,7 +1657,7 @@ impl Pane {
                 let mut should_save = true;
                 if save_intent == SaveIntent::Close {
                     workspace.update(cx, |workspace, cx| {
-                        if Self::skip_save_on_close(item_to_close.as_ref(), &workspace, cx) {
+                        if Self::skip_save_on_close(item_to_close.as_ref(), workspace, cx) {
                             should_save = false;
                         }
                     })?;

@@ -155,7 +155,7 @@ fn init_panic_hook(session_id: String) {
         log::error!(
             "panic occurred: {}\nBacktrace:\n{}",
             &payload,
-            (&backtrace).join("\n")
+            backtrace.join("\n")
         );
 
         let panic_data = telemetry_events::Panic {
@@ -797,7 +797,7 @@ fn initialize_settings(
     cx: &mut App,
 ) -> watch::Receiver<Option<NodeBinaryOptions>> {
     let user_settings_file_rx = watch_config_file(
-        &cx.background_executor(),
+        cx.background_executor(),
         fs,
         paths::settings_file().clone(),
     );

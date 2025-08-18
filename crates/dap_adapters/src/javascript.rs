@@ -514,7 +514,7 @@ impl DebugAdapter for JsDebugAdapter {
             }
         }
 
-        self.get_installed_binary(delegate, &config, user_installed_path, user_args, cx)
+        self.get_installed_binary(delegate, config, user_installed_path, user_args, cx)
             .await
     }
 

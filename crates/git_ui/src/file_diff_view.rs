@@ -417,7 +417,7 @@ mod tests {
         // Verify initial diff
         assert_state_with_diff(
             &diff_view.read_with(cx, |diff_view, _| diff_view.editor.clone()),
-            &mut cx,
+            cx,
             &unindent(
                 "
                 - old line 1
@@ -452,7 +452,7 @@ mod tests {
         cx.executor().advance_clock(RECALCULATE_DIFF_DEBOUNCE);
         assert_state_with_diff(
             &diff_view.read_with(cx, |diff_view, _| diff_view.editor.clone()),
-            &mut cx,
+            cx,
             &unindent(
                 "
                 - old line 1
@@ -487,7 +487,7 @@ mod tests {
         cx.executor().advance_clock(RECALCULATE_DIFF_DEBOUNCE);
         assert_state_with_diff(
             &diff_view.read_with(cx, |diff_view, _| diff_view.editor.clone()),
-            &mut cx,
+            cx,
             &unindent(
                 "
                   ˇnew line 1

@@ -104,6 +104,6 @@ pub fn apply_related_actions(editor: &Entity<Editor>, window: &mut Window, cx: &
         .filter_map(|buffer| buffer.read(cx).language())
         .any(|language| is_c_language(language))
     {
-        register_action(&editor, window, switch_source_header);
+        register_action(editor, window, switch_source_header);
     }
 }

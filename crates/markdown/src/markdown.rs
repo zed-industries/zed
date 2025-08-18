@@ -875,7 +875,7 @@ impl Element for MarkdownElement {
                                 (CodeBlockRenderer::Custom { render, .. }, _) => {
                                     let parent_container = render(
                                         kind,
-                                        &parsed_markdown,
+                                        parsed_markdown,
                                         range.clone(),
                                         metadata.clone(),
                                         window,

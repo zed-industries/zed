@@ -696,7 +696,7 @@ impl AcpThreadView {
         };
 
         diff.update(cx, |diff, cx| {
-            diff.move_to_path(PathKey::for_buffer(&buffer, cx), window, cx)
+            diff.move_to_path(PathKey::for_buffer(buffer, cx), window, cx)
         })
     }
 
@@ -722,13 +722,13 @@ impl AcpThreadView {
                 let len = thread.read(cx).entries().len();
                 let index = len - 1;
                 self.entry_view_state.update(cx, |view_state, cx| {
-                    view_state.sync_entry(index, &thread, window, cx)
+                    view_state.sync_entry(index, thread, window, cx)
                 });
                 self.list_state.splice(index..index, 1);
             }
             AcpThreadEvent::EntryUpdated(index) => {
                 self.entry_view_state.update(cx, |view_state, cx| {
-                    view_state.sync_entry(*index, &thread, window, cx)
+                    view_state.sync_entry(*index, thread, window, cx)
                 });
                 self.list_state.splice(*index..index + 1, 1);
             }
@@ -1427,7 +1427,7 @@ impl AcpThreadView {
                     Empty.into_any_element()
                 }
             }
-            ToolCallContent::Diff(diff) => self.render_diff_editor(entry_ix, &diff, cx),
+            ToolCallContent::Diff(diff) => self.render_diff_editor(entry_ix, diff, cx),
             ToolCallContent::Terminal(terminal) => {
                 self.render_terminal_tool_call(entry_ix, terminal, tool_call, window, cx)
             }
@@ -1583,7 +1583,7 @@ impl AcpThreadView {
             .border_color(self.tool_card_border_color(cx))
             .child(
                 if let Some(entry) = self.entry_view_state.read(cx).entry(entry_ix)
-                    && let Some(editor) = entry.editor_for_diff(&diff)
+                    && let Some(editor) = entry.editor_for_diff(diff)
                 {
                     editor.clone().into_any_element()
                 } else {
@@ -1783,7 +1783,7 @@ impl AcpThreadView {
             .entry_view_state
             .read(cx)
             .entry(entry_ix)
-            .and_then(|entry| entry.terminal(&terminal));
+            .and_then(|entry| entry.terminal(terminal));
         let show_output = self.terminal_expanded && terminal_view.is_some();
 
         v_flex()
@@ -2420,7 +2420,7 @@ impl AcpThreadView {
                         .buffer_font(cx)
                 });
 
-                let file_icon = FileIcons::get_icon(&path, cx)
+                let file_icon = FileIcons::get_icon(path, cx)
                     .map(Icon::from_path)
                     .map(|icon| icon.color(Color::Muted).size(IconSize::Small))
                     .unwrap_or_else(|| {
@@ -3453,7 +3453,7 @@ impl Render for AcpThreadView {
                     configuration_view,
                     ..
                 } => self.render_auth_required_state(
-                    &connection,
+                    connection,
                     description.as_ref(),
                     configuration_view.as_ref(),
                     window,

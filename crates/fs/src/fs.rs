@@ -1677,7 +1677,7 @@ impl FakeFs {
     /// by mutating the head, index, and unmerged state.
     pub fn set_status_for_repo(&self, dot_git: &Path, statuses: &[(&Path, FileStatus)]) {
         let workdir_path = dot_git.parent().unwrap();
-        let workdir_contents = self.files_with_contents(&workdir_path);
+        let workdir_contents = self.files_with_contents(workdir_path);
         self.with_git_state(dot_git, true, |state| {
             state.index_contents.clear();
             state.head_contents.clear();
@@ -2244,7 +2244,7 @@ impl Fs for FakeFs {
     async fn open_handle(&self, path: &Path) -> Result<Arc<dyn FileHandle>> {
         self.simulate_random_delay().await;
         let mut state = self.state.lock();
-        let inode = match state.entry(&path)? {
+        let inode = match state.entry(path)? {
             FakeFsEntry::File { inode, .. } => *inode,
             FakeFsEntry::Dir { inode, .. } => *inode,
             _ => unreachable!(),

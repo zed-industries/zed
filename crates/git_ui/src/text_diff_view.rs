@@ -725,7 +725,7 @@ mod tests {
 
         assert_state_with_diff(
             &diff_view.read_with(cx, |diff_view, _| diff_view.diff_editor.clone()),
-            &mut cx,
+            cx,
             expected_diff,
         );
 

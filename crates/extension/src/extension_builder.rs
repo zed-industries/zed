@@ -452,7 +452,7 @@ impl ExtensionBuilder {
         let mut output = Vec::new();
         let mut stack = Vec::new();
 
-        for payload in Parser::new(0).parse_all(&input) {
+        for payload in Parser::new(0).parse_all(input) {
             let payload = payload?;
 
             // Track nesting depth, so that we don't mess with inner producer sections:

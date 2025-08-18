@@ -216,7 +216,7 @@ mod uniform_list {
             };
             let visible_entries = &compute_indents_fn(visible_range.clone(), window, cx);
             let indent_guides = compute_indent_guides(
-                &visible_entries,
+                visible_entries,
                 visible_range.start,
                 includes_trailing_indent,
             );
@@ -241,7 +241,7 @@ mod sticky_items {
             window: &mut Window,
             cx: &mut App,
         ) -> AnyElement {
-            let indent_guides = compute_indent_guides(&indents, 0, false);
+            let indent_guides = compute_indent_guides(indents, 0, false);
             self.render_from_layout(indent_guides, bounds, item_height, window, cx)
         }
     }

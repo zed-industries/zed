@@ -358,11 +358,11 @@ impl KeymapFile {
                 let action_input = items[1].clone();
                 let action_input_string = action_input.to_string();
                 (
-                    cx.build_action(&name, Some(action_input)),
+                    cx.build_action(name, Some(action_input)),
                     Some(action_input_string),
                 )
             }
-            Value::String(name) => (cx.build_action(&name, None), None),
+            Value::String(name) => (cx.build_action(name, None), None),
             Value::Null => (Ok(NoAction.boxed_clone()), None),
             _ => {
                 return Err(format!(
@@ -839,7 +839,7 @@ impl KeymapFile {
                     if &action.0 != target_action_value {
                         continue;
                     }
-                    return Some((index, &keystrokes_str));
+                    return Some((index, keystrokes_str));
                 }
             }
             None

@@ -343,7 +343,7 @@ impl TableInteractionState {
             .on_any_mouse_down(|_, _, cx| {
                 cx.stop_propagation();
             })
-            .on_scroll_wheel(Self::listener(&this, |_, _, _, cx| {
+            .on_scroll_wheel(Self::listener(this, |_, _, _, cx| {
                 cx.notify();
             }))
             .children(Scrollbar::vertical(

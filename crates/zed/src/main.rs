@@ -371,9 +371,9 @@ pub fn main() {
         {
             cx.spawn({
                 let app_state = app_state.clone();
-                async move |mut cx| {
-                    if let Err(e) = restore_or_create_workspace(app_state, &mut cx).await {
-                        fail_to_open_window_async(e, &mut cx)
+                async move |cx| {
+                    if let Err(e) = restore_or_create_workspace(app_state, cx).await {
+                        fail_to_open_window_async(e, cx)
                     }
                 }
             })
@@ -690,7 +690,7 @@ pub fn main() {
 
         cx.spawn({
             let client = app_state.client.clone();
-            async move |cx| authenticate(client, &cx).await
+            async move |cx| authenticate(client, cx).await
         })
         .detach_and_log_err(cx);
 
@@ -722,9 +722,9 @@ pub fn main() {
             None => {
                 cx.spawn({
                     let app_state = app_state.clone();
-                    async move |mut cx| {
-                        if let Err(e) = restore_or_create_workspace(app_state, &mut cx).await {
-                            fail_to_open_window_async(e, &mut cx)
+                    async move |cx| {
+                        if let Err(e) = restore_or_create_workspace(app_state, cx).await {
+                            fail_to_open_window_async(e, cx)
                         }
                     }
                 })
@@ -795,14 +795,14 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
     }
 
     if let Some(connection_options) = request.ssh_connection {
-        cx.spawn(async move |mut cx| {
+        cx.spawn(async move |cx| {
             let paths: Vec<PathBuf> = request.open_paths.into_iter().map(PathBuf::from).collect();
             open_ssh_project(
                 connection_options,
                 paths,
                 app_state,
                 workspace::OpenOptions::default(),
-                &mut cx,
+                cx,
             )
             .await
         })
@@ -813,7 +813,7 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
     let mut task = None;
     if !request.open_paths.is_empty() || !request.diff_paths.is_empty() {
         let app_state = app_state.clone();
-        task = Some(cx.spawn(async move |mut cx| {
+        task = Some(cx.spawn(async move |cx| {
             let paths_with_position =
                 derive_paths_with_position(app_state.fs.as_ref(), request.open_paths).await;
             let (_window, results) = open_paths_with_positions(
@@ -821,7 +821,7 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
                 &request.diff_paths,
                 app_state,
                 workspace::OpenOptions::default(),
-                &mut cx,
+                cx,
             )
             .await?;
             for result in results.into_iter().flatten() {
@@ -834,7 +834,7 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
     }
 
     if !request.open_channel_notes.is_empty() || request.join_channel.is_some() {
-        cx.spawn(async move |mut cx| {
+        cx.spawn(async move |cx| {
             let result = maybe!(async {
                 if let Some(task) = task {
                     task.await?;
@@ -842,7 +842,7 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
                 let client = app_state.client.clone();
                 // we continue even if authentication fails as join_channel/ open channel notes will
                 // show a visible error message.
-                authenticate(client, &cx).await.log_err();
+                authenticate(client, cx).await.log_err();
 
                 if let Some(channel_id) = request.join_channel {
                     cx.update(|cx| {
@@ -878,14 +878,14 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
             })
             .await;
             if let Err(err) = result {
-                fail_to_open_window_async(err, &mut cx);
+                fail_to_open_window_async(err, cx);
             }
         })
         .detach()
     } else if let Some(task) = task {
-        cx.spawn(async move |mut cx| {
+        cx.spawn(async move |cx| {
             if let Err(err) = task.await {
-                fail_to_open_window_async(err, &mut cx);
+                fail_to_open_window_async(err, cx);
             }
         })
         .detach();

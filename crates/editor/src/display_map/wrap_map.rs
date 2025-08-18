@@ -1461,7 +1461,7 @@ mod tests {
                 }
 
                 let mut prev_ix = 0;
-                for boundary in line_wrapper.wrap_line(&[LineFragment::text(&line)], wrap_width) {
+                for boundary in line_wrapper.wrap_line(&[LineFragment::text(line)], wrap_width) {
                     wrapped_text.push_str(&line[prev_ix..boundary.ix]);
                     wrapped_text.push('\n');
                     wrapped_text.push_str(&" ".repeat(boundary.next_indent as usize));
