@@ -4254,12 +4254,13 @@ pub(crate) mod tests {
         cx.run_until_parked();
 
         // Should still be editing
-        thread_view.read_with(cx, |view, cx| {
-            assert_eq!(view.editing_message, Some(0));
+        cx.update(|window, cx| {
+            assert!(user_message_editor.focus_handle(cx).is_focused(window));
+            assert_eq!(thread_view.read(cx).editing_message, Some(0));
             assert_eq!(
                 user_message_editor.read(cx).text(cx),
                 "Edited message content"
             );
-        })
+        });
     }
 }
