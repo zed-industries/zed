@@ -1,4 +1,4 @@
-use anyhow::Context;
+use anyhow::{Context, Result};
 use collections::HashMap;
 use futures::{
     Future, FutureExt as _,
@@ -27,7 +27,7 @@ type RequestIds = Arc<
         HashMap<
             LspRequestId,
             oneshot::Sender<
-                anyhow::Result<
+                Result<
                     Option<TypedEnvelope<Vec<proto::ProtoLspResponse<Box<dyn AnyTypedEnvelope>>>>>,
                 >,
             >,
@@ -49,11 +49,11 @@ pub trait ProtoClient: Send + Sync {
         &self,
         envelope: Envelope,
         request_type: &'static str,
-    ) -> BoxFuture<'static, anyhow::Result<Envelope>>;
+    ) -> BoxFuture<'static, Result<Envelope>>;
 
-    fn send(&self, envelope: Envelope, message_type: &'static str) -> anyhow::Result<()>;
+    fn send(&self, envelope: Envelope, message_type: &'static str) -> Result<()>;
 
-    fn send_response(&self, envelope: Envelope, message_type: &'static str) -> anyhow::Result<()>;
+    fn send_response(&self, envelope: Envelope, message_type: &'static str) -> Result<()>;
 
     fn message_handler_set(&self) -> &parking_lot::Mutex<ProtoMessageHandlerSet>;
 
@@ -77,7 +77,7 @@ pub type ProtoMessageHandler = Arc<
             Box<dyn AnyTypedEnvelope>,
             AnyProtoClient,
             AsyncApp,
-        ) -> LocalBoxFuture<'static, anyhow::Result<()>>,
+        ) -> LocalBoxFuture<'static, Result<()>>,
 >;
 
 impl ProtoMessageHandlerSet {
@@ -125,7 +125,7 @@ impl ProtoMessageHandlerSet {
         message: Box<dyn AnyTypedEnvelope>,
         client: AnyProtoClient,
         cx: AsyncApp,
-    ) -> Option<LocalBoxFuture<'static, anyhow::Result<()>>> {
+    ) -> Option<LocalBoxFuture<'static, Result<()>>> {
         let payload_type_id = message.payload_type_id();
         let mut this = this.lock();
         let handler = this.message_handlers.get(&payload_type_id)?.clone();
@@ -203,7 +203,7 @@ impl AnyProtoClient {
     pub fn request<T: RequestMessage>(
         &self,
         request: T,
-    ) -> impl Future<Output = anyhow::Result<T::Response>> + use<T> {
+    ) -> impl Future<Output = Result<T::Response>> + use<T> {
         let envelope = request.into_envelope(0, None, None);
         let response = self.0.client.request(envelope, T::NAME);
         async move {
@@ -212,16 +212,12 @@ impl AnyProtoClient {
         }
     }
 
-    pub fn send<T: EnvelopedMessage>(&self, request: T) -> anyhow::Result<()> {
+    pub fn send<T: EnvelopedMessage>(&self, request: T) -> Result<()> {
         let envelope = request.into_envelope(0, None, None);
         self.0.client.send(envelope, T::NAME)
     }
 
-    pub fn send_response<T: EnvelopedMessage>(
-        &self,
-        request_id: u32,
-        request: T,
-    ) -> anyhow::Result<()> {
+    pub fn send_response<T: EnvelopedMessage>(&self, request_id: u32, request: T) -> Result<()> {
         let envelope = request.into_envelope(0, Some(request_id), None);
         self.0.client.send(envelope, T::NAME)
     }
@@ -231,7 +227,7 @@ impl AnyProtoClient {
         project_id: u64,
         request: T,
     ) -> impl Future<
-        Output = anyhow::Result<Option<TypedEnvelope<Vec<proto::ProtoLspResponse<T::Response>>>>>,
+        Output = Result<Option<TypedEnvelope<Vec<proto::ProtoLspResponse<T::Response>>>>>,
     > + use<T>
     where
         T: LspRequestMessage,
@@ -245,7 +241,6 @@ impl AnyProtoClient {
         );
         let (tx, rx) = oneshot::channel();
         {
-            dbg!("listener inserted", new_id);
             self.0.request_ids.lock().insert(new_id, tx);
         }
 
@@ -254,8 +249,6 @@ impl AnyProtoClient {
             lsp_request_id: new_id.to_proto(),
             request: Some(request.clone().to_proto_query()),
         };
-        let aaa_envelope = request.clone().into_envelope(0, None, None);
-        dbg!(&aaa_envelope);
         let request = self.request(query);
         async move {
             let _request_enqueued: proto::Ack =
@@ -274,7 +267,7 @@ impl AnyProtoClient {
                                     .payload
                                     .into_iter()
                                     .map(|lsp_response| lsp_response.into_response::<T>())
-                                    .collect::<anyhow::Result<Vec<_>>>()?,
+                                    .collect::<Result<Vec<_>>>()?,
                                 sender_id: response.sender_id,
                                 original_sender_id: response.original_sender_id,
                                 message_id: response.message_id,
@@ -296,13 +289,31 @@ impl AnyProtoClient {
     pub fn send_lsp_response<T: LspRequestMessage>(
         &self,
         project_id: u64,
-        request_id: LspRequestId,
+        lsp_request_id: LspRequestId,
         response: HashMap<proto::LanguageServerId, T::Response>,
-    ) -> impl Future<Output = anyhow::Result<proto::Ack>> + use<T> {
+    ) -> Result<()> {
         dbg!(("send_lsp_response", &response.len()));
-        self.request(proto::LspQueryResponse {
+        // let envelope = Envelope {
+        //     id: 0,
+        //     responding_to: (),
+        //     original_sender_id: (),
+        //     ack_id: None,
+        //     payload: proto::LspQueryResponse {
+        //         project_id,
+        //         lsp_request_id: lsp_request_id.to_proto(),
+        //         responses: response
+        //             .into_iter()
+        //             .map(|(server_id, response)| proto::LspResponse2 {
+        //                 server_id: server_id.to_proto(),
+        //                 response: Some(T::response_to_proto_query(response)),
+        //             })
+        //             .collect(),
+        //     },
+        // };
+        // self.0.client.send(envelope, T::NAME)
+        self.send(proto::LspQueryResponse {
             project_id,
-            lsp_request_id: request_id.to_proto(),
+            lsp_request_id: lsp_request_id.to_proto(),
             responses: response
                 .into_iter()
                 .map(|(server_id, response)| proto::LspResponse2 {
@@ -317,7 +328,7 @@ impl AnyProtoClient {
         dbg!(("handle_lsp_response", &envelope));
         let request_id = LspRequestId(envelope.payload.lsp_request_id);
         let mut a = self.0.request_ids.lock();
-        // TODO kb (!!!) there's a wrong sequence of addresses used when sending the responsees back from the local Zed instance.
+        // TODO kb (!!!) there's a wrong sequence of addresses used when sending the responses back from the local Zed instance.
         // Check why is that wrong — could be that we have specified wrong envelopes' ids?
         dbg!(&a);
         if let Some(tx) = a.remove(&request_id) {
@@ -334,19 +345,31 @@ impl AnyProtoClient {
                         use proto::lsp_response2::Response;
 
                         let server_id = proto::LanguageServerId(response.server_id);
-                        let proto_response = match response.response? {
-                            Response::GetReferencesResponse(response) => response,
-                        };
-                        let response_envelope = proto::TypedEnvelope {
-                            sender_id: envelope.sender_id,
-                            original_sender_id: envelope.original_sender_id,
-                            message_id: envelope.message_id,
-                            received_at: envelope.received_at,
-                            payload: proto_response,
+                        let response = match response.response? {
+                            Response::GetReferencesResponse(response) => {
+                                let response_envelope = proto::TypedEnvelope {
+                                    sender_id: envelope.sender_id,
+                                    original_sender_id: envelope.original_sender_id,
+                                    message_id: envelope.message_id,
+                                    received_at: envelope.received_at,
+                                    payload: response,
+                                };
+                                Box::new(response_envelope) as Box<_>
+                            }
+                            Response::GetDocumentColorResponse(response) => {
+                                let response_envelope = proto::TypedEnvelope {
+                                    sender_id: envelope.sender_id,
+                                    original_sender_id: envelope.original_sender_id,
+                                    message_id: envelope.message_id,
+                                    received_at: envelope.received_at,
+                                    payload: response,
+                                };
+                                Box::new(response_envelope) as Box<_>
+                            }
                         };
                         Some(proto::ProtoLspResponse {
                             server_id,
-                            response: Box::new(response_envelope) as Box<_>,
+                            response,
                         })
                     })
                     .collect(),
@@ -360,7 +383,7 @@ impl AnyProtoClient {
         M: RequestMessage,
         E: 'static,
         H: 'static + Sync + Fn(Entity<E>, TypedEnvelope<M>, AsyncApp) -> F + Send + Sync,
-        F: 'static + Future<Output = anyhow::Result<M::Response>>,
+        F: 'static + Future<Output = Result<M::Response>>,
     {
         self.0
             .client
@@ -396,7 +419,7 @@ impl AnyProtoClient {
         M: EnvelopedMessage + RequestMessage + EntityMessage,
         E: 'static,
         H: 'static + Sync + Send + Fn(gpui::Entity<E>, TypedEnvelope<M>, AsyncApp) -> F,
-        F: 'static + Future<Output = anyhow::Result<M::Response>>,
+        F: 'static + Future<Output = Result<M::Response>>,
     {
         let message_type_id = TypeId::of::<M>();
         let entity_type_id = TypeId::of::<E>();
@@ -442,7 +465,7 @@ impl AnyProtoClient {
         M: EnvelopedMessage + EntityMessage,
         E: 'static,
         H: 'static + Sync + Send + Fn(gpui::Entity<E>, TypedEnvelope<M>, AsyncApp) -> F,
-        F: 'static + Future<Output = anyhow::Result<()>>,
+        F: 'static + Future<Output = Result<()>>,
     {
         let message_type_id = TypeId::of::<M>();
         let entity_type_id = TypeId::of::<E>();

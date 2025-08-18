@@ -780,6 +780,7 @@ message LspQuery {
     uint64 lsp_request_id = 2;
     oneof request {
         GetReferences get_references = 3;
+        GetDocumentColor get_document_color = 4;
     }
 }
 
@@ -793,6 +794,7 @@ message LspResponse2 {
     uint64 server_id = 1;
     oneof response {
         GetReferencesResponse get_references_response = 2;
+        GetDocumentColorResponse get_document_color_response = 3;
     }
 }
 

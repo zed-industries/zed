@@ -3583,7 +3583,7 @@ impl LspStore {
     pub fn init(client: &AnyProtoClient) {
         client.add_entity_request_handler(Self::handle_multi_lsp_query);
         client.add_entity_request_handler(Self::handle_lsp_query);
-        client.add_entity_request_handler(Self::handle_lsp_query_response);
+        client.add_entity_message_handler(Self::handle_lsp_query_response);
         client.add_entity_request_handler(Self::handle_restart_language_servers);
         client.add_entity_request_handler(Self::handle_stop_language_servers);
         client.add_entity_request_handler(Self::handle_cancel_language_server_work);
@@ -6840,49 +6840,34 @@ impl LspStore {
                 return Task::ready(Ok(HashMap::default()));
             }
 
-            let request_task = client.request(proto::MultiLspQuery {
-                project_id,
-                buffer_id: buffer.read(cx).remote_id().to_proto(),
-                version: serialize_version(&buffer.read(cx).version()),
-                strategy: Some(proto::multi_lsp_query::Strategy::All(
-                    proto::AllLanguageServers {},
-                )),
-                request: Some(proto::multi_lsp_query::Request::GetDocumentColor(
-                    request.to_proto(project_id, buffer.read(cx)),
-                )),
-            });
+            let request_task =
+                client.request_lsp(project_id, request.to_proto(project_id, buffer.read(cx)));
             let buffer = buffer.clone();
-            cx.spawn(async move |project, cx| {
-                let Some(project) = project.upgrade() else {
+            cx.spawn(async move |lsp_store, cx| {
+                let Some(project) = lsp_store.upgrade() else {
                     return Ok(HashMap::default());
                 };
                 let colors = join_all(
                     request_task
                         .await
                         .log_err()
-                        .map(|response| response.responses)
+                        .flatten()
+                        .map(|response| response.payload)
                         .unwrap_or_default()
                         .into_iter()
-                        .filter_map(|lsp_response| match lsp_response.response? {
-                            proto::lsp_response::Response::GetDocumentColorResponse(response) => {
-                                Some((
-                                    LanguageServerId::from_proto(lsp_response.server_id),
-                                    response,
-                                ))
-                            }
-                            unexpected => {
-                                debug_panic!("Unexpected response: {unexpected:?}");
-                                None
-                            }
-                        })
-                        .map(|(server_id, color_response)| {
+                        .map(|color_response| {
                             let response = request.response_from_proto(
-                                color_response,
+                                color_response.response,
                                 project.clone(),
                                 buffer.clone(),
                                 cx.clone(),
                             );
-                            async move { (server_id, response.await.log_err().unwrap_or_default()) }
+                            async move {
+                                (
+                                    LanguageServerId::from_proto(color_response.server_id.0),
+                                    response.await.log_err().unwrap_or_default(),
+                                )
+                            }
                         }),
                 )
                 .await
@@ -8174,6 +8159,10 @@ impl LspStore {
                             let references = references_task.await;
                             let send_response_task = lsp_store
                                 .update(cx, |lsp_store, cx| {
+                                    dbg!(
+                                        lsp_store.upstream_client().is_some(),
+                                        lsp_store.as_remote().is_some()
+                                    );
                                     if let Some((client, project_id)) =
                                         lsp_store.downstream_client.clone()
                                     {
@@ -8204,19 +8193,94 @@ impl LspStore {
                                 .ok()
                                 .flatten();
 
-                            if let Some(send_response_task) = send_response_task {
-                                match dbg!(send_response_task.await) {
-                                    Ok(proto::Ack {}) => {}
+                            if let Some(send_result) = send_response_task {
+                                match dbg!(send_result) {
+                                    Ok(()) => {}
                                     Err(e) => log::error!("Failed to send LSP response: {e:#}"),
                                 }
                             }
                         }),
                     );
                 })?;
+            }
+            Request::GetDocumentColor(get_document_color) => {
+                let buffer_id = BufferId::new(get_document_color.buffer_id)?;
+                let version = deserialize_version(&get_document_color.version);
+                let buffer = lsp_store.update(&mut cx, |this, cx| {
+                    this.buffer_store.read(cx).get_existing(buffer_id)
+                })??;
+                buffer
+                    .update(&mut cx, |buffer, _| {
+                        buffer.wait_for_version(version.clone())
+                    })?
+                    .await?;
+                let buffer_version = buffer.read_with(&mut cx, |buffer, _| buffer.version())?;
 
-                Ok(proto::Ack {})
+                let get_document_color = GetDocumentColor::from_proto(
+                    get_document_color,
+                    lsp_store.clone(),
+                    buffer.clone(),
+                    cx.clone(),
+                )
+                .await?;
+                let lsp_request_id = LspRequestId(lsp_query.lsp_request_id);
+
+                lsp_store.update(&mut cx, |lsp_store, cx| {
+                    let colors_task = lsp_store.request_multiple_lsp_locally(
+                        &buffer,
+                        None::<usize>,
+                        get_document_color,
+                        cx,
+                    );
+                    lsp_store.running_lsp_requests.insert(
+                        lsp_request_id,
+                        cx.spawn(async move |lsp_store, cx| {
+                            let colors = colors_task.await;
+                            lsp_store
+                                .update(cx, |lsp_store, cx| {
+                                    if let Some((client, project_id)) =
+                                        lsp_store.downstream_client.clone()
+                                    {
+                                        dbg!((
+                                            lsp_store.upstream_client().is_some(),
+                                            lsp_store.as_remote().is_some(),
+                                        ));
+                                        let response = colors
+                                            .into_iter()
+                                            .map(|(server_id, colors)| {
+                                                (
+                                                    proto::LanguageServerId(server_id.to_proto()),
+                                                    GetDocumentColor::response_to_proto(
+                                                        colors,
+                                                        lsp_store,
+                                                        sender_id,
+                                                        &buffer_version,
+                                                        cx,
+                                                    ),
+                                                )
+                                            })
+                                            .collect::<HashMap<_, _>>();
+                                        let send_result = client
+                                            .send_lsp_response::<proto::GetDocumentColor>(
+                                                project_id,
+                                                lsp_request_id,
+                                                response,
+                                            );
+                                        match dbg!(send_result) {
+                                            Ok(()) => {}
+                                            Err(e) => {
+                                                log::error!("Failed to send LSP response: {e:#}")
+                                            }
+                                        }
+                                    }
+                                })
+                                .ok();
+                        }),
+                    );
+                })?;
             }
         }
+        Ok(proto::Ack {})
     }
 
     async fn handle_lsp_query_response(
@@ -8225,11 +8289,12 @@ impl LspStore {
         // TODO kb OR maybe this `Some` should go elsewhere, and here we should not send anything if it's None
         envelope: TypedEnvelope<proto::LspQueryResponse>,
         mut cx: AsyncApp,
-    ) -> Result<proto::Ack> {
+    ) -> Result<()> {
         dbg!("????????????????");
         lsp_store.read_with(&mut cx, |lsp_store, _| {
             dbg!((
                 "1",
+                lsp_store.as_remote().is_some(),
                 lsp_store.upstream_client().is_some(),
                 lsp_store.downstream_client.is_some()
             ));
@@ -8238,7 +8303,7 @@ impl LspStore {
                 upstream_client.handle_lsp_response(envelope.clone());
             }
         })?;
-        Ok(proto::Ack {})
+        Ok(())
     }
 
     async fn handle_multi_lsp_query(

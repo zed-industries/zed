@@ -482,7 +482,10 @@ request_messages!(
     (GitClone, GitCloneResponse)
 );
 
-lsp_messages!((GetReferences, GetReferencesResponse));
+lsp_messages!(
+    (GetReferences, GetReferencesResponse),
+    (GetDocumentColor, GetDocumentColorResponse),
+);
 
 entity_messages!(
     {project_id, ShareProject},
@@ -821,6 +824,7 @@ impl LspQuery {
             // Some(lsp_query::Request::GetTypeDefinition(_)) => ("GetTypeDefinition", false),
             // Some(lsp_query::Request::GetImplementation(_)) => ("GetImplementation", false),
             Some(lsp_query::Request::GetReferences(_)) => ("GetReferences", false),
+            Some(lsp_query::Request::GetDocumentColor(_)) => ("GetDocumentColor", false),
             None => ("<unknown>", false),
         }
     }
