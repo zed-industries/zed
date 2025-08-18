@@ -1141,7 +1141,6 @@ pub struct MentionImage {
 
 #[derive(Default)]
 pub struct MentionSet {
-    // FIXME use shared string everywhere
     uri_by_crease_id: HashMap<CreaseId, MentionUri>,
     fetch_results: HashMap<Url, Shared<Task<Result<String, String>>>>,
     images: HashMap<CreaseId, Shared<Task<Result<MentionImage, String>>>>,
@@ -1237,7 +1236,6 @@ impl MentionSet {
                                     content: content
                                         .await
                                         .map_err(|e| anyhow::anyhow!("{e}"))?
-                                        // FIXME format
                                         .to_string(),
                                 },
                             ))
