@@ -443,7 +443,13 @@ To do it via your `settings.json`, add the following snippet under `language_mod
         {
           "name": "mistralai/Mixtral-8x7B-Instruct-v0.1",
           "display_name": "Together Mixtral 8x7B",
-          "max_tokens": 32768
+          "max_tokens": 32768,
+          "capabilities": {
+            "tools": true,
+            "images": false,
+            "parallel_tool_calls": false,
+            "prompt_cache_key": false
+          }
         }
       ]
     }
@@ -451,42 +457,12 @@ To do it via your `settings.json`, add the following snippet under `language_mod
 }
 ```
 
-If an OpenAI-compatible model lacks API support for certain features:
-  - In the UI, leave the corresponding capability checkboxes unchecked when adding the model.
-  - Or, in settings.json, set the corresponding fields under `capabilities` to `false` for that model.
-
 By default, OpenAI-compatible models inherit the following capabilities:
+
 - `tools`: true (supports tool/function calling)
 - `images`: false (does not support image inputs)
 - `parallel_tool_calls`: false (does not support `parallel_tool_calls` parameter)
 - `prompt_cache_key`: false (does not support `prompt_cache_key` parameter)
-
-You can override these defaults by specifying the `capabilities` object for each model.
-
-```json
-{
-  "language_models": {
-    "openai_compatible": {
-      "Cerebras": {
-        "api_url": "https://api.cerebras.ai/v1",
-        "available_models": [
-          {
-            "name": "gpt-oss-120b",
-            "max_tokens": 131000,
-            "max_output_tokens": 32000,
-            "capabilities": {
-              "tools": true,
-              "images": false,
-              "parallel_tool_calls": false,
-              "prompt_cache_key": false
-            }
-          }
-        ]
-      }
-    }
-  }
-}
-```
 
 Note that LLM API keys aren't stored in your settings file.
 So, ensure you have it set in your environment variables (`OPENAI_API_KEY=<your api key>`) so your settings can pick it up.
