@@ -83,6 +83,14 @@ macro_rules! lsp_messages {
             fn response_to_proto_query(response: Self::Response) -> crate::lsp_response2::Response {
                 crate::lsp_response2::Response::$response_name(response)
             }
+
+            fn buffer_id(&self) -> u64 {
+                self.buffer_id
+            }
+
+            fn version(&self) -> &[crate::VectorClockEntry] {
+                &self.version
+            }
         })*
     };
 }

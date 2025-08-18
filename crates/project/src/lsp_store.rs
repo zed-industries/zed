@@ -84,7 +84,7 @@ use rand::prelude::*;
 
 use rpc::{
     AnyProtoClient,
-    proto::{FromProto, LspRequestId, ToProto},
+    proto::{FromProto, LspRequestId, LspRequestMessage as _, ToProto},
 };
 use serde::Serialize;
 use settings::{Settings, SettingsLocation, SettingsStore};
@@ -8118,155 +8118,35 @@ impl LspStore {
     async fn handle_lsp_query(
         lsp_store: Entity<Self>,
         envelope: TypedEnvelope<proto::LspQuery>,
-        mut cx: AsyncApp,
+        cx: AsyncApp,
     ) -> Result<proto::Ack> {
         use proto::lsp_query::Request;
         let sender_id = envelope.original_sender_id().unwrap_or_default();
         let lsp_query = envelope.payload;
+        let lsp_request_id = LspRequestId(lsp_query.lsp_request_id);
         match lsp_query.request.context("invalid LSP query request")? {
             Request::GetReferences(get_references) => {
-                let buffer_id = BufferId::new(get_references.buffer_id)?;
-                let version = deserialize_version(&get_references.version);
-                let buffer = lsp_store.update(&mut cx, |this, cx| {
-                    this.buffer_store.read(cx).get_existing(buffer_id)
-                })??;
-                buffer
-                    .update(&mut cx, |buffer, _| {
-                        buffer.wait_for_version(version.clone())
-                    })?
-                    .await?;
-                let buffer_version = buffer.read_with(&mut cx, |buffer, _| buffer.version())?;
-
-                let get_references = GetReferences::from_proto(
+                let position = get_references.position.clone().and_then(deserialize_anchor);
+                Self::query_lsp::<GetReferences>(
+                    lsp_store,
+                    sender_id,
+                    lsp_request_id,
                     get_references,
-                    lsp_store.clone(),
-                    buffer.clone(),
+                    position,
                     cx.clone(),
                 )
                 .await?;
-                let lsp_request_id = LspRequestId(lsp_query.lsp_request_id);
-
-                lsp_store.update(&mut cx, |lsp_store, cx| {
-                    let references_task = lsp_store.request_multiple_lsp_locally(
-                        &buffer,
-                        Some(get_references.position),
-                        get_references,
-                        cx,
-                    );
-                    lsp_store.running_lsp_requests.insert(
-                        lsp_request_id,
-                        cx.spawn(async move |lsp_store, cx| {
-                            let references = references_task.await;
-                            lsp_store
-                                .update(cx, |lsp_store, cx| {
-                                    if let Some((client, project_id)) =
-                                        lsp_store.downstream_client.clone()
-                                    {
-                                        let response = references
-                                            .into_iter()
-                                            .map(|(server_id, references)| {
-                                                (
-                                                    proto::LanguageServerId(server_id.to_proto()),
-                                                    GetReferences::response_to_proto(
-                                                        references,
-                                                        lsp_store,
-                                                        sender_id,
-                                                        &buffer_version,
-                                                        cx,
-                                                    ),
-                                                )
-                                            })
-                                            .collect::<HashMap<_, _>>();
-                                        let send_result = client
-                                            .send_lsp_response::<proto::GetReferences>(
-                                                project_id,
-                                                lsp_request_id,
-                                                response,
-                                            );
-                                        match send_result {
-                                            Ok(()) => {}
-                                            Err(e) => {
-                                                log::error!("Failed to send LSP response: {e:#}")
-                                            }
-                                        }
-                                    }
-                                })
-                                .ok();
-                        }),
-                    );
-                })?;
             }
             Request::GetDocumentColor(get_document_color) => {
-                let buffer_id = BufferId::new(get_document_color.buffer_id)?;
-                let version = deserialize_version(&get_document_color.version);
-                let buffer = lsp_store.update(&mut cx, |this, cx| {
-                    this.buffer_store.read(cx).get_existing(buffer_id)
-                })??;
-                buffer
-                    .update(&mut cx, |buffer, _| {
-                        buffer.wait_for_version(version.clone())
-                    })?
-                    .await?;
-                let buffer_version = buffer.read_with(&mut cx, |buffer, _| buffer.version())?;
-
-                let get_document_color = GetDocumentColor::from_proto(
+                Self::query_lsp::<GetDocumentColor>(
+                    lsp_store,
+                    sender_id,
+                    lsp_request_id,
                     get_document_color,
-                    lsp_store.clone(),
-                    buffer.clone(),
+                    None,
                     cx.clone(),
                 )
                 .await?;
-                let lsp_request_id = LspRequestId(lsp_query.lsp_request_id);
-
-                lsp_store.update(&mut cx, |lsp_store, cx| {
-                    let colors_task = lsp_store.request_multiple_lsp_locally(
-                        &buffer,
-                        None::<usize>,
-                        get_document_color,
-                        cx,
-                    );
-                    lsp_store.running_lsp_requests.insert(
-                        lsp_request_id,
-                        cx.spawn(async move |lsp_store, cx| {
-                            let colors = colors_task.await;
-                            lsp_store
-                                .update(cx, |lsp_store, cx| {
-                                    if let Some((client, project_id)) =
-                                        lsp_store.downstream_client.clone()
-                                    {
-                                        let response = colors
-                                            .into_iter()
-                                            .map(|(server_id, colors)| {
-                                                (
-                                                    proto::LanguageServerId(server_id.to_proto()),
-                                                    GetDocumentColor::response_to_proto(
-                                                        colors,
-                                                        lsp_store,
-                                                        sender_id,
-                                                        &buffer_version,
-                                                        cx,
-                                                    ),
-                                                )
-                                            })
-                                            .collect::<HashMap<_, _>>();
-                                        let send_result = client
-                                            .send_lsp_response::<proto::GetDocumentColor>(
-                                                project_id,
-                                                lsp_request_id,
-                                                response,
-                                            );
-                                        match send_result {
-                                            Ok(()) => {}
-                                            Err(e) => {
-                                                log::error!("Failed to send LSP response: {e:#}")
-                                            }
-                                        }
-                                    }
-                                })
-                                .ok();
-                        }),
-                    );
-                })?;
             }
         }
         Ok(proto::Ack {})
@@ -12159,6 +12039,80 @@ impl LspStore {
             }
         }
 
+        Ok(())
+    }
+
+    async fn query_lsp<T>(
+        lsp_store: Entity<Self>,
+        sender_id: proto::PeerId,
+        lsp_request_id: LspRequestId,
+        proto_request: T::ProtoRequest,
+        position: Option<Anchor>,
+        mut cx: AsyncApp,
+    ) -> Result<()>
+    where
+        T: LspCommand + Clone,
+        T::ProtoRequest: proto::LspRequestMessage,
+        <T::ProtoRequest as proto::RequestMessage>::Response:
+            Into<<T::ProtoRequest as proto::LspRequestMessage>::Response>,
+    {
+        let buffer_id = BufferId::new(proto_request.buffer_id())?;
+        let version = deserialize_version(proto_request.version());
+        let buffer = lsp_store.update(&mut cx, |this, cx| {
+            this.buffer_store.read(cx).get_existing(buffer_id)
+        })??;
+        buffer
+            .update(&mut cx, |buffer, _| {
+                buffer.wait_for_version(version.clone())
+            })?
+            .await?;
+        let buffer_version = buffer.read_with(&mut cx, |buffer, _| buffer.version())?;
+        let request =
+            T::from_proto(proto_request, lsp_store.clone(), buffer.clone(), cx.clone()).await?;
+        lsp_store.update(&mut cx, |lsp_store, cx| {
+            let request_task =
+                lsp_store.request_multiple_lsp_locally(&buffer, position, request, cx);
+            lsp_store.running_lsp_requests.insert(
+                lsp_request_id,
+                cx.spawn(async move |lsp_store, cx| {
+                    let response = request_task.await;
+                    lsp_store
+                        .update(cx, |lsp_store, cx| {
+                            if let Some((client, project_id)) = lsp_store.downstream_client.clone()
+                            {
+                                let response = response
+                                    .into_iter()
+                                    .map(|(server_id, response)| {
+                                        (
+                                            proto::LanguageServerId(server_id.to_proto()),
+                                            T::response_to_proto(
+                                                response,
+                                                lsp_store,
+                                                sender_id,
+                                                &buffer_version,
+                                                cx,
+                                            )
+                                            .into(),
+                                        )
+                                    })
+                                    .collect::<HashMap<_, _>>();
+                                let send_result = client.send_lsp_response::<T::ProtoRequest>(
+                                    project_id,
+                                    lsp_request_id,
+                                    response,
+                                );
+                                match send_result {
+                                    Ok(()) => {}
+                                    Err(e) => {
+                                        log::error!("Failed to send LSP response: {e:#}",)
+                                    }
+                                }
+                            }
+                        })
+                        .ok();
+                }),
+            );
+        })?;
         Ok(())
     }
 

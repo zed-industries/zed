@@ -37,6 +37,10 @@ pub trait LspRequestMessage: EnvelopedMessage {
     fn to_proto_query(self) -> crate::lsp_query::Request;
 
     fn response_to_proto_query(response: Self::Response) -> crate::lsp_response2::Response;
+
+    fn buffer_id(&self) -> u64;
+
+    fn version(&self) -> &[crate::VectorClockEntry];
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
