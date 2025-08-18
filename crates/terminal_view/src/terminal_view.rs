@@ -205,7 +205,7 @@ impl TerminalView {
     ) {
         let working_directory = default_working_directory(workspace, cx);
         TerminalPanel::add_center_terminal(workspace, window, cx, |project, cx| {
-            project.create_terminal_shell(working_directory, cx)
+            project.create_terminal_shell(working_directory, cx, None)
         })
         .detach_and_log_err(cx);
     }
@@ -1330,11 +1330,10 @@ impl Item for TerminalView {
         let terminal = self
             .project
             .update(cx, |project, cx| {
-                let terminal = self.terminal().read(cx);
-                let working_directory = terminal
-                    .working_directory()
-                    .or_else(|| Some(project.active_project_directory(cx)?.to_path_buf()));
-                project.create_terminal_shell(working_directory, cx)
+                let cwd = project
+                    .active_project_directory(cx)
+                    .map(|it| it.to_path_buf());
+                project.clone_terminal(self.terminal(), cx, || cwd)
             })
             .ok()?
             .log_err()?;
@@ -1489,8 +1488,11 @@ impl SerializableItem for TerminalView {
                 .ok()
                 .flatten();
 
-            let terminal =
-                project.update(cx, |project, cx| project.create_terminal_shell(cwd, cx))??;
+            let terminal = project
+                .update(cx, |project, cx| {
+                    project.create_terminal_shell(cwd, cx, None)
+                })?
+                .await?;
             cx.update(|window, cx| {
                 cx.new(|cx| {
                     TerminalView::new(

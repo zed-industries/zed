@@ -408,6 +408,7 @@ mod tests {
             .update(cx, |project: &mut Project, cx| {
                 project.create_terminal_shell(None, cx, None)
             })
+            .await
             .expect("Failed to create a terminal");
 
         let workspace_a = workspace.clone();

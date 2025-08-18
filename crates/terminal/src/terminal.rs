@@ -427,12 +427,9 @@ impl TerminalBuilder {
                     .clone()
                     .or_else(|| Some(home_dir().to_path_buf())),
                 drain_on_exit: true,
-                env: env.into_iter().collect(),
+                env: env.clone().into_iter().collect(),
             }
         };
-
-        // Setup Alacritty's env, which modifies the current process's environment
-        alacritty_terminal::tty::setup_env();
 
         let default_cursor_style = AlacCursorStyle::from(cursor_shape);
         let scrolling_history = if task.is_some() {
@@ -520,6 +517,14 @@ impl TerminalBuilder {
             last_hyperlink_search_position: None,
             #[cfg(windows)]
             shell_program,
+            template: CopyTemplate {
+                shell,
+                env,
+                cursor_shape,
+                alternate_scroll,
+                max_scroll_history_lines,
+                window_id,
+            },
         };
 
         Ok(TerminalBuilder {
@@ -704,6 +709,16 @@ pub struct Terminal {
     last_hyperlink_search_position: Option<Point<Pixels>>,
     #[cfg(windows)]
     shell_program: Option<String>,
+    template: CopyTemplate,
+}
+
+struct CopyTemplate {
+    shell: Shell,
+    env: HashMap<String, String>,
+    cursor_shape: CursorShape,
+    alternate_scroll: AlternateScroll,
+    max_scroll_history_lines: Option<usize>,
+    window_id: u64,
 }
 
 pub struct TaskState {
@@ -1948,6 +1963,27 @@ impl Terminal {
 
     pub fn vi_mode_enabled(&self) -> bool {
         self.vi_mode_enabled
+    }
+
+    pub fn clone_builder(
+        &self,
+        cx: &App,
+        cwd: impl FnOnce() -> Option<PathBuf>,
+    ) -> Result<TerminalBuilder> {
+        let working_directory = self.working_directory().or_else(cwd);
+        TerminalBuilder::new(
+            working_directory,
+            None,
+            self.template.shell.clone(),
+            self.template.env.clone(),
+            self.template.cursor_shape,
+            self.template.alternate_scroll,
+            self.template.max_scroll_history_lines,
+            self.is_ssh_terminal,
+            self.template.window_id,
+            None,
+            cx,
+        )
     }
 }
 

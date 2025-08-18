@@ -5,7 +5,7 @@ use futures::{StreamExt as _, stream::FuturesUnordered};
 use gpui::{AppContext as _, AsyncWindowContext, Axis, Entity, Task, WeakEntity};
 use project::Project;
 use serde::{Deserialize, Serialize};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use ui::{App, Context, Pixels, Window};
 use util::ResultExt as _;
 
@@ -247,10 +247,7 @@ async fn deserialize_pane_group(
                             .ok()
                             .flatten();
                         let terminal = project.update(cx, |project, cx| {
-                            project.create_terminal_shell(
-                                working_directory.as_deref().map(Path::to_path_buf),
-                                cx,
-                            )
+                            project.create_terminal_shell(working_directory, cx, None)
                         });
                         Some(Some(terminal))
                     } else {
@@ -260,7 +257,7 @@ async fn deserialize_pane_group(
                 .ok()
                 .flatten()?;
             if let Some(terminal) = terminal {
-                let terminal = terminal.ok()?;
+                let terminal = terminal.await.ok()?;
                 pane.update_in(cx, |pane, window, cx| {
                     let terminal_view = Box::new(cx.new(|cx| {
                         TerminalView::new(

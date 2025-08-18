@@ -1,8 +1,7 @@
-use crate::Project;
-
 use anyhow::Result;
 use collections::HashMap;
-use gpui::{App, AppContext as _, Context, Entity, WeakEntity};
+use gpui::{App, AppContext as _, Context, Entity, Task, WeakEntity};
+use language::LanguageName;
 use remote::RemoteClient;
 use settings::{Settings, SettingsLocation};
 use smol::channel::bounded;
@@ -14,6 +13,9 @@ use task::{Shell, ShellBuilder, SpawnInTerminal};
 use terminal::{
     TaskState, TaskStatus, Terminal, TerminalBuilder, terminal_settings::TerminalSettings,
 };
+use util::maybe;
+
+use crate::{Project, ProjectPath};
 
 pub struct Terminals {
     pub(crate) local_handles: Vec<WeakEntity<terminal::Terminal>>,
@@ -163,7 +165,8 @@ impl Project {
         &mut self,
         cwd: Option<PathBuf>,
         cx: &mut Context<Self>,
-    ) -> Result<Entity<Terminal>> {
+        project_path_context: Option<ProjectPath>,
+    ) -> Task<Result<Entity<Terminal>>> {
         let path = cwd.map(|p| Arc::from(&*p));
         let is_via_remote = self.remote_client.is_some();
 
@@ -193,25 +196,71 @@ impl Project {
         let shell = {
             match self.remote_client.clone() {
                 Some(remote_client) => {
-                    create_remote_shell(None, &mut env, path, remote_client, cx)?
+                    match create_remote_shell(None, &mut env, path, remote_client, cx) {
+                        Ok(it) => it,
+                        Err(e) => return Task::ready(Err(e)),
+                    }
                 }
                 None => settings.shell,
             }
         };
-        TerminalBuilder::new(
-            local_path.map(|path| path.to_path_buf()),
-            None,
-            shell,
-            env,
-            settings.cursor_shape.unwrap_or_default(),
-            settings.alternate_scroll,
-            settings.max_scroll_history_lines,
-            is_via_remote,
-            cx.entity_id().as_u64(),
-            None,
-            cx,
-        )
-        .map(|builder| {
+        let toolchain =
+            project_path_context.map(|p| self.active_toolchain(p, LanguageName::new("Python"), cx));
+        cx.spawn(async move |project, cx| {
+            let toolchain = maybe!(async {
+                let toolchain = toolchain?.await?;
+
+                Some(())
+            })
+            .await;
+            project.update(cx, move |this, cx| {
+                TerminalBuilder::new(
+                    local_path.map(|path| path.to_path_buf()),
+                    None,
+                    shell,
+                    env,
+                    settings.cursor_shape.unwrap_or_default(),
+                    settings.alternate_scroll,
+                    settings.max_scroll_history_lines,
+                    is_via_remote,
+                    cx.entity_id().as_u64(),
+                    None,
+                    cx,
+                )
+                .map(|builder| {
+                    let terminal_handle = cx.new(|cx| builder.subscribe(cx));
+
+                    this.terminals
+                        .local_handles
+                        .push(terminal_handle.downgrade());
+
+                    let id = terminal_handle.entity_id();
+                    cx.observe_release(&terminal_handle, move |project, _terminal, cx| {
+                        let handles = &mut project.terminals.local_handles;
+
+                        if let Some(index) = handles
+                            .iter()
+                            .position(|terminal| terminal.entity_id() == id)
+                        {
+                            handles.remove(index);
+                            cx.notify();
+                        }
+                    })
+                    .detach();
+
+                    terminal_handle
+                })
+            })?
+        })
+    }
+
+    pub fn clone_terminal(
+        &mut self,
+        terminal: &Entity<Terminal>,
+        cx: &mut Context<'_, Project>,
+        cwd: impl FnOnce() -> Option<PathBuf>,
+    ) -> Result<Entity<Terminal>> {
+        terminal.read(cx).clone_builder(cx, cwd).map(|builder| {
             let terminal_handle = cx.new(|cx| builder.subscribe(cx));
 
             self.terminals
