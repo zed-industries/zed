@@ -1556,8 +1556,12 @@ mod tests {
             editor.confirm_completion(&editor::actions::ConfirmCompletion::default(), window, cx);
         });
 
+        let path_one = path!("/dir/a/one.txt");
         editor.update(&mut cx, |editor, cx| {
-            assert_eq!(editor.text(cx), "Lorem [@one.txt](file:///dir/a/one.txt) ");
+            assert_eq!(
+                editor.text(cx),
+                format!("Lorem [@one.txt](file://{path_one}) ")
+            );
             assert!(!editor.has_visible_completions_menu());
             assert_eq!(
                 fold_ranges(editor, cx),
@@ -1583,14 +1587,17 @@ mod tests {
             contents,
             [Mention::Text {
                 content: "1".into(),
-                uri: "file:///dir/a/one.txt".parse().unwrap()
+                uri: format!("file://{path_one}").parse().unwrap()
             }]
         );
 
         cx.simulate_input(" ");
 
         editor.update(&mut cx, |editor, cx| {
-            assert_eq!(editor.text(cx), "Lorem [@one.txt](file:///dir/a/one.txt)  ");
+            assert_eq!(
+                editor.text(cx),
+                format!("Lorem [@one.txt](file://{path_one})  ")
+            );
             assert!(!editor.has_visible_completions_menu());
             assert_eq!(
                 fold_ranges(editor, cx),
@@ -1603,7 +1610,7 @@ mod tests {
         editor.update(&mut cx, |editor, cx| {
             assert_eq!(
                 editor.text(cx),
-                "Lorem [@one.txt](file:///dir/a/one.txt)  Ipsum ",
+                format!("Lorem [@one.txt](file://{path_one})  Ipsum "),
             );
             assert!(!editor.has_visible_completions_menu());
             assert_eq!(
@@ -1617,7 +1624,7 @@ mod tests {
         editor.update(&mut cx, |editor, cx| {
             assert_eq!(
                 editor.text(cx),
-                "Lorem [@one.txt](file:///dir/a/one.txt)  Ipsum @file ",
+                format!("Lorem [@one.txt](file://{path_one})  Ipsum @file "),
             );
             assert!(editor.has_visible_completions_menu());
             assert_eq!(
@@ -1647,28 +1654,31 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert_eq!(contents.len(), 2);
+        let path_eight = path!("/dir/b/eight.txt");
         pretty_assertions::assert_eq!(
             contents[1],
             Mention::Text {
                 content: "8".to_string(),
-                uri: "file:///dir/b/eight.txt".parse().unwrap(),
+                uri: format!("file://{path_eight}").parse().unwrap(),
             }
         );
 
         editor.update(&mut cx, |editor, cx| {
-                assert_eq!(
-                    editor.text(cx),
-                    "Lorem [@one.txt](file:///dir/a/one.txt)  Ipsum [@eight.txt](file:///dir/b/eight.txt) "
-                );
-                assert!(!editor.has_visible_completions_menu());
-                assert_eq!(
-                    fold_ranges(editor, cx),
-                    vec![
-                        Point::new(0, 6)..Point::new(0, 39),
-                        Point::new(0, 47)..Point::new(0, 84)
-                    ]
-                );
-            });
+            assert_eq!(
+                editor.text(cx),
+                format!(
+                    "Lorem [@one.txt](file://{path_one})  Ipsum [@eight.txt](file://{path_eight}) "
+                )
+            );
+            assert!(!editor.has_visible_completions_menu());
+            assert_eq!(
+                fold_ranges(editor, cx),
+                vec![
+                    Point::new(0, 6)..Point::new(0, 39),
+                    Point::new(0, 47)..Point::new(0, 84)
+                ]
+            );
+        });
 
         let plain_text_language = Arc::new(language::Language::new(
             language::LanguageConfig {
@@ -1700,7 +1710,7 @@ mod tests {
         // Open the buffer to trigger LSP initialization
         let buffer = project
             .update(&mut cx, |project, cx| {
-                project.open_local_buffer(path!("/dir/a/one.txt"), cx)
+                project.open_local_buffer(path_one, cx)
             })
             .await
             .unwrap();
@@ -1714,13 +1724,13 @@ mod tests {
 
         let fake_language_server = fake_language_servers.next().await.unwrap();
         fake_language_server.set_request_handler::<lsp::WorkspaceSymbolRequest, _, _>(
-            |_, _| async move {
+            move |_, _| async move {
                 Ok(Some(lsp::WorkspaceSymbolResponse::Flat(vec![
                     #[allow(deprecated)]
                     lsp::SymbolInformation {
                         name: "MySymbol".into(),
                         location: lsp::Location {
-                            uri: lsp::Url::from_file_path(path!("/dir/a/one.txt")).unwrap(),
+                            uri: lsp::Url::from_file_path(path_one).unwrap(),
                             range: lsp::Range::new(
                                 lsp::Position::new(0, 0),
                                 lsp::Position::new(0, 1),
@@ -1740,7 +1750,7 @@ mod tests {
         editor.update(&mut cx, |editor, cx| {
                 assert_eq!(
                     editor.text(cx),
-                    "Lorem [@one.txt](file:///dir/a/one.txt)  Ipsum [@eight.txt](file:///dir/b/eight.txt) @symbol "
+                    format!("Lorem [@one.txt](file://{path_one})  Ipsum [@eight.txt](file://{path_eight}) @symbol ")
                 );
                 assert!(editor.has_visible_completions_menu());
                 assert_eq!(
@@ -1771,7 +1781,7 @@ mod tests {
             contents[2],
             Mention::Text {
                 content: "1".into(),
-                uri: "file:///dir/a/one.txt?symbol=MySymbol#L1:1"
+                uri: format!("file://{path_one}?symbol=MySymbol#L1:1")
                     .parse()
                     .unwrap(),
             }
@@ -1782,7 +1792,7 @@ mod tests {
         editor.read_with(&mut cx, |editor, cx| {
                 assert_eq!(
                     editor.text(cx),
-                    "Lorem [@one.txt](file:///dir/a/one.txt)  Ipsum [@eight.txt](file:///dir/b/eight.txt) [@MySymbol](file:///dir/a/one.txt?symbol=MySymbol#L1:1) "
+                    format!("Lorem [@one.txt](file://{path_one})  Ipsum [@eight.txt](file://{path_eight}) [@MySymbol](file://{path_one}?symbol=MySymbol#L1:1) ")
                 );
             });
     }
