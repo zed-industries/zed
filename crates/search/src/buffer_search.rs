@@ -121,6 +121,11 @@ pub struct BufferSearchBar {
     pending_search: Option<Task<()>>,
     search_options: SearchOptions,
     default_options: SearchOptions,
+    /// List of search options and its state derived from the pattern items in
+    /// the search query. Keeping track of these values allows us to determine
+    /// which search options are enabled/disabled by the pattern items, as well
+    /// as reverting any changes made to the search options.
+    pattern_item_options: Vec<(SearchOptions, bool)>,
     configured_options: SearchOptions,
     query_error: Option<String>,
     dismissed: bool,
@@ -675,6 +680,7 @@ impl BufferSearchBar {
             default_options: search_options,
             configured_options: search_options,
             search_options,
+            pattern_item_options: Vec::new(),
             pending_search: None,
             query_error: None,
             dismissed: true,
@@ -1485,24 +1491,59 @@ impl BufferSearchBar {
     // Determines which pattern items are present in the search query and
     // updates the search options accordingly, only if the regex search option
     // is enabled.
+    //
+    // TODO: How to deal with the case where cancelling pattern items are
+    // available? For example, `bananas\c\C` or `bananas\C\c`. We'd probably
+    // need to actually capture the matches with a Regex, so we can iterate over
+    // them in order and get the correct order, for example, finding `\c\C\c` in
+    // a string would eventually equate to `[(CASE_SENSITIVE, false),
+    // (CASE_INSENSITIVE, true), (CASE_SENSITIVE, false)]`
+    //
+    // TODO: Reimplement this so that we can simply use another `SearchOptions`
+    // for the pattern items, so that excluding that second one from the
+    // `self.search_options` leads to the search options before pattern items
+    // options were applied.
     fn apply_pattern_items(&mut self, cx: &mut Context<Self>) {
         if self.search_options.contains(SearchOptions::REGEX) {
-            // Start from the default search options to ensure that any search
-            // option that is not to be updated does not changed.
-            // For example, if `\c` was present in the query and the case
-            // sensitivity was initially enabled, removing `\c` from the query
-            // should re-enable case sensitivity.
-            let mut search_options = self.default_options;
+            // Recalculate the search options before the pattern items were
+            // applied, so we can reapply them and determine which ones are
+            // actually affecting the search options.
+            // TODO: This can probably be improved by simply verifying if any new
+            // pattern items are available, seeing as it should be incremental.
+            let mut search_options = self.search_options;
+            self.pattern_item_options
+                .iter()
+                .rev()
+                .for_each(|(search_option, _value)| {
+                    // TODO: Do we actually care about the `value`? If the
+                    // search option was added to `pattern_item_options`, we
+                    // already know that it affected the `search_options` so
+                    // simply toggleing it should have the desired effect of
+                    // reverting the changes.
+                    search_options.toggle(*search_option);
+                });
+
+            let mut pattern_item_options = Vec::new();
             let query = self.raw_query(cx);
 
-            for (pattern, search_option, value) in PATTERN_ITEMS {
-                match (query.contains(pattern), value) {
-                    (true, true) => search_options.set(*search_option, value),
-                    (true, false) => search_options.set(*search_option, value),
-                    (false, _) => (),
-                }
-            }
+            PATTERN_ITEMS
+                .iter()
+                .filter(|(pattern, _, _)| query.contains(pattern))
+                .for_each(|(_pattern, search_option, value)| {
+                    match (search_options.contains(**search_option), value) {
+                        (true, false) => {
+                            search_options.toggle(**search_option);
+                            pattern_item_options.push((**search_option, false));
+                        }
+                        (false, true) => {
+                            search_options.toggle(**search_option);
+                            pattern_item_options.push((**search_option, true));
+                        }
+                        (_, _) => {}
+                    }
+                });
 
+            self.pattern_item_options = pattern_item_options;
             self.set_search_options(search_options, cx);
         }
     }
