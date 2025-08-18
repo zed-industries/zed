@@ -237,11 +237,17 @@ impl AgentTool for EditFileTool {
             });
         }
 
-        let request = self.thread.update(cx, |thread, cx| {
-            thread.build_completion_request(CompletionIntent::ToolResults, cx)
-        });
+        let Some(request) = self.thread.update(cx, |thread, cx| {
+            thread
+                .build_completion_request(CompletionIntent::ToolResults, cx)
+                .ok()
+        }) else {
+            return Task::ready(Err(anyhow!("Failed to build completion request")));
+        };
         let thread = self.thread.read(cx);
-        let model = thread.model().clone();
+        let Some(model) = thread.model().cloned() else {
+            return Task::ready(Err(anyhow!("No language model configured")));
+        };
         let action_log = thread.action_log().clone();
 
         let authorize = self.authorize(&input, &event_stream, cx);
@@ -520,7 +526,7 @@ mod tests {
                 context_server_registry,
                 action_log,
                 Templates::new(),
-                model,
+                Some(model),
                 cx,
             )
         });
@@ -717,7 +723,7 @@ mod tests {
                 context_server_registry,
                 action_log.clone(),
                 Templates::new(),
-                model.clone(),
+                Some(model.clone()),
                 cx,
             )
         });
@@ -853,7 +859,7 @@ mod tests {
                 context_server_registry,
                 action_log.clone(),
                 Templates::new(),
-                model.clone(),
+                Some(model.clone()),
                 cx,
             )
         });
@@ -979,7 +985,7 @@ mod tests {
                 context_server_registry,
                 action_log.clone(),
                 Templates::new(),
-                model.clone(),
+                Some(model.clone()),
                 cx,
             )
         });
@@ -1116,7 +1122,7 @@ mod tests {
                 context_server_registry,
                 action_log.clone(),
                 Templates::new(),
-                model.clone(),
+                Some(model.clone()),
                 cx,
             )
         });
@@ -1226,7 +1232,7 @@ mod tests {
                 context_server_registry.clone(),
                 action_log.clone(),
                 Templates::new(),
-                model.clone(),
+                Some(model.clone()),
                 cx,
             )
         });
@@ -1307,7 +1313,7 @@ mod tests {
                 context_server_registry.clone(),
                 action_log.clone(),
                 Templates::new(),
-                model.clone(),
+                Some(model.clone()),
                 cx,
             )
         });
@@ -1391,7 +1397,7 @@ mod tests {
                 context_server_registry.clone(),
                 action_log.clone(),
                 Templates::new(),
-                model.clone(),
+                Some(model.clone()),
                 cx,
             )
         });
@@ -1472,7 +1478,7 @@ mod tests {
                 context_server_registry,
                 action_log.clone(),
                 Templates::new(),
-                model.clone(),
+                Some(model.clone()),
                 cx,
             )
         });
