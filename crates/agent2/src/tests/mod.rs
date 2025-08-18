@@ -742,7 +742,7 @@ async fn expect_tool_call(
         .expect("no tool call authorization event received")
         .unwrap();
     match event {
-        AgentResponseEvent::ToolCall(tool_call) => return tool_call,
+        AgentResponseEvent::ToolCall(tool_call) => tool_call,
         event => {
             panic!("Unexpected event {event:?}");
         }
@@ -759,7 +759,7 @@ async fn expect_tool_call_update_fields(
         .unwrap();
     match event {
         AgentResponseEvent::ToolCallUpdate(acp_thread::ToolCallUpdate::UpdateFields(update)) => {
-            return update;
+            update
         }
         event => {
             panic!("Unexpected event {event:?}");

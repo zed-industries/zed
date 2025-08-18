@@ -349,7 +349,6 @@ impl LanguageServerState {
                             .detach();
                         } else {
                             cx.propagate();
-                            return;
                         }
                     }
                 },
@@ -523,7 +522,6 @@ impl LspTool {
                 if ProjectSettings::get_global(cx).global_lsp_settings.button {
                     if lsp_tool.lsp_menu.is_none() {
                         lsp_tool.refresh_lsp_menu(true, window, cx);
-                        return;
                     }
                 } else if lsp_tool.lsp_menu.take().is_some() {
                     cx.notify();

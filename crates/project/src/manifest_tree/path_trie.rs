@@ -22,6 +22,7 @@ pub(super) struct RootPathTrie<Label> {
 /// Label presence is a marker that allows to optimize searches within [RootPathTrie]; node label can be:
 /// - Present; we know there's definitely a project root at this node.
 /// - Known Absent - we know there's definitely no project root at this node and none of it's ancestors are Present (descendants can be present though!).
+///
 /// The distinction is there to optimize searching; when we encounter a node with unknown status, we don't need to look at it's full path
 /// to the root of the worktree; it's sufficient to explore only the path between last node with a KnownAbsent state and the directory of a path, since we run searches
 /// from the leaf up to the root of the worktree.

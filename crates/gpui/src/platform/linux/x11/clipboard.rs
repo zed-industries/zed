@@ -1078,11 +1078,11 @@ impl Clipboard {
         } else {
             String::from_utf8(result.bytes).map_err(|_| Error::ConversionFailure)?
         };
-        return Ok(ClipboardItem::new_string(text));
+        Ok(ClipboardItem::new_string(text))
     }
 
     pub fn is_owner(&self, selection: ClipboardKind) -> bool {
-        return self.inner.is_owner(selection).unwrap_or(false);
+        self.inner.is_owner(selection).unwrap_or(false)
     }
 }
 

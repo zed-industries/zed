@@ -46,7 +46,6 @@ use smol::stream::StreamExt;
 use std::any::TypeId;
 use std::collections::BTreeMap;
 use std::ops::RangeInclusive;
-use std::u64;
 use std::{
     any::Any,
     collections::hash_map::Entry,
@@ -431,7 +430,7 @@ impl RunningMode {
         let should_send_exception_breakpoints = capabilities
             .exception_breakpoint_filters
             .as_ref()
-            .map_or(false, |filters| !filters.is_empty())
+            .is_some_and(|filters| !filters.is_empty())
             || !configuration_done_supported;
         let supports_exception_filters = capabilities
             .supports_exception_filter_options
@@ -710,9 +709,7 @@ where
     T: LocalDapCommand + PartialEq + Eq + Hash,
 {
     fn dyn_eq(&self, rhs: &dyn CacheableCommand) -> bool {
-        (rhs as &dyn Any)
-            .downcast_ref::<Self>()
-            .map_or(false, |rhs| self == rhs)
+        (rhs as &dyn Any).downcast_ref::<Self>() == Some(self)
     }
 
     fn dyn_hash(&self, mut hasher: &mut dyn Hasher) {
@@ -1085,7 +1082,7 @@ impl Session {
         })
         .detach();
 
-        return tx;
+        tx
     }
 
     pub fn is_started(&self) -> bool {
@@ -1630,7 +1627,7 @@ impl Session {
         + 'static,
         cx: &mut Context<Self>,
     ) -> Task<Option<T::Response>> {
-        if !T::is_supported(&capabilities) {
+        if !T::is_supported(capabilities) {
             log::warn!(
                 "Attempted to send a DAP request that isn't supported: {:?}",
                 request
@@ -1688,7 +1685,7 @@ impl Session {
         self.requests
             .entry((&*key.0 as &dyn Any).type_id())
             .and_modify(|request_map| {
-                request_map.remove(&key);
+                request_map.remove(key);
             });
     }
 

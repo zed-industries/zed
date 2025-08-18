@@ -241,7 +241,7 @@ impl Model {
     ///
     /// If the model does not support the parameter, do not pass it up.
     pub fn supports_prompt_cache_key(&self) -> bool {
-        return true;
+        true
     }
 }
 

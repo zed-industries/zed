@@ -154,7 +154,7 @@ fn try_determine_available_gpus() -> Option<String> {
     }
     #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
     {
-        return None;
+        None
     }
 }
 

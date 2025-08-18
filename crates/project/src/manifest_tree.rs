@@ -218,10 +218,8 @@ impl ManifestQueryDelegate {
 
 impl ManifestDelegate for ManifestQueryDelegate {
     fn exists(&self, path: &Path, is_dir: Option<bool>) -> bool {
-        self.worktree.entry_for_path(path).map_or(false, |entry| {
-            is_dir.map_or(true, |is_required_to_be_dir| {
-                is_required_to_be_dir == entry.is_dir()
-            })
+        self.worktree.entry_for_path(path).is_some_and(|entry| {
+            is_dir.is_none_or(|is_required_to_be_dir| is_required_to_be_dir == entry.is_dir())
         })
     }
 

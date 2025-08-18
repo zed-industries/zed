@@ -2375,7 +2375,7 @@ fn matching_tag(map: &DisplaySnapshot, head: DisplayPoint) -> Option<DisplayPoin
         }
     }
 
-    return None;
+    None
 }
 
 fn matching(map: &DisplaySnapshot, display_point: DisplayPoint) -> DisplayPoint {
@@ -2517,7 +2517,7 @@ fn unmatched_forward(
         }
         display_point = new_point;
     }
-    return display_point;
+    display_point
 }
 
 fn unmatched_backward(

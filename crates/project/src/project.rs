@@ -1848,7 +1848,7 @@ impl Project {
         cx: &'a mut App,
     ) -> Shared<Task<Option<HashMap<String, String>>>> {
         self.environment.update(cx, |environment, cx| {
-            environment.get_buffer_environment(&buffer, &worktree_store, cx)
+            environment.get_buffer_environment(buffer, worktree_store, cx)
         })
     }
 
@@ -1903,7 +1903,7 @@ impl Project {
             return true;
         }
 
-        return false;
+        false
     }
 
     pub fn ssh_connection_string(&self, cx: &App) -> Option<SharedString> {
@@ -1911,7 +1911,7 @@ impl Project {
             return Some(ssh_state.read(cx).connection_string().into());
         }
 
-        return None;
+        None
     }
 
     pub fn ssh_connection_state(&self, cx: &App) -> Option<remote::ConnectionState> {
@@ -2592,7 +2592,7 @@ impl Project {
         cx: &mut App,
     ) -> OpenLspBufferHandle {
         self.lsp_store.update(cx, |lsp_store, cx| {
-            lsp_store.register_buffer_with_language_servers(&buffer, HashSet::default(), false, cx)
+            lsp_store.register_buffer_with_language_servers(buffer, HashSet::default(), false, cx)
         })
     }
 
@@ -4139,7 +4139,7 @@ impl Project {
                 }
             })
         } else {
-            return Task::ready(None);
+            Task::ready(None)
         }
     }
 
@@ -4167,15 +4167,14 @@ impl Project {
             })
             .collect();
 
-        cx.spawn(async move |_, mut cx| {
+        cx.spawn(async move |_, cx| {
             if let Some(buffer_worktree_id) = buffer_worktree_id {
                 if let Some((worktree, _)) = worktrees_with_ids
                     .iter()
                     .find(|(_, id)| *id == buffer_worktree_id)
                 {
                     for candidate in candidates.iter() {
-                        if let Some(path) =
-                            Self::resolve_path_in_worktree(&worktree, candidate, &mut cx)
+                        if let Some(path) = Self::resolve_path_in_worktree(worktree, candidate, cx)
                         {
                             return Some(path);
                         }
@@ -4187,9 +4186,7 @@ impl Project {
                     continue;
                 }
                 for candidate in candidates.iter() {
-                    if let Some(path) =
-                        Self::resolve_path_in_worktree(&worktree, candidate, &mut cx)
-                    {
+                    if let Some(path) = Self::resolve_path_in_worktree(&worktree, candidate, cx) {
                         return Some(path);
                     }
                 }
@@ -5197,7 +5194,7 @@ impl<'a> fuzzy::PathMatchCandidateSet<'a> for PathMatchCandidateSet {
     }
 
     fn prefix(&self) -> Arc<str> {
-        if self.snapshot.root_entry().map_or(false, |e| e.is_file()) {
+        if self.snapshot.root_entry().is_some_and(|e| e.is_file()) {
             self.snapshot.root_name().into()
         } else if self.include_root_name {
             format!("{}{}", self.snapshot.root_name(), std::path::MAIN_SEPARATOR).into()
@@ -5329,7 +5326,7 @@ impl ResolvedPath {
 
     pub fn project_path(&self) -> Option<&ProjectPath> {
         match self {
-            Self::ProjectPath { project_path, .. } => Some(&project_path),
+            Self::ProjectPath { project_path, .. } => Some(project_path),
             _ => None,
         }
     }
@@ -5399,7 +5396,7 @@ impl Completion {
                 _ => None,
             })
             .unwrap_or(DEFAULT_KIND_KEY);
-        (kind_key, &self.label.filter_text())
+        (kind_key, self.label.filter_text())
     }
 
     /// Whether this completion is a snippet.
@@ -5407,7 +5404,7 @@ impl Completion {
         self.source
             // `lsp::CompletionListItemDefaults` has `insert_text_format` field
             .lsp_completion(true)
-            .map_or(false, |lsp_completion| {
+            .is_some_and(|lsp_completion| {
                 lsp_completion.insert_text_format == Some(lsp::InsertTextFormat::SNIPPET)
             })
     }
@@ -5463,9 +5460,10 @@ fn provide_inline_values(
                     .collect::<String>();
                 let point = snapshot.offset_to_point(capture_range.end);
 
-                while scopes.last().map_or(false, |scope: &Range<_>| {
-                    !scope.contains(&capture_range.start)
-                }) {
+                while scopes
+                    .last()
+                    .is_some_and(|scope: &Range<_>| !scope.contains(&capture_range.start))
+                {
                     scopes.pop();
                 }
 
@@ -5475,7 +5473,7 @@ fn provide_inline_values(
 
                 let scope = if scopes
                     .last()
-                    .map_or(true, |scope| !scope.contains(&active_debug_line_offset))
+                    .is_none_or(|scope| !scope.contains(&active_debug_line_offset))
                 {
                     VariableScope::Global
                 } else {

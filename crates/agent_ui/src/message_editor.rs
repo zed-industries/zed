@@ -117,7 +117,7 @@ pub(crate) fn create_editor(
         let mut editor = Editor::new(
             editor::EditorMode::AutoHeight {
                 min_lines,
-                max_lines: max_lines,
+                max_lines,
             },
             buffer,
             None,

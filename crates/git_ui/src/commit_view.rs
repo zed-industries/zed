@@ -92,7 +92,6 @@ impl CommitView {
                             });
                             if let Some(ix) = ix {
                                 pane.activate_item(ix, true, true, window, cx);
-                                return;
                             } else {
                                 pane.add_item(Box::new(commit_view), true, true, None, window, cx);
                             }

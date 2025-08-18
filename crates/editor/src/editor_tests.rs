@@ -23631,7 +23631,7 @@ pub fn handle_completion_request(
                     complete_from_position
                 );
                 Ok(Some(lsp::CompletionResponse::List(lsp::CompletionList {
-                    is_incomplete: is_incomplete,
+                    is_incomplete,
                     item_defaults: None,
                     items: completions
                         .iter()

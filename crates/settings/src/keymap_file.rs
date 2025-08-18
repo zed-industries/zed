@@ -1056,10 +1056,10 @@ mod tests {
 
     #[track_caller]
     fn parse_keystrokes(keystrokes: &str) -> Vec<Keystroke> {
-        return keystrokes
+        keystrokes
             .split(' ')
             .map(|s| Keystroke::parse(s).expect("Keystrokes valid"))
-            .collect();
+            .collect()
     }
 
     #[test]

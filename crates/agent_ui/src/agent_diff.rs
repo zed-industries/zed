@@ -1060,7 +1060,7 @@ impl ToolbarItemView for AgentDiffToolbar {
         }
 
         self.active_item = None;
-        return self.location(cx);
+        self.location(cx)
     }
 
     fn pane_focus_update(
@@ -1869,7 +1869,7 @@ impl AgentDiff {
             }
         }
 
-        return Some(Task::ready(Ok(())));
+        Some(Task::ready(Ok(())))
     }
 }
 

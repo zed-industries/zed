@@ -2502,8 +2502,8 @@ pub(crate) fn parse_completion_text_edit(
     };
 
     Some(ParsedCompletionEdit {
-        insert_range: insert_range,
-        replace_range: replace_range,
+        insert_range,
+        replace_range,
         new_text: new_text.clone(),
     })
 }
@@ -3449,9 +3449,7 @@ impl LspCommand for GetCodeLens {
             .server_capabilities
             .code_lens_provider
             .as_ref()
-            .map_or(false, |code_lens_options| {
-                code_lens_options.resolve_provider.unwrap_or(false)
-            })
+            .is_some_and(|code_lens_options| code_lens_options.resolve_provider.unwrap_or(false))
     }
 
     fn to_lsp(

@@ -173,7 +173,7 @@ impl UserMessage {
                                 &mut symbol_context,
                                 "\n{}",
                                 MarkdownCodeBlock {
-                                    tag: &codeblock_tag(&abs_path, None),
+                                    tag: &codeblock_tag(abs_path, None),
                                     text: &content.to_string(),
                                 }
                             )
@@ -189,8 +189,8 @@ impl UserMessage {
                                 &mut rules_context,
                                 "\n{}",
                                 MarkdownCodeBlock {
-                                    tag: &codeblock_tag(&path, Some(line_range)),
-                                    text: &content
+                                    tag: &codeblock_tag(path, Some(line_range)),
+                                    text: content
                                 }
                             )
                             .ok();
@@ -207,7 +207,7 @@ impl UserMessage {
                                 "\n{}",
                                 MarkdownCodeBlock {
                                     tag: "",
-                                    text: &content
+                                    text: content
                                 }
                             )
                             .ok();
@@ -871,7 +871,7 @@ impl Thread {
 
         // Ensure the last message ends in the current tool use
         let last_message = self.pending_message();
-        let push_new_tool_use = last_message.content.last_mut().map_or(true, |content| {
+        let push_new_tool_use = last_message.content.last_mut().is_none_or(|content| {
             if let AgentMessageContent::ToolUse(last_tool_use) = content {
                 if last_tool_use.id == tool_use.id {
                     *last_tool_use = tool_use.clone();

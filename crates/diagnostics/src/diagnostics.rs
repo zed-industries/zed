@@ -542,7 +542,7 @@ impl ProjectDiagnosticsEditor {
                     return true;
                 }
                 this.diagnostics.insert(buffer_id, diagnostics.clone());
-                return false;
+                false
             })?;
             if unchanged {
                 return Ok(());

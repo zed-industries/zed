@@ -77,7 +77,7 @@ impl McpServer {
                 socket_path,
                 _server_task: server_task,
                 tools,
-                handlers: handlers,
+                handlers,
             })
         })
     }

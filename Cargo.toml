@@ -818,15 +818,32 @@ single_range_in_vec_init = "allow"
 # allow all of those, for now.
 style = { level = "allow", priority = -1 }
 
-# Temporary list of style lints that we've fixed so far.
-module_inception = { level = "deny" }
-question_mark = { level = "deny" }
-redundant_closure = { level = "deny" }
-declare_interior_mutable_const = { level = "deny" }
+# Temporary list of warn-by-default style lints that we've fixed so far.
+# Once we are done migrating, remove the `style = { level = "allow", priority = -1 }`
+# line above and this list below.
+module_inception = "deny"
+question_mark = "deny"
+redundant_closure = "deny"
+declare_interior_mutable_const = "deny"
+needless_return = "warn"
+unused_unit = "warn"
+redundant_field_names = "warn"
+redundant_static_lifetimes = "warn"
+legacy_numeric_constants = "warn"
+doc_lazy_continuation = "warn"
+inherent_to_string = "warn"
+
 # Individual rules that have violations in the codebase:
 type_complexity = "allow"
+# We have a lot of violations for these two and sometimes it is a conscious choice
+# for readability, so we keep them allowed for now
+collapsible_if = "allow"
+collapsible_else_if = "allow"
+# Use by our protocol messages
+enum_variant_names = "allow"
 # We often return trait objects from `new` functions.
-new_ret_no_self = { level = "allow" }
+new_ret_no_self = "allow"
+new_without_default = "allow"
 # We have a few `next` functions that differ in lifetimes
 # compared to Iterator::next. Yet, clippy complains about those.
 should_implement_trait = { level = "allow" }

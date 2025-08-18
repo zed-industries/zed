@@ -724,7 +724,7 @@ impl EditorElement {
                         ColumnarMode::FromMouse => true,
                         ColumnarMode::FromSelection => false,
                     },
-                    mode: mode,
+                    mode,
                     goal_column: point_for_position.exact_unclipped.column(),
                 },
                 window,

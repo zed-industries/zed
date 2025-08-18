@@ -1146,13 +1146,13 @@ impl MultiBuffer {
 
     pub fn last_transaction_id(&self, cx: &App) -> Option<TransactionId> {
         if let Some(buffer) = self.as_singleton() {
-            return buffer
+            buffer
                 .read(cx)
                 .peek_undo_stack()
-                .map(|history_entry| history_entry.transaction_id());
+                .map(|history_entry| history_entry.transaction_id())
         } else {
             let last_transaction = self.history.undo_stack.last()?;
-            return Some(last_transaction.id);
+            Some(last_transaction.id)
         }
     }
 
@@ -1726,7 +1726,7 @@ impl MultiBuffer {
             merged_ranges.push(range.clone());
             counts.push(1);
         }
-        return (merged_ranges, counts);
+        (merged_ranges, counts)
     }
 
     fn update_path_excerpts(
@@ -4655,7 +4655,7 @@ impl MultiBufferSnapshot {
                 return true;
             }
         }
-        return true;
+        true
     }
 
     pub fn prev_non_blank_row(&self, mut row: MultiBufferRow) -> Option<MultiBufferRow> {
@@ -4964,7 +4964,7 @@ impl MultiBufferSnapshot {
         while let Some(replacement) = self.replaced_excerpts.get(&excerpt_id) {
             excerpt_id = *replacement;
         }
-        return excerpt_id;
+        excerpt_id
     }
 
     pub fn summaries_for_anchors<'a, D, I>(&'a self, anchors: I) -> Vec<D>
@@ -5082,9 +5082,9 @@ impl MultiBufferSnapshot {
                 if point == region.range.end.key && region.has_trailing_newline {
                     position.add_assign(&D::from_text_summary(&TextSummary::newline()));
                 }
-                return Some(position);
+                Some(position)
             } else {
-                return Some(D::from_text_summary(&self.text_summary()));
+                Some(D::from_text_summary(&self.text_summary()))
             }
         })
     }
@@ -5651,10 +5651,10 @@ impl MultiBufferSnapshot {
                 .buffer
                 .line_indents_in_row_range(buffer_start_row..buffer_end_row);
             cursor.next();
-            return Some(line_indents.map(move |(buffer_row, indent)| {
+            Some(line_indents.map(move |(buffer_row, indent)| {
                 let row = region.range.start.row + (buffer_row - region.buffer_range.start.row);
                 (MultiBufferRow(row), indent, &region.excerpt.buffer)
-            }));
+            }))
         })
         .flatten()
     }
@@ -5691,10 +5691,10 @@ impl MultiBufferSnapshot {
                 .buffer
                 .reversed_line_indents_in_row_range(buffer_start_row..buffer_end_row);
             cursor.prev();
-            return Some(line_indents.map(move |(buffer_row, indent)| {
+            Some(line_indents.map(move |(buffer_row, indent)| {
                 let row = region.range.start.row + (buffer_row - region.buffer_range.start.row);
                 (MultiBufferRow(row), indent, &region.excerpt.buffer)
-            }));
+            }))
         })
         .flatten()
     }
@@ -6657,7 +6657,7 @@ where
                 buffer_end.add_assign(&buffer_range_len);
                 let start = self.diff_transforms.start().output_dimension.0;
                 let end = self.diff_transforms.end().output_dimension.0;
-                return Some(MultiBufferRegion {
+                Some(MultiBufferRegion {
                     buffer,
                     excerpt,
                     has_trailing_newline: *has_trailing_newline,
@@ -6667,7 +6667,7 @@ where
                     )),
                     buffer_range: buffer_start..buffer_end,
                     range: start..end,
-                });
+                })
             }
             DiffTransform::BufferContent {
                 inserted_hunk_info, ..

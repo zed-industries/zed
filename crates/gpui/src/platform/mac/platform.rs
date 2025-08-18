@@ -790,7 +790,7 @@ impl Platform for MacPlatform {
                                             result.set_file_name(&new_filename);
                                         }
                                     }
-                                    return result;
+                                    result
                                 })
                             }
                         }

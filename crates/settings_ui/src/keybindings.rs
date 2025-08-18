@@ -559,7 +559,7 @@ impl KeymapEditor {
                                 if exact_match {
                                     keystrokes_match_exactly(&keystroke_query, keystrokes)
                                 } else if keystroke_query.len() > keystrokes.len() {
-                                    return false;
+                                    false
                                 } else {
                                     for keystroke_offset in 0..keystrokes.len() {
                                         let mut found_count = 0;
@@ -591,7 +591,7 @@ impl KeymapEditor {
                                             return true;
                                         }
                                     }
-                                    return false;
+                                    false
                                 }
                             })
                     });
@@ -2719,7 +2719,7 @@ impl ActionArgumentsEditor {
                 })
                 .ok();
             }
-            return result;
+            result
         })
         .detach_and_log_err(cx);
         Self {
@@ -2822,7 +2822,7 @@ impl Render for ActionArgumentsEditor {
         self.editor
             .update(cx, |editor, _| editor.set_text_style_refinement(text_style));
 
-        return v_flex().w_full().child(
+        v_flex().w_full().child(
             h_flex()
                 .min_h_8()
                 .min_w_48()
@@ -2835,7 +2835,7 @@ impl Render for ActionArgumentsEditor {
                 .border_color(border_color)
                 .track_focus(&self.focus_handle)
                 .child(self.editor.clone()),
-        );
+        )
     }
 }
 
@@ -2917,7 +2917,7 @@ async fn load_json_language(workspace: WeakEntity<Workspace>, cx: &mut AsyncApp)
         Some(task) => task.await.context("Failed to load JSON language").log_err(),
         None => None,
     };
-    return json_language.unwrap_or_else(|| {
+    json_language.unwrap_or_else(|| {
         Arc::new(Language::new(
             LanguageConfig {
                 name: "JSON".into(),
@@ -2925,7 +2925,7 @@ async fn load_json_language(workspace: WeakEntity<Workspace>, cx: &mut AsyncApp)
             },
             Some(tree_sitter_json::LANGUAGE.into()),
         ))
-    });
+    })
 }
 
 async fn load_keybind_context_language(
@@ -2949,7 +2949,7 @@ async fn load_keybind_context_language(
             .log_err(),
         None => None,
     };
-    return language.unwrap_or_else(|| {
+    language.unwrap_or_else(|| {
         Arc::new(Language::new(
             LanguageConfig {
                 name: "Zed Keybind Context".into(),
@@ -2957,7 +2957,7 @@ async fn load_keybind_context_language(
             },
             Some(tree_sitter_rust::LANGUAGE.into()),
         ))
-    });
+    })
 }
 
 async fn save_keybinding_update(
@@ -3137,7 +3137,7 @@ fn collect_contexts_from_assets() -> Vec<SharedString> {
     let mut contexts = contexts.into_iter().collect::<Vec<_>>();
     contexts.sort();
 
-    return contexts;
+    contexts
 }
 
 impl SerializableItem for KeymapEditor {

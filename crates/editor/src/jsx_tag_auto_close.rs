@@ -87,9 +87,9 @@ pub(crate) fn should_auto_close(
         });
     }
     if to_auto_edit.is_empty() {
-        return None;
+        None
     } else {
-        return Some(to_auto_edit);
+        Some(to_auto_edit)
     }
 }
 
@@ -187,7 +187,7 @@ pub(crate) fn generate_auto_close_edits(
                     let range = node_name.byte_range();
                     return buffer.text_for_range(range).equals_str(name);
                 }
-                return is_empty;
+                is_empty
             };
 
             let tree_root_node = {
@@ -264,8 +264,7 @@ pub(crate) fn generate_auto_close_edits(
             }
 
             let is_after_open_tag = |node: &Node| {
-                return node.start_byte() < open_tag.start_byte()
-                    && node.end_byte() < open_tag.start_byte();
+                node.start_byte() < open_tag.start_byte() && node.end_byte() < open_tag.start_byte()
             };
 
             // perf: use cursor for more efficient traversal
@@ -304,7 +303,7 @@ pub(crate) fn generate_auto_close_edits(
         let edit_range = edit_anchor..edit_anchor;
         edits.push((edit_range, format!("</{}>", tag_name)));
     }
-    return Ok(edits);
+    Ok(edits)
 }
 
 pub(crate) fn refresh_enabled_in_any_buffer(
@@ -370,7 +369,7 @@ pub(crate) fn construct_initial_buffer_versions_map<
             initial_buffer_versions.insert(buffer_id, buffer_version);
         }
     }
-    return initial_buffer_versions;
+    initial_buffer_versions
 }
 
 pub(crate) fn handle_from(

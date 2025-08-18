@@ -494,7 +494,7 @@ impl BreakpointList {
     fn toggle_data_breakpoint(&mut self, id: &str, cx: &mut Context<Self>) {
         if let Some(session) = &self.session {
             session.update(cx, |this, cx| {
-                this.toggle_data_breakpoint(&id, cx);
+                this.toggle_data_breakpoint(id, cx);
             });
         }
     }
@@ -502,7 +502,7 @@ impl BreakpointList {
     fn toggle_exception_breakpoint(&mut self, id: &str, cx: &mut Context<Self>) {
         if let Some(session) = &self.session {
             session.update(cx, |this, cx| {
-                this.toggle_exception_breakpoint(&id, cx);
+                this.toggle_exception_breakpoint(id, cx);
             });
             cx.notify();
             const EXCEPTION_SERIALIZATION_INTERVAL: Duration = Duration::from_secs(1);
@@ -538,7 +538,7 @@ impl BreakpointList {
             cx.background_executor()
                 .spawn(async move { KEY_VALUE_STORE.write_kvp(key, value?).await })
         } else {
-            return Task::ready(Result::Ok(()));
+            Task::ready(Result::Ok(()))
         }
     }
 
@@ -977,7 +977,7 @@ impl LineBreakpoint {
                     props,
                     breakpoint: BreakpointEntry {
                         kind: BreakpointEntryKind::LineBreakpoint(self.clone()),
-                        weak: weak,
+                        weak,
                     },
                     is_selected,
                     focus_handle,
@@ -1189,7 +1189,7 @@ impl ExceptionBreakpoint {
                     props,
                     breakpoint: BreakpointEntry {
                         kind: BreakpointEntryKind::ExceptionBreakpoint(self.clone()),
-                        weak: weak,
+                        weak,
                     },
                     is_selected,
                     focus_handle,

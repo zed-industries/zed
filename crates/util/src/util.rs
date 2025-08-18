@@ -303,7 +303,7 @@ pub fn get_shell_safe_zed_path() -> anyhow::Result<String> {
     let zed_path_escaped =
         shlex::try_quote(&zed_path).context("Failed to shell-escape Zed executable path.")?;
 
-    return Ok(zed_path_escaped.to_string());
+    Ok(zed_path_escaped.to_string())
 }
 
 #[cfg(unix)]

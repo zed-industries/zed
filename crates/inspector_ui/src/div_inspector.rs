@@ -93,8 +93,8 @@ impl DivInspector {
                     Ok((json_style_buffer, rust_style_buffer)) => {
                         this.update_in(cx, |this, window, cx| {
                             this.state = State::BuffersLoaded {
-                                json_style_buffer: json_style_buffer,
-                                rust_style_buffer: rust_style_buffer,
+                                json_style_buffer,
+                                rust_style_buffer,
                             };
 
                             // Initialize editors immediately instead of waiting for

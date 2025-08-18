@@ -287,7 +287,7 @@ impl KeyBindingContextPredicate {
                         return false;
                     }
                 }
-                return true;
+                true
             }
             // Workspace > Pane > Editor
             //
@@ -305,7 +305,7 @@ impl KeyBindingContextPredicate {
                         return true;
                     }
                 }
-                return false;
+                false
             }
             Self::And(left, right) => {
                 left.eval_inner(contexts, all_contexts) && right.eval_inner(contexts, all_contexts)

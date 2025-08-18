@@ -132,12 +132,12 @@ impl AudioStack {
             drop(transmit_task);
             drop(capture_task);
         });
-        return Ok((
+        Ok((
             super::LocalAudioTrack(track),
             AudioStream::Output {
                 _drop: Box::new(on_drop),
             },
-        ));
+        ))
     }
 
     fn start_output(&self) -> Arc<Task<()>> {

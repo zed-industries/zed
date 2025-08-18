@@ -185,7 +185,7 @@ impl Render for EditPredictionButton {
                 let this = cx.entity();
                 let fs = self.fs.clone();
 
-                return div().child(
+                div().child(
                     PopoverMenu::new("supermaven")
                         .menu(move |window, cx| match &status {
                             SupermavenButtonStatus::NeedsActivation(activate_url) => {
@@ -230,7 +230,7 @@ impl Render for EditPredictionButton {
                             },
                         )
                         .with_handle(self.popover_menu_handle.clone()),
-                );
+                )
             }
 
             EditPredictionProvider::Zed => {

@@ -113,10 +113,6 @@ impl SanitizedPath {
         &self.0
     }
 
-    pub fn to_string(&self) -> String {
-        self.0.to_string_lossy().to_string()
-    }
-
     pub fn to_glob_string(&self) -> String {
         #[cfg(target_os = "windows")]
         {
@@ -134,6 +130,12 @@ impl SanitizedPath {
 
     pub fn strip_prefix(&self, base: &Self) -> Result<&Path, StripPrefixError> {
         self.0.strip_prefix(base.as_path())
+    }
+}
+
+impl ToString for SanitizedPath {
+    fn to_string(&self) -> String {
+        self.0.to_string_lossy().to_string()
     }
 }
 
@@ -220,10 +222,6 @@ impl RemotePathBuf {
         Self::new(path_buf, style)
     }
 
-    pub fn to_string(&self) -> String {
-        self.string.clone()
-    }
-
     #[cfg(target_os = "windows")]
     pub fn to_proto(self) -> String {
         match self.path_style() {
@@ -252,6 +250,12 @@ impl RemotePathBuf {
         self.inner
             .parent()
             .map(|p| RemotePathBuf::new(p.to_path_buf(), self.style))
+    }
+}
+
+impl ToString for RemotePathBuf {
+    fn to_string(&self) -> String {
+        self.string.clone()
     }
 }
 
@@ -1215,11 +1219,11 @@ mod tests {
 
             // Verify iterators advanced correctly
             assert!(
-                !a_iter.next().map_or(false, |c| c.is_ascii_digit()),
+                !a_iter.next().is_some_and(|c| c.is_ascii_digit()),
                 "Iterator a should have consumed all digits"
             );
             assert!(
-                !b_iter.next().map_or(false, |c| c.is_ascii_digit()),
+                !b_iter.next().is_some_and(|c| c.is_ascii_digit()),
                 "Iterator b should have consumed all digits"
             );
 

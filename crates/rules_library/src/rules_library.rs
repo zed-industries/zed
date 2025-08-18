@@ -49,7 +49,7 @@ actions!(
     ]
 );
 
-const BUILT_IN_TOOLTIP_TEXT: &'static str = concat!(
+const BUILT_IN_TOOLTIP_TEXT: &str = concat!(
     "This rule supports special functionality.\n",
     "It's read-only, but you can remove it from your default rules."
 );

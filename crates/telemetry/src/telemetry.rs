@@ -55,7 +55,6 @@ macro_rules! serialize_property {
 pub fn send_event(event: Event) {
     if let Some(queue) = TELEMETRY_QUEUE.get() {
         queue.unbounded_send(event).ok();
-        return;
     }
 }
 

@@ -295,9 +295,9 @@ fn replace_value_in_json_text(
     }
 }
 
-const TS_DOCUMENT_KIND: &'static str = "document";
-const TS_ARRAY_KIND: &'static str = "array";
-const TS_COMMENT_KIND: &'static str = "comment";
+const TS_DOCUMENT_KIND: &str = "document";
+const TS_ARRAY_KIND: &str = "array";
+const TS_COMMENT_KIND: &str = "comment";
 
 pub fn replace_top_level_array_value_in_json_text(
     text: &str,
@@ -385,7 +385,7 @@ pub fn replace_top_level_array_value_in_json_text(
                 remove_range.start = cursor.node().range().start_byte;
             }
         }
-        return Ok((remove_range, String::new()));
+        Ok((remove_range, String::new()))
     } else {
         let (mut replace_range, mut replace_value) =
             replace_value_in_json_text(value_str, key_path, tab_size, new_value, replace_key);
@@ -406,7 +406,7 @@ pub fn replace_top_level_array_value_in_json_text(
             }
         }
 
-        return Ok((replace_range, replace_value));
+        Ok((replace_range, replace_value))
     }
 }
 
@@ -528,7 +528,7 @@ pub fn append_top_level_array_value_in_json_text(
         let descendant_index = cursor.descendant_index();
         let res = cursor.goto_first_child() && cursor.node().kind() == kind;
         cursor.goto_descendant(descendant_index);
-        return res;
+        res
     }
 }
 

@@ -29,7 +29,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 use util::ResultExt;
 
-const RULES_FILE_NAMES: [&'static str; 9] = [
+const RULES_FILE_NAMES: [&str; 9] = [
     ".rules",
     ".cursorrules",
     ".windsurfrules",
@@ -91,7 +91,7 @@ impl LanguageModels {
         for provider in &providers {
             for model in provider.recommended_models(cx) {
                 recommended_models.insert(model.id());
-                recommended.push(Self::map_language_model_to_info(&model, &provider));
+                recommended.push(Self::map_language_model_to_info(&model, provider));
             }
         }
         if !recommended.is_empty() {

@@ -947,7 +947,7 @@ impl VariableList {
     #[track_caller]
     #[cfg(test)]
     pub(crate) fn assert_visual_entries(&self, expected: Vec<&str>) {
-        const INDENT: &'static str = "    ";
+        const INDENT: &str = "    ";
 
         let entries = &self.entries;
         let mut visual_entries = Vec::with_capacity(entries.len());
@@ -1289,7 +1289,7 @@ impl VariableList {
                             }),
                         )
                         .child(self.render_variable_value(
-                            &entry,
+                            entry,
                             &variable_color,
                             watcher.value.to_string(),
                             cx,
@@ -1494,7 +1494,7 @@ impl VariableList {
                             }),
                         )
                         .child(self.render_variable_value(
-                            &variable,
+                            variable,
                             &variable_color,
                             dap.value.clone(),
                             cx,

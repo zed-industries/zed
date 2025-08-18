@@ -731,7 +731,7 @@ impl<const COLS: usize> ColumnWidths<COLS> {
         }
         widths[col_idx] = widths[col_idx] + (diff - diff_remaining);
 
-        return diff_remaining;
+        diff_remaining
     }
 }
 
@@ -801,7 +801,7 @@ impl<const COLS: usize> Table<COLS> {
     ) -> Self {
         self.rows = TableContents::UniformList(UniformListData {
             element_id: id.into(),
-            row_count: row_count,
+            row_count,
             render_item_fn: Box::new(render_item_fn),
         });
         self

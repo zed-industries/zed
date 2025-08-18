@@ -1464,7 +1464,7 @@ pub(crate) fn current_modifiers() -> Modifiers {
 #[inline]
 pub(crate) fn current_capslock() -> Capslock {
     let on = unsafe { GetKeyState(VK_CAPITAL.0 as i32) & 1 } > 0;
-    Capslock { on: on }
+    Capslock { on }
 }
 
 fn get_client_area_insets(

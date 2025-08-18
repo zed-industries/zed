@@ -728,7 +728,7 @@ impl PickerDelegate for OpenPathDelegate {
                         .child(LabelLike::new().child(label_with_highlights)),
                 )
             }
-            DirectoryState::None { .. } => return None,
+            DirectoryState::None { .. } => None,
         }
     }
 

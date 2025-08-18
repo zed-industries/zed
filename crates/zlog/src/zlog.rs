@@ -242,7 +242,7 @@ pub mod private {
         let Some((crate_name, _)) = module_path.split_at_checked(index) else {
             return module_path;
         };
-        return crate_name;
+        crate_name
     }
 
     pub const fn scope_new(scopes: &[&'static str]) -> Scope {
@@ -264,13 +264,13 @@ pub mod private {
     }
 
     pub fn scope_to_alloc(scope: &Scope) -> ScopeAlloc {
-        return scope.map(|s| s.to_string());
+        scope.map(|s| s.to_string())
     }
 }
 
 pub type Scope = [&'static str; SCOPE_DEPTH_MAX];
 pub type ScopeAlloc = [String; SCOPE_DEPTH_MAX];
-const SCOPE_STRING_SEP_STR: &'static str = ".";
+const SCOPE_STRING_SEP_STR: &str = ".";
 const SCOPE_STRING_SEP_CHAR: char = '.';
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -321,18 +321,18 @@ impl Drop for Timer {
 impl Timer {
     #[must_use = "Timer will stop when dropped, the result of this function should be saved in a variable prefixed with `_` if it should stop when dropped"]
     pub fn new(logger: Logger, name: &'static str) -> Self {
-        return Self {
+        Self {
             logger,
             name,
             start_time: std::time::Instant::now(),
             warn_if_longer_than: None,
             done: false,
-        };
+        }
     }
 
     pub fn warn_if_gt(mut self, warn_limit: std::time::Duration) -> Self {
         self.warn_if_longer_than = Some(warn_limit);
-        return self;
+        self
     }
 
     pub fn end(mut self) {

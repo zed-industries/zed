@@ -1871,7 +1871,7 @@ impl SshRemoteConnection {
             .await?;
         self.extract_server_binary(&dst_path, &tmp_path_gz, delegate, cx)
             .await?;
-        return Ok(dst_path);
+        Ok(dst_path)
     }
 
     async fn download_binary_on_server(

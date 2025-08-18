@@ -458,7 +458,7 @@ impl DispatchTree {
             .keymap
             .borrow()
             .bindings_for_input(input, &context_stack);
-        return (bindings, partial, context_stack);
+        (bindings, partial, context_stack)
     }
 
     /// dispatch_key processes the keystroke

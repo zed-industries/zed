@@ -90,8 +90,8 @@ fn render_theme_section(tab_index: &mut isize, cx: &mut App) -> impl IntoElement
         };
         let current_theme_name = theme_selection.theme(appearance);
 
-        const LIGHT_THEMES: [&'static str; 3] = ["One Light", "Ayu Light", "Gruvbox Light"];
-        const DARK_THEMES: [&'static str; 3] = ["One Dark", "Ayu Dark", "Gruvbox Dark"];
+        const LIGHT_THEMES: [&str; 3] = ["One Light", "Ayu Light", "Gruvbox Light"];
+        const DARK_THEMES: [&str; 3] = ["One Dark", "Ayu Dark", "Gruvbox Dark"];
         const FAMILY_NAMES: [SharedString; 3] = [
             SharedString::new_static("One"),
             SharedString::new_static("Ayu"),

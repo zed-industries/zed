@@ -61,13 +61,13 @@ impl MouseContextMenu {
             source,
             offset: position - (source_position + content_origin),
         };
-        return Some(MouseContextMenu::new(
+        Some(MouseContextMenu::new(
             editor,
             menu_position,
             context_menu,
             window,
             cx,
-        ));
+        ))
     }
 
     pub(crate) fn new(

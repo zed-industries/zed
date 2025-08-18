@@ -94,9 +94,7 @@ impl<'a, S: Summary, D: Dimension<'a, S> + Ord> SeekTarget<'a, S, D> for D {
 }
 
 impl<'a, T: Summary> Dimension<'a, T> for () {
-    fn zero(_: &T::Context) -> Self {
-        ()
-    }
+    fn zero(_: &T::Context) -> Self {}
 
     fn add_summary(&mut self, _: &'a T, _: &T::Context) {}
 }

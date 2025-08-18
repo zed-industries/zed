@@ -1407,7 +1407,7 @@ impl Buffer {
                     })
                     .unwrap_or(true);
                 let result = any_sub_ranges_contain_range;
-                return result;
+                result
             })
             .last()
             .map(|info| info.language.clone())
@@ -3296,8 +3296,7 @@ impl BufferSnapshot {
         range: Range<D>,
     ) -> Option<SyntaxLayer<'_>> {
         let range = range.to_offset(self);
-        return self
-            .syntax
+        self.syntax
             .layers_for_range(range, &self.text, false)
             .max_by(|a, b| {
                 if a.depth != b.depth {
@@ -3307,7 +3306,7 @@ impl BufferSnapshot {
                 } else {
                     a.node().end_byte().cmp(&b.node().end_byte()).reverse()
                 }
-            });
+            })
     }
 
     /// Returns the main [`Language`].
@@ -3544,7 +3543,7 @@ impl BufferSnapshot {
             }
         }
 
-        return Some(cursor.node());
+        Some(cursor.node())
     }
 
     /// Returns the outline for the buffer.

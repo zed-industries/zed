@@ -103,7 +103,6 @@ impl Vim {
                 window.dispatch_keystroke(keystroke, cx);
             });
         }
-        return;
     }
 
     pub fn handle_literal_input(

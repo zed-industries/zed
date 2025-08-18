@@ -5,7 +5,6 @@ use std::{
     borrow::Cow,
     path::{Path, PathBuf},
     sync::Arc,
-    usize,
 };
 use tasks_ui::{TaskOverrides, TasksModal};
 
@@ -413,7 +412,7 @@ impl NewProcessModal {
         let Some(adapter) = self.debugger.as_ref() else {
             return;
         };
-        let scenario = self.debug_scenario(&adapter, cx);
+        let scenario = self.debug_scenario(adapter, cx);
         cx.spawn_in(window, async move |this, cx| {
             let scenario = scenario.await.context("no scenario to save")?;
             let worktree_id = task_contexts
@@ -659,12 +658,7 @@ impl Render for NewProcessModal {
                             this.mode = NewProcessMode::Attach;
 
                             if let Some(debugger) = this.debugger.as_ref() {
-                                Self::update_attach_picker(
-                                    &this.attach_mode,
-                                    &debugger,
-                                    window,
-                                    cx,
-                                );
+                                Self::update_attach_picker(&this.attach_mode, debugger, window, cx);
                             }
                             this.mode_focus_handle(cx).focus(window);
                             cx.notify();
@@ -1083,7 +1077,7 @@ impl DebugDelegate {
                     .into_iter()
                     .map(|(scenario, context)| {
                         let (kind, scenario) =
-                            Self::get_scenario_kind(&languages, &dap_registry, scenario);
+                            Self::get_scenario_kind(&languages, dap_registry, scenario);
                         (kind, scenario, Some(context))
                     })
                     .chain(
@@ -1100,7 +1094,7 @@ impl DebugDelegate {
                             .filter(|(_, scenario)| valid_adapters.contains(&scenario.adapter))
                             .map(|(kind, scenario)| {
                                 let (language, scenario) =
-                                    Self::get_scenario_kind(&languages, &dap_registry, scenario);
+                                    Self::get_scenario_kind(&languages, dap_registry, scenario);
                                 (language.or(Some(kind)), scenario, None)
                             }),
                     )

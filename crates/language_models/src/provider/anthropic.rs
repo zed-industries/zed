@@ -791,7 +791,7 @@ impl AnthropicEventMapper {
                             ))];
                         }
                     }
-                    return vec![];
+                    vec![]
                 }
             },
             Event::ContentBlockStop { index } => {

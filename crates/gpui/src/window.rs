@@ -504,7 +504,7 @@ impl HitboxId {
                 return true;
             }
         }
-        return false;
+        false
     }
 
     /// Checks if the hitbox with this ID contains the mouse and should handle scroll events.
@@ -4468,7 +4468,7 @@ impl Window {
                 }
             }
         }
-        return None;
+        None
     }
 }
 

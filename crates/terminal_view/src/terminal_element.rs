@@ -1481,7 +1481,7 @@ pub fn is_blank(cell: &IndexedCell) -> bool {
         return false;
     }
 
-    return true;
+    true
 }
 
 fn to_highlighted_range_lines(

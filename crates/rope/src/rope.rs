@@ -817,7 +817,7 @@ impl<'a> Chunks<'a> {
             }
         }
 
-        return true;
+        true
     }
 }
 

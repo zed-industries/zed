@@ -645,7 +645,7 @@ impl ProjectItemRegistry {
             .build_project_item_for_path_fns
             .iter()
             .rev()
-            .find_map(|open_project_item| open_project_item(&project, &path, window, cx))
+            .find_map(|open_project_item| open_project_item(project, path, window, cx))
         else {
             return Task::ready(Err(anyhow!("cannot open file {:?}", path.path)));
         };
@@ -1788,7 +1788,7 @@ impl Workspace {
                             .insert(project_path.clone());
                     }
 
-                    history.insert(project_path, (fs_path, std::usize::MAX));
+                    history.insert(project_path, (fs_path, usize::MAX));
                 }
             }
         }
@@ -1808,7 +1808,7 @@ impl Workspace {
                             .max_by(|b1, b2| b1.worktree_id.cmp(&b2.worktree_id))
                     });
 
-                latest_project_path_opened.map_or(true, |path| path == history_path)
+                latest_project_path_opened.is_none_or(|path| path == history_path)
             })
     }
 
@@ -2289,7 +2289,7 @@ impl Workspace {
             // the current session.
             if close_intent != CloseIntent::Quit
                 && !save_last_workspace
-                && save_result.as_ref().map_or(false, |&res| res)
+                && save_result.as_ref().is_ok_and(|&res| res)
             {
                 this.update_in(cx, |this, window, cx| this.remove_from_session(window, cx))?
                     .await;
@@ -2429,7 +2429,7 @@ impl Workspace {
                         );
                         window.prompt(
                             PromptLevel::Warning,
-                            &"Do you want to save all changes in the following files?",
+                            "Do you want to save all changes in the following files?",
                             Some(&detail),
                             &["Save all", "Discard all", "Cancel"],
                             cx,
@@ -2764,9 +2764,9 @@ impl Workspace {
         let item = pane.read(cx).active_item();
         let pane = pane.downgrade();
 
-        window.spawn(cx, async move |mut cx| {
+        window.spawn(cx, async move |cx| {
             if let Some(item) = item {
-                Pane::save_item(project, &pane, item.as_ref(), save_intent, &mut cx)
+                Pane::save_item(project, &pane, item.as_ref(), save_intent, cx)
                     .await
                     .map(|_| ())
             } else {
@@ -3886,14 +3886,14 @@ impl Workspace {
                     pane.track_alternate_file_items();
                 });
                 if *local {
-                    self.unfollow_in_pane(&pane, window, cx);
+                    self.unfollow_in_pane(pane, window, cx);
                 }
                 serialize_workspace = *focus_changed || pane != self.active_pane();
                 if pane == self.active_pane() {
                     self.active_item_path_changed(window, cx);
                     self.update_active_view_for_followers(window, cx);
                 } else if *local {
-                    self.set_active_pane(&pane, window, cx);
+                    self.set_active_pane(pane, window, cx);
                 }
             }
             pane::Event::UserSavedItem { item, save_intent } => {
@@ -5905,7 +5905,6 @@ impl Workspace {
 
     pub fn cancel(&mut self, _: &menu::Cancel, window: &mut Window, cx: &mut Context<Self>) {
         if cx.stop_active_drag(window) {
-            return;
         } else if let Some((notification_id, _)) = self.notifications.pop() {
             dismiss_app_notification(&notification_id, cx);
         } else {
@@ -6112,7 +6111,7 @@ fn open_items(
                         // here is a directory, it was already opened further above
                         // with a `find_or_create_worktree`.
                         if let Ok(task) = abs_path_task {
-                            if task.await.map_or(true, |p| p.is_file()) {
+                            if task.await.is_none_or(|p| p.is_file()) {
                                 return Some((
                                     ix,
                                     workspace
@@ -6988,7 +6987,7 @@ async fn join_channel_internal(
                         && project.visible_worktrees(cx).any(|tree| {
                             tree.read(cx)
                                 .root_entry()
-                                .map_or(false, |entry| entry.is_dir())
+                                .is_some_and(|entry| entry.is_dir())
                         })
                     {
                         Some(workspace.project.clone())
@@ -7179,9 +7178,9 @@ pub fn open_paths(
                 .collect::<Vec<_>>();
 
             cx.update(|cx| {
-                for window in local_workspace_windows(&cx) {
-                    if let Ok(workspace) = window.read(&cx) {
-                        let m = workspace.project.read(&cx).visibility_for_paths(
+                for window in local_workspace_windows(cx) {
+                    if let Ok(workspace) = window.read(cx) {
+                        let m = workspace.project.read(cx).visibility_for_paths(
                             &abs_paths,
                             &all_metadatas,
                             open_options.open_new_workspace == None,
@@ -7338,7 +7337,7 @@ pub fn open_ssh_project_with_new_connection(
 ) -> Task<Result<()>> {
     cx.spawn(async move |cx| {
         let (serialized_ssh_project, workspace_id, serialized_workspace) =
-            serialize_ssh_project(connection_options.clone(), paths.clone(), &cx).await?;
+            serialize_ssh_project(connection_options.clone(), paths.clone(), cx).await?;
 
         let session = match cx
             .update(|cx| {
@@ -7392,7 +7391,7 @@ pub fn open_ssh_project_with_existing_connection(
 ) -> Task<Result<()>> {
     cx.spawn(async move |cx| {
         let (serialized_ssh_project, workspace_id, serialized_workspace) =
-            serialize_ssh_project(connection_options.clone(), paths.clone(), &cx).await?;
+            serialize_ssh_project(connection_options.clone(), paths.clone(), cx).await?;
 
         open_ssh_project_inner(
             project,
@@ -7920,7 +7919,6 @@ fn join_pane_into_active(
     cx: &mut App,
 ) {
     if pane == active_pane {
-        return;
     } else if pane.read(cx).items_len() == 0 {
         pane.update(cx, |_, cx| {
             cx.emit(pane::Event::Remove {
@@ -9169,11 +9167,11 @@ mod tests {
         workspace.update_in(cx, |workspace, window, cx| {
             workspace.add_item_to_active_pane(Box::new(item.clone()), None, false, window, cx);
         });
-        return item;
+        item
     }
 
     fn split_pane(cx: &mut VisualTestContext, workspace: &Entity<Workspace>) -> Entity<Pane> {
-        return workspace.update_in(cx, |workspace, window, cx| {
+        workspace.update_in(cx, |workspace, window, cx| {
             let new_pane = workspace.split_pane(
                 workspace.active_pane().clone(),
                 SplitDirection::Right,
@@ -9181,7 +9179,7 @@ mod tests {
                 cx,
             );
             new_pane
-        });
+        })
     }
 
     #[gpui::test]

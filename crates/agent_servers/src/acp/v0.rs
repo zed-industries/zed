@@ -148,7 +148,7 @@ impl acp_old::Client for OldAcpClientDelegate {
 
         Ok(acp_old::RequestToolCallConfirmationResponse {
             id: acp_old::ToolCallId(old_acp_id),
-            outcome: outcome,
+            outcome,
         })
     }
 
@@ -265,7 +265,7 @@ impl acp_old::Client for OldAcpClientDelegate {
 
 fn into_new_tool_call(id: acp::ToolCallId, request: acp_old::PushToolCallParams) -> acp::ToolCall {
     acp::ToolCall {
-        id: id,
+        id,
         title: request.label,
         kind: acp_kind_from_old_icon(request.icon),
         status: acp::ToolCallStatus::InProgress,

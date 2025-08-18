@@ -22,7 +22,7 @@ use project::{
 };
 use settings::Settings;
 use std::fmt::Write;
-use std::{cell::RefCell, ops::Range, rc::Rc, usize};
+use std::{cell::RefCell, ops::Range, rc::Rc};
 use theme::{Theme, ThemeSettings};
 use ui::{ContextMenu, Divider, PopoverMenu, SplitButton, Tooltip, prelude::*};
 use util::ResultExt;
@@ -697,7 +697,7 @@ impl ConsoleQueryBarCompletionProvider {
         new_bytes: &[u8],
         snapshot: &TextBufferSnapshot,
     ) -> Range<Anchor> {
-        let buffer_offset = buffer_position.to_offset(&snapshot);
+        let buffer_offset = buffer_position.to_offset(snapshot);
         let buffer_bytes = &buffer_text.as_bytes()[0..buffer_offset];
 
         let mut prefix_len = 0;

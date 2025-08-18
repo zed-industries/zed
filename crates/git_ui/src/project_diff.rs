@@ -329,14 +329,14 @@ impl ProjectDiff {
             })
             .ok();
 
-        return ButtonStates {
+        ButtonStates {
             stage: has_unstaged_hunks,
             unstage: has_staged_hunks,
             prev_next,
             selection,
             stage_all,
             unstage_all,
-        };
+        }
     }
 
     fn handle_editor_event(
