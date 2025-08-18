@@ -3,7 +3,6 @@ pub mod tools;
 
 use collections::HashMap;
 use context_server::listener::McpServerTool;
-use language_model::LanguageModelRegistry;
 use language_models::provider::anthropic::AnthropicLanguageModelProvider;
 use project::Project;
 use settings::SettingsStore;
@@ -13,7 +12,6 @@ use std::cell::RefCell;
 use std::fmt::Display;
 use std::path::Path;
 use std::rc::Rc;
-use std::sync::Arc;
 use uuid::Uuid;
 
 use agent_client_protocol as acp;
@@ -99,53 +97,18 @@ impl AgentConnection for ClaudeAgentConnection {
                 anyhow::bail!("Failed to find claude binary");
             };
 
-            let anthropic: Arc<AnthropicLanguageModelProvider> = cx.update(|cx| {
-                let registry = LanguageModelRegistry::global(cx);
-                let provider: Arc<dyn Any + Send + Sync> = registry
-                    .read(cx)
-                    .provider(&language_model::ANTHROPIC_PROVIDER_ID)
-                    .context("Failed to get Anthropic provider")?;
-
-                Arc::downcast::<AnthropicLanguageModelProvider>(provider)
-                    .map_err(|_| anyhow!("Failed to downcast provider"))
-            })??;
-
-            let api_key = cx
-                .update(|cx| AnthropicLanguageModelProvider::api_key(cx))?
-                .await
-                .map_err(|err| {
-                    if err.is::<language_model::AuthenticateError>() {
-                        let (update_tx, update_rx) = oneshot::channel();
-                        let mut update_tx = Some(update_tx);
-
-                        let sub = cx
-                            .update(|cx| {
-                                anthropic.observe(
-                                    move |_cx| {
-                                        if let Some(update_tx) = update_tx.take() {
-                                            update_tx.send(()).ok();
-                                        }
-                                    },
-                                    cx,
-                                )
-                            })
-                            .ok();
-
-                        let update_task = cx.foreground_executor().spawn(async move {
-                            update_rx.await.ok();
-                            drop(sub)
-                        });
-
-                        anyhow!(
-                            AuthRequired::new()
-                                .with_description(
-                                    "To use Claude Code in Zed, you need an [Anthropic API key](https://console.anthropic.com/settings/keys)\n\nAdd one in [settings](zed:///agent/settings) or set the `ANTHROPIC_API_KEY` variable".into())
-                                .with_update(update_task)
-                        )
-                    } else {
-                        anyhow!(err)
-                    }
-                })?;
+            let api_key =
+                cx.update(|cx| AnthropicLanguageModelProvider::api_key(cx))?
+                    .await
+                    .map_err(|err| {
+                        if err.is::<language_model::AuthenticateError>() {
+                            anyhow!(AuthRequired::new().with_language_model_provider(
+                                language_model::ANTHROPIC_PROVIDER_ID
+                            ))
+                        } else {
+                            anyhow!(err)
+                        }
+                    })?;
 
             let (mut thread_tx, thread_rx) = watch::channel(WeakEntity::new_invalid());
             let permission_mcp_server = ClaudeZedMcpServer::new(thread_rx.clone(), cx).await?;

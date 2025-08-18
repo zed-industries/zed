@@ -1,8 +1,8 @@
 use crate::{
-    AuthenticateError, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
-    LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
-    LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
-    LanguageModelToolChoice,
+    AuthenticateError, ConfigurationViewTargetAgent, LanguageModel, LanguageModelCompletionError,
+    LanguageModelCompletionEvent, LanguageModelId, LanguageModelName, LanguageModelProvider,
+    LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
+    LanguageModelRequest, LanguageModelToolChoice,
 };
 use futures::{FutureExt, StreamExt, channel::mpsc, future::BoxFuture, stream::BoxStream};
 use gpui::{AnyView, App, AsyncApp, Entity, Task, Window};
@@ -62,7 +62,12 @@ impl LanguageModelProvider for FakeLanguageModelProvider {
         Task::ready(Ok(()))
     }
 
-    fn configuration_view(&self, _window: &mut Window, _: &mut App) -> AnyView {
+    fn configuration_view(
+        &self,
+        _target_agent: ConfigurationViewTargetAgent,
+        _window: &mut Window,
+        _: &mut App,
+    ) -> AnyView {
         unimplemented!()
     }
 

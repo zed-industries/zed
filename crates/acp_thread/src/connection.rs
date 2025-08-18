@@ -3,6 +3,7 @@ use agent_client_protocol::{self as acp};
 use anyhow::Result;
 use collections::IndexMap;
 use gpui::{Entity, SharedString, Task};
+use language_model::LanguageModelProviderId;
 use project::Project;
 use std::{any::Any, error::Error, fmt, path::Path, rc::Rc, sync::Arc};
 use ui::{App, IconName};
@@ -82,15 +83,14 @@ pub trait AgentSessionResume {
 #[derive(Debug)]
 pub struct AuthRequired {
     pub description: Option<String>,
-    /// A Task that resolves when authentication is updated
-    pub update_task: Option<Task<()>>,
+    pub provider_id: Option<LanguageModelProviderId>,
 }
 
 impl AuthRequired {
     pub fn new() -> Self {
         Self {
             description: None,
-            update_task: None,
+            provider_id: None,
         }
     }
 
@@ -99,8 +99,8 @@ impl AuthRequired {
         self
     }
 
-    pub fn with_update(mut self, update: Task<()>) -> Self {
-        self.update_task = Some(update);
+    pub fn with_language_model_provider(mut self, provider_id: LanguageModelProviderId) -> Self {
+        self.provider_id = Some(provider_id);
         self
     }
 }

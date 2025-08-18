@@ -15,11 +15,11 @@ use gpui::{
 };
 use http_client::HttpClient;
 use language_model::{
-    AuthenticateError, LanguageModel, LanguageModelCacheConfiguration,
-    LanguageModelCompletionError, LanguageModelId, LanguageModelName, LanguageModelProvider,
-    LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
-    LanguageModelRequest, LanguageModelToolChoice, LanguageModelToolResultContent, MessageContent,
-    RateLimiter, Role,
+    AuthenticateError, ConfigurationViewTargetAgent, LanguageModel,
+    LanguageModelCacheConfiguration, LanguageModelCompletionError, LanguageModelId,
+    LanguageModelName, LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
+    LanguageModelProviderState, LanguageModelRequest, LanguageModelToolChoice,
+    LanguageModelToolResultContent, MessageContent, RateLimiter, Role,
 };
 use language_model::{LanguageModelCompletionEvent, LanguageModelToolUse, StopReason};
 use schemars::JsonSchema;
@@ -223,14 +223,6 @@ impl AnthropicLanguageModelProvider {
             })
         }
     }
-
-    pub fn observe(
-        &self,
-        mut on_notify: impl FnMut(&mut App) + 'static,
-        cx: &mut App,
-    ) -> Subscription {
-        cx.observe(&self.state, move |_, cx| on_notify(cx))
-    }
 }
 
 impl LanguageModelProviderState for AnthropicLanguageModelProvider {
@@ -324,8 +316,13 @@ impl LanguageModelProvider for AnthropicLanguageModelProvider {
         self.state.update(cx, |state, cx| state.authenticate(cx))
     }
 
-    fn configuration_view(&self, window: &mut Window, cx: &mut App) -> AnyView {
-        cx.new(|cx| ConfigurationView::new(self.state.clone(), window, cx))
+    fn configuration_view(
+        &self,
+        target_agent: ConfigurationViewTargetAgent,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> AnyView {
+        cx.new(|cx| ConfigurationView::new(self.state.clone(), target_agent, window, cx))
             .into()
     }
 
@@ -927,12 +924,18 @@ struct ConfigurationView {
     api_key_editor: Entity<Editor>,
     state: gpui::Entity<State>,
     load_credentials_task: Option<Task<()>>,
+    target_agent: ConfigurationViewTargetAgent,
 }
 
 impl ConfigurationView {
     const PLACEHOLDER_TEXT: &'static str = "sk-ant-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx";
 
-    fn new(state: gpui::Entity<State>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    fn new(
+        state: gpui::Entity<State>,
+        target_agent: ConfigurationViewTargetAgent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         cx.observe(&state, |_, _, cx| {
             cx.notify();
         })
@@ -964,6 +967,7 @@ impl ConfigurationView {
             }),
             state,
             load_credentials_task,
+            target_agent,
         }
     }
 
@@ -1037,7 +1041,10 @@ impl Render for ConfigurationView {
             v_flex()
                 .size_full()
                 .on_action(cx.listener(Self::save_api_key))
-                .child(Label::new("To use Zed's agent with Anthropic, you need to add an API key. Follow these steps:"))
+                .child(Label::new(format!("To use {}, you need to add an API key. Follow these steps:", match self.target_agent {
+                    ConfigurationViewTargetAgent::ZedAgent => "Zed's agent with Anthropic",
+                    ConfigurationViewTargetAgent::Other(agent) => agent,
+                })))
                 .child(
                     List::new()
                         .child(
@@ -1048,7 +1055,7 @@ impl Render for ConfigurationView {
                             )
                         )
                         .child(
-                            InstructionListItem::text_only("Paste your API key below and hit enter to start using the assistant")
+                            InstructionListItem::text_only("Paste your API key below and hit enter to start using the agent")
                         )
                 )
                 .child(

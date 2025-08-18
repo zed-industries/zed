@@ -20,7 +20,6 @@ use icons::IconName;
 use parking_lot::Mutex;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
-use std::any::Any;
 use std::ops::{Add, Sub};
 use std::str::FromStr;
 use std::sync::Arc;
@@ -621,7 +620,7 @@ pub enum AuthenticateError {
     Other(#[from] anyhow::Error),
 }
 
-pub trait LanguageModelProvider: Any + Send + Sync {
+pub trait LanguageModelProvider: 'static {
     fn id(&self) -> LanguageModelProviderId;
     fn name(&self) -> LanguageModelProviderName;
     fn icon(&self) -> IconName {
@@ -635,7 +634,12 @@ pub trait LanguageModelProvider: Any + Send + Sync {
     }
     fn is_authenticated(&self, cx: &App) -> bool;
     fn authenticate(&self, cx: &mut App) -> Task<Result<(), AuthenticateError>>;
-    fn configuration_view(&self, window: &mut Window, cx: &mut App) -> AnyView;
+    fn configuration_view(
+        &self,
+        target_agent: ConfigurationViewTargetAgent,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> AnyView;
     fn must_accept_terms(&self, _cx: &App) -> bool {
         false
     }
@@ -647,6 +651,13 @@ pub trait LanguageModelProvider: Any + Send + Sync {
         None
     }
     fn reset_credentials(&self, cx: &mut App) -> Task<Result<()>>;
+}
+
+#[derive(Default, Clone, Copy)]
+pub enum ConfigurationViewTargetAgent {
+    #[default]
+    ZedAgent,
+    Other(&'static str),
 }
 
 #[derive(PartialEq, Eq)]
