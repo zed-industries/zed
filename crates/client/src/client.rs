@@ -1410,6 +1410,12 @@ impl Client {
 
                     open_url_tx.send(url).log_err();
 
+                    #[derive(Deserialize)]
+                    struct CallbackParams {
+                        pub user_id: String,
+                        pub access_token: String,
+                    }
+
                     // Receive the HTTP request from the user's browser. Retrieve the user id and encrypted
                     // access token from the query params.
                     //
@@ -1420,17 +1426,13 @@ impl Client {
                             for _ in 0..100 {
                                 if let Some(req) = server.recv_timeout(Duration::from_secs(1))? {
                                     let path = req.url();
-                                    let mut user_id = None;
-                                    let mut access_token = None;
                                     let url = Url::parse(&format!("http://example.com{}", path))
                                         .context("failed to parse login notification url")?;
-                                    for (key, value) in url.query_pairs() {
-                                        if key == "access_token" {
-                                            access_token = Some(value.to_string());
-                                        } else if key == "user_id" {
-                                            user_id = Some(value.to_string());
-                                        }
-                                    }
+                                    let callback_params: CallbackParams =
+                                        serde_urlencoded::from_str(url.query().unwrap_or_default())
+                                            .context(
+                                                "failed to parse sign-in callback query parameters",
+                                            )?;
 
                                     let post_auth_url =
                                         http.build_url("/native_app_signin_succeeded");
@@ -1445,8 +1447,8 @@ impl Client {
                                     )
                                     .context("failed to respond to login http request")?;
                                     return Ok((
-                                        user_id.context("missing user_id parameter")?,
-                                        access_token.context("missing access_token parameter")?,
+                                        callback_params.user_id,
+                                        callback_params.access_token,
                                     ));
                                 }
                             }
