@@ -495,6 +495,7 @@ pub struct Thread {
     project_context: Rc<RefCell<ProjectContext>>,
     templates: Arc<Templates>,
     model: Option<Arc<dyn LanguageModel>>,
+    summarization_model: Option<Arc<dyn LanguageModel>>,
     project: Entity<Project>,
     action_log: Entity<ActionLog>,
 }
@@ -508,6 +509,7 @@ impl Thread {
         action_log: Entity<ActionLog>,
         templates: Arc<Templates>,
         model: Option<Arc<dyn LanguageModel>>,
+        summarization_model: Option<Arc<dyn LanguageModel>>,
         cx: &mut Context<Self>,
     ) -> Self {
         let profile_id = AgentSettings::get_global(cx).default_profile.clone();
@@ -561,7 +563,7 @@ impl Thread {
             context_server_registry,
             action_log,
             Templates::new(),
-            model,
+            Some(model),
             None,
             cx,
         )
@@ -604,7 +606,7 @@ impl Thread {
             profile_id,
             project_context,
             templates,
-            model,
+            model: Some(model),
             summarization_model,
             project,
             action_log,
@@ -622,9 +624,9 @@ impl Thread {
             initial_project_snapshot: None,
             cumulative_token_usage: self.cumulative_token_usage.clone(),
             request_token_usage: self.request_token_usage.clone(),
-            model: Some(DbLanguageModel {
-                provider: self.model.provider_id().to_string(),
-                model: self.model.name().0.to_string(),
+            model: self.model.as_ref().map(|model| DbLanguageModel {
+                provider: model.provider_id().to_string(),
+                model: model.name().0.to_string(),
             }),
             completion_mode: Some(self.completion_mode.into()),
             profile: Some(self.profile_id.clone()),
@@ -850,8 +852,18 @@ impl Thread {
         self.model.as_ref()
     }
 
-    pub fn set_model(&mut self, model: Arc<dyn LanguageModel>) {
+    pub fn set_model(&mut self, model: Arc<dyn LanguageModel>, cx: &mut Context<Self>) {
         self.model = Some(model);
+        cx.notify()
+    }
+
+    pub fn set_summarization_model(
+        &mut self,
+        model: Option<Arc<dyn LanguageModel>>,
+        cx: &mut Context<Self>,
+    ) {
+        self.summarization_model = model;
+        cx.notify()
     }
 
     pub fn completion_mode(&self) -> CompletionMode {
@@ -931,7 +943,7 @@ impl Thread {
         id: UserMessageId,
         content: impl IntoIterator<Item = T>,
         cx: &mut Context<Self>,
-    ) -> mpsc::UnboundedReceiver<Result<ThreadEvent>>
+    ) -> Result<mpsc::UnboundedReceiver<Result<ThreadEvent>>>
     where
         T: Into<UserMessageContent>,
     {
@@ -951,10 +963,13 @@ impl Thread {
         self.run_turn(cx)
     }
 
-    fn run_turn(&mut self, cx: &mut Context<Self>) -> mpsc::UnboundedReceiver<Result<ThreadEvent>> {
+    fn run_turn(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> Result<mpsc::UnboundedReceiver<Result<ThreadEvent>>> {
         self.cancel(cx);
 
-        let model = self.model.clone();
+        let model = self.model.clone().context("No language model configured")?;
         let (events_tx, events_rx) = mpsc::unbounded::<Result<ThreadEvent>>();
         let event_stream = ThreadEventStream(events_tx);
         let message_ix = self.messages.len().saturating_sub(1);
@@ -1145,6 +1160,7 @@ impl Thread {
         });
 
         self.title = ThreadTitle::Pending(task);
+        cx.notify()
     }
 
     pub fn build_system_message(&self) -> LanguageModelRequestMessage {

@@ -139,7 +139,6 @@ impl LanguageModels {
         &self,
         model_id: &acp_thread::AgentModelId,
     ) -> Option<Arc<dyn LanguageModel>> {
-        dbg!(&self.models.len());
         self.models.get(model_id).cloned()
     }
 
@@ -277,6 +276,7 @@ impl NativeAgent {
         let thread_database = self.thread_database.clone();
         session.save_task = cx.spawn(async move |this, cx| {
             cx.background_executor().timer(SAVE_THREAD_DEBOUNCE).await;
+
             let db_thread = thread.update(cx, |thread, cx| thread.to_db(cx))?.await;
             thread_database.save_thread(id, db_thread).await?;
             this.update(cx, |this, cx| this.reload_history(cx))?;
@@ -527,7 +527,7 @@ impl NativeAgent {
                 if thread.model().is_none()
                     && let Some(model) = default_model.clone()
                 {
-                    thread.set_model(model);
+                    thread.set_model(model, cx);
                     cx.notify();
                 }
                 let summarization_model = registry

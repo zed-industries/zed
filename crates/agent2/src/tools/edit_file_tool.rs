@@ -257,8 +257,10 @@ impl AgentTool for EditFileTool {
 
             let (request, model, action_log) = self.thread.update(cx, |thread, cx| {
                 let request = thread.build_completion_request(CompletionIntent::ToolResults, cx);
-                (request, thread.model().clone(), thread.action_log().clone())
+                (request, thread.model().cloned(), thread.action_log().clone())
             })?;
+            let request = request?;
+            let model = model.context("No language model configured")?;
 
             let edit_format = EditFormat::from_model(model.clone())?;
             let edit_agent = EditAgent::new(

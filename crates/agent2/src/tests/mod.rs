@@ -1554,6 +1554,7 @@ async fn setup(cx: &mut TestAppContext, model: TestModel) -> ThreadTest {
             action_log,
             templates,
             Some(model.clone()),
+            None,
             cx,
         )
     });

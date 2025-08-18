@@ -1697,13 +1697,13 @@ impl AgentPanel {
                 window.dispatch_action(NewTextThread.boxed_clone(), cx);
             }
             AgentType::NativeAgent => {
-                self.new_external_thread(Some(crate::ExternalAgent::NativeAgent), window, cx)
+                self.new_external_thread(Some(crate::ExternalAgent::NativeAgent), None, window, cx)
             }
             AgentType::Gemini => {
-                self.new_external_thread(Some(crate::ExternalAgent::Gemini), window, cx)
+                self.new_external_thread(Some(crate::ExternalAgent::Gemini), None, window, cx)
             }
             AgentType::ClaudeCode => {
-                self.new_external_thread(Some(crate::ExternalAgent::ClaudeCode), window, cx)
+                self.new_external_thread(Some(crate::ExternalAgent::ClaudeCode), None, window, cx)
             }
         }
     }
