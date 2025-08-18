@@ -227,7 +227,7 @@ impl WindowsPlatform {
                     | WM_GPUI_CLOSE_ONE_WINDOW
                     | WM_GPUI_TASK_DISPATCHED_ON_MAIN_THREAD
                     | WM_GPUI_DOCK_MENU_ACTION => {
-                        if self.handle_gpui_evnets(msg.message, msg.wParam, msg.lParam, &msg) {
+                        if self.handle_gpui_events(msg.message, msg.wParam, msg.lParam, &msg) {
                             return;
                         }
                     }
@@ -240,7 +240,7 @@ impl WindowsPlatform {
     }
 
     // Returns true if the app should quit.
-    fn handle_gpui_evnets(
+    fn handle_gpui_events(
         &self,
         message: u32,
         wparam: WPARAM,
@@ -787,6 +787,12 @@ fn file_open_dialog(
 
     unsafe {
         folder_dialog.SetOptions(dialog_options)?;
+
+        if let Some(prompt) = options.prompt {
+            let prompt: &str = &prompt;
+            folder_dialog.SetOkButtonLabel(&HSTRING::from(prompt))?;
+        }
+
         if folder_dialog.Show(window).is_err() {
             // User cancelled
             return Ok(None);
