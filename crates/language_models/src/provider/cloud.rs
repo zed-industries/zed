@@ -391,7 +391,12 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
         Task::ready(Ok(()))
     }
 
-    fn configuration_view(&self, _: &mut Window, cx: &mut App) -> AnyView {
+    fn configuration_view(
+        &self,
+        _target_agent: language_model::ConfigurationViewTargetAgent,
+        _: &mut Window,
+        cx: &mut App,
+    ) -> AnyView {
         cx.new(|_| ConfigurationView::new(self.state.clone()))
             .into()
     }

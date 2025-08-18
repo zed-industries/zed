@@ -140,7 +140,13 @@ impl AgentConnection for AcpConnection {
                 .await
                 .map_err(|err| {
                     if err.code == acp::ErrorCode::AUTH_REQUIRED.code {
-                        anyhow!(AuthRequired)
+                        let mut error = AuthRequired::new();
+
+                        if err.message != acp::ErrorCode::AUTH_REQUIRED.message {
+                            error = error.with_description(err.message);
+                        }
+
+                        anyhow!(error)
                     } else {
                         anyhow!(err)
                     }

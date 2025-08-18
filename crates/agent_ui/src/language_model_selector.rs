@@ -104,7 +104,7 @@ impl LanguageModelPickerDelegate {
                 window,
                 |picker, _, event, window, cx| {
                     match event {
-                        language_model::Event::ProviderStateChanged
+                        language_model::Event::ProviderStateChanged(_)
                         | language_model::Event::AddedProvider(_)
                         | language_model::Event::RemovedProvider(_) => {
                             let query = picker.query(cx);

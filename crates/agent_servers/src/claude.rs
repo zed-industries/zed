@@ -3,6 +3,7 @@ pub mod tools;
 
 use collections::HashMap;
 use context_server::listener::McpServerTool;
+use language_models::provider::anthropic::AnthropicLanguageModelProvider;
 use project::Project;
 use settings::SettingsStore;
 use smol::process::Child;
@@ -30,7 +31,7 @@ use util::{ResultExt, debug_panic};
 use crate::claude::mcp_server::{ClaudeZedMcpServer, McpConfig};
 use crate::claude::tools::ClaudeTool;
 use crate::{AgentServer, AgentServerCommand, AllAgentServersSettings};
-use acp_thread::{AcpThread, AgentConnection};
+use acp_thread::{AcpThread, AgentConnection, AuthRequired};
 
 #[derive(Clone)]
 pub struct ClaudeCode;
@@ -79,6 +80,36 @@ impl AgentConnection for ClaudeAgentConnection {
     ) -> Task<Result<Entity<AcpThread>>> {
         let cwd = cwd.to_owned();
         cx.spawn(async move |cx| {
+            let settings = cx.read_global(|settings: &SettingsStore, _| {
+                settings.get::<AllAgentServersSettings>(None).claude.clone()
+            })?;
+
+            let Some(command) = AgentServerCommand::resolve(
+                "claude",
+                &[],
+                Some(&util::paths::home_dir().join(".claude/local/claude")),
+                settings,
+                &project,
+                cx,
+            )
+            .await
+            else {
+                anyhow::bail!("Failed to find claude binary");
+            };
+
+            let api_key =
+                cx.update(AnthropicLanguageModelProvider::api_key)?
+                    .await
+                    .map_err(|err| {
+                        if err.is::<language_model::AuthenticateError>() {
+                            anyhow!(AuthRequired::new().with_language_model_provider(
+                                language_model::ANTHROPIC_PROVIDER_ID
+                            ))
+                        } else {
+                            anyhow!(err)
+                        }
+                    })?;
+
             let (mut thread_tx, thread_rx) = watch::channel(WeakEntity::new_invalid());
             let permission_mcp_server = ClaudeZedMcpServer::new(thread_rx.clone(), cx).await?;
 
@@ -98,23 +129,6 @@ impl AgentConnection for ClaudeAgentConnection {
                 .await?;
             mcp_config_file.flush().await?;
 
-            let settings = cx.read_global(|settings: &SettingsStore, _| {
-                settings.get::<AllAgentServersSettings>(None).claude.clone()
-            })?;
-
-            let Some(command) = AgentServerCommand::resolve(
-                "claude",
-                &[],
-                Some(&util::paths::home_dir().join(".claude/local/claude")),
-                settings,
-                &project,
-                cx,
-            )
-            .await
-            else {
-                anyhow::bail!("Failed to find claude binary");
-            };
-
             let (incoming_message_tx, mut incoming_message_rx) = mpsc::unbounded();
             let (outgoing_tx, outgoing_rx) = mpsc::unbounded();
 
@@ -126,6 +140,7 @@ impl AgentConnection for ClaudeAgentConnection {
                 &command,
                 ClaudeSessionMode::Start,
                 session_id.clone(),
+                api_key,
                 &mcp_config_path,
                 &cwd,
             )?;
@@ -320,6 +335,7 @@ fn spawn_claude(
     command: &AgentServerCommand,
     mode: ClaudeSessionMode,
     session_id: acp::SessionId,
+    api_key: language_models::provider::anthropic::ApiKey,
     mcp_config_path: &Path,
     root_dir: &Path,
 ) -> Result<Child> {
@@ -355,6 +371,8 @@ fn spawn_claude(
             ClaudeSessionMode::Resume => ["--resume".to_string(), session_id.to_string()],
         })
         .args(command.args.iter().map(|arg| arg.as_str()))
+        .envs(command.env.iter().flatten())
+        .env("ANTHROPIC_API_KEY", api_key.key)
         .current_dir(root_dir)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())

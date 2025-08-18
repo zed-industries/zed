@@ -3,6 +3,7 @@ use agent_client_protocol::{self as acp};
 use anyhow::Result;
 use collections::IndexMap;
 use gpui::{Entity, SharedString, Task};
+use language_model::LanguageModelProviderId;
 use project::Project;
 use std::{any::Any, error::Error, fmt, path::Path, rc::Rc, sync::Arc};
 use ui::{App, IconName};
@@ -80,12 +81,34 @@ pub trait AgentSessionResume {
 }
 
 #[derive(Debug)]
-pub struct AuthRequired;
+pub struct AuthRequired {
+    pub description: Option<String>,
+    pub provider_id: Option<LanguageModelProviderId>,
+}
+
+impl AuthRequired {
+    pub fn new() -> Self {
+        Self {
+            description: None,
+            provider_id: None,
+        }
+    }
+
+    pub fn with_description(mut self, description: String) -> Self {
+        self.description = Some(description);
+        self
+    }
+
+    pub fn with_language_model_provider(mut self, provider_id: LanguageModelProviderId) -> Self {
+        self.provider_id = Some(provider_id);
+        self
+    }
+}
 
 impl Error for AuthRequired {}
 impl fmt::Display for AuthRequired {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "AuthRequired")
+        write!(f, "Authentication required")
     }
 }
 

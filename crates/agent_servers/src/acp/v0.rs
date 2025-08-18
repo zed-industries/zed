@@ -437,7 +437,7 @@ impl AgentConnection for AcpConnection {
             let result = acp_old::InitializeParams::response_from_any(result)?;
 
             if !result.is_authenticated {
-                anyhow::bail!(AuthRequired)
+                anyhow::bail!(AuthRequired::new())
             }
 
             cx.update(|cx| {
