@@ -522,7 +522,7 @@ fn resolve_path(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{ContextServerRegistry, Templates};
+    use crate::{ContextServerRegistry, Templates, generate_session_id};
     use action_log::ActionLog;
     use client::TelemetrySettings;
     use fs::Fs;
@@ -547,6 +547,7 @@ mod tests {
         let model = Arc::new(FakeLanguageModel::default());
         let thread = cx.new(|cx| {
             Thread::new(
+                generate_session_id(),
                 project,
                 Rc::default(),
                 context_server_registry,
@@ -748,6 +749,7 @@ mod tests {
         let model = Arc::new(FakeLanguageModel::default());
         let thread = cx.new(|cx| {
             Thread::new(
+                generate_session_id(),
                 project,
                 Rc::default(),
                 context_server_registry,
@@ -890,6 +892,7 @@ mod tests {
         let model = Arc::new(FakeLanguageModel::default());
         let thread = cx.new(|cx| {
             Thread::new(
+                generate_session_id(),
                 project,
                 Rc::default(),
                 context_server_registry,
@@ -1019,6 +1022,7 @@ mod tests {
         let model = Arc::new(FakeLanguageModel::default());
         let thread = cx.new(|cx| {
             Thread::new(
+                generate_session_id(),
                 project,
                 Rc::default(),
                 context_server_registry,
@@ -1157,6 +1161,7 @@ mod tests {
         let model = Arc::new(FakeLanguageModel::default());
         let thread = cx.new(|cx| {
             Thread::new(
+                generate_session_id(),
                 project,
                 Rc::default(),
                 context_server_registry,
@@ -1267,6 +1272,7 @@ mod tests {
         let model = Arc::new(FakeLanguageModel::default());
         let thread = cx.new(|cx| {
             Thread::new(
+                generate_session_id(),
                 project.clone(),
                 Rc::default(),
                 context_server_registry.clone(),
@@ -1349,6 +1355,7 @@ mod tests {
         let model = Arc::new(FakeLanguageModel::default());
         let thread = cx.new(|cx| {
             Thread::new(
+                generate_session_id(),
                 project.clone(),
                 Rc::default(),
                 context_server_registry.clone(),
@@ -1434,6 +1441,7 @@ mod tests {
         let model = Arc::new(FakeLanguageModel::default());
         let thread = cx.new(|cx| {
             Thread::new(
+                generate_session_id(),
                 project.clone(),
                 Rc::default(),
                 context_server_registry.clone(),
@@ -1516,6 +1524,7 @@ mod tests {
         let model = Arc::new(FakeLanguageModel::default());
         let thread = cx.new(|cx| {
             Thread::new(
+                generate_session_id(),
                 project.clone(),
                 Rc::default(),
                 context_server_registry,

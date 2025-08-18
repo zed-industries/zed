@@ -27,7 +27,10 @@ pub trait AgentConnection {
         cx: &mut App,
     ) -> Task<Result<Entity<AcpThread>>>;
 
-    fn list_threads(&self, _cx: &mut App) -> Option<UnboundedReceiver<Vec<AcpThreadMetadata>>> {
+    fn list_threads(
+        &self,
+        _cx: &mut App,
+    ) -> Option<watch::Receiver<Option<Vec<AcpThreadMetadata>>>> {
         return None;
     }
 

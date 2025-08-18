@@ -709,9 +709,7 @@ async fn test_send_after_tool_use_limit(cx: &mut TestAppContext) {
     );
 }
 
-async fn expect_tool_call(
-    events: &mut UnboundedReceiver<Result<ThreadEvent>>,
-) -> acp::ToolCall {
+async fn expect_tool_call(events: &mut UnboundedReceiver<Result<ThreadEvent>>) -> acp::ToolCall {
     let event = events
         .next()
         .await
@@ -1501,6 +1499,7 @@ async fn setup(cx: &mut TestAppContext, model: TestModel) -> ThreadTest {
     let action_log = cx.new(|_| ActionLog::new(project.clone()));
     let thread = cx.new(|cx| {
         Thread::new(
+            generate_session_id(),
             project,
             project_context.clone(),
             context_server_registry,

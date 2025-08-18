@@ -1,25 +1,35 @@
-use crate::{ContextServerRegistry, DbThread, SystemPromptTemplate, Template, Templates};
+use crate::{
+    ContextServerRegistry, DbLanguageModel, DbThread, SystemPromptTemplate, Template, Templates,
+};
 use acp_thread::{MentionUri, UserMessageId};
 use action_log::ActionLog;
+use agent::thread::{DetailedSummaryState, GitState, ProjectSnapshot, WorktreeSnapshot};
 use agent_client_protocol as acp;
 use agent_settings::{AgentProfileId, AgentSettings, CompletionMode};
 use anyhow::{Context as _, Result, anyhow};
 use assistant_tool::adapt_schema_to_format;
+use chrono::{DateTime, Utc};
 use cloud_llm_client::{CompletionIntent, CompletionRequestStatus};
 use collections::IndexMap;
 use fs::Fs;
 use futures::{
+    FutureExt,
     channel::{mpsc, oneshot},
+    future::Shared,
     stream::FuturesUnordered,
 };
+use git::repository::DiffType;
 use gpui::{App, AppContext, Context, Entity, SharedString, Task};
 use language_model::{
     LanguageModel, LanguageModelCompletionEvent, LanguageModelImage, LanguageModelProviderId,
     LanguageModelRequest, LanguageModelRequestMessage, LanguageModelRequestTool,
     LanguageModelToolResult, LanguageModelToolResultContent, LanguageModelToolSchemaFormat,
-    LanguageModelToolUse, LanguageModelToolUseId, Role, StopReason,
+    LanguageModelToolUse, LanguageModelToolUseId, Role, StopReason, TokenUsage,
 };
-use project::Project;
+use project::{
+    Project,
+    git_store::{GitStore, RepositoryState},
+};
 use prompt_store::ProjectContext;
 use schemars::{JsonSchema, Schema};
 use serde::{Deserialize, Serialize};
@@ -31,41 +41,6 @@ use util::{ResultExt, markdown::MarkdownCodeBlock};
 use uuid::Uuid;
 
 const TOOL_CANCELED_MESSAGE: &str = "Tool canceled by user";
-
-#[derive(
-    Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Serialize, Deserialize, JsonSchema,
-)]
-pub struct ThreadId(pub(crate) Arc<str>);
-
-impl ThreadId {
-    pub fn new() -> Self {
-        Self(Uuid::new_v4().to_string().into())
-    }
-}
-
-impl std::fmt::Display for ThreadId {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
-
-impl From<&str> for ThreadId {
-    fn from(value: &str) -> Self {
-        Self(value.into())
-    }
-}
-
-impl From<acp::SessionId> for ThreadId {
-    fn from(value: acp::SessionId) -> Self {
-        Self(value.0)
-    }
-}
-
-impl From<ThreadId> for acp::SessionId {
-    fn from(value: ThreadId) -> Self {
-        Self(value.0)
-    }
-}
 
 /// The ID of the user prompt that initiated a request.
 ///
@@ -461,9 +436,28 @@ pub struct ToolCallAuthorization {
     pub response: oneshot::Sender<acp::PermissionOptionId>,
 }
 
+enum ThreadTitle {
+    None,
+    Pending(Task<()>),
+    Done(Result<SharedString>),
+}
+
+impl ThreadTitle {
+    pub fn unwrap_or_default(&self) -> SharedString {
+        if let ThreadTitle::Done(Ok(title)) = self {
+            title.clone()
+        } else {
+            "New Thread".into()
+        }
+    }
+}
+
 pub struct Thread {
-    id: ThreadId,
+    id: acp::SessionId,
     prompt_id: PromptId,
+    updated_at: DateTime<Utc>,
+    title: ThreadTitle,
+    summary: DetailedSummaryState,
     messages: Vec<Message>,
     completion_mode: CompletionMode,
     /// Holds the task that handles agent interaction until the end of the turn.
@@ -473,6 +467,9 @@ pub struct Thread {
     pending_message: Option<AgentMessage>,
     tools: BTreeMap<SharedString, Arc<dyn AnyAgentTool>>,
     tool_use_limit_reached: bool,
+    request_token_usage: Vec<TokenUsage>,
+    cumulative_token_usage: TokenUsage,
+    initial_project_snapshot: Shared<Task<Option<Arc<ProjectSnapshot>>>>,
     context_server_registry: Entity<ContextServerRegistry>,
     profile_id: AgentProfileId,
     project_context: Rc<RefCell<ProjectContext>>,
@@ -484,6 +481,7 @@ pub struct Thread {
 
 impl Thread {
     pub fn new(
+        id: acp::SessionId,
         project: Entity<Project>,
         project_context: Rc<RefCell<ProjectContext>>,
         context_server_registry: Entity<ContextServerRegistry>,
@@ -494,14 +492,25 @@ impl Thread {
     ) -> Self {
         let profile_id = AgentSettings::get_global(cx).default_profile.clone();
         Self {
-            id: ThreadId::new(),
+            id,
             prompt_id: PromptId::new(),
+            updated_at: Utc::now(),
+            title: ThreadTitle::None,
+            summary: DetailedSummaryState::default(),
             messages: Vec::new(),
             completion_mode: CompletionMode::Normal,
             running_turn: None,
             pending_message: None,
             tools: BTreeMap::default(),
             tool_use_limit_reached: false,
+            request_token_usage: Vec::new(),
+            cumulative_token_usage: TokenUsage::default(),
+            initial_project_snapshot: {
+                let project_snapshot = Self::project_snapshot(project.clone(), cx);
+                cx.foreground_executor()
+                    .spawn(async move { Some(project_snapshot.await) })
+                    .shared()
+            },
             context_server_registry,
             profile_id,
             project_context,
@@ -512,8 +521,12 @@ impl Thread {
         }
     }
 
+    pub fn id(&self) -> &acp::SessionId {
+        &self.id
+    }
+
     pub fn from_db(
-        id: ThreadId,
+        id: acp::SessionId,
         db_thread: DbThread,
         project: Entity<Project>,
         project_context: Rc<RefCell<ProjectContext>>,
@@ -529,12 +542,17 @@ impl Thread {
         Self {
             id,
             prompt_id: PromptId::new(),
+            title: ThreadTitle::Done(Ok(db_thread.title.clone())),
+            summary: db_thread.summary,
             messages: db_thread.messages,
             completion_mode: CompletionMode::Normal,
             running_turn: None,
             pending_message: None,
             tools: BTreeMap::default(),
             tool_use_limit_reached: false,
+            request_token_usage: db_thread.request_token_usage.clone(),
+            cumulative_token_usage: db_thread.cumulative_token_usage.clone(),
+            initial_project_snapshot: Task::ready(db_thread.initial_project_snapshot).shared(),
             context_server_registry,
             profile_id,
             project_context,
@@ -542,7 +560,33 @@ impl Thread {
             model,
             project,
             action_log,
+            updated_at: db_thread.updated_at, // todo!(figure out if we can remove the "recently opened" list)
         }
+    }
+
+    pub fn to_db(&self, cx: &App) -> Task<DbThread> {
+        let initial_project_snapshot = self.initial_project_snapshot.clone();
+        let mut thread = DbThread {
+            title: self.title.unwrap_or_default(),
+            messages: self.messages.clone(),
+            updated_at: self.updated_at.clone(),
+            summary: self.summary.clone(),
+            initial_project_snapshot: None,
+            cumulative_token_usage: self.cumulative_token_usage.clone(),
+            request_token_usage: self.request_token_usage.clone(),
+            model: Some(DbLanguageModel {
+                provider: self.model.provider_id().to_string(),
+                model: self.model.name().0.to_string(),
+            }),
+            completion_mode: Some(self.completion_mode.into()),
+            profile: Some(self.profile_id.clone()),
+        };
+
+        cx.background_spawn(async move {
+            let initial_project_snapshot = initial_project_snapshot.await;
+            thread.initial_project_snapshot = initial_project_snapshot;
+            thread
+        })
     }
 
     pub fn replay(
@@ -628,6 +672,122 @@ impl Thread {
                 ..Default::default()
             },
         );
+    }
+
+    /// Create a snapshot of the current project state including git information and unsaved buffers.
+    fn project_snapshot(
+        project: Entity<Project>,
+        cx: &mut Context<Self>,
+    ) -> Task<Arc<agent::thread::ProjectSnapshot>> {
+        let git_store = project.read(cx).git_store().clone();
+        let worktree_snapshots: Vec<_> = project
+            .read(cx)
+            .visible_worktrees(cx)
+            .map(|worktree| Self::worktree_snapshot(worktree, git_store.clone(), cx))
+            .collect();
+
+        cx.spawn(async move |_, cx| {
+            let worktree_snapshots = futures::future::join_all(worktree_snapshots).await;
+
+            let mut unsaved_buffers = Vec::new();
+            cx.update(|app_cx| {
+                let buffer_store = project.read(app_cx).buffer_store();
+                for buffer_handle in buffer_store.read(app_cx).buffers() {
+                    let buffer = buffer_handle.read(app_cx);
+                    if buffer.is_dirty() {
+                        if let Some(file) = buffer.file() {
+                            let path = file.path().to_string_lossy().to_string();
+                            unsaved_buffers.push(path);
+                        }
+                    }
+                }
+            })
+            .ok();
+
+            Arc::new(ProjectSnapshot {
+                worktree_snapshots,
+                unsaved_buffer_paths: unsaved_buffers,
+                timestamp: Utc::now(),
+            })
+        })
+    }
+
+    fn worktree_snapshot(
+        worktree: Entity<project::Worktree>,
+        git_store: Entity<GitStore>,
+        cx: &App,
+    ) -> Task<agent::thread::WorktreeSnapshot> {
+        cx.spawn(async move |cx| {
+            // Get worktree path and snapshot
+            let worktree_info = cx.update(|app_cx| {
+                let worktree = worktree.read(app_cx);
+                let path = worktree.abs_path().to_string_lossy().to_string();
+                let snapshot = worktree.snapshot();
+                (path, snapshot)
+            });
+
+            let Ok((worktree_path, _snapshot)) = worktree_info else {
+                return WorktreeSnapshot {
+                    worktree_path: String::new(),
+                    git_state: None,
+                };
+            };
+
+            let git_state = git_store
+                .update(cx, |git_store, cx| {
+                    git_store
+                        .repositories()
+                        .values()
+                        .find(|repo| {
+                            repo.read(cx)
+                                .abs_path_to_repo_path(&worktree.read(cx).abs_path())
+                                .is_some()
+                        })
+                        .cloned()
+                })
+                .ok()
+                .flatten()
+                .map(|repo| {
+                    repo.update(cx, |repo, _| {
+                        let current_branch =
+                            repo.branch.as_ref().map(|branch| branch.name().to_owned());
+                        repo.send_job(None, |state, _| async move {
+                            let RepositoryState::Local { backend, .. } = state else {
+                                return GitState {
+                                    remote_url: None,
+                                    head_sha: None,
+                                    current_branch,
+                                    diff: None,
+                                };
+                            };
+
+                            let remote_url = backend.remote_url("origin");
+                            let head_sha = backend.head_sha().await;
+                            let diff = backend.diff(DiffType::HeadToWorktree).await.ok();
+
+                            GitState {
+                                remote_url,
+                                head_sha,
+                                current_branch,
+                                diff,
+                            }
+                        })
+                    })
+                });
+
+            let git_state = match git_state {
+                Some(git_state) => match git_state.ok() {
+                    Some(git_state) => git_state.await.ok(),
+                    None => None,
+                },
+                None => None,
+            };
+
+            WorktreeSnapshot {
+                worktree_path,
+                git_state,
+            }
+        })
     }
 
     pub fn project(&self) -> &Entity<Project> {
