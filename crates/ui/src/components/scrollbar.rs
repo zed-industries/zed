@@ -218,12 +218,14 @@ where
     let state = &scrollbar.read(cx).0;
 
     div.when_some(state.read(cx).handle_to_track(), |this, handle| {
-        this.track_scroll(handle)
-    })
-    .when_some(state.read(cx).visible_axes(), |this, axes| match axes {
-        ScrollAxes::Horizontal => this.overflow_x_scroll(),
-        ScrollAxes::Vertical => this.overflow_y_scroll(),
-        ScrollAxes::Both => this.overflow_scroll(),
+        this.track_scroll(handle).when_some(
+            state.read(cx).visible_axes(),
+            |this, axes| match axes {
+                ScrollAxes::Horizontal => this.overflow_x_scroll(),
+                ScrollAxes::Vertical => this.overflow_y_scroll(),
+                ScrollAxes::Both => this.overflow_scroll(),
+            },
+        )
     })
     .when_some(
         state
@@ -602,6 +604,7 @@ impl<S: ScrollbarVisibilitySetting, T: ScrollableHandle> ScrollbarState<S, T> {
         if self.scroll_handle.offset() != offset {
             self.scroll_handle.set_offset(offset);
             self.notify_parent(cx);
+            cx.notify();
         }
 
         // We always want to show scrollbars in cases where the offset is updated.
@@ -1029,9 +1032,11 @@ impl<S: ScrollbarVisibilitySetting, T: ScrollableHandle> Element for ScrollbarEl
                     thumb_bounds,
                     cursor_hitbox,
                     axis,
+                    reserved_space,
                     ..
                 } in &prepaint_state.thumbs
                 {
+                    const MAXIMUM_OPACITY: f32 = 0.5;
                     let thumb_state = self.state.read(cx).thumb_state;
                     let thumb_base_color = match thumb_state {
                         ThumbState::Dragging(dragged_axis, _) if dragged_axis == *axis => {
@@ -1043,7 +1048,16 @@ impl<S: ScrollbarVisibilitySetting, T: ScrollableHandle> Element for ScrollbarEl
                         _ => colors.scrollbar_thumb_background,
                     };
 
-                    let thumb_background = colors.surface_background.blend(thumb_base_color);
+                    let blending_color = if matches!(thumb_state, ThumbState::Hover(_))
+                        || reserved_space.needs_scroll_track()
+                    {
+                        colors.surface_background
+                    } else {
+                        let blend_color = colors.surface_background;
+                        blend_color.min(blend_color.alpha(MAXIMUM_OPACITY))
+                    };
+
+                    let thumb_background = blending_color.blend(thumb_base_color);
 
                     window.paint_quad(quad(
                         *thumb_bounds,
