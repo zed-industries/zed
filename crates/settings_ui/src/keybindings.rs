@@ -3011,7 +3011,7 @@ async fn save_keybinding_update(
 
     let updated_keymap_contents =
         settings::KeymapFile::update_keybinding(operation, keymap_contents, tab_size)
-            .map_err(|err| anyhow::anyhow!("Failed to update keybinding: {}", err))?;
+            .map_err(|err| anyhow::anyhow!("Could not save updated keybinding: {}", err))?;
     fs.write(
         paths::keymap_file().as_path(),
         updated_keymap_contents.as_bytes(),
