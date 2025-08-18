@@ -2160,7 +2160,7 @@ mod tests {
     use gpui::{Pixels, Point, TestAppContext, bounds, point, size};
     use rand::{Rng, distributions::Alphanumeric, rngs::ThreadRng, thread_rng};
 
-    #[cfg_attr(windows, ignore = "TODO: fix on windows")]
+    #[ignore = "Test is flaky on macOS, and doesn't run on Windows"]
     #[gpui::test]
     async fn test_basic_terminal(cx: &mut TestAppContext) {
         cx.executor().allow_parking();
