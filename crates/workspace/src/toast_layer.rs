@@ -113,9 +113,9 @@ impl ToastLayer {
         V: ToastView,
     {
         if let Some(active_toast) = &self.active_toast {
-            let is_close = active_toast.toast.view().downcast::<V>().is_ok();
-            let did_close = self.hide_toast(cx);
-            if is_close || !did_close {
+            let show_new = active_toast.toast.view().entity_id() != new_toast.entity_id();
+            self.hide_toast(cx);
+            if !show_new {
                 return;
             }
         }
@@ -130,11 +130,11 @@ impl ToastLayer {
         let focus_handle = cx.focus_handle();
 
         self.active_toast = Some(ActiveToast {
-            toast: Box::new(new_toast.clone()),
-            action,
             _subscriptions: [cx.subscribe(&new_toast, |this, _, _: &DismissEvent, cx| {
                 this.hide_toast(cx);
             })],
+            toast: Box::new(new_toast),
+            action,
             focus_handle,
         });
 
@@ -143,11 +143,9 @@ impl ToastLayer {
         cx.notify();
     }
 
-    pub fn hide_toast(&mut self, cx: &mut Context<Self>) -> bool {
+    pub fn hide_toast(&mut self, cx: &mut Context<Self>) {
         self.active_toast.take();
         cx.notify();
-
-        true
     }
 
     pub fn active_toast<V>(&self) -> Option<Entity<V>>
