@@ -386,6 +386,9 @@ impl ThreadsDatabase {
 
 #[cfg(test)]
 mod tests {
+    use crate::NativeAgent;
+    use crate::Templates;
+
     use super::*;
     use agent::MessageSegment;
     use agent::context::LoadedContext;

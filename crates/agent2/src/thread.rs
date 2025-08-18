@@ -1283,6 +1283,7 @@ impl Thread {
         }
 
         self.messages.push(Message::Agent(message));
+        dbg!("!!!!!!!!!!!!!!!!!!!!!!!");
         cx.notify()
     }
 

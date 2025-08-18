@@ -13,33 +13,34 @@ const MAX_RECENTLY_OPENED_ENTRIES: usize = 6;
 const NAVIGATION_HISTORY_PATH: &str = "agent-navigation-history.json";
 const SAVE_RECENTLY_OPENED_ENTRIES_DEBOUNCE: Duration = Duration::from_millis(50);
 
+// todo!(put this in the UI)
 #[derive(Clone, Debug)]
 pub enum HistoryEntry {
-    Thread(AcpThreadMetadata),
-    Context(SavedContextMetadata),
+    AcpThread(AcpThreadMetadata),
+    TextThread(SavedContextMetadata),
 }
 
 impl HistoryEntry {
     pub fn updated_at(&self) -> DateTime<Utc> {
         match self {
-            HistoryEntry::Thread(thread) => thread.updated_at,
-            HistoryEntry::Context(context) => context.mtime.to_utc(),
+            HistoryEntry::AcpThread(thread) => thread.updated_at,
+            HistoryEntry::TextThread(context) => context.mtime.to_utc(),
         }
     }
 
     pub fn id(&self) -> HistoryEntryId {
         match self {
-            HistoryEntry::Thread(thread) => {
+            HistoryEntry::AcpThread(thread) => {
                 HistoryEntryId::Thread(thread.agent.clone(), thread.id.clone())
             }
-            HistoryEntry::Context(context) => HistoryEntryId::Context(context.path.clone()),
+            HistoryEntry::TextThread(context) => HistoryEntryId::Context(context.path.clone()),
         }
     }
 
     pub fn title(&self) -> &SharedString {
         match self {
-            HistoryEntry::Thread(thread) => &thread.title,
-            HistoryEntry::Context(context) => &context.title,
+            HistoryEntry::AcpThread(thread) => &thread.title,
+            HistoryEntry::TextThread(context) => &context.title,
         }
     }
 }
@@ -107,7 +108,7 @@ impl HistoryStore {
             self.agents
                 .values_mut()
                 .flat_map(|history| history.entries.borrow().clone().unwrap_or_default()) // todo!("surface the loading state?")
-                .map(HistoryEntry::Thread),
+                .map(HistoryEntry::AcpThread),
         );
         // todo!() include the text threads in here.
 

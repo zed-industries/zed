@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use acp_thread::AcpThreadMetadata;
 use agent_servers::AgentServer;
-use agent2::history_store::HistoryEntry;
+use agent2::HistoryEntry;
 use db::kvp::{Dismissable, KEY_VALUE_STORE};
 use serde::{Deserialize, Serialize};
 
@@ -752,7 +752,7 @@ impl AgentPanel {
             &acp_history,
             window,
             |this, _, event, window, cx| match event {
-                ThreadHistoryEvent::Open(HistoryEntry::Thread(thread)) => {
+                ThreadHistoryEvent::Open(HistoryEntry::AcpThread(thread)) => {
                     let agent_choice = match thread.agent.0.as_ref() {
                         "Claude Code" => Some(ExternalAgent::ClaudeCode),
                         "Gemini" => Some(ExternalAgent::Gemini),
@@ -761,7 +761,7 @@ impl AgentPanel {
                     };
                     this.new_external_thread(agent_choice, Some(thread.clone()), window, cx);
                 }
-                ThreadHistoryEvent::Open(HistoryEntry::Context(thread)) => {
+                ThreadHistoryEvent::Open(HistoryEntry::TextThread(thread)) => {
                     todo!()
                 }
             },

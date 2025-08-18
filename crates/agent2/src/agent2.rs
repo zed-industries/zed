@@ -1,6 +1,6 @@
 mod agent;
 mod db;
-pub mod history_store;
+mod history_store;
 mod native_agent_server;
 mod templates;
 mod thread;
@@ -11,6 +11,7 @@ mod tests;
 
 pub use agent::*;
 pub use db::*;
+pub use history_store::*;
 pub use native_agent_server::NativeAgentServer;
 pub use templates::*;
 pub use thread::*;

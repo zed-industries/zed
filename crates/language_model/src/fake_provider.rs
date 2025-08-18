@@ -102,6 +102,8 @@ pub struct FakeLanguageModel {
 
 impl Default for FakeLanguageModel {
     fn default() -> Self {
+        dbg!("default......");
+        eprintln!("{}", std::backtrace::Backtrace::force_capture());
         Self {
             provider_id: LanguageModelProviderId::from("fake".to_string()),
             provider_name: LanguageModelProviderName::from("Fake".to_string()),
@@ -149,12 +151,14 @@ impl FakeLanguageModel {
     }
 
     pub fn end_completion_stream(&self, request: &LanguageModelRequest) {
+        dbg!("remove...");
         self.current_completion_txs
             .lock()
             .retain(|(req, _)| req != request);
     }
 
     pub fn send_last_completion_stream_text_chunk(&self, chunk: impl Into<String>) {
+        dbg!("read...");
         self.send_completion_stream_text_chunk(self.pending_completions().last().unwrap(), chunk);
     }
 
@@ -223,6 +227,7 @@ impl LanguageModel for FakeLanguageModel {
         >,
     > {
         let (tx, rx) = mpsc::unbounded();
+        dbg!("insert...");
         self.current_completion_txs.lock().push((request, tx));
         async move { Ok(rx.map(Ok).boxed()) }.boxed()
     }

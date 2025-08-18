@@ -263,15 +263,20 @@ impl NativeAgent {
     }
 
     fn save_thread(&mut self, thread: Entity<Thread>, cx: &mut Context<Self>) {
+        dbg!();
         let id = thread.read(cx).id().clone();
+        dbg!();
         let Some(session) = self.sessions.get_mut(&id) else {
             return;
         };
+        dbg!();
 
         let thread = thread.downgrade();
         let thread_database = self.thread_database.clone();
+        dbg!();
         session.save_task = cx.spawn(async move |this, cx| {
             cx.background_executor().timer(SAVE_THREAD_DEBOUNCE).await;
+            dbg!();
             let db_thread = thread.update(cx, |thread, cx| thread.to_db(cx))?.await;
             thread_database.save_thread(id, db_thread).await?;
             this.update(cx, |this, cx| this.reload_history(cx))?;
@@ -1049,12 +1054,15 @@ impl acp_thread::AgentSessionResume for NativeAgentSessionResume {
 
 #[cfg(test)]
 mod tests {
+    use crate::{HistoryEntry, HistoryStore};
+
     use super::*;
     use acp_thread::{AgentConnection, AgentModelGroupName, AgentModelId, AgentModelInfo};
     use fs::FakeFs;
     use gpui::TestAppContext;
     use serde_json::json;
     use settings::SettingsStore;
+    use util::path;
 
     #[gpui::test]
     async fn test_maintaining_project_context(cx: &mut TestAppContext) {
@@ -1227,6 +1235,66 @@ mod tests {
             settings_json["agent"]["default_model"]["provider"],
             json!("fake")
         );
+    }
+
+    #[gpui::test]
+    async fn test_history(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs.clone(), [], cx).await;
+
+        let agent = NativeAgent::new(
+            project.clone(),
+            Templates::new(),
+            None,
+            fs.clone(),
+            &mut cx.to_async(),
+        )
+        .await
+        .unwrap();
+        let model = cx.update(|cx| {
+            LanguageModelRegistry::global(cx)
+                .read(cx)
+                .default_model()
+                .unwrap()
+                .model
+        });
+        let connection = NativeAgentConnection(agent.clone());
+        let history_store = cx.new(|cx| {
+            let mut store = HistoryStore::new(cx);
+            store.register_agent(NATIVE_AGENT_SERVER_NAME.clone(), &connection, cx);
+            store
+        });
+
+        let acp_thread = cx
+            .update(|cx| {
+                Rc::new(connection.clone()).new_thread(project.clone(), Path::new(path!("")), cx)
+            })
+            .await
+            .unwrap();
+        let session_id = acp_thread.read_with(cx, |thread, _| thread.session_id().clone());
+        let selector = connection.model_selector().unwrap();
+
+        let model = cx
+            .update(|cx| selector.selected_model(&session_id, cx))
+            .await
+            .expect("selected_model should succeed");
+        let model = cx
+            .update(|cx| agent.read(cx).models().model_from_id(&model.id))
+            .unwrap();
+        let model = model.as_fake();
+
+        let send = acp_thread.update(cx, |thread, cx| thread.send_raw("Hi", cx));
+        let send = cx.foreground_executor().spawn(send);
+        cx.run_until_parked();
+        model.send_last_completion_stream_text_chunk("Hey");
+        model.end_last_completion_stream();
+        dbg!(send.await.unwrap());
+        cx.executor().advance_clock(SAVE_THREAD_DEBOUNCE);
+
+        let history = history_store.update(cx, |store, cx| store.entries(cx));
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0].title(), "Hi");
     }
 
     fn init_test(cx: &mut TestAppContext) {

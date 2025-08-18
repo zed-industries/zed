@@ -236,10 +236,10 @@ impl AcpThreadHistory {
 
                 for (idx, entry) in all_entries.iter().enumerate() {
                     match entry {
-                        HistoryEntry::Thread(thread) => {
+                        HistoryEntry::AcpThread(thread) => {
                             candidates.push(StringMatchCandidate::new(idx, &thread.title));
                         }
-                        HistoryEntry::Context(context) => {
+                        HistoryEntry::TextThread(context) => {
                             candidates.push(StringMatchCandidate::new(idx, &context.title));
                         }
                     }
