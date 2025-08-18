@@ -2603,7 +2603,7 @@ impl GitPanel {
         for pending in self.pending.iter() {
             if pending.target_status == TargetStatus::Staged {
                 pending_staged_count += pending.entries.len();
-                last_pending_staged = pending.entries.iter().next().cloned();
+                last_pending_staged = pending.entries.first().cloned();
             }
             if let Some(single_staged) = &single_staged_entry {
                 if pending
@@ -5096,7 +5096,7 @@ mod tests {
             project
                 .read(cx)
                 .worktrees(cx)
-                .nth(0)
+                .next()
                 .unwrap()
                 .read(cx)
                 .as_local()
@@ -5221,7 +5221,7 @@ mod tests {
             project
                 .read(cx)
                 .worktrees(cx)
-                .nth(0)
+                .next()
                 .unwrap()
                 .read(cx)
                 .as_local()
@@ -5272,7 +5272,7 @@ mod tests {
             project
                 .read(cx)
                 .worktrees(cx)
-                .nth(0)
+                .next()
                 .unwrap()
                 .read(cx)
                 .as_local()
@@ -5321,7 +5321,7 @@ mod tests {
             project
                 .read(cx)
                 .worktrees(cx)
-                .nth(0)
+                .next()
                 .unwrap()
                 .read(cx)
                 .as_local()

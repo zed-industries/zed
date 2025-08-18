@@ -272,7 +272,7 @@ impl VariableList {
         let mut entries = vec![];
 
         let scopes: Vec<_> = self.session.update(cx, |session, cx| {
-            session.scopes(stack_frame_id, cx).iter().cloned().collect()
+            session.scopes(stack_frame_id, cx).to_vec()
         });
 
         let mut contains_local_scope = false;
