@@ -2148,11 +2148,11 @@ impl KeybindingEditorModal {
         let action_arguments = self
             .action_arguments_editor
             .as_ref()
-            .map(|editor| editor.read(cx).editor.read(cx).text(cx));
+            .map(|arguments_editor| arguments_editor.read(cx).editor.read(cx).text(cx))
+            .filter(|args| !args.is_empty());
 
         let value = action_arguments
             .as_ref()
-            .filter(|args| !args.is_empty())
             .map(|args| {
                 serde_json::from_str(args).context("Failed to parse action arguments as JSON")
             })
@@ -2260,29 +2260,11 @@ impl KeybindingEditorModal {
 
         let create = self.creating;
 
-        let status_toast = StatusToast::new(
-            format!(
-                "Saved edits to the {} action.",
-                &self.editing_keybind.action().humanized_name
-            ),
-            cx,
-            move |this, _cx| {
-                this.icon(ToastIcon::new(IconName::Check).color(Color::Success))
-                    .dismiss_button(true)
-                // .action("Undo", f) todo: wire the undo functionality
-            },
-        );
-
-        self.workspace
-            .update(cx, |workspace, cx| {
-                workspace.toggle_status_toast(status_toast, cx);
-            })
-            .log_err();
-
         cx.spawn(async move |this, cx| {
             let action_name = existing_keybind.action().name;
+            let humanized_action_name = existing_keybind.action().humanized_name.clone();
 
-            if let Err(err) = save_keybinding_update(
+            match save_keybinding_update(
                 create,
                 existing_keybind,
                 &action_mapping,
@@ -2292,25 +2274,43 @@ impl KeybindingEditorModal {
             )
             .await
             {
-                this.update(cx, |this, cx| {
-                    this.set_error(InputError::error(err), cx);
-                })
-                .log_err();
-            } else {
-                this.update(cx, |this, cx| {
-                    this.keymap_editor.update(cx, |keymap, cx| {
-                        keymap.previous_edit = Some(PreviousEdit::Keybinding {
-                            action_mapping,
-                            action_name,
-                            fallback: keymap
-                                .table_interaction_state
-                                .read(cx)
-                                .get_scrollbar_offset(Axis::Vertical),
-                        })
-                    });
-                    cx.emit(DismissEvent);
-                })
-                .ok();
+                Ok(_) => {
+                    this.update(cx, |this, cx| {
+                        this.keymap_editor.update(cx, |keymap, cx| {
+                            keymap.previous_edit = Some(PreviousEdit::Keybinding {
+                                action_mapping,
+                                action_name,
+                                fallback: keymap
+                                    .table_interaction_state
+                                    .read(cx)
+                                    .get_scrollbar_offset(Axis::Vertical),
+                            });
+                            let status_toast = StatusToast::new(
+                                format!("Saved edits to the {} action.", humanized_action_name),
+                                cx,
+                                move |this, _cx| {
+                                    this.icon(ToastIcon::new(IconName::Check).color(Color::Success))
+                                        .dismiss_button(true)
+                                    // .action("Undo", f) todo: wire the undo functionality
+                                },
+                            );
+
+                            this.workspace
+                                .update(cx, |workspace, cx| {
+                                    workspace.toggle_status_toast(status_toast, cx);
+                                })
+                                .log_err();
+                        });
+                        cx.emit(DismissEvent);
+                    })
+                    .ok();
+                }
+                Err(err) => {
+                    this.update(cx, |this, cx| {
+                        this.set_error(InputError::error(err), cx);
+                    })
+                    .log_err();
+                }
             }
         })
         .detach();
@@ -2907,7 +2907,7 @@ async fn save_keybinding_update(
 
     let updated_keymap_contents =
         settings::KeymapFile::update_keybinding(operation, keymap_contents, tab_size)
-            .context("Failed to update keybinding")?;
+            .map_err(|err| anyhow::anyhow!("Could not save updated keybinding: {}", err))?;
     fs.write(
         paths::keymap_file().as_path(),
         updated_keymap_contents.as_bytes(),
