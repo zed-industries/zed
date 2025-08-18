@@ -1571,6 +1571,7 @@ impl Buffer {
             diagnostics: diagnostics.iter().cloned().collect(),
             lamport_timestamp,
         };
+
         self.apply_diagnostic_update(server_id, diagnostics, lamport_timestamp, cx);
         self.send_operation(op, true, cx);
     }
