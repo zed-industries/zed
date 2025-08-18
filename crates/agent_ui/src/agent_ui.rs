@@ -5,7 +5,6 @@ mod agent_diff;
 mod agent_model_selector;
 mod agent_panel;
 mod buffer_codegen;
-mod burn_mode_tooltip;
 mod context_picker;
 mod context_server_configuration;
 mod context_strip;
@@ -31,7 +30,7 @@ use std::sync::Arc;
 use agent::{Thread, ThreadId};
 use agent_settings::{AgentProfileId, AgentSettings, LanguageModelSelection};
 use assistant_slash_command::SlashCommandRegistry;
-use client::{Client, DisableAiSettings};
+use client::Client;
 use command_palette_hooks::CommandPaletteFilter;
 use feature_flags::FeatureFlagAppExt as _;
 use fs::Fs;
@@ -40,6 +39,7 @@ use language::LanguageRegistry;
 use language_model::{
     ConfiguredModel, LanguageModel, LanguageModelId, LanguageModelProviderId, LanguageModelRegistry,
 };
+use project::DisableAiSettings;
 use prompt_store::PromptBuilder;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -63,6 +63,8 @@ actions!(
         NewTextThread,
         /// Toggles the context picker interface for adding files, symbols, or other context.
         ToggleContextPicker,
+        /// Toggles the menu to create new agent threads.
+        ToggleNewThreadMenu,
         /// Toggles the navigation menu for switching between threads and views.
         ToggleNavigationMenu,
         /// Toggles the options menu for agent settings and preferences.
@@ -144,19 +146,21 @@ pub struct NewExternalAgentThread {
     agent: Option<ExternalAgent>,
 }
 
-#[derive(Default, Clone, Copy, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Default, Debug, Clone, Copy, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 enum ExternalAgent {
     #[default]
     Gemini,
     ClaudeCode,
+    NativeAgent,
 }
 
 impl ExternalAgent {
-    pub fn server(&self) -> Rc<dyn agent_servers::AgentServer> {
+    pub fn server(&self, fs: Arc<dyn fs::Fs>) -> Rc<dyn agent_servers::AgentServer> {
         match self {
             ExternalAgent::Gemini => Rc::new(agent_servers::Gemini),
             ExternalAgent::ClaudeCode => Rc::new(agent_servers::ClaudeCode),
+            ExternalAgent::NativeAgent => Rc::new(agent2::NativeAgentServer::new(fs)),
         }
     }
 }
@@ -238,7 +242,6 @@ pub fn init(
         client.telemetry().clone(),
         cx,
     );
-    indexed_docs::init(cx);
     cx.observe_new(move |workspace, window, cx| {
         ConfigureContextServerModal::register(workspace, language_registry.clone(), window, cx)
     })
@@ -262,6 +265,8 @@ fn update_command_palette_filter(cx: &mut App) {
         if disable_ai {
             filter.hide_namespace("agent");
             filter.hide_namespace("assistant");
+            filter.hide_namespace("copilot");
+            filter.hide_namespace("supermaven");
             filter.hide_namespace("zed_predict_onboarding");
             filter.hide_namespace("edit_prediction");
 
@@ -282,6 +287,7 @@ fn update_command_palette_filter(cx: &mut App) {
         } else {
             filter.show_namespace("agent");
             filter.show_namespace("assistant");
+            filter.show_namespace("copilot");
             filter.show_namespace("zed_predict_onboarding");
 
             filter.show_namespace("edit_prediction");
@@ -401,12 +407,6 @@ fn register_slash_commands(cx: &mut App) {
 fn update_slash_commands_from_settings(cx: &mut App) {
     let slash_command_registry = SlashCommandRegistry::global(cx);
     let settings = SlashCommandSettings::get_global(cx);
-
-    if settings.docs.enabled {
-        slash_command_registry.register_command(assistant_slash_commands::DocsSlashCommand, true);
-    } else {
-        slash_command_registry.unregister_command(assistant_slash_commands::DocsSlashCommand);
-    }
 
     if settings.cargo_workspace.enabled {
         slash_command_registry

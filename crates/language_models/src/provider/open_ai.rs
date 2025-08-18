@@ -14,7 +14,7 @@ use language_model::{
     RateLimiter, Role, StopReason, TokenUsage,
 };
 use menu;
-use open_ai::{ImageUrl, Model, ResponseStreamEvent, stream_completion};
+use open_ai::{ImageUrl, Model, ReasoningEffort, ResponseStreamEvent, stream_completion};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
@@ -45,6 +45,7 @@ pub struct AvailableModel {
     pub max_tokens: u64,
     pub max_output_tokens: Option<u64>,
     pub max_completion_tokens: Option<u64>,
+    pub reasoning_effort: Option<ReasoningEffort>,
 }
 
 pub struct OpenAiLanguageModelProvider {
@@ -213,6 +214,7 @@ impl LanguageModelProvider for OpenAiLanguageModelProvider {
                     max_tokens: model.max_tokens,
                     max_output_tokens: model.max_output_tokens,
                     max_completion_tokens: model.max_completion_tokens,
+                    reasoning_effort: model.reasoning_effort.clone(),
                 },
             );
         }
@@ -301,7 +303,25 @@ impl LanguageModel for OpenAiLanguageModel {
     }
 
     fn supports_images(&self) -> bool {
-        false
+        use open_ai::Model;
+        match &self.model {
+            Model::FourOmni
+            | Model::FourOmniMini
+            | Model::FourPointOne
+            | Model::FourPointOneMini
+            | Model::FourPointOneNano
+            | Model::Five
+            | Model::FiveMini
+            | Model::FiveNano
+            | Model::O1
+            | Model::O3
+            | Model::O4Mini => true,
+            Model::ThreePointFiveTurbo
+            | Model::Four
+            | Model::FourTurbo
+            | Model::O3Mini
+            | Model::Custom { .. } => false,
+        }
     }
 
     fn supports_tool_choice(&self, choice: LanguageModelToolChoice) -> bool {
@@ -350,7 +370,9 @@ impl LanguageModel for OpenAiLanguageModel {
             request,
             self.model.id(),
             self.model.supports_parallel_tool_calls(),
+            self.model.supports_prompt_cache_key(),
             self.max_output_tokens(),
+            self.model.reasoning_effort(),
         );
         let completions = self.stream_completion(request, cx);
         async move {
@@ -365,7 +387,9 @@ pub fn into_open_ai(
     request: LanguageModelRequest,
     model_id: &str,
     supports_parallel_tool_calls: bool,
+    supports_prompt_cache_key: bool,
     max_output_tokens: Option<u64>,
+    reasoning_effort: Option<ReasoningEffort>,
 ) -> open_ai::Request {
     let stream = !model_id.starts_with("o1-");
 
@@ -455,6 +479,11 @@ pub fn into_open_ai(
         } else {
             None
         },
+        prompt_cache_key: if supports_prompt_cache_key {
+            request.thread_id
+        } else {
+            None
+        },
         tools: request
             .tools
             .into_iter()
@@ -471,6 +500,7 @@ pub fn into_open_ai(
             LanguageModelToolChoice::Any => open_ai::ToolChoice::Required,
             LanguageModelToolChoice::None => open_ai::ToolChoice::None,
         }),
+        reasoning_effort,
     }
 }
 
@@ -674,6 +704,10 @@ pub fn count_open_ai_tokens(
             | Model::O3
             | Model::O3Mini
             | Model::O4Mini => tiktoken_rs::num_tokens_from_messages(model.id(), &messages),
+            // GPT-5 models don't have tiktoken support yet; fall back on gpt-4o tokenizer
+            Model::Five | Model::FiveMini | Model::FiveNano => {
+                tiktoken_rs::num_tokens_from_messages("gpt-4o", &messages)
+            }
         }
         .map(|tokens| tokens as u64)
     })
@@ -780,7 +814,7 @@ impl Render for ConfigurationView {
         let api_key_section = if self.should_render_editor(cx) {
             v_flex()
                 .on_action(cx.listener(Self::save_api_key))
-                .child(Label::new("To use Zed's assistant with OpenAI, you need to add an API key. Follow these steps:"))
+                .child(Label::new("To use Zed's agent with OpenAI, you need to add an API key. Follow these steps:"))
                 .child(
                     List::new()
                         .child(InstructionListItem::new(
@@ -865,10 +899,10 @@ impl Render for ConfigurationView {
             .child(
                 Button::new("docs", "Learn More")
                     .icon(IconName::ArrowUpRight)
-                    .icon_size(IconSize::XSmall)
+                    .icon_size(IconSize::Small)
                     .icon_color(Color::Muted)
                     .on_click(move |_, _window, cx| {
-                        cx.open_url("https://zed.dev/docs/ai/configuration#openai-api-compatible")
+                        cx.open_url("https://zed.dev/docs/ai/llm-providers#openai-api-compatible")
                     }),
             );
 

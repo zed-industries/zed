@@ -137,7 +137,7 @@ impl ToolUseState {
     }
 
     pub fn cancel_pending(&mut self) -> Vec<PendingToolUse> {
-        let mut cancelled_tool_uses = Vec::new();
+        let mut canceled_tool_uses = Vec::new();
         self.pending_tool_uses_by_id
             .retain(|tool_use_id, tool_use| {
                 if matches!(tool_use.status, PendingToolUseStatus::Error { .. }) {
@@ -155,17 +155,22 @@ impl ToolUseState {
                         is_error: true,
                     },
                 );
-                cancelled_tool_uses.push(tool_use.clone());
+                canceled_tool_uses.push(tool_use.clone());
                 false
             });
-        cancelled_tool_uses
+        canceled_tool_uses
     }
 
     pub fn pending_tool_uses(&self) -> Vec<&PendingToolUse> {
         self.pending_tool_uses_by_id.values().collect()
     }
 
-    pub fn tool_uses_for_message(&self, id: MessageId, cx: &App) -> Vec<ToolUse> {
+    pub fn tool_uses_for_message(
+        &self,
+        id: MessageId,
+        project: &Entity<Project>,
+        cx: &App,
+    ) -> Vec<ToolUse> {
         let Some(tool_uses_for_message) = &self.tool_uses_by_assistant_message.get(&id) else {
             return Vec::new();
         };
@@ -211,7 +216,10 @@ impl ToolUseState {
 
             let (icon, needs_confirmation) =
                 if let Some(tool) = self.tools.read(cx).tool(&tool_use.name, cx) {
-                    (tool.icon(), tool.needs_confirmation(&tool_use.input, cx))
+                    (
+                        tool.icon(),
+                        tool.needs_confirmation(&tool_use.input, project, cx),
+                    )
                 } else {
                     (IconName::Cog, false)
                 };

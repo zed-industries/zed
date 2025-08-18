@@ -38,6 +38,27 @@ pub struct AvailableModel {
     pub max_tokens: u64,
     pub max_output_tokens: Option<u64>,
     pub max_completion_tokens: Option<u64>,
+    #[serde(default)]
+    pub capabilities: ModelCapabilities,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct ModelCapabilities {
+    pub tools: bool,
+    pub images: bool,
+    pub parallel_tool_calls: bool,
+    pub prompt_cache_key: bool,
+}
+
+impl Default for ModelCapabilities {
+    fn default() -> Self {
+        Self {
+            tools: true,
+            images: false,
+            parallel_tool_calls: false,
+            prompt_cache_key: false,
+        }
+    }
 }
 
 pub struct OpenAiCompatibleLanguageModelProvider {
@@ -293,17 +314,17 @@ impl LanguageModel for OpenAiCompatibleLanguageModel {
     }
 
     fn supports_tools(&self) -> bool {
-        true
+        self.model.capabilities.tools
     }
 
     fn supports_images(&self) -> bool {
-        false
+        self.model.capabilities.images
     }
 
     fn supports_tool_choice(&self, choice: LanguageModelToolChoice) -> bool {
         match choice {
-            LanguageModelToolChoice::Auto => true,
-            LanguageModelToolChoice::Any => true,
+            LanguageModelToolChoice::Auto => self.model.capabilities.tools,
+            LanguageModelToolChoice::Any => self.model.capabilities.tools,
             LanguageModelToolChoice::None => true,
         }
     }
@@ -355,7 +376,14 @@ impl LanguageModel for OpenAiCompatibleLanguageModel {
             LanguageModelCompletionError,
         >,
     > {
-        let request = into_open_ai(request, &self.model.name, true, self.max_output_tokens());
+        let request = into_open_ai(
+            request,
+            &self.model.name,
+            self.model.capabilities.parallel_tool_calls,
+            self.model.capabilities.prompt_cache_key,
+            self.max_output_tokens(),
+            None,
+        );
         let completions = self.stream_completion(request, cx);
         async move {
             let mapper = OpenAiEventMapper::new();
@@ -466,7 +494,7 @@ impl Render for ConfigurationView {
         let api_key_section = if self.should_render_editor(cx) {
             v_flex()
                 .on_action(cx.listener(Self::save_api_key))
-                .child(Label::new("To use Zed's assistant with an OpenAI compatible provider, you need to add an API key."))
+                .child(Label::new("To use Zed's agent with an OpenAI-compatible provider, you need to add an API key."))
                 .child(
                     div()
                         .pt(DynamicSpacing::Base04.rems(cx))

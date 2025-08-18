@@ -62,7 +62,7 @@ pub struct SelectedEntry {
 #[derive(Debug)]
 pub struct DraggedSelection {
     pub active_selection: SelectedEntry,
-    pub marked_selections: Arc<BTreeSet<SelectedEntry>>,
+    pub marked_selections: Arc<[SelectedEntry]>,
 }
 
 impl DraggedSelection {
@@ -1664,10 +1664,33 @@ impl Pane {
                 }
 
                 if should_save {
-                    if !Self::save_item(project.clone(), &pane, &*item_to_close, save_intent, cx)
-                        .await?
+                    match Self::save_item(project.clone(), &pane, &*item_to_close, save_intent, cx)
+                        .await
                     {
-                        break;
+                        Ok(success) => {
+                            if !success {
+                                break;
+                            }
+                        }
+                        Err(err) => {
+                            let answer = pane.update_in(cx, |_, window, cx| {
+                                let detail = Self::file_names_for_prompt(
+                                    &mut [&item_to_close].into_iter(),
+                                    cx,
+                                );
+                                window.prompt(
+                                    PromptLevel::Warning,
+                                    &format!("Unable to save file: {}", &err),
+                                    Some(&detail),
+                                    &["Close Without Saving", "Cancel"],
+                                    cx,
+                                )
+                            })?;
+                            match answer.await {
+                                Ok(0) => {}
+                                Ok(1..) | Err(_) => break,
+                            }
+                        }
                     }
                 }
 
@@ -1806,6 +1829,7 @@ impl Pane {
         let mode = self.nav_history.mode();
         self.nav_history.set_mode(NavigationMode::ClosingItem);
         item.deactivated(window, cx);
+        item.on_removed(cx);
         self.nav_history.set_mode(mode);
 
         if self.is_active_preview_item(item.item_id()) {
@@ -2038,6 +2062,8 @@ impl Pane {
                 })?
                 .await?;
             } else if can_save_as && is_singleton {
+                let suggested_name =
+                    cx.update(|_window, cx| item.suggested_filename(cx).to_string())?;
                 let new_path = pane.update_in(cx, |pane, window, cx| {
                     pane.activate_item(item_ix, true, true, window, cx);
                     pane.workspace.update(cx, |workspace, cx| {
@@ -2049,7 +2075,7 @@ impl Pane {
                         } else {
                             DirectoryLister::Project(workspace.project().clone())
                         };
-                        workspace.prompt_for_new_path(lister, window, cx)
+                        workspace.prompt_for_new_path(lister, Some(suggested_name), window, cx)
                     })
                 })??;
                 let Some(new_path) = new_path.await.ok().flatten().into_iter().flatten().next()
@@ -2172,7 +2198,7 @@ impl Pane {
 
     fn update_status_bar(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let workspace = self.workspace.clone();
-        let pane = cx.entity().clone();
+        let pane = cx.entity();
 
         window.defer(cx, move |window, cx| {
             let Ok(status_bar) =
@@ -2253,7 +2279,7 @@ impl Pane {
         cx: &mut Context<Self>,
     ) {
         maybe!({
-            let pane = cx.entity().clone();
+            let pane = cx.entity();
 
             let destination_index = match operation {
                 PinOperation::Pin => self.pinned_tab_count.min(ix),
@@ -2447,15 +2473,26 @@ impl Pane {
             .on_drag(
                 DraggedTab {
                     item: item.boxed_clone(),
-                    pane: cx.entity().clone(),
+                    pane: cx.entity(),
                     detail,
                     is_active,
                     ix,
                 },
                 |tab, _, _, cx| cx.new(|_| tab.clone()),
             )
-            .drag_over::<DraggedTab>(|tab, _, _, cx| {
-                tab.bg(cx.theme().colors().drop_target_background)
+            .drag_over::<DraggedTab>(move |tab, dragged_tab: &DraggedTab, _, cx| {
+                let mut styled_tab = tab
+                    .bg(cx.theme().colors().drop_target_background)
+                    .border_color(cx.theme().colors().drop_target_border)
+                    .border_0();
+
+                if ix < dragged_tab.ix {
+                    styled_tab = styled_tab.border_l_2();
+                } else if ix > dragged_tab.ix {
+                    styled_tab = styled_tab.border_r_2();
+                }
+
+                styled_tab
             })
             .drag_over::<DraggedSelection>(|tab, _, _, cx| {
                 tab.bg(cx.theme().colors().drop_target_background)
@@ -2496,7 +2533,7 @@ impl Pane {
                         .shape(IconButtonShape::Square)
                         .icon_color(Color::Muted)
                         .size(ButtonSize::None)
-                        .icon_size(IconSize::XSmall)
+                        .icon_size(IconSize::Small)
                         .on_click(cx.listener(move |pane, _, window, cx| {
                             pane.unpin_tab_at(ix, window, cx);
                         }))
@@ -2516,7 +2553,7 @@ impl Pane {
                     .shape(IconButtonShape::Square)
                     .icon_color(Color::Muted)
                     .size(ButtonSize::None)
-                    .icon_size(IconSize::XSmall)
+                    .icon_size(IconSize::Small)
                     .on_click(cx.listener(move |pane, _, window, cx| {
                         pane.close_item_by_id(item_id, SaveIntent::Close, window, cx)
                             .detach_and_log_err(cx);
@@ -2795,7 +2832,7 @@ impl Pane {
         let navigate_backward = IconButton::new("navigate_backward", IconName::ArrowLeft)
             .icon_size(IconSize::Small)
             .on_click({
-                let entity = cx.entity().clone();
+                let entity = cx.entity();
                 move |_, window, cx| {
                     entity.update(cx, |pane, cx| pane.navigate_backward(window, cx))
                 }
@@ -2811,7 +2848,7 @@ impl Pane {
         let navigate_forward = IconButton::new("navigate_forward", IconName::ArrowRight)
             .icon_size(IconSize::Small)
             .on_click({
-                let entity = cx.entity().clone();
+                let entity = cx.entity();
                 move |_, window, cx| entity.update(cx, |pane, cx| pane.navigate_forward(window, cx))
             })
             .disabled(!self.can_navigate_forward())
@@ -2832,7 +2869,7 @@ impl Pane {
             })
             .collect::<Vec<_>>();
         let tab_count = tab_items.len();
-        if self.pinned_tab_count > tab_count {
+        if self.is_tab_pinned(tab_count) {
             log::warn!(
                 "Pinned tab count ({}) exceeds actual tab count ({}). \
                 This should not happen. If possible, add reproduction steps, \
@@ -2922,7 +2959,7 @@ impl Pane {
                                 this.handle_external_paths_drop(paths, window, cx)
                             }))
                             .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
-                                if event.up.click_count == 2 {
+                                if event.click_count() == 2 {
                                     window.dispatch_action(
                                         this.double_click_dispatch_action.boxed_clone(),
                                         cx,
@@ -3017,7 +3054,7 @@ impl Pane {
                 return;
             }
         }
-        let mut to_pane = cx.entity().clone();
+        let mut to_pane = cx.entity();
         let split_direction = self.drag_split_direction;
         let item_id = dragged_tab.item.item_id();
         if let Some(preview_item_id) = self.preview_item_id {
@@ -3030,7 +3067,7 @@ impl Pane {
             || cfg!(not(target_os = "macos")) && window.modifiers().control;
 
         let from_pane = dragged_tab.pane.clone();
-        let from_ix = dragged_tab.ix;
+
         self.workspace
             .update(cx, |_, cx| {
                 cx.defer_in(window, move |workspace, window, cx| {
@@ -3062,9 +3099,13 @@ impl Pane {
                     }
                     to_pane.update(cx, |this, _| {
                         if to_pane == from_pane {
-                            let moved_right = ix > from_ix;
-                            let ix = if moved_right { ix - 1 } else { ix };
-                            let is_pinned_in_to_pane = this.is_tab_pinned(ix);
+                            let actual_ix = this
+                                .items
+                                .iter()
+                                .position(|item| item.item_id() == item_id)
+                                .unwrap_or(0);
+
+                            let is_pinned_in_to_pane = this.is_tab_pinned(actual_ix);
 
                             if !was_pinned_in_from_pane && is_pinned_in_to_pane {
                                 this.pinned_tab_count += 1;
@@ -3122,7 +3163,7 @@ impl Pane {
                 return;
             }
         }
-        let mut to_pane = cx.entity().clone();
+        let mut to_pane = cx.entity();
         let split_direction = self.drag_split_direction;
         let project_entry_id = *project_entry_id;
         self.workspace
@@ -3198,7 +3239,7 @@ impl Pane {
                 return;
             }
         }
-        let mut to_pane = cx.entity().clone();
+        let mut to_pane = cx.entity();
         let mut split_direction = self.drag_split_direction;
         let paths = paths.paths().to_vec();
         let is_remote = self
@@ -3613,7 +3654,7 @@ impl Render for Pane {
                                 .justify_center()
                                 .on_click(cx.listener(
                                     move |this, event: &ClickEvent, window, cx| {
-                                        if event.up.click_count == 2 {
+                                        if event.click_count() == 2 {
                                             window.dispatch_action(
                                                 this.double_click_dispatch_action.boxed_clone(),
                                                 cx,
@@ -4948,6 +4989,43 @@ mod tests {
 
         // A stays pinned
         assert_item_labels(&pane_a, ["B!", "A*!"], cx);
+    }
+
+    #[gpui::test]
+    async fn test_dragging_pinned_tab_onto_unpinned_tab_reduces_unpinned_tab_count(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let pane_a = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        // Add A, B to pane A and pin A
+        let item_a = add_labeled_item(&pane_a, "A", false, cx);
+        add_labeled_item(&pane_a, "B", false, cx);
+        pane_a.update_in(cx, |pane, window, cx| {
+            let ix = pane.index_for_item_id(item_a.item_id()).unwrap();
+            pane.pin_tab_at(ix, window, cx);
+        });
+        assert_item_labels(&pane_a, ["A!", "B*"], cx);
+
+        // Drag pinned A on top of B in the same pane, which changes tab order to B, A
+        pane_a.update_in(cx, |pane, window, cx| {
+            let dragged_tab = DraggedTab {
+                pane: pane_a.clone(),
+                item: item_a.boxed_clone(),
+                ix: 0,
+                detail: 0,
+                is_active: true,
+            };
+            pane.handle_tab_drop(&dragged_tab, 1, window, cx);
+        });
+
+        // Neither are pinned
+        assert_item_labels(&pane_a, ["B", "A*"], cx);
     }
 
     #[gpui::test]

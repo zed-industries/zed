@@ -6,7 +6,7 @@ use crate::agent_diff::AgentDiffThread;
 use crate::agent_model_selector::AgentModelSelector;
 use crate::tool_compatibility::{IncompatibleToolsState, IncompatibleToolsTooltip};
 use crate::ui::{
-    MaxModeTooltip,
+    BurnModeTooltip,
     preview::{AgentPreview, UsageCallout},
 };
 use agent::history_store::HistoryStore;
@@ -14,10 +14,10 @@ use agent::{
     context::{AgentContextKey, ContextLoadResult, load_context},
     context_store::ContextStoreEvent,
 };
-use agent_settings::{AgentSettings, CompletionMode};
+use agent_settings::{AgentProfileId, AgentSettings, CompletionMode};
 use ai_onboarding::ApiKeysWithProviders;
 use buffer_diff::BufferDiff;
-use client::UserStore;
+use cloud_llm_client::CompletionIntent;
 use collections::{HashMap, HashSet};
 use editor::actions::{MoveUp, Paste};
 use editor::display_map::CreaseId;
@@ -42,7 +42,6 @@ use language_model::{
 use multi_buffer;
 use project::Project;
 use prompt_store::PromptStore;
-use proto::Plan;
 use settings::Settings;
 use std::time::Duration;
 use theme::ThemeSettings;
@@ -53,11 +52,10 @@ use util::ResultExt as _;
 use workspace::{CollaboratorId, Workspace};
 use zed_actions::agent::Chat;
 use zed_actions::agent::ToggleModelSelector;
-use zed_llm_client::CompletionIntent;
 
 use crate::context_picker::{ContextPicker, ContextPickerCompletionProvider, crease_for_mention};
 use crate::context_strip::{ContextStrip, ContextStripEvent, SuggestContextKind};
-use crate::profile_selector::ProfileSelector;
+use crate::profile_selector::{ProfileProvider, ProfileSelector};
 use crate::{
     ActiveThread, AgentDiffPane, ChatWithFollow, ExpandMessageEditor, Follow, KeepAll,
     ModelUsageContext, NewThread, OpenAgentDiff, RejectAll, RemoveAllContext, ToggleBurnMode,
@@ -79,7 +77,6 @@ pub struct MessageEditor {
     editor: Entity<Editor>,
     workspace: WeakEntity<Workspace>,
     project: Entity<Project>,
-    user_store: Entity<UserStore>,
     context_store: Entity<ContextStore>,
     prompt_store: Option<Entity<PromptStore>>,
     history_store: Option<WeakEntity<HistoryStore>>,
@@ -155,11 +152,28 @@ pub(crate) fn create_editor(
     editor
 }
 
+impl ProfileProvider for Entity<Thread> {
+    fn profiles_supported(&self, cx: &App) -> bool {
+        self.read(cx)
+            .configured_model()
+            .map_or(false, |model| model.model.supports_tools())
+    }
+
+    fn profile_id(&self, cx: &App) -> AgentProfileId {
+        self.read(cx).profile().id().clone()
+    }
+
+    fn set_profile(&self, profile_id: AgentProfileId, cx: &mut App) {
+        self.update(cx, |this, cx| {
+            this.set_profile(profile_id, cx);
+        });
+    }
+}
+
 impl MessageEditor {
     pub fn new(
         fs: Arc<dyn Fs>,
         workspace: WeakEntity<Workspace>,
-        user_store: Entity<UserStore>,
         context_store: Entity<ContextStore>,
         prompt_store: Option<Entity<PromptStore>>,
         thread_store: WeakEntity<ThreadStore>,
@@ -225,13 +239,13 @@ impl MessageEditor {
             )
         });
 
-        let profile_selector =
-            cx.new(|cx| ProfileSelector::new(fs, thread.clone(), editor.focus_handle(cx), cx));
+        let profile_selector = cx.new(|cx| {
+            ProfileSelector::new(fs, Arc::new(thread.clone()), editor.focus_handle(cx), cx)
+        });
 
         Self {
             editor: editor.clone(),
             project: thread.read(cx).project().clone(),
-            user_store,
             thread,
             incompatible_tools_state: incompatible_tools.clone(),
             workspace,
@@ -427,11 +441,11 @@ impl MessageEditor {
             thread.cancel_editing(cx);
         });
 
-        let cancelled = self.thread.update(cx, |thread, cx| {
+        let canceled = self.thread.update(cx, |thread, cx| {
             thread.cancel_last_completion(Some(window.window_handle()), cx)
         });
 
-        if cancelled {
+        if canceled {
             self.set_editor_is_expanded(false, cx);
             self.send_to_model(window, cx);
         }
@@ -610,7 +624,7 @@ impl MessageEditor {
                     this.toggle_burn_mode(&ToggleBurnMode, window, cx);
                 }))
                 .tooltip(move |_window, cx| {
-                    cx.new(|_| MaxModeTooltip::new().selected(burn_mode_enabled))
+                    cx.new(|_| BurnModeTooltip::new().selected(burn_mode_enabled))
                         .into()
                 })
                 .into_any_element(),
@@ -726,7 +740,7 @@ impl MessageEditor {
                     .when(focus_handle.is_focused(window), |this| {
                         this.child(
                             IconButton::new("toggle-height", expand_icon)
-                                .icon_size(IconSize::XSmall)
+                                .icon_size(IconSize::Small)
                                 .icon_color(Color::Muted)
                                 .tooltip({
                                     let focus_handle = focus_handle.clone();
@@ -832,7 +846,7 @@ impl MessageEditor {
                                                         parent.child(
                                                             IconButton::new(
                                                                 "stop-generation",
-                                                                IconName::StopFilled,
+                                                                IconName::Stop,
                                                             )
                                                             .icon_color(Color::Error)
                                                             .style(ButtonStyle::Tinted(
@@ -1283,24 +1297,12 @@ impl MessageEditor {
             return None;
         }
 
-        let user_store = self.user_store.read(cx);
-
-        let ubb_enable = user_store
-            .usage_based_billing_enabled()
-            .map_or(false, |enabled| enabled);
-
-        if ubb_enable {
+        let user_store = self.project.read(cx).user_store().read(cx);
+        if user_store.is_usage_based_billing_enabled() {
             return None;
         }
 
-        let plan = user_store
-            .current_plan()
-            .map(|plan| match plan {
-                Plan::Free => zed_llm_client::Plan::ZedFree,
-                Plan::ZedPro => zed_llm_client::Plan::ZedPro,
-                Plan::ZedProTrial => zed_llm_client::Plan::ZedProTrial,
-            })
-            .unwrap_or(zed_llm_client::Plan::ZedFree);
+        let plan = user_store.plan().unwrap_or(cloud_llm_client::Plan::ZedFree);
 
         let usage = user_store.model_request_usage()?;
 
@@ -1318,7 +1320,7 @@ impl MessageEditor {
         cx: &mut Context<Self>,
     ) -> Option<Div> {
         let icon = if token_usage_ratio == TokenUsageRatio::Exceeded {
-            Icon::new(IconName::X)
+            Icon::new(IconName::Close)
                 .color(Color::Error)
                 .size(IconSize::XSmall)
         } else {
@@ -1398,7 +1400,7 @@ impl MessageEditor {
             })
             .ok();
         });
-        // Replace existing load task, if any, causing it to be cancelled.
+        // Replace existing load task, if any, causing it to be canceled.
         let load_task = load_task.shared();
         self.load_context_task = Some(load_task.clone());
         cx.spawn(async move |this, cx| {
@@ -1765,7 +1767,6 @@ impl AgentPreview for MessageEditor {
     ) -> Option<AnyElement> {
         if let Some(workspace) = workspace.upgrade() {
             let fs = workspace.read(cx).app_state().fs.clone();
-            let user_store = workspace.read(cx).app_state().user_store.clone();
             let project = workspace.read(cx).project().clone();
             let weak_project = project.downgrade();
             let context_store = cx.new(|_cx| ContextStore::new(weak_project, None));
@@ -1778,7 +1779,6 @@ impl AgentPreview for MessageEditor {
                 MessageEditor::new(
                     fs,
                     workspace.downgrade(),
-                    user_store,
                     context_store,
                     None,
                     thread_store.downgrade(),

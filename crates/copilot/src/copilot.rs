@@ -6,7 +6,6 @@ mod sign_in;
 use crate::sign_in::initiate_sign_in_within_workspace;
 use ::fs::Fs;
 use anyhow::{Context as _, Result, anyhow};
-use client::DisableAiSettings;
 use collections::{HashMap, HashSet};
 use command_palette_hooks::CommandPaletteFilter;
 use futures::{Future, FutureExt, TryFutureExt, channel::oneshot, future::Shared};
@@ -22,8 +21,9 @@ use language::{
     point_from_lsp, point_to_lsp,
 };
 use lsp::{LanguageServer, LanguageServerBinary, LanguageServerId, LanguageServerName};
-use node_runtime::NodeRuntime;
+use node_runtime::{NodeRuntime, VersionStrategy};
 use parking_lot::Mutex;
+use project::DisableAiSettings;
 use request::StatusNotification;
 use serde_json::json;
 use settings::Settings;
@@ -39,6 +39,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
+use sum_tree::Dimensions;
 use util::{ResultExt, fs::remove_matching};
 use workspace::Workspace;
 
@@ -85,45 +86,13 @@ pub fn init(
         move |cx| Copilot::start(new_server_id, fs, node_runtime, cx)
     });
     Copilot::set_global(copilot.clone(), cx);
-    cx.observe(&copilot, |handle, cx| {
-        let copilot_action_types = [
-            TypeId::of::<Suggest>(),
-            TypeId::of::<NextSuggestion>(),
-            TypeId::of::<PreviousSuggestion>(),
-            TypeId::of::<Reinstall>(),
-        ];
-        let copilot_auth_action_types = [TypeId::of::<SignOut>()];
-        let copilot_no_auth_action_types = [TypeId::of::<SignIn>()];
-        let status = handle.read(cx).status();
-
-        let is_ai_disabled = DisableAiSettings::get_global(cx).disable_ai;
-        let filter = CommandPaletteFilter::global_mut(cx);
-
-        if is_ai_disabled {
-            filter.hide_action_types(&copilot_action_types);
-            filter.hide_action_types(&copilot_auth_action_types);
-            filter.hide_action_types(&copilot_no_auth_action_types);
-        } else {
-            match status {
-                Status::Disabled => {
-                    filter.hide_action_types(&copilot_action_types);
-                    filter.hide_action_types(&copilot_auth_action_types);
-                    filter.hide_action_types(&copilot_no_auth_action_types);
-                }
-                Status::Authorized => {
-                    filter.hide_action_types(&copilot_no_auth_action_types);
-                    filter.show_action_types(
-                        copilot_action_types
-                            .iter()
-                            .chain(&copilot_auth_action_types),
-                    );
-                }
-                _ => {
-                    filter.hide_action_types(&copilot_action_types);
-                    filter.hide_action_types(&copilot_auth_action_types);
-                    filter.show_action_types(copilot_no_auth_action_types.iter());
-                }
-            }
+    cx.observe(&copilot, |copilot, cx| {
+        copilot.update(cx, |copilot, cx| copilot.update_action_visibilities(cx));
+    })
+    .detach();
+    cx.observe_global::<SettingsStore>(|cx| {
+        if let Some(copilot) = Copilot::global(cx) {
+            copilot.update(cx, |copilot, cx| copilot.update_action_visibilities(cx));
         }
     })
     .detach();
@@ -271,7 +240,7 @@ impl RegisteredBuffer {
                         let new_snapshot = new_snapshot.clone();
                         async move {
                             new_snapshot
-                                .edits_since::<(PointUtf16, usize)>(&old_version)
+                                .edits_since::<Dimensions<PointUtf16, usize>>(&old_version)
                                 .map(|edit| {
                                     let edit_start = edit.new.start.0;
                                     let edit_end = edit_start + (edit.old.end.0 - edit.old.start.0);
@@ -380,7 +349,11 @@ impl Copilot {
         this.start_copilot(true, false, cx);
         cx.observe_global::<SettingsStore>(move |this, cx| {
             this.start_copilot(true, false, cx);
-            this.send_configuration_update(cx);
+            if let Ok(server) = this.server.as_running() {
+                notify_did_change_config_to_server(&server.lsp, cx)
+                    .context("copilot setting change: did change configuration")
+                    .log_err();
+            }
         })
         .detach();
         this
@@ -467,43 +440,6 @@ impl Copilot {
         }
 
         if env.is_empty() { None } else { Some(env) }
-    }
-
-    fn send_configuration_update(&mut self, cx: &mut Context<Self>) {
-        let copilot_settings = all_language_settings(None, cx)
-            .edit_predictions
-            .copilot
-            .clone();
-
-        let settings = json!({
-            "http": {
-                "proxy": copilot_settings.proxy,
-                "proxyStrictSSL": !copilot_settings.proxy_no_verify.unwrap_or(false)
-            },
-            "github-enterprise": {
-                "uri": copilot_settings.enterprise_uri
-            }
-        });
-
-        if let Some(copilot_chat) = copilot_chat::CopilotChat::global(cx) {
-            copilot_chat.update(cx, |chat, cx| {
-                chat.set_configuration(
-                    copilot_chat::CopilotChatConfiguration {
-                        enterprise_uri: copilot_settings.enterprise_uri.clone(),
-                    },
-                    cx,
-                );
-            });
-        }
-
-        if let Ok(server) = self.server.as_running() {
-            server
-                .lsp
-                .notify::<lsp::notification::DidChangeConfiguration>(
-                    &lsp::DidChangeConfigurationParams { settings },
-                )
-                .log_err();
-        }
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -604,6 +540,9 @@ impl Copilot {
                 })?
                 .await?;
 
+            this.update(cx, |_, cx| notify_did_change_config_to_server(&server, cx))?
+                .context("copilot: did change configuration")?;
+
             let status = server
                 .request::<request::CheckStatus>(request::CheckStatusParams {
                     local_checks_only: false,
@@ -629,8 +568,6 @@ impl Copilot {
                     });
                     cx.emit(Event::CopilotLanguageServerStarted);
                     this.update_sign_in_status(status, cx);
-                    // Send configuration now that the LSP is fully started
-                    this.send_configuration_update(cx);
                 }
                 Err(error) => {
                     this.server = CopilotServer::Error(error.to_string().into());
@@ -1131,6 +1068,44 @@ impl Copilot {
             cx.notify();
         }
     }
+
+    fn update_action_visibilities(&self, cx: &mut App) {
+        let signed_in_actions = [
+            TypeId::of::<Suggest>(),
+            TypeId::of::<NextSuggestion>(),
+            TypeId::of::<PreviousSuggestion>(),
+            TypeId::of::<Reinstall>(),
+        ];
+        let auth_actions = [TypeId::of::<SignOut>()];
+        let no_auth_actions = [TypeId::of::<SignIn>()];
+        let status = self.status();
+
+        let is_ai_disabled = DisableAiSettings::get_global(cx).disable_ai;
+        let filter = CommandPaletteFilter::global_mut(cx);
+
+        if is_ai_disabled {
+            filter.hide_action_types(&signed_in_actions);
+            filter.hide_action_types(&auth_actions);
+            filter.hide_action_types(&no_auth_actions);
+        } else {
+            match status {
+                Status::Disabled => {
+                    filter.hide_action_types(&signed_in_actions);
+                    filter.hide_action_types(&auth_actions);
+                    filter.hide_action_types(&no_auth_actions);
+                }
+                Status::Authorized => {
+                    filter.hide_action_types(&no_auth_actions);
+                    filter.show_action_types(signed_in_actions.iter().chain(&auth_actions));
+                }
+                _ => {
+                    filter.hide_action_types(&signed_in_actions);
+                    filter.hide_action_types(&auth_actions);
+                    filter.show_action_types(no_auth_actions.iter());
+                }
+            }
+        }
+    }
 }
 
 fn id_for_language(language: Option<&Arc<Language>>) -> String {
@@ -1147,6 +1122,41 @@ fn uri_for_buffer(buffer: &Entity<Buffer>, cx: &App) -> Result<lsp::Url, ()> {
             .parse()
             .map_err(|_| ())
     }
+}
+
+fn notify_did_change_config_to_server(
+    server: &Arc<LanguageServer>,
+    cx: &mut Context<Copilot>,
+) -> std::result::Result<(), anyhow::Error> {
+    let copilot_settings = all_language_settings(None, cx)
+        .edit_predictions
+        .copilot
+        .clone();
+
+    if let Some(copilot_chat) = copilot_chat::CopilotChat::global(cx) {
+        copilot_chat.update(cx, |chat, cx| {
+            chat.set_configuration(
+                copilot_chat::CopilotChatConfiguration {
+                    enterprise_uri: copilot_settings.enterprise_uri.clone(),
+                },
+                cx,
+            );
+        });
+    }
+
+    let settings = json!({
+        "http": {
+            "proxy": copilot_settings.proxy,
+            "proxyStrictSSL": !copilot_settings.proxy_no_verify.unwrap_or(false)
+        },
+        "github-enterprise": {
+            "uri": copilot_settings.enterprise_uri
+        }
+    });
+
+    server.notify::<lsp::notification::DidChangeConfiguration>(&lsp::DidChangeConfigurationParams {
+        settings,
+    })
 }
 
 async fn clear_copilot_dir() {
@@ -1174,7 +1184,7 @@ async fn get_copilot_lsp(fs: Arc<dyn Fs>, node_runtime: NodeRuntime) -> anyhow::
             PACKAGE_NAME,
             &server_path,
             paths::copilot_dir(),
-            &latest_version,
+            VersionStrategy::Latest(&latest_version),
         )
         .await;
     if should_install {

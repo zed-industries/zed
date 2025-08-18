@@ -1,8 +1,8 @@
 use client::{ModelRequestUsage, RequestUsage, zed_urls};
+use cloud_llm_client::{Plan, UsageLimit};
 use component::{empty_example, example_group_with_title, single_example};
 use gpui::{AnyElement, App, IntoElement, RenderOnce, Window};
 use ui::{Callout, prelude::*};
-use zed_llm_client::{Plan, UsageLimit};
 
 #[derive(IntoElement, RegisterComponent)]
 pub struct UsageCallout {
@@ -81,7 +81,7 @@ impl RenderOnce for UsageCallout {
         };
 
         let icon = if is_limit_reached {
-            Icon::new(IconName::X)
+            Icon::new(IconName::Close)
                 .color(Color::Error)
                 .size(IconSize::XSmall)
         } else {

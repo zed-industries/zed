@@ -10,10 +10,10 @@ use client::{
 };
 use collections::{BTreeMap, HashMap, HashSet};
 use fs::Fs;
-use futures::{FutureExt, StreamExt};
+use futures::StreamExt;
 use gpui::{
-    App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, ScreenCaptureSource,
-    ScreenCaptureStream, Task, WeakEntity,
+    App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, FutureExt as _,
+    ScreenCaptureSource, ScreenCaptureStream, Task, Timeout, WeakEntity,
 };
 use gpui_tokio::Tokio;
 use language::LanguageRegistry;
@@ -370,57 +370,53 @@ impl Room {
                     })?;
 
                 // Wait for client to re-establish a connection to the server.
-                {
-                    let mut reconnection_timeout =
-                        cx.background_executor().timer(RECONNECT_TIMEOUT).fuse();
-                    let client_reconnection = async {
-                        let mut remaining_attempts = 3;
-                        while remaining_attempts > 0 {
-                            if client_status.borrow().is_connected() {
-                                log::info!("client reconnected, attempting to rejoin room");
+                let executor = cx.background_executor().clone();
+                let client_reconnection = async {
+                    let mut remaining_attempts = 3;
+                    while remaining_attempts > 0 {
+                        if client_status.borrow().is_connected() {
+                            log::info!("client reconnected, attempting to rejoin room");
 
-                                let Some(this) = this.upgrade() else { break };
-                                match this.update(cx, |this, cx| this.rejoin(cx)) {
-                                    Ok(task) => {
-                                        if task.await.log_err().is_some() {
-                                            return true;
-                                        } else {
-                                            remaining_attempts -= 1;
-                                        }
+                            let Some(this) = this.upgrade() else { break };
+                            match this.update(cx, |this, cx| this.rejoin(cx)) {
+                                Ok(task) => {
+                                    if task.await.log_err().is_some() {
+                                        return true;
+                                    } else {
+                                        remaining_attempts -= 1;
                                     }
-                                    Err(_app_dropped) => return false,
                                 }
-                            } else if client_status.borrow().is_signed_out() {
-                                return false;
+                                Err(_app_dropped) => return false,
                             }
-
-                            log::info!(
-                                "waiting for client status change, remaining attempts {}",
-                                remaining_attempts
-                            );
-                            client_status.next().await;
+                        } else if client_status.borrow().is_signed_out() {
+                            return false;
                         }
-                        false
+
+                        log::info!(
+                            "waiting for client status change, remaining attempts {}",
+                            remaining_attempts
+                        );
+                        client_status.next().await;
                     }
-                    .fuse();
-                    futures::pin_mut!(client_reconnection);
+                    false
+                };
 
-                    futures::select_biased! {
-                        reconnected = client_reconnection => {
-                            if reconnected {
-                                log::info!("successfully reconnected to room");
-                                // If we successfully joined the room, go back around the loop
-                                // waiting for future connection status changes.
-                                continue;
-                            }
-                        }
-                        _ = reconnection_timeout => {
-                            log::info!("room reconnection timeout expired");
-                        }
+                match client_reconnection
+                    .with_timeout(RECONNECT_TIMEOUT, &executor)
+                    .await
+                {
+                    Ok(true) => {
+                        log::info!("successfully reconnected to room");
+                        // If we successfully joined the room, go back around the loop
+                        // waiting for future connection status changes.
+                        continue;
+                    }
+                    Ok(false) => break,
+                    Err(Timeout) => {
+                        log::info!("room reconnection timeout expired");
+                        break;
                     }
                 }
-
-                break;
             }
         }
 

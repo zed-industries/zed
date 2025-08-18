@@ -716,18 +716,10 @@ impl ActivityIndicator {
                     })),
                     tooltip_message: Some(Self::version_tooltip_message(&version)),
                 }),
-                AutoUpdateStatus::Updated {
-                    binary_path,
-                    version,
-                } => Some(Content {
+                AutoUpdateStatus::Updated { version } => Some(Content {
                     icon: None,
                     message: "Click to restart and update Zed".to_string(),
-                    on_click: Some(Arc::new({
-                        let reload = workspace::Reload {
-                            binary_path: Some(binary_path.clone()),
-                        };
-                        move |_, _, cx| workspace::reload(&reload, cx)
-                    })),
+                    on_click: Some(Arc::new(move |_, _, cx| workspace::reload(cx))),
                     tooltip_message: Some(Self::version_tooltip_message(&version)),
                 }),
                 AutoUpdateStatus::Errored => Some(Content {

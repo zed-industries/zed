@@ -541,6 +541,7 @@ impl Render for ThreadHistory {
         v_flex()
             .key_context("ThreadHistory")
             .size_full()
+            .bg(cx.theme().colors().panel_background)
             .on_action(cx.listener(Self::select_previous))
             .on_action(cx.listener(Self::select_next))
             .on_action(cx.listener(Self::select_first))
@@ -701,7 +702,7 @@ impl RenderOnce for HistoryEntryElement {
             .on_hover(self.on_hover)
             .end_slot::<IconButton>(if self.hovered || self.selected {
                 Some(
-                    IconButton::new("delete", IconName::TrashAlt)
+                    IconButton::new("delete", IconName::Trash)
                         .shape(IconButtonShape::Square)
                         .icon_size(IconSize::XSmall)
                         .icon_color(Color::Muted)

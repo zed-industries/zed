@@ -500,13 +500,12 @@ impl LspCommand for PerformRename {
         mut cx: AsyncApp,
     ) -> Result<ProjectTransaction> {
         if let Some(edit) = message {
-            let (lsp_adapter, lsp_server) =
+            let (_, lsp_server) =
                 language_server_for_buffer(&lsp_store, &buffer, server_id, &mut cx)?;
             LocalLspStore::deserialize_workspace_edit(
                 lsp_store,
                 edit,
                 self.push_to_history,
-                lsp_adapter,
                 lsp_server,
                 &mut cx,
             )
@@ -1116,18 +1115,12 @@ pub async fn location_links_from_lsp(
         }
     }
 
-    let (lsp_adapter, language_server) =
-        language_server_for_buffer(&lsp_store, &buffer, server_id, &mut cx)?;
+    let (_, language_server) = language_server_for_buffer(&lsp_store, &buffer, server_id, &mut cx)?;
     let mut definitions = Vec::new();
     for (origin_range, target_uri, target_range) in unresolved_links {
         let target_buffer_handle = lsp_store
             .update(&mut cx, |this, cx| {
-                this.open_local_buffer_via_lsp(
-                    target_uri,
-                    language_server.server_id(),
-                    lsp_adapter.name.clone(),
-                    cx,
-                )
+                this.open_local_buffer_via_lsp(target_uri, language_server.server_id(), cx)
             })?
             .await?;
 
@@ -1172,8 +1165,7 @@ pub async fn location_link_from_lsp(
     server_id: LanguageServerId,
     cx: &mut AsyncApp,
 ) -> Result<LocationLink> {
-    let (lsp_adapter, language_server) =
-        language_server_for_buffer(&lsp_store, &buffer, server_id, cx)?;
+    let (_, language_server) = language_server_for_buffer(&lsp_store, &buffer, server_id, cx)?;
 
     let (origin_range, target_uri, target_range) = (
         link.origin_selection_range,
@@ -1183,12 +1175,7 @@ pub async fn location_link_from_lsp(
 
     let target_buffer_handle = lsp_store
         .update(cx, |lsp_store, cx| {
-            lsp_store.open_local_buffer_via_lsp(
-                target_uri,
-                language_server.server_id(),
-                lsp_adapter.name.clone(),
-                cx,
-            )
+            lsp_store.open_local_buffer_via_lsp(target_uri, language_server.server_id(), cx)
         })?
         .await?;
 
@@ -1326,7 +1313,7 @@ impl LspCommand for GetReferences {
         mut cx: AsyncApp,
     ) -> Result<Vec<Location>> {
         let mut references = Vec::new();
-        let (lsp_adapter, language_server) =
+        let (_, language_server) =
             language_server_for_buffer(&lsp_store, &buffer, server_id, &mut cx)?;
 
         if let Some(locations) = locations {
@@ -1336,7 +1323,6 @@ impl LspCommand for GetReferences {
                         lsp_store.open_local_buffer_via_lsp(
                             lsp_location.uri,
                             language_server.server_id(),
-                            lsp_adapter.name.clone(),
                             cx,
                         )
                     })?
@@ -2154,6 +2140,16 @@ impl LspCommand for GetHover {
     }
 }
 
+impl GetCompletions {
+    pub fn can_resolve_completions(capabilities: &lsp::ServerCapabilities) -> bool {
+        capabilities
+            .completion_provider
+            .as_ref()
+            .and_then(|options| options.resolve_provider)
+            .unwrap_or(false)
+    }
+}
+
 #[async_trait(?Send)]
 impl LspCommand for GetCompletions {
     type Response = CoreCompletionResponse;
@@ -2269,7 +2265,7 @@ impl LspCommand for GetCompletions {
                     // the range based on the syntax tree.
                     None => {
                         if self.position != clipped_position {
-                            log::info!("completion out of expected range");
+                            log::info!("completion out of expected range ");
                             return false;
                         }
 
@@ -2483,7 +2479,9 @@ pub(crate) fn parse_completion_text_edit(
         let start = snapshot.clip_point_utf16(range.start, Bias::Left);
         let end = snapshot.clip_point_utf16(range.end, Bias::Left);
         if start != range.start.0 || end != range.end.0 {
-            log::info!("completion out of expected range");
+            log::info!(
+                "completion out of expected range, start: {start:?}, end: {end:?}, range: {range:?}"
+            );
             return None;
         }
         snapshot.anchor_before(start)..snapshot.anchor_after(end)
@@ -2760,6 +2758,23 @@ impl GetCodeActions {
     }
 }
 
+impl OnTypeFormatting {
+    pub fn supports_on_type_formatting(trigger: &str, capabilities: &ServerCapabilities) -> bool {
+        let Some(on_type_formatting_options) = &capabilities.document_on_type_formatting_provider
+        else {
+            return false;
+        };
+        on_type_formatting_options
+            .first_trigger_character
+            .contains(trigger)
+            || on_type_formatting_options
+                .more_trigger_character
+                .iter()
+                .flatten()
+                .any(|chars| chars.contains(trigger))
+    }
+}
+
 #[async_trait(?Send)]
 impl LspCommand for OnTypeFormatting {
     type Response = Option<Transaction>;
@@ -2771,20 +2786,7 @@ impl LspCommand for OnTypeFormatting {
     }
 
     fn check_capabilities(&self, capabilities: AdapterServerCapabilities) -> bool {
-        let Some(on_type_formatting_options) = &capabilities
-            .server_capabilities
-            .document_on_type_formatting_provider
-        else {
-            return false;
-        };
-        on_type_formatting_options
-            .first_trigger_character
-            .contains(&self.trigger)
-            || on_type_formatting_options
-                .more_trigger_character
-                .iter()
-                .flatten()
-                .any(|chars| chars.contains(&self.trigger))
+        Self::supports_on_type_formatting(&self.trigger, &capabilities.server_capabilities)
     }
 
     fn to_lsp(
@@ -3268,6 +3270,16 @@ impl InlayHints {
             })
             .unwrap_or(false)
     }
+
+    pub fn check_capabilities(capabilities: &ServerCapabilities) -> bool {
+        capabilities
+            .inlay_hint_provider
+            .as_ref()
+            .is_some_and(|inlay_hint_provider| match inlay_hint_provider {
+                lsp::OneOf::Left(enabled) => *enabled,
+                lsp::OneOf::Right(_) => true,
+            })
+    }
 }
 
 #[async_trait(?Send)]
@@ -3281,17 +3293,7 @@ impl LspCommand for InlayHints {
     }
 
     fn check_capabilities(&self, capabilities: AdapterServerCapabilities) -> bool {
-        let Some(inlay_hint_provider) = &capabilities.server_capabilities.inlay_hint_provider
-        else {
-            return false;
-        };
-        match inlay_hint_provider {
-            lsp::OneOf::Left(enabled) => *enabled,
-            lsp::OneOf::Right(inlay_hint_capabilities) => match inlay_hint_capabilities {
-                lsp::InlayHintServerCapabilities::Options(_) => true,
-                lsp::InlayHintServerCapabilities::RegistrationOptions(_) => false,
-            },
-        }
+        Self::check_capabilities(&capabilities.server_capabilities)
     }
 
     fn to_lsp(
@@ -3578,6 +3580,18 @@ impl LspCommand for GetCodeLens {
     }
 }
 
+impl LinkedEditingRange {
+    pub fn check_server_capabilities(capabilities: ServerCapabilities) -> bool {
+        let Some(linked_editing_options) = capabilities.linked_editing_range_provider else {
+            return false;
+        };
+        if let LinkedEditingRangeServerCapabilities::Simple(false) = linked_editing_options {
+            return false;
+        }
+        true
+    }
+}
+
 #[async_trait(?Send)]
 impl LspCommand for LinkedEditingRange {
     type Response = Vec<Range<Anchor>>;
@@ -3589,16 +3603,7 @@ impl LspCommand for LinkedEditingRange {
     }
 
     fn check_capabilities(&self, capabilities: AdapterServerCapabilities) -> bool {
-        let Some(linked_editing_options) = &capabilities
-            .server_capabilities
-            .linked_editing_range_provider
-        else {
-            return false;
-        };
-        if let LinkedEditingRangeServerCapabilities::Simple(false) = linked_editing_options {
-            return false;
-        }
-        true
+        Self::check_server_capabilities(capabilities.server_capabilities)
     }
 
     fn to_lsp(
@@ -4216,8 +4221,9 @@ impl LspCommand for GetDocumentColor {
         server_capabilities
             .server_capabilities
             .color_provider
+            .as_ref()
             .is_some_and(|capability| match capability {
-                lsp::ColorProviderCapability::Simple(supported) => supported,
+                lsp::ColorProviderCapability::Simple(supported) => *supported,
                 lsp::ColorProviderCapability::ColorProvider(..) => true,
                 lsp::ColorProviderCapability::Options(..) => true,
             })

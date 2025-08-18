@@ -44,6 +44,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use serde_json::Value;
 use settings::WorktreeId;
 use smol::future::FutureExt as _;
+use std::num::NonZeroU32;
 use std::{
     any::Any,
     ffi::OsStr,
@@ -59,7 +60,6 @@ use std::{
         atomic::{AtomicU64, AtomicUsize, Ordering::SeqCst},
     },
 };
-use std::{num::NonZeroU32, sync::OnceLock};
 use syntax_map::{QueryCursorHandle, SyntaxSnapshot};
 use task::RunnableTag;
 pub use task_context::{ContextLocation, ContextProvider, RunnableRange};
@@ -67,7 +67,9 @@ pub use text_diff::{
     DiffOptions, apply_diff_patch, line_diff, text_diff, text_diff_with_options, unified_diff,
 };
 use theme::SyntaxTheme;
-pub use toolchain::{LanguageToolchainStore, Toolchain, ToolchainList, ToolchainLister};
+pub use toolchain::{
+    LanguageToolchainStore, LocalLanguageToolchainStore, Toolchain, ToolchainList, ToolchainLister,
+};
 use tree_sitter::{self, Query, QueryCursor, WasmStore, wasmtime};
 use util::serde::default_true;
 
@@ -119,8 +121,8 @@ where
     func(cursor.deref_mut())
 }
 
-static NEXT_LANGUAGE_ID: LazyLock<AtomicUsize> = LazyLock::new(Default::default);
-static NEXT_GRAMMAR_ID: LazyLock<AtomicUsize> = LazyLock::new(Default::default);
+static NEXT_LANGUAGE_ID: AtomicUsize = AtomicUsize::new(0);
+static NEXT_GRAMMAR_ID: AtomicUsize = AtomicUsize::new(0);
 static WASM_ENGINE: LazyLock<wasmtime::Engine> = LazyLock::new(|| {
     wasmtime::Engine::new(&wasmtime::Config::new()).expect("Failed to create Wasmtime engine")
 });
@@ -161,12 +163,10 @@ pub struct CachedLspAdapter {
     pub name: LanguageServerName,
     pub disk_based_diagnostic_sources: Vec<String>,
     pub disk_based_diagnostics_progress_token: Option<String>,
-    language_ids: HashMap<String, String>,
+    language_ids: HashMap<LanguageName, String>,
     pub adapter: Arc<dyn LspAdapter>,
     pub reinstall_attempt_count: AtomicU64,
     cached_binary: futures::lock::Mutex<Option<LanguageServerBinary>>,
-    manifest_name: OnceLock<Option<ManifestName>>,
-    attach_kind: OnceLock<Attach>,
 }
 
 impl Debug for CachedLspAdapter {
@@ -202,8 +202,6 @@ impl CachedLspAdapter {
             adapter,
             cached_binary: Default::default(),
             reinstall_attempt_count: AtomicU64::new(0),
-            attach_kind: Default::default(),
-            manifest_name: Default::default(),
         })
     }
 
@@ -214,7 +212,7 @@ impl CachedLspAdapter {
     pub async fn get_language_server_command(
         self: Arc<Self>,
         delegate: Arc<dyn LspAdapterDelegate>,
-        toolchains: Arc<dyn LanguageToolchainStore>,
+        toolchains: Option<Toolchain>,
         binary_options: LanguageServerBinaryOptions,
         cx: &mut AsyncApp,
     ) -> Result<LanguageServerBinary> {
@@ -279,37 +277,9 @@ impl CachedLspAdapter {
 
     pub fn language_id(&self, language_name: &LanguageName) -> String {
         self.language_ids
-            .get(language_name.as_ref())
+            .get(language_name)
             .cloned()
             .unwrap_or_else(|| language_name.lsp_id())
-    }
-    pub fn manifest_name(&self) -> Option<ManifestName> {
-        self.manifest_name
-            .get_or_init(|| self.adapter.manifest_name())
-            .clone()
-    }
-    pub fn attach_kind(&self) -> Attach {
-        *self.attach_kind.get_or_init(|| self.adapter.attach_kind())
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub enum Attach {
-    /// Create a single language server instance per subproject root.
-    InstancePerRoot,
-    /// Use one shared language server instance for all subprojects within a project.
-    Shared,
-}
-
-impl Attach {
-    pub fn root_path(
-        &self,
-        root_subproject_path: (WorktreeId, Arc<Path>),
-    ) -> (WorktreeId, Arc<Path>) {
-        match self {
-            Attach::InstancePerRoot => root_subproject_path,
-            Attach::Shared => (root_subproject_path.0, Arc::from(Path::new(""))),
-        }
     }
 }
 
@@ -342,7 +312,7 @@ pub trait LspAdapter: 'static + Send + Sync {
     fn get_language_server_command<'a>(
         self: Arc<Self>,
         delegate: Arc<dyn LspAdapterDelegate>,
-        toolchains: Arc<dyn LanguageToolchainStore>,
+        toolchains: Option<Toolchain>,
         binary_options: LanguageServerBinaryOptions,
         mut cached_binary: futures::lock::MutexGuard<'a, Option<LanguageServerBinary>>,
         cx: &'a mut AsyncApp,
@@ -417,7 +387,7 @@ pub trait LspAdapter: 'static + Send + Sync {
     async fn check_if_user_installed(
         &self,
         _: &dyn LspAdapterDelegate,
-        _: Arc<dyn LanguageToolchainStore>,
+        _: Option<Toolchain>,
         _: &AsyncApp,
     ) -> Option<LanguageServerBinary> {
         None
@@ -550,7 +520,7 @@ pub trait LspAdapter: 'static + Send + Sync {
         self: Arc<Self>,
         _: &dyn Fs,
         _: &Arc<dyn LspAdapterDelegate>,
-        _: Arc<dyn LanguageToolchainStore>,
+        _: Option<Toolchain>,
         _cx: &mut AsyncApp,
     ) -> Result<Value> {
         Ok(serde_json::json!({}))
@@ -570,7 +540,6 @@ pub trait LspAdapter: 'static + Send + Sync {
         _target_language_server_id: LanguageServerName,
         _: &dyn Fs,
         _: &Arc<dyn LspAdapterDelegate>,
-        _: Arc<dyn LanguageToolchainStore>,
         _cx: &mut AsyncApp,
     ) -> Result<Option<Value>> {
         Ok(None)
@@ -589,8 +558,8 @@ pub trait LspAdapter: 'static + Send + Sync {
         None
     }
 
-    fn language_ids(&self) -> HashMap<String, String> {
-        Default::default()
+    fn language_ids(&self) -> HashMap<LanguageName, String> {
+        HashMap::default()
     }
 
     /// Support custom initialize params.
@@ -600,14 +569,6 @@ pub trait LspAdapter: 'static + Send + Sync {
         _: &App,
     ) -> Result<InitializeParams> {
         Ok(original)
-    }
-
-    fn attach_kind(&self) -> Attach {
-        Attach::Shared
-    }
-
-    fn manifest_name(&self) -> Option<ManifestName> {
-        None
     }
 
     /// Method only implemented by the default JSON language server adapter.
@@ -1003,11 +964,11 @@ where
 
 fn deserialize_regex_vec<'de, D: Deserializer<'de>>(d: D) -> Result<Vec<Regex>, D::Error> {
     let sources = Vec::<String>::deserialize(d)?;
-    let mut regexes = Vec::new();
-    for source in sources {
-        regexes.push(regex::Regex::new(&source).map_err(de::Error::custom)?);
-    }
-    Ok(regexes)
+    sources
+        .into_iter()
+        .map(|source| regex::Regex::new(&source))
+        .collect::<Result<_, _>>()
+        .map_err(de::Error::custom)
 }
 
 fn regex_vec_json_schema(_: &mut SchemaGenerator) -> schemars::Schema {
@@ -1073,12 +1034,10 @@ impl<'de> Deserialize<'de> for BracketPairConfig {
         D: Deserializer<'de>,
     {
         let result = Vec::<BracketPairContent>::deserialize(deserializer)?;
-        let mut brackets = Vec::with_capacity(result.len());
-        let mut disabled_scopes_by_bracket_ix = Vec::with_capacity(result.len());
-        for entry in result {
-            brackets.push(entry.bracket_pair);
-            disabled_scopes_by_bracket_ix.push(entry.not_in);
-        }
+        let (brackets, disabled_scopes_by_bracket_ix) = result
+            .into_iter()
+            .map(|entry| (entry.bracket_pair, entry.not_in))
+            .unzip();
 
         Ok(BracketPairConfig {
             pairs: brackets,
@@ -1120,6 +1079,7 @@ pub struct Language {
     pub(crate) grammar: Option<Arc<Grammar>>,
     pub(crate) context_provider: Option<Arc<dyn ContextProvider>>,
     pub(crate) toolchain: Option<Arc<dyn ToolchainLister>>,
+    pub(crate) manifest_name: Option<ManifestName>,
 }
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
@@ -1330,6 +1290,7 @@ impl Language {
             }),
             context_provider: None,
             toolchain: None,
+            manifest_name: None,
         }
     }
 
@@ -1343,6 +1304,10 @@ impl Language {
         self
     }
 
+    pub fn with_manifest(mut self, name: Option<ManifestName>) -> Self {
+        self.manifest_name = name;
+        self
+    }
     pub fn with_queries(mut self, queries: LanguageQueries) -> Result<Self> {
         if let Some(query) = queries.highlights {
             self = self
@@ -1412,16 +1377,14 @@ impl Language {
         let grammar = self.grammar_mut().context("cannot mutate grammar")?;
 
         let query = Query::new(&grammar.ts_language, source)?;
-        let mut extra_captures = Vec::with_capacity(query.capture_names().len());
-
-        for name in query.capture_names().iter() {
-            let kind = if *name == "run" {
-                RunnableCapture::Run
-            } else {
-                RunnableCapture::Named(name.to_string().into())
-            };
-            extra_captures.push(kind);
-        }
+        let extra_captures: Vec<_> = query
+            .capture_names()
+            .iter()
+            .map(|&name| match name {
+                "run" => RunnableCapture::Run,
+                name => RunnableCapture::Named(name.to_string().into()),
+            })
+            .collect();
 
         grammar.runnable_config = Some(RunnableConfig {
             extra_captures,
@@ -1775,6 +1738,9 @@ impl Language {
 
     pub fn name(&self) -> LanguageName {
         self.config.name.clone()
+    }
+    pub fn manifest(&self) -> Option<&ManifestName> {
+        self.manifest_name.as_ref()
     }
 
     pub fn code_fence_block_name(&self) -> Arc<str> {
@@ -2221,7 +2187,7 @@ impl LspAdapter for FakeLspAdapter {
     async fn check_if_user_installed(
         &self,
         _: &dyn LspAdapterDelegate,
-        _: Arc<dyn LanguageToolchainStore>,
+        _: Option<Toolchain>,
         _: &AsyncApp,
     ) -> Option<LanguageServerBinary> {
         Some(self.language_server_binary.clone())
@@ -2230,7 +2196,7 @@ impl LspAdapter for FakeLspAdapter {
     fn get_language_server_command<'a>(
         self: Arc<Self>,
         _: Arc<dyn LspAdapterDelegate>,
-        _: Arc<dyn LanguageToolchainStore>,
+        _: Option<Toolchain>,
         _: LanguageServerBinaryOptions,
         _: futures::lock::MutexGuard<'a, Option<LanguageServerBinary>>,
         _: &'a mut AsyncApp,
@@ -2365,9 +2331,9 @@ mod tests {
         assert_eq!(
             languages.language_names(),
             &[
-                "JSON".to_string(),
-                "Plain Text".to_string(),
-                "Rust".to_string(),
+                LanguageName::new("JSON"),
+                LanguageName::new("Plain Text"),
+                LanguageName::new("Rust"),
             ]
         );
 
@@ -2378,9 +2344,9 @@ mod tests {
         assert_eq!(
             languages.language_names(),
             &[
-                "JSON".to_string(),
-                "Plain Text".to_string(),
-                "Rust".to_string(),
+                LanguageName::new("JSON"),
+                LanguageName::new("Plain Text"),
+                LanguageName::new("Rust"),
             ]
         );
 
@@ -2391,9 +2357,9 @@ mod tests {
         assert_eq!(
             languages.language_names(),
             &[
-                "JSON".to_string(),
-                "Plain Text".to_string(),
-                "Rust".to_string(),
+                LanguageName::new("JSON"),
+                LanguageName::new("Plain Text"),
+                LanguageName::new("Rust"),
             ]
         );
 

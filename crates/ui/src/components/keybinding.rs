@@ -44,7 +44,7 @@ impl KeyBinding {
     pub fn for_action_in(
         action: &dyn Action,
         focus: &FocusHandle,
-        window: &mut Window,
+        window: &Window,
         cx: &App,
     ) -> Option<Self> {
         let key_binding = window.highest_precedence_binding_for_action_in(action, focus)?;
@@ -188,7 +188,7 @@ fn icon_for_key(keystroke: &Keystroke, platform_style: PlatformStyle) -> Option<
         "up" => Some(IconName::ArrowUp),
         "down" => Some(IconName::ArrowDown),
         "backspace" => Some(IconName::Backspace),
-        "delete" => Some(IconName::Delete),
+        "delete" => Some(IconName::Backspace),
         "return" => Some(IconName::Return),
         "enter" => Some(IconName::Return),
         "tab" => Some(IconName::Tab),
