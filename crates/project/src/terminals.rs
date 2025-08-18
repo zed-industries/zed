@@ -23,6 +23,13 @@ use util::{
     paths::{PathStyle, RemotePathBuf},
 };
 
+/// The directory inside a Python virtual environment that contains executables
+const PYTHON_VENV_BIN_DIR: &str = if cfg!(target_os = "windows") {
+    "Scripts"
+} else {
+    "bin"
+};
+
 pub struct Terminals {
     pub(crate) local_handles: Vec<WeakEntity<terminal::Terminal>>,
 }
@@ -368,7 +375,8 @@ impl Project {
                     }
                     None => {
                         if let Some(venv_path) = &python_venv_directory {
-                            add_environment_path(&mut env, &venv_path.join("bin")).log_err();
+                            add_environment_path(&mut env, &venv_path.join(PYTHON_VENV_BIN_DIR))
+                                .log_err();
                         }
 
                         let shell = if let Some(program) = spawn_task.command {
@@ -478,16 +486,12 @@ impl Project {
         venv_settings: &terminal_settings::VenvSettingsContent,
         cx: &App,
     ) -> Option<PathBuf> {
-        let bin_dir_name = match std::env::consts::OS {
-            "windows" => "Scripts",
-            _ => "bin",
-        };
         venv_settings
             .directories
             .iter()
             .map(|name| abs_path.join(name))
             .find(|venv_path| {
-                let bin_path = venv_path.join(bin_dir_name);
+                let bin_path = venv_path.join(PYTHON_VENV_BIN_DIR);
                 self.find_worktree(&bin_path, cx)
                     .and_then(|(worktree, relative_path)| {
                         worktree.read(cx).entry_for_path(&relative_path)
@@ -504,16 +508,12 @@ impl Project {
     ) -> Option<PathBuf> {
         let (worktree, _) = self.find_worktree(abs_path, cx)?;
         let fs = worktree.read(cx).as_local()?.fs();
-        let bin_dir_name = match std::env::consts::OS {
-            "windows" => "Scripts",
-            _ => "bin",
-        };
         venv_settings
             .directories
             .iter()
             .map(|name| abs_path.join(name))
             .find(|venv_path| {
-                let bin_path = venv_path.join(bin_dir_name);
+                let bin_path = venv_path.join(PYTHON_VENV_BIN_DIR);
                 // One-time synchronous check is acceptable for terminal/task initialization
                 smol::block_on(fs.metadata(&bin_path))
                     .ok()
@@ -589,10 +589,7 @@ impl Project {
 
         if venv_settings.venv_name.is_empty() {
             let path = venv_base_directory
-                .join(match std::env::consts::OS {
-                    "windows" => "Scripts",
-                    _ => "bin",
-                })
+                .join(PYTHON_VENV_BIN_DIR)
                 .join(activate_script_name)
                 .to_string_lossy()
                 .to_string();
