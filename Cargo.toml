@@ -813,6 +813,8 @@ style = { level = "allow", priority = -1 }
 module_inception = { level = "deny" }
 question_mark = { level = "deny" }
 redundant_closure = { level = "deny" }
+# It doesn't make sense to implement Default unilaterally
+new_without_default = "allow"
 # Individual rules that have violations in the codebase:
 type_complexity = "allow"
 # We often return trait objects from `new` functions.
