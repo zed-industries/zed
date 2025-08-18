@@ -344,7 +344,6 @@ pub struct TerminalBuilder {
 impl TerminalBuilder {
     pub fn new(
         working_directory: Option<PathBuf>,
-        python_venv_directory: Option<PathBuf>,
         task: Option<TaskState>,
         shell: Shell,
         mut env: HashMap<String, String>,
@@ -353,7 +352,7 @@ impl TerminalBuilder {
         max_scroll_history_lines: Option<usize>,
         is_ssh_terminal: bool,
         window_id: u64,
-        completion_tx: Sender<Option<ExitStatus>>,
+        completion_tx: Option<Sender<Option<ExitStatus>>>,
         cx: &App,
     ) -> Result<TerminalBuilder> {
         // If the parent environment doesn't have a locale set
@@ -517,7 +516,6 @@ impl TerminalBuilder {
             hyperlink_regex_searches: RegexSearches::new(),
             vi_mode_enabled: false,
             is_ssh_terminal,
-            python_venv_directory,
             last_mouse_move_time: Instant::now(),
             last_hyperlink_search_position: None,
             #[cfg(windows)]
@@ -683,7 +681,7 @@ pub enum SelectionPhase {
 
 pub struct Terminal {
     pty_tx: Notifier,
-    completion_tx: Sender<Option<ExitStatus>>,
+    completion_tx: Option<Sender<Option<ExitStatus>>>,
     term: Arc<FairMutex<Term<ZedListener>>>,
     term_config: Config,
     events: VecDeque<InternalEvent>,
@@ -695,7 +693,6 @@ pub struct Terminal {
     pub breadcrumb_text: String,
     pub pty_info: PtyProcessInfo,
     title_override: Option<SharedString>,
-    pub python_venv_directory: Option<PathBuf>,
     scroll_px: Pixels,
     next_link_id: usize,
     selection_phase: SelectionPhase,
@@ -1895,7 +1892,9 @@ impl Terminal {
             }
         });
 
-        self.completion_tx.try_send(e).ok();
+        if let Some(tx) = &self.completion_tx {
+            tx.try_send(e).ok();
+        }
         let task = match &mut self.task {
             Some(task) => task,
             None => {
@@ -2166,7 +2165,6 @@ mod tests {
             TerminalBuilder::new(
                 None,
                 None,
-                None,
                 task::Shell::WithArguments {
                     program: "echo".into(),
                     args: vec!["hello".into()],
@@ -2178,7 +2176,7 @@ mod tests {
                 None,
                 false,
                 0,
-                completion_tx,
+                Some(completion_tx),
                 cx,
             )
             .unwrap()
