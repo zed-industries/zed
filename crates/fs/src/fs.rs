@@ -1101,7 +1101,9 @@ impl FakeFsState {
     ) -> Option<(&mut FakeFsEntry, PathBuf)> {
         let canonical_path = self.canonicalize(target, follow_symlink)?;
 
-        let mut components = canonical_path.components();
+        let mut components = canonical_path
+            .components()
+            .skip_while(|component| matches!(component, Component::Prefix(_)));
         let Some(Component::RootDir) = components.next() else {
             panic!(
                 "the path {:?} was not canonicalized properly {:?}",
