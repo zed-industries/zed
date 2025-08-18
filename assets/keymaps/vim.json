@@ -734,6 +734,14 @@
     }
   },
   {
+    "context": "Editor",
+    "bindings": {
+      "ctrl-h": "editor::Backspace",
+      "ctrl-u": "editor::DeleteToBeginningOfLine",
+      "ctrl-w": "editor::DeleteToPreviousWordStart"
+    }
+  },
+  {
     "context": "VimControl || !Editor && !Terminal",
     "bindings": {
       // window related commands (ctrl-w X)
@@ -870,14 +878,6 @@
     }
   },
   {
-    "context": "Picker > Editor",
-    "bindings": {
-      "ctrl-h": "editor::Backspace",
-      "ctrl-u": "editor::DeleteToBeginningOfLine",
-      "ctrl-w": "editor::DeleteToPreviousWordStart"
-    }
-  },
-  {
     "context": "GitCommit > Editor && VimControl && vim_mode == normal",
     "bindings": {
       "ctrl-c": "menu::Cancel",
@@ -905,12 +905,6 @@
       // is because alt-tab may not be available, as it is often used for window switching on Linux
       // and Windows.
       "alt-l": "editor::AcceptEditPrediction"
-    }
-  },
-  {
-    "context": "Pane",
-    "bindings": {
-      "ctrl-w": "editor::DeleteToPreviousWordStart"
     }
   }
 ]
