@@ -139,6 +139,7 @@ impl LanguageModels {
         &self,
         model_id: &acp_thread::AgentModelId,
     ) -> Option<Arc<dyn LanguageModel>> {
+        dbg!(&self.models.len());
         self.models.get(model_id).cloned()
     }
 
@@ -823,6 +824,7 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
                     let default_model = registry
                         .default_model()
                         .and_then(|default_model| {
+                            dbg!("here!");
                             agent
                                 .models
                                 .model_from_id(&LanguageModels::model_id(&default_model.model))
