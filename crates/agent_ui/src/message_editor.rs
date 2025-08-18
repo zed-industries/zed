@@ -1559,9 +1559,8 @@ impl ContextCreasesAddon {
         cx: &mut Context<Editor>,
     ) {
         self.creases.entry(key).or_default().extend(creases);
-        self._subscription = Some(cx.subscribe(
-            context_store,
-            |editor, _, event, cx| match event {
+        self._subscription = Some(
+            cx.subscribe(context_store, |editor, _, event, cx| match event {
                 ContextStoreEvent::ContextRemoved(key) => {
                     let Some(this) = editor.addon_mut::<Self>() else {
                         return;
@@ -1581,8 +1580,8 @@ impl ContextCreasesAddon {
                     editor.edit(ranges.into_iter().zip(replacement_texts), cx);
                     cx.notify();
                 }
-            },
-        ))
+            }),
+        )
     }
 
     pub fn into_inner(self) -> HashMap<AgentContextKey, Vec<(CreaseId, SharedString)>> {

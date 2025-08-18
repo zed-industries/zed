@@ -20055,8 +20055,7 @@ impl Editor {
                             self.registered_buffers
                                 .entry(edited_buffer.read(cx).remote_id())
                                 .or_insert_with(|| {
-                                    project
-                                        .register_buffer_with_language_servers(edited_buffer, cx)
+                                    project.register_buffer_with_language_servers(edited_buffer, cx)
                                 });
                         });
                     }

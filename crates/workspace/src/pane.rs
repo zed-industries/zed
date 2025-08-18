@@ -1627,8 +1627,7 @@ impl Pane {
                 items_to_close
                     .iter()
                     .filter(|item| {
-                        item.is_dirty(cx)
-                            && !Self::skip_save_on_close(item.as_ref(), workspace, cx)
+                        item.is_dirty(cx) && !Self::skip_save_on_close(item.as_ref(), workspace, cx)
                     })
                     .map(|item| item.boxed_clone())
                     .collect::<Vec<_>>()

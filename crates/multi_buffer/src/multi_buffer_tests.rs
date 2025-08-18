@@ -2739,9 +2739,8 @@ async fn test_random_multibuffer(cx: &mut TestAppContext, mut rng: StdRng) {
                     let id = buffer_handle.read(cx).remote_id();
                     if multibuffer.diff_for(id).is_none() {
                         let base_text = base_texts.get(&id).unwrap();
-                        let diff = cx.new(|cx| {
-                            BufferDiff::new_with_base_text(base_text, buffer_handle, cx)
-                        });
+                        let diff = cx
+                            .new(|cx| BufferDiff::new_with_base_text(base_text, buffer_handle, cx));
                         reference.add_diff(diff.clone(), cx);
                         multibuffer.add_diff(diff, cx)
                     }

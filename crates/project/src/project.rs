@@ -4174,8 +4174,7 @@ impl Project {
                     .find(|(_, id)| *id == buffer_worktree_id)
                 {
                     for candidate in candidates.iter() {
-                        if let Some(path) =
-                            Self::resolve_path_in_worktree(worktree, candidate, cx)
+                        if let Some(path) = Self::resolve_path_in_worktree(worktree, candidate, cx)
                         {
                             return Some(path);
                         }
@@ -4187,9 +4186,7 @@ impl Project {
                     continue;
                 }
                 for candidate in candidates.iter() {
-                    if let Some(path) =
-                        Self::resolve_path_in_worktree(&worktree, candidate, cx)
-                    {
+                    if let Some(path) = Self::resolve_path_in_worktree(&worktree, candidate, cx) {
                         return Some(path);
                     }
                 }

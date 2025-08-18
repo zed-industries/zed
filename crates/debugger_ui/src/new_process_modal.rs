@@ -659,12 +659,7 @@ impl Render for NewProcessModal {
                             this.mode = NewProcessMode::Attach;
 
                             if let Some(debugger) = this.debugger.as_ref() {
-                                Self::update_attach_picker(
-                                    &this.attach_mode,
-                                    debugger,
-                                    window,
-                                    cx,
-                                );
+                                Self::update_attach_picker(&this.attach_mode, debugger, window, cx);
                             }
                             this.mode_focus_handle(cx).focus(window);
                             cx.notify();
