@@ -1377,16 +1377,14 @@ impl Language {
         let grammar = self.grammar_mut().context("cannot mutate grammar")?;
 
         let query = Query::new(&grammar.ts_language, source)?;
-        let mut extra_captures = Vec::with_capacity(query.capture_names().len());
-
-        for name in query.capture_names().iter() {
-            let kind = if *name == "run" {
-                RunnableCapture::Run
-            } else {
-                RunnableCapture::Named(name.to_string().into())
-            };
-            extra_captures.push(kind);
-        }
+        let extra_captures: Vec<_> = query
+            .capture_names()
+            .iter()
+            .map(|&name| match name {
+                "run" => RunnableCapture::Run,
+                name => RunnableCapture::Named(name.to_string().into()),
+            })
+            .collect();
 
         grammar.runnable_config = Some(RunnableConfig {
             extra_captures,
