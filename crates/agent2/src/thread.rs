@@ -815,7 +815,7 @@ impl Thread {
                             attempt: attempt as usize,
                             max_attempts: max_attempts as usize,
                             started_at: Instant::now(),
-                            duration: delay.clone(),
+                            duration: delay,
                         });
 
                         cx.background_executor().timer(delay).await;
