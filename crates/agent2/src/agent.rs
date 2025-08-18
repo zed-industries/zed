@@ -427,9 +427,11 @@ impl NativeAgent {
         self.models.refresh_list(cx);
         for session in self.sessions.values_mut() {
             session.thread.update(cx, |thread, _| {
-                let model_id = LanguageModels::model_id(&thread.model());
-                if let Some(model) = self.models.model_from_id(&model_id) {
-                    thread.set_model(model.clone());
+                if let Some(model) = thread.model() {
+                    let model_id = LanguageModels::model_id(model);
+                    if let Some(model) = self.models.model_from_id(&model_id) {
+                        thread.set_model(model.clone());
+                    }
                 }
             });
         }
@@ -622,7 +624,9 @@ impl AgentModelSelector for NativeAgentConnection {
         else {
             return Task::ready(Err(anyhow!("Session not found")));
         };
-        let model = thread.read(cx).model().clone();
+        let Some(model) = thread.read(cx).model().clone() else {
+            return Task::ready(Err(anyhow!("Model not found")));
+        };
         let Some(provider) = LanguageModelRegistry::read_global(cx).provider(&model.provider_id())
         else {
             return Task::ready(Err(anyhow!("Provider not found")));
@@ -679,19 +683,11 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
                     let available_count = registry.available_models(cx).count();
                     log::debug!("Total available models: {}", available_count);
 
-                    let default_model = registry
-                        .default_model()
-                        .and_then(|default_model| {
-                            agent
-                                .models
-                                .model_from_id(&LanguageModels::model_id(&default_model.model))
-                        })
-                        .ok_or_else(|| {
-                            log::warn!("No default model configured in settings");
-                            anyhow!(
-                                "No default model. Please configure a default model in settings."
-                            )
-                        })?;
+                    let default_model = registry.default_model().and_then(|default_model| {
+                        agent
+                            .models
+                            .model_from_id(&LanguageModels::model_id(&default_model.model))
+                    });
 
                     let thread = cx.new(|cx| {
                         let mut thread = Thread::new(
@@ -777,13 +773,7 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
             log::debug!("Message id: {:?}", id);
             log::debug!("Message content: {:?}", content);
 
-            Ok(thread.update(cx, |thread, cx| {
-                log::info!(
-                    "Sending message to thread with model: {:?}",
-                    thread.model().name()
-                );
-                thread.send(id, content, cx)
-            }))
+            thread.update(cx, |thread, cx| thread.send(id, content, cx))
         })
     }
 
@@ -1008,7 +998,7 @@ mod tests {
         agent.read_with(cx, |agent, _| {
             let session = agent.sessions.get(&session_id).unwrap();
             session.thread.read_with(cx, |thread, _| {
-                assert_eq!(thread.model().id().0, "fake");
+                assert_eq!(thread.model().unwrap().id().0, "fake");
             });
         });
 
