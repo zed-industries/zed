@@ -117,7 +117,7 @@ async fn stream_file_archive(
         }
         #[cfg(windows)]
         AssetKind::Zip => {
-            util::archive::extract_zip(&destination_path, file_archive).await?;
+            util::archive::extract_zip(destination_path, file_archive).await?;
         }
     };
     Ok(())
