@@ -57,7 +57,7 @@ use language::{
     DiagnosticEntry, DiagnosticSet, DiagnosticSourceKind, Diff, File as _, Language, LanguageName,
     LanguageRegistry, LocalFile, LspAdapter, LspAdapterDelegate, ManifestDelegate, ManifestName,
     Patch, PointUtf16, TextBufferSnapshot, ToOffset, ToPointUtf16, Toolchain, Transaction,
-    Unclipped, WorkspaceFoldersContent,
+    Unclipped,
     language_settings::{
         FormatOnSave, Formatter, LanguageSettings, SelectedFormatter, language_settings,
     },
@@ -344,10 +344,7 @@ impl LocalLspStore {
                     binary,
                     &root_path,
                     code_action_kinds,
-                    Some(pending_workspace_folders).filter(|_| {
-                        adapter.adapter.workspace_folders_content()
-                            == WorkspaceFoldersContent::SubprojectRoots
-                    }),
+                    Some(pending_workspace_folders),
                     cx,
                 )
             }

@@ -4,13 +4,13 @@ use async_trait::async_trait;
 use collections::HashMap;
 use gpui::{App, Task};
 use gpui::{AsyncApp, SharedString};
+use language::Toolchain;
 use language::ToolchainList;
 use language::ToolchainLister;
 use language::language_settings::language_settings;
 use language::{ContextLocation, LanguageToolchainStore};
 use language::{ContextProvider, LspAdapter, LspAdapterDelegate};
 use language::{LanguageName, ManifestName, ManifestProvider, ManifestQuery};
-use language::{Toolchain, WorkspaceFoldersContent};
 use lsp::LanguageServerBinary;
 use lsp::LanguageServerName;
 use node_runtime::{NodeRuntime, VersionStrategy};
@@ -388,10 +388,6 @@ impl LspAdapter for PythonLspAdapter {
 
             user_settings
         })
-    }
-
-    fn workspace_folders_content(&self) -> WorkspaceFoldersContent {
-        WorkspaceFoldersContent::WorktreeRoot
     }
 }
 
@@ -1257,9 +1253,6 @@ impl LspAdapter for PyLspAdapter {
             user_settings
         })
     }
-    fn workspace_folders_content(&self) -> WorkspaceFoldersContent {
-        WorkspaceFoldersContent::WorktreeRoot
-    }
 }
 
 pub(crate) struct BasedPyrightLspAdapter {
@@ -1576,10 +1569,6 @@ impl LspAdapter for BasedPyrightLspAdapter {
 
             user_settings
         })
-    }
-
-    fn workspace_folders_content(&self) -> WorkspaceFoldersContent {
-        WorkspaceFoldersContent::WorktreeRoot
     }
 }
 
