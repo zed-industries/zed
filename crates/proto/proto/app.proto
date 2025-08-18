@@ -28,11 +28,13 @@ message GetCrashFiles {
 
 message GetCrashFilesResponse {
     repeated CrashReport crashes = 1;
+    repeated string legacy_panics = 2;
 }
 
 message CrashReport {
-    optional string panic_contents = 1;
-    optional bytes minidump_contents = 2;
+    reserved 1, 2;
+    string metadata = 3;
+    bytes minidump_contents = 4;
 }
 
 message Extension {

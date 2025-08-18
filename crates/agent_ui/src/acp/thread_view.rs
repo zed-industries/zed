@@ -94,7 +94,9 @@ impl ProfileProvider for Entity<agent2::Thread> {
     }
 
     fn profiles_supported(&self, cx: &App) -> bool {
-        self.read(cx).model().supports_tools()
+        self.read(cx)
+            .model()
+            .map_or(false, |model| model.supports_tools())
     }
 }
 
@@ -1102,14 +1104,10 @@ impl AcpThreadView {
         let card_header_id = SharedString::from("inner-tool-call-header");
 
         let status_icon = match &tool_call.status {
-            ToolCallStatus::Allowed {
-                status: acp::ToolCallStatus::Pending,
-            }
-            | ToolCallStatus::WaitingForConfirmation { .. } => None,
-            ToolCallStatus::Allowed {
-                status: acp::ToolCallStatus::InProgress,
-                ..
-            } => Some(
+            ToolCallStatus::Pending
+            | ToolCallStatus::WaitingForConfirmation { .. }
+            | ToolCallStatus::Completed => None,
+            ToolCallStatus::InProgress => Some(
                 Icon::new(IconName::ArrowCircle)
                     .color(Color::Accent)
                     .size(IconSize::Small)
@@ -1120,16 +1118,7 @@ impl AcpThreadView {
                     )
                     .into_any(),
             ),
-            ToolCallStatus::Allowed {
-                status: acp::ToolCallStatus::Completed,
-                ..
-            } => None,
-            ToolCallStatus::Rejected
-            | ToolCallStatus::Canceled
-            | ToolCallStatus::Allowed {
-                status: acp::ToolCallStatus::Failed,
-                ..
-            } => Some(
+            ToolCallStatus::Rejected | ToolCallStatus::Canceled | ToolCallStatus::Failed => Some(
                 Icon::new(IconName::Close)
                     .color(Color::Error)
                     .size(IconSize::Small)
@@ -1195,15 +1184,23 @@ impl AcpThreadView {
                     tool_call.content.is_empty(),
                     cx,
                 )),
-            ToolCallStatus::Allowed { .. } | ToolCallStatus::Canceled => v_flex()
-                .w_full()
-                .children(tool_call.content.iter().map(|content| {
-                    div()
-                        .child(
-                            self.render_tool_call_content(entry_ix, content, tool_call, window, cx),
-                        )
-                        .into_any_element()
-                })),
+            ToolCallStatus::Pending
+            | ToolCallStatus::InProgress
+            | ToolCallStatus::Completed
+            | ToolCallStatus::Failed
+            | ToolCallStatus::Canceled => {
+                v_flex()
+                    .w_full()
+                    .children(tool_call.content.iter().map(|content| {
+                        div()
+                            .child(
+                                self.render_tool_call_content(
+                                    entry_ix, content, tool_call, window, cx,
+                                ),
+                            )
+                            .into_any_element()
+                    }))
+            }
             ToolCallStatus::Rejected => v_flex().size_0(),
         };
 
@@ -1516,12 +1513,7 @@ impl AcpThreadView {
 
         let tool_failed = matches!(
             &tool_call.status,
-            ToolCallStatus::Rejected
-                | ToolCallStatus::Canceled
-                | ToolCallStatus::Allowed {
-                    status: acp::ToolCallStatus::Failed,
-                    ..
-                }
+            ToolCallStatus::Rejected | ToolCallStatus::Canceled | ToolCallStatus::Failed
         );
 
         let output = terminal_data.output();
@@ -2501,12 +2493,15 @@ impl AcpThreadView {
             .into_any()
     }
 
-    fn as_native_connection(&self, cx: &App) -> Option<Rc<agent2::NativeAgentConnection>> {
+    pub(crate) fn as_native_connection(
+        &self,
+        cx: &App,
+    ) -> Option<Rc<agent2::NativeAgentConnection>> {
         let acp_thread = self.thread()?.read(cx);
         acp_thread.connection().clone().downcast()
     }
 
-    fn as_native_thread(&self, cx: &App) -> Option<Entity<agent2::Thread>> {
+    pub(crate) fn as_native_thread(&self, cx: &App) -> Option<Entity<agent2::Thread>> {
         let acp_thread = self.thread()?.read(cx);
         self.as_native_connection(cx)?
             .thread(acp_thread.session_id(), cx)
@@ -2534,7 +2529,10 @@ impl AcpThreadView {
     fn render_burn_mode_toggle(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let thread = self.as_native_thread(cx)?.read(cx);
 
-        if !thread.model().supports_burn_mode() {
+        if thread
+            .model()
+            .map_or(true, |model| !model.supports_burn_mode())
+        {
             return None;
         }
 
@@ -3194,7 +3192,10 @@ impl AcpThreadView {
         cx: &mut Context<Self>,
     ) -> Option<Callout> {
         let thread = self.as_native_thread(cx)?;
-        let supports_burn_mode = thread.read(cx).model().supports_burn_mode();
+        let supports_burn_mode = thread
+            .read(cx)
+            .model()
+            .map_or(false, |model| model.supports_burn_mode());
 
         let focus_handle = self.focus_handle(cx);
 

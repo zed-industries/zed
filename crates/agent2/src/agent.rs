@@ -425,11 +425,18 @@ impl NativeAgent {
         cx: &mut Context<Self>,
     ) {
         self.models.refresh_list(cx);
+
+        let default_model = LanguageModelRegistry::read_global(cx)
+            .default_model()
+            .map(|m| m.model.clone());
+
         for session in self.sessions.values_mut() {
-            session.thread.update(cx, |thread, _| {
-                let model_id = LanguageModels::model_id(&thread.model());
-                if let Some(model) = self.models.model_from_id(&model_id) {
-                    thread.set_model(model.clone());
+            session.thread.update(cx, |thread, cx| {
+                if thread.model().is_none()
+                    && let Some(model) = default_model.clone()
+                {
+                    thread.set_model(model);
+                    cx.notify();
                 }
             });
         }
@@ -514,10 +521,11 @@ impl NativeAgentConnection {
                                     thread.request_tool_call_authorization(tool_call, options, cx)
                                 })?;
                                 cx.background_spawn(async move {
-                                    if let Some(option) = recv
-                                        .await
-                                        .context("authorization sender was dropped")
-                                        .log_err()
+                                    if let Some(recv) = recv.log_err()
+                                        && let Some(option) = recv
+                                            .await
+                                            .context("authorization sender was dropped")
+                                            .log_err()
                                     {
                                         response
                                             .send(option)
@@ -530,7 +538,7 @@ impl NativeAgentConnection {
                             AgentResponseEvent::ToolCall(tool_call) => {
                                 acp_thread.update(cx, |thread, cx| {
                                     thread.upsert_tool_call(tool_call, cx)
-                                })?;
+                                })??;
                             }
                             AgentResponseEvent::ToolCallUpdate(update) => {
                                 acp_thread.update(cx, |thread, cx| {
@@ -621,13 +629,15 @@ impl AgentModelSelector for NativeAgentConnection {
         else {
             return Task::ready(Err(anyhow!("Session not found")));
         };
-        let model = thread.read(cx).model().clone();
+        let Some(model) = thread.read(cx).model() else {
+            return Task::ready(Err(anyhow!("Model not found")));
+        };
         let Some(provider) = LanguageModelRegistry::read_global(cx).provider(&model.provider_id())
         else {
             return Task::ready(Err(anyhow!("Provider not found")));
         };
         Task::ready(Ok(LanguageModels::map_language_model_to_info(
-            &model, &provider,
+            model, &provider,
         )))
     }
 
@@ -678,19 +688,11 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
                     let available_count = registry.available_models(cx).count();
                     log::debug!("Total available models: {}", available_count);
 
-                    let default_model = registry
-                        .default_model()
-                        .and_then(|default_model| {
-                            agent
-                                .models
-                                .model_from_id(&LanguageModels::model_id(&default_model.model))
-                        })
-                        .ok_or_else(|| {
-                            log::warn!("No default model configured in settings");
-                            anyhow!(
-                                "No default model. Please configure a default model in settings."
-                            )
-                        })?;
+                    let default_model = registry.default_model().and_then(|default_model| {
+                        agent
+                            .models
+                            .model_from_id(&LanguageModels::model_id(&default_model.model))
+                    });
 
                     let thread = cx.new(|cx| {
                         let mut thread = Thread::new(
@@ -776,13 +778,7 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
             log::debug!("Message id: {:?}", id);
             log::debug!("Message content: {:?}", content);
 
-            Ok(thread.update(cx, |thread, cx| {
-                log::info!(
-                    "Sending message to thread with model: {:?}",
-                    thread.model().name()
-                );
-                thread.send(id, content, cx)
-            }))
+            thread.update(cx, |thread, cx| thread.send(id, content, cx))
         })
     }
 
@@ -1007,7 +1003,7 @@ mod tests {
         agent.read_with(cx, |agent, _| {
             let session = agent.sessions.get(&session_id).unwrap();
             session.thread.read_with(cx, |thread, _| {
-                assert_eq!(thread.model().id().0, "fake");
+                assert_eq!(thread.model().unwrap().id().0, "fake");
             });
         });
 

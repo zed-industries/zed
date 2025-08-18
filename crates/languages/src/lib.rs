@@ -1,6 +1,6 @@
 use anyhow::Context as _;
 use feature_flags::{FeatureFlag, FeatureFlagAppExt as _};
-use gpui::{App, UpdateGlobal};
+use gpui::{App, SharedString, UpdateGlobal};
 use node_runtime::NodeRuntime;
 use python::PyprojectTomlManifestProvider;
 use rust::CargoManifestProvider;
@@ -177,11 +177,13 @@ pub fn init(languages: Arc<LanguageRegistry>, node: NodeRuntime, cx: &mut App) {
             adapters: vec![python_lsp_adapter.clone(), py_lsp_adapter.clone()],
             context: Some(python_context_provider),
             toolchain: Some(python_toolchain_provider),
+            manifest_name: Some(SharedString::new_static("pyproject.toml").into()),
         },
         LanguageInfo {
             name: "rust",
             adapters: vec![rust_lsp_adapter],
             context: Some(rust_context_provider),
+            manifest_name: Some(SharedString::new_static("Cargo.toml").into()),
             ..Default::default()
         },
         LanguageInfo {
@@ -234,6 +236,7 @@ pub fn init(languages: Arc<LanguageRegistry>, node: NodeRuntime, cx: &mut App) {
             registration.adapters,
             registration.context,
             registration.toolchain,
+            registration.manifest_name,
         );
     }
 
@@ -340,7 +343,7 @@ pub fn init(languages: Arc<LanguageRegistry>, node: NodeRuntime, cx: &mut App) {
         Arc::from(PyprojectTomlManifestProvider),
     ];
     for provider in manifest_providers {
-        project::ManifestProviders::global(cx).register(provider);
+        project::ManifestProvidersStore::global(cx).register(provider);
     }
 }
 
@@ -350,6 +353,7 @@ struct LanguageInfo {
     adapters: Vec<Arc<dyn LspAdapter>>,
     context: Option<Arc<dyn ContextProvider>>,
     toolchain: Option<Arc<dyn ToolchainLister>>,
+    manifest_name: Option<ManifestName>,
 }
 
 fn register_language(
@@ -358,6 +362,7 @@ fn register_language(
     adapters: Vec<Arc<dyn LspAdapter>>,
     context: Option<Arc<dyn ContextProvider>>,
     toolchain: Option<Arc<dyn ToolchainLister>>,
+    manifest_name: Option<ManifestName>,
 ) {
     let config = load_config(name);
     for adapter in adapters {
@@ -368,12 +373,14 @@ fn register_language(
         config.grammar.clone(),
         config.matcher.clone(),
         config.hidden,
+        manifest_name.clone(),
         Arc::new(move || {
             Ok(LoadedLanguage {
                 config: config.clone(),
                 queries: load_queries(name),
                 context_provider: context.clone(),
                 toolchain_provider: toolchain.clone(),
+                manifest_name: manifest_name.clone(),
             })
         }),
     );

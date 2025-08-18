@@ -285,7 +285,7 @@ impl AgentConnection for ClaudeAgentConnection {
 
         let turn_state = session.turn_state.take();
         let TurnState::InProgress { end_tx } = turn_state else {
-            // Already cancelled or idle, put it back
+            // Already canceled or idle, put it back
             session.turn_state.replace(turn_state);
             return;
         };
@@ -389,7 +389,7 @@ enum TurnState {
 }
 
 impl TurnState {
-    fn is_cancelled(&self) -> bool {
+    fn is_canceled(&self) -> bool {
         matches!(self, TurnState::CancelConfirmed { .. })
     }
 
@@ -439,7 +439,7 @@ impl ClaudeAgentSession {
                 for chunk in message.content.chunks() {
                     match chunk {
                         ContentChunk::Text { text } | ContentChunk::UntaggedText(text) => {
-                            if !turn_state.borrow().is_cancelled() {
+                            if !turn_state.borrow().is_canceled() {
                                 thread
                                     .update(cx, |thread, cx| {
                                         thread.push_user_content_block(None, text.into(), cx)
@@ -458,8 +458,8 @@ impl ClaudeAgentSession {
                                         acp::ToolCallUpdate {
                                             id: acp::ToolCallId(tool_use_id.into()),
                                             fields: acp::ToolCallUpdateFields {
-                                                status: if turn_state.borrow().is_cancelled() {
-                                                    // Do not set to completed if turn was cancelled
+                                                status: if turn_state.borrow().is_canceled() {
+                                                    // Do not set to completed if turn was canceled
                                                     None
                                                 } else {
                                                     Some(acp::ToolCallStatus::Completed)
@@ -560,8 +560,9 @@ impl ClaudeAgentSession {
                                         thread.upsert_tool_call(
                                             claude_tool.as_acp(acp::ToolCallId(id.into())),
                                             cx,
-                                        );
+                                        )?;
                                     }
+                                    anyhow::Ok(())
                                 })
                                 .log_err();
                         }
@@ -591,14 +592,13 @@ impl ClaudeAgentSession {
                 ..
             } => {
                 let turn_state = turn_state.take();
-                let was_cancelled = turn_state.is_cancelled();
+                let was_canceled = turn_state.is_canceled();
                 let Some(end_turn_tx) = turn_state.end_tx() else {
                     debug_panic!("Received `SdkMessage::Result` but there wasn't an active turn");
                     return;
                 };
 
-                if is_error || (!was_cancelled && subtype == ResultErrorType::ErrorDuringExecution)
-                {
+                if is_error || (!was_canceled && subtype == ResultErrorType::ErrorDuringExecution) {
                     end_turn_tx
                         .send(Err(anyhow!(
                             "Error: {}",
@@ -609,7 +609,7 @@ impl ClaudeAgentSession {
                     let stop_reason = match subtype {
                         ResultErrorType::Success => acp::StopReason::EndTurn,
                         ResultErrorType::ErrorMaxTurns => acp::StopReason::MaxTurnRequests,
-                        ResultErrorType::ErrorDuringExecution => acp::StopReason::Cancelled,
+                        ResultErrorType::ErrorDuringExecution => acp::StopReason::Canceled,
                     };
                     end_turn_tx
                         .send(Ok(acp::PromptResponse { stop_reason }))

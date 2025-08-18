@@ -135,9 +135,9 @@ impl acp_old::Client for OldAcpClientDelegate {
         let response = cx
             .update(|cx| {
                 self.thread.borrow().update(cx, |thread, cx| {
-                    thread.request_tool_call_authorization(tool_call, acp_options, cx)
+                    thread.request_tool_call_authorization(tool_call.into(), acp_options, cx)
                 })
-            })?
+            })??
             .context("Failed to update thread")?
             .await;
 
@@ -168,7 +168,7 @@ impl acp_old::Client for OldAcpClientDelegate {
                     cx,
                 )
             })
-        })?
+        })??
         .context("Failed to update thread")?;
 
         Ok(acp_old::PushToolCallResponse {
