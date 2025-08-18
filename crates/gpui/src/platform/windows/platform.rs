@@ -787,6 +787,12 @@ fn file_open_dialog(
 
     unsafe {
         folder_dialog.SetOptions(dialog_options)?;
+
+        if let Some(prompt) = options.prompt {
+            let prompt: &str = &prompt;
+            folder_dialog.SetOkButtonLabel(&HSTRING::from(prompt))?;
+        }
+
         if folder_dialog.Show(window).is_err() {
             // User cancelled
             return Ok(None);
