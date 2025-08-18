@@ -671,7 +671,7 @@ impl Thread {
                         log::info!("Calling model.stream_completion");
 
                         let mut tool_use_limit_reached = false;
-                        let mut tool_uses = Self::stream_completion_with_potential_retries(
+                        let mut tool_uses = Self::stream_completion_with_retries(
                             this.clone(),
                             model.clone(),
                             request,
@@ -738,7 +738,7 @@ impl Thread {
         Ok(events_rx)
     }
 
-    async fn stream_completion_with_potential_retries(
+    async fn stream_completion_with_retries(
         this: WeakEntity<Self>,
         model: Arc<dyn LanguageModel>,
         request: LanguageModelRequest,
