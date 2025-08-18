@@ -100,7 +100,7 @@ impl WindowsWindowInner {
             WM_SETCURSOR => self.handle_set_cursor(handle, lparam),
             WM_SETTINGCHANGE => self.handle_system_settings_changed(handle, wparam, lparam),
             WM_INPUTLANGCHANGE => self.handle_input_language_changed(lparam),
-            WM_SHOWWINDOW => self.handle_window_visibility_changed(handle, wparam, lparam),
+            WM_SHOWWINDOW => self.handle_window_visibility_changed(handle, wparam),
             WM_GPUI_CURSOR_STYLE_CHANGED => self.handle_cursor_changed(lparam),
             WM_GPUI_FORCE_UPDATE_WINDOW => self.draw_window(handle, true),
             _ => None,
@@ -1161,7 +1161,7 @@ impl WindowsWindowInner {
         Some(0)
     }
 
-    fn handle_window_visibility_changed(&self, handle: HWND, wparam: WPARAM, lparam: LPARAM) -> Option<isize> {
+    fn handle_window_visibility_changed(&self, handle: HWND, wparam: WPARAM) -> Option<isize> {
         if wparam.0 == 1 {
             self.draw_window(handle, false);
         }
