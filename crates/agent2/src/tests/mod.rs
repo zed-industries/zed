@@ -946,7 +946,7 @@ async fn test_cancellation(cx: &mut TestAppContext) {
     assert!(
         matches!(
             last_event,
-            Some(Ok(AgentResponseEvent::Stop(acp::StopReason::Cancelled)))
+            Some(Ok(AgentResponseEvent::Stop(acp::StopReason::Canceled)))
         ),
         "unexpected event {last_event:?}"
     );
@@ -974,7 +974,7 @@ async fn test_cancellation(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_in_progress_send_cancelled_by_next_send(cx: &mut TestAppContext) {
+async fn test_in_progress_send_canceled_by_next_send(cx: &mut TestAppContext) {
     let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
     let fake_model = model.as_fake();
 
@@ -995,7 +995,7 @@ async fn test_in_progress_send_cancelled_by_next_send(cx: &mut TestAppContext) {
     fake_model.end_last_completion_stream();
 
     let events_1 = events_1.collect::<Vec<_>>().await;
-    assert_eq!(stop_events(events_1), vec![acp::StopReason::Cancelled]);
+    assert_eq!(stop_events(events_1), vec![acp::StopReason::Canceled]);
     let events_2 = events_2.collect::<Vec<_>>().await;
     assert_eq!(stop_events(events_2), vec![acp::StopReason::EndTurn]);
 }

@@ -1148,7 +1148,7 @@ impl RunningTurn {
         if let Some(event_stream) = event_stream.upgrade() {
             drop(task);
             log::debug!("Cancelling in progress turn");
-            event_stream.send_cancelled();
+            event_stream.send_canceled();
         }
     }
 }
@@ -1364,9 +1364,9 @@ impl AgentResponseEventStream {
         }
     }
 
-    fn send_cancelled(&self) {
+    fn send_canceled(&self) {
         self.0
-            .unbounded_send(Ok(AgentResponseEvent::Stop(acp::StopReason::Cancelled)))
+            .unbounded_send(Ok(AgentResponseEvent::Stop(acp::StopReason::Canceled)))
             .ok();
     }
 
