@@ -474,10 +474,39 @@ impl AcpThreadView {
     }
 
     fn send(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(thread) = self.thread() {
+            if thread.read(cx).status() != ThreadStatus::Idle {
+                self.stop_current_and_send_new_message(window, cx);
+                return;
+            }
+        }
+
         let contents = self
             .message_editor
             .update(cx, |message_editor, cx| message_editor.contents(window, cx));
         self.send_impl(contents, window, cx)
+    }
+
+    fn stop_current_and_send_new_message(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(thread) = self.thread().cloned() else {
+            return;
+        };
+
+        let cancelled = thread.update(cx, |thread, cx| thread.cancel(cx));
+
+        let contents = self
+            .message_editor
+            .update(cx, |message_editor, cx| message_editor.contents(window, cx));
+
+        cx.spawn_in(window, async move |this, cx| {
+            cancelled.await;
+
+            this.update_in(cx, |this, window, cx| {
+                this.send_impl(contents, window, cx);
+            })
+            .ok();
+        })
+        .detach();
     }
 
     fn send_impl(
@@ -2562,25 +2591,12 @@ impl AcpThreadView {
     }
 
     fn render_send_button(&self, cx: &mut Context<Self>) -> AnyElement {
-        if self.thread().map_or(true, |thread| {
-            thread.read(cx).status() == ThreadStatus::Idle
-        }) {
-            let is_editor_empty = self.message_editor.read(cx).is_empty(cx);
-            IconButton::new("send-message", IconName::Send)
-                .icon_color(Color::Accent)
-                .style(ButtonStyle::Filled)
-                .disabled(self.thread().is_none() || is_editor_empty)
-                .when(!is_editor_empty, |button| {
-                    button.tooltip(move |window, cx| Tooltip::for_action("Send", &Chat, window, cx))
-                })
-                .when(is_editor_empty, |button| {
-                    button.tooltip(Tooltip::text("Type a message to submit"))
-                })
-                .on_click(cx.listener(|this, _, window, cx| {
-                    this.send(window, cx);
-                }))
-                .into_any_element()
-        } else {
+        let is_editor_empty = self.message_editor.read(cx).is_empty(cx);
+        let is_generating = self.thread().map_or(false, |thread| {
+            thread.read(cx).status() != ThreadStatus::Idle
+        });
+
+        if is_generating && is_editor_empty {
             IconButton::new("stop-generation", IconName::Stop)
                 .icon_color(Color::Error)
                 .style(ButtonStyle::Tinted(ui::TintColor::Error))
@@ -2588,6 +2604,29 @@ impl AcpThreadView {
                     Tooltip::for_action("Stop Generation", &editor::actions::Cancel, window, cx)
                 })
                 .on_click(cx.listener(|this, _event, _, cx| this.cancel_generation(cx)))
+                .into_any_element()
+        } else {
+            let send_btn_tooltip = if is_editor_empty && !is_generating {
+                "Type to Send"
+            } else if is_generating {
+                "Stop and Send Message"
+            } else {
+                "Send"
+            };
+
+            IconButton::new("send-message", IconName::Send)
+                .style(ButtonStyle::Filled)
+                .map(|this| {
+                    if is_editor_empty && !is_generating {
+                        this.disabled(true).icon_color(Color::Muted)
+                    } else {
+                        this.icon_color(Color::Accent)
+                    }
+                })
+                .tooltip(move |window, cx| Tooltip::for_action(send_btn_tooltip, &Chat, window, cx))
+                .on_click(cx.listener(|this, _, window, cx| {
+                    this.send(window, cx);
+                }))
                 .into_any_element()
         }
     }
