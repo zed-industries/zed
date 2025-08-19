@@ -6,6 +6,7 @@ use acp_thread::{MentionUri, selection_name};
 use agent::{TextThreadStore, ThreadId, ThreadStore};
 use agent_client_protocol as acp;
 use anyhow::{Context as _, Result, anyhow};
+use assistant_slash_commands::codeblock_fence_for_path;
 use collections::{HashMap, HashSet};
 use editor::{
     Anchor, AnchorRangeExt, ContextMenuOptions, ContextMenuPlacement, Editor, EditorElement,
@@ -15,7 +16,7 @@ use editor::{
 };
 use futures::{
     FutureExt as _, TryFutureExt as _,
-    future::{Shared, try_join_all},
+    future::{Shared, join_all, try_join_all},
 };
 use gpui::{
     AppContext, ClipboardEntry, Context, Entity, EventEmitter, FocusHandle, Focusable, Image,
@@ -23,12 +24,12 @@ use gpui::{
 };
 use language::{Buffer, Language};
 use language_model::LanguageModelImage;
-use project::{CompletionIntent, Project};
+use project::{CompletionIntent, Project, ProjectPath, Worktree};
 use rope::Point;
 use settings::Settings;
 use std::{
     ffi::OsStr,
-    fmt::Write,
+    fmt::{Display, Write},
     ops::Range,
     path::{Path, PathBuf},
     rc::Rc,
@@ -245,6 +246,9 @@ impl MessageEditor {
             MentionUri::Fetch { url } => {
                 self.confirm_mention_for_fetch(crease_id, anchor, url, window, cx);
             }
+            MentionUri::Directory { abs_path } => {
+                self.confirm_mention_for_directory(crease_id, anchor, abs_path, window, cx);
+            }
             MentionUri::Thread { id, name } => {
                 self.confirm_mention_for_thread(crease_id, anchor, id, name, window, cx);
             }
@@ -258,6 +262,124 @@ impl MessageEditor {
                 self.mention_set.insert_uri(crease_id, mention_uri.clone());
             }
         }
+    }
+
+    fn confirm_mention_for_directory(
+        &mut self,
+        crease_id: CreaseId,
+        anchor: Anchor,
+        abs_path: PathBuf,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        fn collect_files_in_path(worktree: &Worktree, path: &Path) -> Vec<(Arc<Path>, PathBuf)> {
+            let mut files = Vec::new();
+
+            for entry in worktree.child_entries(path) {
+                if entry.is_dir() {
+                    files.extend(collect_files_in_path(worktree, &entry.path));
+                } else if entry.is_file() {
+                    files.push((entry.path.clone(), worktree.full_path(&entry.path)));
+                }
+            }
+
+            files
+        }
+
+        let uri = MentionUri::Directory {
+            abs_path: abs_path.clone(),
+        };
+        let Some(project_path) = self
+            .project
+            .read(cx)
+            .project_path_for_absolute_path(&abs_path, cx)
+        else {
+            return;
+        };
+        let Some(entry) = self.project.read(cx).entry_for_path(&project_path, cx) else {
+            return;
+        };
+        let Some(worktree) = self.project.read(cx).worktree_for_entry(entry.id, cx) else {
+            return;
+        };
+        let project = self.project.clone();
+        let task = cx.spawn(async move |_, cx| {
+            let directory_path = entry.path.clone();
+
+            let worktree_id = worktree.read_with(cx, |worktree, _| worktree.id())?;
+            let file_paths = worktree.read_with(cx, |worktree, _cx| {
+                collect_files_in_path(worktree, &directory_path)
+            })?;
+            let descendants_future = cx.update(|cx| {
+                join_all(file_paths.into_iter().map(|(worktree_path, full_path)| {
+                    let rel_path = worktree_path
+                        .strip_prefix(&directory_path)
+                        .log_err()
+                        .map_or_else(|| worktree_path.clone(), |rel_path| rel_path.into());
+
+                    let open_task = project.update(cx, |project, cx| {
+                        project.buffer_store().update(cx, |buffer_store, cx| {
+                            let project_path = ProjectPath {
+                                worktree_id,
+                                path: worktree_path,
+                            };
+                            buffer_store.open_buffer(project_path, cx)
+                        })
+                    });
+
+                    // TODO: report load errors instead of just logging
+                    let rope_task = cx.spawn(async move |cx| {
+                        let buffer = open_task.await.log_err()?;
+                        let rope = buffer
+                            .read_with(cx, |buffer, _cx| buffer.as_rope().clone())
+                            .log_err()?;
+                        Some(rope)
+                    });
+
+                    cx.background_spawn(async move {
+                        let rope = rope_task.await?;
+                        Some((rel_path, full_path, rope.to_string()))
+                    })
+                }))
+            })?;
+
+            let contents = cx
+                .background_spawn(async move {
+                    let contents = descendants_future.await.into_iter().flatten();
+                    contents.collect()
+                })
+                .await;
+            anyhow::Ok(contents)
+        });
+        let task = cx
+            .spawn(async move |_, _| {
+                task.await
+                    .map(|contents| DirectoryContents(contents).to_string())
+                    .map_err(|e| e.to_string())
+            })
+            .shared();
+
+        self.mention_set.directories.insert(abs_path, task.clone());
+
+        let editor = self.editor.clone();
+        cx.spawn_in(window, async move |this, cx| {
+            if task.await.notify_async_err(cx).is_some() {
+                this.update(cx, |this, _| {
+                    this.mention_set.insert_uri(crease_id, uri);
+                })
+                .ok();
+            } else {
+                editor
+                    .update(cx, |editor, cx| {
+                        editor.display_map.update(cx, |display_map, cx| {
+                            display_map.unfold_intersecting(vec![anchor..anchor], true, cx);
+                        });
+                        editor.remove_creases([crease_id], cx);
+                    })
+                    .ok();
+            }
+        })
+        .detach();
     }
 
     fn confirm_mention_for_fetch(
@@ -359,6 +481,104 @@ impl MessageEditor {
             self.mention_set
                 .insert_uri(crease_id, MentionUri::Selection { path, line_range });
         }
+    }
+
+    fn confirm_mention_for_thread(
+        &mut self,
+        crease_id: CreaseId,
+        anchor: Anchor,
+        id: ThreadId,
+        name: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let uri = MentionUri::Thread {
+            id: id.clone(),
+            name,
+        };
+        let open_task = self.thread_store.update(cx, |thread_store, cx| {
+            thread_store.open_thread(&id, window, cx)
+        });
+        let task = cx
+            .spawn(async move |_, cx| {
+                let thread = open_task.await.map_err(|e| e.to_string())?;
+                let content = thread
+                    .read_with(cx, |thread, _cx| thread.latest_detailed_summary_or_text())
+                    .map_err(|e| e.to_string())?;
+                Ok(content)
+            })
+            .shared();
+
+        self.mention_set.insert_thread(id, task.clone());
+
+        let editor = self.editor.clone();
+        cx.spawn_in(window, async move |this, cx| {
+            if task.await.notify_async_err(cx).is_some() {
+                this.update(cx, |this, _| {
+                    this.mention_set.insert_uri(crease_id, uri);
+                })
+                .ok();
+            } else {
+                editor
+                    .update(cx, |editor, cx| {
+                        editor.display_map.update(cx, |display_map, cx| {
+                            display_map.unfold_intersecting(vec![anchor..anchor], true, cx);
+                        });
+                        editor.remove_creases([crease_id], cx);
+                    })
+                    .ok();
+            }
+        })
+        .detach();
+    }
+
+    fn confirm_mention_for_text_thread(
+        &mut self,
+        crease_id: CreaseId,
+        anchor: Anchor,
+        path: PathBuf,
+        name: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let uri = MentionUri::TextThread {
+            path: path.clone(),
+            name,
+        };
+        let context = self.text_thread_store.update(cx, |text_thread_store, cx| {
+            text_thread_store.open_local_context(path.as_path().into(), cx)
+        });
+        let task = cx
+            .spawn(async move |_, cx| {
+                let context = context.await.map_err(|e| e.to_string())?;
+                let xml = context
+                    .update(cx, |context, cx| context.to_xml(cx))
+                    .map_err(|e| e.to_string())?;
+                Ok(xml)
+            })
+            .shared();
+
+        self.mention_set.insert_text_thread(path, task.clone());
+
+        let editor = self.editor.clone();
+        cx.spawn_in(window, async move |this, cx| {
+            if task.await.notify_async_err(cx).is_some() {
+                this.update(cx, |this, _| {
+                    this.mention_set.insert_uri(crease_id, uri);
+                })
+                .ok();
+            } else {
+                editor
+                    .update(cx, |editor, cx| {
+                        editor.display_map.update(cx, |display_map, cx| {
+                            display_map.unfold_intersecting(vec![anchor..anchor], true, cx);
+                        });
+                        editor.remove_creases([crease_id], cx);
+                    })
+                    .ok();
+            }
+        })
+        .detach();
     }
 
     pub fn contents(
@@ -613,114 +833,11 @@ impl MessageEditor {
             if task.await.notify_async_err(cx).is_some() {
                 if let Some(abs_path) = abs_path.clone() {
                     this.update(cx, |this, _cx| {
-                        this.mention_set.insert_uri(
-                            crease_id,
-                            MentionUri::File {
-                                abs_path,
-                                is_directory: false,
-                            },
-                        );
+                        this.mention_set
+                            .insert_uri(crease_id, MentionUri::File { abs_path });
                     })
                     .ok();
                 }
-            } else {
-                editor
-                    .update(cx, |editor, cx| {
-                        editor.display_map.update(cx, |display_map, cx| {
-                            display_map.unfold_intersecting(vec![anchor..anchor], true, cx);
-                        });
-                        editor.remove_creases([crease_id], cx);
-                    })
-                    .ok();
-            }
-        })
-        .detach();
-    }
-
-    fn confirm_mention_for_thread(
-        &mut self,
-        crease_id: CreaseId,
-        anchor: Anchor,
-        id: ThreadId,
-        name: String,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let uri = MentionUri::Thread {
-            id: id.clone(),
-            name,
-        };
-        let open_task = self.thread_store.update(cx, |thread_store, cx| {
-            thread_store.open_thread(&id, window, cx)
-        });
-        let task = cx
-            .spawn(async move |_, cx| {
-                let thread = open_task.await.map_err(|e| e.to_string())?;
-                let content = thread
-                    .read_with(cx, |thread, _cx| thread.latest_detailed_summary_or_text())
-                    .map_err(|e| e.to_string())?;
-                Ok(content)
-            })
-            .shared();
-
-        self.mention_set.insert_thread(id, task.clone());
-
-        let editor = self.editor.clone();
-        cx.spawn_in(window, async move |this, cx| {
-            if task.await.notify_async_err(cx).is_some() {
-                this.update(cx, |this, _| {
-                    this.mention_set.insert_uri(crease_id, uri);
-                })
-                .ok();
-            } else {
-                editor
-                    .update(cx, |editor, cx| {
-                        editor.display_map.update(cx, |display_map, cx| {
-                            display_map.unfold_intersecting(vec![anchor..anchor], true, cx);
-                        });
-                        editor.remove_creases([crease_id], cx);
-                    })
-                    .ok();
-            }
-        })
-        .detach();
-    }
-
-    fn confirm_mention_for_text_thread(
-        &mut self,
-        crease_id: CreaseId,
-        anchor: Anchor,
-        path: PathBuf,
-        name: String,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let uri = MentionUri::TextThread {
-            path: path.clone(),
-            name,
-        };
-        let context = self.text_thread_store.update(cx, |text_thread_store, cx| {
-            text_thread_store.open_local_context(path.as_path().into(), cx)
-        });
-        let task = cx
-            .spawn(async move |_, cx| {
-                let context = context.await.map_err(|e| e.to_string())?;
-                let xml = context
-                    .update(cx, |context, cx| context.to_xml(cx))
-                    .map_err(|e| e.to_string())?;
-                Ok(xml)
-            })
-            .shared();
-
-        self.mention_set.insert_text_thread(path, task.clone());
-
-        let editor = self.editor.clone();
-        cx.spawn_in(window, async move |this, cx| {
-            if task.await.notify_async_err(cx).is_some() {
-                this.update(cx, |this, _| {
-                    this.mention_set.insert_uri(crease_id, uri);
-                })
-                .ok();
             } else {
                 editor
                     .update(cx, |editor, cx| {
@@ -817,6 +934,10 @@ impl MessageEditor {
                     self.mention_set
                         .add_fetch_result(url, Task::ready(Ok(text)).shared());
                 }
+                MentionUri::Directory { abs_path } => {
+                    let task = Task::ready(Ok(text)).shared();
+                    self.mention_set.directories.insert(abs_path, task);
+                }
                 MentionUri::File { .. }
                 | MentionUri::Symbol { .. }
                 | MentionUri::Rule { .. }
@@ -879,6 +1000,18 @@ impl MessageEditor {
     #[cfg(test)]
     pub fn text(&self, cx: &App) -> String {
         self.editor.read(cx).text(cx)
+    }
+}
+
+struct DirectoryContents(Arc<[(Arc<Path>, PathBuf, String)]>);
+
+impl Display for DirectoryContents {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        for (_relative_path, full_path, content) in self.0.iter() {
+            let fence = codeblock_fence_for_path(Some(full_path), None);
+            write!(f, "\n{fence}\n{content}\n```")?;
+        }
+        Ok(())
     }
 }
 
@@ -1064,6 +1197,7 @@ pub struct MentionSet {
     images: HashMap<CreaseId, Shared<Task<Result<MentionImage, String>>>>,
     thread_summaries: HashMap<ThreadId, Shared<Task<Result<SharedString, String>>>>,
     text_thread_summaries: HashMap<PathBuf, Shared<Task<Result<String, String>>>>,
+    directories: HashMap<PathBuf, Shared<Task<Result<String, String>>>>,
 }
 
 impl MentionSet {
@@ -1116,7 +1250,6 @@ impl MentionSet {
             .map(|(&crease_id, uri)| {
                 match uri {
                     MentionUri::File { abs_path, .. } => {
-                        // TODO directories
                         let uri = uri.clone();
                         let abs_path = abs_path.to_path_buf();
 
@@ -1139,6 +1272,24 @@ impl MentionSet {
                             let content = buffer.read_with(cx, |buffer, _cx| buffer.text())?;
 
                             anyhow::Ok((crease_id, Mention::Text { uri, content }))
+                        })
+                    }
+                    MentionUri::Directory { abs_path } => {
+                        let Some(content) = self.directories.get(abs_path).cloned() else {
+                            return Task::ready(Err(anyhow!("missing directory load task")));
+                        };
+                        let uri = uri.clone();
+                        cx.spawn(async move |_| {
+                            Ok((
+                                crease_id,
+                                Mention::Text {
+                                    uri,
+                                    content: content
+                                        .await
+                                        .map_err(|e| anyhow::anyhow!("{e}"))?
+                                        .to_string(),
+                                },
+                            ))
                         })
                     }
                     MentionUri::Symbol {

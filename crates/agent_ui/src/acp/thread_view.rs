@@ -2790,25 +2790,30 @@ impl AcpThreadView {
 
         if let Some(mention) = MentionUri::parse(&url).log_err() {
             workspace.update(cx, |workspace, cx| match mention {
-                MentionUri::File { abs_path, .. } => {
+                MentionUri::File { abs_path } => {
                     let project = workspace.project();
-                    let Some((path, entry)) = project.update(cx, |project, cx| {
+                    let Some(path) =
+                        project.update(cx, |project, cx| project.find_project_path(abs_path, cx))
+                    else {
+                        return;
+                    };
+
+                    workspace
+                        .open_path(path, None, true, window, cx)
+                        .detach_and_log_err(cx);
+                }
+                MentionUri::Directory { abs_path } => {
+                    let project = workspace.project();
+                    let Some(entry) = project.update(cx, |project, cx| {
                         let path = project.find_project_path(abs_path, cx)?;
-                        let entry = project.entry_for_path(&path, cx)?;
-                        Some((path, entry))
+                        project.entry_for_path(&path, cx)
                     }) else {
                         return;
                     };
 
-                    if entry.is_dir() {
-                        project.update(cx, |_, cx| {
-                            cx.emit(project::Event::RevealInProjectPanel(entry.id));
-                        });
-                    } else {
-                        workspace
-                            .open_path(path, None, true, window, cx)
-                            .detach_and_log_err(cx);
-                    }
+                    project.update(cx, |_, cx| {
+                        cx.emit(project::Event::RevealInProjectPanel(entry.id));
+                    });
                 }
                 MentionUri::Symbol {
                     path, line_range, ..
