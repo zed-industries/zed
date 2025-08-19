@@ -609,7 +609,15 @@ impl OpenAiEventMapper {
             }
         }
 
-        match choice.finish_reason.as_deref() {
+        let mut effective_finish_reason = choice.finish_reason.as_deref();
+
+        if effective_finish_reason == Some("stop") && !self.tool_calls_by_index.is_empty() 
+        {
+            log::warn!("finish_reason is 'stop' but tool calls are present; inferring 'tool_calls'");
+            effective_finish_reason = Some("tool_calls");
+        }
+
+        match effective_finish_reason {
             Some("stop") => {
                 events.push(Ok(LanguageModelCompletionEvent::Stop(StopReason::EndTurn)));
             }
