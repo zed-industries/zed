@@ -1434,6 +1434,50 @@ async fn test_tool_updates_to_completion(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_send_no_retry_on_success(cx: &mut TestAppContext) {
+    let ThreadTest { thread, model, .. } = setup(cx, TestModel::Fake).await;
+    let fake_model = model.as_fake();
+
+    let mut events = thread
+        .update(cx, |thread, cx| {
+            thread.set_completion_mode(agent_settings::CompletionMode::Burn);
+            thread.send(UserMessageId::new(), ["Hello!"], cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+
+    fake_model.send_last_completion_stream_text_chunk("Hey!");
+    fake_model.end_last_completion_stream();
+
+    let mut retry_events = Vec::new();
+    while let Some(Ok(event)) = events.next().await {
+        match event {
+            AgentResponseEvent::Retry(retry_status) => {
+                retry_events.push(retry_status);
+            }
+            AgentResponseEvent::Stop(..) => break,
+            _ => {}
+        }
+    }
+
+    assert_eq!(retry_events.len(), 0);
+    thread.read_with(cx, |thread, _cx| {
+        assert_eq!(
+            thread.to_markdown(),
+            indoc! {"
+                ## User
+
+                Hello!
+
+                ## Assistant
+
+                Hey!
+            "}
+        )
+    });
+}
+
+#[gpui::test]
 async fn test_send_retry_on_error(cx: &mut TestAppContext) {
     let ThreadTest { thread, model, .. } = setup(cx, TestModel::Fake).await;
     let fake_model = model.as_fake();
