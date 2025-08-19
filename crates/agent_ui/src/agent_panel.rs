@@ -245,7 +245,7 @@ impl AgentType {
         match self {
             Self::Zed | Self::TextThread => "Zed Agent",
             Self::NativeAgent => "Agent 2",
-            Self::Gemini => "Google Gemini",
+            Self::Gemini => "Gemini CLI",
             Self::ClaudeCode => "Claude Code",
         }
     }
@@ -2460,7 +2460,7 @@ impl AgentPanel {
                             .header("External Agents")
                             .when(cx.has_flag::<AcpFeatureFlag>(), |menu| {
                                 menu.item(
-                                    ContextMenuEntry::new("New Gemini Thread")
+                                    ContextMenuEntry::new("New Gemini CLI Thread")
                                         .icon(IconName::AiGemini)
                                         .icon_color(Color::Muted)
                                         .handler({
