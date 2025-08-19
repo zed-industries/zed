@@ -4,10 +4,11 @@ use crate::{
     LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
     LanguageModelRequest, LanguageModelToolChoice,
 };
-use futures::{FutureExt, StreamExt, channel::mpsc, future::BoxFuture, stream::BoxStream};
+use futures::{FutureExt, channel::mpsc, future::BoxFuture, stream::BoxStream};
 use gpui::{AnyView, App, AsyncApp, Entity, Task, Window};
 use http_client::Result;
 use parking_lot::Mutex;
+use smol::stream::StreamExt;
 use std::sync::Arc;
 
 #[derive(Clone)]
@@ -100,7 +101,9 @@ pub struct FakeLanguageModel {
     current_completion_txs: Mutex<
         Vec<(
             LanguageModelRequest,
-            mpsc::UnboundedSender<LanguageModelCompletionEvent>,
+            mpsc::UnboundedSender<
+                Result<LanguageModelCompletionEvent, LanguageModelCompletionError>,
+            >,
         )>,
     >,
 }
@@ -150,7 +153,21 @@ impl FakeLanguageModel {
             .find(|(req, _)| req == request)
             .map(|(_, tx)| tx)
             .unwrap();
-        tx.unbounded_send(event.into()).unwrap();
+        tx.unbounded_send(Ok(event.into())).unwrap();
+    }
+
+    pub fn send_completion_stream_error(
+        &self,
+        request: &LanguageModelRequest,
+        error: impl Into<LanguageModelCompletionError>,
+    ) {
+        let current_completion_txs = self.current_completion_txs.lock();
+        let tx = current_completion_txs
+            .iter()
+            .find(|(req, _)| req == request)
+            .map(|(_, tx)| tx)
+            .unwrap();
+        tx.unbounded_send(Err(error.into())).unwrap();
     }
 
     pub fn end_completion_stream(&self, request: &LanguageModelRequest) {
@@ -168,6 +185,13 @@ impl FakeLanguageModel {
         event: impl Into<LanguageModelCompletionEvent>,
     ) {
         self.send_completion_stream_event(self.pending_completions().last().unwrap(), event);
+    }
+
+    pub fn send_last_completion_stream_error(
+        &self,
+        error: impl Into<LanguageModelCompletionError>,
+    ) {
+        self.send_completion_stream_error(self.pending_completions().last().unwrap(), error);
     }
 
     pub fn end_last_completion_stream(&self) {
@@ -229,7 +253,7 @@ impl LanguageModel for FakeLanguageModel {
     > {
         let (tx, rx) = mpsc::unbounded();
         self.current_completion_txs.lock().push((request, tx));
-        async move { Ok(rx.map(Ok).boxed()) }.boxed()
+        async move { Ok(rx.boxed()) }.boxed()
     }
 
     fn as_fake(&self) -> &Self {
