@@ -477,10 +477,10 @@ impl<'de> Deserialize<'de> for ModelName {
                 model_id: id.to_string(),
             })
         } else {
-            return Err(serde::de::Error::custom(format!(
+            Err(serde::de::Error::custom(format!(
                 "Expected model name to begin with {}, got: {}",
                 MODEL_NAME_PREFIX, string
-            )));
+            )))
         }
     }
 }

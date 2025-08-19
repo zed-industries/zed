@@ -403,7 +403,7 @@ impl LspAdapter for RustLspAdapter {
                 } else if completion
                     .detail
                     .as_ref()
-                    .map_or(false, |detail| detail.starts_with("macro_rules! "))
+                    .is_some_and(|detail| detail.starts_with("macro_rules! "))
                 {
                     let text = completion.label.clone();
                     let len = text.len();
@@ -496,7 +496,7 @@ impl LspAdapter for RustLspAdapter {
         let enable_lsp_tasks = ProjectSettings::get_global(cx)
             .lsp
             .get(&SERVER_NAME)
-            .map_or(false, |s| s.enable_lsp_tasks);
+            .is_some_and(|s| s.enable_lsp_tasks);
         if enable_lsp_tasks {
             let experimental = json!({
                 "runnables": {

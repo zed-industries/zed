@@ -175,7 +175,7 @@ impl Render for QuickActionBar {
                 let code_action_menu = menu_ref
                     .as_ref()
                     .filter(|menu| matches!(menu, CodeContextMenu::CodeActions(..)));
-                code_action_menu.as_ref().map_or(false, |menu| {
+                code_action_menu.as_ref().is_some_and(|menu| {
                     matches!(menu.origin(), ContextMenuOrigin::QuickActionBar)
                 })
             };

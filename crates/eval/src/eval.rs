@@ -112,7 +112,7 @@ fn main() {
         let telemetry = app_state.client.telemetry();
         telemetry.start(system_id, installation_id, session_id, cx);
 
-        let enable_telemetry = env::var("ZED_EVAL_TELEMETRY").map_or(false, |value| value == "1")
+        let enable_telemetry = env::var("ZED_EVAL_TELEMETRY").is_ok_and(|value| value == "1")
             && telemetry.has_checksum_seed();
         if enable_telemetry {
             println!("Telemetry enabled");

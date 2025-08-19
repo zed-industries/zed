@@ -14,7 +14,7 @@ struct FeatureFlags {
 }
 
 pub static ZED_DISABLE_STAFF: LazyLock<bool> = LazyLock::new(|| {
-    std::env::var("ZED_DISABLE_STAFF").map_or(false, |value| !value.is_empty() && value != "0")
+    std::env::var("ZED_DISABLE_STAFF").is_ok_and(|value| !value.is_empty() && value != "0")
 });
 
 impl FeatureFlags {

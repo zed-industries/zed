@@ -880,7 +880,7 @@ impl FileFinderDelegate {
                     include_ignored: self.include_ignored.unwrap_or_else(|| {
                         worktree
                             .root_entry()
-                            .map_or(false, |entry| entry.is_ignored)
+                            .is_some_and(|entry| entry.is_ignored)
                     }),
                     include_root_name,
                     candidates: project::Candidates::Files,

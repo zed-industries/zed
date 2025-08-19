@@ -283,7 +283,7 @@ pub fn task_contexts(
                 .project()
                 .read(cx)
                 .worktree_for_id(*worktree_id, cx)
-                .map_or(false, |worktree| is_visible_directory(&worktree, cx))
+                .is_some_and(|worktree| is_visible_directory(&worktree, cx))
         })
         .or_else(|| {
             workspace
@@ -372,7 +372,7 @@ pub fn task_contexts(
 
 fn is_visible_directory(worktree: &Entity<Worktree>, cx: &App) -> bool {
     let worktree = worktree.read(cx);
-    worktree.is_visible() && worktree.root_entry().map_or(false, |entry| entry.is_dir())
+    worktree.is_visible() && worktree.root_entry().is_some_and(|entry| entry.is_dir())
 }
 
 fn worktree_context(worktree_abs_path: &Path) -> TaskContext {

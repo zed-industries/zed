@@ -101,7 +101,7 @@ impl ProfileProvider for Entity<agent2::Thread> {
     fn profiles_supported(&self, cx: &App) -> bool {
         self.read(cx)
             .model()
-            .map_or(false, |model| model.supports_tools())
+            .is_some_and(|model| model.supports_tools())
     }
 }
 
@@ -2839,7 +2839,7 @@ impl AcpThreadView {
 
         if thread
             .model()
-            .map_or(true, |model| !model.supports_burn_mode())
+            .is_none_or(|model| !model.supports_burn_mode())
         {
             return None;
         }
@@ -2871,7 +2871,7 @@ impl AcpThreadView {
 
     fn render_send_button(&self, cx: &mut Context<Self>) -> AnyElement {
         let is_editor_empty = self.message_editor.read(cx).is_empty(cx);
-        let is_generating = self.thread().map_or(false, |thread| {
+        let is_generating = self.thread().is_some_and(|thread| {
             thread.read(cx).status() != ThreadStatus::Idle
         });
 
@@ -3452,18 +3452,16 @@ impl AcpThreadView {
             } else {
                 format!("Retrying. Next attempt in {next_attempt_in_secs} seconds.")
             }
+        } else if next_attempt_in_secs == 1 {
+            format!(
+                "Retrying. Next attempt in 1 second (Attempt {} of {}).",
+                state.attempt, state.max_attempts,
+            )
         } else {
-            if next_attempt_in_secs == 1 {
-                format!(
-                    "Retrying. Next attempt in 1 second (Attempt {} of {}).",
-                    state.attempt, state.max_attempts,
-                )
-            } else {
-                format!(
-                    "Retrying. Next attempt in {next_attempt_in_secs} seconds (Attempt {} of {}).",
-                    state.attempt, state.max_attempts,
-                )
-            }
+            format!(
+                "Retrying. Next attempt in {next_attempt_in_secs} seconds (Attempt {} of {}).",
+                state.attempt, state.max_attempts,
+            )
         };
 
         Some(
@@ -3549,7 +3547,7 @@ impl AcpThreadView {
         let supports_burn_mode = thread
             .read(cx)
             .model()
-            .map_or(false, |model| model.supports_burn_mode());
+            .is_some_and(|model| model.supports_burn_mode());
 
         let focus_handle = self.focus_handle(cx);
 

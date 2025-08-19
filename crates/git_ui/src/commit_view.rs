@@ -88,11 +88,10 @@ impl CommitView {
                             let ix = pane.items().position(|item| {
                                 let commit_view = item.downcast::<CommitView>();
                                 commit_view
-                                    .map_or(false, |view| view.read(cx).commit.sha == commit.sha)
+                                    .is_some_and(|view| view.read(cx).commit.sha == commit.sha)
                             });
                             if let Some(ix) = ix {
                                 pane.activate_item(ix, true, true, window, cx);
-                                return;
                             } else {
                                 pane.add_item(Box::new(commit_view), true, true, None, window, cx);
                             }

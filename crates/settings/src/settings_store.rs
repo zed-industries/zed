@@ -1233,8 +1233,7 @@ impl SettingsStore {
 
                         // If a local settings file changed, then avoid recomputing local
                         // settings for any path outside of that directory.
-                        if changed_local_path.map_or(
-                            false,
+                        if changed_local_path.is_some_and(
                             |(changed_root_id, changed_local_path)| {
                                 *root_id != changed_root_id
                                     || !directory_path.starts_with(changed_local_path)

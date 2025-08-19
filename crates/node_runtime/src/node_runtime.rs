@@ -197,7 +197,7 @@ impl NodeRuntime {
 
         state.instance = Some(instance.boxed_clone());
         state.last_options = Some(options);
-        return instance;
+        instance
     }
 
     pub async fn binary_path(&self) -> Result<PathBuf> {

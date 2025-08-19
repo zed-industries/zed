@@ -106,7 +106,7 @@ impl Dismissable for ZedPredictUpsell {
         if KEY_VALUE_STORE
             .read_kvp(ZED_PREDICT_DATA_COLLECTION_CHOICE)
             .log_err()
-            .map_or(false, |s| s.is_some())
+            .is_some_and(|s| s.is_some())
         {
             return true;
         }
@@ -114,7 +114,7 @@ impl Dismissable for ZedPredictUpsell {
         KEY_VALUE_STORE
             .read_kvp(Self::KEY)
             .log_err()
-            .map_or(false, |s| s.is_some())
+            .is_some_and(|s| s.is_some())
     }
 }
 

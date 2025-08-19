@@ -35,7 +35,7 @@ impl Rope {
             && (self
                 .chunks
                 .last()
-                .map_or(false, |c| c.text.len() < chunk::MIN_BASE)
+                .is_some_and(|c| c.text.len() < chunk::MIN_BASE)
                 || chunk.text.len() < chunk::MIN_BASE)
         {
             self.push_chunk(chunk.as_slice());
@@ -816,7 +816,7 @@ impl<'a> Chunks<'a> {
             }
         }
 
-        return true;
+        true
     }
 }
 

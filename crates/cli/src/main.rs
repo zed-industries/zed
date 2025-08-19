@@ -381,7 +381,7 @@ fn anonymous_fd(path: &str) -> Option<fs::File> {
         }
         let fd: fd::RawFd = fd_str.parse().ok()?;
         let file = unsafe { fs::File::from_raw_fd(fd) };
-        return Some(file);
+        Some(file)
     }
     #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "freebsd")))]
     {

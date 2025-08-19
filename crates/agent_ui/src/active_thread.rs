@@ -2246,7 +2246,7 @@ impl ActiveThread {
         let after_editing_message = self
             .editing_message
             .as_ref()
-            .map_or(false, |(editing_message_id, _)| {
+            .is_some_and(|(editing_message_id, _)| {
                 message_id > *editing_message_id
             });
 

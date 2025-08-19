@@ -1625,7 +1625,7 @@ fn open_local_file(
                     .await
                     .ok()
                     .flatten()
-                    .map_or(false, |metadata| !metadata.is_dir && !metadata.is_fifo);
+                    .is_some_and(|metadata| !metadata.is_dir && !metadata.is_fifo);
                 file_exists
             };
 

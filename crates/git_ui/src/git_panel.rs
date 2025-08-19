@@ -775,7 +775,7 @@ impl GitPanel {
 
         if window
             .focused(cx)
-            .map_or(false, |focused| self.focus_handle == focused)
+            .is_some_and(|focused| self.focus_handle == focused)
         {
             dispatch_context.add("menu");
             dispatch_context.add("ChangesList");
@@ -894,7 +894,7 @@ impl GitPanel {
         let have_entries = self
             .active_repository
             .as_ref()
-            .map_or(false, |active_repository| {
+            .is_some_and(|active_repository| {
                 active_repository.read(cx).status_summary().count > 0
             });
         if have_entries && self.selected_entry.is_none() {
@@ -1208,7 +1208,6 @@ impl GitPanel {
                 .ok();
             }
             _ => {
-                return;
             }
         })
         .detach();
@@ -1640,13 +1639,13 @@ impl GitPanel {
     fn has_commit_message(&self, cx: &mut Context<Self>) -> bool {
         let text = self.commit_editor.read(cx).text(cx);
         if !text.trim().is_empty() {
-            return true;
+            true
         } else if text.is_empty() {
-            return self
+            self
                 .suggest_commit_message(cx)
-                .is_some_and(|text| !text.trim().is_empty());
+                .is_some_and(|text| !text.trim().is_empty())
         } else {
-            return false;
+            false
         }
     }
 
@@ -2938,8 +2937,7 @@ impl GitPanel {
             .matches(git::repository::REMOTE_CANCELLED_BY_USER)
             .next()
             .is_some()
-        {
-            return; // Hide the cancelled by user message
+        {// Hide the cancelled by user message
         } else {
             workspace.update(cx, |workspace, cx| {
                 let workspace_weak = cx.weak_entity();
@@ -3272,12 +3270,10 @@ impl GitPanel {
             } else {
                 "Amend Tracked"
             }
+        } else if self.has_staged_changes() {
+            "Commit"
         } else {
-            if self.has_staged_changes() {
-                "Commit"
-            } else {
-                "Commit Tracked"
-            }
+            "Commit Tracked"
         }
     }
 
@@ -4498,7 +4494,7 @@ impl Render for GitPanel {
 
         let has_write_access = self.has_write_access(cx);
 
-        let has_co_authors = room.map_or(false, |room| {
+        let has_co_authors = room.is_some_and(|room| {
             self.load_local_committer(cx);
             let room = room.read(cx);
             room.remote_participants()
@@ -4818,16 +4814,14 @@ impl RenderOnce for PanelRepoFooter {
             <= LABEL_CHARACTER_BUDGET
         {
             (repo_actual_len, branch_actual_len)
+        } else if branch_actual_len <= MAX_BRANCH_LEN {
+            let repo_space = (LABEL_CHARACTER_BUDGET - branch_actual_len).min(MAX_REPO_LEN);
+            (repo_space, branch_actual_len)
+        } else if repo_actual_len <= MAX_REPO_LEN {
+            let branch_space = (LABEL_CHARACTER_BUDGET - repo_actual_len).min(MAX_BRANCH_LEN);
+            (repo_actual_len, branch_space)
         } else {
-            if branch_actual_len <= MAX_BRANCH_LEN {
-                let repo_space = (LABEL_CHARACTER_BUDGET - branch_actual_len).min(MAX_REPO_LEN);
-                (repo_space, branch_actual_len)
-            } else if repo_actual_len <= MAX_REPO_LEN {
-                let branch_space = (LABEL_CHARACTER_BUDGET - repo_actual_len).min(MAX_BRANCH_LEN);
-                (repo_actual_len, branch_space)
-            } else {
-                (MAX_REPO_LEN, MAX_BRANCH_LEN)
-            }
+            (MAX_REPO_LEN, MAX_BRANCH_LEN)
         };
 
         let truncated_repo_name = if repo_actual_len <= repo_display_len {

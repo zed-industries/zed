@@ -105,7 +105,7 @@ impl Element for StickyItemsElement {
         _window: &mut Window,
         _cx: &mut App,
     ) -> Self::PrepaintState {
-        ()
+        
     }
 
     fn paint(

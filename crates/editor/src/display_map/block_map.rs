@@ -531,7 +531,7 @@ impl BlockMap {
                 && transform
                     .block
                     .as_ref()
-                    .map_or(true, |b| !b.is_replacement())
+                    .is_none_or(|b| !b.is_replacement())
             {
                 // Preserve the transform (push and next)
                 new_transforms.push(transform.clone(), &());
@@ -539,7 +539,7 @@ impl BlockMap {
 
                 // Preserve below blocks at end of edit
                 while let Some(transform) = cursor.item() {
-                    if transform.block.as_ref().map_or(false, |b| b.place_below()) {
+                    if transform.block.as_ref().is_some_and(|b| b.place_below()) {
                         new_transforms.push(transform.clone(), &());
                         cursor.next();
                     } else {
@@ -606,7 +606,7 @@ impl BlockMap {
 
             // Discard below blocks at the end of the edit. They'll be reconstructed.
             while let Some(transform) = cursor.item() {
-                if transform.block.as_ref().map_or(false, |b| b.place_below()) {
+                if transform.block.as_ref().is_some_and(|b| b.place_below()) {
                     cursor.next();
                 } else {
                     break;
@@ -1328,7 +1328,7 @@ impl BlockSnapshot {
         let Dimensions(output_start, input_start, _) = cursor.start();
         let overshoot = if cursor
             .item()
-            .map_or(false, |transform| transform.block.is_none())
+            .is_some_and(|transform| transform.block.is_none())
         {
             start_row.0 - output_start.0
         } else {
@@ -1358,7 +1358,7 @@ impl BlockSnapshot {
                         && transform
                             .block
                             .as_ref()
-                            .map_or(false, |block| block.height() > 0))
+                            .is_some_and(|block| block.height() > 0))
                 {
                     break;
                 }
@@ -1511,7 +1511,7 @@ impl BlockSnapshot {
     pub(super) fn is_block_line(&self, row: BlockRow) -> bool {
         let mut cursor = self.transforms.cursor::<Dimensions<BlockRow, WrapRow>>(&());
         cursor.seek(&row, Bias::Right);
-        cursor.item().map_or(false, |t| t.block.is_some())
+        cursor.item().is_some_and(|t| t.block.is_some())
     }
 
     pub(super) fn is_folded_buffer_header(&self, row: BlockRow) -> bool {
@@ -1529,11 +1529,11 @@ impl BlockSnapshot {
             .make_wrap_point(Point::new(row.0, 0), Bias::Left);
         let mut cursor = self.transforms.cursor::<Dimensions<WrapRow, BlockRow>>(&());
         cursor.seek(&WrapRow(wrap_point.row()), Bias::Right);
-        cursor.item().map_or(false, |transform| {
+        cursor.item().is_some_and(|transform| {
             transform
                 .block
                 .as_ref()
-                .map_or(false, |block| block.is_replacement())
+                .is_some_and(|block| block.is_replacement())
         })
     }
 
@@ -1653,7 +1653,7 @@ impl BlockChunks<'_> {
             if transform
                 .block
                 .as_ref()
-                .map_or(false, |block| block.height() == 0)
+                .is_some_and(|block| block.height() == 0)
             {
                 self.transforms.next();
             } else {
@@ -1664,7 +1664,7 @@ impl BlockChunks<'_> {
         if self
             .transforms
             .item()
-            .map_or(false, |transform| transform.block.is_none())
+            .is_some_and(|transform| transform.block.is_none())
         {
             let start_input_row = self.transforms.start().1.0;
             let start_output_row = self.transforms.start().0.0;
@@ -1774,7 +1774,7 @@ impl Iterator for BlockRows<'_> {
                 if transform
                     .block
                     .as_ref()
-                    .map_or(false, |block| block.height() == 0)
+                    .is_some_and(|block| block.height() == 0)
                 {
                     self.transforms.next();
                 } else {
@@ -1786,7 +1786,7 @@ impl Iterator for BlockRows<'_> {
             if transform
                 .block
                 .as_ref()
-                .map_or(true, |block| block.is_replacement())
+                .is_none_or(|block| block.is_replacement())
             {
                 self.input_rows.seek(self.transforms.start().1.0);
             }

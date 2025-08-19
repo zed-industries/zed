@@ -96,7 +96,7 @@ impl AgentConfiguration {
         let mut expanded_provider_configurations = HashMap::default();
         if LanguageModelRegistry::read_global(cx)
             .provider(&ZED_CLOUD_PROVIDER_ID)
-            .map_or(false, |cloud_provider| cloud_provider.must_accept_terms(cx))
+            .is_some_and(|cloud_provider| cloud_provider.must_accept_terms(cx))
         {
             expanded_provider_configurations.insert(ZED_CLOUD_PROVIDER_ID, true);
         }

@@ -234,7 +234,7 @@ impl RemoteBufferStore {
                 }
             }
         }
-        return Ok(None);
+        Ok(None)
     }
 
     pub fn incomplete_buffer_ids(&self) -> Vec<BufferId> {
@@ -1315,7 +1315,7 @@ impl BufferStore {
                     buffer.file_updated(Arc::new(file), cx);
                     if old_file
                         .as_ref()
-                        .map_or(true, |old| *old.path() != new_path)
+                        .is_none_or(|old| *old.path() != new_path)
                     {
                         Some(old_file)
                     } else {

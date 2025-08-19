@@ -37,7 +37,7 @@ impl ModalView for DisconnectedOverlay {
         _window: &mut Window,
         _: &mut Context<Self>,
     ) -> workspace::DismissDecision {
-        return workspace::DismissDecision::Dismiss(self.finished);
+        workspace::DismissDecision::Dismiss(self.finished)
     }
     fn fade_out_background(&self) -> bool {
         true

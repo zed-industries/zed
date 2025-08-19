@@ -1113,8 +1113,7 @@ impl CompletionsMenu {
                     !split_words(&string_match.string).any(|word| {
                         word.chars()
                             .next()
-                            .and_then(|c| c.to_lowercase().next())
-                            .map_or(false, |word_char| word_char == query_char)
+                            .and_then(|c| c.to_lowercase().next()) == Some(query_char)
                     })
                 })
                 .unwrap_or(false);

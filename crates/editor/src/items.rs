@@ -201,7 +201,7 @@ impl FollowableItem for Editor {
         if buffer
             .as_singleton()
             .and_then(|buffer| buffer.read(cx).file())
-            .map_or(false, |file| file.is_private())
+            .is_some_and(|file| file.is_private())
         {
             return None;
         }
@@ -715,7 +715,7 @@ impl Item for Editor {
             .read(cx)
             .as_singleton()
             .and_then(|buffer| buffer.read(cx).file())
-            .map_or(false, |file| file.disk_state() == DiskState::Deleted);
+            .is_some_and(|file| file.disk_state() == DiskState::Deleted);
 
         h_flex()
             .gap_2()

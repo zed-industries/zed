@@ -247,7 +247,7 @@ impl PromptStore {
 
             if metadata_db
                 .get(&txn, &prompt_id_v2)?
-                .map_or(true, |metadata_v2| {
+                .is_none_or(|metadata_v2| {
                     metadata_v1.saved_at > metadata_v2.saved_at
                 })
             {

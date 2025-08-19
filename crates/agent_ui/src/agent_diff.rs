@@ -285,7 +285,7 @@ impl AgentDiffPane {
                     && buffer
                         .read(cx)
                         .file()
-                        .map_or(false, |file| file.disk_state() == DiskState::Deleted)
+                        .is_some_and(|file| file.disk_state() == DiskState::Deleted)
                 {
                     editor.fold_buffer(snapshot.text.remote_id(), cx)
                 }
@@ -1063,7 +1063,7 @@ impl ToolbarItemView for AgentDiffToolbar {
         }
 
         self.active_item = None;
-        return self.location(cx);
+        self.location(cx)
     }
 
     fn pane_focus_update(
@@ -1509,7 +1509,7 @@ impl AgentDiff {
                     .read(cx)
                     .entries()
                     .last()
-                    .map_or(false, |entry| entry.diffs().next().is_some())
+                    .is_some_and(|entry| entry.diffs().next().is_some())
                 {
                     self.update_reviewing_editors(workspace, window, cx);
                 }
@@ -1519,7 +1519,7 @@ impl AgentDiff {
                     .read(cx)
                     .entries()
                     .get(*ix)
-                    .map_or(false, |entry| entry.diffs().next().is_some())
+                    .is_some_and(|entry| entry.diffs().next().is_some())
                 {
                     self.update_reviewing_editors(workspace, window, cx);
                 }
@@ -1709,7 +1709,7 @@ impl AgentDiff {
                 .read_with(cx, |editor, _cx| editor.workspace())
                 .ok()
                 .flatten()
-                .map_or(false, |editor_workspace| {
+                .is_some_and(|editor_workspace| {
                     editor_workspace.entity_id() == workspace.entity_id()
                 });
 
@@ -1868,7 +1868,7 @@ impl AgentDiff {
             }
         }
 
-        return Some(Task::ready(Ok(())));
+        Some(Task::ready(Ok(())))
     }
 }
 

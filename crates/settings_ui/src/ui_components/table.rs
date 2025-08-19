@@ -731,7 +731,7 @@ impl<const COLS: usize> ColumnWidths<COLS> {
         }
         widths[col_idx] = widths[col_idx] + (diff - diff_remaining);
 
-        return diff_remaining;
+        diff_remaining
     }
 }
 

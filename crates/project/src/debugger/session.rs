@@ -431,7 +431,7 @@ impl RunningMode {
         let should_send_exception_breakpoints = capabilities
             .exception_breakpoint_filters
             .as_ref()
-            .map_or(false, |filters| !filters.is_empty())
+            .is_some_and(|filters| !filters.is_empty())
             || !configuration_done_supported;
         let supports_exception_filters = capabilities
             .supports_exception_filter_options
@@ -711,8 +711,7 @@ where
 {
     fn dyn_eq(&self, rhs: &dyn CacheableCommand) -> bool {
         (rhs as &dyn Any)
-            .downcast_ref::<Self>()
-            .map_or(false, |rhs| self == rhs)
+            .downcast_ref::<Self>() == Some(self)
     }
 
     fn dyn_hash(&self, mut hasher: &mut dyn Hasher) {
@@ -1085,7 +1084,7 @@ impl Session {
         })
         .detach();
 
-        return tx;
+        tx
     }
 
     pub fn is_started(&self) -> bool {

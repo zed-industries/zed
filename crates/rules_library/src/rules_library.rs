@@ -703,7 +703,7 @@ impl RulesLibrary {
                     .delegate
                     .matches
                     .get(picker.delegate.selected_index())
-                    .map_or(true, |old_selected_prompt| {
+                    .is_none_or(|old_selected_prompt| {
                         old_selected_prompt.id != prompt_id
                     })
                     && let Some(ix) = picker

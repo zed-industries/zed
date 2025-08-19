@@ -311,7 +311,7 @@ unsafe fn parse_keystroke(native_event: id) -> Keystroke {
         let mut shift = modifiers.contains(NSEventModifierFlags::NSShiftKeyMask);
         let command = modifiers.contains(NSEventModifierFlags::NSCommandKeyMask);
         let function = modifiers.contains(NSEventModifierFlags::NSFunctionKeyMask)
-            && first_char.map_or(true, |ch| {
+            && first_char.is_none_or(|ch| {
                 !(NSUpArrowFunctionKey..=NSModeSwitchFunctionKey).contains(&ch)
             });
 

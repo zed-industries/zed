@@ -1055,7 +1055,7 @@ fn test_mark_cache_anchors(cx: &mut App) {
     assert_eq!(
         messages_cache(&context, cx)
             .iter()
-            .filter(|(_, cache)| cache.as_ref().map_or(false, |cache| cache.is_anchor))
+            .filter(|(_, cache)| cache.as_ref().is_some_and(|cache| cache.is_anchor))
             .count(),
         0,
         "Empty messages should not have any cache anchors."
@@ -1083,7 +1083,7 @@ fn test_mark_cache_anchors(cx: &mut App) {
     assert_eq!(
         messages_cache(&context, cx)
             .iter()
-            .filter(|(_, cache)| cache.as_ref().map_or(false, |cache| cache.is_anchor))
+            .filter(|(_, cache)| cache.as_ref().is_some_and(|cache| cache.is_anchor))
             .count(),
         0,
         "Messages should not be marked for cache before going over the token minimum."
@@ -1098,7 +1098,7 @@ fn test_mark_cache_anchors(cx: &mut App) {
     assert_eq!(
         messages_cache(&context, cx)
             .iter()
-            .map(|(_, cache)| cache.as_ref().map_or(false, |cache| cache.is_anchor))
+            .map(|(_, cache)| cache.as_ref().is_some_and(|cache| cache.is_anchor))
             .collect::<Vec<bool>>(),
         vec![true, true, false],
         "Last message should not be an anchor on speculative request."
@@ -1116,7 +1116,7 @@ fn test_mark_cache_anchors(cx: &mut App) {
     assert_eq!(
         messages_cache(&context, cx)
             .iter()
-            .map(|(_, cache)| cache.as_ref().map_or(false, |cache| cache.is_anchor))
+            .map(|(_, cache)| cache.as_ref().is_some_and(|cache| cache.is_anchor))
             .collect::<Vec<bool>>(),
         vec![false, true, true, false],
         "Most recent message should also be cached if not a speculative request."

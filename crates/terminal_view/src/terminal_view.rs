@@ -385,7 +385,7 @@ impl TerminalView {
             .workspace
             .upgrade()
             .and_then(|workspace| workspace.read(cx).panel::<TerminalPanel>(cx))
-            .map_or(false, |terminal_panel| {
+            .is_some_and(|terminal_panel| {
                 terminal_panel.read(cx).assistant_enabled()
             });
         let context_menu = ContextMenu::build(window, cx, |menu, _, _| {
