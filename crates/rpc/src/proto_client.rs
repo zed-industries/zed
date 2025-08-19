@@ -5,7 +5,7 @@ use futures::{
     channel::oneshot,
     future::{BoxFuture, LocalBoxFuture},
 };
-use gpui::{AnyEntity, AnyWeakEntity, AsyncApp, Entity};
+use gpui::{AnyEntity, AnyWeakEntity, AsyncApp, BackgroundExecutor, Entity, FutureExt as _};
 use parking_lot::Mutex;
 use proto::{
     AnyTypedEnvelope, EntityMessage, Envelope, EnvelopedMessage, LspRequestId, LspRequestMessage,
@@ -17,6 +17,7 @@ use std::{
         Arc, OnceLock,
         atomic::{self, AtomicU64},
     },
+    time::Duration,
 };
 
 #[derive(Clone)]
@@ -225,6 +226,8 @@ impl AnyProtoClient {
     pub fn request_lsp<T: LspRequestMessage>(
         &self,
         project_id: u64,
+        timeout: Duration,
+        executor: BackgroundExecutor,
         request: T,
     ) -> impl Future<
         Output = Result<Option<TypedEnvelope<Vec<proto::ProtoLspResponse<T::Response>>>>>,
@@ -251,9 +254,8 @@ impl AnyProtoClient {
         async move {
             let _request_enqueued: proto::Ack =
                 request.await.context("sending LSP proto request")?;
-            // TODO kb timeout
-            match rx.await {
-                Ok(response) => {
+            match rx.with_timeout(timeout, &executor).await {
+                Ok(Ok(response)) => {
                     let response = response
                         .context("waiting for LSP proto response")?
                         .map(|response| {
@@ -273,7 +275,8 @@ impl AnyProtoClient {
                         .context("converting LSP proto response")?;
                     Ok(response)
                 }
-                Err(_cancelled) => Ok(None),
+                Err(_cancelled_due_timeout) => Ok(None),
+                Ok(Err(_channel_dropped)) => Ok(None),
             }
         }
     }

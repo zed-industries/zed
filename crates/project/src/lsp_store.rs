@@ -72,10 +72,10 @@ use lsp::{
     AdapterServerCapabilities, CodeActionKind, CompletionContext, DiagnosticSeverity,
     DiagnosticTag, DidChangeWatchedFilesRegistrationOptions, Edit, FileOperationFilter,
     FileOperationPatternKind, FileOperationRegistrationOptions, FileRename, FileSystemWatcher,
-    LanguageServer, LanguageServerBinary, LanguageServerBinaryOptions, LanguageServerId,
-    LanguageServerName, LanguageServerSelector, LspRequestFuture, MessageActionItem, MessageType,
-    OneOf, RenameFilesParams, SymbolKind, TextDocumentSyncSaveOptions, TextEdit, WillRenameFiles,
-    WorkDoneProgressCancelParams, WorkspaceFolder, notification::DidRenameFiles,
+    LSP_REQUEST_TIMEOUT, LanguageServer, LanguageServerBinary, LanguageServerBinaryOptions,
+    LanguageServerId, LanguageServerName, LanguageServerSelector, LspRequestFuture,
+    MessageActionItem, MessageType, OneOf, RenameFilesParams, SymbolKind, TextDocumentSyncSaveOptions,TextEdit,
+    WillRenameFiles, WorkDoneProgressCancelParams, WorkspaceFolder, notification::DidRenameFiles,
 };
 use node_runtime::read_package_installed_version;
 use parking_lot::Mutex;
@@ -5558,8 +5558,12 @@ impl LspStore {
                 return Task::ready(Ok(Vec::new()));
             }
 
-            let request_task = upstream_client
-                .request_lsp(project_id, request.to_proto(project_id, buffer.read(cx)));
+            let request_task = upstream_client.request_lsp(
+                project_id,
+                LSP_REQUEST_TIMEOUT,
+                cx.background_executor().clone(),
+                request.to_proto(project_id, buffer.read(cx)),
+            );
             let buffer = buffer.clone();
             cx.spawn(async move |weak_project, cx| {
                 let Some(project) = weak_project.upgrade() else {
@@ -6839,8 +6843,12 @@ impl LspStore {
                 return Task::ready(Ok(HashMap::default()));
             }
 
-            let request_task =
-                client.request_lsp(project_id, request.to_proto(project_id, buffer.read(cx)));
+            let request_task = client.request_lsp(
+                project_id,
+                LSP_REQUEST_TIMEOUT,
+                cx.background_executor().clone(),
+                request.to_proto(project_id, buffer.read(cx)),
+            );
             let buffer = buffer.clone();
             cx.spawn(async move |lsp_store, cx| {
                 let Some(project) = lsp_store.upgrade() else {
