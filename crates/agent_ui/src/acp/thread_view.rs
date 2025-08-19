@@ -906,10 +906,12 @@ impl AcpThreadView {
                     None
                 };
 
-                div()
+                v_flex()
                     .id(("user_message", entry_ix))
                     .py_4()
                     .px_2()
+                    .gap_1p5()
+                    .w_full()
                     .children(message.id.clone().and_then(|message_id| {
                         message.checkpoint.as_ref()?.show.then(|| {
                             Button::new("restore-checkpoint", "Restore Checkpoint")
