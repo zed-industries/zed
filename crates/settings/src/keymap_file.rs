@@ -3,7 +3,8 @@ use collections::{BTreeMap, HashMap, IndexMap};
 use fs::Fs;
 use gpui::{
     Action, ActionBuildError, App, InvalidKeystrokeError, KEYSTROKE_PARSE_EXPECTED_MESSAGE,
-    KeyBinding, KeyBindingContextPredicate, KeyBindingMetaIndex, Keystroke, NoAction, SharedString,
+    KeyBinding, KeyBindingContextPredicate, KeyBindingMetaIndex, KeybindingKeystroke, Keystroke,
+    NoAction, SharedString,
 };
 use schemars::{JsonSchema, json_schema};
 use serde::Deserialize;
@@ -916,7 +917,7 @@ impl<'a> KeybindUpdateOperation<'a> {
 #[derive(Debug, Clone)]
 pub struct KeybindUpdateTarget<'a> {
     pub context: Option<&'a str>,
-    pub keystrokes: &'a [Keystroke],
+    pub keystrokes: &'a [KeybindingKeystroke],
     pub action_name: &'a str,
     pub action_arguments: Option<&'a str>,
 }
@@ -941,7 +942,7 @@ impl<'a> KeybindUpdateTarget<'a> {
     fn keystrokes_unparsed(&self) -> String {
         let mut keystrokes = String::with_capacity(self.keystrokes.len() * 8);
         for keystroke in self.keystrokes {
-            keystrokes.push_str(&keystroke.unparse());
+            keystrokes.push_str(&keystroke.inner.unparse());
             keystrokes.push(' ');
         }
         keystrokes.pop();
@@ -1020,7 +1021,7 @@ impl From<KeybindSource> for KeyBindingMetaIndex {
 
 #[cfg(test)]
 mod tests {
-    use gpui::Keystroke;
+    use gpui::{KeybindingKeystroke, Keystroke};
     use unindent::Unindent;
 
     use crate::{
@@ -1055,10 +1056,10 @@ mod tests {
     }
 
     #[track_caller]
-    fn parse_keystrokes(keystrokes: &str) -> Vec<Keystroke> {
+    fn parse_keystrokes(keystrokes: &str) -> Vec<KeybindingKeystroke> {
         keystrokes
             .split(' ')
-            .map(|s| Keystroke::parse(s).expect("Keystrokes valid"))
+            .map(|s| KeybindingKeystroke::new(Keystroke::parse(s).expect("Keystrokes valid")))
             .collect()
     }
 

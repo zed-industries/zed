@@ -364,7 +364,7 @@ impl KeystrokeInput {
             &self.keystrokes
         };
         keystrokes.iter().map(move |keystroke| {
-            h_flex().children(ui::render_keystroke(
+            h_flex().children(ui::render_keybinding_keystroke(
                 keystroke,
                 Some(Color::Default),
                 Some(rems(0.875).into()),
