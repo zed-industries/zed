@@ -39,10 +39,10 @@ impl SlashCommand for ContextServerSlashCommand {
 
     fn label(&self, cx: &App) -> language::CodeLabel {
         let mut parts = vec![self.prompt.name.as_str()];
-        if let Some(args) = &self.prompt.arguments {
-            if let Some(arg) = args.first() {
-                parts.push(arg.name.as_str());
-            }
+        if let Some(args) = &self.prompt.arguments
+            && let Some(arg) = args.first()
+        {
+            parts.push(arg.name.as_str());
         }
         create_label_for_command(parts[0], &parts[1..], cx)
     }

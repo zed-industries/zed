@@ -832,10 +832,10 @@ impl<T: Item> ItemHandle for Entity<T> {
                     if let Some(item) = item.to_followable_item_handle(cx) {
                         let leader_id = workspace.leader_for_pane(&pane);
 
-                        if let Some(leader_id) = leader_id {
-                            if let Some(FollowEvent::Unfollow) = item.to_follow_event(event) {
-                                workspace.unfollow(leader_id, window, cx);
-                            }
+                        if let Some(leader_id) = leader_id
+                            && let Some(FollowEvent::Unfollow) = item.to_follow_event(event)
+                        {
+                            workspace.unfollow(leader_id, window, cx);
                         }
 
                         if item.item_focus_handle(cx).contains_focused(window, cx) {
@@ -863,10 +863,10 @@ impl<T: Item> ItemHandle for Entity<T> {
                         }
                     }
 
-                    if let Some(item) = item.to_serializable_item_handle(cx) {
-                        if item.should_serialize(event, cx) {
-                            workspace.enqueue_item_serialization(item).ok();
-                        }
+                    if let Some(item) = item.to_serializable_item_handle(cx)
+                        && item.should_serialize(event, cx)
+                    {
+                        workspace.enqueue_item_serialization(item).ok();
                     }
 
                     T::to_item_events(event, |event| match event {
@@ -948,11 +948,11 @@ impl<T: Item> ItemHandle for Entity<T> {
                 &self.read(cx).focus_handle(cx),
                 window,
                 move |workspace, window, cx| {
-                    if let Some(item) = weak_item.upgrade() {
-                        if item.workspace_settings(cx).autosave == AutosaveSetting::OnFocusChange {
-                            Pane::autosave_item(&item, workspace.project.clone(), window, cx)
-                                .detach_and_log_err(cx);
-                        }
+                    if let Some(item) = weak_item.upgrade()
+                        && item.workspace_settings(cx).autosave == AutosaveSetting::OnFocusChange
+                    {
+                        Pane::autosave_item(&item, workspace.project.clone(), window, cx)
+                            .detach_and_log_err(cx);
                     }
                 },
             )

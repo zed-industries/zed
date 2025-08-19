@@ -732,46 +732,44 @@ impl StateInner {
                         item.element.prepaint_at(item_origin, window, cx);
                     });
 
-                    if let Some(autoscroll_bounds) = window.take_autoscroll() {
-                        if autoscroll {
-                            if autoscroll_bounds.top() < bounds.top() {
-                                return Err(ListOffset {
-                                    item_ix: item.index,
-                                    offset_in_item: autoscroll_bounds.top() - item_origin.y,
+                    if let Some(autoscroll_bounds) = window.take_autoscroll()
+                        && autoscroll
+                    {
+                        if autoscroll_bounds.top() < bounds.top() {
+                            return Err(ListOffset {
+                                item_ix: item.index,
+                                offset_in_item: autoscroll_bounds.top() - item_origin.y,
+                            });
+                        } else if autoscroll_bounds.bottom() > bounds.bottom() {
+                            let mut cursor = self.items.cursor::<Count>(&());
+                            cursor.seek(&Count(item.index), Bias::Right);
+                            let mut height = bounds.size.height - padding.top - padding.bottom;
+
+                            // Account for the height of the element down until the autoscroll bottom.
+                            height -= autoscroll_bounds.bottom() - item_origin.y;
+
+                            // Keep decreasing the scroll top until we fill all the available space.
+                            while height > Pixels::ZERO {
+                                cursor.prev();
+                                let Some(item) = cursor.item() else { break };
+
+                                let size = item.size().unwrap_or_else(|| {
+                                    let mut item = render_item(cursor.start().0, window, cx);
+                                    let item_available_size =
+                                        size(bounds.size.width.into(), AvailableSpace::MinContent);
+                                    item.layout_as_root(item_available_size, window, cx)
                                 });
-                            } else if autoscroll_bounds.bottom() > bounds.bottom() {
-                                let mut cursor = self.items.cursor::<Count>(&());
-                                cursor.seek(&Count(item.index), Bias::Right);
-                                let mut height = bounds.size.height - padding.top - padding.bottom;
-
-                                // Account for the height of the element down until the autoscroll bottom.
-                                height -= autoscroll_bounds.bottom() - item_origin.y;
-
-                                // Keep decreasing the scroll top until we fill all the available space.
-                                while height > Pixels::ZERO {
-                                    cursor.prev();
-                                    let Some(item) = cursor.item() else { break };
-
-                                    let size = item.size().unwrap_or_else(|| {
-                                        let mut item = render_item(cursor.start().0, window, cx);
-                                        let item_available_size = size(
-                                            bounds.size.width.into(),
-                                            AvailableSpace::MinContent,
-                                        );
-                                        item.layout_as_root(item_available_size, window, cx)
-                                    });
-                                    height -= size.height;
-                                }
-
-                                return Err(ListOffset {
-                                    item_ix: cursor.start().0,
-                                    offset_in_item: if height < Pixels::ZERO {
-                                        -height
-                                    } else {
-                                        Pixels::ZERO
-                                    },
-                                });
+                                height -= size.height;
                             }
+
+                            return Err(ListOffset {
+                                item_ix: cursor.start().0,
+                                offset_in_item: if height < Pixels::ZERO {
+                                    -height
+                                } else {
+                                    Pixels::ZERO
+                                },
+                            });
                         }
                     }
 

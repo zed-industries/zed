@@ -363,10 +363,10 @@ impl ProjectDiff {
             }
             _ => {}
         }
-        if editor.focus_handle(cx).contains_focused(window, cx) {
-            if self.multibuffer.read(cx).is_empty() {
-                self.focus_handle.focus(window)
-            }
+        if editor.focus_handle(cx).contains_focused(window, cx)
+            && self.multibuffer.read(cx).is_empty()
+        {
+            self.focus_handle.focus(window)
         }
     }
 

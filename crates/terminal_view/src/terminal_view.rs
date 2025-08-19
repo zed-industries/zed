@@ -308,10 +308,10 @@ impl TerminalView {
                 } else {
                     let mut displayed_lines = total_lines;
 
-                    if !self.focus_handle.is_focused(window) {
-                        if let Some(max_lines) = max_lines_when_unfocused {
-                            displayed_lines = displayed_lines.min(*max_lines)
-                        }
+                    if !self.focus_handle.is_focused(window)
+                        && let Some(max_lines) = max_lines_when_unfocused
+                    {
+                        displayed_lines = displayed_lines.min(*max_lines)
                     }
 
                     ContentMode::Inline {
@@ -1156,26 +1156,26 @@ fn subscribe_for_terminal_events(
 
                                 if let Some(opened_item) = opened_items.first() {
                                     if open_target.is_file() {
-                                        if let Some(Ok(opened_item)) = opened_item {
-                                            if let Some(row) = path_to_open.row {
-                                                let col = path_to_open.column.unwrap_or(0);
-                                                if let Some(active_editor) =
-                                                    opened_item.downcast::<Editor>()
-                                                {
-                                                    active_editor
-                                                        .downgrade()
-                                                        .update_in(cx, |editor, window, cx| {
-                                                            editor.go_to_singleton_buffer_point(
-                                                                language::Point::new(
-                                                                    row.saturating_sub(1),
-                                                                    col.saturating_sub(1),
-                                                                ),
-                                                                window,
-                                                                cx,
-                                                            )
-                                                        })
-                                                        .log_err();
-                                                }
+                                        if let Some(Ok(opened_item)) = opened_item
+                                            && let Some(row) = path_to_open.row
+                                        {
+                                            let col = path_to_open.column.unwrap_or(0);
+                                            if let Some(active_editor) =
+                                                opened_item.downcast::<Editor>()
+                                            {
+                                                active_editor
+                                                    .downgrade()
+                                                    .update_in(cx, |editor, window, cx| {
+                                                        editor.go_to_singleton_buffer_point(
+                                                            language::Point::new(
+                                                                row.saturating_sub(1),
+                                                                col.saturating_sub(1),
+                                                            ),
+                                                            window,
+                                                            cx,
+                                                        )
+                                                    })
+                                                    .log_err();
                                             }
                                         }
                                     } else if open_target.is_dir() {
@@ -1321,17 +1321,17 @@ fn possible_open_target(
                 }
             };
 
-            if path_to_check.path.is_relative() {
-                if let Some(entry) = worktree.read(cx).entry_for_path(&path_to_check.path) {
-                    return Task::ready(Some(OpenTarget::Worktree(
-                        PathWithPosition {
-                            path: worktree_root.join(&entry.path),
-                            row: path_to_check.row,
-                            column: path_to_check.column,
-                        },
-                        entry.clone(),
-                    )));
-                }
+            if path_to_check.path.is_relative()
+                && let Some(entry) = worktree.read(cx).entry_for_path(&path_to_check.path)
+            {
+                return Task::ready(Some(OpenTarget::Worktree(
+                    PathWithPosition {
+                        path: worktree_root.join(&entry.path),
+                        row: path_to_check.row,
+                        column: path_to_check.column,
+                    },
+                    entry.clone(),
+                )));
             }
 
             paths_to_check.push(path_to_check);
@@ -1428,11 +1428,11 @@ fn possible_open_target(
     let fs = workspace.read(cx).project().read(cx).fs().clone();
     cx.background_spawn(async move {
         for mut path_to_check in fs_paths_to_check {
-            if let Some(fs_path_to_check) = fs.canonicalize(&path_to_check.path).await.ok() {
-                if let Some(metadata) = fs.metadata(&fs_path_to_check).await.ok().flatten() {
-                    path_to_check.path = fs_path_to_check;
-                    return Some(OpenTarget::File(path_to_check, metadata));
-                }
+            if let Some(fs_path_to_check) = fs.canonicalize(&path_to_check.path).await.ok()
+                && let Some(metadata) = fs.metadata(&fs_path_to_check).await.ok().flatten()
+            {
+                path_to_check.path = fs_path_to_check;
+                return Some(OpenTarget::File(path_to_check, metadata));
             }
         }
 

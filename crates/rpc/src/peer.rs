@@ -520,10 +520,10 @@ impl Peer {
                             &response.payload
                         {
                             // Remove the transmitting end of the response channel to end the stream.
-                            if let Some(channels) = stream_response_channels.upgrade() {
-                                if let Some(channels) = channels.lock().as_mut() {
-                                    channels.remove(&message_id);
-                                }
+                            if let Some(channels) = stream_response_channels.upgrade()
+                                && let Some(channels) = channels.lock().as_mut()
+                            {
+                                channels.remove(&message_id);
                             }
                             None
                         } else {

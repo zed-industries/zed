@@ -1967,11 +1967,9 @@ impl Thread {
 
                                                 if let Some(prev_message) =
                                                     thread.messages.get(ix - 1)
-                                                {
-                                                    if prev_message.role == Role::Assistant {
+                                                    && prev_message.role == Role::Assistant {
                                                         break;
                                                     }
-                                                }
                                             }
                                         }
 
@@ -2476,13 +2474,13 @@ impl Thread {
                 .ok()?;
 
             // Save thread so its summary can be reused later
-            if let Some(thread) = thread.upgrade() {
-                if let Ok(Ok(save_task)) = cx.update(|cx| {
+            if let Some(thread) = thread.upgrade()
+                && let Ok(Ok(save_task)) = cx.update(|cx| {
                     thread_store
                         .update(cx, |thread_store, cx| thread_store.save_thread(&thread, cx))
-                }) {
-                    save_task.await.log_err();
-                }
+                })
+            {
+                save_task.await.log_err();
             }
 
             Some(())
@@ -2730,12 +2728,11 @@ impl Thread {
         window: Option<AnyWindowHandle>,
         cx: &mut Context<Self>,
     ) {
-        if self.all_tools_finished() {
-            if let Some(ConfiguredModel { model, .. }) = self.configured_model.as_ref() {
-                if !canceled {
-                    self.send_to_model(model.clone(), CompletionIntent::ToolResults, window, cx);
-                }
-            }
+        if self.all_tools_finished()
+            && let Some(ConfiguredModel { model, .. }) = self.configured_model.as_ref()
+            && !canceled
+        {
+            self.send_to_model(model.clone(), CompletionIntent::ToolResults, window, cx);
         }
 
         cx.emit(ThreadEvent::ToolFinished {
@@ -2922,11 +2919,11 @@ impl Thread {
                 let buffer_store = project.read(app_cx).buffer_store();
                 for buffer_handle in buffer_store.read(app_cx).buffers() {
                     let buffer = buffer_handle.read(app_cx);
-                    if buffer.is_dirty() {
-                        if let Some(file) = buffer.file() {
-                            let path = file.path().to_string_lossy().to_string();
-                            unsaved_buffers.push(path);
-                        }
+                    if buffer.is_dirty()
+                        && let Some(file) = buffer.file()
+                    {
+                        let path = file.path().to_string_lossy().to_string();
+                        unsaved_buffers.push(path);
                     }
                 }
             })
@@ -3178,13 +3175,13 @@ impl Thread {
             .model
             .max_token_count_for_mode(self.completion_mode().into());
 
-        if let Some(exceeded_error) = &self.exceeded_window_error {
-            if model.model.id() == exceeded_error.model_id {
-                return Some(TotalTokenUsage {
-                    total: exceeded_error.token_count,
-                    max,
-                });
-            }
+        if let Some(exceeded_error) = &self.exceeded_window_error
+            && model.model.id() == exceeded_error.model_id
+        {
+            return Some(TotalTokenUsage {
+                total: exceeded_error.token_count,
+                max,
+            });
         }
 
         let total = self

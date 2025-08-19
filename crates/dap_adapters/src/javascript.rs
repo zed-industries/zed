@@ -99,10 +99,10 @@ impl JsDebugAdapter {
                 }
             }
 
-            if let Some(env) = configuration.get("env").cloned() {
-                if let Ok(env) = serde_json::from_value(env) {
-                    envs = env;
-                }
+            if let Some(env) = configuration.get("env").cloned()
+                && let Ok(env) = serde_json::from_value(env)
+            {
+                envs = env;
             }
 
             configuration

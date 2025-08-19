@@ -633,11 +633,11 @@ pub fn into_anthropic(
                     Role::Assistant => anthropic::Role::Assistant,
                     Role::System => unreachable!("System role should never occur here"),
                 };
-                if let Some(last_message) = new_messages.last_mut() {
-                    if last_message.role == anthropic_role {
-                        last_message.content.extend(anthropic_message_content);
-                        continue;
-                    }
+                if let Some(last_message) = new_messages.last_mut()
+                    && last_message.role == anthropic_role
+                {
+                    last_message.content.extend(anthropic_message_content);
+                    continue;
                 }
 
                 // Mark the last segment of the message as cached

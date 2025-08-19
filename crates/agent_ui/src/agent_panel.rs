@@ -1398,14 +1398,13 @@ impl AgentPanel {
                 if LanguageModelRegistry::read_global(cx)
                     .default_model()
                     .map_or(true, |model| model.provider.id() != provider.id())
+                    && let Some(model) = provider.default_model(cx)
                 {
-                    if let Some(model) = provider.default_model(cx) {
-                        update_settings_file::<AgentSettings>(
-                            self.fs.clone(),
-                            cx,
-                            move |settings, _| settings.set_model(model),
-                        );
-                    }
+                    update_settings_file::<AgentSettings>(
+                        self.fs.clone(),
+                        cx,
+                        move |settings, _| settings.set_model(model),
+                    );
                 }
 
                 self.new_thread(&NewThread::default(), window, cx);

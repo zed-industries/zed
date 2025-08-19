@@ -184,10 +184,10 @@ pub fn editor_content_with_blocks(editor: &Entity<Editor>, cx: &mut VisualTestCo
     for (row, block) in blocks {
         match block {
             Block::Custom(custom_block) => {
-                if let BlockPlacement::Near(x) = &custom_block.placement {
-                    if snapshot.intersects_fold(x.to_point(&snapshot.buffer_snapshot)) {
-                        continue;
-                    }
+                if let BlockPlacement::Near(x) = &custom_block.placement
+                    && snapshot.intersects_fold(x.to_point(&snapshot.buffer_snapshot))
+                {
+                    continue;
                 };
                 let content = block_content_for_tests(editor, custom_block.id, cx)
                     .expect("block content not found");

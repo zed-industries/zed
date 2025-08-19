@@ -244,11 +244,8 @@ pub fn init(languages: Arc<LanguageRegistry>, node: NodeRuntime, cx: &mut App) {
     cx.observe_flag::<BasedPyrightFeatureFlag, _>({
         let languages = languages.clone();
         move |enabled, _| {
-            if enabled {
-                if let Some(adapter) = basedpyright_lsp_adapter.take() {
-                    languages
-                        .register_available_lsp_adapter(adapter.name(), move || adapter.clone());
-                }
+            if enabled && let Some(adapter) = basedpyright_lsp_adapter.take() {
+                languages.register_available_lsp_adapter(adapter.name(), move || adapter.clone());
             }
         }
     })

@@ -201,10 +201,10 @@ impl TestPlatform {
         executor
             .spawn(async move {
                 if let Some(previous_window) = previous_window {
-                    if let Some(window) = window.as_ref() {
-                        if Rc::ptr_eq(&previous_window.0, &window.0) {
-                            return;
-                        }
+                    if let Some(window) = window.as_ref()
+                        && Rc::ptr_eq(&previous_window.0, &window.0)
+                    {
+                        return;
                     }
                     previous_window.simulate_active_status_change(false);
                 }

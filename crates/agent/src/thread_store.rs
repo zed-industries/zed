@@ -581,33 +581,32 @@ impl ThreadStore {
                 return;
             };
 
-            if protocol.capable(context_server::protocol::ServerCapability::Tools) {
-                if let Some(response) = protocol
+            if protocol.capable(context_server::protocol::ServerCapability::Tools)
+                && let Some(response) = protocol
                     .request::<context_server::types::requests::ListTools>(())
                     .await
                     .log_err()
-                {
-                    let tool_ids = tool_working_set
-                        .update(cx, |tool_working_set, cx| {
-                            tool_working_set.extend(
-                                response.tools.into_iter().map(|tool| {
-                                    Arc::new(ContextServerTool::new(
-                                        context_server_store.clone(),
-                                        server.id(),
-                                        tool,
-                                    )) as Arc<dyn Tool>
-                                }),
-                                cx,
-                            )
-                        })
-                        .log_err();
+            {
+                let tool_ids = tool_working_set
+                    .update(cx, |tool_working_set, cx| {
+                        tool_working_set.extend(
+                            response.tools.into_iter().map(|tool| {
+                                Arc::new(ContextServerTool::new(
+                                    context_server_store.clone(),
+                                    server.id(),
+                                    tool,
+                                )) as Arc<dyn Tool>
+                            }),
+                            cx,
+                        )
+                    })
+                    .log_err();
 
-                    if let Some(tool_ids) = tool_ids {
-                        this.update(cx, |this, _| {
-                            this.context_server_tool_ids.insert(server_id, tool_ids);
-                        })
-                        .log_err();
-                    }
+                if let Some(tool_ids) = tool_ids {
+                    this.update(cx, |this, _| {
+                        this.context_server_tool_ids.insert(server_id, tool_ids);
+                    })
+                    .log_err();
                 }
             }
         })
@@ -697,13 +696,14 @@ impl SerializedThreadV0_1_0 {
         let mut messages: Vec<SerializedMessage> = Vec::with_capacity(self.0.messages.len());
 
         for message in self.0.messages {
-            if message.role == Role::User && !message.tool_results.is_empty() {
-                if let Some(last_message) = messages.last_mut() {
-                    debug_assert!(last_message.role == Role::Assistant);
+            if message.role == Role::User
+                && !message.tool_results.is_empty()
+                && let Some(last_message) = messages.last_mut()
+            {
+                debug_assert!(last_message.role == Role::Assistant);
 
-                    last_message.tool_results = message.tool_results;
-                    continue;
-                }
+                last_message.tool_results = message.tool_results;
+                continue;
             }
 
             messages.push(message);

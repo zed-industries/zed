@@ -289,25 +289,25 @@ impl FoldMapWriter<'_> {
             let ChunkRendererId::Fold(id) = id else {
                 continue;
             };
-            if let Some(metadata) = self.0.snapshot.fold_metadata_by_id.get(&id).cloned() {
-                if Some(new_width) != metadata.width {
-                    let buffer_start = metadata.range.start.to_offset(buffer);
-                    let buffer_end = metadata.range.end.to_offset(buffer);
-                    let inlay_range = inlay_snapshot.to_inlay_offset(buffer_start)
-                        ..inlay_snapshot.to_inlay_offset(buffer_end);
-                    edits.push(InlayEdit {
-                        old: inlay_range.clone(),
-                        new: inlay_range.clone(),
-                    });
+            if let Some(metadata) = self.0.snapshot.fold_metadata_by_id.get(&id).cloned()
+                && Some(new_width) != metadata.width
+            {
+                let buffer_start = metadata.range.start.to_offset(buffer);
+                let buffer_end = metadata.range.end.to_offset(buffer);
+                let inlay_range = inlay_snapshot.to_inlay_offset(buffer_start)
+                    ..inlay_snapshot.to_inlay_offset(buffer_end);
+                edits.push(InlayEdit {
+                    old: inlay_range.clone(),
+                    new: inlay_range.clone(),
+                });
 
-                    self.0.snapshot.fold_metadata_by_id.insert(
-                        id,
-                        FoldMetadata {
-                            range: metadata.range,
-                            width: Some(new_width),
-                        },
-                    );
-                }
+                self.0.snapshot.fold_metadata_by_id.insert(
+                    id,
+                    FoldMetadata {
+                        range: metadata.range,
+                        width: Some(new_width),
+                    },
+                );
             }
         }
 
@@ -417,18 +417,18 @@ impl FoldMap {
             cursor.seek(&InlayOffset(0), Bias::Right);
 
             while let Some(mut edit) = inlay_edits_iter.next() {
-                if let Some(item) = cursor.item() {
-                    if !item.is_fold() {
-                        new_transforms.update_last(
-                            |transform| {
-                                if !transform.is_fold() {
-                                    transform.summary.add_summary(&item.summary, &());
-                                    cursor.next();
-                                }
-                            },
-                            &(),
-                        );
-                    }
+                if let Some(item) = cursor.item()
+                    && !item.is_fold()
+                {
+                    new_transforms.update_last(
+                        |transform| {
+                            if !transform.is_fold() {
+                                transform.summary.add_summary(&item.summary, &());
+                                cursor.next();
+                            }
+                        },
+                        &(),
+                    );
                 }
                 new_transforms.append(cursor.slice(&edit.old.start, Bias::Left), &());
                 edit.new.start -= edit.old.start - *cursor.start();

@@ -305,15 +305,14 @@ impl Dock {
         .detach();
 
         cx.observe_in(&dock, window, move |workspace, dock, window, cx| {
-            if dock.read(cx).is_open() {
-                if let Some(panel) = dock.read(cx).active_panel() {
-                    if panel.is_zoomed(window, cx) {
-                        workspace.zoomed = Some(panel.to_any().downgrade());
-                        workspace.zoomed_position = Some(position);
-                        cx.emit(Event::ZoomChanged);
-                        return;
-                    }
-                }
+            if dock.read(cx).is_open()
+                && let Some(panel) = dock.read(cx).active_panel()
+                && panel.is_zoomed(window, cx)
+            {
+                workspace.zoomed = Some(panel.to_any().downgrade());
+                workspace.zoomed_position = Some(position);
+                cx.emit(Event::ZoomChanged);
+                return;
             }
             if workspace.zoomed_position == Some(position) {
                 workspace.zoomed = None;
@@ -541,10 +540,10 @@ impl Dock {
             Ok(ix) => ix,
             Err(ix) => ix,
         };
-        if let Some(active_index) = self.active_panel_index.as_mut() {
-            if *active_index >= index {
-                *active_index += 1;
-            }
+        if let Some(active_index) = self.active_panel_index.as_mut()
+            && *active_index >= index
+        {
+            *active_index += 1;
         }
         self.panel_entries.insert(
             index,
@@ -566,16 +565,16 @@ impl Dock {
 
     pub fn restore_state(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
         if let Some(serialized) = self.serialized_dock.clone() {
-            if let Some(active_panel) = serialized.active_panel.filter(|_| serialized.visible) {
-                if let Some(idx) = self.panel_index_for_persistent_name(active_panel.as_str(), cx) {
-                    self.activate_panel(idx, window, cx);
-                }
+            if let Some(active_panel) = serialized.active_panel.filter(|_| serialized.visible)
+                && let Some(idx) = self.panel_index_for_persistent_name(active_panel.as_str(), cx)
+            {
+                self.activate_panel(idx, window, cx);
             }
 
-            if serialized.zoom {
-                if let Some(panel) = self.active_panel() {
-                    panel.set_zoomed(true, window, cx)
-                }
+            if serialized.zoom
+                && let Some(panel) = self.active_panel()
+            {
+                panel.set_zoomed(true, window, cx)
             }
             self.set_open(serialized.visible, window, cx);
             return true;

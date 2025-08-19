@@ -254,35 +254,35 @@ impl LogStore {
         let copilot_subscription = Copilot::global(cx).map(|copilot| {
             let copilot = &copilot;
             cx.subscribe(copilot, |this, copilot, edit_prediction_event, cx| {
-                if let copilot::Event::CopilotLanguageServerStarted = edit_prediction_event {
-                    if let Some(server) = copilot.read(cx).language_server() {
-                        let server_id = server.server_id();
-                        let weak_this = cx.weak_entity();
-                        this.copilot_log_subscription =
-                            Some(server.on_notification::<copilot::request::LogMessage, _>(
-                                move |params, cx| {
-                                    weak_this
-                                        .update(cx, |this, cx| {
-                                            this.add_language_server_log(
-                                                server_id,
-                                                MessageType::LOG,
-                                                &params.message,
-                                                cx,
-                                            );
-                                        })
-                                        .ok();
-                                },
-                            ));
-                        let name = LanguageServerName::new_static("copilot");
-                        this.add_language_server(
-                            LanguageServerKind::Global,
-                            server.server_id(),
-                            Some(name),
-                            None,
-                            Some(server.clone()),
-                            cx,
-                        );
-                    }
+                if let copilot::Event::CopilotLanguageServerStarted = edit_prediction_event
+                    && let Some(server) = copilot.read(cx).language_server()
+                {
+                    let server_id = server.server_id();
+                    let weak_this = cx.weak_entity();
+                    this.copilot_log_subscription =
+                        Some(server.on_notification::<copilot::request::LogMessage, _>(
+                            move |params, cx| {
+                                weak_this
+                                    .update(cx, |this, cx| {
+                                        this.add_language_server_log(
+                                            server_id,
+                                            MessageType::LOG,
+                                            &params.message,
+                                            cx,
+                                        );
+                                    })
+                                    .ok();
+                            },
+                        ));
+                    let name = LanguageServerName::new_static("copilot");
+                    this.add_language_server(
+                        LanguageServerKind::Global,
+                        server.server_id(),
+                        Some(name),
+                        None,
+                        Some(server.clone()),
+                        cx,
+                    );
                 }
             })
         });
@@ -733,16 +733,14 @@ impl LspLogView {
                 let first_server_id_for_project =
                     store.read(cx).server_ids_for_project(&weak_project).next();
                 if let Some(current_lsp) = this.current_server_id {
-                    if !store.read(cx).language_servers.contains_key(&current_lsp) {
-                        if let Some(server_id) = first_server_id_for_project {
-                            match this.active_entry_kind {
-                                LogKind::Rpc => {
-                                    this.show_rpc_trace_for_server(server_id, window, cx)
-                                }
-                                LogKind::Trace => this.show_trace_for_server(server_id, window, cx),
-                                LogKind::Logs => this.show_logs_for_server(server_id, window, cx),
-                                LogKind::ServerInfo => this.show_server_info(server_id, window, cx),
-                            }
+                    if !store.read(cx).language_servers.contains_key(&current_lsp)
+                        && let Some(server_id) = first_server_id_for_project
+                    {
+                        match this.active_entry_kind {
+                            LogKind::Rpc => this.show_rpc_trace_for_server(server_id, window, cx),
+                            LogKind::Trace => this.show_trace_for_server(server_id, window, cx),
+                            LogKind::Logs => this.show_logs_for_server(server_id, window, cx),
+                            LogKind::ServerInfo => this.show_server_info(server_id, window, cx),
                         }
                     }
                 } else if let Some(server_id) = first_server_id_for_project {
@@ -776,21 +774,17 @@ impl LspLogView {
                                 ],
                                 cx,
                             );
-                            if text.len() > 1024 {
-                                if let Some((fold_offset, _)) =
+                            if text.len() > 1024
+                                && let Some((fold_offset, _)) =
                                     text.char_indices().dropping(1024).next()
-                                {
-                                    if fold_offset < text.len() {
-                                        editor.fold_ranges(
-                                            vec![
-                                                last_offset + fold_offset..last_offset + text.len(),
-                                            ],
-                                            false,
-                                            window,
-                                            cx,
-                                        );
-                                    }
-                                }
+                                && fold_offset < text.len()
+                            {
+                                editor.fold_ranges(
+                                    vec![last_offset + fold_offset..last_offset + text.len()],
+                                    false,
+                                    window,
+                                    cx,
+                                );
                             }
 
                             if newest_cursor_is_at_end {
@@ -1311,14 +1305,14 @@ impl ToolbarItemView for LspLogToolbarItemView {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) -> workspace::ToolbarItemLocation {
-        if let Some(item) = active_pane_item {
-            if let Some(log_view) = item.downcast::<LspLogView>() {
-                self.log_view = Some(log_view.clone());
-                self._log_view_subscription = Some(cx.observe(&log_view, |_, _, cx| {
-                    cx.notify();
-                }));
-                return ToolbarItemLocation::PrimaryLeft;
-            }
+        if let Some(item) = active_pane_item
+            && let Some(log_view) = item.downcast::<LspLogView>()
+        {
+            self.log_view = Some(log_view.clone());
+            self._log_view_subscription = Some(cx.observe(&log_view, |_, _, cx| {
+                cx.notify();
+            }));
+            return ToolbarItemLocation::PrimaryLeft;
         }
         self.log_view = None;
         self._log_view_subscription = None;

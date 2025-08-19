@@ -639,17 +639,15 @@ impl ProjectDiagnosticsEditor {
                 #[cfg(test)]
                 let cloned_blocks = blocks.clone();
 
-                if was_empty {
-                    if let Some(anchor_range) = anchor_ranges.first() {
-                        let range_to_select = anchor_range.start..anchor_range.start;
-                        this.editor.update(cx, |editor, cx| {
-                            editor.change_selections(Default::default(), window, cx, |s| {
-                                s.select_anchor_ranges([range_to_select]);
-                            })
-                        });
-                        if this.focus_handle.is_focused(window) {
-                            this.editor.read(cx).focus_handle(cx).focus(window);
-                        }
+                if was_empty && let Some(anchor_range) = anchor_ranges.first() {
+                    let range_to_select = anchor_range.start..anchor_range.start;
+                    this.editor.update(cx, |editor, cx| {
+                        editor.change_selections(Default::default(), window, cx, |s| {
+                            s.select_anchor_ranges([range_to_select]);
+                        })
+                    });
+                    if this.focus_handle.is_focused(window) {
+                        this.editor.read(cx).focus_handle(cx).focus(window);
                     }
                 }
 
@@ -980,18 +978,16 @@ async fn heuristic_syntactic_expand(
         // Remove blank lines from start and end
         if let Some(start_row) = (outline_range.start.row..outline_range.end.row)
             .find(|row| !snapshot.line_indent_for_row(*row).is_line_blank())
-        {
-            if let Some(end_row) = (outline_range.start.row..outline_range.end.row + 1)
+            && let Some(end_row) = (outline_range.start.row..outline_range.end.row + 1)
                 .rev()
                 .find(|row| !snapshot.line_indent_for_row(*row).is_line_blank())
-            {
-                let row_count = end_row.saturating_sub(start_row);
-                if row_count <= max_row_count {
-                    return Some(RangeInclusive::new(
-                        outline_range.start.row,
-                        outline_range.end.row,
-                    ));
-                }
+        {
+            let row_count = end_row.saturating_sub(start_row);
+            if row_count <= max_row_count {
+                return Some(RangeInclusive::new(
+                    outline_range.start.row,
+                    outline_range.end.row,
+                ));
             }
         }
     }

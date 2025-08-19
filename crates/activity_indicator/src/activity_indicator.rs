@@ -458,26 +458,24 @@ impl ActivityIndicator {
             .map(|r| r.read(cx))
             .and_then(Repository::current_job);
         // Show any long-running git command
-        if let Some(job_info) = current_job {
-            if Instant::now() - job_info.start >= GIT_OPERATION_DELAY {
-                return Some(Content {
-                    icon: Some(
-                        Icon::new(IconName::ArrowCircle)
-                            .size(IconSize::Small)
-                            .with_animation(
-                                "arrow-circle",
-                                Animation::new(Duration::from_secs(2)).repeat(),
-                                |icon, delta| {
-                                    icon.transform(Transformation::rotate(percentage(delta)))
-                                },
-                            )
-                            .into_any_element(),
-                    ),
-                    message: job_info.message.into(),
-                    on_click: None,
-                    tooltip_message: None,
-                });
-            }
+        if let Some(job_info) = current_job
+            && Instant::now() - job_info.start >= GIT_OPERATION_DELAY
+        {
+            return Some(Content {
+                icon: Some(
+                    Icon::new(IconName::ArrowCircle)
+                        .size(IconSize::Small)
+                        .with_animation(
+                            "arrow-circle",
+                            Animation::new(Duration::from_secs(2)).repeat(),
+                            |icon, delta| icon.transform(Transformation::rotate(percentage(delta))),
+                        )
+                        .into_any_element(),
+                ),
+                message: job_info.message.into(),
+                on_click: None,
+                tooltip_message: None,
+            });
         }
 
         // Show any language server installation info.
@@ -740,21 +738,20 @@ impl ActivityIndicator {
 
         if let Some(extension_store) =
             ExtensionStore::try_global(cx).map(|extension_store| extension_store.read(cx))
+            && let Some(extension_id) = extension_store.outstanding_operations().keys().next()
         {
-            if let Some(extension_id) = extension_store.outstanding_operations().keys().next() {
-                return Some(Content {
-                    icon: Some(
-                        Icon::new(IconName::Download)
-                            .size(IconSize::Small)
-                            .into_any_element(),
-                    ),
-                    message: format!("Updating {extension_id} extension…"),
-                    on_click: Some(Arc::new(|this, window, cx| {
-                        this.dismiss_error_message(&DismissErrorMessage, window, cx)
-                    })),
-                    tooltip_message: None,
-                });
-            }
+            return Some(Content {
+                icon: Some(
+                    Icon::new(IconName::Download)
+                        .size(IconSize::Small)
+                        .into_any_element(),
+                ),
+                message: format!("Updating {extension_id} extension…"),
+                on_click: Some(Arc::new(|this, window, cx| {
+                    this.dismiss_error_message(&DismissErrorMessage, window, cx)
+                })),
+                tooltip_message: None,
+            });
         }
 
         None

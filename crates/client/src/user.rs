@@ -894,10 +894,10 @@ impl UserStore {
         let mut ret = Vec::with_capacity(users.len());
         for user in users {
             let user = User::new(user);
-            if let Some(old) = self.users.insert(user.id, user.clone()) {
-                if old.github_login != user.github_login {
-                    self.by_github_login.remove(&old.github_login);
-                }
+            if let Some(old) = self.users.insert(user.id, user.clone())
+                && old.github_login != user.github_login
+            {
+                self.by_github_login.remove(&old.github_login);
             }
             self.by_github_login
                 .insert(user.github_login.clone(), user.id);
