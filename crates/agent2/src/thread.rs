@@ -787,7 +787,7 @@ impl Thread {
                         this.update(cx, |this, cx| {
                             tool_uses.extend(this.handle_streamed_completion_event(
                                 event,
-                                &event_stream,
+                                event_stream,
                                 cx,
                             ));
                         })
