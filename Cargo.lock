@@ -2918,6 +2918,22 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6e4de3bc4ea267985becf712dc6d9eed8b04c953b3fcfb339ebc87acd9804901"
 
 [[package]]
+name = "chutes"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "futures 0.3.31",
+ "http_client",
+ "log",
+ "schemars",
+ "serde",
+ "serde_json",
+ "strum 0.27.1",
+ "thiserror 2.0.12",
+ "workspace-hack",
+]
+
+[[package]]
 name = "ciborium"
 version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9143,6 +9159,7 @@ dependencies = [
  "aws_http_client",
  "bedrock",
  "chrono",
+ "chutes",
  "client",
  "cloud_llm_client",
  "collections",

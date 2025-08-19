@@ -1,0 +1,1093 @@
+diff --git a/.rules b/.rules
+index da009f1877..6028381ae0 100644
+--- a/.rules
++++ b/.rules
+@@ -1,3 +1,57 @@
++# CLAUDE.md
++
++This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
++
++# Development Commands
++
++## Building and Running
++- `cargo run` - Build and run Zed in debug mode
++- `cargo run --release` - Build and run Zed in release mode
++- `cargo run -p cli` - Run the CLI crate in development (primary user interface in release mode)
++
++## Testing and Quality
++- `cargo test --workspace` - Run all tests in the workspace
++- `./script/clippy` - Run Clippy linter with project-specific settings (preferred over `cargo clippy`)
++- `cargo install cargo-nextest --locked; cargo nextest run --workspace --no-fail-fast` - Alternative test runner to avoid "too many open files" issues on macOS
++
++## Platform Setup
++- Linux: Run `script/linux` to install system dependencies
++- macOS: Install Xcode, command line tools, and `brew install cmake`
++- Both platforms need [rustup](https://www.rust-lang.org/tools/install) installed
++
++## Installation
++- `./script/install-linux` - Install development build locally on Linux (creates `~/.local/bin/zed`)
++
++# Architecture Overview
++
++Zed is a Rust-based code editor built on the GPUI UI framework. The codebase uses a workspace with 190+ crates organized into several key areas:
++
++## Core Architecture
++- **GPUI Framework**: Custom UI framework providing state management, windowing, and rendering
++- **Entity-Component System**: Uses `Entity<T>` handles for state management with reactive updates
++- **Workspace Pattern**: Large Cargo workspace with modular crates for different functionality
++- **Async/Concurrent**: Heavy use of async Rust with `cx.spawn()` and `cx.background_spawn()`
++
++## Key Crate Categories
++- **Core Editor**: `editor`, `multi_buffer`, `text`, `rope` - Text editing and buffer management
++- **UI Components**: `workspace`, `panel`, `picker`, `command_palette` - Main interface components  
++- **Language Support**: `language`, `lsp`, `languages` - LSP integration and language-specific features
++- **Project Management**: `project`, `worktree`, `file_finder` - File system and project navigation
++- **Collaboration**: `collab`, `rpc`, `call`, `channel` - Real-time collaborative editing
++- **AI Integration**: `assistant_*`, `anthropic`, `open_ai` - AI language model integrations
++- **Extensions**: `extension`, `extension_host` - Plugin system and extension support
++- **Platform**: `gpui`, `platform`, `fs` - Low-level platform abstractions
++
++## Main Binaries
++- `crates/zed` - Main editor application
++- `crates/cli` - Command-line interface (primary interface in release mode)
++- `crates/collab` - Collaboration server
++
++## Configuration & Settings
++- Settings system built around JSON schemas with runtime validation
++- Extension system supporting WASM-based plugins
++- Theme system with support for custom themes and extensions
++
+ # Rust coding guidelines
+ 
+ * Prioritize code correctness and clarity. Speed and efficiency are secondary priorities unless otherwise specified.
+diff --git a/Cargo.lock b/Cargo.lock
+index 4a5dec4734..b66614d434 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -2917,6 +2917,22 @@ version = "1.5.0"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "6e4de3bc4ea267985becf712dc6d9eed8b04c953b3fcfb339ebc87acd9804901"
+ 
++[[package]]
++name = "chutes"
++version = "0.1.0"
++dependencies = [
++ "anyhow",
++ "futures 0.3.31",
++ "http_client",
++ "log",
++ "schemars",
++ "serde",
++ "serde_json",
++ "strum 0.27.1",
++ "thiserror 2.0.12",
++ "workspace-hack",
++]
++
+ [[package]]
+ name = "ciborium"
+ version = "0.2.2"
+@@ -9143,6 +9159,7 @@ dependencies = [
+  "aws_http_client",
+  "bedrock",
+  "chrono",
++ "chutes",
+  "client",
+  "cloud_llm_client",
+  "collections",
+diff --git a/Cargo.toml b/Cargo.toml
+index ad45def2d4..7f615311bd 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -28,6 +28,7 @@ members = [
+     "crates/buffer_diff",
+     "crates/call",
+     "crates/channel",
++    "crates/chutes",
+     "crates/cli",
+     "crates/client",
+     "crates/clock",
+@@ -254,6 +255,7 @@ breadcrumbs = { path = "crates/breadcrumbs" }
+ buffer_diff = { path = "crates/buffer_diff" }
+ call = { path = "crates/call" }
+ channel = { path = "crates/channel" }
++chutes = { path = "crates/chutes" }
+ cli = { path = "crates/cli" }
+ client = { path = "crates/client" }
+ clock = { path = "crates/clock" }
+diff --git a/crates/chutes/Cargo.toml b/crates/chutes/Cargo.toml
+new file mode 100644
+index 0000000000..251a80b270
+--- /dev/null
++++ b/crates/chutes/Cargo.toml
+@@ -0,0 +1,28 @@
++[package]
++name = "chutes"
++version = "0.1.0"
++edition.workspace = true
++publish.workspace = true
++license = "GPL-3.0-or-later"
++
++[features]
++default = []
++schemars = ["dep:schemars"]
++
++[lints]
++workspace = true
++
++[lib]
++path = "src/chutes.rs"
++
++[dependencies]
++anyhow.workspace = true
++futures.workspace = true
++http_client.workspace = true
++schemars = { workspace = true, optional = true }
++log.workspace = true
++serde.workspace = true
++serde_json.workspace = true
++strum.workspace = true
++thiserror.workspace = true
++workspace-hack.workspace = true
+\ No newline at end of file
+diff --git a/crates/chutes/LICENSE-GPL b/crates/chutes/LICENSE-GPL
+new file mode 100644
+index 0000000000..9e598d4c0e
+--- /dev/null
++++ b/crates/chutes/LICENSE-GPL
+@@ -0,0 +1,4 @@
++This file is part of Zed.
++
++Zed is free software: you can redistribute it and/or modify
++it under the terms of the GNU General Public License v3.0.
+\ No newline at end of file
+diff --git a/crates/chutes/src/chutes.rs b/crates/chutes/src/chutes.rs
+new file mode 100644
+index 0000000000..7889a0b94b
+--- /dev/null
++++ b/crates/chutes/src/chutes.rs
+@@ -0,0 +1,341 @@
++use anyhow::{Context as _, Result, anyhow};
++use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
++use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
++use serde::{Deserialize, Serialize};
++use serde_json::Value;
++use std::{convert::TryFrom, future::Future};
++use strum::EnumIter;
++
++pub const CHUTES_API_URL: &str = "https://api.chutes.ai/v1";
++
++#[derive(Clone, Copy, Serialize, Deserialize, Debug, Eq, PartialEq)]
++#[serde(rename_all = "lowercase")]
++pub enum Role {
++    User,
++    Assistant,
++    System,
++    Tool,
++}
++
++impl TryFrom<String> for Role {
++    type Error = anyhow::Error;
++
++    fn try_from(value: String) -> Result<Self> {
++        match value.as_str() {
++            "user" => Ok(Self::User),
++            "assistant" => Ok(Self::Assistant),
++            "system" => Ok(Self::System),
++            "tool" => Ok(Self::Tool),
++            _ => anyhow::bail!("invalid role '{value}'"),
++        }
++    }
++}
++
++impl From<Role> for String {
++    fn from(val: Role) -> Self {
++        match val {
++            Role::User => "user".to_owned(),
++            Role::Assistant => "assistant".to_owned(),
++            Role::System => "system".to_owned(),
++            Role::Tool => "tool".to_owned(),
++        }
++    }
++}
++
++#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
++#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, EnumIter)]
++pub enum Model {
++    #[serde(rename = "llama-3-8b")]
++    Llama3_8B,
++    #[serde(rename = "llama-3-70b")]
++    Llama3_70B,
++    #[serde(rename = "llama-3.1-8b")]
++    Llama3_1_8B,
++    #[serde(rename = "llama-3.1-70b")]
++    Llama3_1_70B,
++    #[serde(rename = "llama-3.1-405b")]
++    #[default]
++    Llama3_1_405B,
++    #[serde(rename = "mistral-7b")]
++    Mistral7B,
++    #[serde(rename = "mixtral-8x7b")]
++    Mixtral8x7B,
++    #[serde(rename = "claude-3-sonnet")]
++    Claude3Sonnet,
++    #[serde(rename = "claude-3-haiku")]
++    Claude3Haiku,
++    #[serde(rename = "gpt-4")]
++    GPT4,
++    #[serde(rename = "gpt-3.5-turbo")]
++    GPT3_5Turbo,
++    #[serde(rename = "custom")]
++    Custom {
++        name: String,
++        /// The name displayed in the UI, such as in the assistant panel model dropdown menu.
++        display_name: Option<String>,
++        max_tokens: u64,
++        max_output_tokens: Option<u64>,
++    },
++}
++
++impl Model {
++    pub fn default_fast() -> Self {
++        Self::Llama3_1_8B
++    }
++
++    pub fn from_id(id: &str) -> Result<Self> {
++        match id {
++            "llama-3-8b" => Ok(Self::Llama3_8B),
++            "llama-3-70b" => Ok(Self::Llama3_70B),
++            "llama-3.1-8b" => Ok(Self::Llama3_1_8B),
++            "llama-3.1-70b" => Ok(Self::Llama3_1_70B),
++            "llama-3.1-405b" => Ok(Self::Llama3_1_405B),
++            "mistral-7b" => Ok(Self::Mistral7B),
++            "mixtral-8x7b" => Ok(Self::Mixtral8x7B),
++            "claude-3-sonnet" => Ok(Self::Claude3Sonnet),
++            "claude-3-haiku" => Ok(Self::Claude3Haiku),
++            "gpt-4" => Ok(Self::GPT4),
++            "gpt-3.5-turbo" => Ok(Self::GPT3_5Turbo),
++            invalid_id => anyhow::bail!("invalid model id '{invalid_id}'"),
++        }
++    }
++
++    pub fn id(&self) -> &str {
++        match self {
++            Self::Llama3_8B => "llama-3-8b",
++            Self::Llama3_70B => "llama-3-70b",
++            Self::Llama3_1_8B => "llama-3.1-8b",
++            Self::Llama3_1_70B => "llama-3.1-70b",
++            Self::Llama3_1_405B => "llama-3.1-405b",
++            Self::Mistral7B => "mistral-7b",
++            Self::Mixtral8x7B => "mixtral-8x7b",
++            Self::Claude3Sonnet => "claude-3-sonnet",
++            Self::Claude3Haiku => "claude-3-haiku",
++            Self::GPT4 => "gpt-4",
++            Self::GPT3_5Turbo => "gpt-3.5-turbo",
++            Self::Custom { name, .. } => name,
++        }
++    }
++
++    pub fn display_name(&self) -> &str {
++        match self {
++            Self::Llama3_8B => "Llama 3 8B",
++            Self::Llama3_70B => "Llama 3 70B",
++            Self::Llama3_1_8B => "Llama 3.1 8B",
++            Self::Llama3_1_70B => "Llama 3.1 70B",
++            Self::Llama3_1_405B => "Llama 3.1 405B",
++            Self::Mistral7B => "Mistral 7B",
++            Self::Mixtral8x7B => "Mixtral 8x7B",
++            Self::Claude3Sonnet => "Claude 3 Sonnet",
++            Self::Claude3Haiku => "Claude 3 Haiku",
++            Self::GPT4 => "GPT-4",
++            Self::GPT3_5Turbo => "GPT-3.5 Turbo",
++            Self::Custom {
++                name, display_name, ..
++            } => display_name.as_ref().unwrap_or(name),
++        }
++    }
++
++    pub fn max_token_count(&self) -> u64 {
++        match self {
++            Self::Llama3_8B => 8_192,
++            Self::Llama3_70B => 8_192,
++            Self::Llama3_1_8B => 128_000,
++            Self::Llama3_1_70B => 128_000,
++            Self::Llama3_1_405B => 128_000,
++            Self::Mistral7B => 32_768,
++            Self::Mixtral8x7B => 32_768,
++            Self::Claude3Sonnet => 200_000,
++            Self::Claude3Haiku => 200_000,
++            Self::GPT4 => 128_000,
++            Self::GPT3_5Turbo => 16_385,
++            Self::Custom { max_tokens, .. } => *max_tokens,
++        }
++    }
++
++    pub fn max_output_tokens(&self) -> Option<u64> {
++        match self {
++            Self::Custom {
++                max_output_tokens, ..
++            } => *max_output_tokens,
++            Self::Llama3_8B => Some(8_192),
++            Self::Llama3_70B => Some(8_192),
++            Self::Llama3_1_8B => Some(128_000),
++            Self::Llama3_1_70B => Some(128_000),
++            Self::Llama3_1_405B => Some(128_000),
++            Self::Mistral7B => Some(32_768),
++            Self::Mixtral8x7B => Some(32_768),
++            Self::Claude3Sonnet => Some(4_096),
++            Self::Claude3Haiku => Some(4_096),
++            Self::GPT4 => Some(4_096),
++            Self::GPT3_5Turbo => Some(4_096),
++        }
++    }
++}
++
++#[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
++pub struct Message {
++    pub role: Role,
++    pub content: String,
++}
++
++#[derive(Serialize)]
++pub struct Request {
++    pub model: String,
++    pub messages: Vec<Message>,
++    pub max_tokens: Option<u64>,
++    pub temperature: Option<f32>,
++    pub stream: bool,
++}
++
++#[derive(Deserialize)]
++pub struct Usage {
++    pub prompt_tokens: u64,
++    pub completion_tokens: u64,
++    pub total_tokens: u64,
++}
++
++#[derive(Deserialize)]
++pub struct Choice {
++    pub index: u64,
++    pub delta: Option<Delta>,
++    pub message: Option<Message>,
++    pub finish_reason: Option<String>,
++}
++
++#[derive(Deserialize)]
++pub struct Delta {
++    pub role: Option<String>,
++    pub content: Option<String>,
++}
++
++#[derive(Deserialize)]
++pub struct Response {
++    pub id: String,
++    pub object: String,
++    pub created: u64,
++    pub model: String,
++    pub choices: Vec<Choice>,
++    pub usage: Option<Usage>,
++}
++
++#[derive(Deserialize, Debug)]
++pub struct ChutesError {
++    pub message: String,
++    #[serde(rename = "type")]
++    pub error_type: Option<String>,
++    pub code: Option<String>,
++}
++
++pub async fn stream_completion(
++    client: &dyn HttpClient,
++    api_url: &str,
++    api_key: &str,
++    request: Request,
++) -> Result<BoxStream<'static, Result<Response>>> {
++    let uri = format!("{api_url}/chat/completions");
++    let body = AsyncBody::from(serde_json::to_string(&request)?);
++    
++    let request = HttpRequest::builder()
++        .method(Method::POST)
++        .uri(uri)
++        .header("Content-Type", "application/json")
++        .header("Authorization", format!("Bearer {}", api_key))
++        .body(body)?;
++
++    let mut response = client.send(request).await?;
++
++    if !response.status().is_success() {
++        let mut body = String::new();
++        response.body_mut().read_to_string(&mut body).await?;
++
++        #[derive(Deserialize)]
++        struct ChutesResponse {
++            error: ChutesError,
++        }
++
++        match serde_json::from_str::<ChutesResponse>(&body) {
++            Ok(response) if !response.error.message.is_empty() => Err(anyhow!(
++                "API request failed: {}",
++                response.error.message,
++            )),
++            _ => anyhow::bail!(
++                "API request failed with status {}: {}",
++                response.status(),
++                body,
++            ),
++        }
++    } else {
++        let reader = BufReader::new(response.into_body());
++        Ok(reader
++            .lines()
++            .filter_map(|line| async move {
++                match line {
++                    Ok(line) => {
++                        let line = line.trim();
++                        if line.starts_with("data: ") {
++                            let content = &line[6..];
++                            if content == "[DONE]" {
++                                return None;
++                            }
++                            match serde_json::from_str::<Response>(content) {
++                                Ok(response) => Some(Ok(response)),
++                                Err(error) => {
++                                    log::error!("Error parsing Chutes response: {error}, line: {line}");
++                                    Some(Err(anyhow!(error)))
++                                }
++                            }
++                        } else {
++                            None
++                        }
++                    }
++                    Err(error) => Some(Err(anyhow!(error))),
++                }
++            })
++            .boxed())
++    }
++}
++
++pub async fn complete(
++    client: &dyn HttpClient,
++    api_url: &str,
++    api_key: &str,
++    request: Request,
++) -> Result<Response> {
++    let uri = format!("{api_url}/chat/completions");
++    let body = AsyncBody::from(serde_json::to_string(&request)?);
++    
++    let request = HttpRequest::builder()
++        .method(Method::POST)
++        .uri(uri)
++        .header("Content-Type", "application/json")
++        .header("Authorization", format!("Bearer {}", api_key))
++        .body(body)?;
++
++    let mut response = client.send(request).await?;
++    let mut body = String::new();
++    response.body_mut().read_to_string(&mut body).await?;
++
++    if response.status().is_success() {
++        let response: Response = serde_json::from_str(&body)
++            .context("failed to parse Chutes response")?;
++        Ok(response)
++    } else {
++        #[derive(Deserialize)]
++        struct ChutesResponse {
++            error: ChutesError,
++        }
++
++        match serde_json::from_str::<ChutesResponse>(&body) {
++            Ok(response) if !response.error.message.is_empty() => Err(anyhow!(
++                "API request failed: {}",
++                response.error.message,
++            )),
++            _ => anyhow::bail!(
++                "API request failed with status {}: {}",
++                response.status(),
++                body,
++            ),
++        }
++    }
++}
+\ No newline at end of file
+diff --git a/crates/language_models/Cargo.toml b/crates/language_models/Cargo.toml
+index b5bfb870f6..d6b61652b7 100644
+--- a/crates/language_models/Cargo.toml
++++ b/crates/language_models/Cargo.toml
+@@ -15,6 +15,7 @@ path = "src/language_models.rs"
+ ai_onboarding.workspace = true
+ anthropic = { workspace = true, features = ["schemars"] }
+ anyhow.workspace = true
++chutes = { workspace = true, features = ["schemars"] }
+ aws-config = { workspace = true, features = ["behavior-version-latest"] }
+ aws-credential-types = { workspace = true, features = ["hardcoded-credentials"] }
+ aws_http_client.workspace = true
+diff --git a/crates/language_models/src/language_models.rs b/crates/language_models/src/language_models.rs
+index 18e6f47ed0..7718854e5f 100644
+--- a/crates/language_models/src/language_models.rs
++++ b/crates/language_models/src/language_models.rs
+@@ -13,6 +13,7 @@ pub mod ui;
+ 
+ use crate::provider::anthropic::AnthropicLanguageModelProvider;
+ use crate::provider::bedrock::BedrockLanguageModelProvider;
++use crate::provider::chutes::ChutesLanguageModelProvider;
+ use crate::provider::cloud::CloudLanguageModelProvider;
+ use crate::provider::copilot_chat::CopilotChatLanguageModelProvider;
+ use crate::provider::google::GoogleLanguageModelProvider;
+@@ -140,6 +141,10 @@ fn register_language_model_providers(
+         BedrockLanguageModelProvider::new(client.http_client(), cx),
+         cx,
+     );
++    registry.register_provider(
++        ChutesLanguageModelProvider::new(client.http_client(), cx),
++        cx,
++    );
+     registry.register_provider(
+         OpenRouterLanguageModelProvider::new(client.http_client(), cx),
+         cx,
+diff --git a/crates/language_models/src/provider.rs b/crates/language_models/src/provider.rs
+index d780195c66..0850d9b167 100644
+--- a/crates/language_models/src/provider.rs
++++ b/crates/language_models/src/provider.rs
+@@ -1,5 +1,6 @@
+ pub mod anthropic;
+ pub mod bedrock;
++pub mod chutes;
+ pub mod cloud;
+ pub mod copilot_chat;
+ pub mod deepseek;
+diff --git a/crates/language_models/src/provider/chutes.rs b/crates/language_models/src/provider/chutes.rs
+new file mode 100644
+index 0000000000..c254404c6b
+--- /dev/null
++++ b/crates/language_models/src/provider/chutes.rs
+@@ -0,0 +1,472 @@
++use anyhow::{Context as _, Result, anyhow};
++use collections::{BTreeMap, HashMap};
++use credentials_provider::CredentialsProvider;
++
++use futures::Stream;
++use futures::{FutureExt, StreamExt, future::BoxFuture};
++use gpui::{AnyView, App, AsyncApp, Context, Entity, Subscription, Task, Window};
++use http_client::HttpClient;
++use language_model::{
++    AuthenticateError, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
++    LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
++    LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
++    LanguageModelToolChoice, LanguageModelToolResultContent, LanguageModelToolUse, MessageContent,
++    RateLimiter, Role, StopReason, TokenUsage,
++};
++use menu;
++use chutes::{Model, stream_completion, complete};
++use schemars::JsonSchema;
++use serde::{Deserialize, Serialize};
++use settings::{Settings, SettingsStore};
++use std::pin::Pin;
++use std::str::FromStr as _;
++use std::sync::Arc;
++use strum::IntoEnumIterator;
++
++use ui::{ElevationIndex, List, Tooltip, prelude::*};
++use ui_input::SingleLineInput;
++use util::ResultExt;
++
++use crate::{AllLanguageModelSettings, ui::InstructionListItem};
++
++const PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("chutes");
++const PROVIDER_NAME: LanguageModelProviderName = LanguageModelProviderName::new("Chutes.ai");
++
++#[derive(Default, Clone, Debug, PartialEq)]
++pub struct ChutesSettings {
++    pub api_url: String,
++    pub available_models: Vec<AvailableModel>,
++}
++
++#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
++pub struct AvailableModel {
++    pub name: String,
++    pub display_name: Option<String>,
++    pub max_tokens: u64,
++    pub max_output_tokens: Option<u64>,
++}
++
++pub struct ChutesLanguageModelProvider {
++    http_client: Arc<dyn HttpClient>,
++    state: gpui::Entity<State>,
++}
++
++pub struct State {
++    api_key: Option<String>,
++    api_key_from_env: bool,
++    _subscription: Subscription,
++}
++
++const CHUTES_API_KEY_VAR: &str = "CHUTES_API_KEY";
++
++impl State {
++    fn is_authenticated(&self) -> bool {
++        self.api_key.is_some()
++    }
++
++    fn reset_api_key(&self, cx: &mut Context<Self>) -> Task<Result<()>> {
++        let credentials_provider = <dyn CredentialsProvider>::global(cx);
++        let api_url = AllLanguageModelSettings::get_global(cx)
++            .chutes
++            .as_ref()
++            .map(|settings| settings.api_url.clone())
++            .unwrap_or_else(|| chutes::CHUTES_API_URL.to_string());
++        cx.spawn(async move |this, cx| {
++            credentials_provider
++                .delete_credentials(&api_url, cx)
++                .await
++                .log_err();
++            this.update(cx, |this, cx| {
++                this.api_key = None;
++                this.api_key_from_env = false;
++                cx.notify();
++            })
++        })
++    }
++
++    fn set_api_key(&mut self, api_key: String, cx: &mut Context<Self>) -> Task<Result<()>> {
++        let credentials_provider = <dyn CredentialsProvider>::global(cx);
++        let api_url = AllLanguageModelSettings::get_global(cx)
++            .chutes
++            .as_ref()
++            .map(|settings| settings.api_url.clone())
++            .unwrap_or_else(|| chutes::CHUTES_API_URL.to_string());
++        cx.spawn(async move |this, cx| {
++            credentials_provider
++                .write_credentials(&api_url, "Bearer", api_key.as_bytes(), cx)
++                .await
++                .log_err();
++            this.update(cx, |this, cx| {
++                this.api_key = Some(api_key);
++                cx.notify();
++            })
++        })
++    }
++
++    fn authenticate(&self, cx: &mut Context<Self>) -> Task<Result<(), AuthenticateError>> {
++        if self.is_authenticated() {
++            return Task::ready(Ok(()));
++        }
++
++        let credentials_provider = <dyn CredentialsProvider>::global(cx);
++        let api_url = AllLanguageModelSettings::get_global(cx)
++            .chutes
++            .as_ref()
++            .map(|settings| settings.api_url.clone())
++            .unwrap_or_else(|| chutes::CHUTES_API_URL.to_string());
++        cx.spawn(async move |this, cx| {
++            let (api_key, from_env) = if let Ok(api_key) = std::env::var(CHUTES_API_KEY_VAR) {
++                (api_key, true)
++            } else {
++                let (_, api_key) = credentials_provider
++                    .read_credentials(&api_url, cx)
++                    .await?
++                    .ok_or(AuthenticateError::CredentialsNotFound)?;
++                (
++                    String::from_utf8(api_key).context("invalid Chutes.ai API key")?,
++                    false,
++                )
++            };
++            this.update(cx, |this, cx| {
++                this.api_key = Some(api_key);
++                this.api_key_from_env = from_env;
++                cx.notify();
++            })?;
++
++            Ok(())
++        })
++    }
++}
++
++impl ChutesLanguageModelProvider {
++    pub fn new(http_client: Arc<dyn HttpClient>, cx: &mut App) -> Self {
++        let state = cx.new(|cx| State {
++            api_key: None,
++            api_key_from_env: false,
++            _subscription: cx.observe_global::<SettingsStore>(|_this: &mut State, cx| {
++                cx.notify();
++            }),
++        });
++
++        Self { http_client, state }
++    }
++}
++
++impl LanguageModelProvider for ChutesLanguageModelProvider {
++    fn id(&self) -> LanguageModelProviderId {
++        PROVIDER_ID
++    }
++
++    fn name(&self) -> LanguageModelProviderName {
++        PROVIDER_NAME
++    }
++
++    fn icon(&self) -> ui::IconName {
++        ui::IconName::AiAssistant
++    }
++
++    fn provided_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
++        let mut models = Vec::new();
++
++        // Add built-in models
++        for model in Model::iter() {
++            if let Model::Custom { .. } = model {
++                continue;
++            }
++
++            models.push(Arc::new(ChutesLanguageModel {
++                id: LanguageModelId::from(format!("chutes::{}", model.id()).as_str()),
++                model,
++                http_client: self.http_client.clone(),
++                request_limiter: RateLimiter::new(4),
++                state: self.state.clone(),
++            }) as Arc<dyn LanguageModel>);
++        }
++
++        // Add custom models from settings
++        if let Some(chutes_settings) = AllLanguageModelSettings::get_global(cx).chutes.as_ref() {
++            for model in &chutes_settings.available_models {
++                models.push(Arc::new(ChutesLanguageModel {
++                    id: LanguageModelId::from(format!("chutes::{}", model.name).as_str()),
++                    model: Model::Custom {
++                        name: model.name.clone(),
++                        display_name: model.display_name.clone(),
++                        max_tokens: model.max_tokens,
++                        max_output_tokens: model.max_output_tokens,
++                    },
++                    http_client: self.http_client.clone(),
++                    request_limiter: RateLimiter::new(4),
++                    state: self.state.clone(),
++                }) as Arc<dyn LanguageModel>);
++            }
++        }
++
++        models
++    }
++
++    fn is_authenticated(&self, cx: &App) -> bool {
++        self.state.read(cx).is_authenticated()
++    }
++
++    fn authenticate(&self, cx: &mut App) -> Task<Result<(), AuthenticateError>> {
++        self.state.update(cx, |state, cx| state.authenticate(cx))
++    }
++
++    fn configuration_view(&self, cx: &mut Window) -> AnyView {
++        cx.new(|cx| ConfigurationView {
++            api_key: String::new(),
++            state: self.state.clone(),
++        })
++        .into()
++    }
++
++    fn reset_credentials(&self, cx: &mut App) -> Task<anyhow::Result<()>> {
++        self.state.update(cx, |state, cx| state.reset_api_key(cx))
++    }
++
++    fn default_model(&self, cx: &App) -> Option<Arc<dyn LanguageModel>> {
++        self.provided_models(cx)
++            .into_iter()
++            .find(|model| model.name().0.contains("llama-3.1-405b"))
++    }
++
++    fn provider_state(&self, cx: &App) -> LanguageModelProviderState {
++        if self.is_authenticated(cx) {
++            LanguageModelProviderState::Authenticated
++        } else {
++            LanguageModelProviderState::NotAuthenticated
++        }
++    }
++}
++
++pub struct ChutesLanguageModel {
++    id: LanguageModelId,
++    model: Model,
++    http_client: Arc<dyn HttpClient>,
++    request_limiter: RateLimiter,
++    state: Entity<State>,
++}
++
++impl ChutesLanguageModel {
++    fn to_chutes_message(message: &language_model::Message) -> chutes::Message {
++        chutes::Message {
++            role: match message.role {
++                Role::User => chutes::Role::User,
++                Role::Assistant => chutes::Role::Assistant,
++                Role::System => chutes::Role::System,
++                Role::Tool => chutes::Role::Tool,
++            },
++            content: match &message.content {
++                MessageContent::Text(text) => text.clone(),
++                MessageContent::Image { text, .. } => text.clone(),
++            },
++        }
++    }
++}
++
++impl LanguageModel for ChutesLanguageModel {
++    fn id(&self) -> LanguageModelId {
++        self.id.clone()
++    }
++
++    fn name(&self) -> LanguageModelName {
++        LanguageModelName::from(self.model.display_name())
++    }
++
++    fn provider_id(&self) -> LanguageModelProviderId {
++        PROVIDER_ID
++    }
++
++    fn provider_name(&self) -> LanguageModelProviderName {
++        PROVIDER_NAME
++    }
++
++    fn telemetry_id(&self) -> String {
++        format!("chutes::{}", self.model.id())
++    }
++
++    fn max_token_count(&self) -> u64 {
++        self.model.max_token_count()
++    }
++
++    fn count_tokens(
++        &self,
++        request: &LanguageModelRequest,
++        cx: &App,
++    ) -> BoxFuture<'static, Result<u64>> {
++        // Simple token estimation - in a real implementation you'd use tiktoken or similar
++        let text = request
++            .messages
++            .iter()
++            .map(|msg| match &msg.content {
++                MessageContent::Text(text) => text.len(),
++                MessageContent::Image { text, .. } => text.len() + 100, // Add for image
++            })
++            .sum::<usize>() as u64;
++        
++        async move { Ok(text / 4) }.boxed() // Rough estimate: 4 chars per token
++    }
++
++    fn stream_completion(
++        &self,
++        request: LanguageModelRequest,
++        cx: &AsyncApp,
++    ) -> BoxFuture<'static, Result<Pin<Box<dyn Stream<Item = Result<LanguageModelCompletionEvent>> + Send + 'static>>>> {
++        let http_client = self.http_client.clone();
++        let state = self.state.clone();
++        let model = self.model.clone();
++        let request_limiter = self.request_limiter.clone();
++
++        async move {
++            let api_key = state.update(cx, |state, _cx| state.api_key.clone())?
++                .ok_or_else(|| anyhow!("missing API key"))?;
++
++            let chutes_request = chutes::Request {
++                model: model.id().to_string(),
++                messages: request
++                    .messages
++                    .iter()
++                    .map(Self::to_chutes_message)
++                    .collect(),
++                max_tokens: request.max_tokens,
++                temperature: request.temperature,
++                stream: true,
++            };
++
++            request_limiter.stream_request(async move {
++                let stream = stream_completion(
++                    http_client.as_ref(),
++                    chutes::CHUTES_API_URL,
++                    &api_key,
++                    chutes_request,
++                ).await?;
++
++                Ok(stream
++                    .map(|response| {
++                        match response {
++                            Ok(response) => {
++                                if let Some(choice) = response.choices.first() {
++                                    if let Some(delta) = &choice.delta {
++                                        if let Some(content) = &delta.content {
++                                            return Ok(LanguageModelCompletionEvent::Text(content.clone()));
++                                        }
++                                    }
++                                    if let Some(finish_reason) = &choice.finish_reason {
++                                        return Ok(LanguageModelCompletionEvent::Stop(
++                                            match finish_reason.as_str() {
++                                                "stop" => StopReason::EndTurn,
++                                                "length" => StopReason::MaxTokens,
++                                                _ => StopReason::EndTurn,
++                                            }
++                                        ));
++                                    }
++                                }
++                                if let Some(usage) = response.usage {
++                                    return Ok(LanguageModelCompletionEvent::UsageUpdate(TokenUsage {
++                                        input_tokens: usage.prompt_tokens,
++                                        output_tokens: usage.completion_tokens,
++                                        cache_creation_input_tokens: None,
++                                        cache_read_input_tokens: None,
++                                    }));
++                                }
++                                Ok(LanguageModelCompletionEvent::Text(String::new()))
++                            }
++                            Err(error) => Err(anyhow!(error)),
++                        }
++                    })
++                    .boxed())
++            }).await
++        }.boxed()
++    }
++
++    fn supports_structured_output(&self) -> bool {
++        false
++    }
++
++    fn supports_tool_use(&self) -> bool {
++        false
++    }
++}
++
++struct ConfigurationView {
++    api_key: String,
++    state: Entity<State>,
++}
++
++impl ui::Render for ConfigurationView {
++    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
++        const INSTRUCTIONS: [&str; 2] = [
++            "To use Chutes.ai models, you need to add your Chutes.ai API key.",
++            "You can create an API key at: https://chutes.ai/dashboard",
++        ];
++
++        v_flex()
++            .gap_2()
++            .child(
++                List::new()
++                    .child(
++                        v_flex()
++                            .gap_2()
++                            .child(Label::new("Instructions").size(LabelSize::Small))
++                            .child(
++                                v_flex()
++                                    .gap_1()
++                                    .children(INSTRUCTIONS.iter().map(|instruction| {
++                                        InstructionListItem::new(instruction)
++                                    })),
++                            ),
++                    )
++                    .child(ListSeparator)
++                    .child(
++                        ListItem::new("api_key")
++                            .spacing(ui::ListItemSpacing::Sparse)
++                            .child(Label::new("API Key").size(LabelSize::Small))
++                            .child(
++                                h_flex()
++                                    .w_full()
++                                    .justify_end()
++                                    .child(
++                                        SingleLineInput::new(&mut self.api_key)
++                                            .placeholder("Enter your Chutes.ai API key")
++                                            .password(true)
++                                            .on_input(cx.listener(|this, _, cx| {
++                                                cx.notify();
++                                            }))
++                                            .on_confirm(cx.listener(|this, _, cx| {
++                                                if !this.api_key.trim().is_empty() {
++                                                    this.save_api_key(cx);
++                                                }
++                                            }))
++                                            .w(px(200.0)),
++                                    ),
++                            ),
++                    )
++                    .child(ListSeparator)
++                    .child(
++                        ListItem::new("save_button")
++                            .spacing(ui::ListItemSpacing::Sparse)
++                            .child(
++                                Button::new("save", "Save API Key")
++                                    .style(ButtonStyle::Filled)
++                                    .size(ButtonSize::Small)
++                                    .disabled(self.api_key.trim().is_empty())
++                                    .on_click(cx.listener(|this, _, cx| {
++                                        this.save_api_key(cx);
++                                    })),
++                            ),
++                    ),
++            )
++    }
++}
++
++impl ConfigurationView {
++    fn save_api_key(&mut self, cx: &mut Context<Self>) {
++        let api_key = self.api_key.trim().to_string();
++        if !api_key.is_empty() {
++            self.state.update(cx, |state, cx| {
++                state.set_api_key(api_key, cx).detach_and_log_err(cx);
++            });
++            self.api_key.clear();
++        }
++    }
++}
+\ No newline at end of file
+diff --git a/crates/language_models/src/settings.rs b/crates/language_models/src/settings.rs
+index b163585aa7..21d08903a2 100644
+--- a/crates/language_models/src/settings.rs
++++ b/crates/language_models/src/settings.rs
+@@ -11,6 +11,7 @@ use crate::provider::{
+     self,
+     anthropic::AnthropicSettings,
+     bedrock::AmazonBedrockSettings,
++    chutes::ChutesSettings,
+     cloud::{self, ZedDotDevSettings},
+     deepseek::DeepSeekSettings,
+     google::GoogleSettings,
+@@ -33,6 +34,7 @@ pub fn init_settings(cx: &mut App) {
+ pub struct AllLanguageModelSettings {
+     pub anthropic: AnthropicSettings,
+     pub bedrock: AmazonBedrockSettings,
++    pub chutes: Option<ChutesSettings>,
+     pub deepseek: DeepSeekSettings,
+     pub google: GoogleSettings,
+     pub lmstudio: LmStudioSettings,
+@@ -50,6 +52,7 @@ pub struct AllLanguageModelSettings {
+ pub struct AllLanguageModelSettingsContent {
+     pub anthropic: Option<AnthropicSettingsContent>,
+     pub bedrock: Option<AmazonBedrockSettingsContent>,
++    pub chutes: Option<ChutesSettingsContent>,
+     pub deepseek: Option<DeepseekSettingsContent>,
+     pub google: Option<GoogleSettingsContent>,
+     pub lmstudio: Option<LmStudioSettingsContent>,
+@@ -138,6 +141,12 @@ pub struct ZedDotDevSettingsContent {
+     available_models: Option<Vec<cloud::AvailableModel>>,
+ }
+ 
++#[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
++pub struct ChutesSettingsContent {
++    pub api_url: Option<String>,
++    pub available_models: Option<Vec<provider::chutes::AvailableModel>>,
++}
++
+ #[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
+ pub struct OpenRouterSettingsContent {
+     pub api_url: Option<String>,
+@@ -227,6 +236,15 @@ impl settings::Settings for AllLanguageModelSettings {
+                 deepseek.as_ref().and_then(|s| s.available_models.clone()),
+             );
+ 
++            // Chutes
++            if let Some(chutes_content) = value.chutes.clone() {
++                let chutes_settings = ChutesSettings {
++                    api_url: chutes_content.api_url.unwrap_or_else(|| chutes::CHUTES_API_URL.to_string()),
++                    available_models: chutes_content.available_models.unwrap_or_default(),
++                };
++                settings.chutes = Some(chutes_settings);
++            }
++
+             // OpenAI
+             let openai = value.openai.clone();
+             merge(

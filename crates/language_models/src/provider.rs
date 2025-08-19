@@ -1,5 +1,6 @@
 pub mod anthropic;
 pub mod bedrock;
+pub mod chutes;
 pub mod cloud;
 pub mod copilot_chat;
 pub mod deepseek;

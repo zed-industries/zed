@@ -11,6 +11,7 @@ use crate::provider::{
     self,
     anthropic::AnthropicSettings,
     bedrock::AmazonBedrockSettings,
+    chutes::ChutesSettings,
     cloud::{self, ZedDotDevSettings},
     deepseek::DeepSeekSettings,
     google::GoogleSettings,
@@ -33,6 +34,7 @@ pub fn init_settings(cx: &mut App) {
 pub struct AllLanguageModelSettings {
     pub anthropic: AnthropicSettings,
     pub bedrock: AmazonBedrockSettings,
+    pub chutes: Option<ChutesSettings>,
     pub deepseek: DeepSeekSettings,
     pub google: GoogleSettings,
     pub lmstudio: LmStudioSettings,
@@ -50,6 +52,7 @@ pub struct AllLanguageModelSettings {
 pub struct AllLanguageModelSettingsContent {
     pub anthropic: Option<AnthropicSettingsContent>,
     pub bedrock: Option<AmazonBedrockSettingsContent>,
+    pub chutes: Option<ChutesSettingsContent>,
     pub deepseek: Option<DeepseekSettingsContent>,
     pub google: Option<GoogleSettingsContent>,
     pub lmstudio: Option<LmStudioSettingsContent>,
@@ -136,6 +139,12 @@ pub struct XAiSettingsContent {
 #[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
 pub struct ZedDotDevSettingsContent {
     available_models: Option<Vec<cloud::AvailableModel>>,
+}
+
+#[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
+pub struct ChutesSettingsContent {
+    pub api_url: Option<String>,
+    pub available_models: Option<Vec<provider::chutes::AvailableModel>>,
 }
 
 #[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
@@ -226,6 +235,15 @@ impl settings::Settings for AllLanguageModelSettings {
                 &mut settings.deepseek.available_models,
                 deepseek.as_ref().and_then(|s| s.available_models.clone()),
             );
+
+            // Chutes
+            if let Some(chutes_content) = value.chutes.clone() {
+                let chutes_settings = ChutesSettings {
+                    api_url: chutes_content.api_url.unwrap_or_else(|| chutes::CHUTES_API_URL.to_string()),
+                    available_models: chutes_content.available_models.unwrap_or_default(),
+                };
+                settings.chutes = Some(chutes_settings);
+            }
 
             // OpenAI
             let openai = value.openai.clone();

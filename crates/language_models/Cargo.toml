@@ -15,6 +15,7 @@ path = "src/language_models.rs"
 ai_onboarding.workspace = true
 anthropic = { workspace = true, features = ["schemars"] }
 anyhow.workspace = true
+chutes = { workspace = true, features = ["schemars"] }
 aws-config = { workspace = true, features = ["behavior-version-latest"] }
 aws-credential-types = { workspace = true, features = ["hardcoded-credentials"] }
 aws_http_client.workspace = true
