@@ -150,7 +150,6 @@ impl HistoryStore {
         }
 
         history_entries.extend(self.threads.iter().cloned().map(HistoryEntry::AcpThread));
-        // todo! validate what's in the context store.
         history_entries.extend(
             self.context_store
                 .read(cx)

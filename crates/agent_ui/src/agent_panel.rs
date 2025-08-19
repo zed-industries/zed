@@ -636,7 +636,6 @@ impl AgentPanel {
             )
         });
 
-        // todo! initial recent items.
         let acp_history_store =
             cx.new(|cx| agent2::HistoryStore::new(context_store.clone(), [], cx));
         let acp_history = cx.new(|cx| AcpThreadHistory::new(acp_history_store.clone(), window, cx));
@@ -1084,7 +1083,6 @@ impl AgentPanel {
                 self.set_active_view(previous_view, window, cx);
             }
         } else {
-            // todo!("call reload on the history store")
             self.thread_store
                 .update(cx, |thread_store, cx| thread_store.reload(cx))
                 .detach_and_log_err(cx);
