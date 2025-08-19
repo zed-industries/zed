@@ -15,7 +15,9 @@ use url::Url;
 pub enum MentionUri {
     File {
         abs_path: PathBuf,
-        is_directory: bool,
+    },
+    Directory {
+        abs_path: PathBuf,
     },
     Symbol {
         path: PathBuf,
@@ -79,14 +81,14 @@ impl MentionUri {
                         })
                     }
                 } else {
-                    let file_path =
+                    let abs_path =
                         PathBuf::from(format!("{}{}", url.host_str().unwrap_or(""), path));
-                    let is_directory = input.ends_with("/");
 
-                    Ok(Self::File {
-                        abs_path: file_path,
-                        is_directory,
-                    })
+                    if input.ends_with("/") {
+                        Ok(Self::Directory { abs_path })
+                    } else {
+                        Ok(Self::File { abs_path })
+                    }
                 }
             }
             "zed" => {
@@ -120,7 +122,7 @@ impl MentionUri {
 
     pub fn name(&self) -> String {
         match self {
-            MentionUri::File { abs_path, .. } => abs_path
+            MentionUri::File { abs_path, .. } | MentionUri::Directory { abs_path, .. } => abs_path
                 .file_name()
                 .unwrap_or_default()
                 .to_string_lossy()
@@ -138,18 +140,11 @@ impl MentionUri {
 
     pub fn icon_path(&self, cx: &mut App) -> SharedString {
         match self {
-            MentionUri::File {
-                abs_path,
-                is_directory,
-            } => {
-                if *is_directory {
-                    FileIcons::get_folder_icon(false, cx)
-                        .unwrap_or_else(|| IconName::Folder.path().into())
-                } else {
-                    FileIcons::get_icon(abs_path, cx)
-                        .unwrap_or_else(|| IconName::File.path().into())
-                }
+            MentionUri::File { abs_path } => {
+                FileIcons::get_icon(abs_path, cx).unwrap_or_else(|| IconName::File.path().into())
             }
+            MentionUri::Directory { .. } => FileIcons::get_folder_icon(false, cx)
+                .unwrap_or_else(|| IconName::Folder.path().into()),
             MentionUri::Symbol { .. } => IconName::Code.path().into(),
             MentionUri::Thread { .. } => IconName::Thread.path().into(),
             MentionUri::TextThread { .. } => IconName::Thread.path().into(),
@@ -165,13 +160,16 @@ impl MentionUri {
 
     pub fn to_uri(&self) -> Url {
         match self {
-            MentionUri::File {
-                abs_path,
-                is_directory,
-            } => {
+            MentionUri::File { abs_path } => {
+                let mut url = Url::parse("file:///").unwrap();
+                let path = abs_path.to_string_lossy();
+                url.set_path(&path);
+                url
+            }
+            MentionUri::Directory { abs_path } => {
                 let mut url = Url::parse("file:///").unwrap();
                 let mut path = abs_path.to_string_lossy().to_string();
-                if *is_directory && !path.ends_with("/") {
+                if !path.ends_with("/") {
                     path.push_str("/");
                 }
                 url.set_path(&path);
@@ -274,12 +272,8 @@ mod tests {
         let file_uri = "file:///path/to/file.rs";
         let parsed = MentionUri::parse(file_uri).unwrap();
         match &parsed {
-            MentionUri::File {
-                abs_path,
-                is_directory,
-            } => {
+            MentionUri::File { abs_path } => {
                 assert_eq!(abs_path.to_str().unwrap(), "/path/to/file.rs");
-                assert!(!is_directory);
             }
             _ => panic!("Expected File variant"),
         }
@@ -291,32 +285,26 @@ mod tests {
         let file_uri = "file:///path/to/dir/";
         let parsed = MentionUri::parse(file_uri).unwrap();
         match &parsed {
-            MentionUri::File {
-                abs_path,
-                is_directory,
-            } => {
+            MentionUri::Directory { abs_path } => {
                 assert_eq!(abs_path.to_str().unwrap(), "/path/to/dir/");
-                assert!(is_directory);
             }
-            _ => panic!("Expected File variant"),
+            _ => panic!("Expected Directory variant"),
         }
         assert_eq!(parsed.to_uri().to_string(), file_uri);
     }
 
     #[test]
     fn test_to_directory_uri_with_slash() {
-        let uri = MentionUri::File {
+        let uri = MentionUri::Directory {
             abs_path: PathBuf::from("/path/to/dir/"),
-            is_directory: true,
         };
         assert_eq!(uri.to_uri().to_string(), "file:///path/to/dir/");
     }
 
     #[test]
     fn test_to_directory_uri_without_slash() {
-        let uri = MentionUri::File {
+        let uri = MentionUri::Directory {
             abs_path: PathBuf::from("/path/to/dir"),
-            is_directory: true,
         };
         assert_eq!(uri.to_uri().to_string(), "file:///path/to/dir/");
     }
