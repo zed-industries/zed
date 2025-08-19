@@ -910,7 +910,7 @@ impl LspAdapter for EsLintLspAdapter {
         let server_path = destination_path.join(Self::SERVER_PATH);
 
         if fs::metadata(&server_path).await.is_err() {
-            remove_matching(&container_dir, |entry| entry != destination_path).await;
+            remove_matching(&container_dir, |_| true).await;
 
             download_server_binary(
                 delegate,
