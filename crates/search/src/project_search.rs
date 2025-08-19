@@ -4111,7 +4111,7 @@ pub mod tests {
         });
         cx.run_until_parked();
         let project_search_view = pane
-            .read_with(&mut cx, |pane, _| {
+            .read_with(&cx, |pane, _| {
                 pane.active_item()
                     .and_then(|item| item.downcast::<ProjectSearchView>())
             })

@@ -669,10 +669,10 @@ impl LocalLspStore {
                 let this = this.clone();
                 move |_, cx| {
                     let this = this.clone();
-                    let mut cx = cx.clone();
+                    let cx = cx.clone();
                     async move {
-                        let Some(server) = this
-                            .read_with(&mut cx, |this, _| this.language_server_for_id(server_id))?
+                        let Some(server) =
+                            this.read_with(&cx, |this, _| this.language_server_for_id(server_id))?
                         else {
                             return Ok(None);
                         };
@@ -8154,7 +8154,7 @@ impl LspStore {
         envelope: TypedEnvelope<proto::MultiLspQuery>,
         mut cx: AsyncApp,
     ) -> Result<proto::MultiLspQueryResponse> {
-        let response_from_ssh = lsp_store.read_with(&mut cx, |this, _| {
+        let response_from_ssh = lsp_store.read_with(&cx, |this, _| {
             let (upstream_client, project_id) = this.upstream_client()?;
             let mut payload = envelope.payload.clone();
             payload.project_id = project_id;
@@ -8176,7 +8176,7 @@ impl LspStore {
                 buffer.wait_for_version(version.clone())
             })?
             .await?;
-        let buffer_version = buffer.read_with(&mut cx, |buffer, _| buffer.version())?;
+        let buffer_version = buffer.read_with(&cx, |buffer, _| buffer.version())?;
         match envelope
             .payload
             .strategy
@@ -8717,7 +8717,7 @@ impl LspStore {
             })?
             .context("worktree not found")?;
         let (old_abs_path, new_abs_path) = {
-            let root_path = worktree.read_with(&mut cx, |this, _| this.abs_path())?;
+            let root_path = worktree.read_with(&cx, |this, _| this.abs_path())?;
             let new_path = PathBuf::from_proto(envelope.payload.new_path.clone());
             (root_path.join(&old_path), root_path.join(&new_path))
         };
@@ -8732,7 +8732,7 @@ impl LspStore {
         )
         .await;
         let response = Worktree::handle_rename_entry(worktree, envelope.payload, cx.clone()).await;
-        this.read_with(&mut cx, |this, _| {
+        this.read_with(&cx, |this, _| {
             this.did_rename_entry(worktree_id, &old_abs_path, &new_abs_path, is_dir);
         })
         .ok();
@@ -8966,10 +8966,10 @@ impl LspStore {
     async fn handle_lsp_ext_cancel_flycheck(
         lsp_store: Entity<Self>,
         envelope: TypedEnvelope<proto::LspExtCancelFlycheck>,
-        mut cx: AsyncApp,
+        cx: AsyncApp,
     ) -> Result<proto::Ack> {
         let server_id = LanguageServerId(envelope.payload.language_server_id as usize);
-        lsp_store.read_with(&mut cx, |lsp_store, _| {
+        lsp_store.read_with(&cx, |lsp_store, _| {
             if let Some(server) = lsp_store.language_server_for_id(server_id) {
                 server
                     .notify::<lsp_store::lsp_ext_command::LspExtCancelFlycheck>(&())
@@ -9018,10 +9018,10 @@ impl LspStore {
     async fn handle_lsp_ext_clear_flycheck(
         lsp_store: Entity<Self>,
         envelope: TypedEnvelope<proto::LspExtClearFlycheck>,
-        mut cx: AsyncApp,
+        cx: AsyncApp,
     ) -> Result<proto::Ack> {
         let server_id = LanguageServerId(envelope.payload.language_server_id as usize);
-        lsp_store.read_with(&mut cx, |lsp_store, _| {
+        lsp_store.read_with(&cx, |lsp_store, _| {
             if let Some(server) = lsp_store.language_server_for_id(server_id) {
                 server
                     .notify::<lsp_store::lsp_ext_command::LspExtClearFlycheck>(&())
@@ -9789,7 +9789,7 @@ impl LspStore {
         let peer_id = envelope.original_sender_id().unwrap_or_default();
         let symbol = envelope.payload.symbol.context("invalid symbol")?;
         let symbol = Self::deserialize_symbol(symbol)?;
-        let symbol = this.read_with(&mut cx, |this, _| {
+        let symbol = this.read_with(&cx, |this, _| {
             let signature = this.symbol_signature(&symbol.path);
             anyhow::ensure!(signature == symbol.signature, "invalid symbol signature");
             Ok(symbol)
