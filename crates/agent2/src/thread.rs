@@ -1977,8 +1977,20 @@ impl From<UserMessageContent> for acp::ContentBlock {
                 annotations: None,
                 uri: None,
             }),
-            UserMessageContent::Mention { .. } => {
-                todo!()
+            UserMessageContent::Mention { uri, content } => {
+                acp::ContentBlock::ResourceLink(acp::ResourceLink {
+                    uri: uri.to_uri().to_string(),
+                    name: uri.name(),
+                    annotations: None,
+                    description: if content.is_empty() {
+                        None
+                    } else {
+                        Some(content)
+                    },
+                    mime_type: None,
+                    size: None,
+                    title: None,
+                })
             }
         }
     }
