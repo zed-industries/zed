@@ -26,7 +26,6 @@ use std::{
     time::Duration,
     time::Instant,
 };
-use tracing::instrument;
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Serialize)]
 pub struct ConnectionId {
