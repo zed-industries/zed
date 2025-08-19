@@ -17,6 +17,7 @@ use fs::{Fs, RealFs};
 use futures::{StreamExt, channel::oneshot, future};
 use git::GitHostingProviderRegistry;
 use gpui::{App, AppContext as _, Application, AsyncApp, Focusable as _, UpdateGlobal as _};
+use postage::stream::Stream as _;
 
 use gpui_tokio::Tokio;
 use http_client::{Url, read_proxy_from_env};
@@ -747,6 +748,49 @@ pub fn main() {
             }
         })
         .detach();
+
+        if let Ok(selection_change_command) = env::var("ZED_SELECTION_CHANGE_CMD") {
+            log::info!(
+                "Will run {} when the selection changes",
+                selection_change_command
+            );
+            let mut cursor_reciever = editor::LAST_CURSOR_POSITION_WATCH.1.clone();
+            cx.background_spawn(async move {
+                while let Some(mut cursor) = cursor_reciever.recv().await {
+                    loop {
+                        // todo! Check if it's changed meanwhile and refresh.
+                        if let Some(cursor) = dbg!(&cursor) {
+                            let status = smol::process::Command::new(&selection_change_command)
+                                .arg(cursor.worktree_path.as_ref())
+                                .arg(format!(
+                                    "{}:{}:{}",
+                                    cursor.path.display(),
+                                    cursor.point.row + 1,
+                                    cursor.point.column + 1
+                                ))
+                                .status()
+                                .await;
+                            match status {
+                                Ok(status) => {
+                                    if !status.success() {
+                                        log::error!("Command failed with status {}", status);
+                                    }
+                                }
+                                Err(err) => {
+                                    log::error!("Command failed with error {}", err);
+                                }
+                            }
+                        }
+                        let new_cursor = cursor_reciever.borrow();
+                        if *new_cursor == cursor {
+                            break;
+                        }
+                        cursor = new_cursor.clone();
+                    }
+                }
+            })
+            .detach();
+        }
     });
 }
 

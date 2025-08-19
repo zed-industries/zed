@@ -176,17 +176,15 @@ use snippet::Snippet;
 use std::{
     any::TypeId,
     borrow::Cow,
-    cell::OnceCell,
-    cell::RefCell,
+    cell::{OnceCell, RefCell},
     cmp::{self, Ordering, Reverse},
     iter::Peekable,
     mem,
     num::NonZeroU32,
-    ops::Not,
-    ops::{ControlFlow, Deref, DerefMut, Range, RangeInclusive},
+    ops::{ControlFlow, Deref, DerefMut, Not, Range, RangeInclusive},
     path::{Path, PathBuf},
     rc::Rc,
-    sync::Arc,
+    sync::{Arc, LazyLock},
     time::{Duration, Instant},
 };
 use sum_tree::TreeMap;
@@ -236,6 +234,21 @@ pub(crate) const SCROLL_CENTER_TOP_BOTTOM_DEBOUNCE_TIMEOUT: Duration = Duration:
 pub(crate) const EDIT_PREDICTION_KEY_CONTEXT: &str = "edit_prediction";
 pub(crate) const EDIT_PREDICTION_CONFLICT_KEY_CONTEXT: &str = "edit_prediction_conflict";
 pub(crate) const MINIMAP_FONT_SIZE: AbsoluteLength = AbsoluteLength::Pixels(px(2.));
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct LastCursorPosition {
+    pub path: PathBuf,
+    pub worktree_path: Arc<Path>,
+    pub point: Point,
+}
+
+pub static LAST_CURSOR_POSITION_WATCH: LazyLock<(
+    Mutex<postage::watch::Sender<Option<LastCursorPosition>>>,
+    postage::watch::Receiver<Option<LastCursorPosition>>,
+)> = LazyLock::new(|| {
+    let (sender, receiver) = postage::watch::channel();
+    (Mutex::new(sender), receiver)
+});
 
 pub type RenderDiffHunkControlsFn = Arc<
     dyn Fn(
@@ -3018,10 +3031,28 @@ impl Editor {
         let new_cursor_position = newest_selection.head();
         let selection_start = newest_selection.start;
 
+        let new_cursor_point = new_cursor_position.to_point(buffer);
+        if let Some(project) = self.project()
+            && let Some((path, worktree_path)) =
+                self.file_at(new_cursor_point, cx).and_then(|file| {
+                    file.as_local().and_then(|file| {
+                        let worktree =
+                            project.read(cx).worktree_for_id(file.worktree_id(cx), cx)?;
+                        Some((file.abs_path(cx), worktree.read(cx).abs_path()))
+                    })
+                })
+        {
+            *LAST_CURSOR_POSITION_WATCH.0.lock().borrow_mut() = Some(LastCursorPosition {
+                path,
+                worktree_path,
+                point: new_cursor_point,
+            });
+        }
+
         if effects.nav_history.is_none() || effects.nav_history == Some(true) {
             self.push_to_nav_history(
                 *old_cursor_position,
-                Some(new_cursor_position.to_point(buffer)),
+                Some(new_cursor_point),
                 false,
                 effects.nav_history == Some(true),
                 cx,
