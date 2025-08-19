@@ -666,17 +666,6 @@ impl PlanEntry {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
-pub struct AgentServerName(pub SharedString);
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AcpThreadMetadata {
-    pub agent: AgentServerName,
-    pub id: acp::SessionId,
-    pub title: SharedString,
-    pub updated_at: DateTime<Utc>,
-}
-
 pub struct AcpThread {
     title: SharedString,
     entries: Vec<AgentThreadEntry>,
