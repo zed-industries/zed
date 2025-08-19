@@ -622,7 +622,7 @@ pub fn execute_proxy(identifier: String, is_reconnecting: bool) -> Result<()> {
                     Err(anyhow!(error))?;
                 }
                 n => {
-                    stderr.write_all(&mut stderr_buffer[..n]).await?;
+                    stderr.write_all(&stderr_buffer[..n]).await?;
                     stderr.flush().await?;
                 }
             }
