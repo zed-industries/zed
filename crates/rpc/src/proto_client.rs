@@ -193,7 +193,7 @@ impl AnyProtoClient {
             next_lsp_request_id: NEXT_LSP_REQUEST_ID
                 .get_or_init(|| Arc::new(AtomicU64::new(0)))
                 .clone(),
-            request_ids: REQUEST_IDS.get_or_init(|| RequestIds::default()).clone(),
+            request_ids: REQUEST_IDS.get_or_init(RequestIds::default).clone(),
         }))
     }
 
@@ -223,7 +223,7 @@ impl AnyProtoClient {
         self.0.client.send(envelope, T::NAME)
     }
 
-    pub fn request_lsp<T: LspRequestMessage>(
+    pub fn request_lsp<T>(
         &self,
         project_id: u64,
         timeout: Duration,

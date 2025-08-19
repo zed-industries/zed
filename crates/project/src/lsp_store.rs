@@ -6824,9 +6824,7 @@ impl LspStore {
             );
             let buffer = buffer.clone();
             cx.spawn(async move |weak_project, cx| {
-                let Some(project) = weak_project.upgrade() else {
-                    return None;
-                };
+                let project = weak_project.upgrade()?;
                 let signatures = join_all(
                     request_task
                         .await
@@ -6889,9 +6887,7 @@ impl LspStore {
             );
             let buffer = buffer.clone();
             cx.spawn(async move |weak_project, cx| {
-                let Some(project) = weak_project.upgrade() else {
-                    return None;
-                };
+                let project = weak_project.upgrade()?;
                 let hovers = join_all(
                     request_task
                         .await

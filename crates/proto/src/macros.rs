@@ -76,19 +76,19 @@ macro_rules! lsp_messages {
         $(impl LspRequestMessage for $request_name {
             type Response = $response_name;
 
-            fn to_proto_query(self) -> crate::lsp_query::Request {
-                crate::lsp_query::Request::$request_name(self)
+            fn to_proto_query(self) -> $crate::lsp_query::Request {
+                $crate::lsp_query::Request::$request_name(self)
             }
 
-            fn response_to_proto_query(response: Self::Response) -> crate::lsp_response::Response {
-                crate::lsp_response::Response::$response_name(response)
+            fn response_to_proto_query(response: Self::Response) -> $crate::lsp_response::Response {
+                $crate::lsp_response::Response::$response_name(response)
             }
 
             fn buffer_id(&self) -> u64 {
                 self.buffer_id
             }
 
-            fn version(&self) -> &[crate::VectorClockEntry] {
+            fn version(&self) -> &[$crate::VectorClockEntry] {
                 &self.version
             }
 
