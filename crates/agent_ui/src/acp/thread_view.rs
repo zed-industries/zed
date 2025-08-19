@@ -3429,8 +3429,7 @@ impl AcpThreadView {
         cx: &mut Context<Self>,
     ) {
         self.message_editor.update(cx, |message_editor, cx| {
-            message_editor.insert_dragged_files(paths, window, cx);
-            drop(added_worktrees);
+            message_editor.insert_dragged_files(paths, added_worktrees, window, cx);
         })
     }
 

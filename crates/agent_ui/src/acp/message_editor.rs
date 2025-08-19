@@ -26,7 +26,7 @@ use gpui::{
 };
 use language::{Buffer, Language};
 use language_model::LanguageModelImage;
-use project::{CompletionIntent, Project, ProjectPath, Worktree};
+use project::{Project, ProjectPath, Worktree};
 use rope::Point;
 use settings::Settings;
 use std::{
@@ -202,18 +202,18 @@ impl MessageEditor {
         mention_uri: MentionUri,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) {
+    ) -> Task<()> {
         let snapshot = self
             .editor
             .update(cx, |editor, cx| editor.snapshot(window, cx));
         let Some((excerpt_id, _, _)) = snapshot.buffer_snapshot.as_singleton() else {
-            return;
+            return Task::ready(());
         };
         let Some(anchor) = snapshot
             .buffer_snapshot
             .anchor_in_excerpt(*excerpt_id, start)
         else {
-            return;
+            return Task::ready(());
         };
 
         if let MentionUri::File { abs_path, .. } = &mention_uri {
@@ -228,7 +228,7 @@ impl MessageEditor {
                     .read(cx)
                     .project_path_for_absolute_path(abs_path, cx)
                 else {
-                    return;
+                    return Task::ready(());
                 };
                 let image = cx
                     .spawn(async move |_, cx| {
@@ -252,9 +252,9 @@ impl MessageEditor {
                     window,
                     cx,
                 ) else {
-                    return;
+                    return Task::ready(());
                 };
-                self.confirm_mention_for_image(
+                return self.confirm_mention_for_image(
                     crease_id,
                     anchor,
                     Some(abs_path.clone()),
@@ -262,7 +262,6 @@ impl MessageEditor {
                     window,
                     cx,
                 );
-                return;
             }
         }
 
@@ -276,27 +275,28 @@ impl MessageEditor {
             window,
             cx,
         ) else {
-            return;
+            return Task::ready(());
         };
 
         match mention_uri {
             MentionUri::Fetch { url } => {
-                self.confirm_mention_for_fetch(crease_id, anchor, url, window, cx);
+                self.confirm_mention_for_fetch(crease_id, anchor, url, window, cx)
             }
             MentionUri::Directory { abs_path } => {
-                self.confirm_mention_for_directory(crease_id, anchor, abs_path, window, cx);
+                self.confirm_mention_for_directory(crease_id, anchor, abs_path, window, cx)
             }
             MentionUri::Thread { id, name } => {
-                self.confirm_mention_for_thread(crease_id, anchor, id, name, window, cx);
+                self.confirm_mention_for_thread(crease_id, anchor, id, name, window, cx)
             }
             MentionUri::TextThread { path, name } => {
-                self.confirm_mention_for_text_thread(crease_id, anchor, path, name, window, cx);
+                self.confirm_mention_for_text_thread(crease_id, anchor, path, name, window, cx)
             }
             MentionUri::File { .. }
             | MentionUri::Symbol { .. }
             | MentionUri::Rule { .. }
             | MentionUri::Selection { .. } => {
                 self.mention_set.insert_uri(crease_id, mention_uri.clone());
+                Task::ready(())
             }
         }
     }
@@ -308,7 +308,7 @@ impl MessageEditor {
         abs_path: PathBuf,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) {
+    ) -> Task<()> {
         fn collect_files_in_path(worktree: &Worktree, path: &Path) -> Vec<(Arc<Path>, PathBuf)> {
             let mut files = Vec::new();
 
@@ -331,13 +331,13 @@ impl MessageEditor {
             .read(cx)
             .project_path_for_absolute_path(&abs_path, cx)
         else {
-            return;
+            return Task::ready(());
         };
         let Some(entry) = self.project.read(cx).entry_for_path(&project_path, cx) else {
-            return;
+            return Task::ready(());
         };
         let Some(worktree) = self.project.read(cx).worktree_for_entry(entry.id, cx) else {
-            return;
+            return Task::ready(());
         };
         let project = self.project.clone();
         let task = cx.spawn(async move |_, cx| {
@@ -396,7 +396,9 @@ impl MessageEditor {
             })
             .shared();
 
-        self.mention_set.directories.insert(abs_path, task.clone());
+        self.mention_set
+            .directories
+            .insert(abs_path.clone(), task.clone());
 
         let editor = self.editor.clone();
         cx.spawn_in(window, async move |this, cx| {
@@ -414,9 +416,12 @@ impl MessageEditor {
                         editor.remove_creases([crease_id], cx);
                     })
                     .ok();
+                this.update(cx, |this, _cx| {
+                    this.mention_set.directories.remove(&abs_path);
+                })
+                .ok();
             }
         })
-        .detach();
     }
 
     fn confirm_mention_for_fetch(
@@ -426,13 +431,13 @@ impl MessageEditor {
         url: url::Url,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) {
+    ) -> Task<()> {
         let Some(http_client) = self
             .workspace
             .update(cx, |workspace, _cx| workspace.client().http_client())
             .ok()
         else {
-            return;
+            return Task::ready(());
         };
 
         let url_string = url.to_string();
@@ -450,9 +455,9 @@ impl MessageEditor {
         cx.spawn_in(window, async move |this, cx| {
             let fetch = fetch.await.notify_async_err(cx);
             this.update(cx, |this, cx| {
-                let mention_uri = MentionUri::Fetch { url };
                 if fetch.is_some() {
-                    this.mention_set.insert_uri(crease_id, mention_uri.clone());
+                    this.mention_set
+                        .insert_uri(crease_id, MentionUri::Fetch { url });
                 } else {
                     // Remove crease if we failed to fetch
                     this.editor.update(cx, |editor, cx| {
@@ -461,11 +466,11 @@ impl MessageEditor {
                         });
                         editor.remove_creases([crease_id], cx);
                     });
+                    this.mention_set.fetch_results.remove(&url);
                 }
             })
             .ok();
         })
-        .detach();
     }
 
     pub fn confirm_mention_for_selection(
@@ -528,7 +533,7 @@ impl MessageEditor {
         name: String,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) {
+    ) -> Task<()> {
         let uri = MentionUri::Thread {
             id: id.clone(),
             name,
@@ -546,7 +551,7 @@ impl MessageEditor {
             })
             .shared();
 
-        self.mention_set.insert_thread(id, task.clone());
+        self.mention_set.insert_thread(id.clone(), task.clone());
 
         let editor = self.editor.clone();
         cx.spawn_in(window, async move |this, cx| {
@@ -564,9 +569,12 @@ impl MessageEditor {
                         editor.remove_creases([crease_id], cx);
                     })
                     .ok();
+                this.update(cx, |this, _| {
+                    this.mention_set.thread_summaries.remove(&id);
+                })
+                .ok();
             }
         })
-        .detach();
     }
 
     fn confirm_mention_for_text_thread(
@@ -577,7 +585,7 @@ impl MessageEditor {
         name: String,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) {
+    ) -> Task<()> {
         let uri = MentionUri::TextThread {
             path: path.clone(),
             name,
@@ -595,7 +603,8 @@ impl MessageEditor {
             })
             .shared();
 
-        self.mention_set.insert_text_thread(path, task.clone());
+        self.mention_set
+            .insert_text_thread(path.clone(), task.clone());
 
         let editor = self.editor.clone();
         cx.spawn_in(window, async move |this, cx| {
@@ -613,9 +622,12 @@ impl MessageEditor {
                         editor.remove_creases([crease_id], cx);
                     })
                     .ok();
+                this.update(cx, |this, _| {
+                    this.mention_set.text_thread_summaries.remove(&path);
+                })
+                .ok();
             }
         })
-        .detach();
     }
 
     pub fn contents(
@@ -784,13 +796,15 @@ impl MessageEditor {
             ) else {
                 return;
             };
-            self.confirm_mention_for_image(crease_id, anchor, None, task, window, cx);
+            self.confirm_mention_for_image(crease_id, anchor, None, task, window, cx)
+                .detach();
         }
     }
 
     pub fn insert_dragged_files(
-        &self,
+        &mut self,
         paths: Vec<project::ProjectPath>,
+        added_worktrees: Vec<Entity<Worktree>>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -798,6 +812,7 @@ impl MessageEditor {
         let Some(buffer) = buffer.read(cx).as_singleton() else {
             return;
         };
+        let mut tasks = Vec::new();
         for path in paths {
             let Some(entry) = self.project.read(cx).entry_for_path(&path, cx) else {
                 continue;
@@ -805,39 +820,44 @@ impl MessageEditor {
             let Some(abs_path) = self.project.read(cx).absolute_path(&path, cx) else {
                 continue;
             };
-
-            let anchor = buffer.update(cx, |buffer, _cx| buffer.anchor_before(buffer.len()));
             let path_prefix = abs_path
                 .file_name()
                 .unwrap_or(path.path.as_os_str())
                 .display()
                 .to_string();
-            let Some(completion) = ContextPickerCompletionProvider::completion_for_path(
-                path,
-                &path_prefix,
-                false,
-                entry.is_dir(),
-                anchor..anchor,
-                cx.weak_entity(),
-                self.project.clone(),
-                cx,
-            ) else {
-                continue;
+            let (file_name, _) =
+                crate::context_picker::file_context_picker::extract_file_name_and_directory(
+                    &path.path,
+                    &path_prefix,
+                );
+
+            let uri = if entry.is_dir() {
+                MentionUri::Directory { abs_path }
+            } else {
+                MentionUri::File { abs_path }
             };
+
+            let new_text = format!("{} ", uri.as_link());
+            let content_len = new_text.len() - 1;
+
+            let anchor = buffer.update(cx, |buffer, _cx| buffer.anchor_before(buffer.len()));
 
             self.editor.update(cx, |message_editor, cx| {
                 message_editor.edit(
                     [(
                         multi_buffer::Anchor::max()..multi_buffer::Anchor::max(),
-                        completion.new_text,
+                        new_text,
                     )],
                     cx,
                 );
             });
-            if let Some(confirm) = completion.confirm.clone() {
-                confirm(CompletionIntent::Complete, window, cx);
-            }
+            tasks.push(self.confirm_completion(file_name, anchor, content_len, uri, window, cx));
         }
+        cx.spawn(async move |_, _| {
+            join_all(tasks).await;
+            drop(added_worktrees);
+        })
+        .detach();
     }
 
     pub fn set_read_only(&mut self, read_only: bool, cx: &mut Context<Self>) {
@@ -855,7 +875,7 @@ impl MessageEditor {
         image: Shared<Task<Result<Arc<Image>, String>>>,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) {
+    ) -> Task<()> {
         let editor = self.editor.clone();
         let task = cx
             .spawn_in(window, {
@@ -900,9 +920,12 @@ impl MessageEditor {
                         editor.remove_creases([crease_id], cx);
                     })
                     .ok();
+                this.update(cx, |this, _cx| {
+                    this.mention_set.images.remove(&crease_id);
+                })
+                .ok();
             }
         })
-        .detach();
     }
 
     pub fn set_mode(&mut self, mode: EditorMode, cx: &mut Context<Self>) {
