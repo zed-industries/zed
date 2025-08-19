@@ -19,8 +19,8 @@ use futures::{
 use git::repository::DiffType;
 use gpui::{App, AsyncApp, Context, Entity, SharedString, Task, WeakEntity};
 use language_model::{
-    LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelImage,
-    LanguageModelProviderId, LanguageModelRequest, LanguageModelRequestMessage,
+    LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelExt,
+    LanguageModelImage, LanguageModelProviderId, LanguageModelRequest, LanguageModelRequestMessage,
     LanguageModelRequestTool, LanguageModelToolResult, LanguageModelToolResultContent,
     LanguageModelToolSchemaFormat, LanguageModelToolUse, LanguageModelToolUseId, Role, StopReason,
     TokenUsage,
@@ -476,6 +476,7 @@ pub enum ThreadEvent {
     ToolCall(acp::ToolCall),
     ToolCallUpdate(acp_thread::ToolCallUpdate),
     ToolCallAuthorization(ToolCallAuthorization),
+    TokenUsageUpdate(acp_thread::TokenUsage),
     TitleUpdate(SharedString),
     Retry(acp_thread::RetryStatus),
     Stop(acp::StopReason),
@@ -1035,6 +1036,16 @@ impl Thread {
                         CompletionRequestStatus::ToolUseLimitReached,
                     )) => {
                         *tool_use_limit_reached = true;
+                    }
+                    Ok(LanguageModelCompletionEvent::UsageUpdate(token_usage)) => {
+                        event_stream.send_token_usage_update(acp_thread::TokenUsage {
+                            max_tokens: model.max_token_count_for_mode(
+                                request
+                                    .mode
+                                    .unwrap_or(cloud_llm_client::CompletionMode::Normal),
+                            ),
+                            used_tokens: token_usage.total_tokens(),
+                        });
                     }
                     Ok(LanguageModelCompletionEvent::Stop(StopReason::Refusal)) => {
                         *refusal = true;
@@ -1936,6 +1947,12 @@ impl ThreadEventStream {
                 }
                 .into(),
             )))
+            .ok();
+    }
+
+    fn send_token_usage_update(&self, usage: acp_thread::TokenUsage) {
+        self.0
+            .unbounded_send(Ok(ThreadEvent::TokenUsageUpdate(usage)))
             .ok();
     }
 

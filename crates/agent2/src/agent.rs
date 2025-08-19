@@ -556,6 +556,11 @@ impl NativeAgentConnection {
                                     thread.update_tool_call(update, cx)
                                 })??;
                             }
+                            ThreadEvent::TokenUsageUpdate(usage) => {
+                                acp_thread.update(cx, |thread, cx| {
+                                    thread.update_token_usage(usage, cx)
+                                })?;
+                            }
                             ThreadEvent::TitleUpdate(title) => {
                                 acp_thread
                                     .update(cx, |thread, cx| thread.update_title(title, cx))??;
