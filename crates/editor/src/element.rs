@@ -82,7 +82,7 @@ use sum_tree::Bias;
 use text::{BufferId, SelectionGoal};
 use theme::{ActiveTheme, Appearance, BufferLineHeight, PlayerColor};
 use ui::{
-    ButtonLike, ContextMenu, KeyBinding, POPOVER_Y_PADDING, Tooltip, h_flex, prelude::*,
+    ButtonLike, ContextMenu, Indicator, KeyBinding, POPOVER_Y_PADDING, Tooltip, h_flex, prelude::*,
     right_click_menu,
 };
 use unicode_segmentation::UnicodeSegmentation;
@@ -3563,9 +3563,8 @@ impl EditorElement {
         cx: &mut App,
     ) -> impl IntoElement {
         let editor = self.editor.read(cx);
-        let file_status = editor
-            .buffer
-            .read(cx)
+        let multi_buffer = editor.buffer.read(cx);
+        let file_status = multi_buffer
             .all_diff_hunks_expanded()
             .then(|| {
                 editor
@@ -3575,6 +3574,17 @@ impl EditorElement {
                     .status_for_buffer_id(for_excerpt.buffer_id, cx)
             })
             .flatten();
+        let indicator = multi_buffer
+            .buffer(for_excerpt.buffer_id)
+            .and_then(|buffer| {
+                let buffer = buffer.read(cx);
+                let indicator_color = match (buffer.has_conflict(), buffer.is_dirty()) {
+                    (true, _) => Some(Color::Warning),
+                    (_, true) => Some(Color::Accent),
+                    (false, false) => None,
+                };
+                indicator_color.map(|indicator_color| Indicator::dot().color(indicator_color))
+            });
 
         let include_root = editor
             .project
@@ -3683,6 +3693,7 @@ impl EditorElement {
                                 })
                                 .take(1),
                         )
+                        .children(indicator)
                         .child(
                             h_flex()
                                 .cursor_pointer()
