@@ -2865,7 +2865,7 @@ impl AgentPanel {
                         ),
                     )
                     .child(
-                        v_flex().pl_1().pr_1p5().gap_1().children(
+                        v_flex().p_1().pr_1p5().gap_1().children(
                             recent_history
                                 .into_iter()
                                 .enumerate()
