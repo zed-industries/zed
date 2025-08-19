@@ -2,6 +2,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::claude::tools::{ClaudeTool, EditToolParams, ReadToolParams};
+use crate::tools::WriteToolParams;
 use acp_thread::AcpThread;
 use agent_client_protocol as acp;
 use agent_settings::AgentSettings;
@@ -42,6 +43,9 @@ impl ClaudeZedMcpServer {
             thread_rx: thread_rx.clone(),
         });
         mcp_server.add_tool(EditTool {
+            thread_rx: thread_rx.clone(),
+        });
+        mcp_server.add_tool(WriteTool {
             thread_rx: thread_rx.clone(),
         });
 
@@ -330,6 +334,50 @@ impl McpServerTool for EditTool {
         thread
             .update(cx, |thread, cx| {
                 thread.write_text_file(input.abs_path, new_content, cx)
+            })?
+            .await?;
+
+        Ok(ToolResponse {
+            content: vec![],
+            structured_content: (),
+        })
+    }
+}
+
+#[derive(Clone)]
+pub struct WriteTool {
+    thread_rx: watch::Receiver<WeakEntity<AcpThread>>,
+}
+
+impl McpServerTool for WriteTool {
+    type Input = WriteToolParams;
+    type Output = ();
+
+    const NAME: &'static str = "Write";
+
+    fn annotations(&self) -> ToolAnnotations {
+        ToolAnnotations {
+            title: Some("Write file".to_string()),
+            read_only_hint: Some(false),
+            destructive_hint: Some(false),
+            open_world_hint: Some(false),
+            idempotent_hint: Some(false),
+        }
+    }
+
+    async fn run(
+        &self,
+        input: Self::Input,
+        cx: &mut AsyncApp,
+    ) -> Result<ToolResponse<Self::Output>> {
+        let mut thread_rx = self.thread_rx.clone();
+        let Some(thread) = thread_rx.recv().await?.upgrade() else {
+            anyhow::bail!("Thread closed");
+        };
+
+        thread
+            .update(cx, |thread, cx| {
+                thread.write_text_file(input.abs_path, input.content, cx)
             })?
             .await?;
 

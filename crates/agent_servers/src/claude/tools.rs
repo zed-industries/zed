@@ -93,7 +93,7 @@ impl ClaudeTool {
             }
             Self::MultiEdit(None) => "Multi Edit".into(),
             Self::Write(Some(params)) => {
-                format!("Write {}", params.file_path.display())
+                format!("Write {}", params.abs_path.display())
             }
             Self::Write(None) => "Write".into(),
             Self::Glob(Some(params)) => {
@@ -153,7 +153,7 @@ impl ClaudeTool {
             }],
             Self::Write(Some(params)) => vec![acp::ToolCallContent::Diff {
                 diff: acp::Diff {
-                    path: params.file_path.clone(),
+                    path: params.abs_path.clone(),
                     old_text: None,
                     new_text: params.content.clone(),
                 },
@@ -229,7 +229,10 @@ impl ClaudeTool {
                     line: None,
                 }]
             }
-            Self::Write(Some(WriteToolParams { file_path, .. })) => {
+            Self::Write(Some(WriteToolParams {
+                abs_path: file_path,
+                ..
+            })) => {
                 vec![acp::ToolCallLocation {
                     path: file_path.clone(),
                     line: None,
@@ -343,11 +346,15 @@ pub struct ReadToolParams {
     pub limit: Option<u32>,
 }
 
+/// Writes content to the specified file in the project.
+///
+/// In sessions with mcp__zed__Write always use it instead of Write as it will
+/// allow the user to conveniently review changes.
 #[derive(Deserialize, JsonSchema, Debug)]
 pub struct WriteToolParams {
-    /// Absolute path for new file
-    pub file_path: PathBuf,
-    /// File content
+    /// The absolute path of the file to write.
+    pub abs_path: PathBuf,
+    /// The full content to write.
     pub content: String,
 }
 

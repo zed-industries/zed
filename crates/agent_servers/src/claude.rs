@@ -375,7 +375,7 @@ fn spawn_claude(
                 mcp_server::ReadTool::NAME
             ),
             "--disallowedTools",
-            "Read,Edit",
+            "Read,Write,Edit,MultiEdit",
         ])
         .args(match mode {
             ClaudeSessionMode::Start => ["--session-id".to_string(), session_id.to_string()],
