@@ -32,8 +32,8 @@ impl HistoryEntry {
 
     pub fn id(&self) -> HistoryEntryId {
         match self {
-            HistoryEntry::AcpThread(thread) => HistoryEntryId::Thread(thread.id.clone()),
-            HistoryEntry::TextThread(context) => HistoryEntryId::Context(context.path.clone()),
+            HistoryEntry::AcpThread(thread) => HistoryEntryId::AcpThread(thread.id.clone()),
+            HistoryEntry::TextThread(context) => HistoryEntryId::TextThread(context.path.clone()),
         }
     }
 
@@ -49,8 +49,8 @@ impl HistoryEntry {
 /// Generic identifier for a history entry.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum HistoryEntryId {
-    Thread(acp::SessionId),
-    Context(Arc<Path>),
+    AcpThread(acp::SessionId),
+    TextThread(Arc<Path>),
 }
 
 #[derive(Serialize, Deserialize)]
@@ -177,7 +177,7 @@ impl HistoryStore {
                 .iter()
                 .enumerate()
                 .flat_map(|(index, entry)| match entry {
-                    HistoryEntryId::Thread(id) if &thread.id == id => {
+                    HistoryEntryId::AcpThread(id) if &thread.id == id => {
                         Some((index, HistoryEntry::AcpThread(thread.clone())))
                     }
                     _ => None,
@@ -193,7 +193,7 @@ impl HistoryStore {
                         .iter()
                         .enumerate()
                         .flat_map(|(index, entry)| match entry {
-                            HistoryEntryId::Context(path) if &context.path == path => {
+                            HistoryEntryId::TextThread(path) if &context.path == path => {
                                 Some((index, HistoryEntry::TextThread(context.clone())))
                             }
                             _ => None,
@@ -214,10 +214,10 @@ impl HistoryStore {
             .recently_opened_entries
             .iter()
             .filter_map(|entry| match entry {
-                HistoryEntryId::Context(path) => path.file_name().map(|file| {
+                HistoryEntryId::TextThread(path) => path.file_name().map(|file| {
                     SerializedRecentOpen::ContextName(file.to_string_lossy().to_string())
                 }),
-                HistoryEntryId::Thread(id) => Some(SerializedRecentOpen::Thread(id.to_string())),
+                HistoryEntryId::AcpThread(id) => Some(SerializedRecentOpen::Thread(id.to_string())),
             })
             .collect::<Vec<_>>();
 
@@ -254,15 +254,15 @@ impl HistoryStore {
                 .into_iter()
                 .take(MAX_RECENTLY_OPENED_ENTRIES)
                 .flat_map(|entry| match entry {
-                    SerializedRecentOpen::Thread(id) => {
-                        Some(HistoryEntryId::Thread(acp::SessionId(id.as_str().into())))
-                    }
-                    SerializedRecentOpen::ContextName(file_name) => Some(HistoryEntryId::Context(
-                        contexts_dir().join(file_name).into(),
+                    SerializedRecentOpen::Thread(id) => Some(HistoryEntryId::AcpThread(
+                        acp::SessionId(id.as_str().into()),
                     )),
+                    SerializedRecentOpen::ContextName(file_name) => Some(
+                        HistoryEntryId::TextThread(contexts_dir().join(file_name).into()),
+                    ),
                     SerializedRecentOpen::Context(path) => {
                         Path::new(&path).file_name().map(|file_name| {
-                            HistoryEntryId::Context(contexts_dir().join(file_name).into())
+                            HistoryEntryId::TextThread(contexts_dir().join(file_name).into())
                         })
                     }
                 })
@@ -282,7 +282,7 @@ impl HistoryStore {
 
     pub fn remove_recently_opened_thread(&mut self, id: acp::SessionId, cx: &mut Context<Self>) {
         self.recently_opened_entries.retain(|entry| match entry {
-            HistoryEntryId::Thread(thread_id) if thread_id == &id => false,
+            HistoryEntryId::AcpThread(thread_id) if thread_id == &id => false,
             _ => true,
         });
         self.save_recently_opened_entries(cx);
@@ -296,8 +296,8 @@ impl HistoryStore {
     ) {
         for entry in &mut self.recently_opened_entries {
             match entry {
-                HistoryEntryId::Context(path) if path.as_ref() == old_path => {
-                    *entry = HistoryEntryId::Context(new_path.clone());
+                HistoryEntryId::TextThread(path) if path.as_ref() == old_path => {
+                    *entry = HistoryEntryId::TextThread(new_path.clone());
                     break;
                 }
                 _ => {}
