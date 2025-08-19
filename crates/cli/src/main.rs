@@ -363,7 +363,7 @@ fn anonymous_fd(path: &str) -> Option<fs::File> {
 
         let fd: fd::RawFd = fd_str.parse().ok()?;
         let file = unsafe { fs::File::from_raw_fd(fd) };
-        return Some(file);
+        Some(file)
     }
     #[cfg(any(target_os = "macos", target_os = "freebsd"))]
     {
@@ -586,7 +586,7 @@ mod flatpak {
 
     pub fn set_bin_if_no_escape(mut args: super::Args) -> super::Args {
         if env::var(NO_ESCAPE_ENV_NAME).is_ok()
-            && env::var("FLATPAK_ID").map_or(false, |id| id.starts_with("dev.zed.Zed"))
+            && env::var("FLATPAK_ID").is_ok_and(|id| id.starts_with("dev.zed.Zed"))
             && args.zed.is_none()
         {
             args.zed = Some("/app/libexec/zed-editor".into());
