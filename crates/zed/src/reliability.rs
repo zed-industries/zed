@@ -616,8 +616,18 @@ async fn upload_minidump(
     let mut panic_message = "".to_owned();
     if let Some(panic_info) = metadata.panic.as_ref() {
         panic_message = panic_info.message.clone();
-        form = form.text("sentry[logentry][formatted]", panic_info.message.clone());
-        form = form.text("span", panic_info.span.clone());
+        form = form
+            .text("sentry[logentry][formatted]", panic_info.message.clone())
+            .text("span", panic_info.span.clone());
+        // .text(
+        //     "sentry[contexts][device][architecture]",
+        //     panic_info.architecture.clone(),
+        // )
+        // .text("sentry[contexts][os][name]", panic_info.os_name.clone())
+        // .text_if_some(
+        //     "sentry[contexts][os][release]",
+        //     panic_info.os_version.clone(),
+        // );
     }
     if let Some(minidump_error) = metadata.minidump_error.clone() {
         form = form.text("minidump_error", minidump_error);
@@ -637,7 +647,9 @@ async fn upload_minidump(
         let gpu_count = gpus.len();
         for (index, gpu) in gpus.into_iter().enumerate() {
             let feedback::system_specs::GpuInfo {
+                device_name,
                 device_pci_id,
+                vendor_name,
                 vendor_pci_id,
                 driver_version,
                 driver_name,
@@ -652,18 +664,15 @@ async fn upload_minidump(
             let root = format!("sentry[contexts][{name}]");
             form = form
                 .text(format!("{root}[type]"), "gpu")
-                .text(format!("{root}[name]"), name)
+                .text(format!("{root}[name]"), device_name.unwrap_or(name))
                 .text(format!("{root}[id]"), format!("{:#06x}", device_pci_id))
                 .text(
                     format!("{root}[vendor_id]"),
                     format!("{:#06x}", vendor_pci_id),
-                );
-            if let Some(driver_version) = driver_version {
-                form = form.text(format!("{root}[driver_version]"), driver_version);
-            }
-            if let Some(driver_name) = driver_name {
-                form = form.text(format!("{root}[driver_name]"), driver_name);
-            }
+                )
+                .text_if_some(format!("{root}[vendor_name]"), vendor_name)
+                .text_if_some(format!("{root}[driver_version]"), driver_version)
+                .text_if_some(format!("{root}[driver_name]"), driver_name);
         }
     }
     // TODO: add gpu-context, feature-flag-context, and more of device-context like gpu
@@ -680,6 +689,27 @@ async fn upload_minidump(
     }
     log::info!("Uploaded minidump. event id: {response_text}");
     Ok(())
+}
+
+trait FormExt {
+    fn text_if_some(
+        self,
+        label: impl Into<std::borrow::Cow<'static, str>>,
+        value: Option<impl Into<std::borrow::Cow<'static, str>>>,
+    ) -> Self;
+}
+
+impl FormExt for Form {
+    fn text_if_some(
+        self,
+        label: impl Into<std::borrow::Cow<'static, str>>,
+        value: Option<impl Into<std::borrow::Cow<'static, str>>>,
+    ) -> Self {
+        match value {
+            Some(value) => self.text(label.into(), value.into()),
+            None => self,
+        }
+    }
 }
 
 async fn upload_panic(

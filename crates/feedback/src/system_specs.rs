@@ -161,7 +161,9 @@ fn try_determine_available_gpus() -> Option<String> {
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct GpuInfo {
+    pub device_name: Option<String>,
     pub device_pci_id: u16,
+    pub vendor_name: Option<String>,
     pub vendor_pci_id: u16,
     pub driver_version: Option<String>,
     pub driver_name: Option<String>,
@@ -171,6 +173,7 @@ pub struct GpuInfo {
 pub fn read_gpu_info_from_sys_class_drm() -> anyhow::Result<Vec<GpuInfo>> {
     let dir_iter = std::fs::read_dir("/sys/class/drm").context("Failed to read /sys/class/drm")?;
     let mut gpus = vec![];
+    let pci_db = pciid_parser::Database::read().ok();
     for entry in dir_iter {
         let Ok(entry) = entry else {
             continue;
@@ -210,28 +213,36 @@ pub fn read_gpu_info_from_sys_class_drm() -> anyhow::Result<Vec<GpuInfo>> {
             .map(str::trim)
             .map(str::to_string);
 
-        // let name = entry
-        //     .file_name()
-        //     .to_str()
-        //     .context("Name not unicode")
-        //     .map(str::to_string)?;
+        let already_found = gpus
+            .iter()
+            .position(|gpu: &GpuInfo| {
+                gpu.pci_address == pci_address
+                    && gpu.driver_version == driver_version
+                    && gpu.driver_name == driver_name
+            })
+            .is_some();
 
-        let found_gpu = GpuInfo {
+        if already_found {
+            continue;
+        }
+
+        let vendor = pci_db
+            .as_ref()
+            .and_then(|db| db.vendors.get(&vendor_pci_id));
+        let vendor_name = vendor.map(|vendor| vendor.name.clone());
+        let device_name = vendor
+            .and_then(|vendor| vendor.devices.get(&device_pci_id))
+            .map(|device| device.name.clone());
+
+        gpus.push(GpuInfo {
+            device_name,
             device_pci_id,
+            vendor_name,
             vendor_pci_id,
             driver_version,
             driver_name,
             pci_address,
-        };
-
-        if gpus.iter().position(|gpu| gpu == &found_gpu).is_none() {
-            gpus.push(found_gpu);
-        }
-
-        // eprintln!("Vendor ID: {:0x}", vendor_pci_id);
-        // eprintln!("Device ID: {:0x}", device_pci_id);
-        // eprintln!("Driver   : {:?}", driver_name);
-        // eprintln!("Driver Version: {:?}", driver_version);
+        });
     }
 
     return Ok(gpus);
@@ -251,30 +262,6 @@ pub fn read_gpu_info_from_sys_class_drm() -> anyhow::Result<Vec<GpuInfo>> {
         u16::from_str_radix(id, 16).context("Failed to parse device ID")
     }
 }
-
-struct PciDatabase {
-    contents: Vec<String>,
-}
-
-// fn read_pci_db() -> anyhow::Result<PciDatabase> {
-//     let possible_paths = [
-//         "/usr/share/misc/pci.ids",    // Debian, Ubuntu
-//         "/usr/share/hwdata/pci/ids",  // Fedora, Red Hat, Arch
-//         "/var/lib/pciutills/pci.ids", // legacy
-//     ];
-//     let mut contents = None;
-//     for path in possible_paths {
-//         contents = std::fs::read_to_string(path).ok();
-//         if contents.is_some() {
-//             break;
-//         }
-//     }
-//     let Some(contents) = contents else {
-//         anyhow::bail!("Could not find pci.ids database");
-//     };
-
-//     let mut contents = contents.lines().map().collect::<Vec<_>>();
-// }
 
 /// Returns value of `ZED_BUNDLE_TYPE` set at compiletime or else at runtime.
 ///
