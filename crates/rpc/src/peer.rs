@@ -109,7 +109,6 @@ impl Peer {
         self.epoch.load(SeqCst)
     }
 
-    #[instrument(skip_all)]
     pub fn add_connection<F, Fut, Out>(
         self: &Arc<Self>,
         connection: Connection,

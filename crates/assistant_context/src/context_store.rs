@@ -905,7 +905,7 @@ impl ContextStore {
                     .into_iter()
                     .filter(assistant_slash_commands::acceptable_prompt)
                     .map(|prompt| {
-                        log::info!("registering context server command: {:?}", prompt.name);
+                        log::debug!("registering context server command: {:?}", prompt.name);
                         slash_command_working_set.insert(Arc::new(
                             assistant_slash_commands::ContextServerSlashCommand::new(
                                 context_server_store.clone(),

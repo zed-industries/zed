@@ -59,12 +59,9 @@ impl TerminalTool {
             }
 
             if which::which("bash").is_ok() {
-                log::info!("agent selected bash for terminal tool");
                 "bash".into()
             } else {
-                let shell = get_system_shell();
-                log::info!("agent selected {shell} for terminal tool");
-                shell
+                get_system_shell()
             }
         });
         Self {

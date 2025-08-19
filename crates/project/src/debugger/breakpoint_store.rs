@@ -831,7 +831,6 @@ impl BreakpointStore {
                     new_breakpoints.insert(path, breakpoints_for_file);
                 }
                 this.update(cx, |this, cx| {
-                    log::info!("Finish deserializing breakpoints & initializing breakpoint store");
                     for (path, count) in new_breakpoints.iter().map(|(path, bp_in_file)| {
                         (path.to_string_lossy(), bp_in_file.breakpoints.len())
                     }) {

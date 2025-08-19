@@ -399,7 +399,6 @@ impl ContextServerStore {
             async move |this, cx| {
                 match server.clone().start(cx).await {
                     Ok(_) => {
-                        log::info!("Started {} context server", id);
                         debug_assert!(server.client().is_some());
 
                         this.update(cx, |this, cx| {
