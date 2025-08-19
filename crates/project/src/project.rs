@@ -3487,7 +3487,7 @@ impl Project {
         buffer: &Entity<Buffer>,
         position: T,
         cx: &mut Context<Self>,
-    ) -> Task<Result<Vec<Location>>> {
+    ) -> Task<Result<Option<Vec<Location>>>> {
         let position = position.to_point_utf16(buffer.read(cx));
         let guard = self.retain_remotely_created_models(cx);
         let task = self.lsp_store.update(cx, |lsp_store, cx| {

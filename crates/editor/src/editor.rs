@@ -16063,7 +16063,9 @@ impl Editor {
                 }
             });
 
-            let locations = references.await?;
+            let Some(locations) = references.await? else {
+                return anyhow::Ok(Navigated::No);
+            };
             if locations.is_empty() {
                 return anyhow::Ok(Navigated::No);
             }

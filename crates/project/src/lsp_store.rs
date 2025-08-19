@@ -5551,11 +5551,11 @@ impl LspStore {
         buffer: &Entity<Buffer>,
         position: PointUtf16,
         cx: &mut Context<Self>,
-    ) -> Task<Result<Vec<Location>>> {
+    ) -> Task<Result<Option<Vec<Location>>>> {
         if let Some((upstream_client, project_id)) = self.upstream_client() {
             let request = GetReferences { position };
             if !self.is_capable_for_proto_request(buffer, &request, cx) {
-                return Task::ready(Ok(Vec::new()));
+                return Task::ready(Ok(None));
             }
 
             let request_task = upstream_client.request_lsp(
@@ -5567,11 +5567,10 @@ impl LspStore {
             let buffer = buffer.clone();
             cx.spawn(async move |weak_project, cx| {
                 let Some(project) = weak_project.upgrade() else {
-                    return Ok(Vec::new());
+                    return Ok(None);
                 };
                 let Some(responses) = request_task.await? else {
-                    // TODO kb need to return Option now.
-                    return Ok(Vec::new());
+                    return Ok(None);
                 };
 
                 let locations = join_all(responses.payload.into_iter().map(|lsp_response| {
@@ -5589,7 +5588,7 @@ impl LspStore {
                 .flatten()
                 .dedup()
                 .collect();
-                Ok(locations)
+                Ok(Some(locations))
             })
         } else {
             let references_task = self.request_multiple_lsp_locally(
@@ -5599,12 +5598,14 @@ impl LspStore {
                 cx,
             );
             cx.background_spawn(async move {
-                Ok(references_task
-                    .await
-                    .into_iter()
-                    .flat_map(|(_, references)| references)
-                    .dedup()
-                    .collect())
+                Ok(Some(
+                    references_task
+                        .await
+                        .into_iter()
+                        .flat_map(|(_, references)| references)
+                        .dedup()
+                        .collect(),
+                ))
             })
         }
     }

@@ -5060,7 +5060,7 @@ async fn test_references(
         ])))
         .unwrap();
 
-    let references = references.await.unwrap();
+    let references = references.await.unwrap().unwrap();
     executor.run_until_parked();
     project_b.read_with(cx_b, |project, cx| {
         // User is informed that a request is no longer pending.
@@ -5104,7 +5104,7 @@ async fn test_references(
     lsp_response_tx
         .unbounded_send(Err(anyhow!("can't find references")))
         .unwrap();
-    assert_eq!(references.await.unwrap(), []);
+    assert_eq!(references.await.unwrap().unwrap(), []);
 
     // User is informed that the request is no longer pending.
     executor.run_until_parked();
