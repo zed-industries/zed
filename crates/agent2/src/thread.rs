@@ -850,7 +850,7 @@ impl Thread {
     pub fn build_system_message(&self, cx: &App) -> LanguageModelRequestMessage {
         log::debug!("Building system message");
         let prompt = SystemPromptTemplate {
-            project: &self.project_context.read(cx),
+            project: self.project_context.read(cx),
             available_tools: self.tools.keys().cloned().collect(),
         }
         .render(&self.templates)
