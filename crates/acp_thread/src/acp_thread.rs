@@ -6,6 +6,7 @@ mod terminal;
 pub use connection::*;
 pub use diff::*;
 pub use mention::*;
+use serde::{Deserialize, Serialize};
 pub use terminal::*;
 
 use action_log::ActionLog;
@@ -664,6 +665,12 @@ impl PlanEntry {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TokenUsage {
+    pub max_tokens: u64,
+    pub used_tokens: u64,
+}
+
 #[derive(Debug, Clone)]
 pub struct RetryStatus {
     pub last_error: SharedString,
@@ -683,12 +690,14 @@ pub struct AcpThread {
     send_task: Option<Task<()>>,
     connection: Rc<dyn AgentConnection>,
     session_id: acp::SessionId,
+    token_usage: Option<TokenUsage>,
 }
 
 #[derive(Debug)]
 pub enum AcpThreadEvent {
     NewEntry,
     TitleUpdated,
+    TokenUsageUpdated,
     EntryUpdated(usize),
     EntriesRemoved(Range<usize>),
     ToolAuthorizationRequired,
@@ -748,6 +757,7 @@ impl AcpThread {
             send_task: None,
             connection,
             session_id,
+            token_usage: None,
         }
     }
 
@@ -785,6 +795,10 @@ impl AcpThread {
         } else {
             ThreadStatus::Idle
         }
+    }
+
+    pub fn token_usage(&self) -> Option<&TokenUsage> {
+        self.token_usage.as_ref()
     }
 
     pub fn has_pending_edit_tool_calls(&self) -> bool {
@@ -935,6 +949,11 @@ impl AcpThread {
         self.title = title;
         cx.emit(AcpThreadEvent::TitleUpdated);
         Ok(())
+    }
+
+    pub fn update_token_usage(&mut self, usage: Option<TokenUsage>, cx: &mut Context<Self>) {
+        self.token_usage = usage;
+        cx.emit(AcpThreadEvent::TokenUsageUpdated);
     }
 
     pub fn update_retry_status(&mut self, status: RetryStatus, cx: &mut Context<Self>) {

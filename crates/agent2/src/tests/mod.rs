@@ -1117,7 +1117,7 @@ async fn test_refusal(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_truncate(cx: &mut TestAppContext) {
+async fn test_truncate_first_message(cx: &mut TestAppContext) {
     let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
     let fake_model = model.as_fake();
 
@@ -1137,9 +1137,18 @@ async fn test_truncate(cx: &mut TestAppContext) {
                 Hello
             "}
         );
+        assert_eq!(thread.latest_token_usage(), None);
     });
 
     fake_model.send_last_completion_stream_text_chunk("Hey!");
+    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::UsageUpdate(
+        language_model::TokenUsage {
+            input_tokens: 32_000,
+            output_tokens: 16_000,
+            cache_creation_input_tokens: 0,
+            cache_read_input_tokens: 0,
+        },
+    ));
     cx.run_until_parked();
     thread.read_with(cx, |thread, _| {
         assert_eq!(
@@ -1154,6 +1163,13 @@ async fn test_truncate(cx: &mut TestAppContext) {
                 Hey!
             "}
         );
+        assert_eq!(
+            thread.latest_token_usage(),
+            Some(acp_thread::TokenUsage {
+                used_tokens: 32_000 + 16_000,
+                max_tokens: 1_000_000,
+            })
+        );
     });
 
     thread
@@ -1162,6 +1178,7 @@ async fn test_truncate(cx: &mut TestAppContext) {
     cx.run_until_parked();
     thread.read_with(cx, |thread, _| {
         assert_eq!(thread.to_markdown(), "");
+        assert_eq!(thread.latest_token_usage(), None);
     });
 
     // Ensure we can still send a new message after truncation.
@@ -1182,6 +1199,14 @@ async fn test_truncate(cx: &mut TestAppContext) {
     });
     cx.run_until_parked();
     fake_model.send_last_completion_stream_text_chunk("Ahoy!");
+    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::UsageUpdate(
+        language_model::TokenUsage {
+            input_tokens: 40_000,
+            output_tokens: 20_000,
+            cache_creation_input_tokens: 0,
+            cache_read_input_tokens: 0,
+        },
+    ));
     cx.run_until_parked();
     thread.read_with(cx, |thread, _| {
         assert_eq!(
@@ -1196,7 +1221,124 @@ async fn test_truncate(cx: &mut TestAppContext) {
                 Ahoy!
             "}
         );
+
+        assert_eq!(
+            thread.latest_token_usage(),
+            Some(acp_thread::TokenUsage {
+                used_tokens: 40_000 + 20_000,
+                max_tokens: 1_000_000,
+            })
+        );
     });
+}
+
+#[gpui::test]
+async fn test_truncate_second_message(cx: &mut TestAppContext) {
+    let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
+    let fake_model = model.as_fake();
+
+    thread
+        .update(cx, |thread, cx| {
+            thread.send(UserMessageId::new(), ["Message 1"], cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+    fake_model.send_last_completion_stream_text_chunk("Message 1 response");
+    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::UsageUpdate(
+        language_model::TokenUsage {
+            input_tokens: 32_000,
+            output_tokens: 16_000,
+            cache_creation_input_tokens: 0,
+            cache_read_input_tokens: 0,
+        },
+    ));
+    fake_model.end_last_completion_stream();
+    cx.run_until_parked();
+
+    let assert_first_message_state = |cx: &mut TestAppContext| {
+        thread.clone().read_with(cx, |thread, _| {
+            assert_eq!(
+                thread.to_markdown(),
+                indoc! {"
+                    ## User
+
+                    Message 1
+
+                    ## Assistant
+
+                    Message 1 response
+                "}
+            );
+
+            assert_eq!(
+                thread.latest_token_usage(),
+                Some(acp_thread::TokenUsage {
+                    used_tokens: 32_000 + 16_000,
+                    max_tokens: 1_000_000,
+                })
+            );
+        });
+    };
+
+    assert_first_message_state(cx);
+
+    let second_message_id = UserMessageId::new();
+    thread
+        .update(cx, |thread, cx| {
+            thread.send(second_message_id.clone(), ["Message 2"], cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+
+    fake_model.send_last_completion_stream_text_chunk("Message 2 response");
+    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::UsageUpdate(
+        language_model::TokenUsage {
+            input_tokens: 40_000,
+            output_tokens: 20_000,
+            cache_creation_input_tokens: 0,
+            cache_read_input_tokens: 0,
+        },
+    ));
+    fake_model.end_last_completion_stream();
+    cx.run_until_parked();
+
+    thread.read_with(cx, |thread, _| {
+        assert_eq!(
+            thread.to_markdown(),
+            indoc! {"
+                ## User
+
+                Message 1
+
+                ## Assistant
+
+                Message 1 response
+
+                ## User
+
+                Message 2
+
+                ## Assistant
+
+                Message 2 response
+            "}
+        );
+
+        assert_eq!(
+            thread.latest_token_usage(),
+            Some(acp_thread::TokenUsage {
+                used_tokens: 40_000 + 20_000,
+                max_tokens: 1_000_000,
+            })
+        );
+    });
+
+    thread
+        .update(cx, |thread, cx| thread.truncate(second_message_id, cx))
+        .unwrap();
+    cx.run_until_parked();
+
+    assert_first_message_state(cx);
 }
 
 #[gpui::test]
