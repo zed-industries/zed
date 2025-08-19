@@ -919,7 +919,7 @@ impl EditorElement {
         {
             #[allow(
                 clippy::collapsible_if,
-                clippy::needless_return
+                clippy::needless_return,
                 reason = "The cfg-block below makes this a false positive"
             )]
             if !text_hitbox.is_hovered(window) || editor.read_only(cx) {
