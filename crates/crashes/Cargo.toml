@@ -8,7 +8,6 @@ license = "GPL-3.0-or-later"
 [dependencies]
 crash-handler.workspace = true
 log.workspace = true
-mach2.workspace = true
 minidumper.workspace = true
 paths.workspace = true
 release_channel.workspace = true
@@ -16,6 +15,9 @@ smol.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 workspace-hack.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+mach2.workspace = true
 
 [lints]
 workspace = true
