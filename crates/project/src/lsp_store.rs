@@ -74,8 +74,8 @@ use lsp::{
     FileOperationPatternKind, FileOperationRegistrationOptions, FileRename, FileSystemWatcher,
     LanguageServer, LanguageServerBinary, LanguageServerBinaryOptions, LanguageServerId,
     LanguageServerName, LanguageServerSelector, LspRequestFuture, MessageActionItem, MessageType,
-    OneOf, RenameFilesParams, SymbolKind, TextEdit, WillRenameFiles, WorkDoneProgressCancelParams,
-    WorkspaceFolder, notification::DidRenameFiles,
+    OneOf, RenameFilesParams, SymbolKind, TextDocumentSyncSaveOptions, TextEdit, WillRenameFiles,
+    WorkDoneProgressCancelParams, WorkspaceFolder, notification::DidRenameFiles,
 };
 use node_runtime::read_package_installed_version;
 use parking_lot::Mutex;
@@ -11800,8 +11800,40 @@ impl LspStore {
                         .transpose()?
                     {
                         server.update_capabilities(|capabilities| {
+                            let mut sync_options =
+                                Self::take_text_document_sync_options(capabilities);
+                            sync_options.change = Some(sync_kind);
                             capabilities.text_document_sync =
-                                Some(lsp::TextDocumentSyncCapability::Kind(sync_kind));
+                                Some(lsp::TextDocumentSyncCapability::Options(sync_options));
+                        });
+                        notify_server_capabilities_updated(&server, cx);
+                    }
+                }
+                "textDocument/didSave" => {
+                    if let Some(include_text) = reg
+                        .register_options
+                        .map(|opts| {
+                            let transpose = opts
+                                .get("includeText")
+                                .cloned()
+                                .map(serde_json::from_value::<Option<bool>>)
+                                .transpose();
+                            match transpose {
+                                Ok(value) => Ok(value.flatten()),
+                                Err(e) => Err(e),
+                            }
+                        })
+                        .transpose()?
+                    {
+                        server.update_capabilities(|capabilities| {
+                            let mut sync_options =
+                                Self::take_text_document_sync_options(capabilities);
+                            sync_options.save =
+                                Some(TextDocumentSyncSaveOptions::SaveOptions(lsp::SaveOptions {
+                                    include_text,
+                                }));
+                            capabilities.text_document_sync =
+                                Some(lsp::TextDocumentSyncCapability::Options(sync_options));
                         });
                         notify_server_capabilities_updated(&server, cx);
                     }
@@ -11953,7 +11985,19 @@ impl LspStore {
                 }
                 "textDocument/didChange" => {
                     server.update_capabilities(|capabilities| {
-                        capabilities.text_document_sync = None;
+                        let mut sync_options = Self::take_text_document_sync_options(capabilities);
+                        sync_options.change = None;
+                        capabilities.text_document_sync =
+                            Some(lsp::TextDocumentSyncCapability::Options(sync_options));
+                    });
+                    notify_server_capabilities_updated(&server, cx);
+                }
+                "textDocument/didSave" => {
+                    server.update_capabilities(|capabilities| {
+                        let mut sync_options = Self::take_text_document_sync_options(capabilities);
+                        sync_options.save = None;
+                        capabilities.text_document_sync =
+                            Some(lsp::TextDocumentSyncCapability::Options(sync_options));
                     });
                     notify_server_capabilities_updated(&server, cx);
                 }
@@ -11980,6 +12024,20 @@ impl LspStore {
         }
 
         Ok(())
+    }
+
+    fn take_text_document_sync_options(
+        capabilities: &mut lsp::ServerCapabilities,
+    ) -> lsp::TextDocumentSyncOptions {
+        match capabilities.text_document_sync.take() {
+            Some(lsp::TextDocumentSyncCapability::Options(sync_options)) => sync_options,
+            Some(lsp::TextDocumentSyncCapability::Kind(sync_kind)) => {
+                let mut sync_options = lsp::TextDocumentSyncOptions::default();
+                sync_options.change = Some(sync_kind);
+                sync_options
+            }
+            None => lsp::TextDocumentSyncOptions::default(),
+        }
     }
 }
 
@@ -13083,24 +13141,18 @@ async fn populate_labels_for_symbols(
 
 fn include_text(server: &lsp::LanguageServer) -> Option<bool> {
     match server.capabilities().text_document_sync.as_ref()? {
-        lsp::TextDocumentSyncCapability::Kind(kind) => match *kind {
-            lsp::TextDocumentSyncKind::NONE => None,
-            lsp::TextDocumentSyncKind::FULL => Some(true),
-            lsp::TextDocumentSyncKind::INCREMENTAL => Some(false),
-            _ => None,
-        },
-        lsp::TextDocumentSyncCapability::Options(options) => match options.save.as_ref()? {
-            lsp::TextDocumentSyncSaveOptions::Supported(supported) => {
-                if *supported {
-                    Some(true)
-                } else {
-                    None
-                }
-            }
+        lsp::TextDocumentSyncCapability::Options(opts) => match opts.save.as_ref()? {
+            // Server wants didSave but didn't specify includeText.
+            lsp::TextDocumentSyncSaveOptions::Supported(true) => Some(false),
+            // Server doesn't want didSave at all.
+            lsp::TextDocumentSyncSaveOptions::Supported(false) => None,
+            // Server provided SaveOptions.
             lsp::TextDocumentSyncSaveOptions::SaveOptions(save_options) => {
                 Some(save_options.include_text.unwrap_or(false))
             }
         },
+        // We do not have any save info. Kind affects didChange only.
+        lsp::TextDocumentSyncCapability::Kind(_) => None,
     }
 }
 
