@@ -19,7 +19,6 @@ use project::{
     task_store::TaskStore,
     worktree_store::WorktreeStore,
 };
-use remote::ssh_session::ChannelClient;
 use rpc::{
     AnyProtoClient, TypedEnvelope,
     proto::{self, SSH_PEER_ID, SSH_PROJECT_ID},
@@ -50,7 +49,7 @@ pub struct HeadlessProject {
 }
 
 pub struct HeadlessAppState {
-    pub session: Arc<ChannelClient>,
+    pub session: AnyProtoClient,
     pub fs: Arc<dyn Fs>,
     pub http_client: Arc<dyn HttpClient>,
     pub node_runtime: NodeRuntime,

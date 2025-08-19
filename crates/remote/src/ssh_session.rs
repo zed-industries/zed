@@ -1222,7 +1222,7 @@ impl SshRemoteClient {
     pub fn fake_server(
         client_cx: &mut gpui::TestAppContext,
         server_cx: &mut gpui::TestAppContext,
-    ) -> (SshConnectionOptions, Arc<ChannelClient>) {
+    ) -> (SshConnectionOptions, AnyProtoClient) {
         let port = client_cx
             .update(|cx| cx.default_global::<ConnectionPool>().connections.len() as u16 + 1);
         let opts = SshConnectionOptions {
@@ -1255,7 +1255,7 @@ impl SshRemoteClient {
             })
         });
 
-        (opts, server_client)
+        (opts, server_client.into())
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -2269,7 +2269,7 @@ impl SshRemoteConnection {
 
 type ResponseChannels = Mutex<HashMap<MessageId, oneshot::Sender<(Envelope, oneshot::Sender<()>)>>>;
 
-pub struct ChannelClient {
+struct ChannelClient {
     next_message_id: AtomicU32,
     outgoing_tx: Mutex<mpsc::UnboundedSender<Envelope>>,
     buffer: Mutex<VecDeque<Envelope>>,
