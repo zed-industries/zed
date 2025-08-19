@@ -406,6 +406,7 @@ impl GitStore {
         client.add_entity_request_handler(Self::handle_unstage);
         client.add_entity_request_handler(Self::handle_stash);
         client.add_entity_request_handler(Self::handle_stash_pop);
+        client.add_entity_request_handler(Self::handle_stash_apply);
         client.add_entity_request_handler(Self::handle_stash_drop);
         client.add_entity_request_handler(Self::handle_commit);
         client.add_entity_request_handler(Self::handle_reset);
@@ -1752,6 +1753,24 @@ impl GitStore {
         repository_handle
             .update(&mut cx, |repository_handle, cx| {
                 repository_handle.stash_pop(stash_index, cx)
+            })?
+            .await?;
+
+        Ok(proto::Ack {})
+    }
+
+    async fn handle_stash_apply(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::StashApply>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::Ack> {
+        let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
+        let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
+        let stash_index = envelope.payload.stash_index.map(|i| i as usize);
+
+        repository_handle
+            .update(&mut cx, |repository_handle, cx| {
+                repository_handle.stash_apply(stash_index, cx)
             })?
             .await?;
 
@@ -3748,6 +3767,40 @@ impl Repository {
                                 })
                                 .await
                                 .context("sending stash pop request")?;
+                            Ok(())
+                        }
+                    }
+                })
+            })?
+            .await??;
+            Ok(())
+        })
+    }
+
+    pub fn stash_apply(
+        &mut self,
+        index: Option<usize>,
+        cx: &mut Context<Self>,
+    ) -> Task<anyhow::Result<()>> {
+        let id = self.id;
+        cx.spawn(async move |this, cx| {
+            this.update(cx, |this, _| {
+                this.send_job(None, move |git_repo, _cx| async move {
+                    match git_repo {
+                        RepositoryState::Local {
+                            backend,
+                            environment,
+                            ..
+                        } => backend.stash_apply(index, environment).await,
+                        RepositoryState::Remote { project_id, client } => {
+                            client
+                                .request(proto::StashApply {
+                                    project_id: project_id.0,
+                                    repository_id: id.to_proto(),
+                                    stash_index: index.map(|i| i as u64),
+                                })
+                                .await
+                                .context("sending stash apply request")?;
                             Ok(())
                         }
                     }

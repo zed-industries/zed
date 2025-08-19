@@ -319,6 +319,12 @@ message StashPop {
     optional uint64 stash_index = 3;
 }
 
+message StashApply {
+    uint64 project_id = 1;
+    uint64 repository_id = 2;
+    optional uint64 stash_index = 3;
+}
+
 message StashDrop {
     uint64 project_id = 1;
     uint64 repository_id = 2;
