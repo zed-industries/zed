@@ -258,6 +258,7 @@ version = "0.1.0"
 dependencies = [
  "acp_thread",
  "agent-client-protocol",
+ "agent_settings",
  "agentic-coding-protocol",
  "anyhow",
  "collections",

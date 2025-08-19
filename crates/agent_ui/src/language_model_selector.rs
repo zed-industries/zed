@@ -296,7 +296,7 @@ impl ModelMatcher {
     pub fn fuzzy_search(&self, query: &str) -> Vec<ModelInfo> {
         let mut matches = self.bg_executor.block(match_strings(
             &self.candidates,
-            &query,
+            query,
             false,
             true,
             100,

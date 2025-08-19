@@ -146,6 +146,7 @@ impl UserMessage {
             They are up-to-date and don't need to be re-read.\n\n";
 
         const OPEN_FILES_TAG: &str = "<files>";
+        const OPEN_DIRECTORIES_TAG: &str = "<directories>";
         const OPEN_SYMBOLS_TAG: &str = "<symbols>";
         const OPEN_THREADS_TAG: &str = "<threads>";
         const OPEN_FETCH_TAG: &str = "<fetched_urls>";
@@ -153,6 +154,7 @@ impl UserMessage {
             "<rules>\nThe user has specified the following rules that should be applied:\n";
 
         let mut file_context = OPEN_FILES_TAG.to_string();
+        let mut directory_context = OPEN_DIRECTORIES_TAG.to_string();
         let mut symbol_context = OPEN_SYMBOLS_TAG.to_string();
         let mut thread_context = OPEN_THREADS_TAG.to_string();
         let mut fetch_context = OPEN_FETCH_TAG.to_string();
@@ -168,16 +170,19 @@ impl UserMessage {
                 }
                 UserMessageContent::Mention { uri, content } => {
                     match uri {
-                        MentionUri::File { abs_path, .. } => {
+                        MentionUri::File { abs_path } => {
                             write!(
                                 &mut symbol_context,
                                 "\n{}",
                                 MarkdownCodeBlock {
-                                    tag: &codeblock_tag(&abs_path, None),
+                                    tag: &codeblock_tag(abs_path, None),
                                     text: &content.to_string(),
                                 }
                             )
                             .ok();
+                        }
+                        MentionUri::Directory { .. } => {
+                            write!(&mut directory_context, "\n{}\n", content).ok();
                         }
                         MentionUri::Symbol {
                             path, line_range, ..
@@ -189,8 +194,8 @@ impl UserMessage {
                                 &mut rules_context,
                                 "\n{}",
                                 MarkdownCodeBlock {
-                                    tag: &codeblock_tag(&path, Some(line_range)),
-                                    text: &content
+                                    tag: &codeblock_tag(path, Some(line_range)),
+                                    text: content
                                 }
                             )
                             .ok();
@@ -207,7 +212,7 @@ impl UserMessage {
                                 "\n{}",
                                 MarkdownCodeBlock {
                                     tag: "",
-                                    text: &content
+                                    text: content
                                 }
                             )
                             .ok();
@@ -231,6 +236,13 @@ impl UserMessage {
             message
                 .content
                 .push(language_model::MessageContent::Text(file_context));
+        }
+
+        if directory_context.len() > OPEN_DIRECTORIES_TAG.len() {
+            directory_context.push_str("</directories>\n");
+            message
+                .content
+                .push(language_model::MessageContent::Text(directory_context));
         }
 
         if symbol_context.len() > OPEN_SYMBOLS_TAG.len() {
@@ -1048,7 +1060,7 @@ impl Thread {
             tools,
             tool_choice: None,
             stop: Vec::new(),
-            temperature: AgentSettings::temperature_for_model(&model, cx),
+            temperature: AgentSettings::temperature_for_model(model, cx),
             thinking_allowed: true,
         };
 

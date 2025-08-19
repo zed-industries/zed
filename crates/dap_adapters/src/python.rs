@@ -717,7 +717,7 @@ impl DebugAdapter for PythonDebugAdapter {
                 local_path.display()
             );
             return self
-                .get_installed_binary(delegate, &config, Some(local_path.clone()), user_args, None)
+                .get_installed_binary(delegate, config, Some(local_path.clone()), user_args, None)
                 .await;
         }
 
@@ -754,7 +754,7 @@ impl DebugAdapter for PythonDebugAdapter {
             return self
                 .get_installed_binary(
                     delegate,
-                    &config,
+                    config,
                     None,
                     user_args,
                     Some(toolchain.path.to_string()),
@@ -762,7 +762,7 @@ impl DebugAdapter for PythonDebugAdapter {
                 .await;
         }
 
-        self.get_installed_binary(delegate, &config, None, user_args, None)
+        self.get_installed_binary(delegate, config, None, user_args, None)
             .await
     }
 

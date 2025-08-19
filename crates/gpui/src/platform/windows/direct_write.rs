@@ -850,7 +850,7 @@ impl DirectWriteState {
         }
 
         let bitmap_data = if params.is_emoji {
-            if let Ok(color) = self.rasterize_color(&params, glyph_bounds) {
+            if let Ok(color) = self.rasterize_color(params, glyph_bounds) {
                 color
             } else {
                 let monochrome = self.rasterize_monochrome(params, glyph_bounds)?;
@@ -1784,7 +1784,7 @@ fn apply_font_features(
         }
 
         unsafe {
-            direct_write_features.AddFontFeature(make_direct_write_feature(&tag, *value))?;
+            direct_write_features.AddFontFeature(make_direct_write_feature(tag, *value))?;
         }
     }
     unsafe {

@@ -696,7 +696,7 @@ impl AcpThreadView {
         };
 
         diff.update(cx, |diff, cx| {
-            diff.move_to_path(PathKey::for_buffer(&buffer, cx), window, cx)
+            diff.move_to_path(PathKey::for_buffer(buffer, cx), window, cx)
         })
     }
 
@@ -722,13 +722,13 @@ impl AcpThreadView {
                 let len = thread.read(cx).entries().len();
                 let index = len - 1;
                 self.entry_view_state.update(cx, |view_state, cx| {
-                    view_state.sync_entry(index, &thread, window, cx)
+                    view_state.sync_entry(index, thread, window, cx)
                 });
                 self.list_state.splice(index..index, 1);
             }
             AcpThreadEvent::EntryUpdated(index) => {
                 self.entry_view_state.update(cx, |view_state, cx| {
-                    view_state.sync_entry(*index, &thread, window, cx)
+                    view_state.sync_entry(*index, thread, window, cx)
                 });
                 self.list_state.splice(*index..index + 1, 1);
             }
@@ -1427,7 +1427,7 @@ impl AcpThreadView {
                     Empty.into_any_element()
                 }
             }
-            ToolCallContent::Diff(diff) => self.render_diff_editor(entry_ix, &diff, cx),
+            ToolCallContent::Diff(diff) => self.render_diff_editor(entry_ix, diff, cx),
             ToolCallContent::Terminal(terminal) => {
                 self.render_terminal_tool_call(entry_ix, terminal, tool_call, window, cx)
             }
@@ -1583,7 +1583,7 @@ impl AcpThreadView {
             .border_color(self.tool_card_border_color(cx))
             .child(
                 if let Some(entry) = self.entry_view_state.read(cx).entry(entry_ix)
-                    && let Some(editor) = entry.editor_for_diff(&diff)
+                    && let Some(editor) = entry.editor_for_diff(diff)
                 {
                     editor.clone().into_any_element()
                 } else {
@@ -1783,7 +1783,7 @@ impl AcpThreadView {
             .entry_view_state
             .read(cx)
             .entry(entry_ix)
-            .and_then(|entry| entry.terminal(&terminal));
+            .and_then(|entry| entry.terminal(terminal));
         let show_output = self.terminal_expanded && terminal_view.is_some();
 
         v_flex()
@@ -2420,7 +2420,7 @@ impl AcpThreadView {
                         .buffer_font(cx)
                 });
 
-                let file_icon = FileIcons::get_icon(&path, cx)
+                let file_icon = FileIcons::get_icon(path, cx)
                     .map(Icon::from_path)
                     .map(|icon| icon.color(Color::Muted).size(IconSize::Small))
                     .unwrap_or_else(|| {
@@ -2790,25 +2790,30 @@ impl AcpThreadView {
 
         if let Some(mention) = MentionUri::parse(&url).log_err() {
             workspace.update(cx, |workspace, cx| match mention {
-                MentionUri::File { abs_path, .. } => {
+                MentionUri::File { abs_path } => {
                     let project = workspace.project();
-                    let Some((path, entry)) = project.update(cx, |project, cx| {
+                    let Some(path) =
+                        project.update(cx, |project, cx| project.find_project_path(abs_path, cx))
+                    else {
+                        return;
+                    };
+
+                    workspace
+                        .open_path(path, None, true, window, cx)
+                        .detach_and_log_err(cx);
+                }
+                MentionUri::Directory { abs_path } => {
+                    let project = workspace.project();
+                    let Some(entry) = project.update(cx, |project, cx| {
                         let path = project.find_project_path(abs_path, cx)?;
-                        let entry = project.entry_for_path(&path, cx)?;
-                        Some((path, entry))
+                        project.entry_for_path(&path, cx)
                     }) else {
                         return;
                     };
 
-                    if entry.is_dir() {
-                        project.update(cx, |_, cx| {
-                            cx.emit(project::Event::RevealInProjectPanel(entry.id));
-                        });
-                    } else {
-                        workspace
-                            .open_path(path, None, true, window, cx)
-                            .detach_and_log_err(cx);
-                    }
+                    project.update(cx, |_, cx| {
+                        cx.emit(project::Event::RevealInProjectPanel(entry.id));
+                    });
                 }
                 MentionUri::Symbol {
                     path, line_range, ..
@@ -3259,44 +3264,33 @@ impl AcpThreadView {
             }
         };
 
-        Some(
-            div()
-                .border_t_1()
-                .border_color(cx.theme().colors().border)
-                .child(content),
-        )
+        Some(div().child(content))
     }
 
     fn render_any_thread_error(&self, error: SharedString, cx: &mut Context<'_, Self>) -> Callout {
-        let icon = Icon::new(IconName::XCircle)
-            .size(IconSize::Small)
-            .color(Color::Error);
-
         Callout::new()
-            .icon(icon)
+            .severity(Severity::Error)
             .title("Error")
             .description(error.clone())
-            .secondary_action(self.create_copy_button(error.to_string()))
-            .primary_action(self.dismiss_error_button(cx))
-            .bg_color(self.error_callout_bg(cx))
+            .actions_slot(self.create_copy_button(error.to_string()))
+            .dismiss_action(self.dismiss_error_button(cx))
     }
 
     fn render_payment_required_error(&self, cx: &mut Context<Self>) -> Callout {
         const ERROR_MESSAGE: &str =
             "You reached your free usage limit. Upgrade to Zed Pro for more prompts.";
 
-        let icon = Icon::new(IconName::XCircle)
-            .size(IconSize::Small)
-            .color(Color::Error);
-
         Callout::new()
-            .icon(icon)
+            .severity(Severity::Error)
             .title("Free Usage Exceeded")
             .description(ERROR_MESSAGE)
-            .tertiary_action(self.upgrade_button(cx))
-            .secondary_action(self.create_copy_button(ERROR_MESSAGE))
-            .primary_action(self.dismiss_error_button(cx))
-            .bg_color(self.error_callout_bg(cx))
+            .actions_slot(
+                h_flex()
+                    .gap_0p5()
+                    .child(self.upgrade_button(cx))
+                    .child(self.create_copy_button(ERROR_MESSAGE)),
+            )
+            .dismiss_action(self.dismiss_error_button(cx))
     }
 
     fn render_model_request_limit_reached_error(
@@ -3311,18 +3305,17 @@ impl AcpThreadView {
             }
         };
 
-        let icon = Icon::new(IconName::XCircle)
-            .size(IconSize::Small)
-            .color(Color::Error);
-
         Callout::new()
-            .icon(icon)
+            .severity(Severity::Error)
             .title("Model Prompt Limit Reached")
             .description(error_message)
-            .tertiary_action(self.upgrade_button(cx))
-            .secondary_action(self.create_copy_button(error_message))
-            .primary_action(self.dismiss_error_button(cx))
-            .bg_color(self.error_callout_bg(cx))
+            .actions_slot(
+                h_flex()
+                    .gap_0p5()
+                    .child(self.upgrade_button(cx))
+                    .child(self.create_copy_button(error_message)),
+            )
+            .dismiss_action(self.dismiss_error_button(cx))
     }
 
     fn render_tool_use_limit_reached_error(
@@ -3338,52 +3331,59 @@ impl AcpThreadView {
 
         let focus_handle = self.focus_handle(cx);
 
-        let icon = Icon::new(IconName::Info)
-            .size(IconSize::Small)
-            .color(Color::Info);
-
         Some(
             Callout::new()
-                .icon(icon)
+                .icon(IconName::Info)
                 .title("Consecutive tool use limit reached.")
-                .when(supports_burn_mode, |this| {
-                    this.secondary_action(
-                        Button::new("continue-burn-mode", "Continue with Burn Mode")
-                            .style(ButtonStyle::Filled)
-                            .style(ButtonStyle::Tinted(ui::TintColor::Accent))
-                            .layer(ElevationIndex::ModalSurface)
-                            .label_size(LabelSize::Small)
-                            .key_binding(
-                                KeyBinding::for_action_in(
-                                    &ContinueWithBurnMode,
-                                    &focus_handle,
-                                    window,
-                                    cx,
-                                )
-                                .map(|kb| kb.size(rems_from_px(10.))),
+                .actions_slot(
+                    h_flex()
+                        .gap_0p5()
+                        .when(supports_burn_mode, |this| {
+                            this.child(
+                                Button::new("continue-burn-mode", "Continue with Burn Mode")
+                                    .style(ButtonStyle::Filled)
+                                    .style(ButtonStyle::Tinted(ui::TintColor::Accent))
+                                    .layer(ElevationIndex::ModalSurface)
+                                    .label_size(LabelSize::Small)
+                                    .key_binding(
+                                        KeyBinding::for_action_in(
+                                            &ContinueWithBurnMode,
+                                            &focus_handle,
+                                            window,
+                                            cx,
+                                        )
+                                        .map(|kb| kb.size(rems_from_px(10.))),
+                                    )
+                                    .tooltip(Tooltip::text(
+                                        "Enable Burn Mode for unlimited tool use.",
+                                    ))
+                                    .on_click({
+                                        cx.listener(move |this, _, _window, cx| {
+                                            thread.update(cx, |thread, _cx| {
+                                                thread.set_completion_mode(CompletionMode::Burn);
+                                            });
+                                            this.resume_chat(cx);
+                                        })
+                                    }),
                             )
-                            .tooltip(Tooltip::text("Enable Burn Mode for unlimited tool use."))
-                            .on_click({
-                                cx.listener(move |this, _, _window, cx| {
-                                    thread.update(cx, |thread, _cx| {
-                                        thread.set_completion_mode(CompletionMode::Burn);
-                                    });
+                        })
+                        .child(
+                            Button::new("continue-conversation", "Continue")
+                                .layer(ElevationIndex::ModalSurface)
+                                .label_size(LabelSize::Small)
+                                .key_binding(
+                                    KeyBinding::for_action_in(
+                                        &ContinueThread,
+                                        &focus_handle,
+                                        window,
+                                        cx,
+                                    )
+                                    .map(|kb| kb.size(rems_from_px(10.))),
+                                )
+                                .on_click(cx.listener(|this, _, _window, cx| {
                                     this.resume_chat(cx);
-                                })
-                            }),
-                    )
-                })
-                .primary_action(
-                    Button::new("continue-conversation", "Continue")
-                        .layer(ElevationIndex::ModalSurface)
-                        .label_size(LabelSize::Small)
-                        .key_binding(
-                            KeyBinding::for_action_in(&ContinueThread, &focus_handle, window, cx)
-                                .map(|kb| kb.size(rems_from_px(10.))),
-                        )
-                        .on_click(cx.listener(|this, _, _window, cx| {
-                            this.resume_chat(cx);
-                        })),
+                                })),
+                        ),
                 ),
         )
     }
@@ -3424,10 +3424,6 @@ impl AcpThreadView {
                 }
             }))
     }
-
-    fn error_callout_bg(&self, cx: &Context<Self>) -> Hsla {
-        cx.theme().status().error.opacity(0.08)
-    }
 }
 
 impl Focusable for AcpThreadView {
@@ -3453,7 +3449,7 @@ impl Render for AcpThreadView {
                     configuration_view,
                     ..
                 } => self.render_auth_required_state(
-                    &connection,
+                    connection,
                     description.as_ref(),
                     configuration_view.as_ref(),
                     window,

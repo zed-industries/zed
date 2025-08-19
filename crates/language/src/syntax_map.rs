@@ -1297,7 +1297,7 @@ fn parse_text(
 ) -> anyhow::Result<Tree> {
     with_parser(|parser| {
         let mut chunks = text.chunks_in_range(start_byte..text.len());
-        parser.set_included_ranges(&ranges)?;
+        parser.set_included_ranges(ranges)?;
         parser.set_language(&grammar.ts_language)?;
         parser
             .parse_with_options(

@@ -1038,7 +1038,7 @@ where
 {
     fn detach_and_notify_err(self, window: &mut Window, cx: &mut App) {
         window
-            .spawn(cx, async move |mut cx| self.await.notify_async_err(&mut cx))
+            .spawn(cx, async move |cx| self.await.notify_async_err(cx))
             .detach();
     }
 }

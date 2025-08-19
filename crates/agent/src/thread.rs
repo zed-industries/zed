@@ -1692,7 +1692,7 @@ impl Thread {
         self.last_received_chunk_at = Some(Instant::now());
 
         let task = cx.spawn(async move |thread, cx| {
-            let stream_completion_future = model.stream_completion(request, &cx);
+            let stream_completion_future = model.stream_completion(request, cx);
             let initial_token_usage =
                 thread.read_with(cx, |thread, _cx| thread.cumulative_token_usage);
             let stream_completion = async {
@@ -1824,7 +1824,7 @@ impl Thread {
                                 let streamed_input = if tool_use.is_input_complete {
                                     None
                                 } else {
-                                    Some((&tool_use.input).clone())
+                                    Some(tool_use.input.clone())
                                 };
 
                                 let ui_text = thread.tool_use.request_tool_use(
@@ -2051,7 +2051,7 @@ impl Thread {
 
                                             retry_scheduled = thread
                                                 .handle_retryable_error_with_delay(
-                                                    &completion_error,
+                                                    completion_error,
                                                     Some(retry_strategy),
                                                     model.clone(),
                                                     intent,
@@ -2130,7 +2130,7 @@ impl Thread {
 
         self.pending_summary = cx.spawn(async move |this, cx| {
             let result = async {
-                let mut messages = model.model.stream_completion(request, &cx).await?;
+                let mut messages = model.model.stream_completion(request, cx).await?;
 
                 let mut new_summary = String::new();
                 while let Some(event) = messages.next().await {
@@ -2456,7 +2456,7 @@ impl Thread {
         // which result to prefer (the old task could complete after the new one, resulting in a
         // stale summary).
         self.detailed_summary_task = cx.spawn(async move |thread, cx| {
-            let stream = model.stream_completion_text(request, &cx);
+            let stream = model.stream_completion_text(request, cx);
             let Some(mut messages) = stream.await.log_err() else {
                 thread
                     .update(cx, |thread, _cx| {
@@ -4043,7 +4043,7 @@ fn main() {{
         });
 
         let fake_model = model.as_fake();
-        simulate_successful_response(&fake_model, cx);
+        simulate_successful_response(fake_model, cx);
 
         // Should start generating summary when there are >= 2 messages
         thread.read_with(cx, |thread, _| {
@@ -4138,7 +4138,7 @@ fn main() {{
         });
 
         let fake_model = model.as_fake();
-        simulate_successful_response(&fake_model, cx);
+        simulate_successful_response(fake_model, cx);
 
         thread.read_with(cx, |thread, _| {
             // State is still Error, not Generating
@@ -5420,7 +5420,7 @@ fn main() {{
         });
 
         let fake_model = model.as_fake();
-        simulate_successful_response(&fake_model, cx);
+        simulate_successful_response(fake_model, cx);
 
         thread.read_with(cx, |thread, _| {
             assert!(matches!(thread.summary(), ThreadSummary::Generating));

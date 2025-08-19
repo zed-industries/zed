@@ -3199,7 +3199,7 @@ impl BackgroundScannerState {
 }
 
 async fn is_git_dir(path: &Path, fs: &dyn Fs) -> bool {
-    if path.file_name() == Some(&*DOT_GIT) {
+    if path.file_name() == Some(*DOT_GIT) {
         return true;
     }
 
@@ -3575,7 +3575,7 @@ impl<'a>
         cursor_location: &Dimensions<TraversalProgress<'a>, GitSummary>,
         _: &(),
     ) -> Ordering {
-        self.cmp_path(&cursor_location.0.max_path)
+        self.cmp_path(cursor_location.0.max_path)
     }
 }
 
@@ -5364,13 +5364,13 @@ impl PathTarget<'_> {
 
 impl<'a, S: Summary> SeekTarget<'a, PathSummary<S>, PathProgress<'a>> for PathTarget<'_> {
     fn cmp(&self, cursor_location: &PathProgress<'a>, _: &S::Context) -> Ordering {
-        self.cmp_path(&cursor_location.max_path)
+        self.cmp_path(cursor_location.max_path)
     }
 }
 
 impl<'a, S: Summary> SeekTarget<'a, PathSummary<S>, TraversalProgress<'a>> for PathTarget<'_> {
     fn cmp(&self, cursor_location: &TraversalProgress<'a>, _: &S::Context) -> Ordering {
-        self.cmp_path(&cursor_location.max_path)
+        self.cmp_path(cursor_location.max_path)
     }
 }
 
@@ -5396,7 +5396,7 @@ impl<'a> TraversalTarget<'a> {
 
     fn cmp_progress(&self, progress: &TraversalProgress) -> Ordering {
         match self {
-            TraversalTarget::Path(path) => path.cmp_path(&progress.max_path),
+            TraversalTarget::Path(path) => path.cmp_path(progress.max_path),
             TraversalTarget::Count {
                 count,
                 include_files,
@@ -5551,7 +5551,7 @@ fn discover_git_paths(dot_git_abs_path: &Arc<Path>, fs: &dyn Fs) -> (Arc<Path>, 
     let mut repository_dir_abs_path = dot_git_abs_path.clone();
     let mut common_dir_abs_path = dot_git_abs_path.clone();
 
-    if let Some(path) = smol::block_on(fs.load(&dot_git_abs_path))
+    if let Some(path) = smol::block_on(fs.load(dot_git_abs_path))
         .ok()
         .as_ref()
         .and_then(|contents| parse_gitfile(contents).log_err())

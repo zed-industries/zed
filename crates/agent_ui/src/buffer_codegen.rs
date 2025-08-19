@@ -388,7 +388,7 @@ impl CodegenAlternative {
             } else {
                 let request = self.build_request(&model, user_prompt, cx)?;
                 cx.spawn(async move |_, cx| {
-                    Ok(model.stream_completion_text(request.await, &cx).await?)
+                    Ok(model.stream_completion_text(request.await, cx).await?)
                 })
                 .boxed_local()
             };
@@ -447,7 +447,7 @@ impl CodegenAlternative {
             }
         });
 
-        let temperature = AgentSettings::temperature_for_model(&model, cx);
+        let temperature = AgentSettings::temperature_for_model(model, cx);
 
         Ok(cx.spawn(async move |_cx| {
             let mut request_message = LanguageModelRequestMessage {
@@ -1028,7 +1028,7 @@ where
                                 chunk.push('\n');
                             }
 
-                            chunk.push_str(&line);
+                            chunk.push_str(line);
                         }
 
                         consumed += line.len();

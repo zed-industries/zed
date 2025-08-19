@@ -193,7 +193,7 @@ impl State {
     fn authenticate(&self, cx: &mut Context<Self>) -> Task<Result<()>> {
         let client = self.client.clone();
         cx.spawn(async move |state, cx| {
-            client.sign_in_with_optional_connect(true, &cx).await?;
+            client.sign_in_with_optional_connect(true, cx).await?;
             state.update(cx, |_, cx| cx.notify())
         })
     }

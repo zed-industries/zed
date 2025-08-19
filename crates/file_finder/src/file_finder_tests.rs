@@ -1614,7 +1614,7 @@ async fn test_select_current_open_file_when_no_history(cx: &mut gpui::TestAppCon
 
     let picker = open_file_picker(&workspace, cx);
     picker.update(cx, |finder, _| {
-        assert_match_selection(&finder, 0, "1_qw");
+        assert_match_selection(finder, 0, "1_qw");
     });
 }
 
@@ -2623,7 +2623,7 @@ async fn open_queried_buffer(
     workspace: &Entity<Workspace>,
     cx: &mut gpui::VisualTestContext,
 ) -> Vec<FoundPath> {
-    let picker = open_file_picker(&workspace, cx);
+    let picker = open_file_picker(workspace, cx);
     cx.simulate_input(input);
 
     let history_items = picker.update(cx, |finder, _| {

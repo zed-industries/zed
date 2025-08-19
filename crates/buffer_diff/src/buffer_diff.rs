@@ -928,7 +928,7 @@ impl BufferDiff {
         let new_index_text = self.inner.stage_or_unstage_hunks_impl(
             &self.secondary_diff.as_ref()?.read(cx).inner,
             stage,
-            &hunks,
+            hunks,
             buffer,
             file_exists,
         );
@@ -952,12 +952,12 @@ impl BufferDiff {
         cx: &App,
     ) -> Option<Range<Anchor>> {
         let start = self
-            .hunks_intersecting_range(range.clone(), &buffer, cx)
+            .hunks_intersecting_range(range.clone(), buffer, cx)
             .next()?
             .buffer_range
             .start;
         let end = self
-            .hunks_intersecting_range_rev(range.clone(), &buffer)
+            .hunks_intersecting_range_rev(range.clone(), buffer)
             .next()?
             .buffer_range
             .end;
@@ -1031,18 +1031,18 @@ impl BufferDiff {
                         && state.base_text.syntax_update_count()
                             == new_state.base_text.syntax_update_count() =>
                 {
-                    (false, new_state.compare(&state, buffer))
+                    (false, new_state.compare(state, buffer))
                 }
                 _ => (true, Some(text::Anchor::MIN..text::Anchor::MAX)),
             };
 
         if let Some(secondary_changed_range) = secondary_diff_change {
             if let Some(secondary_hunk_range) =
-                self.range_to_hunk_range(secondary_changed_range, &buffer, cx)
+                self.range_to_hunk_range(secondary_changed_range, buffer, cx)
             {
                 if let Some(range) = &mut changed_range {
-                    range.start = secondary_hunk_range.start.min(&range.start, &buffer);
-                    range.end = secondary_hunk_range.end.max(&range.end, &buffer);
+                    range.start = secondary_hunk_range.start.min(&range.start, buffer);
+                    range.end = secondary_hunk_range.end.max(&range.end, buffer);
                 } else {
                     changed_range = Some(secondary_hunk_range);
                 }
@@ -1057,8 +1057,8 @@ impl BufferDiff {
             if let Some((first, last)) = state.pending_hunks.first().zip(state.pending_hunks.last())
             {
                 if let Some(range) = &mut changed_range {
-                    range.start = range.start.min(&first.buffer_range.start, &buffer);
-                    range.end = range.end.max(&last.buffer_range.end, &buffer);
+                    range.start = range.start.min(&first.buffer_range.start, buffer);
+                    range.end = range.end.max(&last.buffer_range.end, buffer);
                 } else {
                     changed_range = Some(first.buffer_range.start..last.buffer_range.end);
                 }
@@ -1797,7 +1797,7 @@ mod tests {
 
             uncommitted_diff.update(cx, |diff, cx| {
                 let hunks = diff
-                    .hunks_intersecting_range(hunk_range.clone(), &buffer, &cx)
+                    .hunks_intersecting_range(hunk_range.clone(), &buffer, cx)
                     .collect::<Vec<_>>();
                 for hunk in &hunks {
                     assert_ne!(
@@ -1812,7 +1812,7 @@ mod tests {
                     .to_string();
 
                 let hunks = diff
-                    .hunks_intersecting_range(hunk_range.clone(), &buffer, &cx)
+                    .hunks_intersecting_range(hunk_range.clone(), &buffer, cx)
                     .collect::<Vec<_>>();
                 for hunk in &hunks {
                     assert_eq!(
@@ -1870,7 +1870,7 @@ mod tests {
                 .to_string();
             assert_eq!(new_index_text, buffer_text);
 
-            let hunk = diff.hunks(&buffer, &cx).next().unwrap();
+            let hunk = diff.hunks(&buffer, cx).next().unwrap();
             assert_eq!(
                 hunk.secondary_status,
                 DiffHunkSecondaryStatus::SecondaryHunkRemovalPending
@@ -1882,7 +1882,7 @@ mod tests {
                 .to_string();
             assert_eq!(index_text, head_text);
 
-            let hunk = diff.hunks(&buffer, &cx).next().unwrap();
+            let hunk = diff.hunks(&buffer, cx).next().unwrap();
             // optimistically unstaged (fine, could also be HasSecondaryHunk)
             assert_eq!(
                 hunk.secondary_status,

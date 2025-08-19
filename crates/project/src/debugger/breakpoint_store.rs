@@ -317,8 +317,8 @@ impl BreakpointStore {
                         .iter()
                         .filter_map(|breakpoint| {
                             breakpoint.bp.bp.to_proto(
-                                &path,
-                                &breakpoint.position(),
+                                path,
+                                breakpoint.position(),
                                 &breakpoint.session_state,
                             )
                         })
@@ -753,7 +753,7 @@ impl BreakpointStore {
                         .iter()
                         .map(|breakpoint| {
                             let position = snapshot
-                                .summary_for_anchor::<PointUtf16>(&breakpoint.position())
+                                .summary_for_anchor::<PointUtf16>(breakpoint.position())
                                 .row;
                             let breakpoint = &breakpoint.bp;
                             SourceBreakpoint {

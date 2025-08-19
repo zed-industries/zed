@@ -156,7 +156,7 @@ fn buffers_removed(editor: &mut Editor, removed_buffer_ids: &[BufferId], cx: &mu
         .unwrap()
         .buffers
         .retain(|buffer_id, buffer| {
-            if removed_buffer_ids.contains(&buffer_id) {
+            if removed_buffer_ids.contains(buffer_id) {
                 removed_block_ids.extend(buffer.block_ids.iter().map(|(_, block_id)| *block_id));
                 false
             } else {
@@ -222,12 +222,12 @@ fn conflicts_updated(
                 let precedes_start = range
                     .context
                     .start
-                    .cmp(&conflict_range.start, &buffer_snapshot)
+                    .cmp(&conflict_range.start, buffer_snapshot)
                     .is_le();
                 let follows_end = range
                     .context
                     .end
-                    .cmp(&conflict_range.start, &buffer_snapshot)
+                    .cmp(&conflict_range.start, buffer_snapshot)
                     .is_ge();
                 precedes_start && follows_end
             }) else {
@@ -268,12 +268,12 @@ fn conflicts_updated(
             let precedes_start = range
                 .context
                 .start
-                .cmp(&conflict.range.start, &buffer_snapshot)
+                .cmp(&conflict.range.start, buffer_snapshot)
                 .is_le();
             let follows_end = range
                 .context
                 .end
-                .cmp(&conflict.range.start, &buffer_snapshot)
+                .cmp(&conflict.range.start, buffer_snapshot)
                 .is_ge();
             precedes_start && follows_end
         }) else {

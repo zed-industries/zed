@@ -1166,7 +1166,7 @@ impl MessageEditor {
                                     .buffer_font(cx)
                             });
 
-                            let file_icon = FileIcons::get_icon(&path, cx)
+                            let file_icon = FileIcons::get_icon(path, cx)
                                 .map(Icon::from_path)
                                 .map(|icon| icon.color(Color::Muted).size(IconSize::Small))
                                 .unwrap_or_else(|| {
@@ -1323,14 +1323,10 @@ impl MessageEditor {
         token_usage_ratio: TokenUsageRatio,
         cx: &mut Context<Self>,
     ) -> Option<Div> {
-        let icon = if token_usage_ratio == TokenUsageRatio::Exceeded {
-            Icon::new(IconName::Close)
-                .color(Color::Error)
-                .size(IconSize::XSmall)
+        let (icon, severity) = if token_usage_ratio == TokenUsageRatio::Exceeded {
+            (IconName::Close, Severity::Error)
         } else {
-            Icon::new(IconName::Warning)
-                .color(Color::Warning)
-                .size(IconSize::XSmall)
+            (IconName::Warning, Severity::Warning)
         };
 
         let title = if token_usage_ratio == TokenUsageRatio::Exceeded {
@@ -1345,29 +1341,33 @@ impl MessageEditor {
             "To continue, start a new thread from a summary."
         };
 
-        let mut callout = Callout::new()
+        let callout = Callout::new()
             .line_height(line_height)
+            .severity(severity)
             .icon(icon)
             .title(title)
             .description(description)
-            .primary_action(
-                Button::new("start-new-thread", "Start New Thread")
-                    .label_size(LabelSize::Small)
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        let from_thread_id = Some(this.thread.read(cx).id().clone());
-                        window.dispatch_action(Box::new(NewThread { from_thread_id }), cx);
-                    })),
+            .actions_slot(
+                h_flex()
+                    .gap_0p5()
+                    .when(self.is_using_zed_provider(cx), |this| {
+                        this.child(
+                            IconButton::new("burn-mode-callout", IconName::ZedBurnMode)
+                                .icon_size(IconSize::XSmall)
+                                .on_click(cx.listener(|this, _event, window, cx| {
+                                    this.toggle_burn_mode(&ToggleBurnMode, window, cx);
+                                })),
+                        )
+                    })
+                    .child(
+                        Button::new("start-new-thread", "Start New Thread")
+                            .label_size(LabelSize::Small)
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                let from_thread_id = Some(this.thread.read(cx).id().clone());
+                                window.dispatch_action(Box::new(NewThread { from_thread_id }), cx);
+                            })),
+                    ),
             );
-
-        if self.is_using_zed_provider(cx) {
-            callout = callout.secondary_action(
-                IconButton::new("burn-mode-callout", IconName::ZedBurnMode)
-                    .icon_size(IconSize::XSmall)
-                    .on_click(cx.listener(|this, _event, window, cx| {
-                        this.toggle_burn_mode(&ToggleBurnMode, window, cx);
-                    })),
-            );
-        }
 
         Some(
             div()
@@ -1559,9 +1559,8 @@ impl ContextCreasesAddon {
         cx: &mut Context<Editor>,
     ) {
         self.creases.entry(key).or_default().extend(creases);
-        self._subscription = Some(cx.subscribe(
-            &context_store,
-            |editor, _, event, cx| match event {
+        self._subscription = Some(
+            cx.subscribe(context_store, |editor, _, event, cx| match event {
                 ContextStoreEvent::ContextRemoved(key) => {
                     let Some(this) = editor.addon_mut::<Self>() else {
                         return;
@@ -1581,8 +1580,8 @@ impl ContextCreasesAddon {
                     editor.edit(ranges.into_iter().zip(replacement_texts), cx);
                     cx.notify();
                 }
-            },
-        ))
+            }),
+        )
     }
 
     pub fn into_inner(self) -> HashMap<AgentContextKey, Vec<(CreaseId, SharedString)>> {

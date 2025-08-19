@@ -536,7 +536,7 @@ async fn upload_previous_panics(
             });
 
         if let Some(panic) = panic
-            && upload_panic(&http, &panic_report_url, panic, &mut most_recent_panic).await?
+            && upload_panic(&http, panic_report_url, panic, &mut most_recent_panic).await?
         {
             // We've done what we can, delete the file
             fs::remove_file(child_path)
@@ -566,7 +566,7 @@ pub async fn upload_previous_minidumps(http: Arc<HttpClientWithUrl>) -> anyhow::
         if let Ok(metadata) = serde_json::from_slice(&smol::fs::read(&json_path).await?) {
             if upload_minidump(
                 http.clone(),
-                &minidump_endpoint,
+                minidump_endpoint,
                 smol::fs::read(&child_path)
                     .await
                     .context("Failed to read minidump")?,
