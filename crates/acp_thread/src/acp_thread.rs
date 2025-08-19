@@ -1282,6 +1282,8 @@ impl AcpThread {
                 .await?;
 
             this.update(cx, |this, cx| {
+                this.project
+                    .update(cx, |project, cx| project.set_agent_location(None, cx));
                 match response {
                     Ok(Err(e)) => {
                         this.send_task.take();
