@@ -1306,23 +1306,14 @@ impl AcpThreadView {
             tool_call.status,
             ToolCallStatus::WaitingForConfirmation { .. }
         );
-        let is_edit = matches!(tool_call.kind, acp::ToolKind::Edit);
-        let has_diff = tool_call
-            .content
-            .iter()
-            .any(|content| matches!(content, ToolCallContent::Diff { .. }));
-        let has_nonempty_diff = tool_call.content.iter().any(|content| match content {
-            ToolCallContent::Diff(diff) => diff.read(cx).has_revealed_range(cx),
-            _ => false,
-        });
-        let use_card_layout = needs_confirmation || is_edit || has_diff;
+        let is_edit =
+            matches!(tool_call.kind, acp::ToolKind::Edit) || tool_call.diffs().next().is_some();
+        let use_card_layout = needs_confirmation || is_edit;
 
         let is_collapsible = !tool_call.content.is_empty() && !use_card_layout;
 
-        let is_open = tool_call.content.is_empty()
-            || needs_confirmation
-            || has_nonempty_diff
-            || self.expanded_tool_calls.contains(&tool_call.id);
+        let is_open =
+            needs_confirmation || is_edit || self.expanded_tool_calls.contains(&tool_call.id);
 
         let gradient_overlay = |color: Hsla| {
             div()
@@ -1356,42 +1347,49 @@ impl AcpThreadView {
         //     _ => false,
         // });
 
-        let tool_output_display = match dbg!(&tool_call.status) {
-            ToolCallStatus::WaitingForConfirmation { options, .. } => v_flex()
-                .w_full()
-                .children(tool_call.content.iter().map(|content| {
-                    div()
-                        .child(
+        let tool_output_display = if is_open {
+            match &tool_call.status {
+                ToolCallStatus::WaitingForConfirmation { options, .. } => {
+                    v_flex()
+                        .w_full()
+                        .children(tool_call.content.iter().map(|content| {
+                            div()
+                                .child(self.render_tool_call_content(
+                                    entry_ix, content, tool_call, window, cx,
+                                ))
+                                .into_any_element()
+                        }))
+                        .child(self.render_permission_buttons(
+                            options,
+                            entry_ix,
+                            tool_call.id.clone(),
+                            tool_call.content.is_empty(),
+                            cx,
+                        ))
+                        .into_any()
+                }
+                ToolCallStatus::Pending | ToolCallStatus::InProgress
+                    if is_edit && tool_call.content.is_empty() =>
+                {
+                    self.render_diff_loading(cx).into_any()
+                }
+                ToolCallStatus::Pending
+                | ToolCallStatus::InProgress
+                | ToolCallStatus::Completed
+                | ToolCallStatus::Failed
+                | ToolCallStatus::Canceled => v_flex()
+                    .w_full()
+                    .children(tool_call.content.iter().map(|content| {
+                        div().child(
                             self.render_tool_call_content(entry_ix, content, tool_call, window, cx),
                         )
-                        .into_any_element()
-                }))
-                .child(self.render_permission_buttons(
-                    options,
-                    entry_ix,
-                    tool_call.id.clone(),
-                    tool_call.content.is_empty(),
-                    cx,
-                ))
-                .into_any(),
-            ToolCallStatus::Pending | ToolCallStatus::InProgress
-                if is_edit && dbg!(tool_call.content.is_empty()) =>
-            {
-                self.render_diff_loading(cx).into_any()
+                    }))
+                    .into_any(),
+                ToolCallStatus::Rejected => Empty.into_any(),
             }
-            ToolCallStatus::Pending
-            | ToolCallStatus::InProgress
-            | ToolCallStatus::Completed
-            | ToolCallStatus::Failed
-            | ToolCallStatus::Canceled => v_flex()
-                .w_full()
-                .children(tool_call.content.iter().map(|content| {
-                    div().child(
-                        self.render_tool_call_content(entry_ix, content, tool_call, window, cx),
-                    )
-                }))
-                .into_any(),
-            ToolCallStatus::Rejected => Empty.into_any(),
+            .into()
+        } else {
+            None
         };
 
         v_flex()
@@ -1477,11 +1475,7 @@ impl AcpThreadView {
                                             .overflow_x_scroll()
                                             .child(self.render_markdown(
                                                 tool_call.label.clone(),
-                                                default_markdown_style(
-                                                    needs_confirmation || is_edit || has_diff,
-                                                    window,
-                                                    cx,
-                                                ),
+                                                default_markdown_style(false, window, cx),
                                             )),
                                     )
                                     .child(gradient_overlay(gradient_color))
@@ -1501,7 +1495,7 @@ impl AcpThreadView {
                     )
                     .children(status_icon),
             )
-            .when(is_open, |this| this.child(tool_output_display))
+            .children(tool_output_display)
     }
 
     fn render_tool_call_content(
@@ -1679,8 +1673,6 @@ impl AcpThreadView {
             .p_3()
             .gap_1()
             .rounded_b_md()
-            .border_t_1()
-            .border_color(self.tool_card_border_color(cx))
             .bg(cx.theme().colors().editor_background);
 
         for (width_method, pulse_range, duration_ms) in styles.iter() {
@@ -1724,7 +1716,7 @@ impl AcpThreadView {
             .child(
                 if let Some(entry) = self.entry_view_state.read(cx).entry(entry_ix)
                     && let Some(editor) = entry.editor_for_diff(diff)
-                    && !diff.read(cx).is_empty(cx)
+                    && diff.read(cx).has_revealed_range(cx)
                 {
                     editor.clone().into_any_element()
                 } else {

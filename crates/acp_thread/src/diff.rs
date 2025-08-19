@@ -149,18 +149,6 @@ impl Diff {
         }
     }
 
-    pub fn is_empty(&self, cx: &App) -> bool {
-        match self {
-            Self::Pending(PendingDiff { diff, buffer, .. }) => diff
-                .read(cx)
-                // todo! prob shouldn't do this in the UI
-                .hunks(&buffer.read(cx).text_snapshot(), cx)
-                .next()
-                .is_some(),
-            Self::Finalized(_) => false,
-        }
-    }
-
     pub fn to_markdown(&self, cx: &App) -> String {
         let buffer_text = self
             .multibuffer()
