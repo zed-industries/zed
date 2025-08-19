@@ -669,8 +669,8 @@ impl WaylandWindowStatePtr {
     pub fn set_size_and_scale(&self, size: Option<Size<Pixels>>, scale: Option<f32>) {
         let (size, scale) = {
             let mut state = self.state.borrow_mut();
-            if size.map_or(true, |size| size == state.bounds.size)
-                && scale.map_or(true, |scale| scale == state.scale)
+            if size.is_none_or(|size| size == state.bounds.size)
+                && scale.is_none_or(|scale| scale == state.scale)
             {
                 return;
             }
