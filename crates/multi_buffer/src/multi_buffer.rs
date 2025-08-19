@@ -5237,15 +5237,6 @@ impl MultiBufferSnapshot {
             excerpt_offset += ExcerptOffset::new(offset_in_transform);
         };
 
-        if let Some((excerpt_id, buffer_id, buffer)) = self.as_singleton() {
-            return Anchor {
-                buffer_id: Some(buffer_id),
-                excerpt_id: *excerpt_id,
-                text_anchor: buffer.anchor_at(excerpt_offset.value, bias),
-                diff_base_anchor,
-            };
-        }
-
         let mut excerpts = self
             .excerpts
             .cursor::<Dimensions<ExcerptOffset, Option<ExcerptId>>>(&());
