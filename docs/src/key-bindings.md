@@ -221,7 +221,7 @@ This is useful for preventing Zed from falling back to a default keybinding when
 
 A common request is to be able to map from a single keystroke to a sequence. You can do this with the `workspace::SendKeystrokes` action.
 
-```jsonc
+```json
 [
   {
     "bindings": {
