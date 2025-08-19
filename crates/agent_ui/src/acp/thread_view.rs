@@ -1334,19 +1334,6 @@ impl AcpThreadView {
             cx.theme().colors().panel_background
         };
 
-        // let has_displayable_diff = tool_call.content.iter().any(|content| match content {
-        //     ToolCallContent::Diff(diff) => {
-        //         if let Some(entry) = self.entry_view_state.read(cx).entry(entry_ix)
-        //             && let Some(editor) = entry.editor_for_diff(diff)
-        //         {
-        //             !editor.read(cx).is_empty(cx)
-        //         } else {
-        //             false
-        //         }
-        //     }
-        //     _ => false,
-        // });
-
         let tool_output_display = if is_open {
             match &tool_call.status {
                 ToolCallStatus::WaitingForConfirmation { options, .. } => {
@@ -2041,7 +2028,7 @@ impl AcpThreadView {
 
         Some(
             v_flex()
-                // .px_2p5()
+                .px_2p5()
                 .gap_1()
                 .when_some(user_rules_text, |parent, user_rules_text| {
                     parent.child(
