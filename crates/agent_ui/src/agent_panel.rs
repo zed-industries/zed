@@ -2893,12 +2893,13 @@ impl AgentPanel {
                     )
             })
             .when_some(configuration_error.as_ref(), |this, err| {
-                this.child(self.render_configuration_error(err, &focus_handle, window, cx))
+                this.child(self.render_configuration_error(false, err, &focus_handle, window, cx))
             })
     }
 
     fn render_configuration_error(
         &self,
+        border_bottom: bool,
         configuration_error: &ConfigurationError,
         focus_handle: &FocusHandle,
         window: &mut Window,
@@ -2915,6 +2916,9 @@ impl AgentPanel {
             Callout::new()
                 .icon(IconName::Warning)
                 .severity(Severity::Warning)
+                .when(border_bottom, |this| {
+                    this.border_position(ui::BorderPosition::Bottom)
+                })
                 .title("Sign in to continue using Zed as your LLM provider.")
                 .actions_slot(
                     Button::new("sign_in", "Sign In")
@@ -2940,6 +2944,9 @@ impl AgentPanel {
             Callout::new()
                 .icon(IconName::Warning)
                 .severity(Severity::Warning)
+                .when(border_bottom, |this| {
+                    this.border_position(ui::BorderPosition::Bottom)
+                })
                 .title(configuration_error.to_string())
                 .actions_slot(
                     Button::new("settings", "Configure")
@@ -3522,16 +3529,13 @@ impl Render for AgentPanel {
                             if !self.should_render_onboarding(cx)
                                 && let Some(err) = configuration_error.as_ref()
                             {
-                                this.child(
-                                    div().bg(cx.theme().colors().editor_background).p_2().child(
-                                        self.render_configuration_error(
-                                            err,
-                                            &self.focus_handle(cx),
-                                            window,
-                                            cx,
-                                        ),
-                                    ),
-                                )
+                                this.child(self.render_configuration_error(
+                                    true,
+                                    err,
+                                    &self.focus_handle(cx),
+                                    window,
+                                    cx,
+                                ))
                             } else {
                                 this
                             }
