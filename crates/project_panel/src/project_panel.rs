@@ -503,7 +503,7 @@ impl ProjectPanel {
                     if let Some((worktree, expanded_dir_ids)) = project
                         .read(cx)
                         .worktree_for_id(*worktree_id, cx)
-                        .zip(this.expanded_dir_ids.get_mut(&worktree_id))
+                        .zip(this.expanded_dir_ids.get_mut(worktree_id))
                     {
                         let worktree = worktree.read(cx);
 
@@ -3043,7 +3043,7 @@ impl ProjectPanel {
                 if hide_root && Some(entry.entry) == worktree.read(cx).root_entry() {
                     if new_entry_parent_id == Some(entry.id) {
                         visible_worktree_entries.push(Self::create_new_git_entry(
-                            &entry.entry,
+                            entry.entry,
                             entry.git_summary,
                             new_entry_kind,
                         ));
@@ -3106,7 +3106,7 @@ impl ProjectPanel {
                 };
                 if precedes_new_entry && (!hide_gitignore || !entry.is_ignored) {
                     visible_worktree_entries.push(Self::create_new_git_entry(
-                        &entry.entry,
+                        entry.entry,
                         entry.git_summary,
                         new_entry_kind,
                     ));
@@ -3503,7 +3503,7 @@ impl ProjectPanel {
             let base_index = ix + entry_range.start;
             for (i, entry) in visible.entries[entry_range].iter().enumerate() {
                 let global_index = base_index + i;
-                callback(&entry, global_index, entries, window, cx);
+                callback(entry, global_index, entries, window, cx);
             }
             ix = end_ix;
         }
@@ -4669,7 +4669,7 @@ impl ProjectPanel {
         };
 
         let (depth, difference) =
-            ProjectPanel::calculate_depth_and_difference(&entry, entries_paths);
+            ProjectPanel::calculate_depth_and_difference(entry, entries_paths);
 
         let filename = match difference {
             diff if diff > 1 => entry

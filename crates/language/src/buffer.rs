@@ -716,7 +716,7 @@ impl EditPreview {
                     &self.applied_edits_snapshot,
                     &self.syntax_snapshot,
                     None,
-                    &syntax_theme,
+                    syntax_theme,
                 );
             }
 
@@ -727,7 +727,7 @@ impl EditPreview {
                     &current_snapshot.text,
                     &current_snapshot.syntax,
                     Some(deletion_highlight_style),
-                    &syntax_theme,
+                    syntax_theme,
                 );
             }
 
@@ -737,7 +737,7 @@ impl EditPreview {
                     &self.applied_edits_snapshot,
                     &self.syntax_snapshot,
                     Some(insertion_highlight_style),
-                    &syntax_theme,
+                    syntax_theme,
                 );
             }
 
@@ -749,7 +749,7 @@ impl EditPreview {
             &self.applied_edits_snapshot,
             &self.syntax_snapshot,
             None,
-            &syntax_theme,
+            syntax_theme,
         );
 
         highlighted_text.build()

@@ -485,7 +485,7 @@ impl LogStore {
         &mut self,
         id: &LogStoreEntryIdentifier<'_>,
     ) -> Option<&Vec<SharedString>> {
-        self.get_debug_adapter_state(&id)
+        self.get_debug_adapter_state(id)
             .map(|state| &state.rpc_messages.initialization_sequence)
     }
 }
@@ -536,11 +536,11 @@ impl Render for DapLogToolbarItemView {
                     })
                     .unwrap_or_else(|| "No adapter selected".into()),
             ))
-            .menu(move |mut window, cx| {
+            .menu(move |window, cx| {
                 let log_view = log_view.clone();
                 let menu_rows = menu_rows.clone();
                 let project = project.clone();
-                ContextMenu::build(&mut window, cx, move |mut menu, window, _cx| {
+                ContextMenu::build(window, cx, move |mut menu, window, _cx| {
                     for row in menu_rows.into_iter() {
                         menu = menu.custom_row(move |_window, _cx| {
                             div()
@@ -1131,7 +1131,7 @@ impl LogStore {
         project: &WeakEntity<Project>,
         session_id: SessionId,
     ) -> Vec<SharedString> {
-        self.projects.get(&project).map_or(vec![], |state| {
+        self.projects.get(project).map_or(vec![], |state| {
             state
                 .debug_sessions
                 .get(&session_id)

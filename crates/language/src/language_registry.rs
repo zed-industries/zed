@@ -1102,7 +1102,7 @@ impl LanguageRegistry {
         use gpui::AppContext as _;
 
         let mut state = self.state.write();
-        let fake_entry = state.fake_server_entries.get_mut(&name)?;
+        let fake_entry = state.fake_server_entries.get_mut(name)?;
         let (server, mut fake_server) = lsp::FakeLanguageServer::new(
             server_id,
             binary,

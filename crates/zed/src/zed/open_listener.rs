@@ -432,13 +432,13 @@ async fn open_workspaces(
                             .connection_options_for(ssh.host, ssh.port, ssh.user)
                     });
                     if let Ok(connection_options) = connection_options {
-                        cx.spawn(async move |mut cx| {
+                        cx.spawn(async move |cx| {
                             open_ssh_project(
                                 connection_options,
                                 ssh.paths.into_iter().map(PathBuf::from).collect(),
                                 app_state,
                                 OpenOptions::default(),
-                                &mut cx,
+                                cx,
                             )
                             .await
                             .log_err();

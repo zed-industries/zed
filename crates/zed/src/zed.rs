@@ -327,7 +327,7 @@ pub fn initialize_workspace(
         cx.subscribe_in(&workspace_handle, window, {
             move |workspace, _, event, window, cx| match event {
                 workspace::Event::PaneAdded(pane) => {
-                    initialize_pane(workspace, &pane, window, cx);
+                    initialize_pane(workspace, pane, window, cx);
                 }
                 workspace::Event::OpenBundledFile {
                     text,
@@ -645,6 +645,7 @@ fn register_actions(
                     files: true,
                     directories: true,
                     multiple: true,
+                    prompt: None,
                 },
                 DirectoryLister::Local(
                     workspace.project().clone(),
@@ -685,6 +686,7 @@ fn register_actions(
                     files: true,
                     directories: true,
                     multiple: true,
+                    prompt: None,
                 },
                 DirectoryLister::Project(workspace.project().clone()),
                 window,
@@ -794,7 +796,7 @@ fn register_actions(
         .register_action(install_cli)
         .register_action(|_, _: &install_cli::RegisterZedScheme, window, cx| {
             cx.spawn_in(window, async move |workspace, cx| {
-                install_cli::register_zed_scheme(&cx).await?;
+                install_cli::register_zed_scheme(cx).await?;
                 workspace.update_in(cx, |workspace, _, cx| {
                     struct RegisterZedScheme;
 

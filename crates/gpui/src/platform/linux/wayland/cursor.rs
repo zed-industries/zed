@@ -144,7 +144,7 @@ impl Cursor {
             hot_y as i32 / scale,
         );
 
-        self.surface.attach(Some(&buffer), 0, 0);
+        self.surface.attach(Some(buffer), 0, 0);
         self.surface.damage(0, 0, width as i32, height as i32);
         self.surface.commit();
     }

@@ -154,19 +154,19 @@ fn diff_internal(
         input,
         |old_tokens: Range<u32>, new_tokens: Range<u32>| {
             old_offset += token_len(
-                &input,
+                input,
                 &input.before[old_token_ix as usize..old_tokens.start as usize],
             );
             new_offset += token_len(
-                &input,
+                input,
                 &input.after[new_token_ix as usize..new_tokens.start as usize],
             );
             let old_len = token_len(
-                &input,
+                input,
                 &input.before[old_tokens.start as usize..old_tokens.end as usize],
             );
             let new_len = token_len(
-                &input,
+                input,
                 &input.after[new_tokens.start as usize..new_tokens.end as usize],
             );
             let old_byte_range = old_offset..old_offset + old_len;

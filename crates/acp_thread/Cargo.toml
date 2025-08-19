@@ -28,6 +28,7 @@ futures.workspace = true
 gpui.workspace = true
 itertools.workspace = true
 language.workspace = true
+language_model.workspace = true
 markdown.workspace = true
 parking_lot = { workspace = true, optional = true }
 project.workspace = true

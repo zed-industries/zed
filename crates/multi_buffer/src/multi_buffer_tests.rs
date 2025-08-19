@@ -473,7 +473,7 @@ fn test_editing_text_in_diff_hunks(cx: &mut TestAppContext) {
     let base_text = "one\ntwo\nfour\nfive\nsix\nseven\n";
     let text = "one\ntwo\nTHREE\nfour\nfive\nseven\n";
     let buffer = cx.new(|cx| Buffer::local(text, cx));
-    let diff = cx.new(|cx| BufferDiff::new_with_base_text(&base_text, &buffer, cx));
+    let diff = cx.new(|cx| BufferDiff::new_with_base_text(base_text, &buffer, cx));
     let multibuffer = cx.new(|cx| MultiBuffer::singleton(buffer.clone(), cx));
 
     let (mut snapshot, mut subscription) = multibuffer.update(cx, |multibuffer, cx| {
@@ -2265,14 +2265,14 @@ impl ReferenceMultibuffer {
                 }
 
                 if !excerpt.expanded_diff_hunks.iter().any(|expanded_anchor| {
-                    expanded_anchor.to_offset(&buffer).max(buffer_range.start)
+                    expanded_anchor.to_offset(buffer).max(buffer_range.start)
                         == hunk_range.start.max(buffer_range.start)
                 }) {
                     log::trace!("skipping a hunk that's not marked as expanded");
                     continue;
                 }
 
-                if !hunk.buffer_range.start.is_valid(&buffer) {
+                if !hunk.buffer_range.start.is_valid(buffer) {
                     log::trace!("skipping hunk with deleted start: {:?}", hunk.range);
                     continue;
                 }
@@ -2449,7 +2449,7 @@ impl ReferenceMultibuffer {
                     return false;
                 }
                 while let Some(hunk) = hunks.peek() {
-                    match hunk.buffer_range.start.cmp(&hunk_anchor, &buffer) {
+                    match hunk.buffer_range.start.cmp(hunk_anchor, &buffer) {
                         cmp::Ordering::Less => {
                             hunks.next();
                         }
@@ -2519,8 +2519,8 @@ async fn test_random_set_ranges(cx: &mut TestAppContext, mut rng: StdRng) {
         let mut seen_ranges = Vec::default();
 
         for (_, buf, range) in snapshot.excerpts() {
-            let start = range.context.start.to_point(&buf);
-            let end = range.context.end.to_point(&buf);
+            let start = range.context.start.to_point(buf);
+            let end = range.context.end.to_point(buf);
             seen_ranges.push(start..end);
 
             if let Some(last_end) = last_end.take() {
@@ -2739,9 +2739,8 @@ async fn test_random_multibuffer(cx: &mut TestAppContext, mut rng: StdRng) {
                     let id = buffer_handle.read(cx).remote_id();
                     if multibuffer.diff_for(id).is_none() {
                         let base_text = base_texts.get(&id).unwrap();
-                        let diff = cx.new(|cx| {
-                            BufferDiff::new_with_base_text(base_text, &buffer_handle, cx)
-                        });
+                        let diff = cx
+                            .new(|cx| BufferDiff::new_with_base_text(base_text, buffer_handle, cx));
                         reference.add_diff(diff.clone(), cx);
                         multibuffer.add_diff(diff, cx)
                     }
@@ -3604,7 +3603,7 @@ fn assert_position_translation(snapshot: &MultiBufferSnapshot) {
                             offsets[ix - 1],
                         );
                         assert!(
-                            prev_anchor.cmp(&anchor, snapshot).is_lt(),
+                            prev_anchor.cmp(anchor, snapshot).is_lt(),
                             "anchor({}, {bias:?}).cmp(&anchor({}, {bias:?}).is_lt()",
                             offsets[ix - 1],
                             offsets[ix],

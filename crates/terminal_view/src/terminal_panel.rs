@@ -346,7 +346,7 @@ impl TerminalPanel {
             pane::Event::RemovedItem { .. } => self.serialize(cx),
             pane::Event::Remove { focus_on_pane } => {
                 let pane_count_before_removal = self.center.panes().len();
-                let _removal_result = self.center.remove(&pane);
+                let _removal_result = self.center.remove(pane);
                 if pane_count_before_removal == 1 {
                     self.center.first_pane().update(cx, |pane, cx| {
                         pane.set_zoomed(false, cx);
@@ -1181,10 +1181,10 @@ impl Render for TerminalPanel {
                 registrar.size_full().child(self.center.render(
                     workspace.zoomed_item(),
                     &workspace::PaneRenderContext {
-                        follower_states: &&HashMap::default(),
+                        follower_states: &HashMap::default(),
                         active_call: workspace.active_call(),
                         active_pane: &self.active_pane,
-                        app_state: &workspace.app_state(),
+                        app_state: workspace.app_state(),
                         project: workspace.project(),
                         workspace: &workspace.weak_handle(),
                     },

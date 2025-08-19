@@ -371,7 +371,7 @@ impl MacPlatform {
 
                             item = NSMenuItem::alloc(nil)
                                 .initWithTitle_action_keyEquivalent_(
-                                    ns_string(&name),
+                                    ns_string(name),
                                     selector,
                                     ns_string(key_to_native(&keystroke.key).as_ref()),
                                 )
@@ -383,7 +383,7 @@ impl MacPlatform {
                         } else {
                             item = NSMenuItem::alloc(nil)
                                 .initWithTitle_action_keyEquivalent_(
-                                    ns_string(&name),
+                                    ns_string(name),
                                     selector,
                                     ns_string(""),
                                 )
@@ -392,7 +392,7 @@ impl MacPlatform {
                     } else {
                         item = NSMenuItem::alloc(nil)
                             .initWithTitle_action_keyEquivalent_(
-                                ns_string(&name),
+                                ns_string(name),
                                 selector,
                                 ns_string(""),
                             )
@@ -412,7 +412,7 @@ impl MacPlatform {
                         submenu.addItem_(Self::create_menu_item(item, delegate, actions, keymap));
                     }
                     item.setSubmenu_(submenu);
-                    item.setTitle_(ns_string(&name));
+                    item.setTitle_(ns_string(name));
                     item
                 }
                 MenuItem::SystemMenu(OsMenu { name, menu_type }) => {
@@ -420,7 +420,7 @@ impl MacPlatform {
                     let submenu = NSMenu::new(nil).autorelease();
                     submenu.setDelegate_(delegate);
                     item.setSubmenu_(submenu);
-                    item.setTitle_(ns_string(&name));
+                    item.setTitle_(ns_string(name));
 
                     match menu_type {
                         SystemMenuType::Services => {
@@ -705,6 +705,7 @@ impl Platform for MacPlatform {
                     panel.setCanChooseDirectories_(options.directories.to_objc());
                     panel.setCanChooseFiles_(options.files.to_objc());
                     panel.setAllowsMultipleSelection_(options.multiple.to_objc());
+
                     panel.setCanCreateDirectories(true.to_objc());
                     panel.setResolvesAliases_(false.to_objc());
                     let done_tx = Cell::new(Some(done_tx));
@@ -730,6 +731,11 @@ impl Platform for MacPlatform {
                         }
                     });
                     let block = block.copy();
+
+                    if let Some(prompt) = options.prompt {
+                        let _: () = msg_send![panel, setPrompt: ns_string(&prompt)];
+                    }
+
                     let _: () = msg_send![panel, beginWithCompletionHandler: block];
                 }
             })

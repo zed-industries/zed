@@ -1604,15 +1604,15 @@ impl Item for TerminalView {
                 TaskStatus::Running => (
                     IconName::PlayFilled,
                     Color::Disabled,
-                    TerminalView::rerun_button(&terminal_task),
+                    TerminalView::rerun_button(terminal_task),
                 ),
                 TaskStatus::Unknown => (
                     IconName::Warning,
                     Color::Warning,
-                    TerminalView::rerun_button(&terminal_task),
+                    TerminalView::rerun_button(terminal_task),
                 ),
                 TaskStatus::Completed { success } => {
-                    let rerun_button = TerminalView::rerun_button(&terminal_task);
+                    let rerun_button = TerminalView::rerun_button(terminal_task);
 
                     if *success {
                         (IconName::Check, Color::Success, rerun_button)

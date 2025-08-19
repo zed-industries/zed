@@ -758,7 +758,7 @@ impl DirectXRenderPipelines {
 
 impl DirectComposition {
     pub fn new(dxgi_device: &IDXGIDevice, hwnd: HWND) -> Result<Self> {
-        let comp_device = get_comp_device(&dxgi_device)?;
+        let comp_device = get_comp_device(dxgi_device)?;
         let comp_target = unsafe { comp_device.CreateTargetForHwnd(hwnd, true) }?;
         let comp_visual = unsafe { comp_device.CreateVisual() }?;
 
@@ -1144,7 +1144,7 @@ fn create_resources(
     [D3D11_VIEWPORT; 1],
 )> {
     let (render_target, render_target_view) =
-        create_render_target_and_its_view(&swap_chain, &devices.device)?;
+        create_render_target_and_its_view(swap_chain, &devices.device)?;
     let (path_intermediate_texture, path_intermediate_srv) =
         create_path_intermediate_texture(&devices.device, width, height)?;
     let (path_intermediate_msaa_texture, path_intermediate_msaa_view) =

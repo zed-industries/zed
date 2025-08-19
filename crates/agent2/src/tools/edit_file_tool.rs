@@ -471,7 +471,7 @@ fn resolve_path(
 
             let parent_entry = parent_project_path
                 .as_ref()
-                .and_then(|path| project.entry_for_path(&path, cx))
+                .and_then(|path| project.entry_for_path(path, cx))
                 .context("Can't create file: parent directory doesn't exist")?;
 
             anyhow::ensure!(

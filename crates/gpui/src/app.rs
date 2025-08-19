@@ -1310,7 +1310,7 @@ impl App {
         T: 'static,
     {
         let window_handle = window.handle;
-        self.observe_release(&handle, move |entity, cx| {
+        self.observe_release(handle, move |entity, cx| {
             let _ = window_handle.update(cx, |_, window, cx| on_release(entity, window, cx));
         })
     }
@@ -1917,7 +1917,7 @@ impl AppContext for App {
         G: Global,
     {
         let mut g = self.global::<G>();
-        callback(&g, self)
+        callback(g, self)
     }
 }
 

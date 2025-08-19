@@ -73,7 +73,7 @@ impl Parse for Args {
                 (Meta::NameValue(meta), "seed") => {
                     seeds = vec![parse_usize_from_expr(&meta.value)? as u64]
                 }
-                (Meta::List(list), "seeds") => seeds = parse_u64_array(&list)?,
+                (Meta::List(list), "seeds") => seeds = parse_u64_array(list)?,
                 (Meta::Path(_), _) => {
                     return Err(syn::Error::new(meta.span(), "invalid path argument"));
                 }

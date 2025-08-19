@@ -587,7 +587,7 @@ impl LspAdapter for TypeScriptLspAdapter {
             .should_install_npm_package(
                 Self::PACKAGE_NAME,
                 &server_path,
-                &container_dir,
+                container_dir,
                 VersionStrategy::Latest(version.typescript_version.as_str()),
             )
             .await;

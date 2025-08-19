@@ -561,7 +561,7 @@ impl GitStore {
     pub fn active_repository(&self) -> Option<Entity<Repository>> {
         self.active_repo_id
             .as_ref()
-            .map(|id| self.repositories[&id].clone())
+            .map(|id| self.repositories[id].clone())
     }
 
     pub fn open_unstaged_diff(
@@ -1277,7 +1277,7 @@ impl GitStore {
     ) {
         match event {
             BufferStoreEvent::BufferAdded(buffer) => {
-                cx.subscribe(&buffer, |this, buffer, event, cx| {
+                cx.subscribe(buffer, |this, buffer, event, cx| {
                     if let BufferEvent::LanguageChanged = event {
                         let buffer_id = buffer.read(cx).remote_id();
                         if let Some(diff_state) = this.diffs.get(&buffer_id) {
@@ -1295,7 +1295,7 @@ impl GitStore {
                 }
             }
             BufferStoreEvent::BufferDropped(buffer_id) => {
-                self.diffs.remove(&buffer_id);
+                self.diffs.remove(buffer_id);
                 for diffs in self.shared_diffs.values_mut() {
                     diffs.remove(buffer_id);
                 }
@@ -1384,8 +1384,8 @@ impl GitStore {
             repository.update(cx, |repository, cx| {
                 let repo_abs_path = &repository.work_directory_abs_path;
                 if changed_repos.iter().any(|update| {
-                    update.old_work_directory_abs_path.as_ref() == Some(&repo_abs_path)
-                        || update.new_work_directory_abs_path.as_ref() == Some(&repo_abs_path)
+                    update.old_work_directory_abs_path.as_ref() == Some(repo_abs_path)
+                        || update.new_work_directory_abs_path.as_ref() == Some(repo_abs_path)
                 }) {
                     repository.reload_buffer_diff_bases(cx);
                 }
@@ -1536,7 +1536,7 @@ impl GitStore {
             });
             if is_new {
                 this._subscriptions
-                    .push(cx.subscribe(&repo, Self::on_repository_event))
+                    .push(cx.subscribe(repo, Self::on_repository_event))
             }
 
             repo.update(cx, {
@@ -2353,7 +2353,7 @@ impl GitStore {
                     // All paths prefixed by a given repo will constitute a continuous range.
                     while let Some(path) = entries.get(ix)
                         && let Some(repo_path) =
-                            RepositorySnapshot::abs_path_to_repo_path_inner(&repo_path, &path)
+                            RepositorySnapshot::abs_path_to_repo_path_inner(&repo_path, path)
                     {
                         paths.push((repo_path, ix));
                         ix += 1;
@@ -2875,14 +2875,14 @@ impl RepositorySnapshot {
     }
 
     pub fn had_conflict_on_last_merge_head_change(&self, repo_path: &RepoPath) -> bool {
-        self.merge.conflicted_paths.contains(&repo_path)
+        self.merge.conflicted_paths.contains(repo_path)
     }
 
     pub fn has_conflict(&self, repo_path: &RepoPath) -> bool {
         let had_conflict_on_last_merge_head_change =
-            self.merge.conflicted_paths.contains(&repo_path);
+            self.merge.conflicted_paths.contains(repo_path);
         let has_conflict_currently = self
-            .status_for_path(&repo_path)
+            .status_for_path(repo_path)
             .map_or(false, |entry| entry.status.is_conflicted());
         had_conflict_on_last_merge_head_change || has_conflict_currently
     }

@@ -442,14 +442,14 @@ impl LocalLspStore {
                 match result {
                     Ok(server) => {
                         lsp_store
-                            .update(cx, |lsp_store, mut cx| {
+                            .update(cx, |lsp_store, cx| {
                                 lsp_store.insert_newly_running_language_server(
                                     adapter,
                                     server.clone(),
                                     server_id,
                                     key,
                                     pending_workspace_folders,
-                                    &mut cx,
+                                    cx,
                                 );
                             })
                             .ok();
@@ -1927,7 +1927,7 @@ impl LocalLspStore {
         if let Some(lsp_edits) = lsp_edits {
             this.update(cx, |this, cx| {
                 this.as_local_mut().unwrap().edits_from_lsp(
-                    &buffer_handle,
+                    buffer_handle,
                     lsp_edits,
                     language_server.server_id(),
                     None,
@@ -3115,7 +3115,7 @@ impl LocalLspStore {
 
         let mut servers_to_remove = BTreeSet::default();
         let mut servers_to_preserve = HashSet::default();
-        for (seed, ref state) in &self.language_server_ids {
+        for (seed, state) in &self.language_server_ids {
             if seed.worktree_id == id_to_remove {
                 servers_to_remove.insert(state.id);
             } else {
@@ -3169,7 +3169,7 @@ impl LocalLspStore {
 
         for watcher in watchers {
             if let Some((worktree, literal_prefix, pattern)) =
-                self.worktree_and_path_for_file_watcher(&worktrees, &watcher, cx)
+                self.worktree_and_path_for_file_watcher(&worktrees, watcher, cx)
             {
                 worktree.update(cx, |worktree, _| {
                     if let Some((tree, glob)) =
@@ -4131,7 +4131,7 @@ impl LspStore {
                         local.registered_buffers.remove(&buffer_id);
                         local.buffers_opened_in_servers.remove(&buffer_id);
                         if let Some(file) = File::from_dyn(buffer.read(cx).file()).cloned() {
-                            local.unregister_old_buffer_from_language_servers(&buffer, &file, cx);
+                            local.unregister_old_buffer_from_language_servers(buffer, &file, cx);
                         }
                     }
                 })
@@ -4453,7 +4453,7 @@ impl LspStore {
                     .contains(&server_status.name)
                     .then_some(server_id)
             })
-            .filter_map(|server_id| self.lsp_server_capabilities.get(&server_id))
+            .filter_map(|server_id| self.lsp_server_capabilities.get(server_id))
             .any(check)
     }
 
@@ -5419,7 +5419,7 @@ impl LspStore {
     ) -> Task<Result<Vec<LocationLink>>> {
         if let Some((upstream_client, project_id)) = self.upstream_client() {
             let request = GetTypeDefinitions { position };
-            if !self.is_capable_for_proto_request(&buffer, &request, cx) {
+            if !self.is_capable_for_proto_request(buffer, &request, cx) {
                 return Task::ready(Ok(Vec::new()));
             }
             let request_task = upstream_client.request(proto::MultiLspQuery {
@@ -5573,7 +5573,7 @@ impl LspStore {
     ) -> Task<Result<Vec<Location>>> {
         if let Some((upstream_client, project_id)) = self.upstream_client() {
             let request = GetReferences { position };
-            if !self.is_capable_for_proto_request(&buffer, &request, cx) {
+            if !self.is_capable_for_proto_request(buffer, &request, cx) {
                 return Task::ready(Ok(Vec::new()));
             }
             let request_task = upstream_client.request(proto::MultiLspQuery {
@@ -5755,7 +5755,7 @@ impl LspStore {
 
         let lsp_data = self.lsp_code_lens.entry(buffer_id).or_default();
         if let Some((updating_for, running_update)) = &lsp_data.update {
-            if !version_queried_for.changed_since(&updating_for) {
+            if !version_queried_for.changed_since(updating_for) {
                 return running_update.clone();
             }
         }
@@ -6786,7 +6786,7 @@ impl LspStore {
 
         let lsp_data = self.lsp_document_colors.entry(buffer_id).or_default();
         if let Some((updating_for, running_update)) = &lsp_data.colors_update {
-            if !version_queried_for.changed_since(&updating_for) {
+            if !version_queried_for.changed_since(updating_for) {
                 return Some(running_update.clone());
             }
         }
@@ -10057,7 +10057,7 @@ impl LspStore {
     ) -> Shared<Task<Option<HashMap<String, String>>>> {
         if let Some(environment) = &self.as_local().map(|local| local.environment.clone()) {
             environment.update(cx, |env, cx| {
-                env.get_buffer_environment(&buffer, &self.worktree_store, cx)
+                env.get_buffer_environment(buffer, &self.worktree_store, cx)
             })
         } else {
             Task::ready(None).shared()
@@ -11175,7 +11175,7 @@ impl LspStore {
         let Some(local) = self.as_local() else { return };
 
         local.prettier_store.update(cx, |prettier_store, cx| {
-            prettier_store.update_prettier_settings(&worktree_handle, changes, cx)
+            prettier_store.update_prettier_settings(worktree_handle, changes, cx)
         });
 
         let worktree_id = worktree_handle.read(cx).id();
@@ -11820,8 +11820,28 @@ impl LspStore {
                         .transpose()?
                     {
                         server.update_capabilities(|capabilities| {
+                            let mut sync_options =
+                                Self::take_text_document_sync_options(capabilities);
+                            sync_options.change = Some(sync_kind);
                             capabilities.text_document_sync =
-                                Some(lsp::TextDocumentSyncCapability::Kind(sync_kind));
+                                Some(lsp::TextDocumentSyncCapability::Options(sync_options));
+                        });
+                        notify_server_capabilities_updated(&server, cx);
+                    }
+                }
+                "textDocument/didSave" => {
+                    if let Some(save_options) = reg
+                        .register_options
+                        .and_then(|opts| opts.get("includeText").cloned())
+                        .map(serde_json::from_value::<lsp::TextDocumentSyncSaveOptions>)
+                        .transpose()?
+                    {
+                        server.update_capabilities(|capabilities| {
+                            let mut sync_options =
+                                Self::take_text_document_sync_options(capabilities);
+                            sync_options.save = Some(save_options);
+                            capabilities.text_document_sync =
+                                Some(lsp::TextDocumentSyncCapability::Options(sync_options));
                         });
                         notify_server_capabilities_updated(&server, cx);
                     }
@@ -11973,7 +11993,19 @@ impl LspStore {
                 }
                 "textDocument/didChange" => {
                     server.update_capabilities(|capabilities| {
-                        capabilities.text_document_sync = None;
+                        let mut sync_options = Self::take_text_document_sync_options(capabilities);
+                        sync_options.change = None;
+                        capabilities.text_document_sync =
+                            Some(lsp::TextDocumentSyncCapability::Options(sync_options));
+                    });
+                    notify_server_capabilities_updated(&server, cx);
+                }
+                "textDocument/didSave" => {
+                    server.update_capabilities(|capabilities| {
+                        let mut sync_options = Self::take_text_document_sync_options(capabilities);
+                        sync_options.save = None;
+                        capabilities.text_document_sync =
+                            Some(lsp::TextDocumentSyncCapability::Options(sync_options));
                     });
                     notify_server_capabilities_updated(&server, cx);
                 }
@@ -12000,6 +12032,20 @@ impl LspStore {
         }
 
         Ok(())
+    }
+
+    fn take_text_document_sync_options(
+        capabilities: &mut lsp::ServerCapabilities,
+    ) -> lsp::TextDocumentSyncOptions {
+        match capabilities.text_document_sync.take() {
+            Some(lsp::TextDocumentSyncCapability::Options(sync_options)) => sync_options,
+            Some(lsp::TextDocumentSyncCapability::Kind(sync_kind)) => {
+                let mut sync_options = lsp::TextDocumentSyncOptions::default();
+                sync_options.change = Some(sync_kind);
+                sync_options
+            }
+            None => lsp::TextDocumentSyncOptions::default(),
+        }
     }
 }
 
@@ -13103,24 +13149,18 @@ async fn populate_labels_for_symbols(
 
 fn include_text(server: &lsp::LanguageServer) -> Option<bool> {
     match server.capabilities().text_document_sync.as_ref()? {
-        lsp::TextDocumentSyncCapability::Kind(kind) => match *kind {
-            lsp::TextDocumentSyncKind::NONE => None,
-            lsp::TextDocumentSyncKind::FULL => Some(true),
-            lsp::TextDocumentSyncKind::INCREMENTAL => Some(false),
-            _ => None,
-        },
-        lsp::TextDocumentSyncCapability::Options(options) => match options.save.as_ref()? {
-            lsp::TextDocumentSyncSaveOptions::Supported(supported) => {
-                if *supported {
-                    Some(true)
-                } else {
-                    None
-                }
-            }
+        lsp::TextDocumentSyncCapability::Options(opts) => match opts.save.as_ref()? {
+            // Server wants didSave but didn't specify includeText.
+            lsp::TextDocumentSyncSaveOptions::Supported(true) => Some(false),
+            // Server doesn't want didSave at all.
+            lsp::TextDocumentSyncSaveOptions::Supported(false) => None,
+            // Server provided SaveOptions.
             lsp::TextDocumentSyncSaveOptions::SaveOptions(save_options) => {
                 Some(save_options.include_text.unwrap_or(false))
             }
         },
+        // We do not have any save info. Kind affects didChange only.
+        lsp::TextDocumentSyncCapability::Kind(_) => None,
     }
 }
 

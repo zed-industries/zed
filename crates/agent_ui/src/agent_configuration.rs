@@ -137,7 +137,11 @@ impl AgentConfiguration {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let configuration_view = provider.configuration_view(window, cx);
+        let configuration_view = provider.configuration_view(
+            language_model::ConfigurationViewTargetAgent::ZedAgent,
+            window,
+            cx,
+        );
         self.configuration_views_by_provider
             .insert(provider.id(), configuration_view);
     }
