@@ -1983,6 +1983,7 @@ impl AcpThreadView {
                 .when_some(user_rules_text, |parent, user_rules_text| {
                     parent.child(
                         h_flex()
+                            .group("user-rules")
                             .w_full()
                             .child(
                                 Icon::new(IconName::Reader)
@@ -2003,6 +2004,7 @@ impl AcpThreadView {
                                     .shape(ui::IconButtonShape::Square)
                                     .icon_size(IconSize::XSmall)
                                     .icon_color(Color::Ignored)
+                                    .visible_on_hover("user-rules")
                                     // TODO: Figure out a way to pass focus handle here so we can display the `OpenRulesLibrary`  keybinding
                                     .tooltip(Tooltip::text("View User Rules"))
                                     .on_click(move |_event, window, cx| {
@@ -2019,6 +2021,7 @@ impl AcpThreadView {
                 .when_some(rules_file_text, |parent, rules_file_text| {
                     parent.child(
                         h_flex()
+                            .group("project-rules")
                             .w_full()
                             .child(
                                 Icon::new(IconName::File)
@@ -2039,6 +2042,7 @@ impl AcpThreadView {
                                     .icon_size(IconSize::XSmall)
                                     .icon_color(Color::Ignored)
                                     .on_click(cx.listener(Self::handle_open_rules))
+                                    .visible_on_hover("project-rules")
                                     .tooltip(Tooltip::text("View Project Rules")),
                             ),
                     )
