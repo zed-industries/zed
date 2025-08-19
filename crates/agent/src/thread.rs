@@ -16,7 +16,6 @@ use chrono::{DateTime, Utc};
 use client::{ModelRequestUsage, RequestUsage};
 use cloud_llm_client::{CompletionIntent, CompletionRequestStatus, Plan, UsageLimit};
 use collections::HashMap;
-use feature_flags::{self, FeatureFlagAppExt};
 use futures::{FutureExt, StreamExt as _, future::Shared};
 use git::repository::DiffType;
 use gpui::{
@@ -388,7 +387,6 @@ pub struct Thread {
     feedback: Option<ThreadFeedback>,
     retry_state: Option<RetryState>,
     message_feedback: HashMap<MessageId, ThreadFeedback>,
-    last_auto_capture_at: Option<Instant>,
     last_received_chunk_at: Option<Instant>,
     request_callback: Option<
         Box<dyn FnMut(&LanguageModelRequest, &[Result<LanguageModelCompletionEvent, String>])>,
@@ -489,7 +487,6 @@ impl Thread {
             feedback: None,
             retry_state: None,
             message_feedback: HashMap::default(),
-            last_auto_capture_at: None,
             last_error_context: None,
             last_received_chunk_at: None,
             request_callback: None,
@@ -614,7 +611,6 @@ impl Thread {
             tool_use_limit_reached: serialized.tool_use_limit_reached,
             feedback: None,
             message_feedback: HashMap::default(),
-            last_auto_capture_at: None,
             last_error_context: None,
             last_received_chunk_at: None,
             request_callback: None,
@@ -1032,8 +1028,6 @@ impl Thread {
                 git_checkpoint,
             });
         }
-
-        self.auto_capture_telemetry(cx);
 
         message_id
     }
@@ -1906,7 +1900,6 @@ impl Thread {
                         cx.emit(ThreadEvent::StreamedCompletion);
                         cx.notify();
 
-                        thread.auto_capture_telemetry(cx);
                         Ok(())
                     })??;
 
@@ -2080,8 +2073,6 @@ impl Thread {
                     {
                         request_callback(request, response_events);
                     }
-
-                    thread.auto_capture_telemetry(cx);
 
                     if let Ok(initial_usage) = initial_token_usage {
                         let usage = thread.cumulative_token_usage - initial_usage;
@@ -2536,7 +2527,6 @@ impl Thread {
         model: Arc<dyn LanguageModel>,
         cx: &mut Context<Self>,
     ) -> Vec<PendingToolUse> {
-        self.auto_capture_telemetry(cx);
         let request =
             Arc::new(self.to_completion_request(model.clone(), CompletionIntent::ToolResults, cx));
         let pending_tool_uses = self
@@ -2745,7 +2735,6 @@ impl Thread {
                 if !canceled {
                     self.send_to_model(model.clone(), CompletionIntent::ToolResults, window, cx);
                 }
-                self.auto_capture_telemetry(cx);
             }
         }
 
@@ -3145,50 +3134,6 @@ impl Thread {
 
     pub fn project(&self) -> &Entity<Project> {
         &self.project
-    }
-
-    pub fn auto_capture_telemetry(&mut self, cx: &mut Context<Self>) {
-        if !cx.has_flag::<feature_flags::ThreadAutoCaptureFeatureFlag>() {
-            return;
-        }
-
-        let now = Instant::now();
-        if let Some(last) = self.last_auto_capture_at {
-            if now.duration_since(last).as_secs() < 10 {
-                return;
-            }
-        }
-
-        self.last_auto_capture_at = Some(now);
-
-        let thread_id = self.id().clone();
-        let github_login = self
-            .project
-            .read(cx)
-            .user_store()
-            .read(cx)
-            .current_user()
-            .map(|user| user.github_login.clone());
-        let client = self.project.read(cx).client();
-        let serialize_task = self.serialize(cx);
-
-        cx.background_executor()
-            .spawn(async move {
-                if let Ok(serialized_thread) = serialize_task.await {
-                    if let Ok(thread_data) = serde_json::to_value(serialized_thread) {
-                        telemetry::event!(
-                            "Agent Thread Auto-Captured",
-                            thread_id = thread_id.to_string(),
-                            thread_data = thread_data,
-                            auto_capture_reason = "tracked_user",
-                            github_login = github_login
-                        );
-
-                        client.telemetry().flush_events().await;
-                    }
-                }
-            })
-            .detach();
     }
 
     pub fn cumulative_token_usage(&self) -> TokenUsage {
