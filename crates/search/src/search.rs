@@ -204,3 +204,46 @@ pub(crate) fn show_no_more_matches(window: &mut Window, cx: &mut App) {
         })
     });
 }
+
+/// A `PatternItem` is a character, preceded by a backslash, that can be used to
+/// modify the search options.
+/// For example, using `\c` in a search query will make the search
+/// case-insensitive, while `\C` will make it case-sensitive.
+enum PatternItem {
+    CaseSensitiveFalse,
+    CaseSensitiveTrue,
+}
+
+impl TryFrom<&str> for PatternItem {
+    type Error = anyhow::Error;
+
+    fn try_from(str: &str) -> Result<Self, Self::Error> {
+        match str {
+            "\\c" => Ok(Self::CaseSensitiveFalse),
+            "\\C" => Ok(Self::CaseSensitiveTrue),
+            _ => anyhow::bail!("Invalid pattern item: {}", str),
+        }
+    }
+}
+
+impl PatternItem {
+    /// Representation of the pattern item as a single character, without the
+    /// backslash.
+    fn character(&self) -> char {
+        match self {
+            Self::CaseSensitiveFalse => 'c',
+            Self::CaseSensitiveTrue => 'C',
+        }
+    }
+
+    fn search_option(&self) -> (SearchOptions, bool) {
+        match self {
+            Self::CaseSensitiveFalse => (SearchOptions::CASE_SENSITIVE, false),
+            Self::CaseSensitiveTrue => (SearchOptions::CASE_SENSITIVE, true),
+        }
+    }
+
+    fn all_variants() -> &'static [Self] {
+        &[Self::CaseSensitiveFalse, Self::CaseSensitiveTrue]
+    }
+}

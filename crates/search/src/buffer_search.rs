@@ -1,9 +1,10 @@
 mod registrar;
 
 use crate::{
-    FocusSearch, NextHistoryQuery, PreviousHistoryQuery, ReplaceAll, ReplaceNext, SearchOption,
-    SearchOptions, SearchSource, SelectAllMatches, SelectNextMatch, SelectPreviousMatch,
-    ToggleCaseSensitive, ToggleRegex, ToggleReplace, ToggleSelection, ToggleWholeWord,
+    FocusSearch, NextHistoryQuery, PatternItem, PreviousHistoryQuery, ReplaceAll, ReplaceNext,
+    SearchOption, SearchOptions, SearchSource, SelectAllMatches, SelectNextMatch,
+    SelectPreviousMatch, ToggleCaseSensitive, ToggleRegex, ToggleReplace, ToggleSelection,
+    ToggleWholeWord,
     search_bar::{ActionButtonState, input_base_styles, render_action_button, render_text_input},
 };
 use any_vec::AnyVec;
@@ -46,17 +47,6 @@ pub use registrar::DivRegistrar;
 use registrar::{ForDeployed, ForDismissed, SearchActionsRegistrar, WithResults};
 
 const MAX_BUFFER_SEARCH_HISTORY_SIZE: usize = 50;
-
-/// Array of supported pattern items and their corresponding search options and
-/// value.
-/// When any of the patterns is present in the search query, the corresponding
-/// search option, and value, is applied.
-// TODO: Should this be updated to an HashMap so we can easily determine the
-// search option for a given pattern?
-static PATTERN_ITEMS: [(&str, &SearchOptions, bool); 2] = [
-    ("c", &SearchOptions::CASE_SENSITIVE, false),
-    ("C", &SearchOptions::CASE_SENSITIVE, true),
-];
 
 /// Opens the buffer search interface with the specified configuration.
 #[derive(PartialEq, Clone, Deserialize, JsonSchema, Action)]
@@ -123,11 +113,11 @@ pub struct BufferSearchBar {
     pending_search: Option<Task<()>>,
     search_options: SearchOptions,
     default_options: SearchOptions,
-    /// List of search options and its state derived from the pattern items in
-    /// the search query. Keeping track of these values allows us to determine
-    /// which search options are enabled/disabled by the pattern items, as well
-    /// as reverting any changes made to the search options.
-    pattern_item_options: Vec<(SearchOptions, bool)>,
+    /// List of search options that were enabled or disabled by the pattern
+    /// items in the search query.
+    /// By toggling each search option in reverse order, one can obtain the
+    /// original search options before pattern items were applied.
+    pattern_item_options: Vec<SearchOptions>,
     configured_options: SearchOptions,
     query_error: Option<String>,
     dismissed: bool,
@@ -663,9 +653,9 @@ impl BufferSearchBar {
 
         let pattern_items_regex = Regex::new(&format!(
             r"(?<!\\)(\\[{}])",
-            PATTERN_ITEMS
+            PatternItem::all_variants()
                 .iter()
-                .map(|(pattern, _, _)| *pattern)
+                .map(|item| item.character())
                 .collect::<String>()
         ))
         .unwrap();
@@ -1493,64 +1483,32 @@ impl BufferSearchBar {
     // Determines which pattern items are present in the search query and
     // updates the search options accordingly, only if the regex search option
     // is enabled.
-    //
-    // TODO: How to deal with the case where cancelling pattern items are
-    // available? For example, `bananas\c\C` or `bananas\C\c`. We'd probably
-    // need to actually capture the matches with a Regex, so we can iterate over
-    // them in order and get the correct order, for example, finding `\c\C\c` in
-    // a string would eventually equate to `[(CASE_SENSITIVE, false),
-    // (CASE_INSENSITIVE, true), (CASE_SENSITIVE, false)]`
-    //
-    // TODO: Reimplement this so that we can simply use another `SearchOptions`
-    // for the pattern items, so that excluding that second one from the
-    // `self.search_options` leads to the search options before pattern items
-    // options were applied.
     fn apply_pattern_items(&mut self, cx: &mut Context<Self>) {
         if self.search_options.contains(SearchOptions::REGEX) {
-            // Recalculate the search options before the pattern items were
-            // applied, so we can reapply them and determine which ones are
-            // actually affecting the search options.
-            // TODO: This can probably be improved by simply verifying if any new
-            // pattern items are available, seeing as it should be incremental.
-            let mut search_options = self.search_options;
-            self.pattern_item_options
-                .iter()
-                .rev()
-                .for_each(|(search_option, _value)| {
-                    // TODO: Do we actually care about the `value`? If the
-                    // search option was added to `pattern_item_options`, we
-                    // already know that it affected the `search_options` so
-                    // simply toggleing it should have the desired effect of
-                    // reverting the changes.
+            // Determine what the search options were before the pattern items
+            // were applied, so we can reapply them and determine which ones
+            // actually have an effect on the search options, which are the ones
+            // we need to keep track of.
+            let mut search_options = self.pattern_item_options.iter().rev().fold(
+                self.search_options,
+                |mut search_options, search_option| {
                     search_options.toggle(*search_option);
-                });
+                    search_options
+                },
+            );
 
-            let mut pattern_item_options = Vec::new();
             let query = self.raw_query(cx);
+            let mut pattern_item_options = Vec::new();
 
-            // TODO: Maybe avoid so many unwrap/expect calls here.
             self.pattern_items_regex
                 .captures_iter(&query)
-                .map(|capture| capture.unwrap())
-                .map(|capture| {
-                    let pattern_item = capture.get(1).unwrap().as_str();
-
-                    PATTERN_ITEMS
-                        .iter()
-                        .find(|(pattern, _, _)| pattern_item.ends_with(*pattern))
-                        .expect("should only capture valid pattern items")
-                })
-                .for_each(|(_, search_option, value)| {
-                    match (search_options.contains(**search_option), value) {
-                        (true, false) => {
-                            search_options.toggle(**search_option);
-                            pattern_item_options.push((**search_option, false));
-                        }
-                        (false, true) => {
-                            search_options.toggle(**search_option);
-                            pattern_item_options.push((**search_option, true));
-                        }
-                        (_, _) => {}
+                .filter_map(|capture| capture.ok()?.get(1))
+                .filter_map(|capture| PatternItem::try_from(capture.as_str()).ok())
+                .map(|pattern_item| pattern_item.search_option())
+                .for_each(|(search_option, value)| {
+                    if search_options.contains(search_option) != value {
+                        search_options.toggle(search_option);
+                        pattern_item_options.push(search_option);
                     }
                 });
 
