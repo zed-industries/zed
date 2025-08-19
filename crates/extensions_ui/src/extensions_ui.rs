@@ -1031,14 +1031,15 @@ impl ExtensionsPage {
                                 .read(cx)
                                 .extension_manifest_for_id(&extension_id)
                                 .cloned()
-                                && let Some(events) = extension::ExtensionEvents::try_global(cx) {
-                                    events.update(cx, |this, cx| {
-                                        this.emit(
-                                            extension::Event::ConfigureExtensionRequested(manifest),
-                                            cx,
-                                        )
-                                    });
-                                }
+                                && let Some(events) = extension::ExtensionEvents::try_global(cx)
+                            {
+                                events.update(cx, |this, cx| {
+                                    this.emit(
+                                        extension::Event::ConfigureExtensionRequested(manifest),
+                                        cx,
+                                    )
+                                });
+                            }
                         }
                     })
                 }),

@@ -1449,9 +1449,10 @@ impl GitRepository for RealGitRepository {
                 let mut add_if_matching = async |remote_head: &str| {
                     if let Ok(merge_base) = git_cmd(&["merge-base", &head, remote_head]).await
                         && merge_base.trim() == head
-                            && let Some(s) = remote_head.strip_prefix("refs/remotes/") {
-                                remote_branches.push(s.to_owned().into());
-                            }
+                        && let Some(s) = remote_head.strip_prefix("refs/remotes/")
+                    {
+                        remote_branches.push(s.to_owned().into());
+                    }
                 };
 
                 // check the main branch of each remote
@@ -1572,9 +1573,10 @@ impl GitRepository for RealGitRepository {
                     Err(error) => {
                         if let Some(GitBinaryCommandError { status, .. }) =
                             error.downcast_ref::<GitBinaryCommandError>()
-                            && status.code() == Some(1) {
-                                return Ok(false);
-                            }
+                            && status.code() == Some(1)
+                        {
+                            return Ok(false);
+                        }
 
                         Err(error)
                     }

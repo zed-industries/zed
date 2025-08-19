@@ -73,9 +73,10 @@ impl<M: ManagedView> PopoverMenuHandle<M> {
 
     pub fn hide(&self, cx: &mut App) {
         if let Some(state) = self.0.borrow().as_ref()
-            && let Some(menu) = state.menu.borrow().as_ref() {
-                menu.update(cx, |_, cx| cx.emit(DismissEvent));
-            }
+            && let Some(menu) = state.menu.borrow().as_ref()
+        {
+            menu.update(cx, |_, cx| cx.emit(DismissEvent));
+        }
     }
 
     pub fn toggle(&self, window: &mut Window, cx: &mut App) {
@@ -278,9 +279,10 @@ fn show_menu<M: ManagedView>(
     window
         .subscribe(&new_menu, cx, move |modal, _: &DismissEvent, window, cx| {
             if modal.focus_handle(cx).contains_focused(window, cx)
-                && let Some(previous_focus_handle) = previous_focus_handle.as_ref() {
-                    window.focus(previous_focus_handle);
-                }
+                && let Some(previous_focus_handle) = previous_focus_handle.as_ref()
+            {
+                window.focus(previous_focus_handle);
+            }
             *menu2.borrow_mut() = None;
             window.refresh();
         })
@@ -372,13 +374,14 @@ impl<M: ManagedView> Element for PopoverMenu<M> {
                 });
 
                 if let Some(trigger_handle) = self.trigger_handle.take()
-                    && let Some(menu_builder) = self.menu_builder.clone() {
-                        *trigger_handle.0.borrow_mut() = Some(PopoverMenuHandleState {
-                            menu_builder,
-                            menu: element_state.menu.clone(),
-                            on_open: self.on_open.clone(),
-                        });
-                    }
+                    && let Some(menu_builder) = self.menu_builder.clone()
+                {
+                    *trigger_handle.0.borrow_mut() = Some(PopoverMenuHandleState {
+                        menu_builder,
+                        menu: element_state.menu.clone(),
+                        on_open: self.on_open.clone(),
+                    });
+                }
 
                 let child_layout_id = child_element
                     .as_mut()

@@ -626,9 +626,9 @@ impl BreakpointStore {
                         if let Some(range) = &range
                             && (bp.position().cmp(&range.start, buffer_snapshot).is_lt()
                                 || bp.position().cmp(&range.end, buffer_snapshot).is_gt())
-                            {
-                                return None;
-                            }
+                        {
+                            return None;
+                        }
                         let session_state = active_session_id
                             .and_then(|id| bp.session_state.get(&id))
                             .copied();

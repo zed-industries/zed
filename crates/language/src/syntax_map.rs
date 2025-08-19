@@ -415,41 +415,42 @@ impl SyntaxSnapshot {
         self.reparse_with_ranges(text, root_language.clone(), edit_ranges, registry.as_ref());
 
         if let Some(registry) = registry
-            && registry.version() != self.language_registry_version {
-                let mut resolved_injection_ranges = Vec::new();
-                let mut cursor = self
-                    .layers
-                    .filter::<_, ()>(text, |summary| summary.contains_unknown_injections);
+            && registry.version() != self.language_registry_version
+        {
+            let mut resolved_injection_ranges = Vec::new();
+            let mut cursor = self
+                .layers
+                .filter::<_, ()>(text, |summary| summary.contains_unknown_injections);
+            cursor.next();
+            while let Some(layer) = cursor.item() {
+                let SyntaxLayerContent::Pending { language_name } = &layer.content else {
+                    unreachable!()
+                };
+                if registry
+                    .language_for_name_or_extension(language_name)
+                    .now_or_never()
+                    .and_then(|language| language.ok())
+                    .is_some()
+                {
+                    let range = layer.range.to_offset(text);
+                    log::trace!("reparse range {range:?} for language {language_name:?}");
+                    resolved_injection_ranges.push(range);
+                }
+
                 cursor.next();
-                while let Some(layer) = cursor.item() {
-                    let SyntaxLayerContent::Pending { language_name } = &layer.content else {
-                        unreachable!()
-                    };
-                    if registry
-                        .language_for_name_or_extension(language_name)
-                        .now_or_never()
-                        .and_then(|language| language.ok())
-                        .is_some()
-                    {
-                        let range = layer.range.to_offset(text);
-                        log::trace!("reparse range {range:?} for language {language_name:?}");
-                        resolved_injection_ranges.push(range);
-                    }
-
-                    cursor.next();
-                }
-                drop(cursor);
-
-                if !resolved_injection_ranges.is_empty() {
-                    self.reparse_with_ranges(
-                        text,
-                        root_language,
-                        resolved_injection_ranges,
-                        Some(&registry),
-                    );
-                }
-                self.language_registry_version = registry.version();
             }
+            drop(cursor);
+
+            if !resolved_injection_ranges.is_empty() {
+                self.reparse_with_ranges(
+                    text,
+                    root_language,
+                    resolved_injection_ranges,
+                    Some(&registry),
+                );
+            }
+            self.language_registry_version = registry.version();
+        }
 
         self.update_count += 1;
     }
@@ -1065,9 +1066,10 @@ impl<'a> SyntaxMapCaptures<'a> {
         for layer in &mut self.layers {
             layer.captures.set_byte_range(range.clone());
             if let Some(capture) = &layer.next_capture
-                && capture.node.end_byte() > range.start {
-                    continue;
-                }
+                && capture.node.end_byte() > range.start
+            {
+                continue;
+            }
             layer.advance();
         }
         self.layers.sort_unstable_by_key(|layer| layer.sort_key());
@@ -1276,10 +1278,11 @@ fn join_ranges(
         };
 
         if let Some(last) = result.last_mut()
-            && range.start <= last.end {
-                last.end = last.end.max(range.end);
-                continue;
-            }
+            && range.start <= last.end
+        {
+            last.end = last.end.max(range.end);
+            continue;
+        }
         result.push(range);
     }
     result
@@ -1332,9 +1335,9 @@ fn get_injections(
                 .language_for_name_or_extension(language_name)
                 .now_or_never()
                 .and_then(|language| language.ok())
-            {
-                combined_injection_ranges.insert(language.id, (language, Vec::new()));
-            }
+        {
+            combined_injection_ranges.insert(language.id, (language, Vec::new()));
+        }
     }
 
     for query_range in changed_ranges {
@@ -1354,9 +1357,11 @@ fn get_injections(
 
             // Avoid duplicate matches if two changed ranges intersect the same injection.
             if let Some((prev_pattern_ix, prev_range)) = &prev_match
-                && mat.pattern_index == *prev_pattern_ix && content_range == *prev_range {
-                    continue;
-                }
+                && mat.pattern_index == *prev_pattern_ix
+                && content_range == *prev_range
+            {
+                continue;
+            }
 
             prev_match = Some((mat.pattern_index, content_range.clone()));
             let combined = config.patterns[mat.pattern_index].combined;

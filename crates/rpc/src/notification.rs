@@ -49,9 +49,10 @@ impl Notification {
             unreachable!("kind is the enum tag")
         };
         if let map::Entry::Occupied(e) = value.entry(ENTITY_ID)
-            && e.get().is_u64() {
-                entity_id = e.remove().as_u64();
-            }
+            && e.get().is_u64()
+        {
+            entity_id = e.remove().as_u64();
+        }
         proto::Notification {
             kind,
             entity_id,

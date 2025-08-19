@@ -267,9 +267,9 @@ impl TerminalPanel {
                             )
                         })?
                         .await
-                    {
-                        terminal_panel = Some(serialized);
-                    }
+                {
+                    terminal_panel = Some(serialized);
+                }
             }
             _ => {}
         }
@@ -1077,9 +1077,9 @@ pub fn new_terminal_pane(
                         };
                     } else if let Some(project_path) = item.project_path(cx)
                         && let Some(entry_path) = project.read(cx).absolute_path(&project_path, cx)
-                        {
-                            add_paths_to_terminal(pane, &[entry_path], window, cx);
-                        }
+                    {
+                        add_paths_to_terminal(pane, &[entry_path], window, cx);
+                    }
                 }
             } else if let Some(selection) = dropped_item.downcast_ref::<DraggedSelection>() {
                 let project = project.read(cx);
@@ -1100,10 +1100,9 @@ pub fn new_terminal_pane(
                 {
                     add_paths_to_terminal(pane, &[entry_path], window, cx);
                 }
-            } else if is_local
-                && let Some(paths) = dropped_item.downcast_ref::<ExternalPaths>() {
-                    add_paths_to_terminal(pane, paths.paths(), window, cx);
-                }
+            } else if is_local && let Some(paths) = dropped_item.downcast_ref::<ExternalPaths>() {
+                add_paths_to_terminal(pane, paths.paths(), window, cx);
+            }
 
             ControlFlow::Break(())
         });

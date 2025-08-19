@@ -29,9 +29,10 @@ impl ActiveBufferLanguage {
 
         let editor = editor.read(cx);
         if let Some((_, buffer, _)) = editor.active_excerpt(cx)
-            && let Some(language) = buffer.read(cx).language() {
-                self.active_language = Some(Some(language.name()));
-            }
+            && let Some(language) = buffer.read(cx).language()
+        {
+            self.active_language = Some(Some(language.name()));
+        }
 
         cx.notify();
     }

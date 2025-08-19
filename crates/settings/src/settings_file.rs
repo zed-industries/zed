@@ -68,9 +68,10 @@ pub fn watch_config_file(
                 }
 
                 if let Ok(contents) = fs.load(&path).await
-                    && tx.unbounded_send(contents).is_err() {
-                        break;
-                    }
+                    && tx.unbounded_send(contents).is_err()
+                {
+                    break;
+                }
             }
         })
         .detach();
@@ -89,9 +90,10 @@ pub fn watch_config_dir(
             for file_path in &config_paths {
                 if fs.metadata(file_path).await.is_ok_and(|v| v.is_some())
                     && let Ok(contents) = fs.load(file_path).await
-                        && tx.unbounded_send(contents).is_err() {
-                            return;
-                        }
+                    && tx.unbounded_send(contents).is_err()
+                {
+                    return;
+                }
             }
 
             let (events, _) = fs.watch(&dir_path, Duration::from_millis(100)).await;
@@ -108,9 +110,10 @@ pub fn watch_config_dir(
                             }
                             Some(PathEventKind::Created) | Some(PathEventKind::Changed) => {
                                 if let Ok(contents) = fs.load(&event.path).await
-                                    && tx.unbounded_send(contents).is_err() {
-                                        return;
-                                    }
+                                    && tx.unbounded_send(contents).is_err()
+                                {
+                                    return;
+                                }
                             }
                             _ => {}
                         }

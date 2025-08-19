@@ -373,9 +373,9 @@ pub fn replace_top_level_array_value_in_json_text(
                 && text[remove_range.end + 1..remove_range.end + next_newline]
                     .chars()
                     .all(|c| c.is_ascii_whitespace())
-                {
-                    remove_range.end = remove_range.end + next_newline;
-                }
+            {
+                remove_range.end = remove_range.end + next_newline;
+            }
         } else {
             while cursor.goto_previous_sibling()
                 && (cursor.node().is_extra() || cursor.node().is_missing())
@@ -508,9 +508,10 @@ pub fn append_top_level_array_value_in_json_text(
         }
     } else {
         if let Some(prev_newline) = text[..replace_range.start].rfind('\n')
-            && text[prev_newline..replace_range.start].trim().is_empty() {
-                replace_range.start = prev_newline;
-            }
+            && text[prev_newline..replace_range.start].trim().is_empty()
+        {
+            replace_range.start = prev_newline;
+        }
         let indent = format!("\n{space:width$}", width = tab_size);
         replace_value = replace_value.replace('\n', &indent);
         replace_value.insert_str(0, &indent);

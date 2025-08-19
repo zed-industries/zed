@@ -970,13 +970,14 @@ impl DisplaySnapshot {
                 // For color inlays, blend the color with the editor background
                 let mut processed_highlight = chunk_highlight;
                 if chunk.is_inlay
-                    && let Some(inlay_color) = chunk_highlight.color {
-                        // Only blend if the color has transparency (alpha < 1.0)
-                        if inlay_color.a < 1.0 {
-                            let blended_color = editor_style.background.blend(inlay_color);
-                            processed_highlight.color = Some(blended_color);
-                        }
+                    && let Some(inlay_color) = chunk_highlight.color
+                {
+                    // Only blend if the color has transparency (alpha < 1.0)
+                    if inlay_color.a < 1.0 {
+                        let blended_color = editor_style.background.blend(inlay_color);
+                        processed_highlight.color = Some(blended_color);
                     }
+                }
 
                 if let Some(highlight_style) = highlight_style.as_mut() {
                     highlight_style.highlight(processed_highlight);
@@ -2351,10 +2352,12 @@ pub mod tests {
                 .and_then(|style| style.color)
                 .map_or(black, |color| color.to_rgb());
             if let Some((last_chunk, last_severity, last_color)) = chunks.last_mut()
-                && *last_severity == chunk.diagnostic_severity && *last_color == color {
-                    last_chunk.push_str(chunk.text);
-                    continue;
-                }
+                && *last_severity == chunk.diagnostic_severity
+                && *last_color == color
+            {
+                last_chunk.push_str(chunk.text);
+                continue;
+            }
 
             chunks.push((chunk.text.to_string(), chunk.diagnostic_severity, color));
         }
@@ -2900,10 +2903,12 @@ pub mod tests {
                 .and_then(|id| id.style(theme)?.color);
             let highlight_color = chunk.highlight_style.and_then(|style| style.color);
             if let Some((last_chunk, last_syntax_color, last_highlight_color)) = chunks.last_mut()
-                && syntax_color == *last_syntax_color && highlight_color == *last_highlight_color {
-                    last_chunk.push_str(chunk.text);
-                    continue;
-                }
+                && syntax_color == *last_syntax_color
+                && highlight_color == *last_highlight_color
+            {
+                last_chunk.push_str(chunk.text);
+                continue;
+            }
             chunks.push((chunk.text.to_string(), syntax_color, highlight_color));
         }
         chunks

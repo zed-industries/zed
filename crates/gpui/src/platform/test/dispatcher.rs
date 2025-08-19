@@ -79,10 +79,11 @@ impl TestDispatcher {
             let next_due_time = state.delayed.first().map(|(time, _)| *time);
             drop(state);
             if let Some(due_time) = next_due_time
-                && due_time <= new_now {
-                    self.state.lock().time = due_time;
-                    continue;
-                }
+                && due_time <= new_now
+            {
+                self.state.lock().time = due_time;
+                continue;
+            }
             break;
         }
         self.state.lock().time = new_now;

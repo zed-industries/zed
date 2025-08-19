@@ -1776,9 +1776,10 @@ impl Language {
             {
                 let end_offset = offset + chunk.text.len();
                 if let Some(highlight_id) = chunk.syntax_highlight_id
-                    && !highlight_id.is_default() {
-                        result.push((offset..end_offset, highlight_id));
-                    }
+                    && !highlight_id.is_default()
+                {
+                    result.push((offset..end_offset, highlight_id));
+                }
                 offset = end_offset;
             }
         }
@@ -1795,10 +1796,11 @@ impl Language {
 
     pub fn set_theme(&self, theme: &SyntaxTheme) {
         if let Some(grammar) = self.grammar.as_ref()
-            && let Some(highlights_query) = &grammar.highlights_query {
-                *grammar.highlight_map.lock() =
-                    HighlightMap::new(highlights_query.capture_names(), theme);
-            }
+            && let Some(highlights_query) = &grammar.highlights_query
+        {
+            *grammar.highlight_map.lock() =
+                HighlightMap::new(highlights_query.capture_names(), theme);
+        }
     }
 
     pub fn grammar(&self) -> Option<&Arc<Grammar>> {
@@ -1918,10 +1920,11 @@ impl LanguageScope {
             .map(move |(ix, bracket)| {
                 let mut is_enabled = true;
                 if let Some(next_disabled_ix) = disabled_ids.first()
-                    && ix == *next_disabled_ix as usize {
-                        disabled_ids = &disabled_ids[1..];
-                        is_enabled = false;
-                    }
+                    && ix == *next_disabled_ix as usize
+                {
+                    disabled_ids = &disabled_ids[1..];
+                    is_enabled = false;
+                }
                 (bracket, is_enabled)
             })
     }

@@ -341,26 +341,27 @@ impl Markdown {
 
             for (range, event) in &events {
                 if let MarkdownEvent::Start(MarkdownTag::Image { dest_url, .. }) = event
-                    && let Some(data_url) = dest_url.strip_prefix("data:") {
-                        let Some((mime_info, data)) = data_url.split_once(',') else {
-                            continue;
-                        };
-                        let Some((mime_type, encoding)) = mime_info.split_once(';') else {
-                            continue;
-                        };
-                        let Some(format) = ImageFormat::from_mime_type(mime_type) else {
-                            continue;
-                        };
-                        let is_base64 = encoding == "base64";
-                        if is_base64
-                            && let Some(bytes) = base64::prelude::BASE64_STANDARD
-                                .decode(data)
-                                .log_with_level(Level::Debug)
-                            {
-                                let image = Arc::new(Image::from_bytes(format, bytes));
-                                images_by_source_offset.insert(range.start, image);
-                            }
+                    && let Some(data_url) = dest_url.strip_prefix("data:")
+                {
+                    let Some((mime_info, data)) = data_url.split_once(',') else {
+                        continue;
+                    };
+                    let Some((mime_type, encoding)) = mime_info.split_once(';') else {
+                        continue;
+                    };
+                    let Some(format) = ImageFormat::from_mime_type(mime_type) else {
+                        continue;
+                    };
+                    let is_base64 = encoding == "base64";
+                    if is_base64
+                        && let Some(bytes) = base64::prelude::BASE64_STANDARD
+                            .decode(data)
+                            .log_with_level(Level::Debug)
+                    {
+                        let image = Arc::new(Image::from_bytes(format, bytes));
+                        images_by_source_offset.insert(range.start, image);
                     }
+                }
             }
 
             (
@@ -658,13 +659,14 @@ impl MarkdownElement {
             move |markdown, event: &MouseUpEvent, phase, window, cx| {
                 if phase.bubble() {
                     if let Some(pressed_link) = markdown.pressed_link.take()
-                        && Some(&pressed_link) == rendered_text.link_for_position(event.position) {
-                            if let Some(open_url) = on_open_url.as_ref() {
-                                open_url(pressed_link.destination_url, window, cx);
-                            } else {
-                                cx.open_url(&pressed_link.destination_url);
-                            }
+                        && Some(&pressed_link) == rendered_text.link_for_position(event.position)
+                    {
+                        if let Some(open_url) = on_open_url.as_ref() {
+                            open_url(pressed_link.destination_url, window, cx);
+                        } else {
+                            cx.open_url(&pressed_link.destination_url);
                         }
+                    }
                 } else if markdown.selection.pending {
                     markdown.selection.pending = false;
                     #[cfg(any(target_os = "linux", target_os = "freebsd"))]
@@ -756,9 +758,10 @@ impl Element for MarkdownElement {
         for (range, event) in parsed_markdown.events.iter() {
             // Skip alt text for images that rendered
             if let Some(current_img_block_range) = &current_img_block_range
-                && current_img_block_range.end > range.end {
-                    continue;
-                }
+                && current_img_block_range.end > range.end
+            {
+                continue;
+            }
 
             match event {
                 MarkdownEvent::Start(tag) => {
@@ -1693,9 +1696,10 @@ impl RenderedText {
             let line_bounds = line.layout.bounds();
             if position.y > line_bounds.bottom() {
                 if let Some(next_line) = lines.peek()
-                    && position.y < next_line.layout.bounds().top() {
-                        return Err(line.source_end);
-                    }
+                    && position.y < next_line.layout.bounds().top()
+                {
+                    return Err(line.source_end);
+                }
 
                 continue;
             }

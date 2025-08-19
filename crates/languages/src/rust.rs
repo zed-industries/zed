@@ -600,9 +600,9 @@ impl ContextProvider for RustContextProvider {
                 .and_then(|local_abs_path| local_abs_path.parent())
                 && let Some(package_name) =
                     human_readable_package_name(path, project_env.as_ref()).await
-                {
-                    variables.insert(RUST_PACKAGE_TASK_VARIABLE.clone(), package_name);
-                }
+            {
+                variables.insert(RUST_PACKAGE_TASK_VARIABLE.clone(), package_name);
+            }
             if let Some(path) = local_abs_path.as_ref()
                 && let Some((target, manifest_path)) =
                     target_info_from_abs_path(path, project_env.as_ref()).await

@@ -833,9 +833,10 @@ impl<T: Item> ItemHandle for Entity<T> {
                         let leader_id = workspace.leader_for_pane(&pane);
 
                         if let Some(leader_id) = leader_id
-                            && let Some(FollowEvent::Unfollow) = item.to_follow_event(event) {
-                                workspace.unfollow(leader_id, window, cx);
-                            }
+                            && let Some(FollowEvent::Unfollow) = item.to_follow_event(event)
+                        {
+                            workspace.unfollow(leader_id, window, cx);
+                        }
 
                         if item.item_focus_handle(cx).contains_focused(window, cx) {
                             match leader_id {
@@ -863,9 +864,10 @@ impl<T: Item> ItemHandle for Entity<T> {
                     }
 
                     if let Some(item) = item.to_serializable_item_handle(cx)
-                        && item.should_serialize(event, cx) {
-                            workspace.enqueue_item_serialization(item).ok();
-                        }
+                        && item.should_serialize(event, cx)
+                    {
+                        workspace.enqueue_item_serialization(item).ok();
+                    }
 
                     T::to_item_events(event, |event| match event {
                         ItemEvent::CloseItem => {
@@ -947,10 +949,11 @@ impl<T: Item> ItemHandle for Entity<T> {
                 window,
                 move |workspace, window, cx| {
                     if let Some(item) = weak_item.upgrade()
-                        && item.workspace_settings(cx).autosave == AutosaveSetting::OnFocusChange {
-                            Pane::autosave_item(&item, workspace.project.clone(), window, cx)
-                                .detach_and_log_err(cx);
-                        }
+                        && item.workspace_settings(cx).autosave == AutosaveSetting::OnFocusChange
+                    {
+                        Pane::autosave_item(&item, workspace.project.clone(), window, cx)
+                            .detach_and_log_err(cx);
+                    }
                 },
             )
             .detach();

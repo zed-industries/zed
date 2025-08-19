@@ -326,9 +326,10 @@ impl settings::Settings for TerminalSettings {
         {
             for (k, v) in env {
                 if v.is_null()
-                    && let Some(zed_env) = current.env.as_mut() {
-                        zed_env.remove(k);
-                    }
+                    && let Some(zed_env) = current.env.as_mut()
+                {
+                    zed_env.remove(k);
+                }
                 let Some(v) = v.as_str() else { continue };
                 if let Some(zed_env) = current.env.as_mut() {
                     zed_env.insert(k.clone(), v.to_owned());

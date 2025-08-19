@@ -1311,9 +1311,10 @@ impl ConnectionPool {
             }
             Some(ConnectionPoolEntry::Connected(ssh)) => {
                 if let Some(ssh) = ssh.upgrade()
-                    && !ssh.has_been_killed() {
-                        return Task::ready(Ok(ssh)).shared();
-                    }
+                    && !ssh.has_been_killed()
+                {
+                    return Task::ready(Ok(ssh)).shared();
+                }
                 self.connections.remove(&opts);
             }
             None => {}
@@ -1843,24 +1844,24 @@ impl SshRemoteConnection {
             && let Some((url, body)) = delegate
                 .get_download_params(self.ssh_platform, release_channel, wanted_version, cx)
                 .await?
+        {
+            match self
+                .download_binary_on_server(&url, &body, &tmp_path_gz, delegate, cx)
+                .await
             {
-                match self
-                    .download_binary_on_server(&url, &body, &tmp_path_gz, delegate, cx)
-                    .await
-                {
-                    Ok(_) => {
-                        self.extract_server_binary(&dst_path, &tmp_path_gz, delegate, cx)
-                            .await?;
-                        return Ok(dst_path);
-                    }
-                    Err(e) => {
-                        log::error!(
-                            "Failed to download binary on server, attempting to upload server: {}",
-                            e
-                        )
-                    }
+                Ok(_) => {
+                    self.extract_server_binary(&dst_path, &tmp_path_gz, delegate, cx)
+                        .await?;
+                    return Ok(dst_path);
+                }
+                Err(e) => {
+                    log::error!(
+                        "Failed to download binary on server, attempting to upload server: {}",
+                        e
+                    )
                 }
             }
+        }
 
         let src_path = delegate
             .download_server_binary_locally(self.ssh_platform, release_channel, wanted_version, cx)

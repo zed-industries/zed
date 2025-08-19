@@ -612,10 +612,10 @@ impl Copilot {
                                                     prompt: prompt_flow,
                                                     ..
                                                 } = status
-                                                {
-                                                    *prompt_flow = Some(flow.clone());
-                                                    cx.notify();
-                                                }
+                                            {
+                                                *prompt_flow = Some(flow.clone());
+                                                cx.notify();
+                                            }
                                         })?;
                                         let response = lsp
                                             .request::<request::SignInConfirm>(
@@ -782,74 +782,75 @@ impl Copilot {
     ) -> Result<()> {
         if let Ok(server) = self.server.as_running()
             && let Some(registered_buffer) = server.registered_buffers.get_mut(&buffer.entity_id())
-            {
-                match event {
-                    language::BufferEvent::Edited => {
-                        drop(registered_buffer.report_changes(&buffer, cx));
-                    }
-                    language::BufferEvent::Saved => {
+        {
+            match event {
+                language::BufferEvent::Edited => {
+                    drop(registered_buffer.report_changes(&buffer, cx));
+                }
+                language::BufferEvent::Saved => {
+                    server
+                        .lsp
+                        .notify::<lsp::notification::DidSaveTextDocument>(
+                            &lsp::DidSaveTextDocumentParams {
+                                text_document: lsp::TextDocumentIdentifier::new(
+                                    registered_buffer.uri.clone(),
+                                ),
+                                text: None,
+                            },
+                        )?;
+                }
+                language::BufferEvent::FileHandleChanged
+                | language::BufferEvent::LanguageChanged => {
+                    let new_language_id = id_for_language(buffer.read(cx).language());
+                    let Ok(new_uri) = uri_for_buffer(&buffer, cx) else {
+                        return Ok(());
+                    };
+                    if new_uri != registered_buffer.uri
+                        || new_language_id != registered_buffer.language_id
+                    {
+                        let old_uri = mem::replace(&mut registered_buffer.uri, new_uri);
+                        registered_buffer.language_id = new_language_id;
                         server
                             .lsp
-                            .notify::<lsp::notification::DidSaveTextDocument>(
-                                &lsp::DidSaveTextDocumentParams {
-                                    text_document: lsp::TextDocumentIdentifier::new(
+                            .notify::<lsp::notification::DidCloseTextDocument>(
+                                &lsp::DidCloseTextDocumentParams {
+                                    text_document: lsp::TextDocumentIdentifier::new(old_uri),
+                                },
+                            )?;
+                        server
+                            .lsp
+                            .notify::<lsp::notification::DidOpenTextDocument>(
+                                &lsp::DidOpenTextDocumentParams {
+                                    text_document: lsp::TextDocumentItem::new(
                                         registered_buffer.uri.clone(),
+                                        registered_buffer.language_id.clone(),
+                                        registered_buffer.snapshot_version,
+                                        registered_buffer.snapshot.text(),
                                     ),
-                                    text: None,
                                 },
                             )?;
                     }
-                    language::BufferEvent::FileHandleChanged
-                    | language::BufferEvent::LanguageChanged => {
-                        let new_language_id = id_for_language(buffer.read(cx).language());
-                        let Ok(new_uri) = uri_for_buffer(&buffer, cx) else {
-                            return Ok(());
-                        };
-                        if new_uri != registered_buffer.uri
-                            || new_language_id != registered_buffer.language_id
-                        {
-                            let old_uri = mem::replace(&mut registered_buffer.uri, new_uri);
-                            registered_buffer.language_id = new_language_id;
-                            server
-                                .lsp
-                                .notify::<lsp::notification::DidCloseTextDocument>(
-                                    &lsp::DidCloseTextDocumentParams {
-                                        text_document: lsp::TextDocumentIdentifier::new(old_uri),
-                                    },
-                                )?;
-                            server
-                                .lsp
-                                .notify::<lsp::notification::DidOpenTextDocument>(
-                                    &lsp::DidOpenTextDocumentParams {
-                                        text_document: lsp::TextDocumentItem::new(
-                                            registered_buffer.uri.clone(),
-                                            registered_buffer.language_id.clone(),
-                                            registered_buffer.snapshot_version,
-                                            registered_buffer.snapshot.text(),
-                                        ),
-                                    },
-                                )?;
-                        }
-                    }
-                    _ => {}
                 }
+                _ => {}
             }
+        }
 
         Ok(())
     }
 
     fn unregister_buffer(&mut self, buffer: &WeakEntity<Buffer>) {
         if let Ok(server) = self.server.as_running()
-            && let Some(buffer) = server.registered_buffers.remove(&buffer.entity_id()) {
-                server
-                    .lsp
-                    .notify::<lsp::notification::DidCloseTextDocument>(
-                        &lsp::DidCloseTextDocumentParams {
-                            text_document: lsp::TextDocumentIdentifier::new(buffer.uri),
-                        },
-                    )
-                    .ok();
-            }
+            && let Some(buffer) = server.registered_buffers.remove(&buffer.entity_id())
+        {
+            server
+                .lsp
+                .notify::<lsp::notification::DidCloseTextDocument>(
+                    &lsp::DidCloseTextDocumentParams {
+                        text_document: lsp::TextDocumentIdentifier::new(buffer.uri),
+                    },
+                )
+                .ok();
+        }
     }
 
     pub fn completions<T>(

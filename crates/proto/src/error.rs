@@ -191,9 +191,10 @@ impl ErrorExt for RpcError {
         for tag in &self.tags {
             let mut parts = tag.split('=');
             if let Some(key) = parts.next()
-                && key == k {
-                    return parts.next();
-                }
+                && key == k
+            {
+                return parts.next();
+            }
         }
         None
     }

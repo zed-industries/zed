@@ -576,17 +576,17 @@ impl GitStore {
                 .unstaged_diff
                 .as_ref()
                 .and_then(|weak| weak.upgrade())
+        {
+            if let Some(task) =
+                diff_state.update(cx, |diff_state, _| diff_state.wait_for_recalculation())
             {
-                if let Some(task) =
-                    diff_state.update(cx, |diff_state, _| diff_state.wait_for_recalculation())
-                {
-                    return cx.background_executor().spawn(async move {
-                        task.await;
-                        Ok(unstaged_diff)
-                    });
-                }
-                return Task::ready(Ok(unstaged_diff));
+                return cx.background_executor().spawn(async move {
+                    task.await;
+                    Ok(unstaged_diff)
+                });
             }
+            return Task::ready(Ok(unstaged_diff));
+        }
 
         let Some((repo, repo_path)) =
             self.repository_and_path_for_buffer_id(buffer.read(cx).remote_id(), cx)
@@ -632,17 +632,17 @@ impl GitStore {
                 .uncommitted_diff
                 .as_ref()
                 .and_then(|weak| weak.upgrade())
+        {
+            if let Some(task) =
+                diff_state.update(cx, |diff_state, _| diff_state.wait_for_recalculation())
             {
-                if let Some(task) =
-                    diff_state.update(cx, |diff_state, _| diff_state.wait_for_recalculation())
-                {
-                    return cx.background_executor().spawn(async move {
-                        task.await;
-                        Ok(uncommitted_diff)
-                    });
-                }
-                return Task::ready(Ok(uncommitted_diff));
+                return cx.background_executor().spawn(async move {
+                    task.await;
+                    Ok(uncommitted_diff)
+                });
             }
+            return Task::ready(Ok(uncommitted_diff));
+        }
 
         let Some((repo, repo_path)) =
             self.repository_and_path_for_buffer_id(buffer.read(cx).remote_id(), cx)
@@ -768,16 +768,16 @@ impl GitStore {
                 .conflict_set
                 .as_ref()
                 .and_then(|weak| weak.upgrade())
-            {
-                let conflict_set = conflict_set.clone();
-                let buffer_snapshot = buffer.read(cx).text_snapshot();
+        {
+            let conflict_set = conflict_set.clone();
+            let buffer_snapshot = buffer.read(cx).text_snapshot();
 
-                git_state.update(cx, |state, cx| {
-                    let _ = state.reparse_conflict_markers(buffer_snapshot, cx);
-                });
+            git_state.update(cx, |state, cx| {
+                let _ = state.reparse_conflict_markers(buffer_snapshot, cx);
+            });
 
-                return conflict_set;
-            }
+            return conflict_set;
+        }
 
         let is_unmerged = self
             .repository_and_path_for_buffer_id(buffer_id, cx)
@@ -1148,28 +1148,27 @@ impl GitStore {
         for (buffer_id, diff) in self.diffs.iter() {
             if let Some((buffer_repo, repo_path)) =
                 self.repository_and_path_for_buffer_id(*buffer_id, cx)
-                && buffer_repo == repo {
-                    diff.update(cx, |diff, cx| {
-                        if let Some(conflict_set) = &diff.conflict_set {
-                            let conflict_status_changed =
-                                conflict_set.update(cx, |conflict_set, cx| {
-                                    let has_conflict = repo_snapshot.has_conflict(&repo_path);
-                                    conflict_set.set_has_conflict(has_conflict, cx)
-                                })?;
-                            if conflict_status_changed {
-                                let buffer_store = self.buffer_store.read(cx);
-                                if let Some(buffer) = buffer_store.get(*buffer_id) {
-                                    let _ = diff.reparse_conflict_markers(
-                                        buffer.read(cx).text_snapshot(),
-                                        cx,
-                                    );
-                                }
+                && buffer_repo == repo
+            {
+                diff.update(cx, |diff, cx| {
+                    if let Some(conflict_set) = &diff.conflict_set {
+                        let conflict_status_changed =
+                            conflict_set.update(cx, |conflict_set, cx| {
+                                let has_conflict = repo_snapshot.has_conflict(&repo_path);
+                                conflict_set.set_has_conflict(has_conflict, cx)
+                            })?;
+                        if conflict_status_changed {
+                            let buffer_store = self.buffer_store.read(cx);
+                            if let Some(buffer) = buffer_store.get(*buffer_id) {
+                                let _ = diff
+                                    .reparse_conflict_markers(buffer.read(cx).text_snapshot(), cx);
                             }
                         }
-                        anyhow::Ok(())
-                    })
-                    .ok();
-                }
+                    }
+                    anyhow::Ok(())
+                })
+                .ok();
+            }
         }
         cx.emit(GitStoreEvent::RepositoryUpdated(
             id,
@@ -2227,12 +2226,13 @@ impl GitStore {
         let buffer_id = BufferId::new(request.payload.buffer_id)?;
         this.update(&mut cx, |this, cx| {
             if let Some(diff_state) = this.diffs.get_mut(&buffer_id)
-                && let Some(buffer) = this.buffer_store.read(cx).get(buffer_id) {
-                    let buffer = buffer.read(cx).text_snapshot();
-                    diff_state.update(cx, |diff_state, cx| {
-                        diff_state.handle_base_texts_updated(buffer, request.payload, cx);
-                    })
-                }
+                && let Some(buffer) = this.buffer_store.read(cx).get(buffer_id)
+            {
+                let buffer = buffer.read(cx).text_snapshot();
+                diff_state.update(cx, |diff_state, cx| {
+                    diff_state.handle_base_texts_updated(buffer, request.payload, cx);
+                })
+            }
         })
     }
 
@@ -3532,9 +3532,9 @@ impl Repository {
                             .read(cx)
                             .file()
                             .map_or(false, |file| file.disk_state().exists())
-                        {
-                            save_futures.push(buffer_store.save_buffer(buffer, cx));
-                        }
+                    {
+                        save_futures.push(buffer_store.save_buffer(buffer, cx));
+                    }
                 }
             })
         }
@@ -3598,9 +3598,9 @@ impl Repository {
                             .read(cx)
                             .file()
                             .map_or(false, |file| file.disk_state().exists())
-                        {
-                            save_futures.push(buffer_store.save_buffer(buffer, cx));
-                        }
+                    {
+                        save_futures.push(buffer_store.save_buffer(buffer, cx));
+                    }
                 }
             })
         }
@@ -4454,9 +4454,9 @@ impl Repository {
                         && jobs
                             .iter()
                             .any(|other_job| other_job.key.as_ref() == Some(current_key))
-                        {
-                            continue;
-                        }
+                    {
+                        continue;
+                    }
                     (job.job)(state.clone(), cx).await;
                 } else if let Some(job) = job_rx.next().await {
                     jobs.push_back(job);
@@ -4580,9 +4580,10 @@ impl Repository {
                         for (repo_path, status) in &*statuses.entries {
                             changed_paths.remove(repo_path);
                             if cursor.seek_forward(&PathTarget::Path(repo_path), Bias::Left)
-                                && cursor.item().is_some_and(|entry| entry.status == *status) {
-                                    continue;
-                                }
+                                && cursor.item().is_some_and(|entry| entry.status == *status)
+                            {
+                                continue;
+                            }
 
                             changed_path_statuses.push(Edit::Insert(StatusEntry {
                                 repo_path: repo_path.clone(),

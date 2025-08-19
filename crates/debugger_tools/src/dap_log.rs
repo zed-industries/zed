@@ -662,10 +662,11 @@ impl ToolbarItemView for DapLogToolbarItemView {
         cx: &mut Context<Self>,
     ) -> workspace::ToolbarItemLocation {
         if let Some(item) = active_pane_item
-            && let Some(log_view) = item.downcast::<DapLogView>() {
-                self.log_view = Some(log_view.clone());
-                return workspace::ToolbarItemLocation::PrimaryLeft;
-            }
+            && let Some(log_view) = item.downcast::<DapLogView>()
+        {
+            self.log_view = Some(log_view.clone());
+            return workspace::ToolbarItemLocation::PrimaryLeft;
+        }
         self.log_view = None;
 
         cx.notify();

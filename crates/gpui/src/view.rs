@@ -207,20 +207,20 @@ impl Element for AnyView {
 
                     if let Some(mut element_state) = element_state
                         && element_state.cache_key.bounds == bounds
-                            && element_state.cache_key.content_mask == content_mask
-                            && element_state.cache_key.text_style == text_style
-                            && !window.dirty_views.contains(&self.entity_id())
-                            && !window.refreshing
-                        {
-                            let prepaint_start = window.prepaint_index();
-                            window.reuse_prepaint(element_state.prepaint_range.clone());
-                            cx.entities
-                                .extend_accessed(&element_state.accessed_entities);
-                            let prepaint_end = window.prepaint_index();
-                            element_state.prepaint_range = prepaint_start..prepaint_end;
+                        && element_state.cache_key.content_mask == content_mask
+                        && element_state.cache_key.text_style == text_style
+                        && !window.dirty_views.contains(&self.entity_id())
+                        && !window.refreshing
+                    {
+                        let prepaint_start = window.prepaint_index();
+                        window.reuse_prepaint(element_state.prepaint_range.clone());
+                        cx.entities
+                            .extend_accessed(&element_state.accessed_entities);
+                        let prepaint_end = window.prepaint_index();
+                        element_state.prepaint_range = prepaint_start..prepaint_end;
 
-                            return (None, element_state);
-                        }
+                        return (None, element_state);
+                    }
 
                     let refreshing = mem::replace(&mut window.refreshing, true);
                     let prepaint_start = window.prepaint_index();

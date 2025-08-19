@@ -716,9 +716,10 @@ impl Platform for MacPlatform {
                             for i in 0..urls.count() {
                                 let url = urls.objectAtIndex(i);
                                 if url.isFileURL() == YES
-                                    && let Ok(path) = ns_url_to_path(url) {
-                                        result.push(path)
-                                    }
+                                    && let Ok(path) = ns_url_to_path(url)
+                                {
+                                    result.push(path)
+                                }
                             }
                             Some(result)
                         } else {
@@ -785,15 +786,17 @@ impl Platform for MacPlatform {
                                     // This is conditional on OS version because I'd like to get rid of it, so that
                                     // you can manually create a file called `a.sql.s`. That said it seems better
                                     // to break that use-case than breaking `a.sql`.
-                                    if chunks.len() == 3 && chunks[1].starts_with(chunks[2])
-                                        && Self::os_version() >= SemanticVersion::new(15, 0, 0) {
-                                            let new_filename = OsStr::from_bytes(
-                                                &filename.as_bytes()
-                                                    [..chunks[0].len() + 1 + chunks[1].len()],
-                                            )
-                                            .to_owned();
-                                            result.set_file_name(&new_filename);
-                                        }
+                                    if chunks.len() == 3
+                                        && chunks[1].starts_with(chunks[2])
+                                        && Self::os_version() >= SemanticVersion::new(15, 0, 0)
+                                    {
+                                        let new_filename = OsStr::from_bytes(
+                                            &filename.as_bytes()
+                                                [..chunks[0].len() + 1 + chunks[1].len()],
+                                        )
+                                        .to_owned();
+                                        result.set_file_name(&new_filename);
+                                    }
                                     return result;
                                 })
                             }

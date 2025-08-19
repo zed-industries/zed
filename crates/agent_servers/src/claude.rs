@@ -204,13 +204,14 @@ impl AgentConnection for ClaudeAgentConnection {
                     }
 
                     if let Some(status) = child.status().await.log_err()
-                        && let Some(thread) = thread_rx.recv().await.ok() {
-                            thread
-                                .update(cx, |thread, cx| {
-                                    thread.emit_server_exited(status, cx);
-                                })
-                                .ok();
-                        }
+                        && let Some(thread) = thread_rx.recv().await.ok()
+                    {
+                        thread
+                            .update(cx, |thread, cx| {
+                                thread.emit_server_exited(status, cx);
+                            })
+                            .ok();
+                    }
                 }
             });
 

@@ -222,13 +222,14 @@ impl Vim {
                 return None;
             }
             if globals.replayer.is_none()
-                && let Some(recording_register) = globals.recording_register {
-                    globals
-                        .recordings
-                        .entry(recording_register)
-                        .or_default()
-                        .push(ReplayableAction::Action(Repeat.boxed_clone()));
-                }
+                && let Some(recording_register) = globals.recording_register
+            {
+                globals
+                    .recordings
+                    .entry(recording_register)
+                    .or_default()
+                    .push(ReplayableAction::Action(Repeat.boxed_clone()));
+            }
 
             let mut mode = None;
             let selection = globals.recorded_selection.clone();
@@ -320,9 +321,10 @@ impl Vim {
         // 3 times, instead it inserts the content thrice at the insert position.
         if let Some(to_repeat) = repeatable_insert(&actions[0]) {
             if let Some(ReplayableAction::Action(action)) = actions.last()
-                && NormalBefore.partial_eq(&**action) {
-                    actions.pop();
-                }
+                && NormalBefore.partial_eq(&**action)
+            {
+                actions.pop();
+            }
 
             let mut new_actions = actions.clone();
             actions[0] = ReplayableAction::Action(to_repeat.boxed_clone());

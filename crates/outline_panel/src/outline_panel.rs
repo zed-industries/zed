@@ -1172,10 +1172,10 @@ impl OutlinePanel {
                     let mut offset = Point::default();
                     if let Some(buffer_id) = scroll_to_buffer
                         && multi_buffer_snapshot.as_singleton().is_none()
-                            && !active_editor.read(cx).is_buffer_folded(buffer_id, cx)
-                        {
-                            offset.y = -(active_editor.read(cx).file_header_size() as f32);
-                        }
+                        && !active_editor.read(cx).is_buffer_folded(buffer_id, cx)
+                    {
+                        offset.y = -(active_editor.read(cx).file_header_size() as f32);
+                    }
 
                     active_editor.update(cx, |editor, cx| {
                         editor.set_scroll_anchor(ScrollAnchor { offset, anchor }, window, cx);
@@ -1609,12 +1609,11 @@ impl OutlinePanel {
                     && self
                         .collapsed_entries
                         .insert(CollapsedEntry::Dir(folded_dirs.worktree_id, dir_entry.id))
-                    {
-                        folded = true;
-                        buffers_to_fold.extend(
-                            self.buffers_inside_directory(folded_dirs.worktree_id, dir_entry),
-                        );
-                    }
+                {
+                    folded = true;
+                    buffers_to_fold
+                        .extend(self.buffers_inside_directory(folded_dirs.worktree_id, dir_entry));
+                }
                 folded
             }
             PanelEntry::Outline(OutlineEntry::Excerpt(excerpt)) => self
@@ -2107,10 +2106,11 @@ impl OutlinePanel {
                             }
 
                             if traversal.back_to_parent()
-                                && let Some(parent_entry) = traversal.entry() {
-                                    current_entry = parent_entry.clone();
-                                    continue;
-                                }
+                                && let Some(parent_entry) = traversal.entry()
+                            {
+                                current_entry = parent_entry.clone();
+                                continue;
+                            }
                             break;
                         }
                     }
@@ -2473,16 +2473,17 @@ impl OutlinePanel {
             Some(search_data) => search_data,
             None => {
                 if let ItemsDisplayMode::Search(search_state) = &mut self.mode
-                    && let Some(multi_buffer_snapshot) = multi_buffer_snapshot {
-                        search_state
-                            .highlight_search_match_tx
-                            .try_send(HighlightArguments {
-                                multi_buffer_snapshot: multi_buffer_snapshot.clone(),
-                                match_range: match_range.clone(),
-                                search_data: Arc::clone(render_data),
-                            })
-                            .ok();
-                    }
+                    && let Some(multi_buffer_snapshot) = multi_buffer_snapshot
+                {
+                    search_state
+                        .highlight_search_match_tx
+                        .try_send(HighlightArguments {
+                            multi_buffer_snapshot: multi_buffer_snapshot.clone(),
+                            match_range: match_range.clone(),
+                            search_data: Arc::clone(render_data),
+                        })
+                        .ok();
+                }
                 return None;
             }
         };
@@ -2829,11 +2830,13 @@ impl OutlinePanel {
                                         let new_entry_added = entries_to_add
                                             .insert(current_entry.id, current_entry)
                                             .is_none();
-                                        if new_entry_added && traversal.back_to_parent()
-                                            && let Some(parent_entry) = traversal.entry() {
-                                                current_entry = parent_entry.to_owned();
-                                                continue;
-                                            }
+                                        if new_entry_added
+                                            && traversal.back_to_parent()
+                                            && let Some(parent_entry) = traversal.entry()
+                                        {
+                                            current_entry = parent_entry.to_owned();
+                                            continue;
+                                        }
                                         break;
                                     }
                                     new_worktree_entries
@@ -2873,19 +2876,19 @@ impl OutlinePanel {
                                 entries
                                     .into_iter()
                                     .filter_map(|entry| {
-                                        if auto_fold_dirs
-                                            && let Some(parent) = entry.path.parent() {
-                                                let children = new_children_count
-                                                    .entry(worktree_id)
-                                                    .or_default()
-                                                    .entry(Arc::from(parent))
-                                                    .or_default();
-                                                if entry.is_dir() {
-                                                    children.dirs += 1;
-                                                } else {
-                                                    children.files += 1;
-                                                }
+                                        if auto_fold_dirs && let Some(parent) = entry.path.parent()
+                                        {
+                                            let children = new_children_count
+                                                .entry(worktree_id)
+                                                .or_default()
+                                                .entry(Arc::from(parent))
+                                                .or_default();
+                                            if entry.is_dir() {
+                                                children.dirs += 1;
+                                            } else {
+                                                children.files += 1;
                                             }
+                                        }
 
                                         if entry.is_dir() {
                                             Some(FsEntry::Directory(FsEntryDirectory {
@@ -3406,27 +3409,27 @@ impl OutlinePanel {
                                     if let Some(default_depth) = pending_default_depth
                                         && let ExcerptOutlines::Outlines(outlines) =
                                             &excerpt.outlines
-                                        {
-                                            outlines
-                                                .iter()
-                                                .filter(|outline| {
-                                                    (default_depth == 0
-                                                        || outline.depth >= default_depth)
-                                                        && outlines_with_children.contains(&(
-                                                            outline.range.clone(),
-                                                            outline.depth,
-                                                        ))
-                                                })
-                                                .for_each(|outline| {
-                                                    outline_panel.collapsed_entries.insert(
-                                                        CollapsedEntry::Outline(
-                                                            buffer_id,
-                                                            excerpt_id,
-                                                            outline.range.clone(),
-                                                        ),
-                                                    );
-                                                });
-                                        }
+                                    {
+                                        outlines
+                                            .iter()
+                                            .filter(|outline| {
+                                                (default_depth == 0
+                                                    || outline.depth >= default_depth)
+                                                    && outlines_with_children.contains(&(
+                                                        outline.range.clone(),
+                                                        outline.depth,
+                                                    ))
+                                            })
+                                            .for_each(|outline| {
+                                                outline_panel.collapsed_entries.insert(
+                                                    CollapsedEntry::Outline(
+                                                        buffer_id,
+                                                        excerpt_id,
+                                                        outline.range.clone(),
+                                                    ),
+                                                );
+                                            });
+                                    }
 
                                     // Even if no outlines to check, we still need to update cached entries
                                     // to show the outline entries that were just fetched
@@ -3614,9 +3617,9 @@ impl OutlinePanel {
                                     cx,
                                 )
                             })
-                        {
-                            outline_panel.select_entry(new_selected_entry, false, window, cx);
-                        }
+                    {
+                        outline_panel.select_entry(new_selected_entry, false, window, cx);
+                    }
 
                     outline_panel.autoscroll(cx);
                     outline_panel.updating_cached_entries = false;
@@ -3913,18 +3916,19 @@ impl OutlinePanel {
                                     None
                                 };
                             if let Some((buffer_id, entry_excerpts)) = excerpts_to_consider
-                                && !active_editor.read(cx).is_buffer_folded(buffer_id, cx) {
-                                    outline_panel.add_excerpt_entries(
-                                        &mut generation_state,
-                                        buffer_id,
-                                        entry_excerpts,
-                                        depth,
-                                        track_matches,
-                                        is_singleton,
-                                        query.as_deref(),
-                                        cx,
-                                    );
-                                }
+                                && !active_editor.read(cx).is_buffer_folded(buffer_id, cx)
+                            {
+                                outline_panel.add_excerpt_entries(
+                                    &mut generation_state,
+                                    buffer_id,
+                                    entry_excerpts,
+                                    depth,
+                                    track_matches,
+                                    is_singleton,
+                                    query.as_deref(),
+                                    cx,
+                                );
+                            }
                         }
                     }
 
@@ -4395,13 +4399,15 @@ impl OutlinePanel {
             .filter(|(match_range, _)| {
                 let editor = active_editor.read(cx);
                 if let Some(buffer_id) = match_range.start.buffer_id
-                    && editor.is_buffer_folded(buffer_id, cx) {
-                        return false;
-                    }
+                    && editor.is_buffer_folded(buffer_id, cx)
+                {
+                    return false;
+                }
                 if let Some(buffer_id) = match_range.start.buffer_id
-                    && editor.is_buffer_folded(buffer_id, cx) {
-                        return false;
-                    }
+                    && editor.is_buffer_folded(buffer_id, cx)
+                {
+                    return false;
+                }
                 true
             });
 
@@ -4449,9 +4455,10 @@ impl OutlinePanel {
                 .workspace
                 .upgrade()
                 .and_then(|workspace| workspace_active_editor(workspace.read(cx), cx))
-                && self.should_replace_active_item(active_item.as_ref()) {
-                    self.replace_active_editor(active_item, active_editor, window, cx);
-                }
+            && self.should_replace_active_item(active_item.as_ref())
+        {
+            self.replace_active_editor(active_item, active_editor, window, cx);
+        }
 
         cx.notify();
     }
@@ -5057,19 +5064,19 @@ impl Panel for OutlinePanel {
                                 outline_panel.workspace.upgrade().and_then(|workspace| {
                                     workspace_active_editor(workspace.read(cx), cx)
                                 })
-                            {
-                                if outline_panel.should_replace_active_item(active_item.as_ref()) {
-                                    outline_panel.replace_active_editor(
-                                        active_item,
-                                        active_editor,
-                                        window,
-                                        cx,
-                                    );
-                                } else {
-                                    outline_panel.update_fs_entries(active_editor, None, window, cx)
-                                }
-                                return;
+                        {
+                            if outline_panel.should_replace_active_item(active_item.as_ref()) {
+                                outline_panel.replace_active_editor(
+                                    active_item,
+                                    active_editor,
+                                    window,
+                                    cx,
+                                );
+                            } else {
+                                outline_panel.update_fs_entries(active_editor, None, window, cx)
                             }
+                            return;
+                        }
 
                         if !outline_panel.pinned {
                             outline_panel.clear_previous(window, cx);
@@ -5328,9 +5335,9 @@ fn subscribe_for_editor_events(
                                 )
                             })
                             .map(PanelEntry::Fs)
-                        {
-                            outline_panel.select_entry(entry_to_select, true, window, cx);
-                        }
+                    {
+                        outline_panel.select_entry(entry_to_select, true, window, cx);
+                    }
 
                     outline_panel.update_fs_entries(editor.clone(), debounce, window, cx);
                 }

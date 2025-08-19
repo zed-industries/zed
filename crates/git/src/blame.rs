@@ -289,15 +289,14 @@ fn parse_git_blame(output: &str) -> Result<Vec<BlameEntry>> {
             }
         };
 
-        if done
-            && let Some(entry) = current_entry.take() {
-                index.insert(entry.sha, entries.len());
+        if done && let Some(entry) = current_entry.take() {
+            index.insert(entry.sha, entries.len());
 
-                // We only want annotations that have a commit.
-                if !entry.sha.is_zero() {
-                    entries.push(entry);
-                }
+            // We only want annotations that have a commit.
+            if !entry.sha.is_zero() {
+                entries.push(entry);
             }
+        }
     }
 
     Ok(entries)

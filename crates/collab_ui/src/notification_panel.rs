@@ -125,9 +125,9 @@ impl NotificationPanel {
                         && let Some(task) = this
                             .notification_store
                             .update(cx, |store, cx| store.load_more_notifications(false, cx))
-                        {
-                            task.detach();
-                        }
+                    {
+                        task.detach();
+                    }
                 },
             ));
 
@@ -468,19 +468,20 @@ impl NotificationPanel {
             channel_id,
             ..
         } = notification.clone()
-            && let Some(workspace) = self.workspace.upgrade() {
-                window.defer(cx, move |window, cx| {
-                    workspace.update(cx, |workspace, cx| {
-                        if let Some(panel) = workspace.focus_panel::<ChatPanel>(window, cx) {
-                            panel.update(cx, |panel, cx| {
-                                panel
-                                    .select_channel(ChannelId(channel_id), Some(message_id), cx)
-                                    .detach_and_log_err(cx);
-                            });
-                        }
-                    });
+            && let Some(workspace) = self.workspace.upgrade()
+        {
+            window.defer(cx, move |window, cx| {
+                workspace.update(cx, |workspace, cx| {
+                    if let Some(panel) = workspace.focus_panel::<ChatPanel>(window, cx) {
+                        panel.update(cx, |panel, cx| {
+                            panel
+                                .select_channel(ChannelId(channel_id), Some(message_id), cx)
+                                .detach_and_log_err(cx);
+                        });
+                    }
                 });
-            }
+            });
+        }
     }
 
     fn is_showing_notification(&self, notification: &Notification, cx: &mut Context<Self>) -> bool {
@@ -489,17 +490,18 @@ impl NotificationPanel {
         }
 
         if let Notification::ChannelMessageMention { channel_id, .. } = &notification
-            && let Some(workspace) = self.workspace.upgrade() {
-                return if let Some(panel) = workspace.read(cx).panel::<ChatPanel>(cx) {
-                    let panel = panel.read(cx);
-                    panel.is_scrolled_to_bottom()
-                        && panel
-                            .active_chat()
-                            .map_or(false, |chat| chat.read(cx).channel_id.0 == *channel_id)
-                } else {
-                    false
-                };
-            }
+            && let Some(workspace) = self.workspace.upgrade()
+        {
+            return if let Some(panel) = workspace.read(cx).panel::<ChatPanel>(cx) {
+                let panel = panel.read(cx);
+                panel.is_scrolled_to_bottom()
+                    && panel
+                        .active_chat()
+                        .map_or(false, |chat| chat.read(cx).channel_id.0 == *channel_id)
+            } else {
+                false
+            };
+        }
 
         false
     }
@@ -579,15 +581,16 @@ impl NotificationPanel {
 
     fn remove_toast(&mut self, notification_id: u64, cx: &mut Context<Self>) {
         if let Some((current_id, _)) = &self.current_notification_toast
-            && *current_id == notification_id {
-                self.current_notification_toast.take();
-                self.workspace
-                    .update(cx, |workspace, cx| {
-                        let id = NotificationId::unique::<NotificationToast>();
-                        workspace.dismiss_notification(&id, cx)
-                    })
-                    .ok();
-            }
+            && *current_id == notification_id
+        {
+            self.current_notification_toast.take();
+            self.workspace
+                .update(cx, |workspace, cx| {
+                    let id = NotificationId::unique::<NotificationToast>();
+                    workspace.dismiss_notification(&id, cx)
+                })
+                .ok();
+        }
     }
 
     fn respond_to_notification(

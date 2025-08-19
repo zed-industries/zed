@@ -865,21 +865,24 @@ impl Client {
 
         let old_credentials = self.state.read().credentials.clone();
         if let Some(old_credentials) = old_credentials
-            && self.validate_credentials(&old_credentials, cx).await? {
-                credentials = Some(old_credentials);
-            }
+            && self.validate_credentials(&old_credentials, cx).await?
+        {
+            credentials = Some(old_credentials);
+        }
 
-        if credentials.is_none() && try_provider
-            && let Some(stored_credentials) = self.credentials_provider.read_credentials(cx).await {
-                if self.validate_credentials(&stored_credentials, cx).await? {
-                    credentials = Some(stored_credentials);
-                } else {
-                    self.credentials_provider
-                        .delete_credentials(cx)
-                        .await
-                        .log_err();
-                }
+        if credentials.is_none()
+            && try_provider
+            && let Some(stored_credentials) = self.credentials_provider.read_credentials(cx).await
+        {
+            if self.validate_credentials(&stored_credentials, cx).await? {
+                credentials = Some(stored_credentials);
+            } else {
+                self.credentials_provider
+                    .delete_credentials(cx)
+                    .await
+                    .log_err();
             }
+        }
 
         if credentials.is_none() {
             let mut status_rx = self.status();

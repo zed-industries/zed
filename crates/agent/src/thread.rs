@@ -2478,9 +2478,10 @@ impl Thread {
                 && let Ok(Ok(save_task)) = cx.update(|cx| {
                     thread_store
                         .update(cx, |thread_store, cx| thread_store.save_thread(&thread, cx))
-                }) {
-                    save_task.await.log_err();
-                }
+                })
+            {
+                save_task.await.log_err();
+            }
 
             Some(())
         });
@@ -2729,9 +2730,10 @@ impl Thread {
     ) {
         if self.all_tools_finished()
             && let Some(ConfiguredModel { model, .. }) = self.configured_model.as_ref()
-                && !canceled {
-                    self.send_to_model(model.clone(), CompletionIntent::ToolResults, window, cx);
-                }
+            && !canceled
+        {
+            self.send_to_model(model.clone(), CompletionIntent::ToolResults, window, cx);
+        }
 
         cx.emit(ThreadEvent::ToolFinished {
             tool_use_id,
@@ -2918,10 +2920,11 @@ impl Thread {
                 for buffer_handle in buffer_store.read(app_cx).buffers() {
                     let buffer = buffer_handle.read(app_cx);
                     if buffer.is_dirty()
-                        && let Some(file) = buffer.file() {
-                            let path = file.path().to_string_lossy().to_string();
-                            unsaved_buffers.push(path);
-                        }
+                        && let Some(file) = buffer.file()
+                    {
+                        let path = file.path().to_string_lossy().to_string();
+                        unsaved_buffers.push(path);
+                    }
                 }
             })
             .ok();
@@ -3173,12 +3176,13 @@ impl Thread {
             .max_token_count_for_mode(self.completion_mode().into());
 
         if let Some(exceeded_error) = &self.exceeded_window_error
-            && model.model.id() == exceeded_error.model_id {
-                return Some(TotalTokenUsage {
-                    total: exceeded_error.token_count,
-                    max,
-                });
-            }
+            && model.model.id() == exceeded_error.model_id
+        {
+            return Some(TotalTokenUsage {
+                total: exceeded_error.token_count,
+                max,
+            });
+        }
 
         let total = self
             .token_usage_at_last_message()

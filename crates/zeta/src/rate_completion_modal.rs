@@ -268,12 +268,13 @@ impl RateCompletionModal {
             cx.notify();
 
             if let Some(prev_completion) = self.active_completion.as_ref()
-                && completion.id == prev_completion.completion.id {
-                    if focus {
-                        window.focus(&prev_completion.feedback_editor.focus_handle(cx));
-                    }
-                    return;
+                && completion.id == prev_completion.completion.id
+            {
+                if focus {
+                    window.focus(&prev_completion.feedback_editor.focus_handle(cx));
                 }
+                return;
+            }
         }
 
         self.active_completion = completion.map(|completion| ActiveCompletion {

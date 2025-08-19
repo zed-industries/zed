@@ -336,9 +336,10 @@ impl ChannelStore {
 
     pub fn has_open_channel_buffer(&self, channel_id: ChannelId, _cx: &App) -> bool {
         if let Some(buffer) = self.opened_buffers.get(&channel_id)
-            && let OpenEntityHandle::Open(buffer) = buffer {
-                return buffer.upgrade().is_some();
-            }
+            && let OpenEntityHandle::Open(buffer) = buffer
+        {
+            return buffer.upgrade().is_some();
+        }
         false
     }
 
@@ -410,9 +411,9 @@ impl ChannelStore {
                 && state
                     .last_acknowledged_message_id()
                     .is_some_and(|id| id < last_message_id)
-                {
-                    return state.last_acknowledged_message_id();
-                }
+            {
+                return state.last_acknowledged_message_id();
+            }
 
             None
         })
@@ -960,25 +961,27 @@ impl ChannelStore {
 
         for chat in self.opened_chats.values() {
             if let OpenEntityHandle::Open(chat) = chat
-                && let Some(chat) = chat.upgrade() {
-                    chat.update(cx, |chat, cx| {
-                        chat.rejoin(cx);
-                    });
-                }
+                && let Some(chat) = chat.upgrade()
+            {
+                chat.update(cx, |chat, cx| {
+                    chat.rejoin(cx);
+                });
+            }
         }
 
         let mut buffer_versions = Vec::new();
         for buffer in self.opened_buffers.values() {
             if let OpenEntityHandle::Open(buffer) = buffer
-                && let Some(buffer) = buffer.upgrade() {
-                    let channel_buffer = buffer.read(cx);
-                    let buffer = channel_buffer.buffer().read(cx);
-                    buffer_versions.push(proto::ChannelBufferVersion {
-                        channel_id: channel_buffer.channel_id.0,
-                        epoch: channel_buffer.epoch(),
-                        version: language::proto::serialize_version(&buffer.version()),
-                    });
-                }
+                && let Some(buffer) = buffer.upgrade()
+            {
+                let channel_buffer = buffer.read(cx);
+                let buffer = channel_buffer.buffer().read(cx);
+                buffer_versions.push(proto::ChannelBufferVersion {
+                    channel_id: channel_buffer.channel_id.0,
+                    epoch: channel_buffer.epoch(),
+                    version: language::proto::serialize_version(&buffer.version()),
+                });
+            }
         }
 
         if buffer_versions.is_empty() {
@@ -1074,9 +1077,10 @@ impl ChannelStore {
                     this.update(cx, |this, cx| {
                         for (_, buffer) in &this.opened_buffers {
                             if let OpenEntityHandle::Open(buffer) = &buffer
-                                && let Some(buffer) = buffer.upgrade() {
-                                    buffer.update(cx, |buffer, cx| buffer.disconnect(cx));
-                                }
+                                && let Some(buffer) = buffer.upgrade()
+                            {
+                                buffer.update(cx, |buffer, cx| buffer.disconnect(cx));
+                            }
                         }
                     })
                     .ok();
@@ -1151,9 +1155,10 @@ impl ChannelStore {
                     }
                     if let Some(OpenEntityHandle::Open(buffer)) =
                         self.opened_buffers.remove(&channel_id)
-                        && let Some(buffer) = buffer.upgrade() {
-                            buffer.update(cx, ChannelBuffer::disconnect);
-                        }
+                        && let Some(buffer) = buffer.upgrade()
+                    {
+                        buffer.update(cx, ChannelBuffer::disconnect);
+                    }
                 }
             }
 
@@ -1164,9 +1169,10 @@ impl ChannelStore {
 
                 if channel_changed
                     && let Some(OpenEntityHandle::Open(buffer)) = self.opened_buffers.get(&id)
-                        && let Some(buffer) = buffer.upgrade() {
-                            buffer.update(cx, ChannelBuffer::channel_changed);
-                        }
+                    && let Some(buffer) = buffer.upgrade()
+                {
+                    buffer.update(cx, ChannelBuffer::channel_changed);
+                }
             }
 
             for latest_buffer_version in payload.latest_channel_buffer_versions {

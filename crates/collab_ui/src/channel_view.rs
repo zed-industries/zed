@@ -109,40 +109,31 @@ impl ChannelView {
                 // If this channel buffer is already open in this pane, just return it.
                 if let Some(existing_view) = existing_view.clone()
                     && existing_view.read(cx).channel_buffer == channel_view.read(cx).channel_buffer
-                    {
-                        if let Some(link_position) = link_position {
-                            existing_view.update(cx, |channel_view, cx| {
-                                channel_view.focus_position_from_link(
-                                    link_position,
-                                    true,
-                                    window,
-                                    cx,
-                                )
-                            });
-                        }
-                        return existing_view;
+                {
+                    if let Some(link_position) = link_position {
+                        existing_view.update(cx, |channel_view, cx| {
+                            channel_view.focus_position_from_link(link_position, true, window, cx)
+                        });
                     }
+                    return existing_view;
+                }
 
                 // If the pane contained a disconnected view for this channel buffer,
                 // replace that.
                 if let Some(existing_item) = existing_view
-                    && let Some(ix) = pane.index_for_item(&existing_item) {
-                        pane.close_item_by_id(
-                            existing_item.entity_id(),
-                            SaveIntent::Skip,
-                            window,
-                            cx,
-                        )
+                    && let Some(ix) = pane.index_for_item(&existing_item)
+                {
+                    pane.close_item_by_id(existing_item.entity_id(), SaveIntent::Skip, window, cx)
                         .detach();
-                        pane.add_item(
-                            Box::new(channel_view.clone()),
-                            true,
-                            true,
-                            Some(ix),
-                            window,
-                            cx,
-                        );
-                    }
+                    pane.add_item(
+                        Box::new(channel_view.clone()),
+                        true,
+                        true,
+                        Some(ix),
+                        window,
+                        cx,
+                    );
+                }
 
                 if let Some(link_position) = link_position {
                     channel_view.update(cx, |channel_view, cx| {
@@ -262,21 +253,17 @@ impl ChannelView {
                 .items
                 .iter()
                 .find(|item| &Channel::slug(&item.text).to_lowercase() == &position)
-            {
-                self.editor.update(cx, |editor, cx| {
-                    editor.change_selections(
-                        SelectionEffects::scroll(Autoscroll::focused()),
-                        window,
-                        cx,
-                        |s| {
-                            s.replace_cursors_with(|map| {
-                                vec![item.range.start.to_display_point(map)]
-                            })
-                        },
-                    )
-                });
-                return;
-            }
+        {
+            self.editor.update(cx, |editor, cx| {
+                editor.change_selections(
+                    SelectionEffects::scroll(Autoscroll::focused()),
+                    window,
+                    cx,
+                    |s| s.replace_cursors_with(|map| vec![item.range.start.to_display_point(map)]),
+                )
+            });
+            return;
+        }
 
         if !first_attempt {
             return;

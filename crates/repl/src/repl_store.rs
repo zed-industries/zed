@@ -172,9 +172,10 @@ impl ReplStore {
                 .collect::<Vec<_>>();
 
             if let Some(remote_task) = remote_kernel_specifications
-                && let Ok(remote_specs) = remote_task.await {
-                    all_specs.extend(remote_specs);
-                }
+                && let Ok(remote_specs) = remote_task.await
+            {
+                all_specs.extend(remote_specs);
+            }
 
             anyhow::Ok(all_specs)
         });

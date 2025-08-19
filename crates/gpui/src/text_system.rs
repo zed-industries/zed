@@ -368,13 +368,13 @@ impl WindowTextSystem {
         for run in runs {
             if let Some(last_run) = decoration_runs.last_mut()
                 && last_run.color == run.color
-                    && last_run.underline == run.underline
-                    && last_run.strikethrough == run.strikethrough
-                    && last_run.background_color == run.background_color
-                {
-                    last_run.len += run.len as u32;
-                    continue;
-                }
+                && last_run.underline == run.underline
+                && last_run.strikethrough == run.strikethrough
+                && last_run.background_color == run.background_color
+            {
+                last_run.len += run.len as u32;
+                continue;
+            }
             decoration_runs.push(DecorationRun {
                 len: run.len as u32,
                 color: run.color,
@@ -492,14 +492,15 @@ impl WindowTextSystem {
         let mut processed = false;
 
         if let Some(first_line) = split_lines.next()
-            && let Some(second_line) = split_lines.next() {
-                processed = true;
-                process_line(first_line.to_string().into());
-                process_line(second_line.to_string().into());
-                for line_text in split_lines {
-                    process_line(line_text.to_string().into());
-                }
+            && let Some(second_line) = split_lines.next()
+        {
+            processed = true;
+            process_line(first_line.to_string().into());
+            process_line(second_line.to_string().into());
+            for line_text in split_lines {
+                process_line(line_text.to_string().into());
             }
+        }
 
         if !processed {
             process_line(text);
@@ -533,10 +534,11 @@ impl WindowTextSystem {
         for run in runs.iter() {
             let font_id = self.resolve_font(&run.font);
             if let Some(last_run) = font_runs.last_mut()
-                && last_run.font_id == font_id {
-                    last_run.len += run.len;
-                    continue;
-                }
+                && last_run.font_id == font_id
+            {
+                last_run.len += run.len;
+                continue;
+            }
             font_runs.push(FontRun {
                 len: run.len,
                 font_id,

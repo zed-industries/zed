@@ -514,13 +514,13 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
                         && let Some(tx_id) = editor
                             .buffer()
                             .update(cx, |multi, cx| multi.last_transaction_id(cx))
-                        {
-                            let last_sel = editor.selections.disjoint_anchors();
-                            editor.modify_transaction_selection_history(tx_id, |old| {
-                                old.0 = first_sel;
-                                old.1 = Some(last_sel);
-                            });
-                        }
+                    {
+                        let last_sel = editor.selections.disjoint_anchors();
+                        editor.modify_transaction_selection_history(tx_id, |old| {
+                            old.0 = first_sel;
+                            old.1 = Some(last_sel);
+                        });
+                    }
                 });
             })
             .ok();
@@ -1714,10 +1714,11 @@ impl Vim {
                     self.update_editor(cx, |_, editor, cx| {
                         if let Some((_, buffer, _)) = editor.active_excerpt(cx)
                             && let Some(file) = buffer.read(cx).file()
-                                && let Some(local) = file.as_local()
-                                    && let Some(str) = local.path().to_str() {
-                                        ret.push_str(str)
-                                    }
+                            && let Some(local) = file.as_local()
+                            && let Some(str) = local.path().to_str()
+                        {
+                            ret.push_str(str)
+                        }
                     });
                 }
                 '!' => {
@@ -1951,18 +1952,19 @@ impl ShellExec {
             };
 
             if let Some(mut stdin) = running.stdin.take()
-                && let Some(snapshot) = input_snapshot {
-                    let range = range.clone();
-                    cx.background_spawn(async move {
-                        for chunk in snapshot.text_for_range(range) {
-                            if stdin.write_all(chunk.as_bytes()).log_err().is_none() {
-                                return;
-                            }
+                && let Some(snapshot) = input_snapshot
+            {
+                let range = range.clone();
+                cx.background_spawn(async move {
+                    for chunk in snapshot.text_for_range(range) {
+                        if stdin.write_all(chunk.as_bytes()).log_err().is_none() {
+                            return;
                         }
-                        stdin.flush().log_err();
-                    })
-                    .detach();
-                };
+                    }
+                    stdin.flush().log_err();
+                })
+                .detach();
+            };
 
             let output = cx
                 .background_spawn(async move { running.wait_with_output() })

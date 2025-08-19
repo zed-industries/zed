@@ -1027,17 +1027,18 @@ async fn restore_or_create_workspace(app_state: Arc<AppState>, cx: &mut AsyncApp
             let toast_shown = cx
                 .update(|cx| {
                     if let Some(window) = cx.active_window()
-                        && let Some(workspace) = window.downcast::<Workspace>() {
-                            workspace
-                                .update(cx, |workspace, _, cx| {
-                                    workspace.show_toast(
-                                        Toast::new(NotificationId::unique::<()>(), message),
-                                        cx,
-                                    )
-                                })
-                                .ok();
-                            return true;
-                        }
+                        && let Some(workspace) = window.downcast::<Workspace>()
+                    {
+                        workspace
+                            .update(cx, |workspace, _, cx| {
+                                workspace.show_toast(
+                                    Toast::new(NotificationId::unique::<()>(), message),
+                                    cx,
+                                )
+                            })
+                            .ok();
+                        return true;
+                    }
                     false
                 })
                 .unwrap_or(false);
@@ -1116,10 +1117,9 @@ pub(crate) async fn restorable_workspace_locations(
 
                 // Since last_session_window_order returns the windows ordered front-to-back
                 // we need to open the window that was frontmost last.
-                if ordered
-                    && let Some(locations) = locations.as_mut() {
-                        locations.reverse();
-                    }
+                if ordered && let Some(locations) = locations.as_mut() {
+                    locations.reverse();
+                }
 
                 locations
             } else {
@@ -1289,20 +1289,21 @@ fn eager_load_active_theme_and_icon_theme(fs: Arc<dyn Fs>, cx: &App) {
     if let Some(theme_selection) = theme_settings.theme_selection.as_ref() {
         let theme_name = theme_selection.theme(appearance);
         if matches!(theme_registry.get(theme_name), Err(ThemeNotFoundError(_)))
-            && let Some(theme_path) = extension_store.read(cx).path_to_extension_theme(theme_name) {
-                cx.spawn({
-                    let theme_registry = theme_registry.clone();
-                    let fs = fs.clone();
-                    async move |cx| {
-                        theme_registry.load_user_theme(&theme_path, fs).await?;
+            && let Some(theme_path) = extension_store.read(cx).path_to_extension_theme(theme_name)
+        {
+            cx.spawn({
+                let theme_registry = theme_registry.clone();
+                let fs = fs.clone();
+                async move |cx| {
+                    theme_registry.load_user_theme(&theme_path, fs).await?;
 
-                        cx.update(|cx| {
-                            ThemeSettings::reload_current_theme(cx);
-                        })
-                    }
-                })
-                .detach_and_log_err(cx);
-            }
+                    cx.update(|cx| {
+                        ThemeSettings::reload_current_theme(cx);
+                    })
+                }
+            })
+            .detach_and_log_err(cx);
+        }
     }
 
     if let Some(icon_theme_selection) = theme_settings.icon_theme_selection.as_ref() {
@@ -1310,26 +1311,25 @@ fn eager_load_active_theme_and_icon_theme(fs: Arc<dyn Fs>, cx: &App) {
         if matches!(
             theme_registry.get_icon_theme(icon_theme_name),
             Err(IconThemeNotFoundError(_))
-        )
-            && let Some((icon_theme_path, icons_root_path)) = extension_store
-                .read(cx)
-                .path_to_extension_icon_theme(icon_theme_name)
-            {
-                cx.spawn({
-                    let theme_registry = theme_registry.clone();
-                    let fs = fs.clone();
-                    async move |cx| {
-                        theme_registry
-                            .load_icon_theme(&icon_theme_path, &icons_root_path, fs)
-                            .await?;
+        ) && let Some((icon_theme_path, icons_root_path)) = extension_store
+            .read(cx)
+            .path_to_extension_icon_theme(icon_theme_name)
+        {
+            cx.spawn({
+                let theme_registry = theme_registry.clone();
+                let fs = fs.clone();
+                async move |cx| {
+                    theme_registry
+                        .load_icon_theme(&icon_theme_path, &icons_root_path, fs)
+                        .await?;
 
-                        cx.update(|cx| {
-                            ThemeSettings::reload_current_icon_theme(cx);
-                        })
-                    }
-                })
-                .detach_and_log_err(cx);
-            }
+                    cx.update(|cx| {
+                        ThemeSettings::reload_current_icon_theme(cx);
+                    })
+                }
+            })
+            .detach_and_log_err(cx);
+        }
     }
 }
 
@@ -1380,13 +1380,13 @@ fn watch_themes(fs: Arc<dyn fs::Fs>, cx: &mut App) {
                 if fs.metadata(&event.path).await.ok().flatten().is_some()
                     && let Some(theme_registry) =
                         cx.update(|cx| ThemeRegistry::global(cx).clone()).log_err()
-                        && let Some(()) = theme_registry
-                            .load_user_theme(&event.path, fs.clone())
-                            .await
-                            .log_err()
-                        {
-                            cx.update(ThemeSettings::reload_current_theme).log_err();
-                        }
+                    && let Some(()) = theme_registry
+                        .load_user_theme(&event.path, fs.clone())
+                        .await
+                        .log_err()
+                {
+                    cx.update(ThemeSettings::reload_current_theme).log_err();
+                }
             }
         }
     })

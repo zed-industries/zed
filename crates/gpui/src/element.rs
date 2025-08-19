@@ -603,10 +603,9 @@ impl AnyElement {
 
         self.0.prepaint(window, cx);
 
-        if !focus_assigned
-            && let Some(focus_id) = window.next_frame.focus {
-                return FocusHandle::for_id(focus_id, &cx.focus_handles);
-            }
+        if !focus_assigned && let Some(focus_id) = window.next_frame.focus {
+            return FocusHandle::for_id(focus_id, &cx.focus_handles);
+        }
 
         None
     }

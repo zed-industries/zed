@@ -272,9 +272,10 @@ impl Client {
                 }
             } else if let Ok(response) = serde_json::from_str::<AnyResponse>(&message) {
                 if let Some(handlers) = response_handlers.lock().as_mut()
-                    && let Some(handler) = handlers.remove(&response.id) {
-                        handler(Ok(message.to_string()));
-                    }
+                    && let Some(handler) = handlers.remove(&response.id)
+                {
+                    handler(Ok(message.to_string()));
+                }
             } else if let Ok(notification) = serde_json::from_str::<AnyNotification>(&message) {
                 let mut notification_handlers = notification_handlers.lock();
                 if let Some(handler) = notification_handlers.get_mut(notification.method.as_str()) {

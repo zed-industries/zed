@@ -165,10 +165,11 @@ impl ScopeSelectorDelegate {
                     let path = entry.path();
                     if let (Some(stem), Some(extension)) = (path.file_stem(), path.extension())
                         && extension.to_os_string().to_str() == Some("json")
-                            && let Ok(file_name) = stem.to_os_string().into_string() {
-                                existing_scopes
-                                    .insert(ScopeName::from(ScopeFileName(Cow::Owned(file_name))));
-                            }
+                        && let Ok(file_name) = stem.to_os_string().into_string()
+                    {
+                        existing_scopes
+                            .insert(ScopeName::from(ScopeFileName(Cow::Owned(file_name))));
+                    }
                 }
             }
         }

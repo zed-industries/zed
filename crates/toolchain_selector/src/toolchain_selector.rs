@@ -218,9 +218,9 @@ impl ToolchainSelectorDelegate {
                             .toolchains
                             .iter()
                             .position(|toolchain| *toolchain == active_toolchain)
-                        {
-                            this.delegate.set_selected_index(position, window, cx);
-                        }
+                    {
+                        this.delegate.set_selected_index(position, window, cx);
+                    }
                     this.update_matches(this.query(cx), window, cx);
                 });
 

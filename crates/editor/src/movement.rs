@@ -511,9 +511,10 @@ pub fn find_preceding_boundary_point(
             break;
         }
         if let Some(prev_ch) = prev_ch
-            && is_boundary(ch, prev_ch) {
-                break;
-            }
+            && is_boundary(ch, prev_ch)
+        {
+            break;
+        }
 
         offset -= ch.len_utf8();
         prev_ch = Some(ch);
@@ -562,13 +563,14 @@ pub fn find_boundary_point(
             break;
         }
         if let Some(prev_ch) = prev_ch
-            && is_boundary(prev_ch, ch) {
-                if return_point_before_boundary {
-                    return map.clip_point(prev_offset.to_display_point(map), Bias::Right);
-                } else {
-                    break;
-                }
+            && is_boundary(prev_ch, ch)
+        {
+            if return_point_before_boundary {
+                return map.clip_point(prev_offset.to_display_point(map), Bias::Right);
+            } else {
+                break;
             }
+        }
         prev_offset = offset;
         offset += ch.len_utf8();
         prev_ch = Some(ch);
@@ -602,13 +604,14 @@ pub fn find_preceding_boundary_trail(
     let start_offset = offset;
     for ch in forward {
         if let Some(prev_ch) = prev_ch
-            && is_boundary(prev_ch, ch) {
-                if start_offset == offset {
-                    trail_offset = Some(offset);
-                } else {
-                    break;
-                }
+            && is_boundary(prev_ch, ch)
+        {
+            if start_offset == offset {
+                trail_offset = Some(offset);
+            } else {
+                break;
             }
+        }
         offset -= ch.len_utf8();
         prev_ch = Some(ch);
     }
@@ -649,13 +652,14 @@ pub fn find_boundary_trail(
     let start_offset = offset;
     for ch in forward {
         if let Some(prev_ch) = prev_ch
-            && is_boundary(prev_ch, ch) {
-                if start_offset == offset {
-                    trail_offset = Some(offset);
-                } else {
-                    break;
-                }
+            && is_boundary(prev_ch, ch)
+        {
+            if start_offset == offset {
+                trail_offset = Some(offset);
+            } else {
+                break;
             }
+        }
         offset += ch.len_utf8();
         prev_ch = Some(ch);
     }

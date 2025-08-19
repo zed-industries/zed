@@ -701,9 +701,10 @@ impl LocalLspStore {
                     async move {
                         this.update(&mut cx, |this, _| {
                             if let Some(status) = this.language_server_statuses.get_mut(&server_id)
-                                && let lsp::NumberOrString::String(token) = params.token {
-                                    status.progress_tokens.insert(token);
-                                }
+                                && let lsp::NumberOrString::String(token) = params.token
+                            {
+                                status.progress_tokens.insert(token);
+                            }
                         })?;
 
                         Ok(())
@@ -1014,9 +1015,10 @@ impl LocalLspStore {
             }
             LanguageServerState::Starting { startup, .. } => {
                 if let Some(server) = startup.await
-                    && let Some(shutdown) = server.shutdown() {
-                        shutdown.await;
-                    }
+                    && let Some(shutdown) = server.shutdown()
+                {
+                    shutdown.await;
+                }
             }
         }
         Ok(())
@@ -2382,13 +2384,15 @@ impl LocalLspStore {
                 }
                 if !only_register_servers.is_empty() {
                     if let Some(server_id) = server_node.server_id()
-                        && !only_register_servers.contains(&LanguageServerSelector::Id(server_id)) {
-                            return None;
-                        }
+                        && !only_register_servers.contains(&LanguageServerSelector::Id(server_id))
+                    {
+                        return None;
+                    }
                     if let Some(name) = server_node.name()
-                        && !only_register_servers.contains(&LanguageServerSelector::Name(name)) {
-                            return None;
-                        }
+                        && !only_register_servers.contains(&LanguageServerSelector::Name(name))
+                    {
+                        return None;
+                    }
                 }
 
                 let server_id = server_node.server_id_or_init(|disposition| {
@@ -2406,9 +2410,10 @@ impl LocalLspStore {
                         );
 
                         if let Some(state) = self.language_servers.get(&server_id)
-                            && let Ok(uri) = uri {
-                                state.add_workspace_folder(uri);
-                            };
+                            && let Ok(uri) = uri
+                        {
+                            state.add_workspace_folder(uri);
+                        };
                         server_id
                     };
 
@@ -3839,13 +3844,14 @@ impl LspStore {
             BufferStoreEvent::BufferChangedFilePath { buffer, old_file } => {
                 let buffer_id = buffer.read(cx).remote_id();
                 if let Some(local) = self.as_local_mut()
-                    && let Some(old_file) = File::from_dyn(old_file.as_ref()) {
-                        local.reset_buffer(buffer, old_file, cx);
+                    && let Some(old_file) = File::from_dyn(old_file.as_ref())
+                {
+                    local.reset_buffer(buffer, old_file, cx);
 
-                        if local.registered_buffers.contains_key(&buffer_id) {
-                            local.unregister_old_buffer_from_language_servers(buffer, old_file, cx);
-                        }
+                    if local.registered_buffers.contains_key(&buffer_id) {
+                        local.unregister_old_buffer_from_language_servers(buffer, old_file, cx);
                     }
+                }
 
                 self.detect_language_for_buffer(buffer, cx);
                 if let Some(local) = self.as_local_mut() {
@@ -4196,11 +4202,11 @@ impl LspStore {
                                                 .contains_key(&buffer.read(cx).remote_id())
                                                 && let Some(file_url) =
                                                     file_path_to_lsp_url(&f.abs_path(cx)).log_err()
-                                                {
-                                                    local.unregister_buffer_from_language_servers(
-                                                        &buffer, &file_url, cx,
-                                                    );
-                                                }
+                                            {
+                                                local.unregister_buffer_from_language_servers(
+                                                    &buffer, &file_url, cx,
+                                                );
+                                            }
                                         }
                                     }
                                 }
@@ -4299,15 +4305,12 @@ impl LspStore {
         let buffer_id = buffer.remote_id();
         if let Some(local_store) = self.as_local_mut()
             && local_store.registered_buffers.contains_key(&buffer_id)
-                && let Some(abs_path) =
-                    File::from_dyn(buffer_file.as_ref()).map(|file| file.abs_path(cx))
-                    && let Some(file_url) = file_path_to_lsp_url(&abs_path).log_err() {
-                        local_store.unregister_buffer_from_language_servers(
-                            buffer_entity,
-                            &file_url,
-                            cx,
-                        );
-                    }
+            && let Some(abs_path) =
+                File::from_dyn(buffer_file.as_ref()).map(|file| file.abs_path(cx))
+            && let Some(file_url) = file_path_to_lsp_url(&abs_path).log_err()
+        {
+            local_store.unregister_buffer_from_language_servers(buffer_entity, &file_url, cx);
+        }
         buffer_entity.update(cx, |buffer, cx| {
             if buffer.language().map_or(true, |old_language| {
                 !Arc::ptr_eq(old_language, &new_language)
@@ -4324,13 +4327,10 @@ impl LspStore {
             let worktree = file.worktree.clone();
 
             if let Some(local) = self.as_local_mut()
-                && local.registered_buffers.contains_key(&buffer_id) {
-                    local.register_buffer_with_language_servers(
-                        buffer_entity,
-                        HashSet::default(),
-                        cx,
-                    );
-                }
+                && local.registered_buffers.contains_key(&buffer_id)
+            {
+                local.register_buffer_with_language_servers(buffer_entity, HashSet::default(), cx);
+            }
             Some(worktree.read(cx).id())
         } else {
             None
@@ -4338,18 +4338,18 @@ impl LspStore {
 
         if settings.prettier.allowed
             && let Some(prettier_plugins) = prettier_store::prettier_plugins_for_language(&settings)
-            {
-                let prettier_store = self.as_local().map(|s| s.prettier_store.clone());
-                if let Some(prettier_store) = prettier_store {
-                    prettier_store.update(cx, |prettier_store, cx| {
-                        prettier_store.install_default_prettier(
-                            worktree_id,
-                            prettier_plugins.iter().map(|s| Arc::from(s.as_str())),
-                            cx,
-                        )
-                    })
-                }
+        {
+            let prettier_store = self.as_local().map(|s| s.prettier_store.clone());
+            if let Some(prettier_store) = prettier_store {
+                prettier_store.update(cx, |prettier_store, cx| {
+                    prettier_store.install_default_prettier(
+                        worktree_id,
+                        prettier_plugins.iter().map(|s| Arc::from(s.as_str())),
+                        cx,
+                    )
+                })
             }
+        }
 
         cx.emit(LspStoreEvent::LanguageDetected {
             buffer: buffer_entity.clone(),
@@ -4367,26 +4367,26 @@ impl LspStore {
 
     pub(crate) fn send_diagnostic_summaries(&self, worktree: &mut Worktree) {
         if let Some((client, downstream_project_id)) = self.downstream_client.clone()
-            && let Some(diangostic_summaries) = self.diagnostic_summaries.get(&worktree.id()) {
-                let mut summaries =
-                    diangostic_summaries
+            && let Some(diangostic_summaries) = self.diagnostic_summaries.get(&worktree.id())
+        {
+            let mut summaries = diangostic_summaries
+                .into_iter()
+                .flat_map(|(path, summaries)| {
+                    summaries
                         .into_iter()
-                        .flat_map(|(path, summaries)| {
-                            summaries
-                                .into_iter()
-                                .map(|(server_id, summary)| summary.to_proto(*server_id, path))
-                        });
-                if let Some(summary) = summaries.next() {
-                    client
-                        .send(proto::UpdateDiagnosticSummary {
-                            project_id: downstream_project_id,
-                            worktree_id: worktree.id().to_proto(),
-                            summary: Some(summary),
-                            more_summaries: summaries.collect(),
-                        })
-                        .log_err();
-                }
+                        .map(|(server_id, summary)| summary.to_proto(*server_id, path))
+                });
+            if let Some(summary) = summaries.next() {
+                client
+                    .send(proto::UpdateDiagnosticSummary {
+                        project_id: downstream_project_id,
+                        worktree_id: worktree.id().to_proto(),
+                        summary: Some(summary),
+                        more_summaries: summaries.collect(),
+                    })
+                    .log_err();
             }
+        }
     }
 
     // TODO: remove MultiLspQuery: instead, the proto handler should pick appropriate server(s)
@@ -4715,9 +4715,10 @@ impl LspStore {
                                 cx,
                             );
                             if let Some(state) = local.language_servers.get(&server_id)
-                                && let Ok(uri) = uri {
-                                    state.add_workspace_folder(uri);
-                                };
+                                && let Ok(uri) = uri
+                            {
+                                state.add_workspace_folder(uri);
+                            };
                             server_id
                         });
 
@@ -5719,26 +5720,28 @@ impl LspStore {
         let buffer_id = buffer.read(cx).remote_id();
 
         if let Some(cached_data) = self.lsp_code_lens.get(&buffer_id)
-            && !version_queried_for.changed_since(&cached_data.lens_for_version) {
-                let has_different_servers = self.as_local().is_some_and(|local| {
-                    local
-                        .buffers_opened_in_servers
-                        .get(&buffer_id)
-                        .cloned()
-                        .unwrap_or_default()
-                        != cached_data.lens.keys().copied().collect()
-                });
-                if !has_different_servers {
-                    return Task::ready(Ok(cached_data.lens.values().flatten().cloned().collect()))
-                        .shared();
-                }
+            && !version_queried_for.changed_since(&cached_data.lens_for_version)
+        {
+            let has_different_servers = self.as_local().is_some_and(|local| {
+                local
+                    .buffers_opened_in_servers
+                    .get(&buffer_id)
+                    .cloned()
+                    .unwrap_or_default()
+                    != cached_data.lens.keys().copied().collect()
+            });
+            if !has_different_servers {
+                return Task::ready(Ok(cached_data.lens.values().flatten().cloned().collect()))
+                    .shared();
             }
+        }
 
         let lsp_data = self.lsp_code_lens.entry(buffer_id).or_default();
         if let Some((updating_for, running_update)) = &lsp_data.update
-            && !version_queried_for.changed_since(updating_for) {
-                return running_update.clone();
-            }
+            && !version_queried_for.changed_since(updating_for)
+        {
+            return running_update.clone();
+        }
         let buffer = buffer.clone();
         let query_version_queried_for = version_queried_for.clone();
         let new_task = cx
@@ -6353,10 +6356,11 @@ impl LspStore {
             .and_then(deserialize_anchor)
             .zip(response.old_replace_end.and_then(deserialize_anchor));
         if let Some((old_replace_start, old_replace_end)) = replace_range
-            && !response.new_text.is_empty() {
-                completion.new_text = response.new_text;
-                completion.replace_range = old_replace_start..old_replace_end;
-            }
+            && !response.new_text.is_empty()
+        {
+            completion.new_text = response.new_text;
+            completion.replace_range = old_replace_start..old_replace_end;
+        }
 
         Ok(())
     }
@@ -6731,42 +6735,44 @@ impl LspStore {
                 known_cache_version,
             } => {
                 if let Some(cached_data) = self.lsp_document_colors.get(&buffer_id)
-                    && !version_queried_for.changed_since(&cached_data.colors_for_version) {
-                        let has_different_servers = self.as_local().is_some_and(|local| {
-                            local
-                                .buffers_opened_in_servers
-                                .get(&buffer_id)
-                                .cloned()
-                                .unwrap_or_default()
-                                != cached_data.colors.keys().copied().collect()
-                        });
-                        if !has_different_servers {
-                            if Some(cached_data.cache_version) == known_cache_version {
-                                return None;
-                            } else {
-                                return Some(
-                                    Task::ready(Ok(DocumentColors {
-                                        colors: cached_data
-                                            .colors
-                                            .values()
-                                            .flatten()
-                                            .cloned()
-                                            .collect(),
-                                        cache_version: Some(cached_data.cache_version),
-                                    }))
-                                    .shared(),
-                                );
-                            }
+                    && !version_queried_for.changed_since(&cached_data.colors_for_version)
+                {
+                    let has_different_servers = self.as_local().is_some_and(|local| {
+                        local
+                            .buffers_opened_in_servers
+                            .get(&buffer_id)
+                            .cloned()
+                            .unwrap_or_default()
+                            != cached_data.colors.keys().copied().collect()
+                    });
+                    if !has_different_servers {
+                        if Some(cached_data.cache_version) == known_cache_version {
+                            return None;
+                        } else {
+                            return Some(
+                                Task::ready(Ok(DocumentColors {
+                                    colors: cached_data
+                                        .colors
+                                        .values()
+                                        .flatten()
+                                        .cloned()
+                                        .collect(),
+                                    cache_version: Some(cached_data.cache_version),
+                                }))
+                                .shared(),
+                            );
                         }
                     }
+                }
             }
         }
 
         let lsp_data = self.lsp_document_colors.entry(buffer_id).or_default();
         if let Some((updating_for, running_update)) = &lsp_data.colors_update
-            && !version_queried_for.changed_since(updating_for) {
-                return Some(running_update.clone());
-            }
+            && !version_queried_for.changed_since(updating_for)
+        {
+            return Some(running_update.clone());
+        }
         let query_version_queried_for = version_queried_for.clone();
         let new_task = cx
             .spawn(async move |lsp_store, cx| {
@@ -8762,12 +8768,13 @@ impl LspStore {
                 if summary.is_empty() {
                     if let Some(worktree_summaries) =
                         lsp_store.diagnostic_summaries.get_mut(&worktree_id)
-                        && let Some(summaries) = worktree_summaries.get_mut(&path) {
-                            summaries.remove(&server_id);
-                            if summaries.is_empty() {
-                                worktree_summaries.remove(&path);
-                            }
+                        && let Some(summaries) = worktree_summaries.get_mut(&path)
+                    {
+                        summaries.remove(&server_id);
+                        if summaries.is_empty() {
+                            worktree_summaries.remove(&path);
                         }
+                    }
                 } else {
                     lsp_store
                         .diagnostic_summaries
@@ -9467,9 +9474,10 @@ impl LspStore {
     ) {
         if let Some(status) = self.language_server_statuses.get_mut(&language_server_id) {
             if let Some(work) = status.pending_work.remove(&token)
-                && !work.is_disk_based_diagnostics_progress {
-                    cx.emit(LspStoreEvent::RefreshInlayHints);
-                }
+                && !work.is_disk_based_diagnostics_progress
+            {
+                cx.emit(LspStoreEvent::RefreshInlayHints);
+            }
             cx.notify();
         }
 
@@ -10263,9 +10271,10 @@ impl LspStore {
         };
 
         if let Some(server) = server
-            && let Some(shutdown) = server.shutdown() {
-                shutdown.await;
-            }
+            && let Some(shutdown) = server.shutdown()
+        {
+            shutdown.await;
+        }
     }
 
     // Returns a list of all of the worktrees which no longer have a language server and the root path
@@ -10539,17 +10548,18 @@ impl LspStore {
             buffer.update(cx, |buffer, cx| {
                 language_servers_to_stop.extend(local.language_server_ids_for_buffer(buffer, cx));
                 if let Some(worktree_id) = buffer.file().map(|f| f.worktree_id(cx))
-                    && covered_worktrees.insert(worktree_id) {
-                        language_server_names_to_stop.retain(|name| {
-                            let old_ids_count = language_servers_to_stop.len();
-                            let all_language_servers_with_this_name = local
-                                .language_server_ids
-                                .iter()
-                                .filter_map(|(seed, state)| seed.name.eq(name).then(|| state.id));
-                            language_servers_to_stop.extend(all_language_servers_with_this_name);
-                            old_ids_count == language_servers_to_stop.len()
-                        });
-                    }
+                    && covered_worktrees.insert(worktree_id)
+                {
+                    language_server_names_to_stop.retain(|name| {
+                        let old_ids_count = language_servers_to_stop.len();
+                        let all_language_servers_with_this_name = local
+                            .language_server_ids
+                            .iter()
+                            .filter_map(|(seed, state)| seed.name.eq(name).then(|| state.id));
+                        language_servers_to_stop.extend(all_language_servers_with_this_name);
+                        old_ids_count == language_servers_to_stop.len()
+                    });
+                }
             });
         }
         for name in language_server_names_to_stop {
@@ -11054,9 +11064,10 @@ impl LspStore {
             {
                 for (token, progress) in &status.pending_work {
                     if let Some(token_to_cancel) = token_to_cancel.as_ref()
-                        && token != token_to_cancel {
-                            continue;
-                        }
+                        && token != token_to_cancel
+                    {
+                        continue;
+                    }
                     if progress.is_cancellable {
                         server
                             .notify::<lsp::notification::WorkDoneProgressCancel>(
@@ -11166,34 +11177,34 @@ impl LspStore {
                     .language_server_watched_paths
                     .get(server_id)
                     .and_then(|paths| paths.worktree_paths.get(&worktree_id))
-                {
-                    let params = lsp::DidChangeWatchedFilesParams {
-                        changes: changes
-                            .iter()
-                            .filter_map(|(path, _, change)| {
-                                if !watched_paths.is_match(path) {
-                                    return None;
-                                }
-                                let typ = match change {
-                                    PathChange::Loaded => return None,
-                                    PathChange::Added => lsp::FileChangeType::CREATED,
-                                    PathChange::Removed => lsp::FileChangeType::DELETED,
-                                    PathChange::Updated => lsp::FileChangeType::CHANGED,
-                                    PathChange::AddedOrUpdated => lsp::FileChangeType::CHANGED,
-                                };
-                                Some(lsp::FileEvent {
-                                    uri: lsp::Url::from_file_path(abs_path.join(path)).unwrap(),
-                                    typ,
-                                })
+            {
+                let params = lsp::DidChangeWatchedFilesParams {
+                    changes: changes
+                        .iter()
+                        .filter_map(|(path, _, change)| {
+                            if !watched_paths.is_match(path) {
+                                return None;
+                            }
+                            let typ = match change {
+                                PathChange::Loaded => return None,
+                                PathChange::Added => lsp::FileChangeType::CREATED,
+                                PathChange::Removed => lsp::FileChangeType::DELETED,
+                                PathChange::Updated => lsp::FileChangeType::CHANGED,
+                                PathChange::AddedOrUpdated => lsp::FileChangeType::CHANGED,
+                            };
+                            Some(lsp::FileEvent {
+                                uri: lsp::Url::from_file_path(abs_path.join(path)).unwrap(),
+                                typ,
                             })
-                            .collect(),
-                    };
-                    if !params.changes.is_empty() {
-                        server
-                            .notify::<lsp::notification::DidChangeWatchedFiles>(&params)
-                            .ok();
-                    }
+                        })
+                        .collect(),
+                };
+                if !params.changes.is_empty() {
+                    server
+                        .notify::<lsp::notification::DidChangeWatchedFiles>(&params)
+                        .ok();
                 }
+            }
         }
         for (path, _, _) in changes {
             if let Some(file_name) = path.file_name().and_then(|file_name| file_name.to_str())

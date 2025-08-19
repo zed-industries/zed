@@ -584,15 +584,16 @@ impl TerminalElement {
         };
 
         if let Some((style, range)) = hyperlink
-            && range.contains(&indexed.point) {
-                if let Some(underline) = style.underline {
-                    result.underline = Some(underline);
-                }
-
-                if let Some(color) = style.color {
-                    result.color = color;
-                }
+            && range.contains(&indexed.point)
+        {
+            if let Some(underline) = style.underline {
+                result.underline = Some(underline);
             }
+
+            if let Some(color) = style.color {
+                result.color = color;
+            }
+        }
 
         result
     }

@@ -31,12 +31,13 @@ impl VsCodeDebugTaskDefinition {
         let mut config = replacer.replace_value(self.other_attributes);
         let adapter = task_type_to_adapter_name(&self.r#type);
         if let Some(config) = config.as_object_mut()
-            && adapter == "JavaScript" {
-                config.insert("type".to_owned(), self.r#type.clone().into());
-                if let Some(port) = self.port.take() {
-                    config.insert("port".to_owned(), port.into());
-                }
+            && adapter == "JavaScript"
+        {
+            config.insert("type".to_owned(), self.r#type.clone().into());
+            if let Some(port) = self.port.take() {
+                config.insert("port".to_owned(), port.into());
             }
+        }
         let definition = DebugScenario {
             label: label.into(),
             build: None,

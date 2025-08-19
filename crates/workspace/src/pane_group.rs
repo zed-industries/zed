@@ -620,15 +620,16 @@ impl PaneAxis {
         if !found_pane {
             for (i, pa) in self.members.iter_mut().enumerate() {
                 if let Member::Axis(pa) = pa
-                    && let Some(done) = pa.resize(pane, axis, amount, bounds) {
-                        if done {
-                            return Some(true); // pane found and operations already done
-                        } else if self.axis != axis {
-                            return Some(false); // pane found but this is not the correct axis direction
-                        } else {
-                            found_axis_index = Some(i); // pane found and this is correct direction
-                        }
+                    && let Some(done) = pa.resize(pane, axis, amount, bounds)
+                {
+                    if done {
+                        return Some(true); // pane found and operations already done
+                    } else if self.axis != axis {
+                        return Some(false); // pane found but this is not the correct axis direction
+                    } else {
+                        found_axis_index = Some(i); // pane found and this is correct direction
                     }
+                }
             }
             found_axis_index?; // no pane found
         }
@@ -743,12 +744,13 @@ impl PaneAxis {
 
         for (idx, member) in self.members.iter().enumerate() {
             if let Some(coordinates) = bounding_boxes[idx]
-                && coordinates.contains(&coordinate) {
-                    return match member {
-                        Member::Pane(found) => Some(found),
-                        Member::Axis(axis) => axis.pane_at_pixel_position(coordinate),
-                    };
-                }
+                && coordinates.contains(&coordinate)
+            {
+                return match member {
+                    Member::Pane(found) => Some(found),
+                    Member::Axis(axis) => axis.pane_at_pixel_position(coordinate),
+                };
+            }
         }
         None
     }
@@ -1272,16 +1274,18 @@ mod element {
                     }
 
                     if let Some(border) = overlay_border
-                        && self.active_pane_ix == Some(ix) && child.is_leaf_pane {
-                            window.paint_quad(gpui::quad(
-                                overlay_bounds,
-                                0.,
-                                gpui::transparent_black(),
-                                border,
-                                cx.theme().colors().border_selected,
-                                BorderStyle::Solid,
-                            ));
-                        }
+                        && self.active_pane_ix == Some(ix)
+                        && child.is_leaf_pane
+                    {
+                        window.paint_quad(gpui::quad(
+                            overlay_bounds,
+                            0.,
+                            gpui::transparent_black(),
+                            border,
+                            cx.theme().colors().border_selected,
+                            BorderStyle::Solid,
+                        ));
+                    }
                 }
 
                 if let Some(handle) = child.handle.as_mut() {

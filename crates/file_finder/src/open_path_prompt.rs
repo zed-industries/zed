@@ -76,16 +76,17 @@ impl OpenPathDelegate {
             } => {
                 let mut i = selected_match_index;
                 if let Some(user_input) = user_input
-                    && (!user_input.exists || !user_input.is_dir) {
-                        if i == 0 {
-                            return Some(CandidateInfo {
-                                path: user_input.file.clone(),
-                                is_dir: false,
-                            });
-                        } else {
-                            i -= 1;
-                        }
+                    && (!user_input.exists || !user_input.is_dir)
+                {
+                    if i == 0 {
+                        return Some(CandidateInfo {
+                            path: user_input.file.clone(),
+                            is_dir: false,
+                        });
+                    } else {
+                        i -= 1;
                     }
+                }
                 let id = self.string_matches.get(i)?.candidate_id;
                 entries.iter().find(|entry| entry.path.id == id).cloned()
             }

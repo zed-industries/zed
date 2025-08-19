@@ -285,16 +285,16 @@ impl Settings for WorkspaceSettings {
             && let Some(opacity) = vscode
                 .read_value("accessibility.dimUnfocused.opacity")
                 .and_then(|v| v.as_f64())
-            {
-                if let Some(settings) = current.active_pane_modifiers.as_mut() {
-                    settings.inactive_opacity = Some(opacity as f32)
-                } else {
-                    current.active_pane_modifiers = Some(ActivePanelModifiers {
-                        inactive_opacity: Some(opacity as f32),
-                        ..Default::default()
-                    })
-                }
+        {
+            if let Some(settings) = current.active_pane_modifiers.as_mut() {
+                settings.inactive_opacity = Some(opacity as f32)
+            } else {
+                current.active_pane_modifiers = Some(ActivePanelModifiers {
+                    inactive_opacity: Some(opacity as f32),
+                    ..Default::default()
+                })
             }
+        }
 
         vscode.enum_setting(
             "window.confirmBeforeClose",
@@ -346,9 +346,9 @@ impl Settings for WorkspaceSettings {
             && vscode
                 .read_bool("workbench.editor.limit.enabled")
                 .unwrap_or_default()
-            {
-                current.max_tabs = Some(n)
-            }
+        {
+            current.max_tabs = Some(n)
+        }
 
         // some combination of "window.restoreWindows" and "workbench.startupEditor" might
         // map to our "restore_on_startup"

@@ -1077,19 +1077,20 @@ impl AssistantContext {
                     ..
                 } => {
                     if let Some(slash_command) = self.invoked_slash_commands.get_mut(&id)
-                        && timestamp > slash_command.timestamp {
-                            slash_command.timestamp = timestamp;
-                            match error_message {
-                                Some(message) => {
-                                    slash_command.status =
-                                        InvokedSlashCommandStatus::Error(message.into());
-                                }
-                                None => {
-                                    slash_command.status = InvokedSlashCommandStatus::Finished;
-                                }
+                        && timestamp > slash_command.timestamp
+                    {
+                        slash_command.timestamp = timestamp;
+                        match error_message {
+                            Some(message) => {
+                                slash_command.status =
+                                    InvokedSlashCommandStatus::Error(message.into());
                             }
-                            cx.emit(ContextEvent::InvokedSlashCommandChanged { command_id: id });
+                            None => {
+                                slash_command.status = InvokedSlashCommandStatus::Finished;
+                            }
                         }
+                        cx.emit(ContextEvent::InvokedSlashCommandChanged { command_id: id });
+                    }
                 }
                 ContextOperation::BufferOperation(_) => unreachable!(),
             }
@@ -1368,9 +1369,10 @@ impl AssistantContext {
             }
 
             if let Some(last_anchor) = last_anchor
-                && message.id == last_anchor {
-                    hit_last_anchor = true;
-                }
+                && message.id == last_anchor
+            {
+                hit_last_anchor = true;
+            }
 
             new_anchor_needs_caching = new_anchor_needs_caching
                 || (invalidated_caches.contains(&message.id) && anchors.contains(&message.id));
@@ -1405,9 +1407,10 @@ impl AssistantContext {
             return;
         }
         if let Some(cache_configuration) = cache_configuration
-            && !cache_configuration.should_speculate {
-                return;
-            }
+            && !cache_configuration.should_speculate
+        {
+            return;
+        }
 
         let request = {
             let mut req = self.to_completion_request(Some(model), cx);
@@ -1550,24 +1553,24 @@ impl AssistantContext {
                     .map(ToOwned::to_owned)
                     .collect::<SmallVec<_>>();
                 if let Some(command) = self.slash_commands.command(name, cx)
-                    && (!command.requires_argument() || !arguments.is_empty()) {
-                        let start_ix = offset + command_line.name.start - 1;
-                        let end_ix = offset
-                            + command_line
-                                .arguments
-                                .last()
-                                .map_or(command_line.name.end, |argument| argument.end);
-                        let source_range =
-                            buffer.anchor_after(start_ix)..buffer.anchor_after(end_ix);
-                        let pending_command = ParsedSlashCommand {
-                            name: name.to_string(),
-                            arguments,
-                            source_range,
-                            status: PendingSlashCommandStatus::Idle,
-                        };
-                        updated.push(pending_command.clone());
-                        new_commands.push(pending_command);
-                    }
+                    && (!command.requires_argument() || !arguments.is_empty())
+                {
+                    let start_ix = offset + command_line.name.start - 1;
+                    let end_ix = offset
+                        + command_line
+                            .arguments
+                            .last()
+                            .map_or(command_line.name.end, |argument| argument.end);
+                    let source_range = buffer.anchor_after(start_ix)..buffer.anchor_after(end_ix);
+                    let pending_command = ParsedSlashCommand {
+                        name: name.to_string(),
+                        arguments,
+                        source_range,
+                        status: PendingSlashCommandStatus::Idle,
+                    };
+                    updated.push(pending_command.clone());
+                    new_commands.push(pending_command);
+                }
             }
 
             offset = lines.offset();
@@ -1798,11 +1801,11 @@ impl AssistantContext {
                                 if run_commands_in_text
                                     && let Some(invoked_slash_command) =
                                         this.invoked_slash_commands.get_mut(&command_id)
-                                    {
-                                        invoked_slash_command
-                                            .run_commands_in_ranges
-                                            .push(start..end);
-                                    }
+                                {
+                                    invoked_slash_command
+                                        .run_commands_in_ranges
+                                        .push(start..end);
+                                }
                             }
                             SlashCommandEvent::EndSection => {
                                 if let Some(pending_section) = pending_section_stack.pop() {
@@ -2737,9 +2740,10 @@ impl AssistantContext {
 
                     this.read_with(cx, |this, _cx| {
                         if let Some(summary) = this.summary.content()
-                            && summary.text.is_empty() {
-                                bail!("Model generated an empty summary");
-                            }
+                            && summary.text.is_empty()
+                        {
+                            bail!("Model generated an empty summary");
+                        }
                         Ok(())
                     })??;
 
@@ -2919,17 +2923,18 @@ impl AssistantContext {
 
                 // rename before write ensures that only one file exists
                 if let Some(old_path) = old_path.as_ref()
-                    && new_path.as_path() != old_path.as_ref() {
-                        fs.rename(
-                            old_path,
-                            &new_path,
-                            RenameOptions {
-                                overwrite: true,
-                                ignore_if_exists: true,
-                            },
-                        )
-                        .await?;
-                    }
+                    && new_path.as_path() != old_path.as_ref()
+                {
+                    fs.rename(
+                        old_path,
+                        &new_path,
+                        RenameOptions {
+                            overwrite: true,
+                            ignore_if_exists: true,
+                        },
+                    )
+                    .await?;
+                }
 
                 // update path before write in case it fails
                 this.update(cx, {

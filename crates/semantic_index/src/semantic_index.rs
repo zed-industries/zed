@@ -176,11 +176,12 @@ impl SemanticDb {
 
             if let Some(prev_result) = loaded_results.last_mut()
                 && prev_result.full_path == full_path
-                    && *prev_result.row_range.end() + 1 == start_row {
-                        prev_result.row_range = *prev_result.row_range.start()..=end_row;
-                        prev_result.excerpt_content.push_str(&excerpt_content);
-                        continue;
-                    }
+                && *prev_result.row_range.end() + 1 == start_row
+            {
+                prev_result.row_range = *prev_result.row_range.start()..=end_row;
+                prev_result.excerpt_content.push_str(&excerpt_content);
+                continue;
+            }
 
             loaded_results.push(LoadedSearchResult {
                 path: result.path,

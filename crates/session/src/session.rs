@@ -71,10 +71,11 @@ impl AppSession {
             let mut current_window_stack = Vec::new();
             loop {
                 if let Some(windows) = cx.update(|cx| window_stack(cx)).ok().flatten()
-                    && windows != current_window_stack {
-                        store_window_stack(&windows).await;
-                        current_window_stack = windows;
-                    }
+                    && windows != current_window_stack
+                {
+                    store_window_stack(&windows).await;
+                    current_window_stack = windows;
+                }
 
                 cx.background_executor()
                     .timer(Duration::from_millis(500))

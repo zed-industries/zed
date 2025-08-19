@@ -319,26 +319,27 @@ impl ComponentPreview {
             let lowercase_desc = description.to_lowercase();
 
             if lowercase_scopeless.contains(&lowercase_filter)
-                && let Some(index) = lowercase_scopeless.find(&lowercase_filter) {
-                    let end = index + lowercase_filter.len();
+                && let Some(index) = lowercase_scopeless.find(&lowercase_filter)
+            {
+                let end = index + lowercase_filter.len();
 
-                    if end <= scopeless_name.len() {
-                        let mut positions = Vec::new();
-                        for i in index..end {
-                            if scopeless_name.is_char_boundary(i) {
-                                positions.push(i);
-                            }
-                        }
-
-                        if !positions.is_empty() {
-                            scope_groups
-                                .entry(component.scope())
-                                .or_insert_with(Vec::new)
-                                .push((component.clone(), Some(positions)));
-                            continue;
+                if end <= scopeless_name.len() {
+                    let mut positions = Vec::new();
+                    for i in index..end {
+                        if scopeless_name.is_char_boundary(i) {
+                            positions.push(i);
                         }
                     }
+
+                    if !positions.is_empty() {
+                        scope_groups
+                            .entry(component.scope())
+                            .or_insert_with(Vec::new)
+                            .push((component.clone(), Some(positions)));
+                        continue;
+                    }
                 }
+            }
 
             if lowercase_scopeless.contains(&lowercase_filter)
                 || lowercase_scope.contains(&lowercase_filter)
@@ -372,31 +373,33 @@ impl ComponentPreview {
 
         for scope in scopes {
             if let Some(components) = scope_groups.remove(&scope)
-                && !components.is_empty() {
-                    entries.push(PreviewEntry::Separator);
-                    entries.push(PreviewEntry::SectionHeader(scope.to_string().into()));
-
-                    let mut sorted_components = components;
-                    sorted_components.sort_by_key(|(component, _)| component.sort_name());
-
-                    for (component, positions) in sorted_components {
-                        entries.push(PreviewEntry::Component(component, positions));
-                    }
-                }
-        }
-
-        // Add uncategorized components last
-        if let Some(components) = scope_groups.get(&ComponentScope::None)
-            && !components.is_empty() {
+                && !components.is_empty()
+            {
                 entries.push(PreviewEntry::Separator);
-                entries.push(PreviewEntry::SectionHeader("Uncategorized".into()));
-                let mut sorted_components = components.clone();
-                sorted_components.sort_by_key(|(c, _)| c.sort_name());
+                entries.push(PreviewEntry::SectionHeader(scope.to_string().into()));
+
+                let mut sorted_components = components;
+                sorted_components.sort_by_key(|(component, _)| component.sort_name());
 
                 for (component, positions) in sorted_components {
                     entries.push(PreviewEntry::Component(component, positions));
                 }
             }
+        }
+
+        // Add uncategorized components last
+        if let Some(components) = scope_groups.get(&ComponentScope::None)
+            && !components.is_empty()
+        {
+            entries.push(PreviewEntry::Separator);
+            entries.push(PreviewEntry::SectionHeader("Uncategorized".into()));
+            let mut sorted_components = components.clone();
+            sorted_components.sort_by_key(|(c, _)| c.sort_name());
+
+            for (component, positions) in sorted_components {
+                entries.push(PreviewEntry::Component(component, positions));
+            }
+        }
 
         entries
     }
@@ -412,21 +415,23 @@ impl ComponentPreview {
 
         let filtered_components = self.filtered_components();
 
-        if !self.filter_text.is_empty() && !matches!(self.active_page, PreviewPage::AllComponents)
-            && let PreviewPage::Component(ref component_id) = self.active_page {
-                let component_still_visible = filtered_components
-                    .iter()
-                    .any(|component| component.id() == *component_id);
+        if !self.filter_text.is_empty()
+            && !matches!(self.active_page, PreviewPage::AllComponents)
+            && let PreviewPage::Component(ref component_id) = self.active_page
+        {
+            let component_still_visible = filtered_components
+                .iter()
+                .any(|component| component.id() == *component_id);
 
-                if !component_still_visible {
-                    if !filtered_components.is_empty() {
-                        let first_component = &filtered_components[0];
-                        self.set_active_page(PreviewPage::Component(first_component.id()), cx);
-                    } else {
-                        self.set_active_page(PreviewPage::AllComponents, cx);
-                    }
+            if !component_still_visible {
+                if !filtered_components.is_empty() {
+                    let first_component = &filtered_components[0];
+                    self.set_active_page(PreviewPage::Component(first_component.id()), cx);
+                } else {
+                    self.set_active_page(PreviewPage::AllComponents, cx);
                 }
             }
+        }
 
         self.component_list = ListState::new(new_len, gpui::ListAlignment::Top, px(1500.0));
         self.entries = entries;

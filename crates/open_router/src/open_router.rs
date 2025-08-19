@@ -241,9 +241,10 @@ impl MessageContent {
 impl From<Vec<MessagePart>> for MessageContent {
     fn from(parts: Vec<MessagePart>) -> Self {
         if parts.len() == 1
-            && let MessagePart::Text { text } = &parts[0] {
-                return Self::Plain(text.clone());
-            }
+            && let MessagePart::Text { text } = &parts[0]
+        {
+            return Self::Plain(text.clone());
+        }
         Self::Multipart(parts)
     }
 }

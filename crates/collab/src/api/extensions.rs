@@ -345,12 +345,12 @@ async fn fetch_extensions_from_blob_store(
                 )
                 .await
                 .log_err()
-                {
-                    new_versions
-                        .entry(extension_id)
-                        .or_default()
-                        .push(extension);
-                }
+            {
+                new_versions
+                    .entry(extension_id)
+                    .or_default()
+                    .push(extension);
+            }
         }
     }
 

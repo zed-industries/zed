@@ -576,10 +576,11 @@ impl BufferDiffInner {
                         && !buffer.has_edits_since_in_range(
                             &pending_hunk.buffer_version,
                             start_anchor..end_anchor,
-                        ) {
-                            has_pending = true;
-                            secondary_status = pending_hunk.new_status;
-                        }
+                        )
+                    {
+                        has_pending = true;
+                        secondary_status = pending_hunk.new_status;
+                    }
                 }
 
                 if let (Some(secondary_cursor), false) = (secondary_cursor.as_mut(), has_pending) {
@@ -1038,14 +1039,14 @@ impl BufferDiff {
         if let Some(secondary_changed_range) = secondary_diff_change
             && let Some(secondary_hunk_range) =
                 self.range_to_hunk_range(secondary_changed_range, buffer, cx)
-            {
-                if let Some(range) = &mut changed_range {
-                    range.start = secondary_hunk_range.start.min(&range.start, buffer);
-                    range.end = secondary_hunk_range.end.max(&range.end, buffer);
-                } else {
-                    changed_range = Some(secondary_hunk_range);
-                }
+        {
+            if let Some(range) = &mut changed_range {
+                range.start = secondary_hunk_range.start.min(&range.start, buffer);
+                range.end = secondary_hunk_range.end.max(&range.end, buffer);
+            } else {
+                changed_range = Some(secondary_hunk_range);
             }
+        }
 
         let state = &mut self.inner;
         state.base_text_exists = new_state.base_text_exists;

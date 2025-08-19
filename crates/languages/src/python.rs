@@ -339,32 +339,33 @@ impl LspAdapter for PythonLspAdapter {
 
                 // Detect if this is a virtual environment
                 if let Some(interpreter_dir) = Path::new(&interpreter_path).parent()
-                    && let Some(venv_dir) = interpreter_dir.parent() {
-                        // Check if this looks like a virtual environment
-                        if venv_dir.join("pyvenv.cfg").exists()
-                            || venv_dir.join("bin/activate").exists()
-                            || venv_dir.join("Scripts/activate.bat").exists()
-                        {
-                            // Set venvPath and venv at the root level
-                            // This matches the format of a pyrightconfig.json file
-                            if let Some(parent) = venv_dir.parent() {
-                                // Use relative path if the venv is inside the workspace
-                                let venv_path = if parent == adapter.worktree_root_path() {
-                                    ".".to_string()
-                                } else {
-                                    parent.to_string_lossy().into_owned()
-                                };
-                                object.insert("venvPath".to_string(), Value::String(venv_path));
-                            }
+                    && let Some(venv_dir) = interpreter_dir.parent()
+                {
+                    // Check if this looks like a virtual environment
+                    if venv_dir.join("pyvenv.cfg").exists()
+                        || venv_dir.join("bin/activate").exists()
+                        || venv_dir.join("Scripts/activate.bat").exists()
+                    {
+                        // Set venvPath and venv at the root level
+                        // This matches the format of a pyrightconfig.json file
+                        if let Some(parent) = venv_dir.parent() {
+                            // Use relative path if the venv is inside the workspace
+                            let venv_path = if parent == adapter.worktree_root_path() {
+                                ".".to_string()
+                            } else {
+                                parent.to_string_lossy().into_owned()
+                            };
+                            object.insert("venvPath".to_string(), Value::String(venv_path));
+                        }
 
-                            if let Some(venv_name) = venv_dir.file_name() {
-                                object.insert(
-                                    "venv".to_owned(),
-                                    Value::String(venv_name.to_string_lossy().into_owned()),
-                                );
-                            }
+                        if let Some(venv_name) = venv_dir.file_name() {
+                            object.insert(
+                                "venv".to_owned(),
+                                Value::String(venv_name.to_string_lossy().into_owned()),
+                            );
                         }
                     }
+                }
 
                 // Always set the python interpreter path
                 // Get or create the python section
@@ -1519,32 +1520,33 @@ impl LspAdapter for BasedPyrightLspAdapter {
 
                 // Detect if this is a virtual environment
                 if let Some(interpreter_dir) = Path::new(&interpreter_path).parent()
-                    && let Some(venv_dir) = interpreter_dir.parent() {
-                        // Check if this looks like a virtual environment
-                        if venv_dir.join("pyvenv.cfg").exists()
-                            || venv_dir.join("bin/activate").exists()
-                            || venv_dir.join("Scripts/activate.bat").exists()
-                        {
-                            // Set venvPath and venv at the root level
-                            // This matches the format of a pyrightconfig.json file
-                            if let Some(parent) = venv_dir.parent() {
-                                // Use relative path if the venv is inside the workspace
-                                let venv_path = if parent == adapter.worktree_root_path() {
-                                    ".".to_string()
-                                } else {
-                                    parent.to_string_lossy().into_owned()
-                                };
-                                object.insert("venvPath".to_string(), Value::String(venv_path));
-                            }
+                    && let Some(venv_dir) = interpreter_dir.parent()
+                {
+                    // Check if this looks like a virtual environment
+                    if venv_dir.join("pyvenv.cfg").exists()
+                        || venv_dir.join("bin/activate").exists()
+                        || venv_dir.join("Scripts/activate.bat").exists()
+                    {
+                        // Set venvPath and venv at the root level
+                        // This matches the format of a pyrightconfig.json file
+                        if let Some(parent) = venv_dir.parent() {
+                            // Use relative path if the venv is inside the workspace
+                            let venv_path = if parent == adapter.worktree_root_path() {
+                                ".".to_string()
+                            } else {
+                                parent.to_string_lossy().into_owned()
+                            };
+                            object.insert("venvPath".to_string(), Value::String(venv_path));
+                        }
 
-                            if let Some(venv_name) = venv_dir.file_name() {
-                                object.insert(
-                                    "venv".to_owned(),
-                                    Value::String(venv_name.to_string_lossy().into_owned()),
-                                );
-                            }
+                        if let Some(venv_name) = venv_dir.file_name() {
+                            object.insert(
+                                "venv".to_owned(),
+                                Value::String(venv_name.to_string_lossy().into_owned()),
+                            );
                         }
                     }
+                }
 
                 // Always set the python interpreter path
                 // Get or create the python section

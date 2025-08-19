@@ -117,12 +117,13 @@ impl Editor {
         let mut scroll_position = self.scroll_manager.scroll_position(&display_map);
         let original_y = scroll_position.y;
         if let Some(last_bounds) = self.expect_bounds_change.take()
-            && scroll_position.y != 0. {
-                scroll_position.y += (bounds.top() - last_bounds.top()) / line_height;
-                if scroll_position.y < 0. {
-                    scroll_position.y = 0.;
-                }
+            && scroll_position.y != 0.
+        {
+            scroll_position.y += (bounds.top() - last_bounds.top()) / line_height;
+            if scroll_position.y < 0. {
+                scroll_position.y = 0.;
             }
+        }
         if scroll_position.y > max_scroll_top {
             scroll_position.y = max_scroll_top;
         }

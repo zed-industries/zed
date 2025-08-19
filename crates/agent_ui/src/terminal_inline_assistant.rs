@@ -389,19 +389,20 @@ impl TerminalInlineAssistant {
         cx: &mut App,
     ) {
         if let Some(assist) = self.assists.get_mut(&assist_id)
-            && let Some(prompt_editor) = assist.prompt_editor.as_ref().cloned() {
-                assist
-                    .terminal
-                    .update(cx, |terminal, cx| {
-                        terminal.clear_block_below_cursor(cx);
-                        let block = terminal_view::BlockProperties {
-                            height,
-                            render: Box::new(move |_| prompt_editor.clone().into_any_element()),
-                        };
-                        terminal.set_block_below_cursor(block, window, cx);
-                    })
-                    .log_err();
-            }
+            && let Some(prompt_editor) = assist.prompt_editor.as_ref().cloned()
+        {
+            assist
+                .terminal
+                .update(cx, |terminal, cx| {
+                    terminal.clear_block_below_cursor(cx);
+                    let block = terminal_view::BlockProperties {
+                        height,
+                        render: Box::new(move |_| prompt_editor.clone().into_any_element()),
+                    };
+                    terminal.set_block_below_cursor(block, window, cx);
+                })
+                .log_err();
+        }
     }
 }
 
@@ -451,20 +452,19 @@ impl TerminalInlineAssist {
 
                             if let CodegenStatus::Error(error) = &codegen.read(cx).status
                                 && assist.prompt_editor.is_none()
-                                    && let Some(workspace) = assist.workspace.upgrade() {
-                                        let error =
-                                            format!("Terminal inline assistant error: {}", error);
-                                        workspace.update(cx, |workspace, cx| {
-                                            struct InlineAssistantError;
+                                && let Some(workspace) = assist.workspace.upgrade()
+                            {
+                                let error = format!("Terminal inline assistant error: {}", error);
+                                workspace.update(cx, |workspace, cx| {
+                                    struct InlineAssistantError;
 
-                                            let id =
-                                                NotificationId::composite::<InlineAssistantError>(
-                                                    assist_id.0,
-                                                );
+                                    let id = NotificationId::composite::<InlineAssistantError>(
+                                        assist_id.0,
+                                    );
 
-                                            workspace.show_toast(Toast::new(id, error), cx);
-                                        })
-                                    }
+                                    workspace.show_toast(Toast::new(id, error), cx);
+                                })
+                            }
 
                             if assist.prompt_editor.is_none() {
                                 this.finish_assist(assist_id, false, false, window, cx);

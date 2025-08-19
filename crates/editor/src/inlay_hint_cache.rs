@@ -500,13 +500,13 @@ impl InlayHintCache {
                                         && new_kinds.contains(&cached_hint.kind)
                                         && let Some(anchor) = multi_buffer_snapshot
                                             .anchor_in_excerpt(*excerpt_id, cached_hint.position)
-                                        {
-                                            to_insert.push(Inlay::hint(
-                                                cached_hint_id.id(),
-                                                anchor,
-                                                cached_hint,
-                                            ));
-                                        }
+                                    {
+                                        to_insert.push(Inlay::hint(
+                                            cached_hint_id.id(),
+                                            anchor,
+                                            cached_hint,
+                                        ));
+                                    }
                                     excerpt_cache.next();
                                 }
                                 cmp::Ordering::Greater => return true,
@@ -520,16 +520,17 @@ impl InlayHintCache {
             for cached_hint_id in excerpt_cache {
                 let maybe_missed_cached_hint = &excerpt_cached_hints.hints_by_id[cached_hint_id];
                 let cached_hint_kind = maybe_missed_cached_hint.kind;
-                if !old_kinds.contains(&cached_hint_kind) && new_kinds.contains(&cached_hint_kind)
+                if !old_kinds.contains(&cached_hint_kind)
+                    && new_kinds.contains(&cached_hint_kind)
                     && let Some(anchor) = multi_buffer_snapshot
                         .anchor_in_excerpt(*excerpt_id, maybe_missed_cached_hint.position)
-                    {
-                        to_insert.push(Inlay::hint(
-                            cached_hint_id.id(),
-                            anchor,
-                            maybe_missed_cached_hint,
-                        ));
-                    }
+                {
+                    to_insert.push(Inlay::hint(
+                        cached_hint_id.id(),
+                        anchor,
+                        maybe_missed_cached_hint,
+                    ));
+                }
             }
         }
 
@@ -618,42 +619,44 @@ impl InlayHintCache {
         if let Some(excerpt_hints) = self.hints.get(&excerpt_id) {
             let mut guard = excerpt_hints.write();
             if let Some(cached_hint) = guard.hints_by_id.get_mut(&id)
-                && let ResolveState::CanResolve(server_id, _) = &cached_hint.resolve_state {
-                    let hint_to_resolve = cached_hint.clone();
-                    let server_id = *server_id;
-                    cached_hint.resolve_state = ResolveState::Resolving;
-                    drop(guard);
-                    cx.spawn_in(window, async move |editor, cx| {
-                        let resolved_hint_task = editor.update(cx, |editor, cx| {
-                            let buffer = editor.buffer().read(cx).buffer(buffer_id)?;
-                            editor.semantics_provider.as_ref()?.resolve_inlay_hint(
-                                hint_to_resolve,
-                                buffer,
-                                server_id,
-                                cx,
-                            )
-                        })?;
-                        if let Some(resolved_hint_task) = resolved_hint_task {
-                            let mut resolved_hint =
-                                resolved_hint_task.await.context("hint resolve task")?;
-                            editor.read_with(cx, |editor, _| {
-                                if let Some(excerpt_hints) =
-                                    editor.inlay_hint_cache.hints.get(&excerpt_id)
+                && let ResolveState::CanResolve(server_id, _) = &cached_hint.resolve_state
+            {
+                let hint_to_resolve = cached_hint.clone();
+                let server_id = *server_id;
+                cached_hint.resolve_state = ResolveState::Resolving;
+                drop(guard);
+                cx.spawn_in(window, async move |editor, cx| {
+                    let resolved_hint_task = editor.update(cx, |editor, cx| {
+                        let buffer = editor.buffer().read(cx).buffer(buffer_id)?;
+                        editor.semantics_provider.as_ref()?.resolve_inlay_hint(
+                            hint_to_resolve,
+                            buffer,
+                            server_id,
+                            cx,
+                        )
+                    })?;
+                    if let Some(resolved_hint_task) = resolved_hint_task {
+                        let mut resolved_hint =
+                            resolved_hint_task.await.context("hint resolve task")?;
+                        editor.read_with(cx, |editor, _| {
+                            if let Some(excerpt_hints) =
+                                editor.inlay_hint_cache.hints.get(&excerpt_id)
+                            {
+                                let mut guard = excerpt_hints.write();
+                                if let Some(cached_hint) = guard.hints_by_id.get_mut(&id)
+                                    && cached_hint.resolve_state == ResolveState::Resolving
                                 {
-                                    let mut guard = excerpt_hints.write();
-                                    if let Some(cached_hint) = guard.hints_by_id.get_mut(&id)
-                                        && cached_hint.resolve_state == ResolveState::Resolving {
-                                            resolved_hint.resolve_state = ResolveState::Resolved;
-                                            *cached_hint = resolved_hint;
-                                        }
+                                    resolved_hint.resolve_state = ResolveState::Resolved;
+                                    *cached_hint = resolved_hint;
                                 }
-                            })?;
-                        }
+                            }
+                        })?;
+                    }
 
-                        anyhow::Ok(())
-                    })
-                    .detach_and_log_err(cx);
-                }
+                    anyhow::Ok(())
+                })
+                .detach_and_log_err(cx);
+            }
         }
     }
 }
@@ -1236,11 +1239,11 @@ fn apply_hint_update(
             .contains(&new_hint.kind)
             && let Some(new_hint_position) =
                 multi_buffer_snapshot.anchor_in_excerpt(query.excerpt_id, new_hint.position)
-            {
-                splice
-                    .to_insert
-                    .push(Inlay::hint(new_inlay_id, new_hint_position, &new_hint));
-            }
+        {
+            splice
+                .to_insert
+                .push(Inlay::hint(new_inlay_id, new_hint_position, &new_hint));
+        }
         let new_id = InlayId::Hint(new_inlay_id);
         cached_excerpt_hints.hints_by_id.insert(new_id, new_hint);
         if cached_excerpt_hints.ordered_hints.len() <= insert_position {

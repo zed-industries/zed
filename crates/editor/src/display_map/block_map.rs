@@ -527,26 +527,26 @@ impl BlockMap {
             new_transforms.append(cursor.slice(&old_start, Bias::Left), &());
             if let Some(transform) = cursor.item()
                 && transform.summary.input_rows > 0
-                    && cursor.end() == old_start
-                    && transform
-                        .block
-                        .as_ref()
-                        .map_or(true, |b| !b.is_replacement())
-                {
-                    // Preserve the transform (push and next)
-                    new_transforms.push(transform.clone(), &());
-                    cursor.next();
+                && cursor.end() == old_start
+                && transform
+                    .block
+                    .as_ref()
+                    .map_or(true, |b| !b.is_replacement())
+            {
+                // Preserve the transform (push and next)
+                new_transforms.push(transform.clone(), &());
+                cursor.next();
 
-                    // Preserve below blocks at end of edit
-                    while let Some(transform) = cursor.item() {
-                        if transform.block.as_ref().map_or(false, |b| b.place_below()) {
-                            new_transforms.push(transform.clone(), &());
-                            cursor.next();
-                        } else {
-                            break;
-                        }
+                // Preserve below blocks at end of edit
+                while let Some(transform) = cursor.item() {
+                    if transform.block.as_ref().map_or(false, |b| b.place_below()) {
+                        new_transforms.push(transform.clone(), &());
+                        cursor.next();
+                    } else {
+                        break;
                     }
                 }
+            }
 
             // Ensure the edit starts at a transform boundary.
             // If the edit starts within an isomorphic transform, preserve its prefix
@@ -657,9 +657,10 @@ impl BlockMap {
                     .filter_map(|block| {
                         let placement = block.placement.to_wrap_row(wrap_snapshot)?;
                         if let BlockPlacement::Above(row) = placement
-                            && row < new_start {
-                                return None;
-                            }
+                            && row < new_start
+                        {
+                            return None;
+                        }
                         Some((placement, Block::Custom(block.clone())))
                     }),
             );
@@ -976,9 +977,10 @@ impl BlockMapReader<'_> {
             }
 
             if let Some(BlockId::Custom(id)) = transform.block.as_ref().map(|block| block.id())
-                && id == block_id {
-                    return Some(cursor.start().1);
-                }
+                && id == block_id
+            {
+                return Some(cursor.start().1);
+            }
             cursor.next();
         }
 
@@ -1297,13 +1299,14 @@ impl BlockSnapshot {
         let mut input_start = transform_input_start;
         let mut input_end = transform_input_start;
         if let Some(transform) = cursor.item()
-            && transform.block.is_none() {
-                input_start += rows.start - transform_output_start;
-                input_end += cmp::min(
-                    rows.end - transform_output_start,
-                    transform.summary.input_rows,
-                );
-            }
+            && transform.block.is_none()
+        {
+            input_start += rows.start - transform_output_start;
+            input_end += cmp::min(
+                rows.end - transform_output_start,
+                transform.summary.input_rows,
+            );
+        }
 
         BlockChunks {
             input_chunks: self.wrap_snapshot.chunks(
@@ -1469,18 +1472,19 @@ impl BlockSnapshot {
             }
 
             if let Some(transform) = cursor.item()
-                && transform.block.is_none() {
-                    let Dimensions(output_start, input_start, _) = cursor.start();
-                    let overshoot = range.end.0 - output_start.0;
-                    let wrap_start_row = input_start.0;
-                    let wrap_end_row = input_start.0 + overshoot;
-                    let summary = self
-                        .wrap_snapshot
-                        .text_summary_for_range(wrap_start_row..wrap_end_row);
-                    if summary.longest_row_chars > longest_row_chars {
-                        longest_row = BlockRow(output_start.0 + summary.longest_row);
-                    }
+                && transform.block.is_none()
+            {
+                let Dimensions(output_start, input_start, _) = cursor.start();
+                let overshoot = range.end.0 - output_start.0;
+                let wrap_start_row = input_start.0;
+                let wrap_end_row = input_start.0 + overshoot;
+                let summary = self
+                    .wrap_snapshot
+                    .text_summary_for_range(wrap_start_row..wrap_end_row);
+                if summary.longest_row_chars > longest_row_chars {
+                    longest_row = BlockRow(output_start.0 + summary.longest_row);
                 }
+            }
         }
 
         longest_row
@@ -1555,9 +1559,9 @@ impl BlockSnapshot {
                         if block.is_replacement()
                             && (((bias == Bias::Left || search_left) && output_start <= point.0)
                                 || (!search_left && output_start >= point.0))
-                            {
-                                return BlockPoint(output_start);
-                            }
+                        {
+                            return BlockPoint(output_start);
+                        }
                     }
                     None => {
                         let input_point = if point.row >= output_end_row.0 {
@@ -3222,34 +3226,34 @@ mod tests {
                 let mut is_in_replace_block = false;
                 if let Some((BlockPlacement::Replace(replace_range), block)) =
                     sorted_blocks_iter.peek()
-                    && wrap_row >= replace_range.start().0 {
-                        is_in_replace_block = true;
+                    && wrap_row >= replace_range.start().0
+                {
+                    is_in_replace_block = true;
 
-                        if wrap_row == replace_range.start().0 {
-                            if matches!(block, Block::FoldedBuffer { .. }) {
-                                expected_buffer_rows.push(None);
-                            } else {
-                                expected_buffer_rows
-                                    .push(input_buffer_rows[multibuffer_row as usize]);
-                            }
-                        }
-
-                        if wrap_row == replace_range.end().0 {
-                            expected_block_positions.push((block_row, block.id()));
-                            let text = "\n".repeat((block.height() - 1) as usize);
-                            if block_row > 0 {
-                                expected_text.push('\n');
-                            }
-                            expected_text.push_str(&text);
-
-                            for _ in 1..block.height() {
-                                expected_buffer_rows.push(None);
-                            }
-                            block_row += block.height();
-
-                            sorted_blocks_iter.next();
+                    if wrap_row == replace_range.start().0 {
+                        if matches!(block, Block::FoldedBuffer { .. }) {
+                            expected_buffer_rows.push(None);
+                        } else {
+                            expected_buffer_rows.push(input_buffer_rows[multibuffer_row as usize]);
                         }
                     }
+
+                    if wrap_row == replace_range.end().0 {
+                        expected_block_positions.push((block_row, block.id()));
+                        let text = "\n".repeat((block.height() - 1) as usize);
+                        if block_row > 0 {
+                            expected_text.push('\n');
+                        }
+                        expected_text.push_str(&text);
+
+                        for _ in 1..block.height() {
+                            expected_buffer_rows.push(None);
+                        }
+                        block_row += block.height();
+
+                        sorted_blocks_iter.next();
+                    }
+                }
 
                 if is_in_replace_block {
                     expected_replaced_buffer_rows.insert(MultiBufferRow(multibuffer_row));

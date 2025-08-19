@@ -953,10 +953,12 @@ fn cleanup_old_binaries() -> Result<()> {
 
         if let Some(file_name) = path.file_name()
             && let Some(version) = file_name.to_string_lossy().strip_prefix(&prefix)
-                && !is_new_version(version) && !is_file_in_use(file_name) {
-                    log::info!("removing old remote server binary: {:?}", path);
-                    std::fs::remove_file(&path)?;
-                }
+            && !is_new_version(version)
+            && !is_file_in_use(file_name)
+        {
+            log::info!("removing old remote server binary: {:?}", path);
+            std::fs::remove_file(&path)?;
+        }
     }
 
     Ok(())

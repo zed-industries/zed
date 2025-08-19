@@ -531,9 +531,10 @@ where
 
         let mut end = self.position.clone();
         if bias == Bias::Left
-            && let Some(summary) = self.item_summary() {
-                end.add_summary(summary, self.cx);
-            }
+            && let Some(summary) = self.item_summary()
+        {
+            end.add_summary(summary, self.cx);
+        }
 
         target.cmp(&end, self.cx) == Ordering::Equal
     }

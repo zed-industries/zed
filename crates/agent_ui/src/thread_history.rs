@@ -171,9 +171,9 @@ impl ThreadHistory {
                                 .all_entries
                                 .iter()
                                 .position(|probe| probe.id() == prev_id)
-                            {
-                                this.set_selected_entry_index(new_ix, cx);
-                            }
+                        {
+                            this.set_selected_entry_index(new_ix, cx);
+                        }
                     }
                     SearchState::Searching { query, .. } | SearchState::Searched { query, .. } => {
                         this.search(query.clone(), cx);

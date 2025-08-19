@@ -899,29 +899,29 @@ impl ContextStore {
                     .request::<context_server::types::requests::PromptsList>(())
                     .await
                     .log_err()
-                {
-                    let slash_command_ids = response
-                        .prompts
-                        .into_iter()
-                        .filter(assistant_slash_commands::acceptable_prompt)
-                        .map(|prompt| {
-                            log::info!("registering context server command: {:?}", prompt.name);
-                            slash_command_working_set.insert(Arc::new(
-                                assistant_slash_commands::ContextServerSlashCommand::new(
-                                    context_server_store.clone(),
-                                    server.id(),
-                                    prompt,
-                                ),
-                            ))
-                        })
-                        .collect::<Vec<_>>();
-
-                    this.update(cx, |this, _cx| {
-                        this.context_server_slash_command_ids
-                            .insert(server_id.clone(), slash_command_ids);
+            {
+                let slash_command_ids = response
+                    .prompts
+                    .into_iter()
+                    .filter(assistant_slash_commands::acceptable_prompt)
+                    .map(|prompt| {
+                        log::info!("registering context server command: {:?}", prompt.name);
+                        slash_command_working_set.insert(Arc::new(
+                            assistant_slash_commands::ContextServerSlashCommand::new(
+                                context_server_store.clone(),
+                                server.id(),
+                                prompt,
+                            ),
+                        ))
                     })
-                    .log_err();
-                }
+                    .collect::<Vec<_>>();
+
+                this.update(cx, |this, _cx| {
+                    this.context_server_slash_command_ids
+                        .insert(server_id.clone(), slash_command_ids);
+                })
+                .log_err();
+            }
         })
         .detach();
     }

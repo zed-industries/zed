@@ -251,12 +251,12 @@ impl ToolCall {
         if let Some(raw_output) = raw_output {
             if self.content.is_empty()
                 && let Some(markdown) = markdown_for_raw_output(&raw_output, &language_registry, cx)
-                {
-                    self.content
-                        .push(ToolCallContent::ContentBlock(ContentBlock::Markdown {
-                            markdown,
-                        }));
-                }
+            {
+                self.content
+                    .push(ToolCallContent::ContentBlock(ContentBlock::Markdown {
+                        markdown,
+                    }));
+            }
             self.raw_output = Some(raw_output);
         }
     }
@@ -430,10 +430,11 @@ impl ContentBlock {
         cx: &mut App,
     ) {
         if matches!(self, ContentBlock::Empty)
-            && let acp::ContentBlock::ResourceLink(resource_link) = block {
-                *self = ContentBlock::ResourceLink { resource_link };
-                return;
-            }
+            && let acp::ContentBlock::ResourceLink(resource_link) = block
+        {
+            *self = ContentBlock::ResourceLink { resource_link };
+            return;
+        }
 
         let new_content = self.block_string_contents(block);
 

@@ -75,9 +75,10 @@ impl Vim {
                     s.move_with(|map, selection| {
                         let mut cursor = selection.head();
                         if kind.linewise()
-                            && let Some(column) = original_columns.get(&selection.id) {
-                                *cursor.column_mut() = *column
-                            }
+                            && let Some(column) = original_columns.get(&selection.id)
+                        {
+                            *cursor.column_mut() = *column
+                        }
                         cursor = map.clip_point(cursor, Bias::Left);
                         selection.collapse_to(cursor, selection.goal)
                     });

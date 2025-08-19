@@ -330,23 +330,24 @@ impl ChannelChat {
             let step = chat
                 .update(&mut cx, |chat, cx| {
                     if let Some(first_id) = chat.first_loaded_message_id()
-                        && first_id <= message_id {
-                            let mut cursor = chat
-                                .messages
-                                .cursor::<Dimensions<ChannelMessageId, Count>>(&());
-                            let message_id = ChannelMessageId::Saved(message_id);
-                            cursor.seek(&message_id, Bias::Left);
-                            return ControlFlow::Break(
-                                if cursor
-                                    .item()
-                                    .map_or(false, |message| message.id == message_id)
-                                {
-                                    Some(cursor.start().1.0)
-                                } else {
-                                    None
-                                },
-                            );
-                        }
+                        && first_id <= message_id
+                    {
+                        let mut cursor = chat
+                            .messages
+                            .cursor::<Dimensions<ChannelMessageId, Count>>(&());
+                        let message_id = ChannelMessageId::Saved(message_id);
+                        cursor.seek(&message_id, Bias::Left);
+                        return ControlFlow::Break(
+                            if cursor
+                                .item()
+                                .map_or(false, |message| message.id == message_id)
+                            {
+                                Some(cursor.start().1.0)
+                            } else {
+                                None
+                            },
+                        );
+                    }
                     ControlFlow::Continue(chat.load_more_messages(cx))
                 })
                 .log_err()?;
@@ -362,18 +363,18 @@ impl ChannelChat {
             && self
                 .last_acknowledged_id
                 .map_or(true, |acknowledged_id| acknowledged_id < latest_message_id)
-            {
-                self.rpc
-                    .send(proto::AckChannelMessage {
-                        channel_id: self.channel_id.0,
-                        message_id: latest_message_id,
-                    })
-                    .ok();
-                self.last_acknowledged_id = Some(latest_message_id);
-                self.channel_store.update(cx, |store, cx| {
-                    store.acknowledge_message_id(self.channel_id, latest_message_id, cx);
-                });
-            }
+        {
+            self.rpc
+                .send(proto::AckChannelMessage {
+                    channel_id: self.channel_id.0,
+                    message_id: latest_message_id,
+                })
+                .ok();
+            self.last_acknowledged_id = Some(latest_message_id);
+            self.channel_store.update(cx, |store, cx| {
+                store.acknowledge_message_id(self.channel_id, latest_message_id, cx);
+            });
+        }
     }
 
     async fn handle_loaded_messages(
@@ -406,9 +407,10 @@ impl ChannelChat {
             .iter()
             .filter_map(|message| {
                 if let Some(ancestor_id) = message.reply_to_message_id
-                    && !loaded_message_ids.contains(&ancestor_id) {
-                        return Some(ancestor_id);
-                    }
+                    && !loaded_message_ids.contains(&ancestor_id)
+                {
+                    return Some(ancestor_id);
+                }
                 None
             })
             .collect::<Vec<_>>();
@@ -644,30 +646,32 @@ impl ChannelChat {
         let mut cursor = self.messages.cursor::<ChannelMessageId>(&());
         let mut messages = cursor.slice(&ChannelMessageId::Saved(id), Bias::Left);
         if let Some(item) = cursor.item()
-            && item.id == ChannelMessageId::Saved(id) {
-                let deleted_message_ix = messages.summary().count;
-                cursor.next();
-                messages.append(cursor.suffix(), &());
-                drop(cursor);
-                self.messages = messages;
+            && item.id == ChannelMessageId::Saved(id)
+        {
+            let deleted_message_ix = messages.summary().count;
+            cursor.next();
+            messages.append(cursor.suffix(), &());
+            drop(cursor);
+            self.messages = messages;
 
-                // If the message that was deleted was the last acknowledged message,
-                // replace the acknowledged message with an earlier one.
-                self.channel_store.update(cx, |store, _| {
-                    let summary = self.messages.summary();
-                    if summary.count == 0 {
-                        store.set_acknowledged_message_id(self.channel_id, None);
-                    } else if deleted_message_ix == summary.count
-                        && let ChannelMessageId::Saved(id) = summary.max_id {
-                            store.set_acknowledged_message_id(self.channel_id, Some(id));
-                        }
-                });
+            // If the message that was deleted was the last acknowledged message,
+            // replace the acknowledged message with an earlier one.
+            self.channel_store.update(cx, |store, _| {
+                let summary = self.messages.summary();
+                if summary.count == 0 {
+                    store.set_acknowledged_message_id(self.channel_id, None);
+                } else if deleted_message_ix == summary.count
+                    && let ChannelMessageId::Saved(id) = summary.max_id
+                {
+                    store.set_acknowledged_message_id(self.channel_id, Some(id));
+                }
+            });
 
-                cx.emit(ChannelChatEvent::MessagesUpdated {
-                    old_range: deleted_message_ix..deleted_message_ix + 1,
-                    new_count: 0,
-                });
-            }
+            cx.emit(ChannelChatEvent::MessagesUpdated {
+                old_range: deleted_message_ix..deleted_message_ix + 1,
+                new_count: 0,
+            });
+        }
     }
 
     fn message_update(

@@ -193,9 +193,10 @@ impl ChannelBuffer {
             } => {
                 if *ZED_ALWAYS_ACTIVE
                     && let language::Operation::UpdateSelections { selections, .. } = operation
-                        && selections.is_empty() {
-                            return;
-                        }
+                    && selections.is_empty()
+                {
+                    return;
+                }
                 let operation = language::proto::serialize_operation(operation);
                 self.client
                     .send(proto::UpdateChannelBuffer {

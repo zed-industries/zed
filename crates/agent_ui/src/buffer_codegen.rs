@@ -353,11 +353,12 @@ impl CodegenAlternative {
         cx: &mut Context<Self>,
     ) {
         if let multi_buffer::Event::TransactionUndone { transaction_id } = event
-            && self.transformation_transaction_id == Some(*transaction_id) {
-                self.transformation_transaction_id = None;
-                self.generation = Task::ready(());
-                cx.emit(CodegenEvent::Undone);
-            }
+            && self.transformation_transaction_id == Some(*transaction_id)
+        {
+            self.transformation_transaction_id = None;
+            self.generation = Task::ready(());
+            cx.emit(CodegenEvent::Undone);
+        }
     }
 
     pub fn last_equal_ranges(&self) -> &[Range<Anchor>] {
@@ -578,35 +579,32 @@ impl CodegenAlternative {
                                     if line_indent.is_none()
                                         && let Some(non_whitespace_ch_ix) =
                                             new_text.find(|ch: char| !ch.is_whitespace())
-                                        {
-                                            line_indent = Some(non_whitespace_ch_ix);
-                                            base_indent = base_indent.or(line_indent);
+                                    {
+                                        line_indent = Some(non_whitespace_ch_ix);
+                                        base_indent = base_indent.or(line_indent);
 
-                                            let line_indent = line_indent.unwrap();
-                                            let base_indent = base_indent.unwrap();
-                                            let indent_delta =
-                                                line_indent as i32 - base_indent as i32;
-                                            let mut corrected_indent_len = cmp::max(
-                                                0,
-                                                suggested_line_indent.len as i32 + indent_delta,
-                                            )
-                                                as usize;
-                                            if first_line {
-                                                corrected_indent_len = corrected_indent_len
-                                                    .saturating_sub(
-                                                        selection_start.column as usize,
-                                                    );
-                                            }
-
-                                            let indent_char = suggested_line_indent.char();
-                                            let mut indent_buffer = [0; 4];
-                                            let indent_str =
-                                                indent_char.encode_utf8(&mut indent_buffer);
-                                            new_text.replace_range(
-                                                ..line_indent,
-                                                &indent_str.repeat(corrected_indent_len),
-                                            );
+                                        let line_indent = line_indent.unwrap();
+                                        let base_indent = base_indent.unwrap();
+                                        let indent_delta = line_indent as i32 - base_indent as i32;
+                                        let mut corrected_indent_len = cmp::max(
+                                            0,
+                                            suggested_line_indent.len as i32 + indent_delta,
+                                        )
+                                            as usize;
+                                        if first_line {
+                                            corrected_indent_len = corrected_indent_len
+                                                .saturating_sub(selection_start.column as usize);
                                         }
+
+                                        let indent_char = suggested_line_indent.char();
+                                        let mut indent_buffer = [0; 4];
+                                        let indent_str =
+                                            indent_char.encode_utf8(&mut indent_buffer);
+                                        new_text.replace_range(
+                                            ..line_indent,
+                                            &indent_str.repeat(corrected_indent_len),
+                                        );
+                                    }
 
                                     if line_indent.is_some() {
                                         let char_ops = diff.push_new(&new_text);

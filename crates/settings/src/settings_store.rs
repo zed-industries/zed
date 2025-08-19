@@ -348,11 +348,12 @@ impl SettingsStore {
             let mut profile_value = None;
             if let Some(active_profile) = cx.try_global::<ActiveSettingsProfileName>()
                 && let Some(profiles) = self.raw_user_settings.get("profiles")
-                    && let Some(profile_settings) = profiles.get(&active_profile.0) {
-                        profile_value = setting_value
-                            .deserialize_setting(profile_settings)
-                            .log_err();
-                    }
+                && let Some(profile_settings) = profiles.get(&active_profile.0)
+            {
+                profile_value = setting_value
+                    .deserialize_setting(profile_settings)
+                    .log_err();
+            }
 
             let server_value = self
                 .raw_server_settings
@@ -481,9 +482,10 @@ impl SettingsStore {
             result @ Ok(_) => result,
             Err(err) => {
                 if let Some(e) = err.downcast_ref::<std::io::Error>()
-                    && e.kind() == std::io::ErrorKind::NotFound {
-                        return Ok(crate::initial_user_settings_content().to_string());
-                    }
+                    && e.kind() == std::io::ErrorKind::NotFound
+                {
+                    return Ok(crate::initial_user_settings_content().to_string());
+                }
                 Err(err)
             }
         }
@@ -494,9 +496,10 @@ impl SettingsStore {
             result @ Ok(_) => result,
             Err(err) => {
                 if let Some(e) = err.downcast_ref::<std::io::Error>()
-                    && e.kind() == std::io::ErrorKind::NotFound {
-                        return Ok("{}".to_string());
-                    }
+                    && e.kind() == std::io::ErrorKind::NotFound
+                {
+                    return Ok("{}".to_string());
+                }
                 Err(err)
             }
         }
@@ -952,13 +955,14 @@ impl SettingsStore {
 
             if let Some(key) = setting_value.key() {
                 if let Some(properties) = combined_schema.get_mut("properties")
-                    && let Some(properties_obj) = properties.as_object_mut() {
-                        if let Some(target) = properties_obj.get_mut(key) {
-                            merge_schema(target, setting_schema.to_value());
-                        } else {
-                            properties_obj.insert(key.to_string(), setting_schema.to_value());
-                        }
+                    && let Some(properties_obj) = properties.as_object_mut()
+                {
+                    if let Some(target) = properties_obj.get_mut(key) {
+                        merge_schema(target, setting_schema.to_value());
+                    } else {
+                        properties_obj.insert(key.to_string(), setting_schema.to_value());
                     }
+                }
             } else {
                 setting_schema.remove("description");
                 setting_schema.remove("additionalProperties");
@@ -1033,15 +1037,16 @@ impl SettingsStore {
                     | "additionalProperties" => {
                         if let Some(old_value) =
                             target_obj.insert(source_key.clone(), source_value.clone())
-                            && old_value != source_value {
-                                log::error!(
-                                    "bug: while merging JSON schemas, \
+                            && old_value != source_value
+                        {
+                            log::error!(
+                                "bug: while merging JSON schemas, \
                                     mismatch `\"{}\": {}` (before was `{}`)",
-                                    source_key,
-                                    old_value,
-                                    source_value
-                                );
-                            }
+                                source_key,
+                                old_value,
+                                source_value
+                            );
+                        }
                     }
                     _ => {
                         log::error!(
@@ -1164,23 +1169,24 @@ impl SettingsStore {
                 && let Some(release_settings) = setting_value
                     .deserialize_setting(release_settings)
                     .log_err()
-                {
-                    release_channel_settings = Some(release_settings);
-                }
+            {
+                release_channel_settings = Some(release_settings);
+            }
 
             let mut os_settings = None;
             if let Some(settings) = &self.raw_user_settings.get(env::consts::OS)
-                && let Some(settings) = setting_value.deserialize_setting(settings).log_err() {
-                    os_settings = Some(settings);
-                }
+                && let Some(settings) = setting_value.deserialize_setting(settings).log_err()
+            {
+                os_settings = Some(settings);
+            }
 
             let mut profile_settings = None;
             if let Some(active_profile) = cx.try_global::<ActiveSettingsProfileName>()
                 && let Some(profiles) = self.raw_user_settings.get("profiles")
-                    && let Some(profile_json) = profiles.get(&active_profile.0) {
-                        profile_settings =
-                            setting_value.deserialize_setting(profile_json).log_err();
-                    }
+                && let Some(profile_json) = profiles.get(&active_profile.0)
+            {
+                profile_settings = setting_value.deserialize_setting(profile_json).log_err();
+            }
 
             // If the global settings file changed, reload the global value for the field.
             if changed_local_path.is_none()
@@ -1200,9 +1206,9 @@ impl SettingsStore {
                         cx,
                     )
                     .log_err()
-                {
-                    setting_value.set_global_value(value);
-                }
+            {
+                setting_value.set_global_value(value);
+            }
 
             // Reload the local values for the setting.
             paths_stack.clear();
@@ -1211,11 +1217,12 @@ impl SettingsStore {
                 // Build a stack of all of the local values for that setting.
                 while let Some(prev_entry) = paths_stack.last() {
                     if let Some((prev_root_id, prev_path)) = prev_entry
-                        && (root_id != prev_root_id || !directory_path.starts_with(prev_path)) {
-                            paths_stack.pop();
-                            project_settings_stack.pop();
-                            continue;
-                        }
+                        && (root_id != prev_root_id || !directory_path.starts_with(prev_path))
+                    {
+                        paths_stack.pop();
+                        project_settings_stack.pop();
+                        continue;
+                    }
                     break;
                 }
 

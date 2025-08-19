@@ -37,16 +37,16 @@ impl Rope {
                 .last()
                 .map_or(false, |c| c.text.len() < chunk::MIN_BASE)
                 || chunk.text.len() < chunk::MIN_BASE)
-            {
-                self.push_chunk(chunk.as_slice());
+        {
+            self.push_chunk(chunk.as_slice());
 
-                let mut chunks = rope.chunks.cursor::<()>(&());
-                chunks.next();
-                chunks.next();
-                self.chunks.append(chunks.suffix(), &());
-                self.check_invariants();
-                return;
-            }
+            let mut chunks = rope.chunks.cursor::<()>(&());
+            chunks.next();
+            chunks.next();
+            self.chunks.append(chunks.suffix(), &());
+            self.check_invariants();
+            return;
+        }
 
         self.chunks.append(rope.chunks.clone(), &());
         self.check_invariants();
@@ -735,16 +735,17 @@ impl<'a> Chunks<'a> {
             .search_backward(|summary| summary.text.lines.row > 0);
         self.offset = *self.chunks.start();
         if let Some(chunk) = self.chunks.item()
-            && let Some(newline_ix) = chunk.text.rfind('\n') {
-                self.offset += newline_ix + 1;
-                if self.offset_is_valid() {
-                    if self.offset == self.chunks.end() {
-                        self.chunks.next();
-                    }
-
-                    return true;
+            && let Some(newline_ix) = chunk.text.rfind('\n')
+        {
+            self.offset += newline_ix + 1;
+            if self.offset_is_valid() {
+                if self.offset == self.chunks.end() {
+                    self.chunks.next();
                 }
+
+                return true;
             }
+        }
 
         if !self.offset_is_valid() || self.chunks.item().is_none() {
             self.offset = self.range.start;

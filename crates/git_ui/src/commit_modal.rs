@@ -135,10 +135,11 @@ impl CommitModal {
                             .as_ref()
                             .and_then(|repo| repo.read(cx).head_commit.as_ref())
                             .is_some()
-                            && !git_panel.amend_pending() {
-                                git_panel.set_amend_pending(true, cx);
-                                git_panel.load_last_commit_message_if_empty(cx);
-                            }
+                            && !git_panel.amend_pending()
+                        {
+                            git_panel.set_amend_pending(true, cx);
+                            git_panel.load_last_commit_message_if_empty(cx);
+                        }
                     }
                     ForceMode::Commit => {
                         if git_panel.amend_pending() {
@@ -194,11 +195,12 @@ impl CommitModal {
         let commit_message = commit_editor.read(cx).text(cx);
 
         if let Some(suggested_commit_message) = suggested_commit_message
-            && commit_message.is_empty() {
-                commit_editor.update(cx, |editor, cx| {
-                    editor.set_placeholder_text(suggested_commit_message, cx);
-                });
-            }
+            && commit_message.is_empty()
+        {
+            commit_editor.update(cx, |editor, cx| {
+                editor.set_placeholder_text(suggested_commit_message, cx);
+            });
+        }
 
         let focus_handle = commit_editor.focus_handle(cx);
 

@@ -93,9 +93,10 @@ pub fn is_version_compatible(
         .wasm_api_version
         .as_ref()
         .and_then(|wasm_api_version| SemanticVersion::from_str(wasm_api_version).ok())
-        && !is_supported_wasm_api_version(release_channel, wasm_api_version) {
-            return false;
-        }
+        && !is_supported_wasm_api_version(release_channel, wasm_api_version)
+    {
+        return false;
+    }
 
     true
 }
@@ -291,17 +292,18 @@ impl ExtensionStore {
         let mut extension_index = ExtensionIndex::default();
         let mut extension_index_needs_rebuild = true;
         if let Ok(index_content) = index_content
-            && let Some(index) = serde_json::from_str(&index_content).log_err() {
-                extension_index = index;
-                if let (Ok(Some(index_metadata)), Ok(Some(extensions_metadata))) =
-                    (index_metadata, extensions_metadata)
-                    && index_metadata
-                        .mtime
-                        .bad_is_greater_than(extensions_metadata.mtime)
-                    {
-                        extension_index_needs_rebuild = false;
-                    }
+            && let Some(index) = serde_json::from_str(&index_content).log_err()
+        {
+            extension_index = index;
+            if let (Ok(Some(index_metadata)), Ok(Some(extensions_metadata))) =
+                (index_metadata, extensions_metadata)
+                && index_metadata
+                    .mtime
+                    .bad_is_greater_than(extensions_metadata.mtime)
+            {
+                extension_index_needs_rebuild = false;
             }
+        }
 
         // Immediately load all of the extensions in the initial manifest. If the
         // index needs to be rebuild, then enqueue
@@ -387,9 +389,10 @@ impl ExtensionStore {
 
                         if let Some(path::Component::Normal(extension_dir_name)) =
                             event_path.components().next()
-                            && let Some(extension_id) = extension_dir_name.to_str() {
-                                reload_tx.unbounded_send(Some(extension_id.into())).ok();
-                            }
+                            && let Some(extension_id) = extension_dir_name.to_str()
+                        {
+                            reload_tx.unbounded_send(Some(extension_id.into())).ok();
+                        }
                     }
                 }
             }
@@ -905,11 +908,12 @@ impl ExtensionStore {
             extension_store.update(cx, |_, cx| {
                 cx.emit(Event::ExtensionUninstalled(extension_id.clone()));
                 if let Some(events) = ExtensionEvents::try_global(cx)
-                    && let Some(manifest) = extension_manifest {
-                        events.update(cx, |this, cx| {
-                            this.emit(extension::Event::ExtensionUninstalled(manifest.clone()), cx)
-                        });
-                    }
+                    && let Some(manifest) = extension_manifest
+                {
+                    events.update(cx, |this, cx| {
+                        this.emit(extension::Event::ExtensionUninstalled(manifest.clone()), cx)
+                    });
+                }
             })?;
 
             anyhow::Ok(())
@@ -989,11 +993,12 @@ impl ExtensionStore {
             this.update(cx, |this, cx| {
                 cx.emit(Event::ExtensionInstalled(extension_id.clone()));
                 if let Some(events) = ExtensionEvents::try_global(cx)
-                    && let Some(manifest) = this.extension_manifest_for_id(&extension_id) {
-                        events.update(cx, |this, cx| {
-                            this.emit(extension::Event::ExtensionInstalled(manifest.clone()), cx)
-                        });
-                    }
+                    && let Some(manifest) = this.extension_manifest_for_id(&extension_id)
+                {
+                    events.update(cx, |this, cx| {
+                        this.emit(extension::Event::ExtensionInstalled(manifest.clone()), cx)
+                    });
+                }
             })?;
 
             Ok(())
@@ -1779,9 +1784,10 @@ impl ExtensionStore {
         let ssh_url = connection_options.ssh_url();
 
         if let Some(existing_client) = self.ssh_clients.get(&ssh_url)
-            && existing_client.upgrade().is_some() {
-                return;
-            }
+            && existing_client.upgrade().is_some()
+        {
+            return;
+        }
 
         self.ssh_clients.insert(ssh_url, client.downgrade());
         self.ssh_registered_tx.unbounded_send(()).ok();

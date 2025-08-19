@@ -36,13 +36,14 @@ pub fn apply_features_and_fallbacks(
         let mut keys = vec![kCTFontFeatureSettingsAttribute];
         let mut values = vec![generate_feature_array(features)];
         if let Some(fallbacks) = fallbacks
-            && !fallbacks.fallback_list().is_empty() {
-                keys.push(kCTFontCascadeListAttribute);
-                values.push(generate_fallback_array(
-                    fallbacks,
-                    font.native_font().as_concrete_TypeRef(),
-                ));
-            }
+            && !fallbacks.fallback_list().is_empty()
+        {
+            keys.push(kCTFontCascadeListAttribute);
+            values.push(generate_fallback_array(
+                fallbacks,
+                font.native_font().as_concrete_TypeRef(),
+            ));
+        }
         let attrs = CFDictionaryCreate(
             kCFAllocatorDefault,
             keys.as_ptr() as _,

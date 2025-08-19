@@ -298,9 +298,10 @@ impl RetainAllImageCache {
     pub fn remove(&mut self, source: &Resource, window: &mut Window, cx: &mut App) {
         let hash = hash(source);
         if let Some(mut item) = self.0.remove(&hash)
-            && let Some(Ok(image)) = item.get() {
-                cx.drop_image(image, Some(window));
-            }
+            && let Some(Ok(image)) = item.get()
+        {
+            cx.drop_image(image, Some(window));
+        }
     }
 
     /// Returns the number of images in the cache.

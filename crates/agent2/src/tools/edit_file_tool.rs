@@ -157,12 +157,13 @@ impl EditFileTool {
         // It's also possible that the global config dir is configured to be inside the project,
         // so check for that edge case too.
         if let Ok(canonical_path) = std::fs::canonicalize(&input.path)
-            && canonical_path.starts_with(paths::config_dir()) {
-                return event_stream.authorize(
-                    format!("{} (global settings)", input.display_description),
-                    cx,
-                );
-            }
+            && canonical_path.starts_with(paths::config_dir())
+        {
+            return event_stream.authorize(
+                format!("{} (global settings)", input.display_description),
+                cx,
+            );
+        }
 
         // Check if path is inside the global config directory
         // First check if it's already inside project - if not, try to canonicalize

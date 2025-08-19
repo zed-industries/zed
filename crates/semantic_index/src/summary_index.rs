@@ -380,18 +380,15 @@ impl SummaryIndex {
                     | project::PathChange::Updated
                     | project::PathChange::AddedOrUpdated => {
                         if let Some(entry) = worktree.entry_for_id(*entry_id)
-                            && entry.is_file() {
-                                let needs_summary = Self::add_to_backlog(
-                                    Arc::clone(&backlog),
-                                    digest_db,
-                                    &txn,
-                                    entry,
-                                );
+                            && entry.is_file()
+                        {
+                            let needs_summary =
+                                Self::add_to_backlog(Arc::clone(&backlog), digest_db, &txn, entry);
 
-                                if !needs_summary.is_empty() {
-                                    tx.send(needs_summary).await?;
-                                }
+                            if !needs_summary.is_empty() {
+                                tx.send(needs_summary).await?;
                             }
+                        }
                     }
                     project::PathChange::Removed => {
                         let _db_path = db_key_for_path(path);

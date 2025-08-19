@@ -239,11 +239,10 @@ impl BreakpointList {
     }
 
     fn select_next(&mut self, _: &menu::SelectNext, window: &mut Window, cx: &mut Context<Self>) {
-        if self.strip_mode.is_some()
-            && self.input.focus_handle(cx).contains_focused(window, cx) {
-                cx.propagate();
-                return;
-            }
+        if self.strip_mode.is_some() && self.input.focus_handle(cx).contains_focused(window, cx) {
+            cx.propagate();
+            return;
+        }
         let ix = match self.selected_ix {
             _ if self.breakpoints.len() == 0 => None,
             None => Some(0),
@@ -264,11 +263,10 @@ impl BreakpointList {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.strip_mode.is_some()
-            && self.input.focus_handle(cx).contains_focused(window, cx) {
-                cx.propagate();
-                return;
-            }
+        if self.strip_mode.is_some() && self.input.focus_handle(cx).contains_focused(window, cx) {
+            cx.propagate();
+            return;
+        }
         let ix = match self.selected_ix {
             _ if self.breakpoints.len() == 0 => None,
             None => Some(self.breakpoints.len() - 1),
@@ -284,11 +282,10 @@ impl BreakpointList {
     }
 
     fn select_first(&mut self, _: &menu::SelectFirst, window: &mut Window, cx: &mut Context<Self>) {
-        if self.strip_mode.is_some()
-            && self.input.focus_handle(cx).contains_focused(window, cx) {
-                cx.propagate();
-                return;
-            }
+        if self.strip_mode.is_some() && self.input.focus_handle(cx).contains_focused(window, cx) {
+            cx.propagate();
+            return;
+        }
         let ix = if self.breakpoints.len() > 0 {
             Some(0)
         } else {
@@ -298,11 +295,10 @@ impl BreakpointList {
     }
 
     fn select_last(&mut self, _: &menu::SelectLast, window: &mut Window, cx: &mut Context<Self>) {
-        if self.strip_mode.is_some()
-            && self.input.focus_handle(cx).contains_focused(window, cx) {
-                cx.propagate();
-                return;
-            }
+        if self.strip_mode.is_some() && self.input.focus_handle(cx).contains_focused(window, cx) {
+            cx.propagate();
+            return;
+        }
         let ix = if self.breakpoints.len() > 0 {
             Some(self.breakpoints.len() - 1)
         } else {
@@ -397,11 +393,10 @@ impl BreakpointList {
         let Some(entry) = self.selected_ix.and_then(|ix| self.breakpoints.get_mut(ix)) else {
             return;
         };
-        if self.strip_mode.is_some()
-            && self.input.focus_handle(cx).contains_focused(window, cx) {
-                cx.propagate();
-                return;
-            }
+        if self.strip_mode.is_some() && self.input.focus_handle(cx).contains_focused(window, cx) {
+            cx.propagate();
+            return;
+        }
 
         match &mut entry.kind {
             BreakpointEntryKind::LineBreakpoint(line_breakpoint) => {

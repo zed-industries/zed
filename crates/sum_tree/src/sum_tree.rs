@@ -675,10 +675,11 @@ impl<T: KeyedItem> SumTree<T> {
             let mut cursor = self.cursor::<T::Key>(cx);
             let mut new_tree = cursor.slice(&item.key(), Bias::Left);
             if let Some(cursor_item) = cursor.item()
-                && cursor_item.key() == item.key() {
-                    replaced = Some(cursor_item.clone());
-                    cursor.next();
-                }
+                && cursor_item.key() == item.key()
+            {
+                replaced = Some(cursor_item.clone());
+                cursor.next();
+            }
             new_tree.push(item, cx);
             new_tree.append(cursor.suffix(), cx);
             new_tree
@@ -692,10 +693,11 @@ impl<T: KeyedItem> SumTree<T> {
             let mut cursor = self.cursor::<T::Key>(cx);
             let mut new_tree = cursor.slice(key, Bias::Left);
             if let Some(item) = cursor.item()
-                && item.key() == *key {
-                    removed = Some(item.clone());
-                    cursor.next();
-                }
+                && item.key() == *key
+            {
+                removed = Some(item.clone());
+                cursor.next();
+            }
             new_tree.append(cursor.suffix(), cx);
             new_tree
         };
@@ -735,10 +737,11 @@ impl<T: KeyedItem> SumTree<T> {
                 }
 
                 if let Some(old_item) = old_item
-                    && old_item.key() == new_key {
-                        removed.push(old_item.clone());
-                        cursor.next();
-                    }
+                    && old_item.key() == new_key
+                {
+                    removed.push(old_item.clone());
+                    cursor.next();
+                }
 
                 match edit {
                     Edit::Insert(item) => {

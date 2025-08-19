@@ -195,9 +195,10 @@ pub fn flush() {
         handle.into_inner()
     });
     if let Some(file) = file.as_mut()
-        && let Err(err) = file.flush() {
-            eprintln!("Failed to flush log file: {}", err);
-        }
+        && let Err(err) = file.flush()
+    {
+        eprintln!("Failed to flush log file: {}", err);
+    }
 }
 
 struct SourceFmt<'a> {

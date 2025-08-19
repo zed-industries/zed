@@ -88,9 +88,10 @@ impl Database {
             };
 
             if let Some((_, max_extension_version)) = &max_versions.get(&version.extension_id)
-                && max_extension_version > &extension_version {
-                    continue;
-                }
+                && max_extension_version > &extension_version
+            {
+                continue;
+            }
 
             if let Some(constraints) = constraints {
                 if !constraints
@@ -331,9 +332,10 @@ impl Database {
                 .await?;
 
                 if let Ok(db_version) = semver::Version::parse(&extension.latest_version)
-                    && db_version >= latest_version.version {
-                        continue;
-                    }
+                    && db_version >= latest_version.version
+                {
+                    continue;
+                }
 
                 let mut extension = extension.into_active_model();
                 extension.latest_version = ActiveValue::Set(latest_version.version.to_string());

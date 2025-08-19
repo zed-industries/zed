@@ -139,9 +139,10 @@ impl NotificationStore {
         let mut cursor = self.notifications.cursor::<NotificationId>(&());
         cursor.seek(&NotificationId(id), Bias::Left);
         if let Some(item) = cursor.item()
-            && item.id == id {
-                return Some(item);
-            }
+            && item.id == id
+        {
+            return Some(item);
+        }
         None
     }
 
@@ -231,22 +232,22 @@ impl NotificationStore {
             if let Some(notification) = envelope.payload.notification
                 && let Some(rpc::Notification::ChannelMessageMention { message_id, .. }) =
                     Notification::from_proto(&notification)
-                {
-                    let fetch_message_task = this.channel_store.update(cx, |this, cx| {
-                        this.fetch_channel_messages(vec![message_id], cx)
-                    });
+            {
+                let fetch_message_task = this.channel_store.update(cx, |this, cx| {
+                    this.fetch_channel_messages(vec![message_id], cx)
+                });
 
-                    cx.spawn(async move |this, cx| {
-                        let messages = fetch_message_task.await?;
-                        this.update(cx, move |this, cx| {
-                            for message in messages {
-                                this.channel_messages.insert(message_id, message);
-                            }
-                            cx.notify();
-                        })
+                cx.spawn(async move |this, cx| {
+                    let messages = fetch_message_task.await?;
+                    this.update(cx, move |this, cx| {
+                        for message in messages {
+                            this.channel_messages.insert(message_id, message);
+                        }
+                        cx.notify();
                     })
-                    .detach_and_log_err(cx)
-                }
+                })
+                .detach_and_log_err(cx)
+            }
             Ok(())
         })?
     }
@@ -389,11 +390,12 @@ impl NotificationStore {
                     }
                 }
             } else if let Some(new_notification) = &new_notification
-                && is_new {
-                    cx.emit(NotificationEvent::NewNotification {
-                        entry: new_notification.clone(),
-                    });
-                }
+                && is_new
+            {
+                cx.emit(NotificationEvent::NewNotification {
+                    entry: new_notification.clone(),
+                });
+            }
 
             if let Some(notification) = new_notification {
                 new_notifications.push(notification, &());

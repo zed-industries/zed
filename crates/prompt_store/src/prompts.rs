@@ -309,11 +309,12 @@ impl PromptBuilder {
                 .split('/')
                 .next_back()
                 .and_then(|s| s.strip_suffix(".hbs"))
-                && let Some(prompt) = Assets.load(path.as_ref()).log_err().flatten() {
-                    log::debug!("Registering built-in prompt template: {}", id);
-                    let prompt = String::from_utf8_lossy(prompt.as_ref());
-                    handlebars.register_template_string(id, LineEnding::normalize_cow(prompt))?
-                }
+                && let Some(prompt) = Assets.load(path.as_ref()).log_err().flatten()
+            {
+                log::debug!("Registering built-in prompt template: {}", id);
+                let prompt = String::from_utf8_lossy(prompt.as_ref());
+                handlebars.register_template_string(id, LineEnding::normalize_cow(prompt))?
+            }
         }
 
         Ok(())

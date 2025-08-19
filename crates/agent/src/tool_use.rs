@@ -114,15 +114,12 @@ impl ToolUseState {
 
                             if let Some(window) = &mut window
                                 && let Some(tool) = this.tools.read(cx).tool(tool_use, cx)
-                                    && let Some(output) = tool_result.output.clone()
-                                        && let Some(card) = tool.deserialize_card(
-                                            output,
-                                            project.clone(),
-                                            window,
-                                            cx,
-                                        ) {
-                                            this.tool_result_cards.insert(tool_use_id, card);
-                                        }
+                                && let Some(output) = tool_result.output.clone()
+                                && let Some(card) =
+                                    tool.deserialize_card(output, project.clone(), window, cx)
+                            {
+                                this.tool_result_cards.insert(tool_use_id, card);
+                            }
                         }
                     }
                 }

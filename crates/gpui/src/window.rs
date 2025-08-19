@@ -3402,15 +3402,16 @@ impl Window {
         let (subscription, activate) =
             self.new_focus_listener(Box::new(move |event, window, cx| {
                 if let Some(blurred_id) = event.previous_focus_path.last().copied()
-                    && event.is_focus_out(focus_id) {
-                        let event = FocusOutEvent {
-                            blurred: WeakFocusHandle {
-                                id: blurred_id,
-                                handles: Arc::downgrade(&cx.focus_handles),
-                            },
-                        };
-                        listener(event, window, cx)
-                    }
+                    && event.is_focus_out(focus_id)
+                {
+                    let event = FocusOutEvent {
+                        blurred: WeakFocusHandle {
+                            id: blurred_id,
+                            handles: Arc::downgrade(&cx.focus_handles),
+                        },
+                    };
+                    listener(event, window, cx)
+                }
                 true
             }));
         cx.defer(move |_| activate());
@@ -3444,11 +3445,12 @@ impl Window {
         }
 
         if let Some(input) = keystroke.key_char
-            && let Some(mut input_handler) = self.platform_window.take_input_handler() {
-                input_handler.dispatch_input(&input, self, cx);
-                self.platform_window.set_input_handler(input_handler);
-                return true;
-            }
+            && let Some(mut input_handler) = self.platform_window.take_input_handler()
+        {
+            input_handler.dispatch_input(&input, self, cx);
+            self.platform_window.set_input_handler(input_handler);
+            return true;
+        }
 
         false
     }
@@ -3863,10 +3865,11 @@ impl Window {
                 continue 'replay;
             }
             if let Some(input) = replay.keystroke.key_char.as_ref().cloned()
-                && let Some(mut input_handler) = self.platform_window.take_input_handler() {
-                    input_handler.dispatch_input(&input, self, cx);
-                    self.platform_window.set_input_handler(input_handler)
-                }
+                && let Some(mut input_handler) = self.platform_window.take_input_handler()
+            {
+                input_handler.dispatch_input(&input, self, cx);
+                self.platform_window.set_input_handler(input_handler)
+            }
         }
     }
 
@@ -4307,15 +4310,16 @@ impl Window {
         f: impl FnOnce(&mut Option<T>, &mut Self) -> R,
     ) -> R {
         if let Some(inspector_id) = _inspector_id
-            && let Some(inspector) = &self.inspector {
-                let inspector = inspector.clone();
-                let active_element_id = inspector.read(cx).active_element_id();
-                if Some(inspector_id) == active_element_id {
-                    return inspector.update(cx, |inspector, _cx| {
-                        inspector.with_active_element_state(self, f)
-                    });
-                }
+            && let Some(inspector) = &self.inspector
+        {
+            let inspector = inspector.clone();
+            let active_element_id = inspector.read(cx).active_element_id();
+            if Some(inspector_id) == active_element_id {
+                return inspector.update(cx, |inspector, _cx| {
+                    inspector.with_active_element_state(self, f)
+                });
             }
+        }
         f(&mut None, self)
     }
 
@@ -4390,9 +4394,9 @@ impl Window {
                     .hitboxes
                     .iter()
                     .find(|hitbox| hitbox.id == hitbox_id)
-                {
-                    self.paint_quad(crate::fill(hitbox.bounds, crate::rgba(0x61afef4d)));
-                }
+            {
+                self.paint_quad(crate::fill(hitbox.bounds, crate::rgba(0x61afef4d)));
+            }
         }
     }
 

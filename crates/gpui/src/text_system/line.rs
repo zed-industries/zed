@@ -293,9 +293,10 @@ fn paint_line(
 
                     if let Some(style_run) = style_run {
                         if let Some((_, underline_style)) = &mut current_underline
-                            && style_run.underline.as_ref() != Some(underline_style) {
-                                finished_underline = current_underline.take();
-                            }
+                            && style_run.underline.as_ref() != Some(underline_style)
+                        {
+                            finished_underline = current_underline.take();
+                        }
                         if let Some(run_underline) = style_run.underline.as_ref() {
                             current_underline.get_or_insert((
                                 point(
@@ -310,9 +311,10 @@ fn paint_line(
                             ));
                         }
                         if let Some((_, strikethrough_style)) = &mut current_strikethrough
-                            && style_run.strikethrough.as_ref() != Some(strikethrough_style) {
-                                finished_strikethrough = current_strikethrough.take();
-                            }
+                            && style_run.strikethrough.as_ref() != Some(strikethrough_style)
+                        {
+                            finished_strikethrough = current_strikethrough.take();
+                        }
                         if let Some(run_strikethrough) = style_run.strikethrough.as_ref() {
                             current_strikethrough.get_or_insert((
                                 point(
@@ -508,9 +510,10 @@ fn paint_line_background(
 
                     if let Some(style_run) = style_run {
                         if let Some((_, background_color)) = &mut current_background
-                            && style_run.background_color.as_ref() != Some(background_color) {
-                                finished_background = current_background.take();
-                            }
+                            && style_run.background_color.as_ref() != Some(background_color)
+                        {
+                            finished_background = current_background.take();
+                        }
                         if let Some(run_background) = style_run.background_color {
                             current_background.get_or_insert((
                                 point(glyph_origin.x, glyph_origin.y),

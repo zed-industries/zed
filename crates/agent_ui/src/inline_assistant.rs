@@ -183,14 +183,15 @@ impl InlineAssistant {
             workspace::Event::UserSavedItem { item, .. } => {
                 // When the user manually saves an editor, automatically accepts all finished transformations.
                 if let Some(editor) = item.upgrade().and_then(|item| item.act_as::<Editor>(cx))
-                    && let Some(editor_assists) = self.assists_by_editor.get(&editor.downgrade()) {
-                        for assist_id in editor_assists.assist_ids.clone() {
-                            let assist = &self.assists[&assist_id];
-                            if let CodegenStatus::Done = assist.codegen.read(cx).status(cx) {
-                                self.finish_assist(assist_id, false, window, cx)
-                            }
+                    && let Some(editor_assists) = self.assists_by_editor.get(&editor.downgrade())
+                {
+                    for assist_id in editor_assists.assist_ids.clone() {
+                        let assist = &self.assists[&assist_id];
+                        if let CodegenStatus::Done = assist.codegen.read(cx).status(cx) {
+                            self.finish_assist(assist_id, false, window, cx)
                         }
                     }
+                }
             }
             workspace::Event::ItemAdded { item } => {
                 self.register_workspace_item(&workspace, item.as_ref(), window, cx);
@@ -342,12 +343,11 @@ impl InlineAssistant {
                         .await
                         .ok();
                     if let Some(answer) = answer
-                        && answer == 0 {
-                            cx.update(|window, cx| {
-                                window.dispatch_action(Box::new(OpenSettings), cx)
-                            })
+                        && answer == 0
+                    {
+                        cx.update(|window, cx| window.dispatch_action(Box::new(OpenSettings), cx))
                             .ok();
-                        }
+                    }
                     anyhow::Ok(())
                 })
                 .detach_and_log_err(cx);
@@ -434,10 +434,11 @@ impl InlineAssistant {
             }
 
             if let Some(prev_selection) = selections.last_mut()
-                && selection.start <= prev_selection.end {
-                    prev_selection.end = selection.end;
-                    continue;
-                }
+                && selection.start <= prev_selection.end
+            {
+                prev_selection.end = selection.end;
+                continue;
+            }
 
             let latest_selection = newest_selection.get_or_insert_with(|| selection.clone());
             if selection.id > latest_selection.id {
@@ -987,9 +988,9 @@ impl InlineAssistant {
                             .prompt_editor
                             .focus_handle(cx)
                             .is_focused(window)
-                        {
-                            return;
-                        }
+                    {
+                        return;
+                    }
                 }
 
                 editor_assists.scroll_lock = None;
@@ -1504,13 +1505,14 @@ impl InlineAssistant {
                 .read(cx)
                 .focus_handle(cx)
                 .contains_focused(window, cx)
-                && let Some(terminal_view) = terminal_panel.read(cx).pane().and_then(|pane| {
-                    pane.read(cx)
-                        .active_item()
-                        .and_then(|t| t.downcast::<TerminalView>())
-                }) {
-                    return Some(InlineAssistTarget::Terminal(terminal_view));
-                }
+            && let Some(terminal_view) = terminal_panel.read(cx).pane().and_then(|pane| {
+                pane.read(cx)
+                    .active_item()
+                    .and_then(|t| t.downcast::<TerminalView>())
+            })
+        {
+            return Some(InlineAssistTarget::Terminal(terminal_view));
+        }
 
         let context_editor = agent_panel
             .and_then(|panel| panel.read(cx).active_context_editor())
@@ -1736,19 +1738,19 @@ impl InlineAssist {
 
                             if let CodegenStatus::Error(error) = codegen.read(cx).status(cx)
                                 && assist.decorations.is_none()
-                                    && let Some(workspace) = assist.workspace.upgrade() {
-                                        let error = format!("Inline assistant error: {}", error);
-                                        workspace.update(cx, |workspace, cx| {
-                                            struct InlineAssistantError;
+                                && let Some(workspace) = assist.workspace.upgrade()
+                            {
+                                let error = format!("Inline assistant error: {}", error);
+                                workspace.update(cx, |workspace, cx| {
+                                    struct InlineAssistantError;
 
-                                            let id =
-                                                NotificationId::composite::<InlineAssistantError>(
-                                                    assist_id.0,
-                                                );
+                                    let id = NotificationId::composite::<InlineAssistantError>(
+                                        assist_id.0,
+                                    );
 
-                                            workspace.show_toast(Toast::new(id, error), cx);
-                                        })
-                                    }
+                                    workspace.show_toast(Toast::new(id, error), cx);
+                                })
+                            }
 
                             if assist.decorations.is_none() {
                                 this.finish_assist(assist_id, false, window, cx);
@@ -1813,16 +1815,18 @@ impl CodeActionProvider for AssistantCodeActionProvider {
         }
         if has_diagnostics {
             if let Some(symbols_containing_start) = snapshot.symbols_containing(range.start, None)
-                && let Some(symbol) = symbols_containing_start.last() {
-                    range.start = cmp::min(range.start, symbol.range.start.to_point(&snapshot));
-                    range.end = cmp::max(range.end, symbol.range.end.to_point(&snapshot));
-                }
+                && let Some(symbol) = symbols_containing_start.last()
+            {
+                range.start = cmp::min(range.start, symbol.range.start.to_point(&snapshot));
+                range.end = cmp::max(range.end, symbol.range.end.to_point(&snapshot));
+            }
 
             if let Some(symbols_containing_end) = snapshot.symbols_containing(range.end, None)
-                && let Some(symbol) = symbols_containing_end.last() {
-                    range.start = cmp::min(range.start, symbol.range.start.to_point(&snapshot));
-                    range.end = cmp::max(range.end, symbol.range.end.to_point(&snapshot));
-                }
+                && let Some(symbol) = symbols_containing_end.last()
+            {
+                range.start = cmp::min(range.start, symbol.range.start.to_point(&snapshot));
+                range.end = cmp::max(range.end, symbol.range.end.to_point(&snapshot));
+            }
 
             Task::ready(Ok(vec![CodeAction {
                 server_id: language::LanguageServerId(0),

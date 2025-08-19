@@ -580,17 +580,19 @@ impl Pane {
                 // or focus the active item itself
                 if let Some(weak_last_focus_handle) =
                     self.last_focus_handle_by_item.get(&active_item.item_id())
-                    && let Some(focus_handle) = weak_last_focus_handle.upgrade() {
-                        focus_handle.focus(window);
-                        return;
-                    }
+                    && let Some(focus_handle) = weak_last_focus_handle.upgrade()
+                {
+                    focus_handle.focus(window);
+                    return;
+                }
 
                 active_item.item_focus_handle(cx).focus(window);
             } else if let Some(focused) = window.focused(cx)
-                && !self.context_menu_focused(window, cx) {
-                    self.last_focus_handle_by_item
-                        .insert(active_item.item_id(), focused.downgrade());
-                }
+                && !self.context_menu_focused(window, cx)
+            {
+                self.last_focus_handle_by_item
+                    .insert(active_item.item_id(), focused.downgrade());
+            }
         }
     }
 
@@ -856,9 +858,11 @@ impl Pane {
 
     pub fn handle_item_edit(&mut self, item_id: EntityId, cx: &App) {
         if let Some(preview_item) = self.preview_item()
-            && preview_item.item_id() == item_id && !preview_item.preserve_preview(cx) {
-                self.set_preview_item_id(None, cx);
-            }
+            && preview_item.item_id() == item_id
+            && !preview_item.preserve_preview(cx)
+        {
+            self.set_preview_item_id(None, cx);
+        }
     }
 
     pub(crate) fn open_item(
@@ -898,9 +902,11 @@ impl Pane {
             // and we are not allowing items to open as preview, mark the item as persistent.
             if let Some(preview_item_id) = self.preview_item_id
                 && let Some(tab) = self.items.get(index)
-                    && tab.item_id() == preview_item_id && !allow_preview {
-                        self.set_preview_item_id(None, cx);
-                    }
+                && tab.item_id() == preview_item_id
+                && !allow_preview
+            {
+                self.set_preview_item_id(None, cx);
+            }
             if activate {
                 self.activate_item(index, focus_item, focus_item, window, cx);
             }
@@ -972,21 +978,22 @@ impl Pane {
         }
 
         if item.is_singleton(cx)
-            && let Some(&entry_id) = item.project_entry_ids(cx).first() {
-                let Some(project) = self.project.upgrade() else {
-                    return;
-                };
+            && let Some(&entry_id) = item.project_entry_ids(cx).first()
+        {
+            let Some(project) = self.project.upgrade() else {
+                return;
+            };
 
-                let project = project.read(cx);
-                if let Some(project_path) = project.path_for_entry(entry_id, cx) {
-                    let abs_path = project.absolute_path(&project_path, cx);
-                    self.nav_history
-                        .0
-                        .lock()
-                        .paths_by_item
-                        .insert(item.item_id(), (project_path, abs_path));
-                }
+            let project = project.read(cx);
+            if let Some(project_path) = project.path_for_entry(entry_id, cx) {
+                let abs_path = project.absolute_path(&project_path, cx);
+                self.nav_history
+                    .0
+                    .lock()
+                    .paths_by_item
+                    .insert(item.item_id(), (project_path, abs_path));
             }
+        }
         // If no destination index is specified, add or move the item after the
         // active item (or at the start of tab bar, if the active item is pinned)
         let mut insertion_index = {
@@ -1187,9 +1194,10 @@ impl Pane {
             let prev_active_item_ix = mem::replace(&mut self.active_item_index, index);
             if (prev_active_item_ix != self.active_item_index
                 || matches!(self.nav_history.mode(), GoingBack | GoingForward))
-                && let Some(prev_item) = self.items.get(prev_active_item_ix) {
-                    prev_item.deactivated(window, cx);
-                }
+                && let Some(prev_item) = self.items.get(prev_active_item_ix)
+            {
+                prev_item.deactivated(window, cx);
+            }
             self.update_history(index);
             self.update_toolbar(window, cx);
             self.update_status_bar(window, cx);
@@ -2454,9 +2462,11 @@ impl Pane {
                 MouseButton::Left,
                 cx.listener(move |pane, event: &MouseDownEvent, _, cx| {
                     if let Some(id) = pane.preview_item_id
-                        && id == item_id && event.click_count > 1 {
-                            pane.set_preview_item_id(None, cx);
-                        }
+                        && id == item_id
+                        && event.click_count > 1
+                    {
+                        pane.set_preview_item_id(None, cx);
+                    }
                 }),
             )
             .on_drag(
@@ -3039,16 +3049,18 @@ impl Pane {
         cx: &mut Context<Self>,
     ) {
         if let Some(custom_drop_handle) = self.custom_drop_handle.clone()
-            && let ControlFlow::Break(()) = custom_drop_handle(self, dragged_tab, window, cx) {
-                return;
-            }
+            && let ControlFlow::Break(()) = custom_drop_handle(self, dragged_tab, window, cx)
+        {
+            return;
+        }
         let mut to_pane = cx.entity();
         let split_direction = self.drag_split_direction;
         let item_id = dragged_tab.item.item_id();
         if let Some(preview_item_id) = self.preview_item_id
-            && item_id == preview_item_id {
-                self.set_preview_item_id(None, cx);
-            }
+            && item_id == preview_item_id
+        {
+            self.set_preview_item_id(None, cx);
+        }
 
         let is_clone = cfg!(target_os = "macos") && window.modifiers().alt
             || cfg!(not(target_os = "macos")) && window.modifiers().control;
@@ -3126,9 +3138,9 @@ impl Pane {
     ) {
         if let Some(custom_drop_handle) = self.custom_drop_handle.clone()
             && let ControlFlow::Break(()) = custom_drop_handle(self, dragged_selection, window, cx)
-            {
-                return;
-            }
+        {
+            return;
+        }
         self.handle_project_entry_drop(
             &dragged_selection.active_selection.entry_id,
             dragged_onto,
@@ -3145,9 +3157,10 @@ impl Pane {
         cx: &mut Context<Self>,
     ) {
         if let Some(custom_drop_handle) = self.custom_drop_handle.clone()
-            && let ControlFlow::Break(()) = custom_drop_handle(self, project_entry_id, window, cx) {
-                return;
-            }
+            && let ControlFlow::Break(()) = custom_drop_handle(self, project_entry_id, window, cx)
+        {
+            return;
+        }
         let mut to_pane = cx.entity();
         let split_direction = self.drag_split_direction;
         let project_entry_id = *project_entry_id;
@@ -3220,9 +3233,10 @@ impl Pane {
         cx: &mut Context<Self>,
     ) {
         if let Some(custom_drop_handle) = self.custom_drop_handle.clone()
-            && let ControlFlow::Break(()) = custom_drop_handle(self, paths, window, cx) {
-                return;
-            }
+            && let ControlFlow::Break(()) = custom_drop_handle(self, paths, window, cx)
+        {
+            return;
+        }
         let mut to_pane = cx.entity();
         let mut split_direction = self.drag_split_direction;
         let paths = paths.paths().to_vec();
@@ -3776,9 +3790,10 @@ impl NavHistory {
                 {
                     f(entry, project_and_abs_path.clone());
                 } else if let Some(item) = entry.item.upgrade()
-                    && let Some(path) = item.project_path(cx) {
-                        f(entry, (path, None));
-                    }
+                    && let Some(path) = item.project_path(cx)
+                {
+                    f(entry, (path, None));
+                }
             })
     }
 

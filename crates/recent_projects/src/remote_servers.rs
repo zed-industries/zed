@@ -665,9 +665,10 @@ impl RemoteServerProjects {
                 let index = state.index;
                 self.update_settings_file(cx, move |setting, _| {
                     if let Some(connections) = setting.ssh_connections.as_mut()
-                        && let Some(connection) = connections.get_mut(index) {
-                            connection.nickname = text;
-                        }
+                        && let Some(connection) = connections.get_mut(index)
+                    {
+                        connection.nickname = text;
+                    }
                 });
                 self.mode = Mode::default_mode(&self.ssh_config_servers, cx);
                 self.focus_handle.focus(window);

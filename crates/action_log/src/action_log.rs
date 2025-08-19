@@ -615,9 +615,10 @@ impl ActionLog {
                     }
                 });
                 if tracked_buffer.unreviewed_edits.is_empty()
-                    && let TrackedBufferStatus::Created { .. } = &mut tracked_buffer.status {
-                        tracked_buffer.status = TrackedBufferStatus::Modified;
-                    }
+                    && let TrackedBufferStatus::Created { .. } = &mut tracked_buffer.status
+                {
+                    tracked_buffer.status = TrackedBufferStatus::Modified;
+                }
                 tracked_buffer.schedule_diff_update(ChangeAuthor::User, cx);
             }
         }

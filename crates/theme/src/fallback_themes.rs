@@ -35,9 +35,10 @@ pub(crate) fn apply_status_color_defaults(status: &mut StatusColorsRefinement) {
         (&status.hidden, &mut status.hidden_background),
     ] {
         if bg_color.is_none()
-            && let Some(fg_color) = fg_color {
-                *bg_color = Some(fg_color.opacity(0.25));
-            }
+            && let Some(fg_color) = fg_color
+        {
+            *bg_color = Some(fg_color.opacity(0.25));
+        }
     }
 }
 

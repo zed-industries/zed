@@ -558,10 +558,11 @@ impl InlayMap {
             while let Some(buffer_edit) = buffer_edits_iter.next() {
                 new_transforms.append(cursor.slice(&buffer_edit.old.start, Bias::Left), &());
                 if let Some(Transform::Isomorphic(transform)) = cursor.item()
-                    && cursor.end().0 == buffer_edit.old.start {
-                        push_isomorphic(&mut new_transforms, *transform);
-                        cursor.next();
-                    }
+                    && cursor.end().0 == buffer_edit.old.start
+                {
+                    push_isomorphic(&mut new_transforms, *transform);
+                    cursor.next();
+                }
 
                 // Remove all the inlays and transforms contained by the edit.
                 let old_start =

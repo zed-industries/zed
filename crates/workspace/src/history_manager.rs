@@ -102,10 +102,11 @@ impl HistoryManager {
         let mut deleted_ids = Vec::new();
         for idx in (0..self.history.len()).rev() {
             if let Some(entry) = self.history.get(idx)
-                && user_removed.contains(&entry.path) {
-                    deleted_ids.push(entry.id);
-                    self.history.remove(idx);
-                }
+                && user_removed.contains(&entry.path)
+            {
+                deleted_ids.push(entry.id);
+                self.history.remove(idx);
+            }
         }
         cx.spawn(async move |_| {
             for id in deleted_ids.iter() {

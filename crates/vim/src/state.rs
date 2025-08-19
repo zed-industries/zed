@@ -413,19 +413,20 @@ impl MarksState {
 
         for (key, value) in &new_points {
             if self.is_global_mark(key)
-                && self.global_marks.get(key) != Some(&MarkLocation::Path(path.clone())) {
-                    if let Some(workspace_id) = self.workspace_id(cx) {
-                        let path = path.clone();
-                        let key = key.clone();
-                        cx.background_spawn(async move {
-                            DB.set_global_mark_path(workspace_id, key, path).await
-                        })
-                        .detach_and_log_err(cx);
-                    }
-
-                    self.global_marks
-                        .insert(key.clone(), MarkLocation::Path(path.clone()));
+                && self.global_marks.get(key) != Some(&MarkLocation::Path(path.clone()))
+            {
+                if let Some(workspace_id) = self.workspace_id(cx) {
+                    let path = path.clone();
+                    let key = key.clone();
+                    cx.background_spawn(async move {
+                        DB.set_global_mark_path(workspace_id, key, path).await
+                    })
+                    .detach_and_log_err(cx);
                 }
+
+                self.global_marks
+                    .insert(key.clone(), MarkLocation::Path(path.clone()));
+            }
             if old_points.and_then(|o| o.get(key)) != Some(value) {
                 to_write.insert(key.clone(), value.clone());
             }
@@ -456,14 +457,15 @@ impl MarksState {
         cx: &mut Context<Self>,
     ) {
         if let MarkLocation::Buffer(entity_id) = old_path
-            && let Some(old_marks) = self.multibuffer_marks.remove(&entity_id) {
-                let buffer_marks = old_marks
-                    .into_iter()
-                    .map(|(k, v)| (k, v.into_iter().map(|anchor| anchor.text_anchor).collect()))
-                    .collect();
-                self.buffer_marks
-                    .insert(buffer.read(cx).remote_id(), buffer_marks);
-            }
+            && let Some(old_marks) = self.multibuffer_marks.remove(&entity_id)
+        {
+            let buffer_marks = old_marks
+                .into_iter()
+                .map(|(k, v)| (k, v.into_iter().map(|anchor| anchor.text_anchor).collect()))
+                .collect();
+            self.buffer_marks
+                .insert(buffer.read(cx).remote_id(), buffer_marks);
+        }
         self.watch_buffer(MarkLocation::Path(new_path.clone()), buffer, cx);
         self.serialize_buffer_marks(new_path, buffer, cx);
     }
@@ -510,9 +512,10 @@ impl MarksState {
                     .watched_buffers
                     .get(&buffer_id.clone())
                     .map(|(path, _, _)| path.clone())
-                    && let Some(new_path) = this.path_for_buffer(&buffer, cx) {
-                        this.rename_buffer(old_path, new_path, &buffer, cx)
-                    }
+                    && let Some(new_path) = this.path_for_buffer(&buffer, cx)
+                {
+                    this.rename_buffer(old_path, new_path, &buffer, cx)
+                }
             }
             _ => {}
         });
@@ -894,12 +897,13 @@ impl VimGlobals {
             }
         }
         if self.replayer.is_none()
-            && let Some(recording_register) = self.recording_register {
-                self.recordings
-                    .entry(recording_register)
-                    .or_default()
-                    .push(ReplayableAction::Action(action));
-            }
+            && let Some(recording_register) = self.recording_register
+        {
+            self.recordings
+                .entry(recording_register)
+                .or_default()
+                .push(ReplayableAction::Action(action));
+        }
     }
 
     pub fn observe_insertion(&mut self, text: &Arc<str>, range_to_replace: Option<Range<isize>>) {
@@ -1326,9 +1330,10 @@ impl MarksMatchInfo {
         for chunk in chunks {
             line.push_str(chunk.text);
             if let Some(highlight_style) = chunk.syntax_highlight_id
-                && let Some(highlight) = highlight_style.style(cx.theme().syntax()) {
-                    highlights.push((offset..offset + chunk.text.len(), highlight))
-                }
+                && let Some(highlight) = highlight_style.style(cx.theme().syntax())
+            {
+                highlights.push((offset..offset + chunk.text.len(), highlight))
+            }
             offset += chunk.text.len();
         }
         MarksMatchInfo::Content { line, highlights }

@@ -183,10 +183,11 @@ impl<'a> Iterator for ChildEntriesGitIter<'a> {
 
     fn next(&mut self) -> Option<Self::Item> {
         if let Some(item) = self.traversal.entry()
-            && item.path.starts_with(self.parent_path) {
-                self.traversal.advance_to_sibling();
-                return Some(item);
-            }
+            && item.path.starts_with(self.parent_path)
+        {
+            self.traversal.advance_to_sibling();
+            return Some(item);
+        }
         None
     }
 }

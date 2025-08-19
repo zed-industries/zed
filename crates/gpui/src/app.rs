@@ -1519,9 +1519,9 @@ impl App {
         if let Some(window) = self.active_window()
             && let Ok(window_action_available) =
                 window.update(self, |_, window, cx| window.is_action_available(action, cx))
-            {
-                action_available = window_action_available;
-            }
+        {
+            action_available = window_action_available;
+        }
 
         action_available
             || self
@@ -1609,23 +1609,23 @@ impl App {
             && let Some(mut global_listeners) = self
                 .global_action_listeners
                 .remove(&action.as_any().type_id())
-            {
-                for listener in global_listeners.iter().rev() {
-                    listener(action.as_any(), DispatchPhase::Bubble, self);
-                    if !self.propagate_event {
-                        break;
-                    }
+        {
+            for listener in global_listeners.iter().rev() {
+                listener(action.as_any(), DispatchPhase::Bubble, self);
+                if !self.propagate_event {
+                    break;
                 }
-
-                global_listeners.extend(
-                    self.global_action_listeners
-                        .remove(&action.as_any().type_id())
-                        .unwrap_or_default(),
-                );
-
-                self.global_action_listeners
-                    .insert(action.as_any().type_id(), global_listeners);
             }
+
+            global_listeners.extend(
+                self.global_action_listeners
+                    .remove(&action.as_any().type_id())
+                    .unwrap_or_default(),
+            );
+
+            self.global_action_listeners
+                .insert(action.as_any().type_id(), global_listeners);
+        }
     }
 
     /// Is there currently something being dragged?

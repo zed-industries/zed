@@ -46,11 +46,11 @@ impl schemars::transform::Transform for DefaultDenyUnknownFields {
     fn transform(&mut self, schema: &mut schemars::Schema) {
         if let Some(object) = schema.as_object_mut()
             && object.contains_key("properties")
-                && !object.contains_key("additionalProperties")
-                && !object.contains_key("unevaluatedProperties")
-            {
-                object.insert("additionalProperties".to_string(), false.into());
-            }
+            && !object.contains_key("additionalProperties")
+            && !object.contains_key("unevaluatedProperties")
+        {
+            object.insert("additionalProperties".to_string(), false.into());
+        }
         transform_subschemas(self, schema);
     }
 }

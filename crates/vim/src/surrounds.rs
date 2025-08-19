@@ -176,9 +176,10 @@ impl Vim {
                                 let mut end = start + 1;
                                 if surround
                                     && let Some((next_ch, _)) = chars_and_offset.peek()
-                                        && next_ch.eq(&' ') {
-                                            end += 1;
-                                        }
+                                    && next_ch.eq(&' ')
+                                {
+                                    end += 1;
+                                }
                                 edits.push((start..end, ""));
                                 anchors.push(start..start);
                                 break;
@@ -193,9 +194,10 @@ impl Vim {
                                 let end = start + 1;
                                 if surround
                                     && let Some((next_ch, _)) = reverse_chars_and_offsets.peek()
-                                        && next_ch.eq(&' ') {
-                                            start -= 1;
-                                        }
+                                    && next_ch.eq(&' ')
+                                {
+                                    start -= 1;
+                                }
                                 edits.push((start..end, ""));
                                 break;
                             }

@@ -369,9 +369,10 @@ impl ContextStrip {
         cx: &mut Context<Self>,
     ) {
         if let Some(suggested) = self.suggested_context(cx)
-            && self.is_suggested_focused(&self.added_contexts(cx)) {
-                self.add_suggested_context(&suggested, cx);
-            }
+            && self.is_suggested_focused(&self.added_contexts(cx))
+        {
+            self.add_suggested_context(&suggested, cx);
+        }
     }
 
     fn add_suggested_context(&mut self, suggested: &SuggestedContext, cx: &mut Context<Self>) {

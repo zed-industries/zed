@@ -18,9 +18,10 @@ impl SnippetExtension {
         }
 
         if let Some(path) = &self.cached_binary_path
-            && fs::metadata(path).map_or(false, |stat| stat.is_file()) {
-                return Ok(path.clone());
-            }
+            && fs::metadata(path).map_or(false, |stat| stat.is_file())
+        {
+            return Ok(path.clone());
+        }
 
         zed::set_language_server_installation_status(
             language_server_id,

@@ -190,10 +190,11 @@ fn tokenize(text: &str, language_scope: Option<LanguageScope>) -> impl Iterator<
             let mut token = None;
             let kind = classifier.kind(c);
             if let Some((prev_char, prev_kind)) = prev
-                && (kind != prev_kind || (kind == CharKind::Punctuation && c != prev_char)) {
-                    token = Some(&text[start_ix..ix]);
-                    start_ix = ix;
-                }
+                && (kind != prev_kind || (kind == CharKind::Punctuation && c != prev_char))
+            {
+                token = Some(&text[start_ix..ix]);
+                start_ix = ix;
+            }
             prev = Some((c, kind));
             if token.is_some() {
                 return token;

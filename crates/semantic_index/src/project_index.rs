@@ -385,9 +385,10 @@ impl ProjectIndex {
     ) -> Option<Entity<WorktreeIndex>> {
         for index in self.worktree_indices.values() {
             if let WorktreeIndexHandle::Loaded { index, .. } = index
-                && index.read(cx).worktree().read(cx).id() == worktree_id {
-                    return Some(index.clone());
-                }
+                && index.read(cx).worktree().read(cx).id() == worktree_id
+            {
+                return Some(index.clone());
+            }
         }
         None
     }

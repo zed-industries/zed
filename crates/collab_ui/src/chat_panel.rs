@@ -287,19 +287,21 @@ impl ChatPanel {
     }
 
     fn acknowledge_last_message(&mut self, cx: &mut Context<Self>) {
-        if self.active && self.is_scrolled_to_bottom
-            && let Some((chat, _)) = &self.active_chat {
-                if let Some(channel_id) = self.channel_id(cx) {
-                    self.last_acknowledged_message_id = self
-                        .channel_store
-                        .read(cx)
-                        .last_acknowledge_message_id(channel_id);
-                }
-
-                chat.update(cx, |chat, cx| {
-                    chat.acknowledge_last_message(cx);
-                });
+        if self.active
+            && self.is_scrolled_to_bottom
+            && let Some((chat, _)) = &self.active_chat
+        {
+            if let Some(channel_id) = self.channel_id(cx) {
+                self.last_acknowledged_message_id = self
+                    .channel_store
+                    .read(cx)
+                    .last_acknowledge_message_id(channel_id);
             }
+
+            chat.update(cx, |chat, cx| {
+                chat.acknowledge_last_message(cx);
+            });
+        }
     }
 
     fn render_replied_to_message(
@@ -409,9 +411,9 @@ impl ChatPanel {
                         .mentions
                         .iter()
                         .any(|(_, user_id)| Some(*user_id) == self.client.user_id())
-                    {
-                        active_chat.acknowledge_message(id);
-                    }
+                {
+                    active_chat.acknowledge_message(id);
+                }
 
                 (this_message, is_continuation_from_previous, is_admin)
             });
@@ -873,30 +875,30 @@ impl ChatPanel {
                 && let Some(item_ix) =
                     ChannelChat::load_history_since_message(chat.clone(), message_id, cx.clone())
                         .await
-                {
-                    this.update(cx, |this, cx| {
-                        if let Some(highlight_message_id) = highlight_message_id {
-                            let task = cx.spawn(async move |this, cx| {
-                                cx.background_executor().timer(Duration::from_secs(2)).await;
-                                this.update(cx, |this, cx| {
-                                    this.highlighted_message.take();
-                                    cx.notify();
-                                })
-                                .ok();
-                            });
+            {
+                this.update(cx, |this, cx| {
+                    if let Some(highlight_message_id) = highlight_message_id {
+                        let task = cx.spawn(async move |this, cx| {
+                            cx.background_executor().timer(Duration::from_secs(2)).await;
+                            this.update(cx, |this, cx| {
+                                this.highlighted_message.take();
+                                cx.notify();
+                            })
+                            .ok();
+                        });
 
-                            this.highlighted_message = Some((highlight_message_id, task));
-                        }
+                        this.highlighted_message = Some((highlight_message_id, task));
+                    }
 
-                        if this.active_chat.as_ref().map_or(false, |(c, _)| *c == chat) {
-                            this.message_list.scroll_to(ListOffset {
-                                item_ix,
-                                offset_in_item: px(0.0),
-                            });
-                            cx.notify();
-                        }
-                    })?;
-                }
+                    if this.active_chat.as_ref().map_or(false, |(c, _)| *c == chat) {
+                        this.message_list.scroll_to(ListOffset {
+                            item_ix,
+                            offset_in_item: px(0.0),
+                        });
+                        cx.notify();
+                    }
+                })?;
+            }
 
             Ok(())
         })

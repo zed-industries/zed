@@ -253,9 +253,9 @@ impl<M: ManagedView> Element for RightClickMenu<M> {
                                 if modal.focus_handle(cx).contains_focused(window, cx)
                                     && let Some(previous_focus_handle) =
                                         previous_focus_handle.as_ref()
-                                    {
-                                        window.focus(previous_focus_handle);
-                                    }
+                                {
+                                    window.focus(previous_focus_handle);
+                                }
                                 *menu2.borrow_mut() = None;
                                 window.refresh();
                             })

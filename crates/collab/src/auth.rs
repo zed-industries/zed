@@ -80,26 +80,27 @@ pub async fn validate_header<B>(mut req: Request<B>, next: Next<B>) -> impl Into
     };
 
     if let Ok(validate_result) = validate_result
-        && validate_result.is_valid {
-            let user = state
-                .db
-                .get_user_by_id(user_id)
-                .await?
-                .with_context(|| format!("user {user_id} not found"))?;
+        && validate_result.is_valid
+    {
+        let user = state
+            .db
+            .get_user_by_id(user_id)
+            .await?
+            .with_context(|| format!("user {user_id} not found"))?;
 
-            if let Some(impersonator_id) = validate_result.impersonator_id {
-                let admin = state
-                    .db
-                    .get_user_by_id(impersonator_id)
-                    .await?
-                    .with_context(|| format!("user {impersonator_id} not found"))?;
-                req.extensions_mut()
-                    .insert(Principal::Impersonated { user, admin });
-            } else {
-                req.extensions_mut().insert(Principal::User(user));
-            };
-            return Ok::<_, Error>(next.run(req).await);
-        }
+        if let Some(impersonator_id) = validate_result.impersonator_id {
+            let admin = state
+                .db
+                .get_user_by_id(impersonator_id)
+                .await?
+                .with_context(|| format!("user {impersonator_id} not found"))?;
+            req.extensions_mut()
+                .insert(Principal::Impersonated { user, admin });
+        } else {
+            req.extensions_mut().insert(Principal::User(user));
+        };
+        return Ok::<_, Error>(next.run(req).await);
+    }
 
     Err(Error::http(
         StatusCode::UNAUTHORIZED,

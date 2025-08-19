@@ -101,9 +101,10 @@ fn cover_or_next<I: Iterator<Item = (Range<usize>, Range<usize>)>>(
             let start_off = open_range.start;
             let end_off = close_range.end;
             if let Some(range_filter) = range_filter
-                && !range_filter(open_range.clone(), close_range.clone()) {
-                    continue;
-                }
+                && !range_filter(open_range.clone(), close_range.clone())
+            {
+                continue;
+            }
             let candidate = CandidateWithRanges {
                 candidate: CandidateRange {
                     start: start_off.to_display_point(map),
@@ -1060,10 +1061,11 @@ fn text_object(
         .collect();
     matches.sort_by_key(|r| r.start);
     if let Some(buffer_range) = matches.first()
-        && !buffer_range.is_empty() {
-            let range = excerpt.map_range_from_buffer(buffer_range.clone());
-            return Some(range.start.to_display_point(map)..range.end.to_display_point(map));
-        }
+        && !buffer_range.is_empty()
+    {
+        let range = excerpt.map_range_from_buffer(buffer_range.clone());
+        return Some(range.start.to_display_point(map)..range.end.to_display_point(map));
+    }
     let buffer_range = excerpt.map_range_from_buffer(around_range.clone());
     return Some(buffer_range.start.to_display_point(map)..buffer_range.end.to_display_point(map));
 }
@@ -1528,25 +1530,26 @@ fn surrounding_markers(
         _ => '\0',
     };
     if let Some((ch, range)) = movement::chars_after(map, point).next()
-        && ch == open_marker && before_ch != '\\' {
-            if open_marker == close_marker {
-                let mut total = 0;
-                for ((ch, _), (before_ch, _)) in movement::chars_before(map, point).tuple_windows()
-                {
-                    if ch == '\n' {
-                        break;
-                    }
-                    if ch == open_marker && before_ch != '\\' {
-                        total += 1;
-                    }
+        && ch == open_marker
+        && before_ch != '\\'
+    {
+        if open_marker == close_marker {
+            let mut total = 0;
+            for ((ch, _), (before_ch, _)) in movement::chars_before(map, point).tuple_windows() {
+                if ch == '\n' {
+                    break;
                 }
-                if total % 2 == 0 {
-                    opening = Some(range)
+                if ch == open_marker && before_ch != '\\' {
+                    total += 1;
                 }
-            } else {
+            }
+            if total % 2 == 0 {
                 opening = Some(range)
             }
+        } else {
+            opening = Some(range)
         }
+    }
 
     if opening.is_none() {
         let mut chars_before = movement::chars_before(map, point).peekable();
@@ -1556,9 +1559,10 @@ fn surrounding_markers(
             }
 
             if let Some((before_ch, _)) = chars_before.peek()
-                && *before_ch == '\\' {
-                    continue;
-                }
+                && *before_ch == '\\'
+            {
+                continue;
+            }
 
             if ch == open_marker {
                 if matched_closes == 0 {

@@ -104,18 +104,15 @@ pub fn init(cx: &mut App) {
 
                 if let Some(language) = language
                     && language.name() == "Python".into()
-                        && let (Some(project_path), Some(project)) = (project_path, project) {
-                            let store = ReplStore::global(cx);
-                            store.update(cx, |store, cx| {
-                                store
-                                    .refresh_python_kernelspecs(
-                                        project_path.worktree_id,
-                                        &project,
-                                        cx,
-                                    )
-                                    .detach_and_log_err(cx);
-                            });
-                        }
+                    && let (Some(project_path), Some(project)) = (project_path, project)
+                {
+                    let store = ReplStore::global(cx);
+                    store.update(cx, |store, cx| {
+                        store
+                            .refresh_python_kernelspecs(project_path.worktree_id, &project, cx)
+                            .detach_and_log_err(cx);
+                    });
+                }
 
                 editor
                     .register_action({

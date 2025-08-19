@@ -639,18 +639,17 @@ impl ProjectDiagnosticsEditor {
                 #[cfg(test)]
                 let cloned_blocks = blocks.clone();
 
-                if was_empty
-                    && let Some(anchor_range) = anchor_ranges.first() {
-                        let range_to_select = anchor_range.start..anchor_range.start;
-                        this.editor.update(cx, |editor, cx| {
-                            editor.change_selections(Default::default(), window, cx, |s| {
-                                s.select_anchor_ranges([range_to_select]);
-                            })
-                        });
-                        if this.focus_handle.is_focused(window) {
-                            this.editor.read(cx).focus_handle(cx).focus(window);
-                        }
+                if was_empty && let Some(anchor_range) = anchor_ranges.first() {
+                    let range_to_select = anchor_range.start..anchor_range.start;
+                    this.editor.update(cx, |editor, cx| {
+                        editor.change_selections(Default::default(), window, cx, |s| {
+                            s.select_anchor_ranges([range_to_select]);
+                        })
+                    });
+                    if this.focus_handle.is_focused(window) {
+                        this.editor.read(cx).focus_handle(cx).focus(window);
                     }
+                }
 
                 let editor_blocks =
                     anchor_ranges
@@ -982,15 +981,15 @@ async fn heuristic_syntactic_expand(
             && let Some(end_row) = (outline_range.start.row..outline_range.end.row + 1)
                 .rev()
                 .find(|row| !snapshot.line_indent_for_row(*row).is_line_blank())
-            {
-                let row_count = end_row.saturating_sub(start_row);
-                if row_count <= max_row_count {
-                    return Some(RangeInclusive::new(
-                        outline_range.start.row,
-                        outline_range.end.row,
-                    ));
-                }
+        {
+            let row_count = end_row.saturating_sub(start_row);
+            if row_count <= max_row_count {
+                return Some(RangeInclusive::new(
+                    outline_range.start.row,
+                    outline_range.end.row,
+                ));
             }
+        }
     }
 
     let mut node = snapshot.syntax_ancestor(input_range.clone())?;
