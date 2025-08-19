@@ -1,0 +1,79 @@
+name: Fast Test
+
+on:
+  push:
+    branches: [ '**' ]
+    paths:
+      - 'crates/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - '.github/workflows/fast-test.yml'
+  pull_request:
+    branches: [ main, preview ]
+    paths:
+      - 'crates/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - '.github/workflows/fast-test.yml'
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 1
+
+jobs:
+  fast-test:
+    name: Fast Test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: true
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          clean: false
+          submodules: "recursive"
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Install Linux dependencies
+        if: matrix.os == 'ubuntu-latest'
+        run: ./script/linux
+
+      - name: Install nextest
+        uses: taiki-e/install-action@nextest
+
+      - name: Cache Cargo dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ matrix.os }}-fast-test-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ matrix.os }}-fast-test-
+            ${{ matrix.os }}-cargo-
+
+      - name: Run fast test subset
+        run: |
+          # Run tests for core crates first for fast feedback
+          cargo nextest run -p gpui -p editor -p workspace -p project -p language --no-fail-fast
+        env:
+          RUST_BACKTRACE: 1
+
+      - name: Run clippy on changed files
+        if: github.event_name == 'pull_request'
+        run: |
+          # Only run clippy on core crates for PR checks
+          cargo clippy -p gpui -p editor -p workspace -p project -p language -- -D warnings

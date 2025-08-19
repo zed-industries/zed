@@ -1,0 +1,294 @@
+name: Build and Test
+
+on:
+  push:
+    branches: [ main, preview, stable ]
+  pull_request:
+    branches: [ main, preview ]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  # Quick validation job for fast feedback
+  quick-check:
+    name: Quick Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          clean: false
+          submodules: "recursive"
+          fetch-depth: 0
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Cache Cargo dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Run clippy
+        run: ./script/clippy
+
+      - name: Check that Cargo.lock is up-to-date
+        run: cargo check --locked
+
+  # Build tests for multiple platforms
+  build-test:
+    name: Build Test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    needs: quick-check
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - os: macos-latest
+            target: x86_64-apple-darwin
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          clean: false
+          submodules: "recursive"
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Install Linux dependencies
+        if: matrix.os == 'ubuntu-latest'
+        run: ./script/linux
+
+      - name: Cache Cargo dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ matrix.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ matrix.os }}-cargo-
+
+      - name: Build workspace
+        run: cargo build --workspace --target ${{ matrix.target }}
+
+      - name: Build Zed
+        run: cargo build -p zed --target ${{ matrix.target }}
+
+      - name: Build CLI
+        run: cargo build -p cli --target ${{ matrix.target }}
+
+  # Comprehensive test suite
+  test-suite:
+    name: Test Suite (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    needs: quick-check
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          clean: false
+          submodules: "recursive"
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Install Linux dependencies
+        if: matrix.os == 'ubuntu-latest'
+        run: ./script/linux
+
+      - name: Install nextest
+        uses: taiki-e/install-action@nextest
+
+      - name: Cache Cargo dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ matrix.os }}-test-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ matrix.os }}-test-
+            ${{ matrix.os }}-cargo-
+
+      - name: Run tests
+        run: cargo nextest run --workspace --no-fail-fast
+        env:
+          RUST_BACKTRACE: 1
+
+      - name: Run doctests
+        run: cargo test --workspace --doc
+
+  # Security and dependency audits
+  security-audit:
+    name: Security Audit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install cargo-audit
+        run: cargo install cargo-audit
+
+      - name: Run security audit
+        run: cargo audit
+
+  # License compliance check
+  license-check:
+    name: License Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Check licenses
+        run: ./script/check-licenses
+
+  # Bundle builds for release testing
+  bundle-builds:
+    name: Bundle Build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    needs: [build-test, test-suite]
+    if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'test-bundle')
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            script: ./script/bundle-linux
+            artifact-name: linux-bundle
+            artifact-path: target/release/zed-*.tar.gz
+          - os: macos-latest
+            script: ./script/bundle-mac -l
+            artifact-name: macos-bundle
+            artifact-path: target/release/Zed.dmg
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          clean: false
+          submodules: "recursive"
+          fetch-depth: 0
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Install Linux dependencies
+        if: matrix.os == 'ubuntu-latest'
+        run: ./script/linux
+
+      - name: Cache Cargo dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ matrix.os }}-bundle-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ matrix.os }}-bundle-
+            ${{ matrix.os }}-cargo-
+
+      - name: Build bundle
+        run: ${{ matrix.script }}
+
+      - name: Upload bundle artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact-name }}
+          path: ${{ matrix.artifact-path }}
+          retention-days: 7
+
+  # Summary job for PR status checks
+  build-and-test-summary:
+    name: Build and Test Summary
+    runs-on: ubuntu-latest
+    needs: [quick-check, build-test, test-suite, security-audit, license-check]
+    if: always()
+    steps:
+      - name: Check all jobs
+        run: |
+          if [[ "${{ needs.quick-check.result }}" != "success" ]]; then
+            echo "Quick check failed"
+            exit 1
+          fi
+          if [[ "${{ needs.build-test.result }}" != "success" ]]; then
+            echo "Build test failed"
+            exit 1
+          fi
+          if [[ "${{ needs.test-suite.result }}" != "success" ]]; then
+            echo "Test suite failed"
+            exit 1
+          fi
+          if [[ "${{ needs.security-audit.result }}" != "success" ]]; then
+            echo "Security audit failed"
+            exit 1
+          fi
+          if [[ "${{ needs.license-check.result }}" != "success" ]]; then
+            echo "License check failed"
+            exit 1
+          fi
+          echo "All required jobs passed!"

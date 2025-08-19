@@ -1,0 +1,148 @@
+name: Development
+
+on:
+  workflow_dispatch:
+    inputs:
+      task:
+        description: 'Development task to run'
+        required: true
+        default: 'check'
+        type: choice
+        options:
+          - check
+          - test
+          - clippy
+          - format
+          - build
+          - bundle
+      target_os:
+        description: 'Target operating system'
+        required: false
+        default: 'ubuntu-latest'
+        type: choice
+        options:
+          - ubuntu-latest
+          - macos-latest
+          - windows-latest
+      crate:
+        description: 'Specific crate to target (optional)'
+        required: false
+        type: string
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 1
+
+jobs:
+  development-task:
+    name: ${{ inputs.task }} (${{ inputs.target_os }})
+    runs-on: ${{ inputs.target_os }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          clean: false
+          submodules: "recursive"
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Install platform dependencies
+        run: |
+          case "${{ inputs.target_os }}" in
+            ubuntu-latest)
+              ./script/linux
+              ;;
+            macos-latest)
+              # macOS dependencies are mostly handled by Homebrew in the runner
+              ;;
+            windows-latest)
+              # Windows dependencies handled by chocolatey in the runner
+              ;;
+          esac
+
+      - name: Install nextest
+        if: inputs.task == 'test'
+        uses: taiki-e/install-action@nextest
+
+      - name: Cache Cargo dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ inputs.target_os }}-dev-${{ inputs.task }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ inputs.target_os }}-dev-${{ inputs.task }}-
+            ${{ inputs.target_os }}-dev-
+
+      - name: Run development task
+        run: |
+          # Determine the cargo flags based on crate input
+          if [[ -n "${{ inputs.crate }}" ]]; then
+            CRATE_FLAG="-p ${{ inputs.crate }}"
+          else
+            CRATE_FLAG="--workspace"
+          fi
+          
+          case "${{ inputs.task }}" in
+            check)
+              cargo check $CRATE_FLAG
+              ;;
+            test)
+              cargo nextest run $CRATE_FLAG --no-fail-fast
+              ;;
+            clippy)
+              if [[ -n "${{ inputs.crate }}" ]]; then
+                cargo clippy $CRATE_FLAG -- -D warnings
+              else
+                ./script/clippy
+              fi
+              ;;
+            format)
+              cargo fmt $CRATE_FLAG -- --check
+              ;;
+            build)
+              cargo build $CRATE_FLAG --release
+              ;;
+            bundle)
+              case "${{ inputs.target_os }}" in
+                ubuntu-latest)
+                  ./script/bundle-linux
+                  ;;
+                macos-latest)
+                  ./script/bundle-mac -l
+                  ;;
+                windows-latest)
+                  echo "Windows bundling not implemented in this workflow"
+                  exit 1
+                  ;;
+              esac
+              ;;
+            *)
+              echo "Unknown task: ${{ inputs.task }}"
+              exit 1
+              ;;
+          esac
+        env:
+          RUST_BACKTRACE: 1
+
+      - name: Upload bundle artifacts
+        if: inputs.task == 'bundle'
+        uses: actions/upload-artifact@v4
+        with:
+          name: dev-bundle-${{ inputs.target_os }}-${{ github.run_number }}
+          path: |
+            target/release/zed-*.tar.gz
+            target/release/Zed.dmg
+          retention-days: 3
