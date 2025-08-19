@@ -9412,7 +9412,7 @@ mod tests {
             let workspace = workspace.clone();
             move |cx: &mut VisualTestContext| {
                 workspace.update_in(cx, |workspace, window, cx| {
-                    if let Some(_) = workspace.active_modal::<TestModal>(cx) {
+                    if workspace.active_modal::<TestModal>(cx).is_some() {
                         workspace.toggle_modal(window, cx, TestModal::new);
                         workspace.toggle_modal(window, cx, TestModal::new);
                     } else {

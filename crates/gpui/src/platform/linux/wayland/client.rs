@@ -949,11 +949,8 @@ impl Dispatch<WlCallback, ObjectId> for WaylandClientStatePtr {
         };
         drop(state);
 
-        match event {
-            wl_callback::Event::Done { .. } => {
-                window.frame();
-            }
-            _ => {}
+        if let wl_callback::Event::Done { .. } = event {
+            window.frame();
         }
     }
 }
@@ -2014,25 +2011,22 @@ impl Dispatch<wl_data_offer::WlDataOffer, ()> for WaylandClientStatePtr {
         let client = this.get_client();
         let mut state = client.borrow_mut();
 
-        match event {
-            wl_data_offer::Event::Offer { mime_type } => {
-                // Drag and drop
-                if mime_type == FILE_LIST_MIME_TYPE {
-                    let serial = state.serial_tracker.get(SerialKind::DataDevice);
-                    let mime_type = mime_type.clone();
-                    data_offer.accept(serial, Some(mime_type));
-                }
-
-                // Clipboard
-                if let Some(offer) = state
-                    .data_offers
-                    .iter_mut()
-                    .find(|wrapper| wrapper.inner.id() == data_offer.id())
-                {
-                    offer.add_mime_type(mime_type);
-                }
+        if let wl_data_offer::Event::Offer { mime_type } = event {
+            // Drag and drop
+            if mime_type == FILE_LIST_MIME_TYPE {
+                let serial = state.serial_tracker.get(SerialKind::DataDevice);
+                let mime_type = mime_type.clone();
+                data_offer.accept(serial, Some(mime_type));
             }
-            _ => {}
+
+            // Clipboard
+            if let Some(offer) = state
+                .data_offers
+                .iter_mut()
+                .find(|wrapper| wrapper.inner.id() == data_offer.id())
+            {
+                offer.add_mime_type(mime_type);
+            }
         }
     }
 }
@@ -2113,13 +2107,10 @@ impl Dispatch<zwp_primary_selection_offer_v1::ZwpPrimarySelectionOfferV1, ()>
         let client = this.get_client();
         let mut state = client.borrow_mut();
 
-        match event {
-            zwp_primary_selection_offer_v1::Event::Offer { mime_type } => {
-                if let Some(offer) = state.primary_data_offer.as_mut() {
-                    offer.add_mime_type(mime_type);
-                }
-            }
-            _ => {}
+        if let zwp_primary_selection_offer_v1::Event::Offer { mime_type } = event
+            && let Some(offer) = state.primary_data_offer.as_mut()
+        {
+            offer.add_mime_type(mime_type);
         }
     }
 }
