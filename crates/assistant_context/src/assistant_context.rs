@@ -1023,9 +1023,11 @@ impl AssistantContext {
                     summary: new_summary,
                     ..
                 } => {
-                    if self.summary.timestamp().map_or(true, |current_timestamp| {
-                        new_summary.timestamp > current_timestamp
-                    }) {
+                    if self
+                        .summary
+                        .timestamp()
+                        .is_none_or(|current_timestamp| new_summary.timestamp > current_timestamp)
+                    {
                         self.summary = ContextSummary::Content(new_summary);
                         summary_generated = true;
                     }
@@ -1339,7 +1341,7 @@ impl AssistantContext {
                 let is_invalid = self
                     .messages_metadata
                     .get(&message_id)
-                    .map_or(true, |metadata| {
+                    .is_none_or(|metadata| {
                         !metadata.is_cache_valid(&buffer, &message.offset_range)
                             || *encountered_invalid
                     });
@@ -1860,7 +1862,7 @@ impl AssistantContext {
                         {
                             let newline_offset = insert_position.saturating_sub(1);
                             if buffer.contains_str_at(newline_offset, "\n")
-                                && last_section_range.map_or(true, |last_section_range| {
+                                && last_section_range.is_none_or(|last_section_range| {
                                     !last_section_range
                                         .to_offset(buffer)
                                         .contains(&newline_offset)
@@ -2313,10 +2315,7 @@ impl AssistantContext {
             let mut request_message = LanguageModelRequestMessage {
                 role: message.role,
                 content: Vec::new(),
-                cache: message
-                    .cache
-                    .as_ref()
-                    .map_or(false, |cache| cache.is_anchor),
+                cache: message.cache.as_ref().is_some_and(|cache| cache.is_anchor),
             };
 
             while let Some(content) = contents.peek() {
@@ -2797,7 +2796,7 @@ impl AssistantContext {
         let mut current_message = messages.next();
         while let Some(offset) = offsets.next() {
             // Locate the message that contains the offset.
-            while current_message.as_ref().map_or(false, |message| {
+            while current_message.as_ref().is_some_and(|message| {
                 !message.offset_range.contains(&offset) && messages.peek().is_some()
             }) {
                 current_message = messages.next();
@@ -2807,7 +2806,7 @@ impl AssistantContext {
             };
 
             // Skip offsets that are in the same message.
-            while offsets.peek().map_or(false, |offset| {
+            while offsets.peek().is_some_and(|offset| {
                 message.offset_range.contains(offset) || messages.peek().is_none()
             }) {
                 offsets.next();

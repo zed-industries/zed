@@ -1126,7 +1126,7 @@ impl SshRemoteClient {
     }
 
     fn state_is(&self, check: impl FnOnce(&State) -> bool) -> bool {
-        self.state.lock().as_ref().map_or(false, check)
+        self.state.lock().as_ref().is_some_and(check)
     }
 
     fn try_set_state(&self, cx: &mut Context<Self>, map: impl FnOnce(&State) -> Option<State>) {
@@ -1873,7 +1873,7 @@ impl SshRemoteConnection {
             .await?;
         self.extract_server_binary(&dst_path, &tmp_path_gz, delegate, cx)
             .await?;
-        return Ok(dst_path);
+        Ok(dst_path)
     }
 
     async fn download_binary_on_server(

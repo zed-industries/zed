@@ -49,7 +49,7 @@ impl UserMessage {
         if self
             .checkpoint
             .as_ref()
-            .map_or(false, |checkpoint| checkpoint.show)
+            .is_some_and(|checkpoint| checkpoint.show)
         {
             writeln!(markdown, "## User (checkpoint)").unwrap();
         } else {

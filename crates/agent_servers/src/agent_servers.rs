@@ -104,7 +104,7 @@ impl AgentServerCommand {
         cx: &mut AsyncApp,
     ) -> Option<Self> {
         if let Some(agent_settings) = settings {
-            return Some(Self {
+            Some(Self {
                 path: agent_settings.command.path,
                 args: agent_settings
                     .command
@@ -113,7 +113,7 @@ impl AgentServerCommand {
                     .chain(extra_args.iter().map(|arg| arg.to_string()))
                     .collect(),
                 env: agent_settings.command.env,
-            });
+            })
         } else {
             match find_bin_in_path(path_bin_name, project, cx).await {
                 Some(path) => Some(Self {

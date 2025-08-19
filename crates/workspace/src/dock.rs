@@ -460,7 +460,7 @@ impl Dock {
                     };
 
                     let was_visible = this.is_open()
-                        && this.visible_panel().map_or(false, |active_panel| {
+                        && this.visible_panel().is_some_and(|active_panel| {
                             active_panel.panel_id() == Entity::entity_id(&panel)
                         });
 
@@ -523,7 +523,7 @@ impl Dock {
                     PanelEvent::Close => {
                         if this
                             .visible_panel()
-                            .map_or(false, |p| p.panel_id() == Entity::entity_id(panel))
+                            .is_some_and(|p| p.panel_id() == Entity::entity_id(panel))
                         {
                             this.set_open(false, window, cx);
                         }

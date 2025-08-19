@@ -42,7 +42,7 @@ use std::{
 use util::ResultExt as _;
 
 pub static ZED_STATELESS: std::sync::LazyLock<bool> =
-    std::sync::LazyLock::new(|| std::env::var("ZED_STATELESS").map_or(false, |v| !v.is_empty()));
+    std::sync::LazyLock::new(|| std::env::var("ZED_STATELESS").is_ok_and(|v| !v.is_empty()));
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum DataType {
@@ -893,7 +893,7 @@ impl ThreadsDatabase {
 
         let needs_migration_from_heed = mdb_path.exists();
 
-        let connection = if *ZED_STATELESS {
+        let connection = if *ZED_STATELESS || cfg!(any(feature = "test-support", test)) {
             Connection::open_memory(Some("THREAD_FALLBACK_DB"))
         } else {
             Connection::open_file(&sqlite_path.to_string_lossy())

@@ -742,7 +742,7 @@ async fn expect_tool_call(events: &mut UnboundedReceiver<Result<ThreadEvent>>) -
         .expect("no tool call authorization event received")
         .unwrap();
     match event {
-        ThreadEvent::ToolCall(tool_call) => return tool_call,
+        ThreadEvent::ToolCall(tool_call) => tool_call,
         event => {
             panic!("Unexpected event {event:?}");
         }
@@ -758,9 +758,7 @@ async fn expect_tool_call_update_fields(
         .expect("no tool call authorization event received")
         .unwrap();
     match event {
-        ThreadEvent::ToolCallUpdate(acp_thread::ToolCallUpdate::UpdateFields(update)) => {
-            return update;
-        }
+        ThreadEvent::ToolCallUpdate(acp_thread::ToolCallUpdate::UpdateFields(update)) => update,
         event => {
             panic!("Unexpected event {event:?}");
         }
@@ -1273,10 +1271,13 @@ async fn test_agent_connection(cx: &mut TestAppContext) {
     fake_fs.insert_tree(path!("/test"), json!({})).await;
     let project = Project::test(fake_fs.clone(), [Path::new("/test")], cx).await;
     let cwd = Path::new("/test");
+    let context_store = cx.new(|cx| assistant_context::ContextStore::fake(project.clone(), cx));
+    let history_store = cx.new(|cx| HistoryStore::new(context_store, [], cx));
 
     // Create agent and connection
     let agent = NativeAgent::new(
         project.clone(),
+        history_store,
         templates.clone(),
         None,
         fake_fs.clone(),
@@ -1756,7 +1757,6 @@ async fn setup(cx: &mut TestAppContext, model: TestModel) -> ThreadTest {
             action_log,
             templates,
             Some(model.clone()),
-            None,
             cx,
         )
     });

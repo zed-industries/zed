@@ -9,6 +9,7 @@ use agent::{TextThreadStore, ThreadStore};
 use agent_client_protocol::{self as acp};
 use agent_servers::{AgentServer, ClaudeCode};
 use agent_settings::{AgentProfileId, AgentSettings, CompletionMode, NotifyWhenAgentWaiting};
+use agent2::DbThreadMetadata;
 use anyhow::bail;
 use audio::{Audio, Sound};
 use buffer_diff::BufferDiff;
@@ -101,7 +102,7 @@ impl ProfileProvider for Entity<agent2::Thread> {
     fn profiles_supported(&self, cx: &App) -> bool {
         self.read(cx)
             .model()
-            .map_or(false, |model| model.supports_tools())
+            .is_some_and(|model| model.supports_tools())
     }
 }
 
@@ -155,6 +156,7 @@ enum ThreadState {
 impl AcpThreadView {
     pub fn new(
         agent: Rc<dyn AgentServer>,
+        resume_thread: Option<DbThreadMetadata>,
         workspace: WeakEntity<Workspace>,
         project: Entity<Project>,
         thread_store: Entity<ThreadStore>,
@@ -203,7 +205,7 @@ impl AcpThreadView {
             workspace: workspace.clone(),
             project: project.clone(),
             entry_view_state,
-            thread_state: Self::initial_state(agent, workspace, project, window, cx),
+            thread_state: Self::initial_state(agent, resume_thread, workspace, project, window, cx),
             message_editor,
             model_selector: None,
             profile_selector: None,
@@ -228,6 +230,7 @@ impl AcpThreadView {
 
     fn initial_state(
         agent: Rc<dyn AgentServer>,
+        resume_thread: Option<DbThreadMetadata>,
         workspace: WeakEntity<Workspace>,
         project: Entity<Project>,
         window: &mut Window,
@@ -254,28 +257,27 @@ impl AcpThreadView {
                 }
             };
 
-            // this.update_in(cx, |_this, _window, cx| {
-            //     let status = connection.exit_status(cx);
-            //     cx.spawn(async move |this, cx| {
-            //         let status = status.await.ok();
-            //         this.update(cx, |this, cx| {
-            //             this.thread_state = ThreadState::ServerExited { status };
-            //             cx.notify();
-            //         })
-            //         .ok();
-            //     })
-            //     .detach();
-            // })
-            // .ok();
-
-            let Some(result) = cx
-                .update(|_, cx| {
+            let result = if let Some(native_agent) = connection
+                .clone()
+                .downcast::<agent2::NativeAgentConnection>()
+                && let Some(resume) = resume_thread
+            {
+                cx.update(|_, cx| {
+                    native_agent
+                        .0
+                        .update(cx, |agent, cx| agent.open_thread(resume.id, cx))
+                })
+                .log_err()
+            } else {
+                cx.update(|_, cx| {
                     connection
                         .clone()
                         .new_thread(project.clone(), &root_dir, cx)
                 })
                 .log_err()
-            else {
+            };
+
+            let Some(result) = result else {
                 return;
             };
 
@@ -382,6 +384,7 @@ impl AcpThreadView {
                         this.update(cx, |this, cx| {
                             this.thread_state = Self::initial_state(
                                 agent.clone(),
+                                None,
                                 this.workspace.clone(),
                                 this.project.clone(),
                                 window,
@@ -842,6 +845,7 @@ impl AcpThreadView {
                     } else {
                         this.thread_state = Self::initial_state(
                             agent,
+                            None,
                             this.workspace.clone(),
                             project.clone(),
                             window,
@@ -2839,7 +2843,7 @@ impl AcpThreadView {
 
         if thread
             .model()
-            .map_or(true, |model| !model.supports_burn_mode())
+            .is_none_or(|model| !model.supports_burn_mode())
         {
             return None;
         }
@@ -2871,9 +2875,9 @@ impl AcpThreadView {
 
     fn render_send_button(&self, cx: &mut Context<Self>) -> AnyElement {
         let is_editor_empty = self.message_editor.read(cx).is_empty(cx);
-        let is_generating = self.thread().map_or(false, |thread| {
-            thread.read(cx).status() != ThreadStatus::Idle
-        });
+        let is_generating = self
+            .thread()
+            .is_some_and(|thread| thread.read(cx).status() != ThreadStatus::Idle);
 
         if is_generating && is_editor_empty {
             IconButton::new("stop-generation", IconName::Stop)
@@ -3425,8 +3429,7 @@ impl AcpThreadView {
         cx: &mut Context<Self>,
     ) {
         self.message_editor.update(cx, |message_editor, cx| {
-            message_editor.insert_dragged_files(paths, window, cx);
-            drop(added_worktrees);
+            message_editor.insert_dragged_files(paths, added_worktrees, window, cx);
         })
     }
 
@@ -3452,18 +3455,16 @@ impl AcpThreadView {
             } else {
                 format!("Retrying. Next attempt in {next_attempt_in_secs} seconds.")
             }
+        } else if next_attempt_in_secs == 1 {
+            format!(
+                "Retrying. Next attempt in 1 second (Attempt {} of {}).",
+                state.attempt, state.max_attempts,
+            )
         } else {
-            if next_attempt_in_secs == 1 {
-                format!(
-                    "Retrying. Next attempt in 1 second (Attempt {} of {}).",
-                    state.attempt, state.max_attempts,
-                )
-            } else {
-                format!(
-                    "Retrying. Next attempt in {next_attempt_in_secs} seconds (Attempt {} of {}).",
-                    state.attempt, state.max_attempts,
-                )
-            }
+            format!(
+                "Retrying. Next attempt in {next_attempt_in_secs} seconds (Attempt {} of {}).",
+                state.attempt, state.max_attempts,
+            )
         };
 
         Some(
@@ -3549,7 +3550,7 @@ impl AcpThreadView {
         let supports_burn_mode = thread
             .read(cx)
             .model()
-            .map_or(false, |model| model.supports_burn_mode());
+            .is_some_and(|model| model.supports_burn_mode());
 
         let focus_handle = self.focus_handle(cx);
 
@@ -4044,6 +4045,7 @@ pub(crate) mod tests {
             cx.new(|cx| {
                 AcpThreadView::new(
                     Rc::new(agent),
+                    None,
                     workspace.downgrade(),
                     project,
                     thread_store.clone(),
@@ -4248,6 +4250,7 @@ pub(crate) mod tests {
             cx.new(|cx| {
                 AcpThreadView::new(
                     Rc::new(StubAgentServer::new(connection.as_ref().clone())),
+                    None,
                     workspace.downgrade(),
                     project.clone(),
                     thread_store.clone(),

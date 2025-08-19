@@ -79,12 +79,10 @@ impl MentionUri {
                     } else {
                         Ok(Self::Selection { path, line_range })
                     }
+                } else if input.ends_with("/") {
+                    Ok(Self::Directory { abs_path: path })
                 } else {
-                    if input.ends_with("/") {
-                        Ok(Self::Directory { abs_path: path })
-                    } else {
-                        Ok(Self::File { abs_path: path })
-                    }
+                    Ok(Self::File { abs_path: path })
                 }
             }
             "zed" => {

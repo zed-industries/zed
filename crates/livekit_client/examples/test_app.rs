@@ -159,14 +159,14 @@ impl LivekitWindow {
                 if output
                     .audio_output_stream
                     .as_ref()
-                    .map_or(false, |(track, _)| track.sid() == unpublish_sid)
+                    .is_some_and(|(track, _)| track.sid() == unpublish_sid)
                 {
                     output.audio_output_stream.take();
                 }
                 if output
                     .screen_share_output_view
                     .as_ref()
-                    .map_or(false, |(track, _)| track.sid() == unpublish_sid)
+                    .is_some_and(|(track, _)| track.sid() == unpublish_sid)
                 {
                     output.screen_share_output_view.take();
                 }

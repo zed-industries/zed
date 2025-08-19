@@ -1630,10 +1630,8 @@ impl<'a> SyntaxLayer<'a> {
                     if offset < range.start || offset > range.end {
                         continue;
                     }
-                } else {
-                    if offset <= range.start || offset >= range.end {
-                        continue;
-                    }
+                } else if offset <= range.start || offset >= range.end {
+                    continue;
                 }
 
                 if let Some((_, smallest_range)) = &smallest_match {

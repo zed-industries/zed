@@ -243,14 +243,14 @@ impl FocusId {
     pub fn contains_focused(&self, window: &Window, cx: &App) -> bool {
         window
             .focused(cx)
-            .map_or(false, |focused| self.contains(focused.id, window))
+            .is_some_and(|focused| self.contains(focused.id, window))
     }
 
     /// Obtains whether the element associated with this handle is contained within the
     /// focused element or is itself focused.
     pub fn within_focused(&self, window: &Window, cx: &App) -> bool {
         let focused = window.focused(cx);
-        focused.map_or(false, |focused| focused.id.contains(*self, window))
+        focused.is_some_and(|focused| focused.id.contains(*self, window))
     }
 
     /// Obtains whether this handle contains the given handle in the most recently rendered frame.
@@ -504,7 +504,7 @@ impl HitboxId {
                 return true;
             }
         }
-        return false;
+        false
     }
 
     /// Checks if the hitbox with this ID contains the mouse and should handle scroll events.
@@ -634,7 +634,7 @@ impl TooltipId {
         window
             .tooltip_bounds
             .as_ref()
-            .map_or(false, |tooltip_bounds| {
+            .is_some_and(|tooltip_bounds| {
                 tooltip_bounds.id == *self
                     && tooltip_bounds.bounds.contains(&window.mouse_position())
             })
@@ -4466,7 +4466,7 @@ impl Window {
                 }
             }
         }
-        return None;
+        None
     }
 }
 

@@ -554,7 +554,6 @@ mod tests {
                 action_log,
                 Templates::new(),
                 Some(model),
-                None,
                 cx,
             )
         });
@@ -756,7 +755,6 @@ mod tests {
                 action_log.clone(),
                 Templates::new(),
                 Some(model.clone()),
-                None,
                 cx,
             )
         });
@@ -899,7 +897,6 @@ mod tests {
                 action_log.clone(),
                 Templates::new(),
                 Some(model.clone()),
-                None,
                 cx,
             )
         });
@@ -1029,7 +1026,6 @@ mod tests {
                 action_log.clone(),
                 Templates::new(),
                 Some(model.clone()),
-                None,
                 cx,
             )
         });
@@ -1168,7 +1164,6 @@ mod tests {
                 action_log.clone(),
                 Templates::new(),
                 Some(model.clone()),
-                None,
                 cx,
             )
         });
@@ -1279,7 +1274,6 @@ mod tests {
                 action_log.clone(),
                 Templates::new(),
                 Some(model.clone()),
-                None,
                 cx,
             )
         });
@@ -1362,7 +1356,6 @@ mod tests {
                 action_log.clone(),
                 Templates::new(),
                 Some(model.clone()),
-                None,
                 cx,
             )
         });
@@ -1448,7 +1441,6 @@ mod tests {
                 action_log.clone(),
                 Templates::new(),
                 Some(model.clone()),
-                None,
                 cx,
             )
         });
@@ -1531,7 +1523,6 @@ mod tests {
                 action_log.clone(),
                 Templates::new(),
                 Some(model.clone()),
-                None,
                 cx,
             )
         });
