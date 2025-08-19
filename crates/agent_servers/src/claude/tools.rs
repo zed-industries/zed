@@ -34,6 +34,7 @@ impl ClaudeTool {
             // Known tools
             "mcp__zed__Read" => Self::ReadFile(serde_json::from_value(input).log_err()),
             "mcp__zed__Edit" => Self::Edit(serde_json::from_value(input).log_err()),
+            "mcp__zed__Write" => Self::Write(serde_json::from_value(input).log_err()),
             "MultiEdit" => Self::MultiEdit(serde_json::from_value(input).log_err()),
             "Write" => Self::Write(serde_json::from_value(input).log_err()),
             "LS" => Self::Ls(serde_json::from_value(input).log_err()),
