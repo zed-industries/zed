@@ -414,8 +414,8 @@ impl SyntaxSnapshot {
             .collect::<Vec<_>>();
         self.reparse_with_ranges(text, root_language.clone(), edit_ranges, registry.as_ref());
 
-        if let Some(registry) = registry {
-            if registry.version() != self.language_registry_version {
+        if let Some(registry) = registry
+            && registry.version() != self.language_registry_version {
                 let mut resolved_injection_ranges = Vec::new();
                 let mut cursor = self
                     .layers
@@ -450,7 +450,6 @@ impl SyntaxSnapshot {
                 }
                 self.language_registry_version = registry.version();
             }
-        }
 
         self.update_count += 1;
     }
@@ -1065,11 +1064,10 @@ impl<'a> SyntaxMapCaptures<'a> {
     pub fn set_byte_range(&mut self, range: Range<usize>) {
         for layer in &mut self.layers {
             layer.captures.set_byte_range(range.clone());
-            if let Some(capture) = &layer.next_capture {
-                if capture.node.end_byte() > range.start {
+            if let Some(capture) = &layer.next_capture
+                && capture.node.end_byte() > range.start {
                     continue;
                 }
-            }
             layer.advance();
         }
         self.layers.sort_unstable_by_key(|layer| layer.sort_key());
@@ -1277,12 +1275,11 @@ fn join_ranges(
             (None, None) => break,
         };
 
-        if let Some(last) = result.last_mut() {
-            if range.start <= last.end {
+        if let Some(last) = result.last_mut()
+            && range.start <= last.end {
                 last.end = last.end.max(range.end);
                 continue;
             }
-        }
         result.push(range);
     }
     result
@@ -1330,15 +1327,14 @@ fn get_injections(
     // if there currently no matches for that injection.
     combined_injection_ranges.clear();
     for pattern in &config.patterns {
-        if let (Some(language_name), true) = (pattern.language.as_ref(), pattern.combined) {
-            if let Some(language) = language_registry
+        if let (Some(language_name), true) = (pattern.language.as_ref(), pattern.combined)
+            && let Some(language) = language_registry
                 .language_for_name_or_extension(language_name)
                 .now_or_never()
                 .and_then(|language| language.ok())
             {
                 combined_injection_ranges.insert(language.id, (language, Vec::new()));
             }
-        }
     }
 
     for query_range in changed_ranges {
@@ -1357,11 +1353,10 @@ fn get_injections(
                 content_ranges.first().unwrap().start_byte..content_ranges.last().unwrap().end_byte;
 
             // Avoid duplicate matches if two changed ranges intersect the same injection.
-            if let Some((prev_pattern_ix, prev_range)) = &prev_match {
-                if mat.pattern_index == *prev_pattern_ix && content_range == *prev_range {
+            if let Some((prev_pattern_ix, prev_range)) = &prev_match
+                && mat.pattern_index == *prev_pattern_ix && content_range == *prev_range {
                     continue;
                 }
-            }
 
             prev_match = Some((mat.pattern_index, content_range.clone()));
             let combined = config.patterns[mat.pattern_index].combined;

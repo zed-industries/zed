@@ -1811,11 +1811,10 @@ fn previous_word_end(
         .ignore_punctuation(ignore_punctuation);
     let mut point = point.to_point(map);
 
-    if point.column < map.buffer_snapshot.line_len(MultiBufferRow(point.row)) {
-        if let Some(ch) = map.buffer_snapshot.chars_at(point).next() {
+    if point.column < map.buffer_snapshot.line_len(MultiBufferRow(point.row))
+        && let Some(ch) = map.buffer_snapshot.chars_at(point).next() {
             point.column += ch.len_utf8() as u32;
         }
-    }
     for _ in 0..times {
         let new_point = movement::find_preceding_boundary_point(
             &map.buffer_snapshot,
@@ -1986,11 +1985,10 @@ fn previous_subword_end(
         .ignore_punctuation(ignore_punctuation);
     let mut point = point.to_point(map);
 
-    if point.column < map.buffer_snapshot.line_len(MultiBufferRow(point.row)) {
-        if let Some(ch) = map.buffer_snapshot.chars_at(point).next() {
+    if point.column < map.buffer_snapshot.line_len(MultiBufferRow(point.row))
+        && let Some(ch) = map.buffer_snapshot.chars_at(point).next() {
             point.column += ch.len_utf8() as u32;
         }
-    }
     for _ in 0..times {
         let new_point = movement::find_preceding_boundary_point(
             &map.buffer_snapshot,
@@ -2054,11 +2052,10 @@ pub(crate) fn last_non_whitespace(
     let classifier = map.buffer_snapshot.char_classifier_at(from.to_point(map));
 
     // NOTE: depending on clip_at_line_end we may already be one char back from the end.
-    if let Some((ch, _)) = map.buffer_chars_at(end_of_line).next() {
-        if classifier.kind(ch) != CharKind::Whitespace {
+    if let Some((ch, _)) = map.buffer_chars_at(end_of_line).next()
+        && classifier.kind(ch) != CharKind::Whitespace {
             return end_of_line.to_display_point(map);
         }
-    }
 
     for (ch, offset) in map.reverse_buffer_chars_at(end_of_line) {
         if ch == '\n' {

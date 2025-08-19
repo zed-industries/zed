@@ -287,8 +287,8 @@ impl ChatPanel {
     }
 
     fn acknowledge_last_message(&mut self, cx: &mut Context<Self>) {
-        if self.active && self.is_scrolled_to_bottom {
-            if let Some((chat, _)) = &self.active_chat {
+        if self.active && self.is_scrolled_to_bottom
+            && let Some((chat, _)) = &self.active_chat {
                 if let Some(channel_id) = self.channel_id(cx) {
                     self.last_acknowledged_message_id = self
                         .channel_store
@@ -300,7 +300,6 @@ impl ChatPanel {
                     chat.acknowledge_last_message(cx);
                 });
             }
-        }
     }
 
     fn render_replied_to_message(
@@ -405,15 +404,14 @@ impl ChatPanel {
                     && last_message.id != this_message.id
                     && duration_since_last_message < Duration::from_secs(5 * 60);
 
-                if let ChannelMessageId::Saved(id) = this_message.id {
-                    if this_message
+                if let ChannelMessageId::Saved(id) = this_message.id
+                    && this_message
                         .mentions
                         .iter()
                         .any(|(_, user_id)| Some(*user_id) == self.client.user_id())
                     {
                         active_chat.acknowledge_message(id);
                     }
-                }
 
                 (this_message, is_continuation_from_previous, is_admin)
             });
@@ -871,8 +869,8 @@ impl ChatPanel {
                 scroll_to_message_id.or(this.last_acknowledged_message_id)
             })?;
 
-            if let Some(message_id) = scroll_to_message_id {
-                if let Some(item_ix) =
+            if let Some(message_id) = scroll_to_message_id
+                && let Some(item_ix) =
                     ChannelChat::load_history_since_message(chat.clone(), message_id, cx.clone())
                         .await
                 {
@@ -899,7 +897,6 @@ impl ChatPanel {
                         }
                     })?;
                 }
-            }
 
             Ok(())
         })

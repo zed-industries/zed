@@ -1170,13 +1170,12 @@ impl OutlinePanel {
                     });
                 } else {
                     let mut offset = Point::default();
-                    if let Some(buffer_id) = scroll_to_buffer {
-                        if multi_buffer_snapshot.as_singleton().is_none()
+                    if let Some(buffer_id) = scroll_to_buffer
+                        && multi_buffer_snapshot.as_singleton().is_none()
                             && !active_editor.read(cx).is_buffer_folded(buffer_id, cx)
                         {
                             offset.y = -(active_editor.read(cx).file_header_size() as f32);
                         }
-                    }
 
                     active_editor.update(cx, |editor, cx| {
                         editor.set_scroll_anchor(ScrollAnchor { offset, anchor }, window, cx);
@@ -1606,8 +1605,8 @@ impl OutlinePanel {
             }
             PanelEntry::FoldedDirs(folded_dirs) => {
                 let mut folded = false;
-                if let Some(dir_entry) = folded_dirs.entries.last() {
-                    if self
+                if let Some(dir_entry) = folded_dirs.entries.last()
+                    && self
                         .collapsed_entries
                         .insert(CollapsedEntry::Dir(folded_dirs.worktree_id, dir_entry.id))
                     {
@@ -1616,7 +1615,6 @@ impl OutlinePanel {
                             self.buffers_inside_directory(folded_dirs.worktree_id, dir_entry),
                         );
                     }
-                }
                 folded
             }
             PanelEntry::Outline(OutlineEntry::Excerpt(excerpt)) => self
@@ -2108,12 +2106,11 @@ impl OutlinePanel {
                                 dirs_to_expand.push(current_entry.id);
                             }
 
-                            if traversal.back_to_parent() {
-                                if let Some(parent_entry) = traversal.entry() {
+                            if traversal.back_to_parent()
+                                && let Some(parent_entry) = traversal.entry() {
                                     current_entry = parent_entry.clone();
                                     continue;
                                 }
-                            }
                             break;
                         }
                     }
@@ -2475,8 +2472,8 @@ impl OutlinePanel {
         let search_data = match render_data.get() {
             Some(search_data) => search_data,
             None => {
-                if let ItemsDisplayMode::Search(search_state) = &mut self.mode {
-                    if let Some(multi_buffer_snapshot) = multi_buffer_snapshot {
+                if let ItemsDisplayMode::Search(search_state) = &mut self.mode
+                    && let Some(multi_buffer_snapshot) = multi_buffer_snapshot {
                         search_state
                             .highlight_search_match_tx
                             .try_send(HighlightArguments {
@@ -2486,7 +2483,6 @@ impl OutlinePanel {
                             })
                             .ok();
                     }
-                }
                 return None;
             }
         };
@@ -2833,12 +2829,11 @@ impl OutlinePanel {
                                         let new_entry_added = entries_to_add
                                             .insert(current_entry.id, current_entry)
                                             .is_none();
-                                        if new_entry_added && traversal.back_to_parent() {
-                                            if let Some(parent_entry) = traversal.entry() {
+                                        if new_entry_added && traversal.back_to_parent()
+                                            && let Some(parent_entry) = traversal.entry() {
                                                 current_entry = parent_entry.to_owned();
                                                 continue;
                                             }
-                                        }
                                         break;
                                     }
                                     new_worktree_entries
@@ -2878,8 +2873,8 @@ impl OutlinePanel {
                                 entries
                                     .into_iter()
                                     .filter_map(|entry| {
-                                        if auto_fold_dirs {
-                                            if let Some(parent) = entry.path.parent() {
+                                        if auto_fold_dirs
+                                            && let Some(parent) = entry.path.parent() {
                                                 let children = new_children_count
                                                     .entry(worktree_id)
                                                     .or_default()
@@ -2891,7 +2886,6 @@ impl OutlinePanel {
                                                     children.files += 1;
                                                 }
                                             }
-                                        }
 
                                         if entry.is_dir() {
                                             Some(FsEntry::Directory(FsEntryDirectory {
@@ -3409,8 +3403,8 @@ impl OutlinePanel {
                                 {
                                     excerpt.outlines = ExcerptOutlines::Outlines(fetched_outlines);
 
-                                    if let Some(default_depth) = pending_default_depth {
-                                        if let ExcerptOutlines::Outlines(outlines) =
+                                    if let Some(default_depth) = pending_default_depth
+                                        && let ExcerptOutlines::Outlines(outlines) =
                                             &excerpt.outlines
                                         {
                                             outlines
@@ -3433,7 +3427,6 @@ impl OutlinePanel {
                                                     );
                                                 });
                                         }
-                                    }
 
                                     // Even if no outlines to check, we still need to update cached entries
                                     // to show the outline entries that were just fetched
@@ -3611,10 +3604,9 @@ impl OutlinePanel {
                 .update_in(cx, |outline_panel, window, cx| {
                     outline_panel.cached_entries = new_cached_entries;
                     outline_panel.max_width_item_index = max_width_item_index;
-                    if outline_panel.selected_entry.is_invalidated()
-                        || matches!(outline_panel.selected_entry, SelectedEntry::None)
-                    {
-                        if let Some(new_selected_entry) =
+                    if (outline_panel.selected_entry.is_invalidated()
+                        || matches!(outline_panel.selected_entry, SelectedEntry::None))
+                        && let Some(new_selected_entry) =
                             outline_panel.active_editor().and_then(|active_editor| {
                                 outline_panel.location_for_editor_selection(
                                     &active_editor,
@@ -3625,7 +3617,6 @@ impl OutlinePanel {
                         {
                             outline_panel.select_entry(new_selected_entry, false, window, cx);
                         }
-                    }
 
                     outline_panel.autoscroll(cx);
                     outline_panel.updating_cached_entries = false;
@@ -3921,8 +3912,8 @@ impl OutlinePanel {
                                 } else {
                                     None
                                 };
-                            if let Some((buffer_id, entry_excerpts)) = excerpts_to_consider {
-                                if !active_editor.read(cx).is_buffer_folded(buffer_id, cx) {
+                            if let Some((buffer_id, entry_excerpts)) = excerpts_to_consider
+                                && !active_editor.read(cx).is_buffer_folded(buffer_id, cx) {
                                     outline_panel.add_excerpt_entries(
                                         &mut generation_state,
                                         buffer_id,
@@ -3934,7 +3925,6 @@ impl OutlinePanel {
                                         cx,
                                     );
                                 }
-                            }
                         }
                     }
 
@@ -4404,16 +4394,14 @@ impl OutlinePanel {
             })
             .filter(|(match_range, _)| {
                 let editor = active_editor.read(cx);
-                if let Some(buffer_id) = match_range.start.buffer_id {
-                    if editor.is_buffer_folded(buffer_id, cx) {
+                if let Some(buffer_id) = match_range.start.buffer_id
+                    && editor.is_buffer_folded(buffer_id, cx) {
                         return false;
                     }
-                }
-                if let Some(buffer_id) = match_range.start.buffer_id {
-                    if editor.is_buffer_folded(buffer_id, cx) {
+                if let Some(buffer_id) = match_range.start.buffer_id
+                    && editor.is_buffer_folded(buffer_id, cx) {
                         return false;
                     }
-                }
                 true
             });
 
@@ -4456,17 +4444,14 @@ impl OutlinePanel {
         cx: &mut Context<Self>,
     ) {
         self.pinned = !self.pinned;
-        if !self.pinned {
-            if let Some((active_item, active_editor)) = self
+        if !self.pinned
+            && let Some((active_item, active_editor)) = self
                 .workspace
                 .upgrade()
                 .and_then(|workspace| workspace_active_editor(workspace.read(cx), cx))
-            {
-                if self.should_replace_active_item(active_item.as_ref()) {
+                && self.should_replace_active_item(active_item.as_ref()) {
                     self.replace_active_editor(active_item, active_editor, window, cx);
                 }
-            }
-        }
 
         cx.notify();
     }
@@ -5067,8 +5052,8 @@ impl Panel for OutlinePanel {
                     let old_active = outline_panel.active;
                     outline_panel.active = active;
                     if old_active != active {
-                        if active {
-                            if let Some((active_item, active_editor)) =
+                        if active
+                            && let Some((active_item, active_editor)) =
                                 outline_panel.workspace.upgrade().and_then(|workspace| {
                                     workspace_active_editor(workspace.read(cx), cx)
                                 })
@@ -5085,7 +5070,6 @@ impl Panel for OutlinePanel {
                                 }
                                 return;
                             }
-                        }
 
                         if !outline_panel.pinned {
                             outline_panel.clear_previous(window, cx);
@@ -5319,8 +5303,8 @@ fn subscribe_for_editor_events(
                             })
                             .copied(),
                     );
-                    if !ignore_selections_change {
-                        if let Some(entry_to_select) = latest_unfolded_buffer_id
+                    if !ignore_selections_change
+                        && let Some(entry_to_select) = latest_unfolded_buffer_id
                             .or(latest_folded_buffer_id)
                             .and_then(|toggled_buffer_id| {
                                 outline_panel.fs_entries.iter().find_map(
@@ -5347,7 +5331,6 @@ fn subscribe_for_editor_events(
                         {
                             outline_panel.select_entry(entry_to_select, true, window, cx);
                         }
-                    }
 
                     outline_panel.update_fs_entries(editor.clone(), debounce, window, cx);
                 }

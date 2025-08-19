@@ -581,8 +581,8 @@ impl ThreadStore {
                 return;
             };
 
-            if protocol.capable(context_server::protocol::ServerCapability::Tools) {
-                if let Some(response) = protocol
+            if protocol.capable(context_server::protocol::ServerCapability::Tools)
+                && let Some(response) = protocol
                     .request::<context_server::types::requests::ListTools>(())
                     .await
                     .log_err()
@@ -609,7 +609,6 @@ impl ThreadStore {
                         .log_err();
                     }
                 }
-            }
         })
         .detach();
     }
@@ -697,14 +696,13 @@ impl SerializedThreadV0_1_0 {
         let mut messages: Vec<SerializedMessage> = Vec::with_capacity(self.0.messages.len());
 
         for message in self.0.messages {
-            if message.role == Role::User && !message.tool_results.is_empty() {
-                if let Some(last_message) = messages.last_mut() {
+            if message.role == Role::User && !message.tool_results.is_empty()
+                && let Some(last_message) = messages.last_mut() {
                     debug_assert!(last_message.role == Role::Assistant);
 
                     last_message.tool_results = message.tool_results;
                     continue;
                 }
-            }
 
             messages.push(message);
         }

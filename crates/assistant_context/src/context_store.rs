@@ -894,8 +894,8 @@ impl ContextStore {
                 return;
             };
 
-            if protocol.capable(context_server::protocol::ServerCapability::Prompts) {
-                if let Some(response) = protocol
+            if protocol.capable(context_server::protocol::ServerCapability::Prompts)
+                && let Some(response) = protocol
                     .request::<context_server::types::requests::PromptsList>(())
                     .await
                     .log_err()
@@ -922,7 +922,6 @@ impl ContextStore {
                     })
                     .log_err();
                 }
-            }
         })
         .detach();
     }

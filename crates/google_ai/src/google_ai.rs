@@ -106,11 +106,9 @@ pub fn validate_generate_content_request(request: &GenerateContentRequest) -> Re
         .contents
         .iter()
         .find(|content| content.role == Role::User)
-    {
-        if user_content.parts.is_empty() {
+        && user_content.parts.is_empty() {
             bail!("User content must contain at least one part");
         }
-    }
 
     Ok(())
 }

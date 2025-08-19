@@ -149,8 +149,8 @@ pub async fn post_crash(
         "crash report"
     );
 
-    if let Some(kinesis_client) = app.kinesis_client.clone() {
-        if let Some(stream) = app.config.kinesis_stream.clone() {
+    if let Some(kinesis_client) = app.kinesis_client.clone()
+        && let Some(stream) = app.config.kinesis_stream.clone() {
             let properties = json!({
                 "app_version": report.header.app_version,
                 "os_version": report.header.os_version,
@@ -178,7 +178,6 @@ pub async fn post_crash(
                 .await
                 .log_err();
         }
-    }
 
     if let Some(slack_panics_webhook) = app.config.slack_panics_webhook.clone() {
         let payload = slack::WebhookBody::new(|w| {
@@ -359,8 +358,8 @@ pub async fn post_panic(
         "panic report"
     );
 
-    if let Some(kinesis_client) = app.kinesis_client.clone() {
-        if let Some(stream) = app.config.kinesis_stream.clone() {
+    if let Some(kinesis_client) = app.kinesis_client.clone()
+        && let Some(stream) = app.config.kinesis_stream.clone() {
             let properties = json!({
                 "app_version": panic.app_version,
                 "os_name": panic.os_name,
@@ -387,7 +386,6 @@ pub async fn post_panic(
                 .await
                 .log_err();
         }
-    }
 
     if !report_to_slack(&panic) {
         return Ok(());
@@ -518,8 +516,8 @@ pub async fn post_events(
     let first_event_at = chrono::Utc::now()
         - chrono::Duration::milliseconds(last_event.milliseconds_since_first_event);
 
-    if let Some(kinesis_client) = app.kinesis_client.clone() {
-        if let Some(stream) = app.config.kinesis_stream.clone() {
+    if let Some(kinesis_client) = app.kinesis_client.clone()
+        && let Some(stream) = app.config.kinesis_stream.clone() {
             let mut request = kinesis_client.put_records().stream_name(stream);
             let mut has_records = false;
             for row in for_snowflake(
@@ -542,8 +540,7 @@ pub async fn post_events(
             if has_records {
                 request.send().await.log_err();
             }
-        }
-    };
+        };
 
     Ok(())
 }

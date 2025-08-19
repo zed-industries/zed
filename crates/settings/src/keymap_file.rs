@@ -543,8 +543,8 @@ impl KeymapFile {
             //
             // When a struct with no deserializable fields is added by deriving `Action`, an empty
             // object schema is produced. The action should be invoked without data in this case.
-            if let Some(schema) = action_schema {
-                if schema != empty_object {
+            if let Some(schema) = action_schema
+                && schema != empty_object {
                     let mut matches_action_name = json_schema!({
                         "const": name
                     });
@@ -564,7 +564,6 @@ impl KeymapFile {
                     });
                     keymap_action_alternatives.push(action_with_input);
                 }
-            }
         }
 
         // Placing null first causes json-language-server to default assuming actions should be
@@ -593,11 +592,10 @@ impl KeymapFile {
         match fs.load(paths::keymap_file()).await {
             result @ Ok(_) => result,
             Err(err) => {
-                if let Some(e) = err.downcast_ref::<std::io::Error>() {
-                    if e.kind() == std::io::ErrorKind::NotFound {
+                if let Some(e) = err.downcast_ref::<std::io::Error>()
+                    && e.kind() == std::io::ErrorKind::NotFound {
                         return Ok(crate::initial_keymap_content().to_string());
                     }
-                }
                 Err(err)
             }
         }

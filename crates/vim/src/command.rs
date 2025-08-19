@@ -510,8 +510,8 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
                     vim.switch_mode(Mode::Normal, true, window, cx);
                 }
                 vim.update_editor(cx, |_, editor, cx| {
-                    if let Some(first_sel) = initial_selections {
-                        if let Some(tx_id) = editor
+                    if let Some(first_sel) = initial_selections
+                        && let Some(tx_id) = editor
                             .buffer()
                             .update(cx, |multi, cx| multi.last_transaction_id(cx))
                         {
@@ -521,7 +521,6 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
                                 old.1 = Some(last_sel);
                             });
                         }
-                    }
                 });
             })
             .ok();
@@ -1713,15 +1712,12 @@ impl Vim {
             match c {
                 '%' => {
                     self.update_editor(cx, |_, editor, cx| {
-                        if let Some((_, buffer, _)) = editor.active_excerpt(cx) {
-                            if let Some(file) = buffer.read(cx).file() {
-                                if let Some(local) = file.as_local() {
-                                    if let Some(str) = local.path().to_str() {
+                        if let Some((_, buffer, _)) = editor.active_excerpt(cx)
+                            && let Some(file) = buffer.read(cx).file()
+                                && let Some(local) = file.as_local()
+                                    && let Some(str) = local.path().to_str() {
                                         ret.push_str(str)
                                     }
-                                }
-                            }
-                        }
                     });
                 }
                 '!' => {
@@ -1954,8 +1950,8 @@ impl ShellExec {
                 return;
             };
 
-            if let Some(mut stdin) = running.stdin.take() {
-                if let Some(snapshot) = input_snapshot {
+            if let Some(mut stdin) = running.stdin.take()
+                && let Some(snapshot) = input_snapshot {
                     let range = range.clone();
                     cx.background_spawn(async move {
                         for chunk in snapshot.text_for_range(range) {
@@ -1966,8 +1962,7 @@ impl ShellExec {
                         stdin.flush().log_err();
                     })
                     .detach();
-                }
-            };
+                };
 
             let output = cx
                 .background_spawn(async move { running.wait_with_output() })

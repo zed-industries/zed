@@ -170,8 +170,8 @@ pub fn new_journal_entry(workspace: &Workspace, window: &mut Window, cx: &mut Ap
                     .await
             };
 
-            if let Some(Some(Ok(item))) = opened.first() {
-                if let Some(editor) = item.downcast::<Editor>().map(|editor| editor.downgrade()) {
+            if let Some(Some(Ok(item))) = opened.first()
+                && let Some(editor) = item.downcast::<Editor>().map(|editor| editor.downgrade()) {
                     editor.update_in(cx, |editor, window, cx| {
                         let len = editor.buffer().read(cx).len(cx);
                         editor.change_selections(
@@ -187,7 +187,6 @@ pub fn new_journal_entry(workspace: &Workspace, window: &mut Window, cx: &mut Ap
                         editor.insert("\n\n", window, cx);
                     })?;
                 }
-            }
 
             anyhow::Ok(())
         })

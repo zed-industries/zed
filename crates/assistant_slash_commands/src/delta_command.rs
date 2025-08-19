@@ -66,8 +66,7 @@ impl SlashCommand for DeltaSlashCommand {
                 .metadata
                 .as_ref()
                 .and_then(|value| serde_json::from_value::<FileCommandMetadata>(value.clone()).ok())
-            {
-                if paths.insert(metadata.path.clone()) {
+                && paths.insert(metadata.path.clone()) {
                     file_command_old_outputs.push(
                         context_buffer
                             .as_rope()
@@ -83,7 +82,6 @@ impl SlashCommand for DeltaSlashCommand {
                         cx,
                     ));
                 }
-            }
         }
 
         cx.background_spawn(async move {
@@ -95,10 +93,9 @@ impl SlashCommand for DeltaSlashCommand {
                 .into_iter()
                 .zip(file_command_new_outputs)
             {
-                if let Ok(new_output) = new_output {
-                    if let Ok(new_output) = SlashCommandOutput::from_event_stream(new_output).await
-                    {
-                        if let Some(file_command_range) = new_output.sections.first() {
+                if let Ok(new_output) = new_output
+                    && let Ok(new_output) = SlashCommandOutput::from_event_stream(new_output).await
+                        && let Some(file_command_range) = new_output.sections.first() {
                             let new_text = &new_output.text[file_command_range.range.clone()];
                             if old_text.chars().ne(new_text.chars()) {
                                 changes_detected = true;
@@ -114,8 +111,6 @@ impl SlashCommand for DeltaSlashCommand {
                                 output.text.push_str(&new_output.text);
                             }
                         }
-                    }
-                }
             }
 
             anyhow::ensure!(changes_detected, "no new changes detected");

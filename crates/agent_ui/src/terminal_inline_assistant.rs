@@ -388,8 +388,8 @@ impl TerminalInlineAssistant {
         window: &mut Window,
         cx: &mut App,
     ) {
-        if let Some(assist) = self.assists.get_mut(&assist_id) {
-            if let Some(prompt_editor) = assist.prompt_editor.as_ref().cloned() {
+        if let Some(assist) = self.assists.get_mut(&assist_id)
+            && let Some(prompt_editor) = assist.prompt_editor.as_ref().cloned() {
                 assist
                     .terminal
                     .update(cx, |terminal, cx| {
@@ -402,7 +402,6 @@ impl TerminalInlineAssistant {
                     })
                     .log_err();
             }
-        }
     }
 }
 
@@ -450,9 +449,9 @@ impl TerminalInlineAssist {
                                 return;
                             };
 
-                            if let CodegenStatus::Error(error) = &codegen.read(cx).status {
-                                if assist.prompt_editor.is_none() {
-                                    if let Some(workspace) = assist.workspace.upgrade() {
+                            if let CodegenStatus::Error(error) = &codegen.read(cx).status
+                                && assist.prompt_editor.is_none()
+                                    && let Some(workspace) = assist.workspace.upgrade() {
                                         let error =
                                             format!("Terminal inline assistant error: {}", error);
                                         workspace.update(cx, |workspace, cx| {
@@ -466,8 +465,6 @@ impl TerminalInlineAssist {
                                             workspace.show_toast(Toast::new(id, error), cx);
                                         })
                                     }
-                                }
-                            }
 
                             if assist.prompt_editor.is_none() {
                                 this.finish_assist(assist_id, false, false, window, cx);

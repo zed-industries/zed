@@ -256,11 +256,10 @@ impl Vim {
                 }
             });
 
-            if should_jump {
-                if let Some(anchor) = anchor {
+            if should_jump
+                && let Some(anchor) = anchor {
                     self.motion(Motion::Jump { anchor, line }, window, cx)
                 }
-            }
         }
     }
 

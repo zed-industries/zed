@@ -352,13 +352,12 @@ impl CodegenAlternative {
         event: &multi_buffer::Event,
         cx: &mut Context<Self>,
     ) {
-        if let multi_buffer::Event::TransactionUndone { transaction_id } = event {
-            if self.transformation_transaction_id == Some(*transaction_id) {
+        if let multi_buffer::Event::TransactionUndone { transaction_id } = event
+            && self.transformation_transaction_id == Some(*transaction_id) {
                 self.transformation_transaction_id = None;
                 self.generation = Task::ready(());
                 cx.emit(CodegenEvent::Undone);
             }
-        }
     }
 
     pub fn last_equal_ranges(&self) -> &[Range<Anchor>] {
@@ -576,8 +575,8 @@ impl CodegenAlternative {
                                 let mut lines = chunk.split('\n').peekable();
                                 while let Some(line) = lines.next() {
                                     new_text.push_str(line);
-                                    if line_indent.is_none() {
-                                        if let Some(non_whitespace_ch_ix) =
+                                    if line_indent.is_none()
+                                        && let Some(non_whitespace_ch_ix) =
                                             new_text.find(|ch: char| !ch.is_whitespace())
                                         {
                                             line_indent = Some(non_whitespace_ch_ix);
@@ -608,7 +607,6 @@ impl CodegenAlternative {
                                                 &indent_str.repeat(corrected_indent_len),
                                             );
                                         }
-                                    }
 
                                     if line_indent.is_some() {
                                         let char_ops = diff.push_new(&new_text);

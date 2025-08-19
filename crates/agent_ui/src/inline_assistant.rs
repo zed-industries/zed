@@ -182,8 +182,8 @@ impl InlineAssistant {
         match event {
             workspace::Event::UserSavedItem { item, .. } => {
                 // When the user manually saves an editor, automatically accepts all finished transformations.
-                if let Some(editor) = item.upgrade().and_then(|item| item.act_as::<Editor>(cx)) {
-                    if let Some(editor_assists) = self.assists_by_editor.get(&editor.downgrade()) {
+                if let Some(editor) = item.upgrade().and_then(|item| item.act_as::<Editor>(cx))
+                    && let Some(editor_assists) = self.assists_by_editor.get(&editor.downgrade()) {
                         for assist_id in editor_assists.assist_ids.clone() {
                             let assist = &self.assists[&assist_id];
                             if let CodegenStatus::Done = assist.codegen.read(cx).status(cx) {
@@ -191,7 +191,6 @@ impl InlineAssistant {
                             }
                         }
                     }
-                }
             }
             workspace::Event::ItemAdded { item } => {
                 self.register_workspace_item(&workspace, item.as_ref(), window, cx);
@@ -342,14 +341,13 @@ impl InlineAssistant {
                         )
                         .await
                         .ok();
-                    if let Some(answer) = answer {
-                        if answer == 0 {
+                    if let Some(answer) = answer
+                        && answer == 0 {
                             cx.update(|window, cx| {
                                 window.dispatch_action(Box::new(OpenSettings), cx)
                             })
                             .ok();
                         }
-                    }
                     anyhow::Ok(())
                 })
                 .detach_and_log_err(cx);
@@ -435,12 +433,11 @@ impl InlineAssistant {
                 }
             }
 
-            if let Some(prev_selection) = selections.last_mut() {
-                if selection.start <= prev_selection.end {
+            if let Some(prev_selection) = selections.last_mut()
+                && selection.start <= prev_selection.end {
                     prev_selection.end = selection.end;
                     continue;
                 }
-            }
 
             let latest_selection = newest_selection.get_or_insert_with(|| selection.clone());
             if selection.id > latest_selection.id {
@@ -985,15 +982,14 @@ impl InlineAssistant {
             EditorEvent::SelectionsChanged { .. } => {
                 for assist_id in editor_assists.assist_ids.clone() {
                     let assist = &self.assists[&assist_id];
-                    if let Some(decorations) = assist.decorations.as_ref() {
-                        if decorations
+                    if let Some(decorations) = assist.decorations.as_ref()
+                        && decorations
                             .prompt_editor
                             .focus_handle(cx)
                             .is_focused(window)
                         {
                             return;
                         }
-                    }
                 }
 
                 editor_assists.scroll_lock = None;
@@ -1503,21 +1499,18 @@ impl InlineAssistant {
         window: &mut Window,
         cx: &mut App,
     ) -> Option<InlineAssistTarget> {
-        if let Some(terminal_panel) = workspace.panel::<TerminalPanel>(cx) {
-            if terminal_panel
+        if let Some(terminal_panel) = workspace.panel::<TerminalPanel>(cx)
+            && terminal_panel
                 .read(cx)
                 .focus_handle(cx)
                 .contains_focused(window, cx)
-            {
-                if let Some(terminal_view) = terminal_panel.read(cx).pane().and_then(|pane| {
+                && let Some(terminal_view) = terminal_panel.read(cx).pane().and_then(|pane| {
                     pane.read(cx)
                         .active_item()
                         .and_then(|t| t.downcast::<TerminalView>())
                 }) {
                     return Some(InlineAssistTarget::Terminal(terminal_view));
                 }
-            }
-        }
 
         let context_editor = agent_panel
             .and_then(|panel| panel.read(cx).active_context_editor())
@@ -1741,9 +1734,9 @@ impl InlineAssist {
                                 return;
                             };
 
-                            if let CodegenStatus::Error(error) = codegen.read(cx).status(cx) {
-                                if assist.decorations.is_none() {
-                                    if let Some(workspace) = assist.workspace.upgrade() {
+                            if let CodegenStatus::Error(error) = codegen.read(cx).status(cx)
+                                && assist.decorations.is_none()
+                                    && let Some(workspace) = assist.workspace.upgrade() {
                                         let error = format!("Inline assistant error: {}", error);
                                         workspace.update(cx, |workspace, cx| {
                                             struct InlineAssistantError;
@@ -1756,8 +1749,6 @@ impl InlineAssist {
                                             workspace.show_toast(Toast::new(id, error), cx);
                                         })
                                     }
-                                }
-                            }
 
                             if assist.decorations.is_none() {
                                 this.finish_assist(assist_id, false, window, cx);
@@ -1821,19 +1812,17 @@ impl CodeActionProvider for AssistantCodeActionProvider {
             has_diagnostics = true;
         }
         if has_diagnostics {
-            if let Some(symbols_containing_start) = snapshot.symbols_containing(range.start, None) {
-                if let Some(symbol) = symbols_containing_start.last() {
+            if let Some(symbols_containing_start) = snapshot.symbols_containing(range.start, None)
+                && let Some(symbol) = symbols_containing_start.last() {
                     range.start = cmp::min(range.start, symbol.range.start.to_point(&snapshot));
                     range.end = cmp::max(range.end, symbol.range.end.to_point(&snapshot));
                 }
-            }
 
-            if let Some(symbols_containing_end) = snapshot.symbols_containing(range.end, None) {
-                if let Some(symbol) = symbols_containing_end.last() {
+            if let Some(symbols_containing_end) = snapshot.symbols_containing(range.end, None)
+                && let Some(symbol) = symbols_containing_end.last() {
                     range.start = cmp::min(range.start, symbol.range.start.to_point(&snapshot));
                     range.end = cmp::max(range.end, symbol.range.end.to_point(&snapshot));
                 }
-            }
 
             Task::ready(Ok(vec![CodeAction {
                 server_id: language::LanguageServerId(0),

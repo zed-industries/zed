@@ -227,11 +227,10 @@ where
 
                 tasks.retain_mut(|(task_source_kind, target_task)| {
                     if predicate((task_source_kind, target_task)) {
-                        if let Some(overrides) = &overrides {
-                            if let Some(target_override) = overrides.reveal_target {
+                        if let Some(overrides) = &overrides
+                            && let Some(target_override) = overrides.reveal_target {
                                 target_task.reveal_target = target_override;
                             }
-                        }
                         workspace.schedule_task(
                             task_source_kind.clone(),
                             target_task,
@@ -343,12 +342,11 @@ pub fn task_contexts(
         task_contexts.lsp_task_sources = lsp_task_sources;
         task_contexts.latest_selection = latest_selection;
 
-        if let Some(editor_context_task) = editor_context_task {
-            if let Some(editor_context) = editor_context_task.await {
+        if let Some(editor_context_task) = editor_context_task
+            && let Some(editor_context) = editor_context_task.await {
                 task_contexts.active_item_context =
                     Some((active_worktree, location, editor_context));
             }
-        }
 
         if let Some(active_worktree) = active_worktree {
             if let Some(active_worktree_abs_path) = worktree_abs_paths.remove(&active_worktree) {

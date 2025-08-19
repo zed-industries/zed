@@ -794,16 +794,14 @@ impl BufferSearchBar {
     }
 
     pub fn activate_current_match(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(match_ix) = self.active_match_index {
-            if let Some(active_searchable_item) = self.active_searchable_item.as_ref() {
-                if let Some(matches) = self
+        if let Some(match_ix) = self.active_match_index
+            && let Some(active_searchable_item) = self.active_searchable_item.as_ref()
+                && let Some(matches) = self
                     .searchable_items_with_matches
                     .get(&active_searchable_item.downgrade())
                 {
                     active_searchable_item.activate_match(match_ix, matches, window, cx)
                 }
-            }
-        }
     }
 
     pub fn select_query(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -951,17 +949,15 @@ impl BufferSearchBar {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !self.dismissed && self.active_match_index.is_some() {
-            if let Some(searchable_item) = self.active_searchable_item.as_ref() {
-                if let Some(matches) = self
+        if !self.dismissed && self.active_match_index.is_some()
+            && let Some(searchable_item) = self.active_searchable_item.as_ref()
+                && let Some(matches) = self
                     .searchable_items_with_matches
                     .get(&searchable_item.downgrade())
                 {
                     searchable_item.select_matches(matches, window, cx);
                     self.focus_editor(&FocusEditor, window, cx);
                 }
-            }
-        }
     }
 
     pub fn select_match(
@@ -971,9 +967,9 @@ impl BufferSearchBar {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(index) = self.active_match_index {
-            if let Some(searchable_item) = self.active_searchable_item.as_ref() {
-                if let Some(matches) = self
+        if let Some(index) = self.active_match_index
+            && let Some(searchable_item) = self.active_searchable_item.as_ref()
+                && let Some(matches) = self
                     .searchable_items_with_matches
                     .get(&searchable_item.downgrade())
                     .filter(|matches| !matches.is_empty())
@@ -992,13 +988,11 @@ impl BufferSearchBar {
                     searchable_item.update_matches(matches, window, cx);
                     searchable_item.activate_match(new_match_index, matches, window, cx);
                 }
-            }
-        }
     }
 
     pub fn select_first_match(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(searchable_item) = self.active_searchable_item.as_ref() {
-            if let Some(matches) = self
+        if let Some(searchable_item) = self.active_searchable_item.as_ref()
+            && let Some(matches) = self
                 .searchable_items_with_matches
                 .get(&searchable_item.downgrade())
             {
@@ -1008,12 +1002,11 @@ impl BufferSearchBar {
                 searchable_item.update_matches(matches, window, cx);
                 searchable_item.activate_match(0, matches, window, cx);
             }
-        }
     }
 
     pub fn select_last_match(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(searchable_item) = self.active_searchable_item.as_ref() {
-            if let Some(matches) = self
+        if let Some(searchable_item) = self.active_searchable_item.as_ref()
+            && let Some(matches) = self
                 .searchable_items_with_matches
                 .get(&searchable_item.downgrade())
             {
@@ -1024,7 +1017,6 @@ impl BufferSearchBar {
                 searchable_item.update_matches(matches, window, cx);
                 searchable_item.activate_match(new_match_index, matches, window, cx);
             }
-        }
     }
 
     fn on_query_editor_event(
@@ -1344,8 +1336,8 @@ impl BufferSearchBar {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.query(cx).is_empty() {
-            if let Some(new_query) = self
+        if self.query(cx).is_empty()
+            && let Some(new_query) = self
                 .search_history
                 .current(&mut self.search_history_cursor)
                 .map(str::to_string)
@@ -1353,7 +1345,6 @@ impl BufferSearchBar {
                 drop(self.search(&new_query, Some(self.search_options), window, cx));
                 return;
             }
-        }
 
         if let Some(new_query) = self
             .search_history
@@ -1384,10 +1375,10 @@ impl BufferSearchBar {
 
     fn replace_next(&mut self, _: &ReplaceNext, window: &mut Window, cx: &mut Context<Self>) {
         let mut should_propagate = true;
-        if !self.dismissed && self.active_search.is_some() {
-            if let Some(searchable_item) = self.active_searchable_item.as_ref() {
-                if let Some(query) = self.active_search.as_ref() {
-                    if let Some(matches) = self
+        if !self.dismissed && self.active_search.is_some()
+            && let Some(searchable_item) = self.active_searchable_item.as_ref()
+                && let Some(query) = self.active_search.as_ref()
+                    && let Some(matches) = self
                         .searchable_items_with_matches
                         .get(&searchable_item.downgrade())
                     {
@@ -1401,19 +1392,16 @@ impl BufferSearchBar {
                         }
                         should_propagate = false;
                     }
-                }
-            }
-        }
         if !should_propagate {
             cx.stop_propagation();
         }
     }
 
     pub fn replace_all(&mut self, _: &ReplaceAll, window: &mut Window, cx: &mut Context<Self>) {
-        if !self.dismissed && self.active_search.is_some() {
-            if let Some(searchable_item) = self.active_searchable_item.as_ref() {
-                if let Some(query) = self.active_search.as_ref() {
-                    if let Some(matches) = self
+        if !self.dismissed && self.active_search.is_some()
+            && let Some(searchable_item) = self.active_searchable_item.as_ref()
+                && let Some(query) = self.active_search.as_ref()
+                    && let Some(matches) = self
                         .searchable_items_with_matches
                         .get(&searchable_item.downgrade())
                     {
@@ -1423,9 +1411,6 @@ impl BufferSearchBar {
                             .with_replacement(self.replacement(cx));
                         searchable_item.replace_all(&mut matches.iter(), &query, window, cx);
                     }
-                }
-            }
-        }
     }
 
     pub fn match_exists(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {

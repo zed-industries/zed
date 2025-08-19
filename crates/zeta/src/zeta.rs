@@ -836,13 +836,11 @@ and then another
                 .headers()
                 .get(MINIMUM_REQUIRED_VERSION_HEADER_NAME)
                 .and_then(|version| SemanticVersion::from_str(version.to_str().ok()?).ok())
-            {
-                if app_version < minimum_required_version {
+                && app_version < minimum_required_version {
                     return Err(anyhow!(ZedUpdateRequiredError {
                         minimum_version: minimum_required_version
                     }));
                 }
-            }
 
             if response.status().is_success() {
                 if let Some(usage) = EditPredictionUsage::from_headers(response.headers()).ok() {

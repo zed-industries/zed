@@ -299,14 +299,12 @@ impl DebugTaskFile {
             if let Some(properties) = template_object
                 .get_mut("properties")
                 .and_then(|value| value.as_object_mut())
-            {
-                if properties.remove("label").is_none() {
+                && properties.remove("label").is_none() {
                     debug_panic!(
                         "Generated TaskTemplate json schema did not have expected 'label' field. \
                         Schema of 2nd alternative is: {template_object:?}"
                     );
                 }
-            }
 
             if let Some(arr) = template_object
                 .get_mut("required")

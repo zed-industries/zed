@@ -608,8 +608,7 @@ impl Copilot {
                                                 sign_in_status: status,
                                                 ..
                                             }) = &mut this.server
-                                            {
-                                                if let SignInStatus::SigningIn {
+                                                && let SignInStatus::SigningIn {
                                                     prompt: prompt_flow,
                                                     ..
                                                 } = status
@@ -617,7 +616,6 @@ impl Copilot {
                                                     *prompt_flow = Some(flow.clone());
                                                     cx.notify();
                                                 }
-                                            }
                                         })?;
                                         let response = lsp
                                             .request::<request::SignInConfirm>(
@@ -782,8 +780,8 @@ impl Copilot {
         event: &language::BufferEvent,
         cx: &mut Context<Self>,
     ) -> Result<()> {
-        if let Ok(server) = self.server.as_running() {
-            if let Some(registered_buffer) = server.registered_buffers.get_mut(&buffer.entity_id())
+        if let Ok(server) = self.server.as_running()
+            && let Some(registered_buffer) = server.registered_buffers.get_mut(&buffer.entity_id())
             {
                 match event {
                     language::BufferEvent::Edited => {
@@ -836,14 +834,13 @@ impl Copilot {
                     _ => {}
                 }
             }
-        }
 
         Ok(())
     }
 
     fn unregister_buffer(&mut self, buffer: &WeakEntity<Buffer>) {
-        if let Ok(server) = self.server.as_running() {
-            if let Some(buffer) = server.registered_buffers.remove(&buffer.entity_id()) {
+        if let Ok(server) = self.server.as_running()
+            && let Some(buffer) = server.registered_buffers.remove(&buffer.entity_id()) {
                 server
                     .lsp
                     .notify::<lsp::notification::DidCloseTextDocument>(
@@ -853,7 +850,6 @@ impl Copilot {
                     )
                     .ok();
             }
-        }
     }
 
     pub fn completions<T>(

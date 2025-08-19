@@ -289,8 +289,8 @@ fn parse_git_blame(output: &str) -> Result<Vec<BlameEntry>> {
             }
         };
 
-        if done {
-            if let Some(entry) = current_entry.take() {
+        if done
+            && let Some(entry) = current_entry.take() {
                 index.insert(entry.sha, entries.len());
 
                 // We only want annotations that have a commit.
@@ -298,7 +298,6 @@ fn parse_git_blame(output: &str) -> Result<Vec<BlameEntry>> {
                     entries.push(entry);
                 }
             }
-        }
     }
 
     Ok(entries)

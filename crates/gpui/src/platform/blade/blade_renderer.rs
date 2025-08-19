@@ -434,8 +434,8 @@ impl BladeRenderer {
     }
 
     fn wait_for_gpu(&mut self) {
-        if let Some(last_sp) = self.last_sync_point.take() {
-            if !self.gpu.wait_for(&last_sp, MAX_FRAME_TIME_MS) {
+        if let Some(last_sp) = self.last_sync_point.take()
+            && !self.gpu.wait_for(&last_sp, MAX_FRAME_TIME_MS) {
                 log::error!("GPU hung");
                 #[cfg(target_os = "linux")]
                 if self.gpu.device_information().driver_name == "radv" {
@@ -452,7 +452,6 @@ impl BladeRenderer {
                 );
                 while !self.gpu.wait_for(&last_sp, MAX_FRAME_TIME_MS) {}
             }
-        }
     }
 
     pub fn update_drawable_size(&mut self, size: Size<DevicePixels>) {

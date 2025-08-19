@@ -379,8 +379,8 @@ impl SummaryIndex {
                     | project::PathChange::Added
                     | project::PathChange::Updated
                     | project::PathChange::AddedOrUpdated => {
-                        if let Some(entry) = worktree.entry_for_id(*entry_id) {
-                            if entry.is_file() {
+                        if let Some(entry) = worktree.entry_for_id(*entry_id)
+                            && entry.is_file() {
                                 let needs_summary = Self::add_to_backlog(
                                     Arc::clone(&backlog),
                                     digest_db,
@@ -392,7 +392,6 @@ impl SummaryIndex {
                                     tx.send(needs_summary).await?;
                                 }
                             }
-                        }
                     }
                     project::PathChange::Removed => {
                         let _db_path = db_key_for_path(path);

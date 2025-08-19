@@ -1478,8 +1478,8 @@ extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: 
                 return YES;
             }
 
-            if key_down_event.is_held {
-                if let Some(key_char) = key_down_event.keystroke.key_char.as_ref() {
+            if key_down_event.is_held
+                && let Some(key_char) = key_down_event.keystroke.key_char.as_ref() {
                     let handled = with_input_handler(this, |input_handler| {
                         if !input_handler.apple_press_and_hold_enabled() {
                             input_handler.replace_text_in_range(None, key_char);
@@ -1491,7 +1491,6 @@ extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: 
                         return YES;
                     }
                 }
-            }
 
             // Don't send key equivalents to the input handler,
             // or macOS shortcuts like cmd-` will stop working.
@@ -1624,11 +1623,9 @@ extern "C" fn handle_view_event(this: &Object, _: Sel, native_event: id) {
                     modifiers: prev_modifiers,
                     capslock: prev_capslock,
                 })) = &lock.previous_modifiers_changed_event
-                {
-                    if prev_modifiers == modifiers && prev_capslock == capslock {
+                    && prev_modifiers == modifiers && prev_capslock == capslock {
                         return;
                     }
-                }
 
                 lock.previous_modifiers_changed_event = Some(event.clone());
             }
@@ -1995,11 +1992,10 @@ extern "C" fn attributed_substring_for_proposed_range(
         let mut adjusted: Option<Range<usize>> = None;
 
         let selected_text = input_handler.text_for_range(range.clone(), &mut adjusted)?;
-        if let Some(adjusted) = adjusted {
-            if adjusted != range {
+        if let Some(adjusted) = adjusted
+            && adjusted != range {
                 unsafe { (actual_range as *mut NSRange).write(NSRange::from(adjusted)) };
             }
-        }
         unsafe {
             let string: id = msg_send![class!(NSAttributedString), alloc];
             let string: id = msg_send![string, initWithString: ns_string(&selected_text)];
@@ -2073,12 +2069,10 @@ extern "C" fn dragging_entered(this: &Object, _: Sel, dragging_info: id) -> NSDr
     let paths = external_paths_from_event(dragging_info);
     if let Some(event) =
         paths.map(|paths| PlatformInput::FileDrop(FileDropEvent::Entered { position, paths }))
-    {
-        if send_new_event(&window_state, event) {
+        && send_new_event(&window_state, event) {
             window_state.lock().external_files_dragged = true;
             return NSDragOperationCopy;
         }
-    }
     NSDragOperationNone
 }
 

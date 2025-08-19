@@ -340,8 +340,8 @@ impl Markdown {
             }
 
             for (range, event) in &events {
-                if let MarkdownEvent::Start(MarkdownTag::Image { dest_url, .. }) = event {
-                    if let Some(data_url) = dest_url.strip_prefix("data:") {
+                if let MarkdownEvent::Start(MarkdownTag::Image { dest_url, .. }) = event
+                    && let Some(data_url) = dest_url.strip_prefix("data:") {
                         let Some((mime_info, data)) = data_url.split_once(',') else {
                             continue;
                         };
@@ -352,17 +352,15 @@ impl Markdown {
                             continue;
                         };
                         let is_base64 = encoding == "base64";
-                        if is_base64 {
-                            if let Some(bytes) = base64::prelude::BASE64_STANDARD
+                        if is_base64
+                            && let Some(bytes) = base64::prelude::BASE64_STANDARD
                                 .decode(data)
                                 .log_with_level(Level::Debug)
                             {
                                 let image = Arc::new(Image::from_bytes(format, bytes));
                                 images_by_source_offset.insert(range.start, image);
                             }
-                        }
                     }
-                }
             }
 
             (
@@ -659,15 +657,14 @@ impl MarkdownElement {
             let rendered_text = rendered_text.clone();
             move |markdown, event: &MouseUpEvent, phase, window, cx| {
                 if phase.bubble() {
-                    if let Some(pressed_link) = markdown.pressed_link.take() {
-                        if Some(&pressed_link) == rendered_text.link_for_position(event.position) {
+                    if let Some(pressed_link) = markdown.pressed_link.take()
+                        && Some(&pressed_link) == rendered_text.link_for_position(event.position) {
                             if let Some(open_url) = on_open_url.as_ref() {
                                 open_url(pressed_link.destination_url, window, cx);
                             } else {
                                 cx.open_url(&pressed_link.destination_url);
                             }
                         }
-                    }
                 } else if markdown.selection.pending {
                     markdown.selection.pending = false;
                     #[cfg(any(target_os = "linux", target_os = "freebsd"))]
@@ -758,11 +755,10 @@ impl Element for MarkdownElement {
         let mut current_img_block_range: Option<Range<usize>> = None;
         for (range, event) in parsed_markdown.events.iter() {
             // Skip alt text for images that rendered
-            if let Some(current_img_block_range) = &current_img_block_range {
-                if current_img_block_range.end > range.end {
+            if let Some(current_img_block_range) = &current_img_block_range
+                && current_img_block_range.end > range.end {
                     continue;
                 }
-            }
 
             match event {
                 MarkdownEvent::Start(tag) => {
@@ -1696,11 +1692,10 @@ impl RenderedText {
         while let Some(line) = lines.next() {
             let line_bounds = line.layout.bounds();
             if position.y > line_bounds.bottom() {
-                if let Some(next_line) = lines.peek() {
-                    if position.y < next_line.layout.bounds().top() {
+                if let Some(next_line) = lines.peek()
+                    && position.y < next_line.layout.bounds().top() {
                         return Err(line.source_end);
                     }
-                }
 
                 continue;
             }

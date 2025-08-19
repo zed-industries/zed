@@ -213,8 +213,8 @@ impl Connection {
 
 fn parse_alter_table(remaining_sql_str: &str) -> Option<(String, String)> {
     let remaining_sql_str = remaining_sql_str.to_lowercase();
-    if remaining_sql_str.starts_with("alter") {
-        if let Some(table_offset) = remaining_sql_str.find("table") {
+    if remaining_sql_str.starts_with("alter")
+        && let Some(table_offset) = remaining_sql_str.find("table") {
             let after_table_offset = table_offset + "table".len();
             let table_to_alter = remaining_sql_str
                 .chars()
@@ -246,7 +246,6 @@ fn parse_alter_table(remaining_sql_str: &str) -> Option<(String, String)> {
                 return Some((table_to_alter, column_name));
             }
         }
-    }
     None
 }
 

@@ -489,8 +489,8 @@ impl CompletionSource {
             ..
         } = self
         {
-            if apply_defaults {
-                if let Some(lsp_defaults) = lsp_defaults {
+            if apply_defaults
+                && let Some(lsp_defaults) = lsp_defaults {
                     let mut completion_with_defaults = *lsp_completion.clone();
                     let default_commit_characters = lsp_defaults.commit_characters.as_ref();
                     let default_edit_range = lsp_defaults.edit_range.as_ref();
@@ -550,7 +550,6 @@ impl CompletionSource {
                     }
                     return Some(Cow::Owned(completion_with_defaults));
                 }
-            }
             Some(Cow::Borrowed(lsp_completion))
         } else {
             None
@@ -2755,12 +2754,11 @@ impl Project {
                         operations,
                     }))
                 })?;
-                if let Some(request) = request {
-                    if request.await.is_err() && !is_local {
+                if let Some(request) = request
+                    && request.await.is_err() && !is_local {
                         *needs_resync_with_host = true;
                         break;
                     }
-                }
             }
             Ok(())
         }
@@ -3939,11 +3937,9 @@ impl Project {
                     if let Some(entry) = b
                         .entry_id(cx)
                         .and_then(|entry_id| worktree_store.entry_for_id(entry_id, cx))
-                    {
-                        if entry.is_ignored && !search_query.include_ignored() {
+                        && entry.is_ignored && !search_query.include_ignored() {
                             return false;
                         }
-                    }
                 }
                 true
             })
@@ -4151,12 +4147,11 @@ impl Project {
     ) -> Task<Option<ResolvedPath>> {
         let mut candidates = vec![path.clone()];
 
-        if let Some(file) = buffer.read(cx).file() {
-            if let Some(dir) = file.path().parent() {
+        if let Some(file) = buffer.read(cx).file()
+            && let Some(dir) = file.path().parent() {
                 let joined = dir.to_path_buf().join(path);
                 candidates.push(joined);
             }
-        }
 
         let buffer_worktree_id = buffer.read(cx).file().map(|file| file.worktree_id(cx));
         let worktrees_with_ids: Vec<_> = self
@@ -4168,8 +4163,8 @@ impl Project {
             .collect();
 
         cx.spawn(async move |_, cx| {
-            if let Some(buffer_worktree_id) = buffer_worktree_id {
-                if let Some((worktree, _)) = worktrees_with_ids
+            if let Some(buffer_worktree_id) = buffer_worktree_id
+                && let Some((worktree, _)) = worktrees_with_ids
                     .iter()
                     .find(|(_, id)| *id == buffer_worktree_id)
                 {
@@ -4180,7 +4175,6 @@ impl Project {
                         }
                     }
                 }
-            }
             for (worktree, id) in worktrees_with_ids {
                 if Some(id) == buffer_worktree_id {
                     continue;

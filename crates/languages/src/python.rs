@@ -338,8 +338,8 @@ impl LspAdapter for PythonLspAdapter {
                 let interpreter_path = toolchain.path.to_string();
 
                 // Detect if this is a virtual environment
-                if let Some(interpreter_dir) = Path::new(&interpreter_path).parent() {
-                    if let Some(venv_dir) = interpreter_dir.parent() {
+                if let Some(interpreter_dir) = Path::new(&interpreter_path).parent()
+                    && let Some(venv_dir) = interpreter_dir.parent() {
                         // Check if this looks like a virtual environment
                         if venv_dir.join("pyvenv.cfg").exists()
                             || venv_dir.join("bin/activate").exists()
@@ -365,7 +365,6 @@ impl LspAdapter for PythonLspAdapter {
                             }
                         }
                     }
-                }
 
                 // Always set the python interpreter path
                 // Get or create the python section
@@ -1519,8 +1518,8 @@ impl LspAdapter for BasedPyrightLspAdapter {
                 let interpreter_path = toolchain.path.to_string();
 
                 // Detect if this is a virtual environment
-                if let Some(interpreter_dir) = Path::new(&interpreter_path).parent() {
-                    if let Some(venv_dir) = interpreter_dir.parent() {
+                if let Some(interpreter_dir) = Path::new(&interpreter_path).parent()
+                    && let Some(venv_dir) = interpreter_dir.parent() {
                         // Check if this looks like a virtual environment
                         if venv_dir.join("pyvenv.cfg").exists()
                             || venv_dir.join("bin/activate").exists()
@@ -1546,7 +1545,6 @@ impl LspAdapter for BasedPyrightLspAdapter {
                             }
                         }
                     }
-                }
 
                 // Always set the python interpreter path
                 // Get or create the python section

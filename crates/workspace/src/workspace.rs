@@ -1345,8 +1345,8 @@ impl Workspace {
                         .timer(Duration::from_millis(100))
                         .await;
                     this.update_in(cx, |this, window, cx| {
-                        if let Some(display) = window.display(cx) {
-                            if let Ok(display_uuid) = display.uuid() {
+                        if let Some(display) = window.display(cx)
+                            && let Ok(display_uuid) = display.uuid() {
                                 let window_bounds = window.inner_window_bounds();
                                 if let Some(database_id) = workspace_id {
                                     cx.background_executor()
@@ -1358,7 +1358,6 @@ impl Workspace {
                                         .detach_and_log_err(cx);
                                 }
                             }
-                        }
                         this.bounds_save_task_queued.take();
                     })
                     .ok();
@@ -1729,14 +1728,12 @@ impl Workspace {
             let item_map: HashMap<EntityId, &Box<dyn ItemHandle>> =
                 pane.items().map(|item| (item.item_id(), item)).collect();
             for entry in pane.activation_history() {
-                if entry.timestamp > recent_timestamp {
-                    if let Some(&item) = item_map.get(&entry.entity_id) {
-                        if let Some(typed_item) = item.act_as::<T>(cx) {
+                if entry.timestamp > recent_timestamp
+                    && let Some(&item) = item_map.get(&entry.entity_id)
+                        && let Some(typed_item) = item.act_as::<T>(cx) {
                             recent_timestamp = entry.timestamp;
                             recent_item = Some(typed_item);
                         }
-                    }
-                }
             }
         }
         recent_item
@@ -1774,8 +1771,8 @@ impl Workspace {
                     }
                 });
 
-            if let Some(item) = pane.active_item() {
-                if let Some(project_path) = item.project_path(cx) {
+            if let Some(item) = pane.active_item()
+                && let Some(project_path) = item.project_path(cx) {
                     let fs_path = self.project.read(cx).absolute_path(&project_path, cx);
 
                     if let Some(fs_path) = &fs_path {
@@ -1787,7 +1784,6 @@ impl Workspace {
 
                     history.insert(project_path, (fs_path, std::usize::MAX));
                 }
-            }
         }
 
         history
@@ -2250,8 +2246,8 @@ impl Workspace {
                     .count()
             })?;
 
-            if let Some(active_call) = active_call {
-                if close_intent != CloseIntent::Quit
+            if let Some(active_call) = active_call
+                && close_intent != CloseIntent::Quit
                     && workspace_count == 1
                     && active_call.read_with(cx, |call, _| call.room().is_some())?
                 {
@@ -2274,7 +2270,6 @@ impl Workspace {
                             .log_err();
                     }
                 }
-            }
 
             let save_result = this
                 .update_in(cx, |this, window, cx| {
@@ -2448,11 +2443,10 @@ impl Workspace {
             for (pane, item) in dirty_items {
                 let (singleton, project_entry_ids) =
                     cx.update(|_, cx| (item.is_singleton(cx), item.project_entry_ids(cx)))?;
-                if singleton || !project_entry_ids.is_empty() {
-                    if !Pane::save_item(project.clone(), &pane, &*item, save_intent, cx).await? {
+                if (singleton || !project_entry_ids.is_empty())
+                    && !Pane::save_item(project.clone(), &pane, &*item, save_intent, cx).await? {
                         return Ok(false);
                     }
-                }
             }
             Ok(true)
         })
@@ -3080,15 +3074,13 @@ impl Workspace {
         let mut focus_center = false;
         for dock in self.all_docks() {
             dock.update(cx, |dock, cx| {
-                if Some(dock.position()) != dock_to_reveal {
-                    if let Some(panel) = dock.active_panel() {
-                        if panel.is_zoomed(window, cx) {
+                if Some(dock.position()) != dock_to_reveal
+                    && let Some(panel) = dock.active_panel()
+                        && panel.is_zoomed(window, cx) {
                             focus_center |=
                                 panel.panel_focus_handle(cx).contains_focused(window, cx);
                             dock.set_open(false, window, cx);
                         }
-                    }
-                }
             });
         }
 
@@ -3328,11 +3320,10 @@ impl Workspace {
                 .downgrade()
         });
 
-        if let Member::Pane(center_pane) = &self.center.root {
-            if center_pane.read(cx).items_len() == 0 {
+        if let Member::Pane(center_pane) = &self.center.root
+            && center_pane.read(cx).items_len() == 0 {
                 return self.open_path(path, Some(pane), true, window, cx);
             }
-        }
 
         let project_path = path.into();
         let task = self.load_path(project_path.clone(), window, cx);
@@ -3393,11 +3384,10 @@ impl Workspace {
         if let Some(entry_id) = entry_id {
             item = pane.read(cx).item_for_entry(entry_id, cx);
         }
-        if item.is_none() {
-            if let Some(project_path) = project_path {
+        if item.is_none()
+            && let Some(project_path) = project_path {
                 item = pane.read(cx).item_for_path(project_path, cx);
             }
-        }
 
         item.and_then(|item| item.downcast::<T>())
     }
@@ -3440,13 +3430,11 @@ impl Workspace {
         let item_id = item.item_id();
         let mut destination_index = None;
         pane.update(cx, |pane, cx| {
-            if PreviewTabsSettings::get_global(cx).enable_preview_from_code_navigation {
-                if let Some(preview_item_id) = pane.preview_item_id() {
-                    if preview_item_id != item_id {
+            if PreviewTabsSettings::get_global(cx).enable_preview_from_code_navigation
+                && let Some(preview_item_id) = pane.preview_item_id()
+                    && preview_item_id != item_id {
                         destination_index = pane.close_current_preview_item(window, cx);
                     }
-                }
-            }
             pane.set_preview_item_id(Some(item.item_id()), cx)
         });
 
@@ -3912,11 +3900,10 @@ impl Workspace {
             pane::Event::RemovedItem { item } => {
                 cx.emit(Event::ActiveItemChanged);
                 self.update_window_edited(window, cx);
-                if let hash_map::Entry::Occupied(entry) = self.panes_by_item.entry(item.item_id()) {
-                    if entry.get().entity_id() == pane.entity_id() {
+                if let hash_map::Entry::Occupied(entry) = self.panes_by_item.entry(item.item_id())
+                    && entry.get().entity_id() == pane.entity_id() {
                         entry.remove();
                     }
-                }
             }
             pane::Event::Focus => {
                 window.invalidate_character_coordinates();
@@ -4105,15 +4092,14 @@ impl Workspace {
 
     pub fn focused_pane(&self, window: &Window, cx: &App) -> Entity<Pane> {
         for dock in self.all_docks() {
-            if dock.focus_handle(cx).contains_focused(window, cx) {
-                if let Some(pane) = dock
+            if dock.focus_handle(cx).contains_focused(window, cx)
+                && let Some(pane) = dock
                     .read(cx)
                     .active_panel()
                     .and_then(|panel| panel.pane(cx))
                 {
                     return pane;
                 }
-            }
         }
         self.active_pane().clone()
     }
@@ -4393,11 +4379,10 @@ impl Workspace {
             title.push_str(" ↗");
         }
 
-        if let Some(last_title) = self.last_window_title.as_ref() {
-            if &title == last_title {
+        if let Some(last_title) = self.last_window_title.as_ref()
+            && &title == last_title {
                 return;
             }
-        }
         window.set_window_title(&title);
         self.last_window_title = Some(title);
     }
@@ -4575,11 +4560,10 @@ impl Workspace {
                     }
                 })??;
 
-                if should_add_view {
-                    if let Some(view) = update_active_view.view {
+                if should_add_view
+                    && let Some(view) = update_active_view.view {
                         Self::add_view_from_leader(this.clone(), leader_id, &view, cx).await?
                     }
-                }
             }
             proto::update_followers::Variant::UpdateView(update_view) => {
                 let variant = update_view.variant.context("missing update view variant")?;
@@ -4774,8 +4758,8 @@ impl Workspace {
         if window.is_window_active() {
             let (active_item, panel_id) = self.active_item_for_followers(window, cx);
 
-            if let Some(item) = active_item {
-                if item.item_focus_handle(cx).contains_focused(window, cx) {
+            if let Some(item) = active_item
+                && item.item_focus_handle(cx).contains_focused(window, cx) {
                     let leader_id = self
                         .pane_for(&*item)
                         .and_then(|pane| self.leader_for_pane(&pane));
@@ -4789,8 +4773,8 @@ impl Workspace {
                             .remote_id(&self.app_state.client, window, cx)
                             .map(|id| id.to_proto());
 
-                        if let Some(id) = id {
-                            if let Some(variant) = item.to_state_proto(window, cx) {
+                        if let Some(id) = id
+                            && let Some(variant) = item.to_state_proto(window, cx) {
                                 let view = Some(proto::View {
                                     id: id.clone(),
                                     leader_id: leader_peer_id,
@@ -4805,11 +4789,9 @@ impl Workspace {
                                     id,
                                     leader_id: leader_peer_id,
                                 };
-                            }
-                        };
+                            };
                     }
                 }
-            }
         }
 
         let active_view_id = update.view.as_ref().and_then(|view| view.id.as_ref());
@@ -4832,17 +4814,14 @@ impl Workspace {
         let mut active_item = None;
         let mut panel_id = None;
         for dock in self.all_docks() {
-            if dock.focus_handle(cx).contains_focused(window, cx) {
-                if let Some(panel) = dock.read(cx).active_panel() {
-                    if let Some(pane) = panel.pane(cx) {
-                        if let Some(item) = pane.read(cx).active_item() {
+            if dock.focus_handle(cx).contains_focused(window, cx)
+                && let Some(panel) = dock.read(cx).active_panel()
+                    && let Some(pane) = panel.pane(cx)
+                        && let Some(item) = pane.read(cx).active_item() {
                             active_item = Some(item);
                             panel_id = panel.remote_id();
                             break;
                         }
-                    }
-                }
-            }
         }
 
         if active_item.is_none() {
@@ -4969,11 +4948,10 @@ impl Workspace {
         let state = self.follower_states.get(&peer_id.into())?;
         let mut item_to_activate = None;
         if let (Some(active_view_id), true) = (state.active_view_id, leader_in_this_app) {
-            if let Some(item) = state.items_by_leader_view_id.get(&active_view_id) {
-                if leader_in_this_project || !item.view.is_project_item(window, cx) {
+            if let Some(item) = state.items_by_leader_view_id.get(&active_view_id)
+                && (leader_in_this_project || !item.view.is_project_item(window, cx)) {
                     item_to_activate = Some((item.location, item.view.boxed_clone()));
                 }
-            }
         } else if let Some(shared_screen) =
             self.shared_screen_for_peer(peer_id, &state.center_pane, window, cx)
         {
@@ -6079,11 +6057,10 @@ fn open_items(
             project_paths_to_open
                 .iter_mut()
                 .for_each(|(_, project_path)| {
-                    if let Some(project_path_to_open) = project_path {
-                        if restored_project_paths.contains(project_path_to_open) {
+                    if let Some(project_path_to_open) = project_path
+                        && restored_project_paths.contains(project_path_to_open) {
                             *project_path = None;
                         }
-                    }
                 });
         } else {
             for _ in 0..project_paths_to_open.len() {
@@ -6109,8 +6086,8 @@ fn open_items(
                         // We only want to open file paths here. If one of the items
                         // here is a directory, it was already opened further above
                         // with a `find_or_create_worktree`.
-                        if let Ok(task) = abs_path_task {
-                            if task.await.map_or(true, |p| p.is_file()) {
+                        if let Ok(task) = abs_path_task
+                            && task.await.map_or(true, |p| p.is_file()) {
                                 return Some((
                                     ix,
                                     workspace
@@ -6127,7 +6104,6 @@ fn open_items(
                                         .await,
                                 ));
                             }
-                        }
                         None
                     })
                 });
@@ -6728,11 +6704,10 @@ impl WorkspaceStore {
                     .update(cx, |workspace, window, cx| {
                         let handler_response =
                             workspace.handle_follow(follower.project_id, window, cx);
-                        if let Some(active_view) = handler_response.active_view.clone() {
-                            if workspace.project.read(cx).remote_id() == follower.project_id {
+                        if let Some(active_view) = handler_response.active_view.clone()
+                            && workspace.project.read(cx).remote_id() == follower.project_id {
                                 response.active_view = Some(active_view)
                             }
-                        }
                     })
                     .is_ok()
             });
@@ -6965,8 +6940,8 @@ async fn join_channel_internal(
         }
 
         // If you are the first to join a channel, see if you should share your project.
-        if room.remote_participants().is_empty() && !room.local_participant_is_guest() {
-            if let Some(workspace) = requesting_window {
+        if room.remote_participants().is_empty() && !room.local_participant_is_guest()
+            && let Some(workspace) = requesting_window {
                 let project = workspace.update(cx, |workspace, _, cx| {
                     let project = workspace.project.read(cx);
 
@@ -6994,7 +6969,6 @@ async fn join_channel_internal(
                     }));
                 }
             }
-        }
 
         None
     })?;
@@ -7189,14 +7163,13 @@ pub fn open_paths(
                 }
             })?;
 
-            if open_options.open_new_workspace.is_none() && existing.is_none() {
-                if all_metadatas.iter().all(|file| !file.is_dir) {
+            if open_options.open_new_workspace.is_none() && existing.is_none()
+                && all_metadatas.iter().all(|file| !file.is_dir) {
                     cx.update(|cx| {
                         if let Some(window) = cx
                             .active_window()
                             .and_then(|window| window.downcast::<Workspace>())
-                        {
-                            if let Ok(workspace) = window.read(cx) {
+                            && let Ok(workspace) = window.read(cx) {
                                 let project = workspace.project().read(cx);
                                 if project.is_local() && !project.is_via_collab() {
                                     existing = Some(window);
@@ -7204,7 +7177,6 @@ pub fn open_paths(
                                     return;
                                 }
                             }
-                        }
                         for window in local_workspace_windows(cx) {
                             if let Ok(workspace) = window.read(cx) {
                                 let project = workspace.project().read(cx);
@@ -7218,7 +7190,6 @@ pub fn open_paths(
                         }
                     })?;
                 }
-            }
         }
 
         if let Some(existing) = existing {
@@ -7651,11 +7622,10 @@ pub fn reload(cx: &mut App) {
         for window in workspace_windows {
             if let Ok(should_close) = window.update(cx, |workspace, window, cx| {
                 workspace.prepare_to_close(CloseIntent::Quit, window, cx)
-            }) {
-                if !should_close.await? {
+            })
+                && !should_close.await? {
                     return Ok(());
                 }
-            }
         }
         cx.update(|cx| cx.restart())
     })

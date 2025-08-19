@@ -41,11 +41,9 @@ impl Watcher for MacWatcher {
         if let Some((watched_path, _)) = handles
             .range::<Path, _>((Bound::Unbounded, Bound::Included(path)))
             .next_back()
-        {
-            if path.starts_with(watched_path) {
+            && path.starts_with(watched_path) {
                 return Ok(());
             }
-        }
 
         let (stream, handle) = EventStream::new(&[path], self.latency);
         let tx = self.events_tx.clone();

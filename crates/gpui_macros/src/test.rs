@@ -152,8 +152,8 @@ fn generate_test_function(
                         }
                         _ => {}
                     }
-                } else if let Type::Reference(ty) = &*arg.ty {
-                    if let Type::Path(ty) = &*ty.elem {
+                } else if let Type::Reference(ty) = &*arg.ty
+                    && let Type::Path(ty) = &*ty.elem {
                         let last_segment = ty.path.segments.last();
                         if let Some("TestAppContext") =
                             last_segment.map(|s| s.ident.to_string()).as_deref()
@@ -175,7 +175,6 @@ fn generate_test_function(
                             continue;
                         }
                     }
-                }
             }
 
             return Err(error_with_message("invalid function signature", arg));
@@ -215,8 +214,8 @@ fn generate_test_function(
                         inner_fn_args.extend(quote!(rand::SeedableRng::seed_from_u64(_seed),));
                         continue;
                     }
-                } else if let Type::Reference(ty) = &*arg.ty {
-                    if let Type::Path(ty) = &*ty.elem {
+                } else if let Type::Reference(ty) = &*arg.ty
+                    && let Type::Path(ty) = &*ty.elem {
                         let last_segment = ty.path.segments.last();
                         match last_segment.map(|s| s.ident.to_string()).as_deref() {
                             Some("App") => {
@@ -258,7 +257,6 @@ fn generate_test_function(
                             _ => {}
                         }
                     }
-                }
             }
 
             return Err(error_with_message("invalid function signature", arg));

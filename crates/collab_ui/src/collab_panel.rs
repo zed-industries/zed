@@ -311,11 +311,10 @@ impl CollabPanel {
                 window,
                 |this: &mut Self, _, event, window, cx| {
                     if let editor::EditorEvent::Blurred = event {
-                        if let Some(state) = &this.channel_editing_state {
-                            if state.pending_name().is_some() {
+                        if let Some(state) = &this.channel_editing_state
+                            && state.pending_name().is_some() {
                                 return;
                             }
-                        }
                         this.take_editing_state(window, cx);
                         this.update_entries(false, cx);
                         cx.notify();
@@ -491,12 +490,11 @@ impl CollabPanel {
             if !self.collapsed_sections.contains(&Section::ActiveCall) {
                 let room = room.read(cx);
 
-                if query.is_empty() {
-                    if let Some(channel_id) = room.channel_id() {
+                if query.is_empty()
+                    && let Some(channel_id) = room.channel_id() {
                         self.entries.push(ListEntry::ChannelNotes { channel_id });
                         self.entries.push(ListEntry::ChannelChat { channel_id });
                     }
-                }
 
                 // Populate the active user.
                 if let Some(user) = user_store.current_user() {
@@ -639,11 +637,10 @@ impl CollabPanel {
                 &Default::default(),
                 executor.clone(),
             ));
-            if let Some(state) = &self.channel_editing_state {
-                if matches!(state, ChannelEditingState::Create { location: None, .. }) {
+            if let Some(state) = &self.channel_editing_state
+                && matches!(state, ChannelEditingState::Create { location: None, .. }) {
                     self.entries.push(ListEntry::ChannelEditor { depth: 0 });
                 }
-            }
             let mut collapse_depth = None;
             for mat in matches {
                 let channel = channel_store.channel_at_index(mat.candidate_id).unwrap();
@@ -1552,8 +1549,8 @@ impl CollabPanel {
             return;
         }
 
-        if let Some(selection) = self.selection {
-            if let Some(entry) = self.entries.get(selection) {
+        if let Some(selection) = self.selection
+            && let Some(entry) = self.entries.get(selection) {
                 match entry {
                     ListEntry::Header(section) => match section {
                         Section::ActiveCall => Self::leave_call(window, cx),
@@ -1645,7 +1642,6 @@ impl CollabPanel {
                     ListEntry::ChannelEditor { .. } => {}
                 }
             }
-        }
     }
 
     fn insert_space(&mut self, _: &InsertSpace, window: &mut Window, cx: &mut Context<Self>) {

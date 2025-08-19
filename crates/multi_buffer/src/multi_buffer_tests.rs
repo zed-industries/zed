@@ -3592,9 +3592,9 @@ fn assert_position_translation(snapshot: &MultiBufferSnapshot) {
 
     for (anchors, bias) in [(&left_anchors, Bias::Left), (&right_anchors, Bias::Right)] {
         for (ix, (offset, anchor)) in offsets.iter().zip(anchors).enumerate() {
-            if ix > 0 {
-                if *offset == 252 {
-                    if offset > &offsets[ix - 1] {
+            if ix > 0
+                && *offset == 252
+                    && offset > &offsets[ix - 1] {
                         let prev_anchor = left_anchors[ix - 1];
                         assert!(
                             anchor.cmp(&prev_anchor, snapshot).is_gt(),
@@ -3609,8 +3609,6 @@ fn assert_position_translation(snapshot: &MultiBufferSnapshot) {
                             offsets[ix],
                         );
                     }
-                }
-            }
         }
     }
 

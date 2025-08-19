@@ -446,11 +446,10 @@ impl History {
     }
 
     fn merge_transactions(&mut self, transaction: TransactionId, destination: TransactionId) {
-        if let Some(transaction) = self.forget(transaction) {
-            if let Some(destination) = self.transaction_mut(destination) {
+        if let Some(transaction) = self.forget(transaction)
+            && let Some(destination) = self.transaction_mut(destination) {
                 destination.edit_ids.extend(transaction.edit_ids);
             }
-        }
     }
 
     fn pop_redo(&mut self) -> Option<&HistoryEntry> {
@@ -1585,12 +1584,11 @@ impl Buffer {
             .map(Some)
             .chain([None])
             .filter_map(move |range| {
-                if let Some((range, prev_range)) = range.as_ref().zip(prev_range.as_mut()) {
-                    if prev_range.end == range.start {
+                if let Some((range, prev_range)) = range.as_ref().zip(prev_range.as_mut())
+                    && prev_range.end == range.start {
                         prev_range.end = range.end;
                         return None;
                     }
-                }
                 let result = prev_range.clone();
                 prev_range = range;
                 result
@@ -1685,11 +1683,10 @@ impl Buffer {
             rx = Some(channel.1);
         }
         async move {
-            if let Some(mut rx) = rx {
-                if rx.recv().await.is_none() {
+            if let Some(mut rx) = rx
+                && rx.recv().await.is_none() {
                     anyhow::bail!("gave up waiting for version");
                 }
-            }
             Ok(())
         }
     }

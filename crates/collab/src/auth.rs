@@ -79,8 +79,8 @@ pub async fn validate_header<B>(mut req: Request<B>, next: Next<B>) -> impl Into
         verify_access_token(access_token, user_id, &state.db).await
     };
 
-    if let Ok(validate_result) = validate_result {
-        if validate_result.is_valid {
+    if let Ok(validate_result) = validate_result
+        && validate_result.is_valid {
             let user = state
                 .db
                 .get_user_by_id(user_id)
@@ -100,7 +100,6 @@ pub async fn validate_header<B>(mut req: Request<B>, next: Next<B>) -> impl Into
             };
             return Ok::<_, Error>(next.run(req).await);
         }
-    }
 
     Err(Error::http(
         StatusCode::UNAUTHORIZED,

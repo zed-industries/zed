@@ -343,11 +343,10 @@ impl NewProcessModal {
             return;
         }
 
-        if let NewProcessMode::Launch = &self.mode {
-            if self.configure_mode.read(cx).save_to_debug_json.selected() {
+        if let NewProcessMode::Launch = &self.mode
+            && self.configure_mode.read(cx).save_to_debug_json.selected() {
                 self.save_debug_scenario(window, cx);
             }
-        }
 
         let Some(debugger) = self.debugger.clone() else {
             return;

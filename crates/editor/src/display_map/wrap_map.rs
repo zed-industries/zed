@@ -249,8 +249,8 @@ impl WrapMap {
             return;
         }
 
-        if let Some(wrap_width) = self.wrap_width {
-            if self.background_task.is_none() {
+        if let Some(wrap_width) = self.wrap_width
+            && self.background_task.is_none() {
                 let pending_edits = self.pending_edits.clone();
                 let mut snapshot = self.snapshot.clone();
                 let text_system = cx.text_system().clone();
@@ -293,7 +293,6 @@ impl WrapMap {
                     }
                 }
             }
-        }
 
         let was_interpolated = self.snapshot.interpolated;
         let mut to_remove_len = 0;
@@ -1065,13 +1064,12 @@ impl sum_tree::Item for Transform {
 }
 
 fn push_isomorphic(transforms: &mut Vec<Transform>, summary: TextSummary) {
-    if let Some(last_transform) = transforms.last_mut() {
-        if last_transform.is_isomorphic() {
+    if let Some(last_transform) = transforms.last_mut()
+        && last_transform.is_isomorphic() {
             last_transform.summary.input += &summary;
             last_transform.summary.output += &summary;
             return;
         }
-    }
     transforms.push(Transform::isomorphic(summary));
 }
 

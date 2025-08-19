@@ -241,8 +241,7 @@ impl MessageEditor {
     ) -> Task<Result<Vec<CompletionResponse>>> {
         if let Some((start_anchor, query, candidates)) =
             self.collect_mention_candidates(buffer, end_anchor, cx)
-        {
-            if !candidates.is_empty() {
+            && !candidates.is_empty() {
                 return cx.spawn(async move |_, cx| {
                     let completion_response = Self::completions_for_candidates(
                         cx,
@@ -255,12 +254,10 @@ impl MessageEditor {
                     Ok(vec![completion_response])
                 });
             }
-        }
 
         if let Some((start_anchor, query, candidates)) =
             self.collect_emoji_candidates(buffer, end_anchor, cx)
-        {
-            if !candidates.is_empty() {
+            && !candidates.is_empty() {
                 return cx.spawn(async move |_, cx| {
                     let completion_response = Self::completions_for_candidates(
                         cx,
@@ -273,7 +270,6 @@ impl MessageEditor {
                     Ok(vec![completion_response])
                 });
             }
-        }
 
         Task::ready(Ok(vec![CompletionResponse {
             completions: Vec::new(),
@@ -474,8 +470,8 @@ impl MessageEditor {
                 for range in ranges {
                     text.clear();
                     text.extend(buffer.text_for_range(range.clone()));
-                    if let Some(username) = text.strip_prefix('@') {
-                        if let Some(user) = this
+                    if let Some(username) = text.strip_prefix('@')
+                        && let Some(user) = this
                             .user_store
                             .read(cx)
                             .cached_user_by_github_login(username)
@@ -486,7 +482,6 @@ impl MessageEditor {
                             mentioned_user_ids.push(user.id);
                             anchor_ranges.push(start..end);
                         }
-                    }
                 }
 
                 editor.clear_highlights::<Self>(cx);

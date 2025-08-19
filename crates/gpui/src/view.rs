@@ -205,8 +205,8 @@ impl Element for AnyView {
                     let content_mask = window.content_mask();
                     let text_style = window.text_style();
 
-                    if let Some(mut element_state) = element_state {
-                        if element_state.cache_key.bounds == bounds
+                    if let Some(mut element_state) = element_state
+                        && element_state.cache_key.bounds == bounds
                             && element_state.cache_key.content_mask == content_mask
                             && element_state.cache_key.text_style == text_style
                             && !window.dirty_views.contains(&self.entity_id())
@@ -221,7 +221,6 @@ impl Element for AnyView {
 
                             return (None, element_state);
                         }
-                    }
 
                     let refreshing = mem::replace(&mut window.refreshing, true);
                     let prepaint_start = window.prepaint_index();

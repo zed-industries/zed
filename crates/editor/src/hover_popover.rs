@@ -142,12 +142,11 @@ pub fn hover_at_inlay(
             .info_popovers
             .iter()
             .any(|InfoPopover { symbol_range, .. }| {
-                if let RangeInEditor::Inlay(range) = symbol_range {
-                    if range == &inlay_hover.range {
+                if let RangeInEditor::Inlay(range) = symbol_range
+                    && range == &inlay_hover.range {
                         // Hover triggered from same location as last time. Don't show again.
                         return true;
                     }
-                }
                 false
             })
         {
@@ -270,14 +269,13 @@ fn show_hover(
     }
 
     // Don't request again if the location is the same as the previous request
-    if let Some(triggered_from) = &editor.hover_state.triggered_from {
-        if triggered_from
+    if let Some(triggered_from) = &editor.hover_state.triggered_from
+        && triggered_from
             .cmp(&anchor, &snapshot.buffer_snapshot)
             .is_eq()
         {
             return None;
         }
-    }
 
     let hover_popover_delay = EditorSettings::get_global(cx).hover_popover_delay;
     let all_diagnostics_active = editor.active_diagnostics == ActiveDiagnostic::All;
@@ -717,9 +715,9 @@ pub fn diagnostics_markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
 }
 
 pub fn open_markdown_url(link: SharedString, window: &mut Window, cx: &mut App) {
-    if let Ok(uri) = Url::parse(&link) {
-        if uri.scheme() == "file" {
-            if let Some(workspace) = window.root::<Workspace>().flatten() {
+    if let Ok(uri) = Url::parse(&link)
+        && uri.scheme() == "file"
+            && let Some(workspace) = window.root::<Workspace>().flatten() {
                 workspace.update(cx, |workspace, cx| {
                     let task = workspace.open_abs_path(
                         PathBuf::from(uri.path()),
@@ -769,8 +767,6 @@ pub fn open_markdown_url(link: SharedString, window: &mut Window, cx: &mut App) 
                 });
                 return;
             }
-        }
-    }
     cx.open_url(&link);
 }
 
@@ -839,21 +835,19 @@ impl HoverState {
     pub fn focused(&self, window: &mut Window, cx: &mut Context<Editor>) -> bool {
         let mut hover_popover_is_focused = false;
         for info_popover in &self.info_popovers {
-            if let Some(markdown_view) = &info_popover.parsed_content {
-                if markdown_view.focus_handle(cx).is_focused(window) {
+            if let Some(markdown_view) = &info_popover.parsed_content
+                && markdown_view.focus_handle(cx).is_focused(window) {
                     hover_popover_is_focused = true;
                 }
-            }
         }
-        if let Some(diagnostic_popover) = &self.diagnostic_popover {
-            if diagnostic_popover
+        if let Some(diagnostic_popover) = &self.diagnostic_popover
+            && diagnostic_popover
                 .markdown
                 .focus_handle(cx)
                 .is_focused(window)
             {
                 hover_popover_is_focused = true;
             }
-        }
         hover_popover_is_focused
     }
 }

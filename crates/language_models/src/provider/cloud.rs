@@ -597,8 +597,7 @@ impl CloudLanguageModel {
                     .headers()
                     .get(SUBSCRIPTION_LIMIT_RESOURCE_HEADER_NAME)
                     .and_then(|resource| resource.to_str().ok())
-                {
-                    if let Some(plan) = response
+                    && let Some(plan) = response
                         .headers()
                         .get(CURRENT_PLAN_HEADER_NAME)
                         .and_then(|plan| plan.to_str().ok())
@@ -606,7 +605,6 @@ impl CloudLanguageModel {
                     {
                         return Err(anyhow!(ModelRequestLimitReachedError { plan }));
                     }
-                }
             } else if status == StatusCode::PAYMENT_REQUIRED {
                 return Err(anyhow!(PaymentRequiredError));
             }
@@ -662,8 +660,8 @@ where
 
 impl From<ApiError> for LanguageModelCompletionError {
     fn from(error: ApiError) -> Self {
-        if let Ok(cloud_error) = serde_json::from_str::<CloudApiError>(&error.body) {
-            if cloud_error.code.starts_with("upstream_http_") {
+        if let Ok(cloud_error) = serde_json::from_str::<CloudApiError>(&error.body)
+            && cloud_error.code.starts_with("upstream_http_") {
                 let status = if let Some(status) = cloud_error.upstream_status {
                     status
                 } else if cloud_error.code.ends_with("_error") {
@@ -685,7 +683,6 @@ impl From<ApiError> for LanguageModelCompletionError {
                     retry_after: cloud_error.retry_after.map(Duration::from_secs_f64),
                 };
             }
-        }
 
         let retry_after = None;
         LanguageModelCompletionError::from_http_status(

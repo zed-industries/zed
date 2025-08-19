@@ -619,8 +619,8 @@ impl PaneAxis {
         let mut found_axis_index: Option<usize> = None;
         if !found_pane {
             for (i, pa) in self.members.iter_mut().enumerate() {
-                if let Member::Axis(pa) = pa {
-                    if let Some(done) = pa.resize(pane, axis, amount, bounds) {
+                if let Member::Axis(pa) = pa
+                    && let Some(done) = pa.resize(pane, axis, amount, bounds) {
                         if done {
                             return Some(true); // pane found and operations already done
                         } else if self.axis != axis {
@@ -629,7 +629,6 @@ impl PaneAxis {
                             found_axis_index = Some(i); // pane found and this is correct direction
                         }
                     }
-                }
             }
             found_axis_index?; // no pane found
         }
@@ -743,14 +742,13 @@ impl PaneAxis {
         let bounding_boxes = self.bounding_boxes.lock();
 
         for (idx, member) in self.members.iter().enumerate() {
-            if let Some(coordinates) = bounding_boxes[idx] {
-                if coordinates.contains(&coordinate) {
+            if let Some(coordinates) = bounding_boxes[idx]
+                && coordinates.contains(&coordinate) {
                     return match member {
                         Member::Pane(found) => Some(found),
                         Member::Axis(axis) => axis.pane_at_pixel_position(coordinate),
                     };
                 }
-            }
         }
         None
     }
@@ -1273,8 +1271,8 @@ mod element {
                         window.paint_quad(gpui::fill(overlay_bounds, overlay_background));
                     }
 
-                    if let Some(border) = overlay_border {
-                        if self.active_pane_ix == Some(ix) && child.is_leaf_pane {
+                    if let Some(border) = overlay_border
+                        && self.active_pane_ix == Some(ix) && child.is_leaf_pane {
                             window.paint_quad(gpui::quad(
                                 overlay_bounds,
                                 0.,
@@ -1284,7 +1282,6 @@ mod element {
                                 BorderStyle::Solid,
                             ));
                         }
-                    }
                 }
 
                 if let Some(handle) = child.handle.as_mut() {

@@ -131,8 +131,8 @@ impl super::LspAdapter for GoLspAdapter {
 
         if let Some(version) = *version {
             let binary_path = container_dir.join(format!("gopls_{version}_go_{go_version}"));
-            if let Ok(metadata) = fs::metadata(&binary_path).await {
-                if metadata.is_file() {
+            if let Ok(metadata) = fs::metadata(&binary_path).await
+                && metadata.is_file() {
                     remove_matching(&container_dir, |entry| {
                         entry != binary_path && entry.file_name() != Some(OsStr::new("gobin"))
                     })
@@ -144,7 +144,6 @@ impl super::LspAdapter for GoLspAdapter {
                         env: None,
                     });
                 }
-            }
         } else if let Some(path) = this
             .cached_server_binary(container_dir.clone(), delegate)
             .await

@@ -121,14 +121,13 @@ impl NotificationPanel {
             let notification_list = ListState::new(0, ListAlignment::Top, px(1000.));
             notification_list.set_scroll_handler(cx.listener(
                 |this, event: &ListScrollEvent, _, cx| {
-                    if event.count.saturating_sub(event.visible_range.end) < LOADING_THRESHOLD {
-                        if let Some(task) = this
+                    if event.count.saturating_sub(event.visible_range.end) < LOADING_THRESHOLD
+                        && let Some(task) = this
                             .notification_store
                             .update(cx, |store, cx| store.load_more_notifications(false, cx))
                         {
                             task.detach();
                         }
-                    }
                 },
             ));
 
@@ -469,8 +468,7 @@ impl NotificationPanel {
             channel_id,
             ..
         } = notification.clone()
-        {
-            if let Some(workspace) = self.workspace.upgrade() {
+            && let Some(workspace) = self.workspace.upgrade() {
                 window.defer(cx, move |window, cx| {
                     workspace.update(cx, |workspace, cx| {
                         if let Some(panel) = workspace.focus_panel::<ChatPanel>(window, cx) {
@@ -483,7 +481,6 @@ impl NotificationPanel {
                     });
                 });
             }
-        }
     }
 
     fn is_showing_notification(&self, notification: &Notification, cx: &mut Context<Self>) -> bool {
@@ -491,8 +488,8 @@ impl NotificationPanel {
             return false;
         }
 
-        if let Notification::ChannelMessageMention { channel_id, .. } = &notification {
-            if let Some(workspace) = self.workspace.upgrade() {
+        if let Notification::ChannelMessageMention { channel_id, .. } = &notification
+            && let Some(workspace) = self.workspace.upgrade() {
                 return if let Some(panel) = workspace.read(cx).panel::<ChatPanel>(cx) {
                     let panel = panel.read(cx);
                     panel.is_scrolled_to_bottom()
@@ -503,7 +500,6 @@ impl NotificationPanel {
                     false
                 };
             }
-        }
 
         false
     }
@@ -582,8 +578,8 @@ impl NotificationPanel {
     }
 
     fn remove_toast(&mut self, notification_id: u64, cx: &mut Context<Self>) {
-        if let Some((current_id, _)) = &self.current_notification_toast {
-            if *current_id == notification_id {
+        if let Some((current_id, _)) = &self.current_notification_toast
+            && *current_id == notification_id {
                 self.current_notification_toast.take();
                 self.workspace
                     .update(cx, |workspace, cx| {
@@ -592,7 +588,6 @@ impl NotificationPanel {
                     })
                     .ok();
             }
-        }
     }
 
     fn respond_to_notification(

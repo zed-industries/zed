@@ -40,8 +40,8 @@ fn migrate_context_server_settings(
     // Parse the server settings to check what keys it contains
     let mut cursor = server_settings.walk();
     for child in server_settings.children(&mut cursor) {
-        if child.kind() == "pair" {
-            if let Some(key_node) = child.child_by_field_name("key") {
+        if child.kind() == "pair"
+            && let Some(key_node) = child.child_by_field_name("key") {
                 if let (None, Some(quote_content)) = (column, key_node.child(0)) {
                     column = Some(quote_content.start_position().column);
                 }
@@ -56,7 +56,6 @@ fn migrate_context_server_settings(
                     }
                 }
             }
-        }
     }
 
     let source_type = if has_command { "custom" } else { "extension" };

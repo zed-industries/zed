@@ -412,8 +412,8 @@ impl MarksState {
         let mut to_write = HashMap::default();
 
         for (key, value) in &new_points {
-            if self.is_global_mark(key) {
-                if self.global_marks.get(key) != Some(&MarkLocation::Path(path.clone())) {
+            if self.is_global_mark(key)
+                && self.global_marks.get(key) != Some(&MarkLocation::Path(path.clone())) {
                     if let Some(workspace_id) = self.workspace_id(cx) {
                         let path = path.clone();
                         let key = key.clone();
@@ -426,7 +426,6 @@ impl MarksState {
                     self.global_marks
                         .insert(key.clone(), MarkLocation::Path(path.clone()));
                 }
-            }
             if old_points.and_then(|o| o.get(key)) != Some(value) {
                 to_write.insert(key.clone(), value.clone());
             }
@@ -456,8 +455,8 @@ impl MarksState {
         buffer: &Entity<Buffer>,
         cx: &mut Context<Self>,
     ) {
-        if let MarkLocation::Buffer(entity_id) = old_path {
-            if let Some(old_marks) = self.multibuffer_marks.remove(&entity_id) {
+        if let MarkLocation::Buffer(entity_id) = old_path
+            && let Some(old_marks) = self.multibuffer_marks.remove(&entity_id) {
                 let buffer_marks = old_marks
                     .into_iter()
                     .map(|(k, v)| (k, v.into_iter().map(|anchor| anchor.text_anchor).collect()))
@@ -465,7 +464,6 @@ impl MarksState {
                 self.buffer_marks
                     .insert(buffer.read(cx).remote_id(), buffer_marks);
             }
-        }
         self.watch_buffer(MarkLocation::Path(new_path.clone()), buffer, cx);
         self.serialize_buffer_marks(new_path, buffer, cx);
     }
@@ -512,11 +510,9 @@ impl MarksState {
                     .watched_buffers
                     .get(&buffer_id.clone())
                     .map(|(path, _, _)| path.clone())
-                {
-                    if let Some(new_path) = this.path_for_buffer(&buffer, cx) {
+                    && let Some(new_path) = this.path_for_buffer(&buffer, cx) {
                         this.rename_buffer(old_path, new_path, &buffer, cx)
                     }
-                }
             }
             _ => {}
         });
@@ -897,14 +893,13 @@ impl VimGlobals {
                 self.stop_recording_after_next_action = false;
             }
         }
-        if self.replayer.is_none() {
-            if let Some(recording_register) = self.recording_register {
+        if self.replayer.is_none()
+            && let Some(recording_register) = self.recording_register {
                 self.recordings
                     .entry(recording_register)
                     .or_default()
                     .push(ReplayableAction::Action(action));
             }
-        }
     }
 
     pub fn observe_insertion(&mut self, text: &Arc<str>, range_to_replace: Option<Range<isize>>) {
@@ -1330,11 +1325,10 @@ impl MarksMatchInfo {
         let mut offset = 0;
         for chunk in chunks {
             line.push_str(chunk.text);
-            if let Some(highlight_style) = chunk.syntax_highlight_id {
-                if let Some(highlight) = highlight_style.style(cx.theme().syntax()) {
+            if let Some(highlight_style) = chunk.syntax_highlight_id
+                && let Some(highlight) = highlight_style.style(cx.theme().syntax()) {
                     highlights.push((offset..offset + chunk.text.len(), highlight))
                 }
-            }
             offset += chunk.text.len();
         }
         MarksMatchInfo::Content { line, highlights }

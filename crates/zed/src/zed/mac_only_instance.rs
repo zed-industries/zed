@@ -37,8 +37,8 @@ fn address() -> SocketAddr {
     let mut user_port = port;
     let mut sys = System::new_all();
     sys.refresh_all();
-    if let Ok(current_pid) = sysinfo::get_current_pid() {
-        if let Some(uid) = sys
+    if let Ok(current_pid) = sysinfo::get_current_pid()
+        && let Some(uid) = sys
             .process(current_pid)
             .and_then(|process| process.user_id())
         {
@@ -51,7 +51,6 @@ fn address() -> SocketAddr {
             let wrapped_uid: u16 = (uid_u32 % max_uid) as u16;
             user_port += wrapped_uid;
         }
-    }
 
     SocketAddr::V4(SocketAddrV4::new(LOCALHOST, user_port))
 }

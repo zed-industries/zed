@@ -209,12 +209,11 @@ impl FileFinder {
         let Some(init_modifiers) = self.init_modifiers.take() else {
             return;
         };
-        if self.picker.read(cx).delegate.has_changed_selected_index {
-            if !event.modified() || !init_modifiers.is_subset_of(event) {
+        if self.picker.read(cx).delegate.has_changed_selected_index
+            && (!event.modified() || !init_modifiers.is_subset_of(event)) {
                 self.init_modifiers = None;
                 window.dispatch_action(menu::Confirm.boxed_clone(), cx);
             }
-        }
     }
 
     fn handle_select_prev(
@@ -323,8 +322,8 @@ impl FileFinder {
     ) {
         self.picker.update(cx, |picker, cx| {
             let delegate = &mut picker.delegate;
-            if let Some(workspace) = delegate.workspace.upgrade() {
-                if let Some(m) = delegate.matches.get(delegate.selected_index()) {
+            if let Some(workspace) = delegate.workspace.upgrade()
+                && let Some(m) = delegate.matches.get(delegate.selected_index()) {
                     let path = match &m {
                         Match::History { path, .. } => {
                             let worktree_id = path.project.worktree_id;
@@ -344,7 +343,6 @@ impl FileFinder {
                     });
                     open_task.detach_and_log_err(cx);
                 }
-            }
         })
     }
 
@@ -675,8 +673,8 @@ impl Matches {
             let path_str = panel_match.0.path.to_string_lossy();
             let filename_str = filename.to_string_lossy();
 
-            if let Some(filename_pos) = path_str.rfind(&*filename_str) {
-                if panel_match.0.positions[0] >= filename_pos {
+            if let Some(filename_pos) = path_str.rfind(&*filename_str)
+                && panel_match.0.positions[0] >= filename_pos {
                     let mut prev_position = panel_match.0.positions[0];
                     for p in &panel_match.0.positions[1..] {
                         if *p != prev_position + 1 {
@@ -686,7 +684,6 @@ impl Matches {
                     }
                     return true;
                 }
-            }
         }
 
         false
@@ -1045,11 +1042,10 @@ impl FileFinderDelegate {
                         )
                     } else {
                         let mut path = Arc::clone(project_relative_path);
-                        if project_relative_path.as_ref() == Path::new("") {
-                            if let Some(absolute_path) = &entry_path.absolute {
+                        if project_relative_path.as_ref() == Path::new("")
+                            && let Some(absolute_path) = &entry_path.absolute {
                                 path = Arc::from(absolute_path.as_path());
                             }
-                        }
 
                         let mut path_match = PathMatch {
                             score: ix as f64,
@@ -1078,11 +1074,11 @@ impl FileFinderDelegate {
                 ),
             };
 
-        if file_name_positions.is_empty() {
-            if let Some(user_home_path) = std::env::var("HOME").ok() {
+        if file_name_positions.is_empty()
+            && let Some(user_home_path) = std::env::var("HOME").ok() {
                 let user_home_path = user_home_path.trim();
-                if !user_home_path.is_empty() {
-                    if full_path.starts_with(user_home_path) {
+                if !user_home_path.is_empty()
+                    && full_path.starts_with(user_home_path) {
                         full_path.replace_range(0..user_home_path.len(), "~");
                         full_path_positions.retain_mut(|pos| {
                             if *pos >= user_home_path.len() {
@@ -1094,9 +1090,7 @@ impl FileFinderDelegate {
                             }
                         })
                     }
-                }
             }
-        }
 
         if full_path.is_ascii() {
             let file_finder_settings = FileFinderSettings::get_global(cx);
@@ -1242,16 +1236,14 @@ impl FileFinderDelegate {
 
     /// Skips first history match (that is displayed topmost) if it's currently opened.
     fn calculate_selected_index(&self, cx: &mut Context<Picker<Self>>) -> usize {
-        if FileFinderSettings::get_global(cx).skip_focus_for_active_in_search {
-            if let Some(Match::History { path, .. }) = self.matches.get(0) {
-                if Some(path) == self.currently_opened_path.as_ref() {
+        if FileFinderSettings::get_global(cx).skip_focus_for_active_in_search
+            && let Some(Match::History { path, .. }) = self.matches.get(0)
+                && Some(path) == self.currently_opened_path.as_ref() {
                     let elements_after_first = self.matches.len() - 1;
                     if elements_after_first > 0 {
                         return 1;
                     }
                 }
-            }
-        }
 
         0
     }
@@ -1310,11 +1302,10 @@ impl PickerDelegate for FileFinderDelegate {
                 .enumerate()
                 .find(|(_, m)| !matches!(m, Match::History { .. }))
                 .map(|(i, _)| i);
-            if let Some(first_non_history_index) = first_non_history_index {
-                if first_non_history_index > 0 {
+            if let Some(first_non_history_index) = first_non_history_index
+                && first_non_history_index > 0 {
                     return vec![first_non_history_index - 1];
                 }
-            }
         }
         Vec::new()
     }
@@ -1436,8 +1427,8 @@ impl PickerDelegate for FileFinderDelegate {
         window: &mut Window,
         cx: &mut Context<Picker<FileFinderDelegate>>,
     ) {
-        if let Some(m) = self.matches.get(self.selected_index()) {
-            if let Some(workspace) = self.workspace.upgrade() {
+        if let Some(m) = self.matches.get(self.selected_index())
+            && let Some(workspace) = self.workspace.upgrade() {
                 let open_task = workspace.update(cx, |workspace, cx| {
                     let split_or_open =
                         |workspace: &mut Workspace,
@@ -1568,8 +1559,8 @@ impl PickerDelegate for FileFinderDelegate {
 
                 cx.spawn_in(window, async move |_, cx| {
                     let item = open_task.await.notify_async_err(cx)?;
-                    if let Some(row) = row {
-                        if let Some(active_editor) = item.downcast::<Editor>() {
+                    if let Some(row) = row
+                        && let Some(active_editor) = item.downcast::<Editor>() {
                             active_editor
                                 .downgrade()
                                 .update_in(cx, |editor, window, cx| {
@@ -1581,14 +1572,12 @@ impl PickerDelegate for FileFinderDelegate {
                                 })
                                 .log_err();
                         }
-                    }
                     finder.update(cx, |_, cx| cx.emit(DismissEvent)).ok()?;
 
                     Some(())
                 })
                 .detach();
             }
-        }
     }
 
     fn dismissed(&mut self, _: &mut Window, cx: &mut Context<Picker<FileFinderDelegate>>) {

@@ -458,8 +458,8 @@ impl ActivityIndicator {
             .map(|r| r.read(cx))
             .and_then(Repository::current_job);
         // Show any long-running git command
-        if let Some(job_info) = current_job {
-            if Instant::now() - job_info.start >= GIT_OPERATION_DELAY {
+        if let Some(job_info) = current_job
+            && Instant::now() - job_info.start >= GIT_OPERATION_DELAY {
                 return Some(Content {
                     icon: Some(
                         Icon::new(IconName::ArrowCircle)
@@ -478,7 +478,6 @@ impl ActivityIndicator {
                     tooltip_message: None,
                 });
             }
-        }
 
         // Show any language server installation info.
         let mut downloading = SmallVec::<[_; 3]>::new();
@@ -740,8 +739,7 @@ impl ActivityIndicator {
 
         if let Some(extension_store) =
             ExtensionStore::try_global(cx).map(|extension_store| extension_store.read(cx))
-        {
-            if let Some(extension_id) = extension_store.outstanding_operations().keys().next() {
+            && let Some(extension_id) = extension_store.outstanding_operations().keys().next() {
                 return Some(Content {
                     icon: Some(
                         Icon::new(IconName::Download)
@@ -755,7 +753,6 @@ impl ActivityIndicator {
                     tooltip_message: None,
                 });
             }
-        }
 
         None
     }

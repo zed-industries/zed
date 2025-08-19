@@ -217,11 +217,10 @@ impl NeovimConnection {
                 .expect("Could not set nvim cursor position");
         }
 
-        if let Some(NeovimData::Get { mode, state }) = self.data.back() {
-            if *mode == Mode::Normal && *state == marked_text {
+        if let Some(NeovimData::Get { mode, state }) = self.data.back()
+            && *mode == Mode::Normal && *state == marked_text {
                 return;
             }
-        }
         self.data.push_back(NeovimData::Put {
             state: marked_text.to_string(),
         })

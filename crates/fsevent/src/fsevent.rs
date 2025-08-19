@@ -178,8 +178,7 @@ impl EventStream {
                     flags.contains(StreamFlags::USER_DROPPED)
                         || flags.contains(StreamFlags::KERNEL_DROPPED)
                 })
-            {
-                if let Some(last_valid_event_id) = state.last_valid_event_id.take() {
+                && let Some(last_valid_event_id) = state.last_valid_event_id.take() {
                     fs::FSEventStreamStop(state.stream);
                     fs::FSEventStreamInvalidate(state.stream);
                     fs::FSEventStreamRelease(state.stream);
@@ -212,7 +211,6 @@ impl EventStream {
                     fs::FSEventStreamStart(state.stream);
                     stream_restarted = true;
                 }
-            }
 
             if !stream_restarted {
                 let mut events = Vec::with_capacity(num);

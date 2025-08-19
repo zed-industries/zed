@@ -107,8 +107,8 @@ impl ChannelView {
                     .find(|view| view.read(cx).channel_buffer.read(cx).remote_id(cx) == buffer_id);
 
                 // If this channel buffer is already open in this pane, just return it.
-                if let Some(existing_view) = existing_view.clone() {
-                    if existing_view.read(cx).channel_buffer == channel_view.read(cx).channel_buffer
+                if let Some(existing_view) = existing_view.clone()
+                    && existing_view.read(cx).channel_buffer == channel_view.read(cx).channel_buffer
                     {
                         if let Some(link_position) = link_position {
                             existing_view.update(cx, |channel_view, cx| {
@@ -122,12 +122,11 @@ impl ChannelView {
                         }
                         return existing_view;
                     }
-                }
 
                 // If the pane contained a disconnected view for this channel buffer,
                 // replace that.
-                if let Some(existing_item) = existing_view {
-                    if let Some(ix) = pane.index_for_item(&existing_item) {
+                if let Some(existing_item) = existing_view
+                    && let Some(ix) = pane.index_for_item(&existing_item) {
                         pane.close_item_by_id(
                             existing_item.entity_id(),
                             SaveIntent::Skip,
@@ -144,7 +143,6 @@ impl ChannelView {
                             cx,
                         );
                     }
-                }
 
                 if let Some(link_position) = link_position {
                     channel_view.update(cx, |channel_view, cx| {
@@ -259,8 +257,8 @@ impl ChannelView {
             .editor
             .update(cx, |editor, cx| editor.snapshot(window, cx));
 
-        if let Some(outline) = snapshot.buffer_snapshot.outline(None) {
-            if let Some(item) = outline
+        if let Some(outline) = snapshot.buffer_snapshot.outline(None)
+            && let Some(item) = outline
                 .items
                 .iter()
                 .find(|item| &Channel::slug(&item.text).to_lowercase() == &position)
@@ -279,7 +277,6 @@ impl ChannelView {
                 });
                 return;
             }
-        }
 
         if !first_attempt {
             return;

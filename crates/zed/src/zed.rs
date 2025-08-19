@@ -1054,8 +1054,8 @@ fn quit(_: &Quit, cx: &mut App) {
         })
         .log_err();
 
-        if should_confirm {
-            if let Some(workspace) = workspace_windows.first() {
+        if should_confirm
+            && let Some(workspace) = workspace_windows.first() {
                 let answer = workspace
                     .update(cx, |_, window, cx| {
                         window.prompt(
@@ -1077,7 +1077,6 @@ fn quit(_: &Quit, cx: &mut App) {
                     }
                 }
             }
-        }
 
         // If the user cancels any save prompt, then keep the app open.
         for window in workspace_windows {
@@ -1086,11 +1085,9 @@ fn quit(_: &Quit, cx: &mut App) {
                     workspace.prepare_to_close(CloseIntent::Quit, window, cx)
                 })
                 .log_err()
-            {
-                if !should_close.await? {
+                && !should_close.await? {
                     return Ok(());
                 }
-            }
         }
         cx.update(|cx| cx.quit())?;
         anyhow::Ok(())
@@ -1633,8 +1630,8 @@ fn open_local_file(
             };
 
             if !file_exists {
-                if let Some(dir_path) = settings_relative_path.parent() {
-                    if worktree.read_with(cx, |tree, _| tree.entry_for_path(dir_path).is_none())? {
+                if let Some(dir_path) = settings_relative_path.parent()
+                    && worktree.read_with(cx, |tree, _| tree.entry_for_path(dir_path).is_none())? {
                         project
                             .update(cx, |project, cx| {
                                 project.create_entry((tree_id, dir_path), true, cx)
@@ -1642,7 +1639,6 @@ fn open_local_file(
                             .await
                             .context("worktree was removed")?;
                     }
-                }
 
                 if worktree.read_with(cx, |tree, _| {
                     tree.entry_for_path(settings_relative_path).is_none()
@@ -1667,13 +1663,12 @@ fn open_local_file(
             editor
                 .downgrade()
                 .update(cx, |editor, cx| {
-                    if let Some(buffer) = editor.buffer().read(cx).as_singleton() {
-                        if buffer.read(cx).is_empty() {
+                    if let Some(buffer) = editor.buffer().read(cx).as_singleton()
+                        && buffer.read(cx).is_empty() {
                             buffer.update(cx, |buffer, cx| {
                                 buffer.edit([(0..0, initial_contents)], None, cx)
                             });
                         }
-                    }
                 })
                 .ok();
 

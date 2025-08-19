@@ -289,8 +289,8 @@ impl FoldMapWriter<'_> {
             let ChunkRendererId::Fold(id) = id else {
                 continue;
             };
-            if let Some(metadata) = self.0.snapshot.fold_metadata_by_id.get(&id).cloned() {
-                if Some(new_width) != metadata.width {
+            if let Some(metadata) = self.0.snapshot.fold_metadata_by_id.get(&id).cloned()
+                && Some(new_width) != metadata.width {
                     let buffer_start = metadata.range.start.to_offset(buffer);
                     let buffer_end = metadata.range.end.to_offset(buffer);
                     let inlay_range = inlay_snapshot.to_inlay_offset(buffer_start)
@@ -308,7 +308,6 @@ impl FoldMapWriter<'_> {
                         },
                     );
                 }
-            }
         }
 
         let edits = consolidate_inlay_edits(edits);
@@ -417,8 +416,8 @@ impl FoldMap {
             cursor.seek(&InlayOffset(0), Bias::Right);
 
             while let Some(mut edit) = inlay_edits_iter.next() {
-                if let Some(item) = cursor.item() {
-                    if !item.is_fold() {
+                if let Some(item) = cursor.item()
+                    && !item.is_fold() {
                         new_transforms.update_last(
                             |transform| {
                                 if !transform.is_fold() {
@@ -429,7 +428,6 @@ impl FoldMap {
                             &(),
                         );
                     }
-                }
                 new_transforms.append(cursor.slice(&edit.old.start, Bias::Left), &());
                 edit.new.start -= edit.old.start - *cursor.start();
                 edit.old.start = *cursor.start();

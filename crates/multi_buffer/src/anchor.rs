@@ -76,8 +76,8 @@ impl Anchor {
             if text_cmp.is_ne() {
                 return text_cmp;
             }
-            if self.diff_base_anchor.is_some() || other.diff_base_anchor.is_some() {
-                if let Some(base_text) = snapshot
+            if (self.diff_base_anchor.is_some() || other.diff_base_anchor.is_some())
+                && let Some(base_text) = snapshot
                     .diffs
                     .get(&excerpt.buffer_id)
                     .map(|diff| diff.base_text())
@@ -97,7 +97,6 @@ impl Anchor {
                         (None, None) => Ordering::Equal,
                     };
                 }
-            }
         }
         Ordering::Equal
     }
@@ -107,8 +106,8 @@ impl Anchor {
     }
 
     pub fn bias_left(&self, snapshot: &MultiBufferSnapshot) -> Anchor {
-        if self.text_anchor.bias != Bias::Left {
-            if let Some(excerpt) = snapshot.excerpt(self.excerpt_id) {
+        if self.text_anchor.bias != Bias::Left
+            && let Some(excerpt) = snapshot.excerpt(self.excerpt_id) {
                 return Self {
                     buffer_id: self.buffer_id,
                     excerpt_id: self.excerpt_id,
@@ -118,22 +117,19 @@ impl Anchor {
                             .diffs
                             .get(&excerpt.buffer_id)
                             .map(|diff| diff.base_text())
-                        {
-                            if a.buffer_id == Some(base_text.remote_id()) {
+                            && a.buffer_id == Some(base_text.remote_id()) {
                                 return a.bias_left(base_text);
                             }
-                        }
                         a
                     }),
                 };
             }
-        }
         *self
     }
 
     pub fn bias_right(&self, snapshot: &MultiBufferSnapshot) -> Anchor {
-        if self.text_anchor.bias != Bias::Right {
-            if let Some(excerpt) = snapshot.excerpt(self.excerpt_id) {
+        if self.text_anchor.bias != Bias::Right
+            && let Some(excerpt) = snapshot.excerpt(self.excerpt_id) {
                 return Self {
                     buffer_id: self.buffer_id,
                     excerpt_id: self.excerpt_id,
@@ -143,16 +139,13 @@ impl Anchor {
                             .diffs
                             .get(&excerpt.buffer_id)
                             .map(|diff| diff.base_text())
-                        {
-                            if a.buffer_id == Some(base_text.remote_id()) {
+                            && a.buffer_id == Some(base_text.remote_id()) {
                                 return a.bias_right(base_text);
                             }
-                        }
                         a
                     }),
                 };
             }
-        }
         *self
     }
 

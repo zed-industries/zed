@@ -376,11 +376,10 @@ impl ExampleInstance {
             );
             let result = this.thread.conversation(&mut example_cx).await;
 
-            if let Err(err) = result {
-                if !err.is::<FailedAssertion>() {
+            if let Err(err) = result
+                && !err.is::<FailedAssertion>() {
                     return Err(err);
                 }
-            }
 
             println!("{}Stopped", this.log_prefix);
 

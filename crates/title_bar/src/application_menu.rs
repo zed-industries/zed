@@ -269,8 +269,8 @@ impl Render for ApplicationMenu {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let all_menus_shown = self.all_menus_shown(cx);
 
-        if let Some(pending_menu_open) = self.pending_menu_open.take() {
-            if let Some(entry) = self
+        if let Some(pending_menu_open) = self.pending_menu_open.take()
+            && let Some(entry) = self
                 .entries
                 .iter()
                 .find(|entry| entry.menu.name == pending_menu_open && !entry.handle.is_deployed())
@@ -296,7 +296,6 @@ impl Render for ApplicationMenu {
                     cx.defer_in(window, move |_, window, cx| handle_to_show.show(window, cx));
                 }
             }
-        }
 
         div()
             .key_context("ApplicationMenu")

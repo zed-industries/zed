@@ -201,8 +201,8 @@ impl FileContextHandle {
                         parse_status.changed().await.log_err();
                     }
 
-                    if let Ok(snapshot) = buffer.read_with(cx, |buffer, _| buffer.snapshot()) {
-                        if let Some(outline) = snapshot.outline(None) {
+                    if let Ok(snapshot) = buffer.read_with(cx, |buffer, _| buffer.snapshot())
+                        && let Some(outline) = snapshot.outline(None) {
                             let items = outline
                                 .items
                                 .into_iter()
@@ -220,7 +220,6 @@ impl FileContextHandle {
                                 return Some((context, vec![buffer]));
                             }
                         }
-                    }
                 }
             }
 

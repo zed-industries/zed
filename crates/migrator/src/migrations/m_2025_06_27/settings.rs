@@ -56,9 +56,9 @@ fn flatten_context_server_command(
 
     let mut cursor = command_object.walk();
     for child in command_object.children(&mut cursor) {
-        if child.kind() == "pair" {
-            if let Some(key_node) = child.child_by_field_name("key") {
-                if let Some(string_content) = key_node.child(1) {
+        if child.kind() == "pair"
+            && let Some(key_node) = child.child_by_field_name("key")
+                && let Some(string_content) = key_node.child(1) {
                     let key = &contents[string_content.byte_range()];
                     if let Some(value_node) = child.child_by_field_name("value") {
                         let value_range = value_node.byte_range();
@@ -70,8 +70,6 @@ fn flatten_context_server_command(
                         }
                     }
                 }
-            }
-        }
     }
 
     let path = path_value?;

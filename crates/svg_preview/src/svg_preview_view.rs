@@ -32,8 +32,8 @@ pub enum SvgPreviewMode {
 impl SvgPreviewView {
     pub fn register(workspace: &mut Workspace, _window: &mut Window, _cx: &mut Context<Workspace>) {
         workspace.register_action(move |workspace, _: &OpenPreview, window, cx| {
-            if let Some(editor) = Self::resolve_active_item_as_svg_editor(workspace, cx) {
-                if Self::is_svg_file(&editor, cx) {
+            if let Some(editor) = Self::resolve_active_item_as_svg_editor(workspace, cx)
+                && Self::is_svg_file(&editor, cx) {
                     let view = Self::create_svg_view(
                         SvgPreviewMode::Default,
                         workspace,
@@ -52,12 +52,11 @@ impl SvgPreviewView {
                     });
                     cx.notify();
                 }
-            }
         });
 
         workspace.register_action(move |workspace, _: &OpenPreviewToTheSide, window, cx| {
-            if let Some(editor) = Self::resolve_active_item_as_svg_editor(workspace, cx) {
-                if Self::is_svg_file(&editor, cx) {
+            if let Some(editor) = Self::resolve_active_item_as_svg_editor(workspace, cx)
+                && Self::is_svg_file(&editor, cx) {
                     let editor_clone = editor.clone();
                     let view = Self::create_svg_view(
                         SvgPreviewMode::Default,
@@ -87,12 +86,11 @@ impl SvgPreviewView {
                     });
                     cx.notify();
                 }
-            }
         });
 
         workspace.register_action(move |workspace, _: &OpenFollowingPreview, window, cx| {
-            if let Some(editor) = Self::resolve_active_item_as_svg_editor(workspace, cx) {
-                if Self::is_svg_file(&editor, cx) {
+            if let Some(editor) = Self::resolve_active_item_as_svg_editor(workspace, cx)
+                && Self::is_svg_file(&editor, cx) {
                     let view = Self::create_svg_view(
                         SvgPreviewMode::Follow,
                         workspace,
@@ -105,7 +103,6 @@ impl SvgPreviewView {
                     });
                     cx.notify();
                 }
-            }
         });
     }
 
@@ -192,11 +189,10 @@ impl SvgPreviewView {
                             match event {
                                 workspace::Event::ActiveItemChanged => {
                                     let workspace_read = workspace.read(cx);
-                                    if let Some(active_item) = workspace_read.active_item(cx) {
-                                        if let Some(editor_entity) =
+                                    if let Some(active_item) = workspace_read.active_item(cx)
+                                        && let Some(editor_entity) =
                                             active_item.downcast::<Editor>()
-                                        {
-                                            if Self::is_svg_file(&editor_entity, cx) {
+                                            && Self::is_svg_file(&editor_entity, cx) {
                                                 let new_path =
                                                     Self::get_svg_path(&editor_entity, cx);
                                                 if this.svg_path != new_path {
@@ -204,8 +200,6 @@ impl SvgPreviewView {
                                                     cx.notify();
                                                 }
                                             }
-                                        }
-                                    }
                                 }
                                 _ => {}
                             }
@@ -232,8 +226,8 @@ impl SvgPreviewView {
     {
         let app = cx.borrow();
         let buffer = editor.read(app).buffer().read(app);
-        if let Some(buffer) = buffer.as_singleton() {
-            if let Some(file) = buffer.read(app).file() {
+        if let Some(buffer) = buffer.as_singleton()
+            && let Some(file) = buffer.read(app).file() {
                 return file
                     .path()
                     .extension()
@@ -241,7 +235,6 @@ impl SvgPreviewView {
                     .map(|ext| ext.eq_ignore_ascii_case("svg"))
                     .unwrap_or(false);
             }
-        }
         false
     }
 

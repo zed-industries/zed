@@ -672,8 +672,8 @@ impl EditAgent {
         cx: &mut AsyncApp,
     ) -> Result<BoxStream<'static, Result<String, LanguageModelCompletionError>>> {
         let mut messages_iter = conversation.messages.iter_mut();
-        if let Some(last_message) = messages_iter.next_back() {
-            if last_message.role == Role::Assistant {
+        if let Some(last_message) = messages_iter.next_back()
+            && last_message.role == Role::Assistant {
                 let old_content_len = last_message.content.len();
                 last_message
                     .content
@@ -685,18 +685,16 @@ impl EditAgent {
                 // (e.g., the message will look very different on the next
                 // request). Thus, we move the flag to the message prior to it,
                 // as it will still be a valid prefix of the conversation.
-                if old_content_len != new_content_len && last_message.cache {
-                    if let Some(prev_message) = messages_iter.next_back() {
+                if old_content_len != new_content_len && last_message.cache
+                    && let Some(prev_message) = messages_iter.next_back() {
                         last_message.cache = false;
                         prev_message.cache = true;
                     }
-                }
 
                 if last_message.content.is_empty() {
                     conversation.messages.pop();
                 }
             }
-        }
 
         conversation.messages.push(LanguageModelRequestMessage {
             role: Role::User,

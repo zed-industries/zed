@@ -1072,8 +1072,8 @@ impl ActiveThread {
             }
             ThreadEvent::MessageEdited(message_id) => {
                 self.clear_last_error();
-                if let Some(index) = self.messages.iter().position(|id| id == message_id) {
-                    if let Some(rendered_message) = self.thread.update(cx, |thread, cx| {
+                if let Some(index) = self.messages.iter().position(|id| id == message_id)
+                    && let Some(rendered_message) = self.thread.update(cx, |thread, cx| {
                         thread.message(*message_id).map(|message| {
                             let mut rendered_message = RenderedMessage {
                                 language_registry: self.language_registry.clone(),
@@ -1092,7 +1092,6 @@ impl ActiveThread {
                         self.save_thread(cx);
                         cx.notify();
                     }
-                }
             }
             ThreadEvent::MessageDeleted(message_id) => {
                 self.deleted_message(message_id);
@@ -1272,8 +1271,7 @@ impl ActiveThread {
                 })
             })
             .log_err()
-        {
-            if let Some(pop_up) = screen_window.entity(cx).log_err() {
+            && let Some(pop_up) = screen_window.entity(cx).log_err() {
                 self.notification_subscriptions
                     .entry(screen_window)
                     .or_insert_with(Vec::new)
@@ -1318,17 +1316,15 @@ impl ActiveThread {
                         let pop_up_weak = pop_up.downgrade();
 
                         cx.observe_window_activation(window, move |_, window, cx| {
-                            if window.is_window_active() {
-                                if let Some(pop_up) = pop_up_weak.upgrade() {
+                            if window.is_window_active()
+                                && let Some(pop_up) = pop_up_weak.upgrade() {
                                     pop_up.update(cx, |_, cx| {
                                         cx.emit(AgentNotificationEvent::Dismissed);
                                     });
                                 }
-                            }
                         })
                     });
             }
-        }
     }
 
     /// Spawns a task to save the active thread.
@@ -2269,8 +2265,7 @@ impl ActiveThread {
                     let mut error = None;
                     if let Some(last_restore_checkpoint) =
                         self.thread.read(cx).last_restore_checkpoint()
-                    {
-                        if last_restore_checkpoint.message_id() == message_id {
+                        && last_restore_checkpoint.message_id() == message_id {
                             match last_restore_checkpoint {
                                 LastRestoreCheckpoint::Pending { .. } => is_pending = true,
                                 LastRestoreCheckpoint::Error { error: err, .. } => {
@@ -2278,7 +2273,6 @@ impl ActiveThread {
                                 }
                             }
                         }
-                    }
 
                     let restore_checkpoint_button =
                         Button::new(("restore-checkpoint", ix), "Restore Checkpoint")

@@ -930,11 +930,10 @@ impl Item for Editor {
             })?;
             buffer
                 .update(cx, |buffer, cx| {
-                    if let Some(transaction) = transaction {
-                        if !buffer.is_singleton() {
+                    if let Some(transaction) = transaction
+                        && !buffer.is_singleton() {
                             buffer.push_transaction(&transaction.0, cx);
                         }
-                    }
                 })
                 .ok();
             Ok(())
@@ -1374,9 +1373,8 @@ impl ProjectItem for Editor {
         let mut editor = Self::for_buffer(buffer.clone(), Some(project), window, cx);
         if let Some((excerpt_id, buffer_id, snapshot)) =
             editor.buffer().read(cx).snapshot(cx).as_singleton()
-        {
-            if WorkspaceSettings::get(None, cx).restore_on_file_reopen {
-                if let Some(restoration_data) = Self::project_item_kind()
+            && WorkspaceSettings::get(None, cx).restore_on_file_reopen
+                && let Some(restoration_data) = Self::project_item_kind()
                     .and_then(|kind| pane.as_ref()?.project_item_restoration_data.get(&kind))
                     .and_then(|data| data.downcast_ref::<EditorRestorationData>())
                     .and_then(|data| {
@@ -1403,8 +1401,6 @@ impl ProjectItem for Editor {
                     );
                     editor.set_scroll_anchor(ScrollAnchor { anchor, offset }, window, cx);
                 }
-            }
-        }
 
         editor
     }

@@ -583,8 +583,8 @@ impl TerminalElement {
             strikethrough,
         };
 
-        if let Some((style, range)) = hyperlink {
-            if range.contains(&indexed.point) {
+        if let Some((style, range)) = hyperlink
+            && range.contains(&indexed.point) {
                 if let Some(underline) = style.underline {
                     result.underline = Some(underline);
                 }
@@ -593,7 +593,6 @@ impl TerminalElement {
                     result.color = color;
                 }
             }
-        }
 
         result
     }
@@ -1275,9 +1274,9 @@ impl Element for TerminalElement {
                     }
                     let text_paint_time = text_paint_start.elapsed();
 
-                    if let Some(text_to_mark) = &marked_text_cloned {
-                        if !text_to_mark.is_empty() {
-                            if let Some(cursor_layout) = &original_cursor {
+                    if let Some(text_to_mark) = &marked_text_cloned
+                        && !text_to_mark.is_empty()
+                            && let Some(cursor_layout) = &original_cursor {
                                 let ime_position = cursor_layout.bounding_rect(origin).origin;
                                 let mut ime_style = layout.base_text_style.clone();
                                 ime_style.underline = Some(UnderlineStyle {
@@ -1303,14 +1302,11 @@ impl Element for TerminalElement {
                                     .paint(ime_position, layout.dimensions.line_height, window, cx)
                                     .log_err();
                             }
-                        }
-                    }
 
-                    if self.cursor_visible && marked_text_cloned.is_none() {
-                        if let Some(mut cursor) = original_cursor {
+                    if self.cursor_visible && marked_text_cloned.is_none()
+                        && let Some(mut cursor) = original_cursor {
                             cursor.paint(origin, window, cx);
                         }
-                    }
 
                     if let Some(mut element) = block_below_cursor_element {
                         element.paint(window, cx);

@@ -329,8 +329,8 @@ impl ChannelChat {
         loop {
             let step = chat
                 .update(&mut cx, |chat, cx| {
-                    if let Some(first_id) = chat.first_loaded_message_id() {
-                        if first_id <= message_id {
+                    if let Some(first_id) = chat.first_loaded_message_id()
+                        && first_id <= message_id {
                             let mut cursor = chat
                                 .messages
                                 .cursor::<Dimensions<ChannelMessageId, Count>>(&());
@@ -347,7 +347,6 @@ impl ChannelChat {
                                 },
                             );
                         }
-                    }
                     ControlFlow::Continue(chat.load_more_messages(cx))
                 })
                 .log_err()?;
@@ -359,8 +358,8 @@ impl ChannelChat {
     }
 
     pub fn acknowledge_last_message(&mut self, cx: &mut Context<Self>) {
-        if let ChannelMessageId::Saved(latest_message_id) = self.messages.summary().max_id {
-            if self
+        if let ChannelMessageId::Saved(latest_message_id) = self.messages.summary().max_id
+            && self
                 .last_acknowledged_id
                 .map_or(true, |acknowledged_id| acknowledged_id < latest_message_id)
             {
@@ -375,7 +374,6 @@ impl ChannelChat {
                     store.acknowledge_message_id(self.channel_id, latest_message_id, cx);
                 });
             }
-        }
     }
 
     async fn handle_loaded_messages(
@@ -407,11 +405,10 @@ impl ChannelChat {
         let missing_ancestors = loaded_messages
             .iter()
             .filter_map(|message| {
-                if let Some(ancestor_id) = message.reply_to_message_id {
-                    if !loaded_message_ids.contains(&ancestor_id) {
+                if let Some(ancestor_id) = message.reply_to_message_id
+                    && !loaded_message_ids.contains(&ancestor_id) {
                         return Some(ancestor_id);
                     }
-                }
                 None
             })
             .collect::<Vec<_>>();
@@ -646,8 +643,8 @@ impl ChannelChat {
     fn message_removed(&mut self, id: u64, cx: &mut Context<Self>) {
         let mut cursor = self.messages.cursor::<ChannelMessageId>(&());
         let mut messages = cursor.slice(&ChannelMessageId::Saved(id), Bias::Left);
-        if let Some(item) = cursor.item() {
-            if item.id == ChannelMessageId::Saved(id) {
+        if let Some(item) = cursor.item()
+            && item.id == ChannelMessageId::Saved(id) {
                 let deleted_message_ix = messages.summary().count;
                 cursor.next();
                 messages.append(cursor.suffix(), &());
@@ -660,11 +657,10 @@ impl ChannelChat {
                     let summary = self.messages.summary();
                     if summary.count == 0 {
                         store.set_acknowledged_message_id(self.channel_id, None);
-                    } else if deleted_message_ix == summary.count {
-                        if let ChannelMessageId::Saved(id) = summary.max_id {
+                    } else if deleted_message_ix == summary.count
+                        && let ChannelMessageId::Saved(id) = summary.max_id {
                             store.set_acknowledged_message_id(self.channel_id, Some(id));
                         }
-                    }
                 });
 
                 cx.emit(ChannelChatEvent::MessagesUpdated {
@@ -672,7 +668,6 @@ impl ChannelChat {
                     new_count: 0,
                 });
             }
-        }
     }
 
     fn message_update(

@@ -1043,8 +1043,8 @@ impl ToolbarItemView for AgentDiffToolbar {
                 return self.location(cx);
             }
 
-            if let Some(editor) = item.act_as::<Editor>(cx) {
-                if editor.read(cx).mode().is_full() {
+            if let Some(editor) = item.act_as::<Editor>(cx)
+                && editor.read(cx).mode().is_full() {
                     let agent_diff = AgentDiff::global(cx);
 
                     self.active_item = Some(AgentDiffToolbarItem::Editor {
@@ -1055,7 +1055,6 @@ impl ToolbarItemView for AgentDiffToolbar {
 
                     return self.location(cx);
                 }
-            }
         }
 
         self.active_item = None;
@@ -1538,8 +1537,8 @@ impl AgentDiff {
     ) {
         match event {
             workspace::Event::ItemAdded { item } => {
-                if let Some(editor) = item.downcast::<Editor>() {
-                    if let Some(buffer) = Self::full_editor_buffer(editor.read(cx), cx) {
+                if let Some(editor) = item.downcast::<Editor>()
+                    && let Some(buffer) = Self::full_editor_buffer(editor.read(cx), cx) {
                         self.register_editor(
                             workspace.downgrade(),
                             buffer.clone(),
@@ -1548,7 +1547,6 @@ impl AgentDiff {
                             cx,
                         );
                     }
-                }
             }
             _ => {}
         }
@@ -1850,8 +1848,8 @@ impl AgentDiff {
 
         let thread = thread.upgrade()?;
 
-        if let PostReviewState::AllReviewed = review(&editor, &thread, window, cx) {
-            if let Some(curr_buffer) = editor.read(cx).buffer().read(cx).as_singleton() {
+        if let PostReviewState::AllReviewed = review(&editor, &thread, window, cx)
+            && let Some(curr_buffer) = editor.read(cx).buffer().read(cx).as_singleton() {
                 let changed_buffers = thread.action_log(cx).read(cx).changed_buffers(cx);
 
                 let mut keys = changed_buffers.keys().cycle();
@@ -1867,7 +1865,6 @@ impl AgentDiff {
                     return Some(task);
                 }
             }
-        }
 
         return Some(Task::ready(Ok(())));
     }

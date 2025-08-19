@@ -732,8 +732,8 @@ impl StateInner {
                         item.element.prepaint_at(item_origin, window, cx);
                     });
 
-                    if let Some(autoscroll_bounds) = window.take_autoscroll() {
-                        if autoscroll {
+                    if let Some(autoscroll_bounds) = window.take_autoscroll()
+                        && autoscroll {
                             if autoscroll_bounds.top() < bounds.top() {
                                 return Err(ListOffset {
                                     item_ix: item.index,
@@ -773,7 +773,6 @@ impl StateInner {
                                 });
                             }
                         }
-                    }
 
                     item_origin.y += item.size.height;
                 }

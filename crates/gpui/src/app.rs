@@ -1516,13 +1516,12 @@ impl App {
     /// the bindings in the element tree, and any global action listeners.
     pub fn is_action_available(&mut self, action: &dyn Action) -> bool {
         let mut action_available = false;
-        if let Some(window) = self.active_window() {
-            if let Ok(window_action_available) =
+        if let Some(window) = self.active_window()
+            && let Ok(window_action_available) =
                 window.update(self, |_, window, cx| window.is_action_available(action, cx))
             {
                 action_available = window_action_available;
             }
-        }
 
         action_available
             || self
@@ -1606,8 +1605,8 @@ impl App {
                 .insert(action.as_any().type_id(), global_listeners);
         }
 
-        if self.propagate_event {
-            if let Some(mut global_listeners) = self
+        if self.propagate_event
+            && let Some(mut global_listeners) = self
                 .global_action_listeners
                 .remove(&action.as_any().type_id())
             {
@@ -1627,7 +1626,6 @@ impl App {
                 self.global_action_listeners
                     .insert(action.as_any().type_id(), global_listeners);
             }
-        }
     }
 
     /// Is there currently something being dragged?

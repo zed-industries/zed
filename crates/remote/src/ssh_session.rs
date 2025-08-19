@@ -1310,11 +1310,10 @@ impl ConnectionPool {
                 return task.clone();
             }
             Some(ConnectionPoolEntry::Connected(ssh)) => {
-                if let Some(ssh) = ssh.upgrade() {
-                    if !ssh.has_been_killed() {
+                if let Some(ssh) = ssh.upgrade()
+                    && !ssh.has_been_killed() {
                         return Task::ready(Ok(ssh)).shared();
                     }
-                }
                 self.connections.remove(&opts);
             }
             None => {}
@@ -1840,8 +1839,8 @@ impl SshRemoteConnection {
             )),
             self.ssh_path_style,
         );
-        if !self.socket.connection_options.upload_binary_over_ssh {
-            if let Some((url, body)) = delegate
+        if !self.socket.connection_options.upload_binary_over_ssh
+            && let Some((url, body)) = delegate
                 .get_download_params(self.ssh_platform, release_channel, wanted_version, cx)
                 .await?
             {
@@ -1862,7 +1861,6 @@ impl SshRemoteConnection {
                     }
                 }
             }
-        }
 
         let src_path = delegate
             .download_server_binary_locally(self.ssh_platform, release_channel, wanted_version, cx)

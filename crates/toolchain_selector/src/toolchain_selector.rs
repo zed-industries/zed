@@ -211,8 +211,8 @@ impl ToolchainSelectorDelegate {
                 let _ = this.update_in(cx, move |this, window, cx| {
                     this.delegate.candidates = available_toolchains;
 
-                    if let Some(active_toolchain) = active_toolchain {
-                        if let Some(position) = this
+                    if let Some(active_toolchain) = active_toolchain
+                        && let Some(position) = this
                             .delegate
                             .candidates
                             .toolchains
@@ -221,7 +221,6 @@ impl ToolchainSelectorDelegate {
                         {
                             this.delegate.set_selected_index(position, window, cx);
                         }
-                    }
                     this.update_matches(this.query(cx), window, cx);
                 });
 

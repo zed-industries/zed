@@ -282,8 +282,7 @@ impl Settings for WorkspaceSettings {
         if vscode
             .read_bool("accessibility.dimUnfocused.enabled")
             .unwrap_or_default()
-        {
-            if let Some(opacity) = vscode
+            && let Some(opacity) = vscode
                 .read_value("accessibility.dimUnfocused.opacity")
                 .and_then(|v| v.as_f64())
             {
@@ -296,7 +295,6 @@ impl Settings for WorkspaceSettings {
                     })
                 }
             }
-        }
 
         vscode.enum_setting(
             "window.confirmBeforeClose",
@@ -345,14 +343,12 @@ impl Settings for WorkspaceSettings {
             .read_value("workbench.editor.limit.value")
             .and_then(|v| v.as_u64())
             .and_then(|n| NonZeroUsize::new(n as usize))
-        {
-            if vscode
+            && vscode
                 .read_bool("workbench.editor.limit.enabled")
                 .unwrap_or_default()
             {
                 current.max_tabs = Some(n)
             }
-        }
 
         // some combination of "window.restoreWindows" and "workbench.startupEditor" might
         // map to our "restore_on_startup"

@@ -2341,8 +2341,8 @@ impl LspCommand for GetCompletions {
             .zip(completion_edits)
             .map(|(mut lsp_completion, mut edit)| {
                 LineEnding::normalize(&mut edit.new_text);
-                if lsp_completion.data.is_none() {
-                    if let Some(default_data) = lsp_defaults
+                if lsp_completion.data.is_none()
+                    && let Some(default_data) = lsp_defaults
                         .as_ref()
                         .and_then(|item_defaults| item_defaults.data.clone())
                     {
@@ -2350,7 +2350,6 @@ impl LspCommand for GetCompletions {
                         // so we do not insert the defaults here, but `data` is needed for resolving, so this is an exception.
                         lsp_completion.data = Some(default_data);
                     }
-                }
                 CoreCompletion {
                     replace_range: edit.replace_range,
                     new_text: edit.new_text,
@@ -2623,11 +2622,10 @@ impl LspCommand for GetCodeActions {
             .filter_map(|entry| {
                 let (lsp_action, resolved) = match entry {
                     lsp::CodeActionOrCommand::CodeAction(lsp_action) => {
-                        if let Some(command) = lsp_action.command.as_ref() {
-                            if !available_commands.contains(&command.command) {
+                        if let Some(command) = lsp_action.command.as_ref()
+                            && !available_commands.contains(&command.command) {
                                 return None;
                             }
-                        }
                         (LspAction::Action(Box::new(lsp_action)), false)
                     }
                     lsp::CodeActionOrCommand::Command(command) => {
@@ -2641,11 +2639,9 @@ impl LspCommand for GetCodeActions {
 
                 if let Some((requested_kinds, kind)) =
                     requested_kinds_set.as_ref().zip(lsp_action.action_kind())
-                {
-                    if !requested_kinds.contains(&kind) {
+                    && !requested_kinds.contains(&kind) {
                         return None;
                     }
-                }
 
                 Some(CodeAction {
                     server_id,

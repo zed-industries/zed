@@ -102,9 +102,9 @@ pub fn init(cx: &mut App) {
 
                 let editor_handle = cx.entity().downgrade();
 
-                if let Some(language) = language {
-                    if language.name() == "Python".into() {
-                        if let (Some(project_path), Some(project)) = (project_path, project) {
+                if let Some(language) = language
+                    && language.name() == "Python".into()
+                        && let (Some(project_path), Some(project)) = (project_path, project) {
                             let store = ReplStore::global(cx);
                             store.update(cx, |store, cx| {
                                 store
@@ -116,8 +116,6 @@ pub fn init(cx: &mut App) {
                                     .detach_and_log_err(cx);
                             });
                         }
-                    }
-                }
 
                 editor
                     .register_action({

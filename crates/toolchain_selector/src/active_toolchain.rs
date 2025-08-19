@@ -121,8 +121,8 @@ impl ActiveToolchain {
         cx: &mut Context<Self>,
     ) {
         let editor = editor.read(cx);
-        if let Some((_, buffer, _)) = editor.active_excerpt(cx) {
-            if let Some(worktree_id) = buffer.read(cx).file().map(|file| file.worktree_id(cx)) {
+        if let Some((_, buffer, _)) = editor.active_excerpt(cx)
+            && let Some(worktree_id) = buffer.read(cx).file().map(|file| file.worktree_id(cx)) {
                 if self
                     .active_buffer
                     .as_ref()
@@ -146,7 +146,6 @@ impl ActiveToolchain {
                 self.active_buffer = Some((worktree_id, buffer.downgrade(), subscription));
                 self._update_toolchain_task = Self::spawn_tracker_task(window, cx);
             }
-        }
 
         cx.notify();
     }

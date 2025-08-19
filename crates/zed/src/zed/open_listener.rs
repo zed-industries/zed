@@ -123,10 +123,10 @@ impl OpenRequest {
 
     fn parse_request_path(&mut self, request_path: &str) -> Result<()> {
         let mut parts = request_path.split('/');
-        if parts.next() == Some("channel") {
-            if let Some(slug) = parts.next() {
-                if let Some(id_str) = slug.split('-').next_back() {
-                    if let Ok(channel_id) = id_str.parse::<u64>() {
+        if parts.next() == Some("channel")
+            && let Some(slug) = parts.next()
+                && let Some(id_str) = slug.split('-').next_back()
+                    && let Ok(channel_id) = id_str.parse::<u64>() {
                         let Some(next) = parts.next() else {
                             self.join_channel = Some(channel_id);
                             return Ok(());
@@ -142,9 +142,6 @@ impl OpenRequest {
                             return Ok(());
                         }
                     }
-                }
-            }
-        }
         anyhow::bail!("invalid zed url: {request_path}")
     }
 }
@@ -244,13 +241,12 @@ pub async fn open_paths_with_positions(
         .iter()
         .map(|path_with_position| {
             let path = path_with_position.path.clone();
-            if let Some(row) = path_with_position.row {
-                if path.is_file() {
+            if let Some(row) = path_with_position.row
+                && path.is_file() {
                     let row = row.saturating_sub(1);
                     let col = path_with_position.column.unwrap_or(0).saturating_sub(1);
                     caret_positions.insert(path.clone(), Point::new(row, col));
                 }
-            }
             path
         })
         .collect::<Vec<_>>();
@@ -264,11 +260,10 @@ pub async fn open_paths_with_positions(
         let new_path = Path::new(&diff_pair[1]).canonicalize()?;
         if let Ok(diff_view) = workspace.update(cx, |workspace, window, cx| {
             FileDiffView::open(old_path, new_path, workspace, window, cx)
-        }) {
-            if let Some(diff_view) = diff_view.await.log_err() {
+        })
+            && let Some(diff_view) = diff_view.await.log_err() {
                 items.push(Some(Ok(Box::new(diff_view))))
             }
-        }
     }
 
     for (item, path) in items.iter_mut().zip(&paths) {

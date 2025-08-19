@@ -788,11 +788,10 @@ impl Vim {
         editor.selections.line_mode = false;
         editor.unregister_addon::<VimAddon>();
         editor.set_relative_line_number(None, cx);
-        if let Some(vim) = Vim::globals(cx).focused_vim() {
-            if vim.entity_id() == cx.entity().entity_id() {
+        if let Some(vim) = Vim::globals(cx).focused_vim()
+            && vim.entity_id() == cx.entity().entity_id() {
                 Vim::globals(cx).focused_vim = None;
             }
-        }
     }
 
     /// Register an action on the editor.
@@ -833,11 +832,10 @@ impl Vim {
         if self.exit_temporary_mode {
             self.exit_temporary_mode = false;
             // Don't switch to insert mode if the action is temporary_normal.
-            if let Some(action) = keystroke_event.action.as_ref() {
-                if action.as_any().downcast_ref::<TemporaryNormal>().is_some() {
+            if let Some(action) = keystroke_event.action.as_ref()
+                && action.as_any().downcast_ref::<TemporaryNormal>().is_some() {
                     return;
                 }
-            }
             self.switch_mode(Mode::Insert, false, window, cx)
         }
         if let Some(action) = keystroke_event.action.as_ref() {
@@ -1006,11 +1004,10 @@ impl Vim {
                     Some((point, goal))
                 })
             }
-            if last_mode == Mode::Insert || last_mode == Mode::Replace {
-                if let Some(prior_tx) = prior_tx {
+            if (last_mode == Mode::Insert || last_mode == Mode::Replace)
+                && let Some(prior_tx) = prior_tx {
                     editor.group_until_transaction(prior_tx, cx)
                 }
-            }
 
             editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
                 // we cheat with visual block mode and use multiple cursors.
@@ -1031,15 +1028,14 @@ impl Vim {
                 }
 
                 let snapshot = s.display_map();
-                if let Some(pending) = s.pending.as_mut() {
-                    if pending.selection.reversed && mode.is_visual() && !last_mode.is_visual() {
+                if let Some(pending) = s.pending.as_mut()
+                    && pending.selection.reversed && mode.is_visual() && !last_mode.is_visual() {
                         let mut end = pending.selection.end.to_point(&snapshot.buffer_snapshot);
                         end = snapshot
                             .buffer_snapshot
                             .clip_point(end + Point::new(0, 1), Bias::Right);
                         pending.selection.end = snapshot.buffer_snapshot.anchor_before(end);
                     }
-                }
 
                 s.move_with(|map, selection| {
                     if last_mode.is_visual() && !mode.is_visual() {
@@ -1536,13 +1532,12 @@ impl Vim {
         if self.mode == Mode::Insert && self.current_tx.is_some() {
             if self.current_anchor.is_none() {
                 self.current_anchor = Some(newest);
-            } else if self.current_anchor.as_ref().unwrap() != &newest {
-                if let Some(tx_id) = self.current_tx.take() {
+            } else if self.current_anchor.as_ref().unwrap() != &newest
+                && let Some(tx_id) = self.current_tx.take() {
                     self.update_editor(cx, |_, editor, cx| {
                         editor.group_until_transaction(tx_id, cx)
                     });
                 }
-            }
         } else if self.mode == Mode::Normal && newest.start != newest.end {
             if matches!(newest.goal, SelectionGoal::HorizontalRange { .. }) {
                 self.switch_mode(Mode::VisualBlock, false, window, cx);

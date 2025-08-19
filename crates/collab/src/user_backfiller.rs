@@ -130,8 +130,8 @@ impl UserBackfiller {
             .and_then(|value| value.parse::<i64>().ok())
             .and_then(|value| DateTime::from_timestamp(value, 0));
 
-        if rate_limit_remaining == Some(0) {
-            if let Some(reset_at) = rate_limit_reset {
+        if rate_limit_remaining == Some(0)
+            && let Some(reset_at) = rate_limit_reset {
                 let now = Utc::now();
                 if reset_at > now {
                     let sleep_duration = reset_at - now;
@@ -142,7 +142,6 @@ impl UserBackfiller {
                     self.executor.sleep(sleep_duration.to_std().unwrap()).await;
                 }
             }
-        }
 
         response
             .error_for_status()

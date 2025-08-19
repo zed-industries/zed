@@ -1158,14 +1158,13 @@ impl Buffer {
             base_buffer.edit(edits, None, cx)
         });
 
-        if let Some(operation) = operation {
-            if let Some(BufferBranchState {
+        if let Some(operation) = operation
+            && let Some(BufferBranchState {
                 merged_operations, ..
             }) = &mut self.branch_state
             {
                 merged_operations.push(operation);
             }
-        }
     }
 
     fn on_base_buffer_event(
@@ -1185,12 +1184,11 @@ impl Buffer {
         };
 
         let mut operation_to_undo = None;
-        if let Operation::Buffer(text::Operation::Edit(operation)) = &operation {
-            if let Ok(ix) = merged_operations.binary_search(&operation.timestamp) {
+        if let Operation::Buffer(text::Operation::Edit(operation)) = &operation
+            && let Ok(ix) = merged_operations.binary_search(&operation.timestamp) {
                 merged_operations.remove(ix);
                 operation_to_undo = Some(operation.timestamp);
             }
-        }
 
         self.apply_ops([operation.clone()], cx);
 
@@ -1424,11 +1422,10 @@ impl Buffer {
             .map(|info| info.language.clone())
             .collect();
 
-        if languages.is_empty() {
-            if let Some(buffer_language) = self.language() {
+        if languages.is_empty()
+            && let Some(buffer_language) = self.language() {
                 languages.push(buffer_language.clone());
             }
-        }
 
         languages
     }
@@ -2589,11 +2586,10 @@ impl Buffer {
                 line_mode,
                 cursor_shape,
             } => {
-                if let Some(set) = self.remote_selections.get(&lamport_timestamp.replica_id) {
-                    if set.lamport_timestamp > lamport_timestamp {
+                if let Some(set) = self.remote_selections.get(&lamport_timestamp.replica_id)
+                    && set.lamport_timestamp > lamport_timestamp {
                         return;
                     }
-                }
 
                 self.remote_selections.insert(
                     lamport_timestamp.replica_id,
@@ -3365,8 +3361,8 @@ impl BufferSnapshot {
                 }
             }
 
-            if let Some(range) = range {
-                if smallest_range_and_depth.as_ref().map_or(
+            if let Some(range) = range
+                && smallest_range_and_depth.as_ref().map_or(
                     true,
                     |(smallest_range, smallest_range_depth)| {
                         if layer.depth > *smallest_range_depth {
@@ -3384,7 +3380,6 @@ impl BufferSnapshot {
                         override_id: layer.override_id(offset, &self.text),
                     });
                 }
-            }
         }
 
         scope.or_else(|| {
@@ -3499,18 +3494,16 @@ impl BufferSnapshot {
                 // If there is a candidate node on both sides of the (empty) range, then
                 // decide between the two by favoring a named node over an anonymous token.
                 // If both nodes are the same in that regard, favor the right one.
-                if let Some(right_node) = right_node {
-                    if right_node.is_named() || !left_node.is_named() {
+                if let Some(right_node) = right_node
+                    && (right_node.is_named() || !left_node.is_named()) {
                         layer_result = right_node;
                     }
-                }
             }
 
-            if let Some(previous_result) = &result {
-                if previous_result.byte_range().len() < layer_result.byte_range().len() {
+            if let Some(previous_result) = &result
+                && previous_result.byte_range().len() < layer_result.byte_range().len() {
                     continue;
                 }
-            }
             result = Some(layer_result);
         }
 
@@ -4081,11 +4074,10 @@ impl BufferSnapshot {
         let mut result: Option<(Range<usize>, Range<usize>)> = None;
 
         for pair in self.enclosing_bracket_ranges(range.clone()) {
-            if let Some(range_filter) = range_filter {
-                if !range_filter(pair.open_range.clone(), pair.close_range.clone()) {
+            if let Some(range_filter) = range_filter
+                && !range_filter(pair.open_range.clone(), pair.close_range.clone()) {
                     continue;
                 }
-            }
 
             let len = pair.close_range.end - pair.open_range.start;
 
@@ -4474,16 +4466,14 @@ impl BufferSnapshot {
                         current_word_start_ix = Some(ix);
                     }
 
-                    if let Some(query_chars) = &query_chars {
-                        if query_ix < query_len {
-                            if c.to_lowercase().eq(query_chars[query_ix].to_lowercase()) {
+                    if let Some(query_chars) = &query_chars
+                        && query_ix < query_len
+                            && c.to_lowercase().eq(query_chars[query_ix].to_lowercase()) {
                                 query_ix += 1;
                             }
-                        }
-                    }
                     continue;
-                } else if let Some(word_start) = current_word_start_ix.take() {
-                    if query_ix == query_len {
+                } else if let Some(word_start) = current_word_start_ix.take()
+                    && query_ix == query_len {
                         let word_range = self.anchor_before(word_start)..self.anchor_after(ix);
                         let mut word_text = self.text_for_range(word_start..ix).peekable();
                         let first_char = word_text
@@ -4496,7 +4486,6 @@ impl BufferSnapshot {
                             words.insert(word_text.collect(), word_range);
                         }
                     }
-                }
                 query_ix = 0;
             }
             chunk_ix += chunk.text.len();
@@ -4607,8 +4596,8 @@ impl<'a> BufferChunks<'a> {
                 highlights
                     .stack
                     .retain(|(end_offset, _)| *end_offset > range.start);
-                if let Some(capture) = &highlights.next_capture {
-                    if range.start >= capture.node.start_byte() {
+                if let Some(capture) = &highlights.next_capture
+                    && range.start >= capture.node.start_byte() {
                         let next_capture_end = capture.node.end_byte();
                         if range.start < next_capture_end {
                             highlights.stack.push((
@@ -4618,7 +4607,6 @@ impl<'a> BufferChunks<'a> {
                         }
                         highlights.next_capture.take();
                     }
-                }
             } else if let Some(snapshot) = self.buffer_snapshot {
                 let (captures, highlight_maps) = snapshot.get_highlights(self.range.clone());
                 *highlights = BufferChunkHighlights {
@@ -4642,8 +4630,8 @@ impl<'a> BufferChunks<'a> {
     }
 
     fn initialize_diagnostic_endpoints(&mut self) {
-        if let Some(diagnostics) = self.diagnostic_endpoints.as_mut() {
-            if let Some(buffer) = self.buffer_snapshot {
+        if let Some(diagnostics) = self.diagnostic_endpoints.as_mut()
+            && let Some(buffer) = self.buffer_snapshot {
                 let mut diagnostic_endpoints = Vec::new();
                 for entry in buffer.diagnostics_in_range::<_, usize>(self.range.clone(), false) {
                     diagnostic_endpoints.push(DiagnosticEndpoint {
@@ -4669,7 +4657,6 @@ impl<'a> BufferChunks<'a> {
                 self.warning_depth = 0;
                 self.information_depth = 0;
             }
-        }
     }
 
     /// The current byte offset in the buffer.
@@ -4779,12 +4766,11 @@ impl<'a> Iterator for BufferChunks<'a> {
                 .min(next_capture_start)
                 .min(next_diagnostic_endpoint);
             let mut highlight_id = None;
-            if let Some(highlights) = self.highlights.as_ref() {
-                if let Some((parent_capture_end, parent_highlight_id)) = highlights.stack.last() {
+            if let Some(highlights) = self.highlights.as_ref()
+                && let Some((parent_capture_end, parent_highlight_id)) = highlights.stack.last() {
                     chunk_end = chunk_end.min(*parent_capture_end);
                     highlight_id = Some(*parent_highlight_id);
                 }
-            }
 
             let slice =
                 &chunk[chunk_start - self.chunks.offset()..chunk_end - self.chunks.offset()];
@@ -4977,12 +4963,11 @@ pub(crate) fn contiguous_ranges(
     std::iter::from_fn(move || {
         loop {
             if let Some(value) = values.next() {
-                if let Some(range) = &mut current_range {
-                    if value == range.end && range.len() < max_len {
+                if let Some(range) = &mut current_range
+                    && value == range.end && range.len() < max_len {
                         range.end += 1;
                         continue;
                     }
-                }
 
                 let prev_range = current_range.clone();
                 current_range = Some(value..(value + 1));
@@ -5049,11 +5034,10 @@ impl CharClassifier {
             } else {
                 scope.word_characters()
             };
-            if let Some(characters) = characters {
-                if characters.contains(&c) {
+            if let Some(characters) = characters
+                && characters.contains(&c) {
                     return CharKind::Word;
                 }
-            }
         }
 
         if c.is_whitespace() {

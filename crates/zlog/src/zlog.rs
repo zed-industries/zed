@@ -28,11 +28,10 @@ pub fn try_init() -> anyhow::Result<()> {
 }
 
 pub fn init_test() {
-    if get_env_config().is_some() {
-        if try_init().is_ok() {
+    if get_env_config().is_some()
+        && try_init().is_ok() {
             init_output_stdout();
         }
-    }
 }
 
 fn get_env_config() -> Option<String> {
@@ -344,8 +343,8 @@ impl Timer {
             return;
         }
         let elapsed = self.start_time.elapsed();
-        if let Some(warn_limit) = self.warn_if_longer_than {
-            if elapsed > warn_limit {
+        if let Some(warn_limit) = self.warn_if_longer_than
+            && elapsed > warn_limit {
                 crate::warn!(
                     self.logger =>
                     "Timer '{}' took {:?}. Which was longer than the expected limit of {:?}",
@@ -356,7 +355,6 @@ impl Timer {
                 self.done = true;
                 return;
             }
-        }
         crate::trace!(
             self.logger =>
             "Timer '{}' finished in {:?}",

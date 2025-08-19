@@ -701,8 +701,7 @@ pub fn parse_wasm_extension_version(
     for part in wasmparser::Parser::new(0).parse_all(wasm_bytes) {
         if let wasmparser::Payload::CustomSection(s) =
             part.context("error parsing wasm extension")?
-        {
-            if s.name() == "zed:api-version" {
+            && s.name() == "zed:api-version" {
                 version = parse_wasm_extension_version_custom_section(s.data());
                 if version.is_none() {
                     bail!(
@@ -712,7 +711,6 @@ pub fn parse_wasm_extension_version(
                     );
                 }
             }
-        }
     }
 
     // The reason we wait until we're done parsing all of the Wasm bytes to return the version

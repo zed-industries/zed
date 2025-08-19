@@ -399,11 +399,10 @@ async fn read_kernels_dir(path: PathBuf, fs: &dyn Fs) -> Result<Vec<LocalKernelS
     while let Some(path) = kernelspec_dirs.next().await {
         match path {
             Ok(path) => {
-                if fs.is_dir(path.as_path()).await {
-                    if let Ok(kernelspec) = read_kernelspec_at(path, fs).await {
+                if fs.is_dir(path.as_path()).await
+                    && let Ok(kernelspec) = read_kernelspec_at(path, fs).await {
                         valid_kernelspecs.push(kernelspec);
                     }
-                }
             }
             Err(err) => log::warn!("Error reading kernelspec directory: {err:?}"),
         }
@@ -429,8 +428,8 @@ pub async fn local_kernel_specifications(fs: Arc<dyn Fs>) -> Result<Vec<LocalKer
         .output()
         .await;
 
-    if let Ok(command) = command {
-        if command.status.success() {
+    if let Ok(command) = command
+        && command.status.success() {
             let python_prefix = String::from_utf8(command.stdout);
             if let Ok(python_prefix) = python_prefix {
                 let python_prefix = PathBuf::from(python_prefix.trim());
@@ -438,7 +437,6 @@ pub async fn local_kernel_specifications(fs: Arc<dyn Fs>) -> Result<Vec<LocalKer
                 data_dirs.push(python_data_dir);
             }
         }
-    }
 
     let kernel_dirs = data_dirs
         .iter()

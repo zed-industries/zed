@@ -138,11 +138,10 @@ impl NotificationStore {
     pub fn notification_for_id(&self, id: u64) -> Option<&NotificationEntry> {
         let mut cursor = self.notifications.cursor::<NotificationId>(&());
         cursor.seek(&NotificationId(id), Bias::Left);
-        if let Some(item) = cursor.item() {
-            if item.id == id {
+        if let Some(item) = cursor.item()
+            && item.id == id {
                 return Some(item);
             }
-        }
         None
     }
 
@@ -229,8 +228,8 @@ impl NotificationStore {
         mut cx: AsyncApp,
     ) -> Result<()> {
         this.update(&mut cx, |this, cx| {
-            if let Some(notification) = envelope.payload.notification {
-                if let Some(rpc::Notification::ChannelMessageMention { message_id, .. }) =
+            if let Some(notification) = envelope.payload.notification
+                && let Some(rpc::Notification::ChannelMessageMention { message_id, .. }) =
                     Notification::from_proto(&notification)
                 {
                     let fetch_message_task = this.channel_store.update(cx, |this, cx| {
@@ -248,7 +247,6 @@ impl NotificationStore {
                     })
                     .detach_and_log_err(cx)
                 }
-            }
             Ok(())
         })?
     }
@@ -390,13 +388,12 @@ impl NotificationStore {
                         });
                     }
                 }
-            } else if let Some(new_notification) = &new_notification {
-                if is_new {
+            } else if let Some(new_notification) = &new_notification
+                && is_new {
                     cx.emit(NotificationEvent::NewNotification {
                         entry: new_notification.clone(),
                     });
                 }
-            }
 
             if let Some(notification) = new_notification {
                 new_notifications.push(notification, &());

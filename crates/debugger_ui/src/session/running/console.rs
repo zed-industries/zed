@@ -611,8 +611,8 @@ impl ConsoleQueryBarCompletionProvider {
             for variable in console.variable_list.update(cx, |variable_list, cx| {
                 variable_list.completion_variables(cx)
             }) {
-                if let Some(evaluate_name) = &variable.evaluate_name {
-                    if variables
+                if let Some(evaluate_name) = &variable.evaluate_name
+                    && variables
                         .insert(evaluate_name.clone(), variable.value.clone())
                         .is_none()
                     {
@@ -622,7 +622,6 @@ impl ConsoleQueryBarCompletionProvider {
                             char_bag: evaluate_name.chars().collect(),
                         });
                     }
-                }
 
                 if variables
                     .insert(variable.name.clone(), variable.value.clone())

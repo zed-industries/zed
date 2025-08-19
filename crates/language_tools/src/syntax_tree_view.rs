@@ -103,13 +103,11 @@ impl SyntaxTreeView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(item) = active_item {
-            if item.item_id() != cx.entity_id() {
-                if let Some(editor) = item.act_as::<Editor>(cx) {
+        if let Some(item) = active_item
+            && item.item_id() != cx.entity_id()
+                && let Some(editor) = item.act_as::<Editor>(cx) {
                     self.set_editor(editor, window, cx);
                 }
-            }
-        }
     }
 
     fn set_editor(&mut self, editor: Entity<Editor>, window: &mut Window, cx: &mut Context<Self>) {
@@ -537,13 +535,12 @@ impl ToolbarItemView for SyntaxTreeToolbarItemView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> ToolbarItemLocation {
-        if let Some(item) = active_pane_item {
-            if let Some(view) = item.downcast::<SyntaxTreeView>() {
+        if let Some(item) = active_pane_item
+            && let Some(view) = item.downcast::<SyntaxTreeView>() {
                 self.tree_view = Some(view.clone());
                 self.subscription = Some(cx.observe_in(&view, window, |_, _, _, cx| cx.notify()));
                 return ToolbarItemLocation::PrimaryLeft;
             }
-        }
         self.tree_view = None;
         self.subscription = None;
         ToolbarItemLocation::Hidden

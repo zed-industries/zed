@@ -1068,14 +1068,13 @@ impl FakeFsState {
                         let current_entry = *entry_stack.last()?;
                         if let FakeFsEntry::Dir { entries, .. } = current_entry {
                             let entry = entries.get(name.to_str().unwrap())?;
-                            if path_components.peek().is_some() || follow_symlink {
-                                if let FakeFsEntry::Symlink { target, .. } = entry {
+                            if (path_components.peek().is_some() || follow_symlink)
+                                && let FakeFsEntry::Symlink { target, .. } = entry {
                                     let mut target = target.clone();
                                     target.extend(path_components);
                                     path = target;
                                     continue 'outer;
                                 }
-                            }
                             entry_stack.push(entry);
                             canonical_path = canonical_path.join(name);
                         } else {
@@ -1566,11 +1565,10 @@ impl FakeFs {
 
     pub fn insert_branches(&self, dot_git: &Path, branches: &[&str]) {
         self.with_git_state(dot_git, true, |state| {
-            if let Some(first) = branches.first() {
-                if state.current_branch_name.is_none() {
+            if let Some(first) = branches.first()
+                && state.current_branch_name.is_none() {
                     state.current_branch_name = Some(first.to_string())
                 }
-            }
             state
                 .branches
                 .extend(branches.iter().map(ToString::to_string));

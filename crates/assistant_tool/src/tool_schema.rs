@@ -24,8 +24,8 @@ pub fn adapt_schema_to_format(
 fn preprocess_json_schema(json: &mut Value) -> Result<()> {
     // `additionalProperties` defaults to `false` unless explicitly specified.
     // This prevents models from hallucinating tool parameters.
-    if let Value::Object(obj) = json {
-        if matches!(obj.get("type"), Some(Value::String(s)) if s == "object") {
+    if let Value::Object(obj) = json
+        && matches!(obj.get("type"), Some(Value::String(s)) if s == "object") {
             if !obj.contains_key("additionalProperties") {
                 obj.insert("additionalProperties".to_string(), Value::Bool(false));
             }
@@ -35,7 +35,6 @@ fn preprocess_json_schema(json: &mut Value) -> Result<()> {
                 obj.insert("properties".to_string(), Value::Object(Default::default()));
             }
         }
-    }
     Ok(())
 }
 
@@ -59,11 +58,10 @@ fn adapt_to_json_schema_subset(json: &mut Value) -> Result<()> {
             ("optional", |value| value.is_boolean()),
         ];
         for (key, predicate) in KEYS_TO_REMOVE {
-            if let Some(value) = obj.get(key) {
-                if predicate(value) {
+            if let Some(value) = obj.get(key)
+                && predicate(value) {
                     obj.remove(key);
                 }
-            }
         }
 
         // If a type is not specified for an input parameter, add a default type
@@ -77,13 +75,12 @@ fn adapt_to_json_schema_subset(json: &mut Value) -> Result<()> {
         }
 
         // Handle oneOf -> anyOf conversion
-        if let Some(subschemas) = obj.get_mut("oneOf") {
-            if subschemas.is_array() {
+        if let Some(subschemas) = obj.get_mut("oneOf")
+            && subschemas.is_array() {
                 let subschemas_clone = subschemas.clone();
                 obj.remove("oneOf");
                 obj.insert("anyOf".to_string(), subschemas_clone);
             }
-        }
 
         // Recursively process all nested objects and arrays
         for (_, value) in obj.iter_mut() {

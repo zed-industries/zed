@@ -610,8 +610,8 @@ impl<'a, T: 'static> Context<'a, T> {
         let (subscription, activate) =
             window.new_focus_listener(Box::new(move |event, window, cx| {
                 view.update(cx, |view, cx| {
-                    if let Some(blurred_id) = event.previous_focus_path.last().copied() {
-                        if event.is_focus_out(focus_id) {
+                    if let Some(blurred_id) = event.previous_focus_path.last().copied()
+                        && event.is_focus_out(focus_id) {
                             let event = FocusOutEvent {
                                 blurred: WeakFocusHandle {
                                     id: blurred_id,
@@ -620,7 +620,6 @@ impl<'a, T: 'static> Context<'a, T> {
                             };
                             listener(view, event, window, cx)
                         }
-                    }
                 })
                 .is_ok()
             }));
