@@ -156,27 +156,17 @@ impl MentionUri {
     pub fn to_uri(&self) -> Url {
         match self {
             MentionUri::File { abs_path } => {
-                let mut url = Url::parse("file:///").unwrap();
-                let path = abs_path.to_string_lossy();
-                url.set_path(&path);
-                url
+                Url::from_file_path(abs_path).expect("mention path should be absolute")
             }
             MentionUri::Directory { abs_path } => {
-                let mut url = Url::parse("file:///").unwrap();
-                let mut path = abs_path.to_string_lossy().to_string();
-                if !path.ends_with("/") {
-                    path.push_str("/");
-                }
-                url.set_path(&path);
-                url
+                Url::from_directory_path(abs_path).expect("mention path should be absolute")
             }
             MentionUri::Symbol {
                 path,
                 name,
                 line_range,
             } => {
-                let mut url = Url::parse("file:///").unwrap();
-                url.set_path(&path.to_string_lossy());
+                let mut url = Url::from_file_path(path).expect("mention path should be absolute");
                 url.query_pairs_mut().append_pair("symbol", name);
                 url.set_fragment(Some(&format!(
                     "L{}:{}",
@@ -186,8 +176,7 @@ impl MentionUri {
                 url
             }
             MentionUri::Selection { path, line_range } => {
-                let mut url = Url::parse("file:///").unwrap();
-                url.set_path(&path.to_string_lossy());
+                let mut url = Url::from_file_path(path).expect("mention path should be absolute");
                 url.set_fragment(Some(&format!(
                     "L{}:{}",
                     line_range.start + 1,
