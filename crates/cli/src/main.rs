@@ -387,7 +387,7 @@ fn anonymous_fd(path: &str) -> Option<fs::File> {
     {
         _ = path;
         // not implemented for bsd, windows. Could be, but isn't yet
-        return None;
+        None
     }
 }
 
