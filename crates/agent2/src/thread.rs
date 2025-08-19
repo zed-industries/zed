@@ -575,7 +575,7 @@ impl Thread {
         let stream = ThreadEventStream(tx);
         for message in &self.messages {
             match message {
-                Message::User(user_message) => stream.send_user_message(&user_message),
+                Message::User(user_message) => stream.send_user_message(user_message),
                 Message::Agent(assistant_message) => {
                     for content in &assistant_message.content {
                         match content {
@@ -1384,7 +1384,7 @@ impl Thread {
         });
         Some(cx.spawn(async move |this, cx| {
             let mut title = String::new();
-            let mut messages = model.stream_completion(request, &cx).await?;
+            let mut messages = model.stream_completion(request, cx).await?;
             while let Some(event) = messages.next().await {
                 let event = event?;
                 let text = match event {
@@ -1495,7 +1495,7 @@ impl Thread {
             tools,
             tool_choice: None,
             stop: Vec::new(),
-            temperature: AgentSettings::temperature_for_model(&model, cx),
+            temperature: AgentSettings::temperature_for_model(model, cx),
             thinking_allowed: true,
         };
 
