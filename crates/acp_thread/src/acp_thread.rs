@@ -6,13 +6,11 @@ mod terminal;
 pub use connection::*;
 pub use diff::*;
 pub use mention::*;
-use serde::{Deserialize, Serialize};
 pub use terminal::*;
 
 use action_log::ActionLog;
 use agent_client_protocol as acp;
 use anyhow::{Context as _, Result, anyhow};
-use chrono::{DateTime, Utc};
 use editor::Bias;
 use futures::{FutureExt, channel::oneshot, future::BoxFuture};
 use gpui::{AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Task, WeakEntity};
@@ -26,6 +24,7 @@ use std::fmt::{Formatter, Write};
 use std::ops::Range;
 use std::process::ExitStatus;
 use std::rc::Rc;
+use std::time::{Duration, Instant};
 use std::{fmt::Display, mem, path::PathBuf, sync::Arc};
 use ui::App;
 use util::ResultExt;
@@ -666,6 +665,15 @@ impl PlanEntry {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct RetryStatus {
+    pub last_error: SharedString,
+    pub attempt: usize,
+    pub max_attempts: usize,
+    pub started_at: Instant,
+    pub duration: Duration,
+}
+
 pub struct AcpThread {
     title: SharedString,
     entries: Vec<AgentThreadEntry>,
@@ -685,6 +693,7 @@ pub enum AcpThreadEvent {
     EntryUpdated(usize),
     EntriesRemoved(Range<usize>),
     ToolAuthorizationRequired,
+    Retry(RetryStatus),
     Stopped,
     Error,
     ServerExited(ExitStatus),
@@ -927,6 +936,10 @@ impl AcpThread {
         self.title = title;
         cx.emit(AcpThreadEvent::TitleUpdated);
         Ok(())
+    }
+
+    pub fn update_retry_status(&mut self, status: RetryStatus, cx: &mut Context<Self>) {
+        cx.emit(AcpThreadEvent::Retry(status));
     }
 
     pub fn update_tool_call(
@@ -1280,6 +1293,8 @@ impl AcpThread {
                 .await?;
 
             this.update(cx, |this, cx| {
+                this.project
+                    .update(cx, |project, cx| project.set_agent_location(None, cx));
                 match response {
                     Ok(Err(e)) => {
                         this.send_task.take();

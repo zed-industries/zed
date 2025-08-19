@@ -1925,13 +1925,15 @@ impl Render for ProjectSearchBar {
         let limit_reached = project_search.limit_reached;
 
         let color_override = match (
+            &project_search.pending_search,
             project_search.no_results,
             &project_search.active_query,
             &project_search.last_search_query_text,
         ) {
-            (Some(true), Some(q), Some(p)) if q.as_str() == p => Some(Color::Error),
+            (None, Some(true), Some(q), Some(p)) if q.as_str() == p => Some(Color::Error),
             _ => None,
         };
+
         let match_text = search
             .active_match_index
             .and_then(|index| {

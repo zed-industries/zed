@@ -77,14 +77,6 @@ impl FeatureFlag for NotebookFeatureFlag {
     const NAME: &'static str = "notebooks";
 }
 
-pub struct ThreadAutoCaptureFeatureFlag {}
-impl FeatureFlag for ThreadAutoCaptureFeatureFlag {
-    const NAME: &'static str = "thread-auto-capture";
-
-    fn enabled_for_staff() -> bool {
-        false
-    }
-}
 pub struct PanicFeatureFlag;
 
 impl FeatureFlag for PanicFeatureFlag {
