@@ -315,12 +315,12 @@ impl McpServer {
                     Self::send_err(
                         request_id,
                         format!("Tool not found: {}", params.name),
-                        &outgoing_tx,
+                        outgoing_tx,
                     );
                 }
             }
             Err(err) => {
-                Self::send_err(request_id, err.to_string(), &outgoing_tx);
+                Self::send_err(request_id, err.to_string(), outgoing_tx);
             }
         }
     }

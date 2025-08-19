@@ -581,7 +581,7 @@ impl ContextProvider for RustContextProvider {
 
         if let (Some(path), Some(stem)) = (&local_abs_path, task_variables.get(&VariableName::Stem))
         {
-            let fragment = test_fragment(&variables, &path, stem);
+            let fragment = test_fragment(&variables, path, stem);
             variables.insert(RUST_TEST_FRAGMENT_TASK_VARIABLE, fragment);
         };
         if let Some(test_name) =
@@ -598,16 +598,14 @@ impl ContextProvider for RustContextProvider {
             if let Some(path) = local_abs_path
                 .as_deref()
                 .and_then(|local_abs_path| local_abs_path.parent())
-            {
-                if let Some(package_name) =
+                && let Some(package_name) =
                     human_readable_package_name(path, project_env.as_ref()).await
-                {
-                    variables.insert(RUST_PACKAGE_TASK_VARIABLE.clone(), package_name);
-                }
+            {
+                variables.insert(RUST_PACKAGE_TASK_VARIABLE.clone(), package_name);
             }
             if let Some(path) = local_abs_path.as_ref()
                 && let Some((target, manifest_path)) =
-                    target_info_from_abs_path(&path, project_env.as_ref()).await
+                    target_info_from_abs_path(path, project_env.as_ref()).await
             {
                 if let Some(target) = target {
                     variables.extend(TaskVariables::from_iter([
@@ -1570,7 +1568,7 @@ mod tests {
             let found = test_fragment(
                 &TaskVariables::from_iter(variables.into_iter().map(|(k, v)| (k, v.to_owned()))),
                 path,
-                &path.file_stem().unwrap().to_str().unwrap(),
+                path.file_stem().unwrap().to_str().unwrap(),
             );
             assert_eq!(expected, found);
         }

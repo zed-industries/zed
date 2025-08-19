@@ -1283,14 +1283,14 @@ impl EvalAssertion {
 
             // Parse the score from the response
             let re = regex::Regex::new(r"<score>(\d+)</score>").unwrap();
-            if let Some(captures) = re.captures(&output) {
-                if let Some(score_match) = captures.get(1) {
-                    let score = score_match.as_str().parse().unwrap_or(0);
-                    return Ok(EvalAssertionOutcome {
-                        score,
-                        message: Some(output),
-                    });
-                }
+            if let Some(captures) = re.captures(&output)
+                && let Some(score_match) = captures.get(1)
+            {
+                let score = score_match.as_str().parse().unwrap_or(0);
+                return Ok(EvalAssertionOutcome {
+                    score,
+                    message: Some(output),
+                });
             }
 
             anyhow::bail!("No score found in response. Raw output: {output}");

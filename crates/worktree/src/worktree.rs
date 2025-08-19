@@ -1522,10 +1522,10 @@ impl LocalWorktree {
             //       reasonable limit
             {
                 const FILE_SIZE_MAX: u64 = 6 * 1024 * 1024 * 1024; // 6GB
-                if let Ok(Some(metadata)) = fs.metadata(&abs_path).await {
-                    if metadata.len >= FILE_SIZE_MAX {
-                        anyhow::bail!("File is too large to load");
-                    }
+                if let Ok(Some(metadata)) = fs.metadata(&abs_path).await
+                    && metadata.len >= FILE_SIZE_MAX
+                {
+                    anyhow::bail!("File is too large to load");
                 }
             }
             let text = fs.load(&abs_path).await?;
@@ -2503,10 +2503,10 @@ impl Snapshot {
             if let Some(PathEntry { path, .. }) = self.entries_by_id.get(&entry.id, &()) {
                 entries_by_path_edits.push(Edit::Remove(PathKey(path.clone())));
             }
-            if let Some(old_entry) = self.entries_by_path.get(&PathKey(entry.path.clone()), &()) {
-                if old_entry.id != entry.id {
-                    entries_by_id_edits.push(Edit::Remove(old_entry.id));
-                }
+            if let Some(old_entry) = self.entries_by_path.get(&PathKey(entry.path.clone()), &())
+                && old_entry.id != entry.id
+            {
+                entries_by_id_edits.push(Edit::Remove(old_entry.id));
             }
             entries_by_id_edits.push(Edit::Insert(PathEntry {
                 id: entry.id,
@@ -2747,20 +2747,19 @@ impl LocalSnapshot {
             }
         }
 
-        if entry.kind == EntryKind::PendingDir {
-            if let Some(existing_entry) =
+        if entry.kind == EntryKind::PendingDir
+            && let Some(existing_entry) =
                 self.entries_by_path.get(&PathKey(entry.path.clone()), &())
-            {
-                entry.kind = existing_entry.kind;
-            }
+        {
+            entry.kind = existing_entry.kind;
         }
 
         let scan_id = self.scan_id;
         let removed = self.entries_by_path.insert_or_replace(entry.clone(), &());
-        if let Some(removed) = removed {
-            if removed.id != entry.id {
-                self.entries_by_id.remove(&removed.id, &());
-            }
+        if let Some(removed) = removed
+            && removed.id != entry.id
+        {
+            self.entries_by_id.remove(&removed.id, &());
         }
         self.entries_by_id.insert_or_replace(
             PathEntry {
@@ -3199,7 +3198,7 @@ impl BackgroundScannerState {
 }
 
 async fn is_git_dir(path: &Path, fs: &dyn Fs) -> bool {
-    if path.file_name() == Some(&*DOT_GIT) {
+    if path.file_name() == Some(*DOT_GIT) {
         return true;
     }
 
@@ -3575,7 +3574,7 @@ impl<'a>
         cursor_location: &Dimensions<TraversalProgress<'a>, GitSummary>,
         _: &(),
     ) -> Ordering {
-        self.cmp_path(&cursor_location.0.max_path)
+        self.cmp_path(cursor_location.0.max_path)
     }
 }
 
@@ -4138,13 +4137,13 @@ impl BackgroundScanner {
             let root_path = state.snapshot.abs_path.clone();
             for path in paths {
                 for ancestor in path.ancestors() {
-                    if let Some(entry) = state.snapshot.entry_for_path(ancestor) {
-                        if entry.kind == EntryKind::UnloadedDir {
-                            let abs_path = root_path.as_path().join(ancestor);
-                            state.enqueue_scan_dir(abs_path.into(), entry, &scan_job_tx);
-                            state.paths_to_scan.insert(path.clone());
-                            break;
-                        }
+                    if let Some(entry) = state.snapshot.entry_for_path(ancestor)
+                        && entry.kind == EntryKind::UnloadedDir
+                    {
+                        let abs_path = root_path.as_path().join(ancestor);
+                        state.enqueue_scan_dir(abs_path.into(), entry, &scan_job_tx);
+                        state.paths_to_scan.insert(path.clone());
+                        break;
                     }
                 }
             }
@@ -4214,11 +4213,10 @@ impl BackgroundScanner {
                                 // Recursively load directories from the file system.
                                 job = scan_jobs_rx.recv().fuse() => {
                                     let Ok(job) = job else { break };
-                                    if let Err(err) = self.scan_dir(&job).await {
-                                        if job.path.as_ref() != Path::new("") {
+                                    if let Err(err) = self.scan_dir(&job).await
+                                        && job.path.as_ref() != Path::new("") {
                                             log::error!("error scanning directory {:?}: {}", job.abs_path, err);
                                         }
-                                    }
                                 }
                             }
                         }
@@ -4554,18 +4552,18 @@ impl BackgroundScanner {
 
                     state.insert_entry(fs_entry.clone(), self.fs.as_ref(), self.watcher.as_ref());
 
-                    if path.as_ref() == Path::new("") {
-                        if let Some((ignores, repo)) = new_ancestor_repo.take() {
-                            log::trace!("updating ancestor git repository");
-                            state.snapshot.ignores_by_parent_abs_path.extend(ignores);
-                            if let Some((ancestor_dot_git, work_directory)) = repo {
-                                state.insert_git_repository_for_path(
-                                    work_directory,
-                                    ancestor_dot_git.as_path().into(),
-                                    self.fs.as_ref(),
-                                    self.watcher.as_ref(),
-                                );
-                            }
+                    if path.as_ref() == Path::new("")
+                        && let Some((ignores, repo)) = new_ancestor_repo.take()
+                    {
+                        log::trace!("updating ancestor git repository");
+                        state.snapshot.ignores_by_parent_abs_path.extend(ignores);
+                        if let Some((ancestor_dot_git, work_directory)) = repo {
+                            state.insert_git_repository_for_path(
+                                work_directory,
+                                ancestor_dot_git.as_path().into(),
+                                self.fs.as_ref(),
+                                self.watcher.as_ref(),
+                            );
                         }
                     }
                 }
@@ -4590,13 +4588,12 @@ impl BackgroundScanner {
         if !path
             .components()
             .any(|component| component.as_os_str() == *DOT_GIT)
+            && let Some(local_repo) = snapshot.local_repo_for_work_directory_path(path)
         {
-            if let Some(local_repo) = snapshot.local_repo_for_work_directory_path(path) {
-                let id = local_repo.work_directory_id;
-                log::debug!("remove repo path: {:?}", path);
-                snapshot.git_repositories.remove(&id);
-                return Some(());
-            }
+            let id = local_repo.work_directory_id;
+            log::debug!("remove repo path: {:?}", path);
+            snapshot.git_repositories.remove(&id);
+            return Some(());
         }
 
         Some(())
@@ -4738,10 +4735,10 @@ impl BackgroundScanner {
 
         let state = &mut self.state.lock();
         for edit in &entries_by_path_edits {
-            if let Edit::Insert(entry) = edit {
-                if let Err(ix) = state.changed_paths.binary_search(&entry.path) {
-                    state.changed_paths.insert(ix, entry.path.clone());
-                }
+            if let Edit::Insert(entry) = edit
+                && let Err(ix) = state.changed_paths.binary_search(&entry.path)
+            {
+                state.changed_paths.insert(ix, entry.path.clone());
             }
         }
 
@@ -5287,13 +5284,12 @@ impl<'a> Traversal<'a> {
         while let Some(entry) = self.cursor.item() {
             self.cursor
                 .seek_forward(&TraversalTarget::successor(&entry.path), Bias::Left);
-            if let Some(entry) = self.cursor.item() {
-                if (self.include_files || !entry.is_file())
-                    && (self.include_dirs || !entry.is_dir())
-                    && (self.include_ignored || !entry.is_ignored || entry.is_always_included)
-                {
-                    return true;
-                }
+            if let Some(entry) = self.cursor.item()
+                && (self.include_files || !entry.is_file())
+                && (self.include_dirs || !entry.is_dir())
+                && (self.include_ignored || !entry.is_ignored || entry.is_always_included)
+            {
+                return true;
             }
         }
         false
@@ -5364,13 +5360,13 @@ impl PathTarget<'_> {
 
 impl<'a, S: Summary> SeekTarget<'a, PathSummary<S>, PathProgress<'a>> for PathTarget<'_> {
     fn cmp(&self, cursor_location: &PathProgress<'a>, _: &S::Context) -> Ordering {
-        self.cmp_path(&cursor_location.max_path)
+        self.cmp_path(cursor_location.max_path)
     }
 }
 
 impl<'a, S: Summary> SeekTarget<'a, PathSummary<S>, TraversalProgress<'a>> for PathTarget<'_> {
     fn cmp(&self, cursor_location: &TraversalProgress<'a>, _: &S::Context) -> Ordering {
-        self.cmp_path(&cursor_location.max_path)
+        self.cmp_path(cursor_location.max_path)
     }
 }
 
@@ -5396,7 +5392,7 @@ impl<'a> TraversalTarget<'a> {
 
     fn cmp_progress(&self, progress: &TraversalProgress) -> Ordering {
         match self {
-            TraversalTarget::Path(path) => path.cmp_path(&progress.max_path),
+            TraversalTarget::Path(path) => path.cmp_path(progress.max_path),
             TraversalTarget::Count {
                 count,
                 include_files,
@@ -5437,11 +5433,11 @@ impl<'a> Iterator for ChildEntriesIter<'a> {
     type Item = &'a Entry;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if let Some(item) = self.traversal.entry() {
-            if item.path.starts_with(self.parent_path) {
-                self.traversal.advance_to_sibling();
-                return Some(item);
-            }
+        if let Some(item) = self.traversal.entry()
+            && item.path.starts_with(self.parent_path)
+        {
+            self.traversal.advance_to_sibling();
+            return Some(item);
         }
         None
     }
@@ -5551,7 +5547,7 @@ fn discover_git_paths(dot_git_abs_path: &Arc<Path>, fs: &dyn Fs) -> (Arc<Path>, 
     let mut repository_dir_abs_path = dot_git_abs_path.clone();
     let mut common_dir_abs_path = dot_git_abs_path.clone();
 
-    if let Some(path) = smol::block_on(fs.load(&dot_git_abs_path))
+    if let Some(path) = smol::block_on(fs.load(dot_git_abs_path))
         .ok()
         .as_ref()
         .and_then(|contents| parse_gitfile(contents).log_err())
@@ -5564,12 +5560,10 @@ fn discover_git_paths(dot_git_abs_path: &Arc<Path>, fs: &dyn Fs) -> (Arc<Path>, 
             repository_dir_abs_path = Path::new(&path).into();
             common_dir_abs_path = repository_dir_abs_path.clone();
             if let Some(commondir_contents) = smol::block_on(fs.load(&path.join("commondir"))).ok()
-            {
-                if let Some(commondir_path) =
+                && let Some(commondir_path) =
                     smol::block_on(fs.canonicalize(&path.join(commondir_contents.trim()))).log_err()
-                {
-                    common_dir_abs_path = commondir_path.as_path().into();
-                }
+            {
+                common_dir_abs_path = commondir_path.as_path().into();
             }
         }
     };

@@ -24,6 +24,7 @@ use std::fmt::{Formatter, Write};
 use std::ops::Range;
 use std::process::ExitStatus;
 use std::rc::Rc;
+use std::time::{Duration, Instant};
 use std::{fmt::Display, mem, path::PathBuf, sync::Arc};
 use ui::App;
 use util::ResultExt;
@@ -248,14 +249,13 @@ impl ToolCall {
         }
 
         if let Some(raw_output) = raw_output {
-            if self.content.is_empty() {
-                if let Some(markdown) = markdown_for_raw_output(&raw_output, &language_registry, cx)
-                {
-                    self.content
-                        .push(ToolCallContent::ContentBlock(ContentBlock::Markdown {
-                            markdown,
-                        }));
-                }
+            if self.content.is_empty()
+                && let Some(markdown) = markdown_for_raw_output(&raw_output, &language_registry, cx)
+            {
+                self.content
+                    .push(ToolCallContent::ContentBlock(ContentBlock::Markdown {
+                        markdown,
+                    }));
             }
             self.raw_output = Some(raw_output);
         }
@@ -429,11 +429,11 @@ impl ContentBlock {
         language_registry: &Arc<LanguageRegistry>,
         cx: &mut App,
     ) {
-        if matches!(self, ContentBlock::Empty) {
-            if let acp::ContentBlock::ResourceLink(resource_link) = block {
-                *self = ContentBlock::ResourceLink { resource_link };
-                return;
-            }
+        if matches!(self, ContentBlock::Empty)
+            && let acp::ContentBlock::ResourceLink(resource_link) = block
+        {
+            *self = ContentBlock::ResourceLink { resource_link };
+            return;
         }
 
         let new_content = self.block_string_contents(block);
@@ -485,7 +485,7 @@ impl ContentBlock {
     }
 
     fn resource_link_md(uri: &str) -> String {
-        if let Some(uri) = MentionUri::parse(&uri).log_err() {
+        if let Some(uri) = MentionUri::parse(uri).log_err() {
             uri.as_link().to_string()
         } else {
             uri.to_string()
@@ -537,9 +537,15 @@ impl ToolCallContent {
             acp::ToolCallContent::Content { content } => {
                 Self::ContentBlock(ContentBlock::new(content, &language_registry, cx))
             }
-            acp::ToolCallContent::Diff { diff } => {
-                Self::Diff(cx.new(|cx| Diff::from_acp(diff, language_registry, cx)))
-            }
+            acp::ToolCallContent::Diff { diff } => Self::Diff(cx.new(|cx| {
+                Diff::finalized(
+                    diff.path,
+                    diff.old_text,
+                    diff.new_text,
+                    language_registry,
+                    cx,
+                )
+            })),
         }
     }
 
@@ -658,6 +664,15 @@ impl PlanEntry {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct RetryStatus {
+    pub last_error: SharedString,
+    pub attempt: usize,
+    pub max_attempts: usize,
+    pub started_at: Instant,
+    pub duration: Duration,
+}
+
 pub struct AcpThread {
     title: SharedString,
     entries: Vec<AgentThreadEntry>,
@@ -673,9 +688,11 @@ pub struct AcpThread {
 #[derive(Debug)]
 pub enum AcpThreadEvent {
     NewEntry,
+    TitleUpdated,
     EntryUpdated(usize),
     EntriesRemoved(Range<usize>),
     ToolAuthorizationRequired,
+    Retry(RetryStatus),
     Stopped,
     Error,
     ServerExited(ExitStatus),
@@ -718,11 +735,9 @@ impl AcpThread {
         title: impl Into<SharedString>,
         connection: Rc<dyn AgentConnection>,
         project: Entity<Project>,
+        action_log: Entity<ActionLog>,
         session_id: acp::SessionId,
-        cx: &mut Context<Self>,
     ) -> Self {
-        let action_log = cx.new(|_| ActionLog::new(project.clone()));
-
         Self {
             action_log,
             shared_buffers: Default::default(),
@@ -914,6 +929,16 @@ impl AcpThread {
     fn push_entry(&mut self, entry: AgentThreadEntry, cx: &mut Context<Self>) {
         self.entries.push(entry);
         cx.emit(AcpThreadEvent::NewEntry);
+    }
+
+    pub fn update_title(&mut self, title: SharedString, cx: &mut Context<Self>) -> Result<()> {
+        self.title = title;
+        cx.emit(AcpThreadEvent::TitleUpdated);
+        Ok(())
+    }
+
+    pub fn update_retry_status(&mut self, status: RetryStatus, cx: &mut Context<Self>) {
+        cx.emit(AcpThreadEvent::Retry(status));
     }
 
     pub fn update_tool_call(
@@ -1267,6 +1292,8 @@ impl AcpThread {
                 .await?;
 
             this.update(cx, |this, cx| {
+                this.project
+                    .update(cx, |project, cx| project.set_agent_location(None, cx));
                 match response {
                     Ok(Err(e)) => {
                         this.send_task.take();
@@ -1416,7 +1443,7 @@ impl AcpThread {
     fn user_message(&self, id: &UserMessageId) -> Option<&UserMessage> {
         self.entries.iter().find_map(|entry| {
             if let AgentThreadEntry::UserMessage(message) = entry {
-                if message.id.as_ref() == Some(&id) {
+                if message.id.as_ref() == Some(id) {
                     Some(message)
                 } else {
                     None
@@ -1430,7 +1457,7 @@ impl AcpThread {
     fn user_message_mut(&mut self, id: &UserMessageId) -> Option<(usize, &mut UserMessage)> {
         self.entries.iter_mut().enumerate().find_map(|(ix, entry)| {
             if let AgentThreadEntry::UserMessage(message) = entry {
-                if message.id.as_ref() == Some(&id) {
+                if message.id.as_ref() == Some(id) {
                     Some((ix, message))
                 } else {
                     None
@@ -1641,7 +1668,7 @@ mod tests {
     use super::*;
     use anyhow::anyhow;
     use futures::{channel::mpsc, future::LocalBoxFuture, select};
-    use gpui::{AsyncApp, TestAppContext, WeakEntity};
+    use gpui::{App, AsyncApp, TestAppContext, WeakEntity};
     use indoc::indoc;
     use project::{FakeFs, Fs};
     use rand::Rng as _;
@@ -2311,7 +2338,7 @@ mod tests {
             self: Rc<Self>,
             project: Entity<Project>,
             _cwd: &Path,
-            cx: &mut gpui::App,
+            cx: &mut App,
         ) -> Task<gpui::Result<Entity<AcpThread>>> {
             let session_id = acp::SessionId(
                 rand::thread_rng()
@@ -2321,8 +2348,16 @@ mod tests {
                     .collect::<String>()
                     .into(),
             );
-            let thread =
-                cx.new(|cx| AcpThread::new("Test", self.clone(), project, session_id.clone(), cx));
+            let action_log = cx.new(|_| ActionLog::new(project.clone()));
+            let thread = cx.new(|_cx| {
+                AcpThread::new(
+                    "Test",
+                    self.clone(),
+                    project,
+                    action_log,
+                    session_id.clone(),
+                )
+            });
             self.sessions.lock().insert(session_id, thread.downgrade());
             Task::ready(Ok(thread))
         }
@@ -2356,7 +2391,7 @@ mod tests {
 
         fn cancel(&self, session_id: &acp::SessionId, cx: &mut App) {
             let sessions = self.sessions.lock();
-            let thread = sessions.get(&session_id).unwrap().clone();
+            let thread = sessions.get(session_id).unwrap().clone();
 
             cx.spawn(async move |cx| {
                 thread

@@ -61,6 +61,6 @@ impl ExtensionLanguageProxy for LanguageServerRegistryProxy {
         grammars_to_remove: &[Arc<str>],
     ) {
         self.language_registry
-            .remove_languages(&languages_to_remove, &grammars_to_remove);
+            .remove_languages(languages_to_remove, grammars_to_remove);
     }
 }

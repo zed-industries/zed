@@ -358,11 +358,11 @@ impl KeymapFile {
                 let action_input = items[1].clone();
                 let action_input_string = action_input.to_string();
                 (
-                    cx.build_action(&name, Some(action_input)),
+                    cx.build_action(name, Some(action_input)),
                     Some(action_input_string),
                 )
             }
-            Value::String(name) => (cx.build_action(&name, None), None),
+            Value::String(name) => (cx.build_action(name, None), None),
             Value::Null => (Ok(NoAction.boxed_clone()), None),
             _ => {
                 return Err(format!(
@@ -543,27 +543,27 @@ impl KeymapFile {
             //
             // When a struct with no deserializable fields is added by deriving `Action`, an empty
             // object schema is produced. The action should be invoked without data in this case.
-            if let Some(schema) = action_schema {
-                if schema != empty_object {
-                    let mut matches_action_name = json_schema!({
-                        "const": name
-                    });
-                    if let Some(desc) = description.clone() {
-                        add_description(&mut matches_action_name, desc);
-                    }
-                    if let Some(message) = deprecation_messages.get(name) {
-                        add_deprecation(&mut matches_action_name, message.to_string());
-                    } else if let Some(new_name) = deprecation {
-                        add_deprecation_preferred_name(&mut matches_action_name, new_name);
-                    }
-                    let action_with_input = json_schema!({
-                        "type": "array",
-                        "items": [matches_action_name, schema],
-                        "minItems": 2,
-                        "maxItems": 2
-                    });
-                    keymap_action_alternatives.push(action_with_input);
+            if let Some(schema) = action_schema
+                && schema != empty_object
+            {
+                let mut matches_action_name = json_schema!({
+                    "const": name
+                });
+                if let Some(desc) = description.clone() {
+                    add_description(&mut matches_action_name, desc);
                 }
+                if let Some(message) = deprecation_messages.get(name) {
+                    add_deprecation(&mut matches_action_name, message.to_string());
+                } else if let Some(new_name) = deprecation {
+                    add_deprecation_preferred_name(&mut matches_action_name, new_name);
+                }
+                let action_with_input = json_schema!({
+                    "type": "array",
+                    "items": [matches_action_name, schema],
+                    "minItems": 2,
+                    "maxItems": 2
+                });
+                keymap_action_alternatives.push(action_with_input);
             }
         }
 
@@ -593,10 +593,10 @@ impl KeymapFile {
         match fs.load(paths::keymap_file()).await {
             result @ Ok(_) => result,
             Err(err) => {
-                if let Some(e) = err.downcast_ref::<std::io::Error>() {
-                    if e.kind() == std::io::ErrorKind::NotFound {
-                        return Ok(crate::initial_keymap_content().to_string());
-                    }
+                if let Some(e) = err.downcast_ref::<std::io::Error>()
+                    && e.kind() == std::io::ErrorKind::NotFound
+                {
+                    return Ok(crate::initial_keymap_content().to_string());
                 }
                 Err(err)
             }
@@ -839,7 +839,7 @@ impl KeymapFile {
                     if &action.0 != target_action_value {
                         continue;
                     }
-                    return Some((index, &keystrokes_str));
+                    return Some((index, keystrokes_str));
                 }
             }
             None

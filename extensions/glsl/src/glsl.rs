@@ -16,10 +16,10 @@ impl GlslExtension {
             return Ok(path);
         }
 
-        if let Some(path) = &self.cached_binary_path {
-            if fs::metadata(path).map_or(false, |stat| stat.is_file()) {
-                return Ok(path.clone());
-            }
+        if let Some(path) = &self.cached_binary_path
+            && fs::metadata(path).map_or(false, |stat| stat.is_file())
+        {
+            return Ok(path.clone());
         }
 
         zed::set_language_server_installation_status(

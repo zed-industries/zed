@@ -95,10 +95,8 @@ impl CursorPosition {
                 .ok()
                 .unwrap_or(true);
 
-            if !is_singleton {
-                if let Some(debounce) = debounce {
-                    cx.background_executor().timer(debounce).await;
-                }
+            if !is_singleton && let Some(debounce) = debounce {
+                cx.background_executor().timer(debounce).await;
             }
 
             editor
@@ -234,13 +232,11 @@ impl Render for CursorPosition {
                                 if let Some(editor) = workspace
                                     .active_item(cx)
                                     .and_then(|item| item.act_as::<Editor>(cx))
+                                    && let Some((_, buffer, _)) = editor.read(cx).active_excerpt(cx)
                                 {
-                                    if let Some((_, buffer, _)) = editor.read(cx).active_excerpt(cx)
-                                    {
-                                        workspace.toggle_modal(window, cx, |window, cx| {
-                                            crate::GoToLine::new(editor, buffer, window, cx)
-                                        })
-                                    }
+                                    workspace.toggle_modal(window, cx, |window, cx| {
+                                        crate::GoToLine::new(editor, buffer, window, cx)
+                                    })
                                 }
                             });
                         }

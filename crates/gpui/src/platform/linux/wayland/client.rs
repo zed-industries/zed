@@ -359,13 +359,13 @@ impl WaylandClientStatePtr {
             }
             changed
         };
-        if changed {
-            if let Some(mut callback) = state.common.callbacks.keyboard_layout_change.take() {
-                drop(state);
-                callback();
-                state = client.borrow_mut();
-                state.common.callbacks.keyboard_layout_change = Some(callback);
-            }
+
+        if changed && let Some(mut callback) = state.common.callbacks.keyboard_layout_change.take()
+        {
+            drop(state);
+            callback();
+            state = client.borrow_mut();
+            state.common.callbacks.keyboard_layout_change = Some(callback);
         }
     }
 
@@ -373,15 +373,15 @@ impl WaylandClientStatePtr {
         let mut client = self.get_client();
         let mut state = client.borrow_mut();
         let closed_window = state.windows.remove(surface_id).unwrap();
-        if let Some(window) = state.mouse_focused_window.take() {
-            if !window.ptr_eq(&closed_window) {
-                state.mouse_focused_window = Some(window);
-            }
+        if let Some(window) = state.mouse_focused_window.take()
+            && !window.ptr_eq(&closed_window)
+        {
+            state.mouse_focused_window = Some(window);
         }
-        if let Some(window) = state.keyboard_focused_window.take() {
-            if !window.ptr_eq(&closed_window) {
-                state.keyboard_focused_window = Some(window);
-            }
+        if let Some(window) = state.keyboard_focused_window.take()
+            && !window.ptr_eq(&closed_window)
+        {
+            state.keyboard_focused_window = Some(window);
         }
         if state.windows.is_empty() {
             state.common.signal.stop();
@@ -1145,7 +1145,7 @@ impl Dispatch<wl_seat::WlSeat, ()> for WaylandClientStatePtr {
                     .globals
                     .text_input_manager
                     .as_ref()
-                    .map(|text_input_manager| text_input_manager.get_text_input(&seat, qh, ()));
+                    .map(|text_input_manager| text_input_manager.get_text_input(seat, qh, ()));
 
                 if let Some(wl_keyboard) = &state.wl_keyboard {
                     wl_keyboard.release();
@@ -1294,7 +1294,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
                 match key_state {
                     wl_keyboard::KeyState::Pressed if !keysym.is_modifier_key() => {
                         let mut keystroke =
-                            Keystroke::from_xkb(&keymap_state, state.modifiers, keycode);
+                            Keystroke::from_xkb(keymap_state, state.modifiers, keycode);
                         if let Some(mut compose) = state.compose_state.take() {
                             compose.feed(keysym);
                             match compose.status() {
@@ -1538,12 +1538,9 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                             cursor_shape_device.set_shape(serial, style.to_shape());
                         } else {
                             let scale = window.primary_output_scale();
-                            state.cursor.set_icon(
-                                &wl_pointer,
-                                serial,
-                                style.to_icon_names(),
-                                scale,
-                            );
+                            state
+                                .cursor
+                                .set_icon(wl_pointer, serial, style.to_icon_names(), scale);
                         }
                     }
                     drop(state);
@@ -1580,7 +1577,7 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                     if state
                         .keyboard_focused_window
                         .as_ref()
-                        .map_or(false, |keyboard_window| window.ptr_eq(&keyboard_window))
+                        .map_or(false, |keyboard_window| window.ptr_eq(keyboard_window))
                     {
                         state.enter_token = None;
                     }
@@ -1787,17 +1784,17 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                             drop(state);
                             window.handle_input(input);
                         }
-                    } else if let Some(discrete) = discrete {
-                        if let Some(window) = state.mouse_focused_window.clone() {
-                            let input = PlatformInput::ScrollWheel(ScrollWheelEvent {
-                                position: state.mouse_location.unwrap(),
-                                delta: ScrollDelta::Lines(discrete),
-                                modifiers: state.modifiers,
-                                touch_phase: TouchPhase::Moved,
-                            });
-                            drop(state);
-                            window.handle_input(input);
-                        }
+                    } else if let Some(discrete) = discrete
+                        && let Some(window) = state.mouse_focused_window.clone()
+                    {
+                        let input = PlatformInput::ScrollWheel(ScrollWheelEvent {
+                            position: state.mouse_location.unwrap(),
+                            delta: ScrollDelta::Lines(discrete),
+                            modifiers: state.modifiers,
+                            touch_phase: TouchPhase::Moved,
+                        });
+                        drop(state);
+                        window.handle_input(input);
                     }
                 }
             }

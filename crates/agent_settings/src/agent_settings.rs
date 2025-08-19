@@ -116,15 +116,15 @@ pub struct LanguageModelParameters {
 
 impl LanguageModelParameters {
     pub fn matches(&self, model: &Arc<dyn LanguageModel>) -> bool {
-        if let Some(provider) = &self.provider {
-            if provider.0 != model.provider_id().0 {
-                return false;
-            }
+        if let Some(provider) = &self.provider
+            && provider.0 != model.provider_id().0
+        {
+            return false;
         }
-        if let Some(setting_model) = &self.model {
-            if *setting_model != model.id().0 {
-                return false;
-            }
+        if let Some(setting_model) = &self.model
+            && *setting_model != model.id().0
+        {
+            return false;
         }
         true
     }

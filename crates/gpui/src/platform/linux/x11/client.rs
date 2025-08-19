@@ -565,10 +565,10 @@ impl X11Client {
                                     events.push(last_keymap_change_event);
                                 }
 
-                                if let Some(last_press) = last_key_press.as_ref() {
-                                    if last_press.detail == key_press.detail {
-                                        continue;
-                                    }
+                                if let Some(last_press) = last_key_press.as_ref()
+                                    && last_press.detail == key_press.detail
+                                {
+                                    continue;
                                 }
 
                                 if let Some(Event::KeyRelease(key_release)) =
@@ -1212,7 +1212,7 @@ impl X11Client {
 
                 state = self.0.borrow_mut();
                 if let Some(mut pointer) = state.pointer_device_states.get_mut(&event.sourceid) {
-                    let scroll_delta = get_scroll_delta_and_update_state(&mut pointer, &event);
+                    let scroll_delta = get_scroll_delta_and_update_state(pointer, &event);
                     drop(state);
                     if let Some(scroll_delta) = scroll_delta {
                         window.handle_input(PlatformInput::ScrollWheel(make_scroll_wheel_event(
@@ -1271,7 +1271,7 @@ impl X11Client {
             Event::XinputDeviceChanged(event) => {
                 let mut state = self.0.borrow_mut();
                 if let Some(mut pointer) = state.pointer_device_states.get_mut(&event.sourceid) {
-                    reset_pointer_device_scroll_positions(&mut pointer);
+                    reset_pointer_device_scroll_positions(pointer);
                 }
             }
             _ => {}
@@ -2035,12 +2035,11 @@ fn xdnd_get_supported_atom(
         ),
     )
     .log_with_level(Level::Warn)
+        && let Some(atoms) = reply.value32()
     {
-        if let Some(atoms) = reply.value32() {
-            for atom in atoms {
-                if xdnd_is_atom_supported(atom, &supported_atoms) {
-                    return atom;
-                }
+        for atom in atoms {
+            if xdnd_is_atom_supported(atom, supported_atoms) {
+                return atom;
             }
         }
     }
@@ -2411,11 +2410,13 @@ fn legacy_get_randr_scale_factor(connection: &XCBConnection, root: u32) -> Optio
     let mut crtc_infos: HashMap<randr::Crtc, randr::GetCrtcInfoReply> = HashMap::default();
     let mut valid_outputs: HashSet<randr::Output> = HashSet::new();
     for (crtc, cookie) in crtc_cookies {
-        if let Ok(reply) = cookie.reply() {
-            if reply.width > 0 && reply.height > 0 && !reply.outputs.is_empty() {
-                crtc_infos.insert(crtc, reply.clone());
-                valid_outputs.extend(&reply.outputs);
-            }
+        if let Ok(reply) = cookie.reply()
+            && reply.width > 0
+            && reply.height > 0
+            && !reply.outputs.is_empty()
+        {
+            crtc_infos.insert(crtc, reply.clone());
+            valid_outputs.extend(&reply.outputs);
         }
     }
 

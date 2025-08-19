@@ -84,11 +84,11 @@ impl<Label: Ord + Clone> RootPathTrie<Label> {
     ) {
         let mut current = self;
         for key in path.0.iter() {
-            if !current.labels.is_empty() {
-                if (callback)(&current.worktree_relative_path, &current.labels).is_break() {
-                    return;
-                };
-            }
+            if !current.labels.is_empty()
+                && (callback)(&current.worktree_relative_path, &current.labels).is_break()
+            {
+                return;
+            };
             current = match current.children.get(key) {
                 Some(child) => child,
                 None => return,

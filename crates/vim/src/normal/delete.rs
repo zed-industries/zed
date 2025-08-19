@@ -74,10 +74,10 @@ impl Vim {
                 editor.change_selections(Default::default(), window, cx, |s| {
                     s.move_with(|map, selection| {
                         let mut cursor = selection.head();
-                        if kind.linewise() {
-                            if let Some(column) = original_columns.get(&selection.id) {
-                                *cursor.column_mut() = *column
-                            }
+                        if kind.linewise()
+                            && let Some(column) = original_columns.get(&selection.id)
+                        {
+                            *cursor.column_mut() = *column
                         }
                         cursor = map.clip_point(cursor, Bias::Left);
                         selection.collapse_to(cursor, selection.goal)

@@ -1094,10 +1094,10 @@ impl BufferStore {
                         .collect::<Vec<_>>()
                 })?;
                 for buffer_task in buffers {
-                    if let Some(buffer) = buffer_task.await.log_err() {
-                        if tx.send(buffer).await.is_err() {
-                            return anyhow::Ok(());
-                        }
+                    if let Some(buffer) = buffer_task.await.log_err()
+                        && tx.send(buffer).await.is_err()
+                    {
+                        return anyhow::Ok(());
                     }
                 }
             }
@@ -1173,11 +1173,11 @@ impl BufferStore {
         buffer_id: BufferId,
         handle: OpenLspBufferHandle,
     ) {
-        if let Some(shared_buffers) = self.shared_buffers.get_mut(&peer_id) {
-            if let Some(buffer) = shared_buffers.get_mut(&buffer_id) {
-                buffer.lsp_handle = Some(handle);
-                return;
-            }
+        if let Some(shared_buffers) = self.shared_buffers.get_mut(&peer_id)
+            && let Some(buffer) = shared_buffers.get_mut(&buffer_id)
+        {
+            buffer.lsp_handle = Some(handle);
+            return;
         }
         debug_panic!("tried to register shared lsp handle, but buffer was not shared")
     }
@@ -1345,7 +1345,7 @@ impl BufferStore {
         mut cx: AsyncApp,
     ) -> Result<proto::BufferSaved> {
         let buffer_id = BufferId::new(envelope.payload.buffer_id)?;
-        let (buffer, project_id) = this.read_with(&mut cx, |this, _| {
+        let (buffer, project_id) = this.read_with(&cx, |this, _| {
             anyhow::Ok((
                 this.get_existing(buffer_id)?,
                 this.downstream_client
@@ -1359,7 +1359,7 @@ impl BufferStore {
                 buffer.wait_for_version(deserialize_version(&envelope.payload.version))
             })?
             .await?;
-        let buffer_id = buffer.read_with(&mut cx, |buffer, _| buffer.remote_id())?;
+        let buffer_id = buffer.read_with(&cx, |buffer, _| buffer.remote_id())?;
 
         if let Some(new_path) = envelope.payload.new_path {
             let new_path = ProjectPath::from_proto(new_path);
@@ -1372,7 +1372,7 @@ impl BufferStore {
                 .await?;
         }
 
-        buffer.read_with(&mut cx, |buffer, _| proto::BufferSaved {
+        buffer.read_with(&cx, |buffer, _| proto::BufferSaved {
             project_id,
             buffer_id: buffer_id.into(),
             version: serialize_version(buffer.saved_version()),
@@ -1388,14 +1388,14 @@ impl BufferStore {
         let peer_id = envelope.sender_id;
         let buffer_id = BufferId::new(envelope.payload.buffer_id)?;
         this.update(&mut cx, |this, cx| {
-            if let Some(shared) = this.shared_buffers.get_mut(&peer_id) {
-                if shared.remove(&buffer_id).is_some() {
-                    cx.emit(BufferStoreEvent::SharedBufferClosed(peer_id, buffer_id));
-                    if shared.is_empty() {
-                        this.shared_buffers.remove(&peer_id);
-                    }
-                    return;
+            if let Some(shared) = this.shared_buffers.get_mut(&peer_id)
+                && shared.remove(&buffer_id).is_some()
+            {
+                cx.emit(BufferStoreEvent::SharedBufferClosed(peer_id, buffer_id));
+                if shared.is_empty() {
+                    this.shared_buffers.remove(&peer_id);
                 }
+                return;
             }
             debug_panic!(
                 "peer_id {} closed buffer_id {} which was either not open or already closed",

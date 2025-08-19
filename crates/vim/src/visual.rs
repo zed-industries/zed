@@ -414,7 +414,7 @@ impl Vim {
                             );
                         }
 
-                        let original_point = selection.tail().to_point(&map);
+                        let original_point = selection.tail().to_point(map);
 
                         if let Some(range) = object.range(map, mut_selection, around, count) {
                             if !range.is_empty() {

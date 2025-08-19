@@ -408,7 +408,7 @@ impl DispatchTree {
         keymap
             .bindings_for_action(action)
             .filter(|binding| {
-                Self::binding_matches_predicate_and_not_shadowed(&keymap, &binding, context_stack)
+                Self::binding_matches_predicate_and_not_shadowed(&keymap, binding, context_stack)
             })
             .cloned()
             .collect()
@@ -426,7 +426,7 @@ impl DispatchTree {
             .bindings_for_action(action)
             .rev()
             .find(|binding| {
-                Self::binding_matches_predicate_and_not_shadowed(&keymap, &binding, context_stack)
+                Self::binding_matches_predicate_and_not_shadowed(&keymap, binding, context_stack)
             })
             .cloned()
     }

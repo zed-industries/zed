@@ -312,10 +312,10 @@ impl GitBlame {
                 .as_ref()
                 .and_then(|entry| entry.author.as_ref())
                 .map(|author| author.len());
-            if let Some(author_len) = author_len {
-                if author_len > max_author_length {
-                    max_author_length = author_len;
-                }
+            if let Some(author_len) = author_len
+                && author_len > max_author_length
+            {
+                max_author_length = author_len;
             }
         }
 
@@ -416,20 +416,19 @@ impl GitBlame {
             if row_edits
                 .peek()
                 .map_or(true, |next_edit| next_edit.old.start >= old_end)
+                && let Some(entry) = cursor.item()
             {
-                if let Some(entry) = cursor.item() {
-                    if old_end > edit.old.end {
-                        new_entries.push(
-                            GitBlameEntry {
-                                rows: cursor.end() - edit.old.end,
-                                blame: entry.blame.clone(),
-                            },
-                            &(),
-                        );
-                    }
-
-                    cursor.next();
+                if old_end > edit.old.end {
+                    new_entries.push(
+                        GitBlameEntry {
+                            rows: cursor.end() - edit.old.end,
+                            blame: entry.blame.clone(),
+                        },
+                        &(),
+                    );
                 }
+
+                cursor.next();
             }
         }
         new_entries.append(cursor.suffix(), &());

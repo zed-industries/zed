@@ -332,9 +332,9 @@ impl LspCommand for PrepareRename {
         _: Entity<LspStore>,
         buffer: Entity<Buffer>,
         _: LanguageServerId,
-        mut cx: AsyncApp,
+        cx: AsyncApp,
     ) -> Result<PrepareRenameResponse> {
-        buffer.read_with(&mut cx, |buffer, _| match message {
+        buffer.read_with(&cx, |buffer, _| match message {
             Some(lsp::PrepareRenameResponse::Range(range))
             | Some(lsp::PrepareRenameResponse::RangeWithPlaceholder { range, .. }) => {
                 let Range { start, end } = range_from_lsp(range);
@@ -386,7 +386,7 @@ impl LspCommand for PrepareRename {
             .await?;
 
         Ok(Self {
-            position: buffer.read_with(&mut cx, |buffer, _| position.to_point_utf16(buffer))?,
+            position: buffer.read_with(&cx, |buffer, _| position.to_point_utf16(buffer))?,
         })
     }
 
@@ -543,7 +543,7 @@ impl LspCommand for PerformRename {
             })?
             .await?;
         Ok(Self {
-            position: buffer.read_with(&mut cx, |buffer, _| position.to_point_utf16(buffer))?,
+            position: buffer.read_with(&cx, |buffer, _| position.to_point_utf16(buffer))?,
             new_name: message.new_name,
             push_to_history: false,
         })
@@ -658,7 +658,7 @@ impl LspCommand for GetDefinitions {
             })?
             .await?;
         Ok(Self {
-            position: buffer.read_with(&mut cx, |buffer, _| position.to_point_utf16(buffer))?,
+            position: buffer.read_with(&cx, |buffer, _| position.to_point_utf16(buffer))?,
         })
     }
 
@@ -761,7 +761,7 @@ impl LspCommand for GetDeclarations {
             })?
             .await?;
         Ok(Self {
-            position: buffer.read_with(&mut cx, |buffer, _| position.to_point_utf16(buffer))?,
+            position: buffer.read_with(&cx, |buffer, _| position.to_point_utf16(buffer))?,
         })
     }
 
@@ -863,7 +863,7 @@ impl LspCommand for GetImplementations {
             })?
             .await?;
         Ok(Self {
-            position: buffer.read_with(&mut cx, |buffer, _| position.to_point_utf16(buffer))?,
+            position: buffer.read_with(&cx, |buffer, _| position.to_point_utf16(buffer))?,
         })
     }
 
@@ -962,7 +962,7 @@ impl LspCommand for GetTypeDefinitions {
             })?
             .await?;
         Ok(Self {
-            position: buffer.read_with(&mut cx, |buffer, _| position.to_point_utf16(buffer))?,
+            position: buffer.read_with(&cx, |buffer, _| position.to_point_utf16(buffer))?,
         })
     }
 
@@ -1165,7 +1165,7 @@ pub async fn location_link_from_lsp(
     server_id: LanguageServerId,
     cx: &mut AsyncApp,
 ) -> Result<LocationLink> {
-    let (_, language_server) = language_server_for_buffer(&lsp_store, &buffer, server_id, cx)?;
+    let (_, language_server) = language_server_for_buffer(lsp_store, buffer, server_id, cx)?;
 
     let (origin_range, target_uri, target_range) = (
         link.origin_selection_range,
@@ -1330,7 +1330,7 @@ impl LspCommand for GetReferences {
 
                 target_buffer_handle
                     .clone()
-                    .read_with(&mut cx, |target_buffer, _| {
+                    .read_with(&cx, |target_buffer, _| {
                         let target_start = target_buffer
                             .clip_point_utf16(point_from_lsp(lsp_location.range.start), Bias::Left);
                         let target_end = target_buffer
@@ -1374,7 +1374,7 @@ impl LspCommand for GetReferences {
             })?
             .await?;
         Ok(Self {
-            position: buffer.read_with(&mut cx, |buffer, _| position.to_point_utf16(buffer))?,
+            position: buffer.read_with(&cx, |buffer, _| position.to_point_utf16(buffer))?,
         })
     }
 
@@ -1484,9 +1484,9 @@ impl LspCommand for GetDocumentHighlights {
         _: Entity<LspStore>,
         buffer: Entity<Buffer>,
         _: LanguageServerId,
-        mut cx: AsyncApp,
+        cx: AsyncApp,
     ) -> Result<Vec<DocumentHighlight>> {
-        buffer.read_with(&mut cx, |buffer, _| {
+        buffer.read_with(&cx, |buffer, _| {
             let mut lsp_highlights = lsp_highlights.unwrap_or_default();
             lsp_highlights.sort_unstable_by_key(|h| (h.range.start, Reverse(h.range.end)));
             lsp_highlights
@@ -1534,7 +1534,7 @@ impl LspCommand for GetDocumentHighlights {
             })?
             .await?;
         Ok(Self {
-            position: buffer.read_with(&mut cx, |buffer, _| position.to_point_utf16(buffer))?,
+            position: buffer.read_with(&cx, |buffer, _| position.to_point_utf16(buffer))?,
         })
     }
 
@@ -1865,7 +1865,7 @@ impl LspCommand for GetSignatureHelp {
             })?
             .await
             .with_context(|| format!("waiting for version for buffer {}", buffer.entity_id()))?;
-        let buffer_snapshot = buffer.read_with(&mut cx, |buffer, _| buffer.snapshot())?;
+        let buffer_snapshot = buffer.read_with(&cx, |buffer, _| buffer.snapshot())?;
         Ok(Self {
             position: payload
                 .position
@@ -1947,13 +1947,13 @@ impl LspCommand for GetHover {
         _: Entity<LspStore>,
         buffer: Entity<Buffer>,
         _: LanguageServerId,
-        mut cx: AsyncApp,
+        cx: AsyncApp,
     ) -> Result<Self::Response> {
         let Some(hover) = message else {
             return Ok(None);
         };
 
-        let (language, range) = buffer.read_with(&mut cx, |buffer, _| {
+        let (language, range) = buffer.read_with(&cx, |buffer, _| {
             (
                 buffer.language().cloned(),
                 hover.range.map(|range| {
@@ -2039,7 +2039,7 @@ impl LspCommand for GetHover {
             })?
             .await?;
         Ok(Self {
-            position: buffer.read_with(&mut cx, |buffer, _| position.to_point_utf16(buffer))?,
+            position: buffer.read_with(&cx, |buffer, _| position.to_point_utf16(buffer))?,
         })
     }
 
@@ -2113,7 +2113,7 @@ impl LspCommand for GetHover {
             return Ok(None);
         }
 
-        let language = buffer.read_with(&mut cx, |buffer, _| buffer.language().cloned())?;
+        let language = buffer.read_with(&cx, |buffer, _| buffer.language().cloned())?;
         let range = if let (Some(start), Some(end)) = (message.start, message.end) {
             language::proto::deserialize_anchor(start)
                 .and_then(|start| language::proto::deserialize_anchor(end).map(|end| start..end))
@@ -2208,7 +2208,7 @@ impl LspCommand for GetCompletions {
         let unfiltered_completions_count = completions.len();
 
         let language_server_adapter = lsp_store
-            .read_with(&mut cx, |lsp_store, _| {
+            .read_with(&cx, |lsp_store, _| {
                 lsp_store.language_server_adapter_for_id(server_id)
             })?
             .with_context(|| format!("no language server with id {server_id}"))?;
@@ -2341,15 +2341,14 @@ impl LspCommand for GetCompletions {
             .zip(completion_edits)
             .map(|(mut lsp_completion, mut edit)| {
                 LineEnding::normalize(&mut edit.new_text);
-                if lsp_completion.data.is_none() {
-                    if let Some(default_data) = lsp_defaults
+                if lsp_completion.data.is_none()
+                    && let Some(default_data) = lsp_defaults
                         .as_ref()
                         .and_then(|item_defaults| item_defaults.data.clone())
-                    {
-                        // Servers (e.g. JDTLS) prefer unchanged completions, when resolving the items later,
-                        // so we do not insert the defaults here, but `data` is needed for resolving, so this is an exception.
-                        lsp_completion.data = Some(default_data);
-                    }
+                {
+                    // Servers (e.g. JDTLS) prefer unchanged completions, when resolving the items later,
+                    // so we do not insert the defaults here, but `data` is needed for resolving, so this is an exception.
+                    lsp_completion.data = Some(default_data);
                 }
                 CoreCompletion {
                     replace_range: edit.replace_range,
@@ -2395,7 +2394,7 @@ impl LspCommand for GetCompletions {
             .position
             .and_then(language::proto::deserialize_anchor)
             .map(|p| {
-                buffer.read_with(&mut cx, |buffer, _| {
+                buffer.read_with(&cx, |buffer, _| {
                     buffer.clip_point_utf16(Unclipped(p.to_point_utf16(buffer)), Bias::Left)
                 })
             })
@@ -2623,10 +2622,10 @@ impl LspCommand for GetCodeActions {
             .filter_map(|entry| {
                 let (lsp_action, resolved) = match entry {
                     lsp::CodeActionOrCommand::CodeAction(lsp_action) => {
-                        if let Some(command) = lsp_action.command.as_ref() {
-                            if !available_commands.contains(&command.command) {
-                                return None;
-                            }
+                        if let Some(command) = lsp_action.command.as_ref()
+                            && !available_commands.contains(&command.command)
+                        {
+                            return None;
                         }
                         (LspAction::Action(Box::new(lsp_action)), false)
                     }
@@ -2641,10 +2640,9 @@ impl LspCommand for GetCodeActions {
 
                 if let Some((requested_kinds, kind)) =
                     requested_kinds_set.as_ref().zip(lsp_action.action_kind())
+                    && !requested_kinds.contains(&kind)
                 {
-                    if !requested_kinds.contains(&kind) {
-                        return None;
-                    }
+                    return None;
                 }
 
                 Some(CodeAction {
@@ -2864,7 +2862,7 @@ impl LspCommand for OnTypeFormatting {
         })?;
 
         Ok(Self {
-            position: buffer.read_with(&mut cx, |buffer, _| position.to_point_utf16(buffer))?,
+            position: buffer.read_with(&cx, |buffer, _| position.to_point_utf16(buffer))?,
             trigger: message.trigger.clone(),
             options,
             push_to_history: false,
@@ -3476,9 +3474,9 @@ impl LspCommand for GetCodeLens {
         lsp_store: Entity<LspStore>,
         buffer: Entity<Buffer>,
         server_id: LanguageServerId,
-        mut cx: AsyncApp,
+        cx: AsyncApp,
     ) -> anyhow::Result<Vec<CodeAction>> {
-        let snapshot = buffer.read_with(&mut cx, |buffer, _| buffer.snapshot())?;
+        let snapshot = buffer.read_with(&cx, |buffer, _| buffer.snapshot())?;
         let language_server = cx.update(|cx| {
             lsp_store
                 .read(cx)

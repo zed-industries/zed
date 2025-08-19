@@ -80,7 +80,7 @@ impl AgentTool for TerminalTool {
             let first_line = lines.next().unwrap_or_default();
             let remaining_line_count = lines.count();
             match remaining_line_count {
-                0 => MarkdownInlineCode(&first_line).to_string().into(),
+                0 => MarkdownInlineCode(first_line).to_string().into(),
                 1 => MarkdownInlineCode(&format!(
                     "{} - {} more line",
                     first_line, remaining_line_count
@@ -319,7 +319,7 @@ mod tests {
     use theme::ThemeSettings;
     use util::test::TempTree;
 
-    use crate::AgentResponseEvent;
+    use crate::ThreadEvent;
 
     use super::*;
 
@@ -396,7 +396,7 @@ mod tests {
             });
             cx.run_until_parked();
             let event = stream_rx.try_next();
-            if let Ok(Some(Ok(AgentResponseEvent::ToolCallAuthorization(auth)))) = event {
+            if let Ok(Some(Ok(ThreadEvent::ToolCallAuthorization(auth)))) = event {
                 auth.response.send(auth.options[0].id.clone()).unwrap();
             }
 

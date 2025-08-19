@@ -1162,8 +1162,8 @@ impl RandomizedTest for ProjectCollaborationTest {
                             Some((project, cx))
                         });
 
-                        if !guest_project.is_disconnected(cx) {
-                            if let Some((host_project, host_cx)) = host_project {
+                        if !guest_project.is_disconnected(cx)
+                            && let Some((host_project, host_cx)) = host_project {
                                 let host_worktree_snapshots =
                                     host_project.read_with(host_cx, |host_project, cx| {
                                         host_project
@@ -1235,7 +1235,6 @@ impl RandomizedTest for ProjectCollaborationTest {
                                     );
                                 }
                             }
-                        }
 
                         for buffer in guest_project.opened_buffers(cx) {
                             let buffer = buffer.read(cx);

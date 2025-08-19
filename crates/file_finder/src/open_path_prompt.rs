@@ -75,16 +75,16 @@ impl OpenPathDelegate {
                 ..
             } => {
                 let mut i = selected_match_index;
-                if let Some(user_input) = user_input {
-                    if !user_input.exists || !user_input.is_dir {
-                        if i == 0 {
-                            return Some(CandidateInfo {
-                                path: user_input.file.clone(),
-                                is_dir: false,
-                            });
-                        } else {
-                            i -= 1;
-                        }
+                if let Some(user_input) = user_input
+                    && (!user_input.exists || !user_input.is_dir)
+                {
+                    if i == 0 {
+                        return Some(CandidateInfo {
+                            path: user_input.file.clone(),
+                            is_dir: false,
+                        });
+                    } else {
+                        i -= 1;
                     }
                 }
                 let id = self.string_matches.get(i)?.candidate_id;
@@ -637,7 +637,7 @@ impl PickerDelegate for OpenPathDelegate {
                 FileIcons::get_folder_icon(false, cx)?
             } else {
                 let path = path::Path::new(&candidate.path.string);
-                FileIcons::get_icon(&path, cx)?
+                FileIcons::get_icon(path, cx)?
             };
             Some(Icon::from_path(icon).color(Color::Muted))
         });

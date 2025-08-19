@@ -1,4 +1,5 @@
 // Translates old acp agents into the new schema
+use action_log::ActionLog;
 use agent_client_protocol as acp;
 use agentic_coding_protocol::{self as acp_old, AgentRequest as _};
 use anyhow::{Context as _, Result, anyhow};
@@ -437,13 +438,14 @@ impl AgentConnection for AcpConnection {
             let result = acp_old::InitializeParams::response_from_any(result)?;
 
             if !result.is_authenticated {
-                anyhow::bail!(AuthRequired)
+                anyhow::bail!(AuthRequired::new())
             }
 
             cx.update(|cx| {
                 let thread = cx.new(|cx| {
                     let session_id = acp::SessionId("acp-old-no-id".into());
-                    AcpThread::new(self.name, self.clone(), project, session_id, cx)
+                    let action_log = cx.new(|_| ActionLog::new(project.clone()));
+                    AcpThread::new(self.name, self.clone(), project, action_log, session_id)
                 });
                 current_thread.replace(thread.downgrade());
                 thread

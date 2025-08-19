@@ -3,12 +3,14 @@ use agent_client_protocol::{self as acp};
 use anyhow::Result;
 use collections::IndexMap;
 use gpui::{Entity, SharedString, Task};
+use language_model::LanguageModelProviderId;
 use project::Project;
+use serde::{Deserialize, Serialize};
 use std::{any::Any, error::Error, fmt, path::Path, rc::Rc, sync::Arc};
 use ui::{App, IconName};
 use uuid::Uuid;
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UserMessageId(Arc<str>);
 
 impl UserMessageId {
@@ -80,12 +82,34 @@ pub trait AgentSessionResume {
 }
 
 #[derive(Debug)]
-pub struct AuthRequired;
+pub struct AuthRequired {
+    pub description: Option<String>,
+    pub provider_id: Option<LanguageModelProviderId>,
+}
+
+impl AuthRequired {
+    pub fn new() -> Self {
+        Self {
+            description: None,
+            provider_id: None,
+        }
+    }
+
+    pub fn with_description(mut self, description: String) -> Self {
+        self.description = Some(description);
+        self
+    }
+
+    pub fn with_language_model_provider(mut self, provider_id: LanguageModelProviderId) -> Self {
+        self.provider_id = Some(provider_id);
+        self
+    }
+}
 
 impl Error for AuthRequired {}
 impl fmt::Display for AuthRequired {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "AuthRequired")
+        write!(f, "Authentication required")
     }
 }
 
@@ -185,6 +209,7 @@ impl AgentModelList {
 mod test_support {
     use std::sync::Arc;
 
+    use action_log::ActionLog;
     use collections::HashMap;
     use futures::{channel::oneshot, future::try_join_all};
     use gpui::{AppContext as _, WeakEntity};
@@ -272,8 +297,16 @@ mod test_support {
             cx: &mut gpui::App,
         ) -> Task<gpui::Result<Entity<AcpThread>>> {
             let session_id = acp::SessionId(self.sessions.lock().len().to_string().into());
-            let thread =
-                cx.new(|cx| AcpThread::new("Test", self.clone(), project, session_id.clone(), cx));
+            let action_log = cx.new(|_| ActionLog::new(project.clone()));
+            let thread = cx.new(|_cx| {
+                AcpThread::new(
+                    "Test",
+                    self.clone(),
+                    project,
+                    action_log,
+                    session_id.clone(),
+                )
+            });
             self.sessions.lock().insert(
                 session_id,
                 Session {

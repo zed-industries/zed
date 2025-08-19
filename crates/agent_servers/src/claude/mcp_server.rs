@@ -1,8 +1,10 @@
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use crate::claude::tools::{ClaudeTool, EditToolParams, ReadToolParams};
 use acp_thread::AcpThread;
 use agent_client_protocol as acp;
+use agent_settings::AgentSettings;
 use anyhow::{Context, Result};
 use collections::HashMap;
 use context_server::listener::{McpServerTool, ToolResponse};
@@ -11,8 +13,11 @@ use context_server::types::{
     ToolAnnotations, ToolResponseContent, ToolsCapabilities, requests,
 };
 use gpui::{App, AsyncApp, Task, WeakEntity};
+use project::Fs;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use settings::{Settings as _, update_settings_file};
+use util::debug_panic;
 
 pub struct ClaudeZedMcpServer {
     server: context_server::listener::McpServer,
@@ -23,6 +28,7 @@ pub const SERVER_NAME: &str = "zed";
 impl ClaudeZedMcpServer {
     pub async fn new(
         thread_rx: watch::Receiver<WeakEntity<AcpThread>>,
+        fs: Arc<dyn Fs>,
         cx: &AsyncApp,
     ) -> Result<Self> {
         let mut mcp_server = context_server::listener::McpServer::new(cx).await?;
@@ -30,6 +36,7 @@ impl ClaudeZedMcpServer {
 
         mcp_server.add_tool(PermissionTool {
             thread_rx: thread_rx.clone(),
+            fs: fs.clone(),
         });
         mcp_server.add_tool(ReadTool {
             thread_rx: thread_rx.clone(),
@@ -102,6 +109,7 @@ pub struct McpServerConfig {
 
 #[derive(Clone)]
 pub struct PermissionTool {
+    fs: Arc<dyn Fs>,
     thread_rx: watch::Receiver<WeakEntity<AcpThread>>,
 }
 
@@ -141,6 +149,24 @@ impl McpServerTool for PermissionTool {
         input: Self::Input,
         cx: &mut AsyncApp,
     ) -> Result<ToolResponse<Self::Output>> {
+        if agent_settings::AgentSettings::try_read_global(cx, |settings| {
+            settings.always_allow_tool_actions
+        })
+        .unwrap_or(false)
+        {
+            let response = PermissionToolResponse {
+                behavior: PermissionToolBehavior::Allow,
+                updated_input: input.input,
+            };
+
+            return Ok(ToolResponse {
+                content: vec![ToolResponseContent::Text {
+                    text: serde_json::to_string(&response)?,
+                }],
+                structured_content: (),
+            });
+        }
+
         let mut thread_rx = self.thread_rx.clone();
         let Some(thread) = thread_rx.recv().await?.upgrade() else {
             anyhow::bail!("Thread closed");
@@ -148,8 +174,10 @@ impl McpServerTool for PermissionTool {
 
         let claude_tool = ClaudeTool::infer(&input.tool_name, input.input.clone());
         let tool_call_id = acp::ToolCallId(input.tool_use_id.context("Tool ID required")?.into());
-        let allow_option_id = acp::PermissionOptionId("allow".into());
-        let reject_option_id = acp::PermissionOptionId("reject".into());
+
+        const ALWAYS_ALLOW: &'static str = "always_allow";
+        const ALLOW: &'static str = "allow";
+        const REJECT: &'static str = "reject";
 
         let chosen_option = thread
             .update(cx, |thread, cx| {
@@ -157,12 +185,17 @@ impl McpServerTool for PermissionTool {
                     claude_tool.as_acp(tool_call_id).into(),
                     vec![
                         acp::PermissionOption {
-                            id: allow_option_id.clone(),
+                            id: acp::PermissionOptionId(ALWAYS_ALLOW.into()),
+                            name: "Always Allow".into(),
+                            kind: acp::PermissionOptionKind::AllowAlways,
+                        },
+                        acp::PermissionOption {
+                            id: acp::PermissionOptionId(ALLOW.into()),
                             name: "Allow".into(),
                             kind: acp::PermissionOptionKind::AllowOnce,
                         },
                         acp::PermissionOption {
-                            id: reject_option_id.clone(),
+                            id: acp::PermissionOptionId(REJECT.into()),
                             name: "Reject".into(),
                             kind: acp::PermissionOptionKind::RejectOnce,
                         },
@@ -172,16 +205,33 @@ impl McpServerTool for PermissionTool {
             })??
             .await?;
 
-        let response = if chosen_option == allow_option_id {
-            PermissionToolResponse {
+        let response = match chosen_option.0.as_ref() {
+            ALWAYS_ALLOW => {
+                cx.update(|cx| {
+                    update_settings_file::<AgentSettings>(self.fs.clone(), cx, |settings, _| {
+                        settings.set_always_allow_tool_actions(true);
+                    });
+                })?;
+
+                PermissionToolResponse {
+                    behavior: PermissionToolBehavior::Allow,
+                    updated_input: input.input,
+                }
+            }
+            ALLOW => PermissionToolResponse {
                 behavior: PermissionToolBehavior::Allow,
                 updated_input: input.input,
-            }
-        } else {
-            debug_assert_eq!(chosen_option, reject_option_id);
-            PermissionToolResponse {
+            },
+            REJECT => PermissionToolResponse {
                 behavior: PermissionToolBehavior::Deny,
                 updated_input: input.input,
+            },
+            opt => {
+                debug_panic!("Unexpected option: {}", opt);
+                PermissionToolResponse {
+                    behavior: PermissionToolBehavior::Deny,
+                    updated_input: input.input,
+                }
             }
         };
 

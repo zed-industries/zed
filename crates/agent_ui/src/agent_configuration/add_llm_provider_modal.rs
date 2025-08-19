@@ -454,7 +454,7 @@ impl Render for AddLlmProviderModal {
                         this.section(
                             Section::new().child(
                                 Banner::new()
-                                    .severity(ui::Severity::Warning)
+                                    .severity(Severity::Warning)
                                     .child(div().text_xs().child(error)),
                             ),
                         )

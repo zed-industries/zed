@@ -255,8 +255,7 @@ impl TerminalPanel {
                     .transpose()
                     .log_err()
                     .flatten()
-                {
-                    if let Ok(serialized) = workspace
+                    && let Ok(serialized) = workspace
                         .update_in(&mut cx, |workspace, window, cx| {
                             deserialize_terminal_panel(
                                 workspace.weak_handle(),
@@ -268,9 +267,8 @@ impl TerminalPanel {
                             )
                         })?
                         .await
-                    {
-                        terminal_panel = Some(serialized);
-                    }
+                {
+                    terminal_panel = Some(serialized);
                 }
             }
             _ => {}
@@ -346,7 +344,7 @@ impl TerminalPanel {
             pane::Event::RemovedItem { .. } => self.serialize(cx),
             pane::Event::Remove { focus_on_pane } => {
                 let pane_count_before_removal = self.center.panes().len();
-                let _removal_result = self.center.remove(&pane);
+                let _removal_result = self.center.remove(pane);
                 if pane_count_before_removal == 1 {
                     self.center.first_pane().update(cx, |pane, cx| {
                         pane.set_zoomed(false, cx);
@@ -1077,11 +1075,10 @@ pub fn new_terminal_pane(
                                 return ControlFlow::Break(());
                             }
                         };
-                    } else if let Some(project_path) = item.project_path(cx) {
-                        if let Some(entry_path) = project.read(cx).absolute_path(&project_path, cx)
-                        {
-                            add_paths_to_terminal(pane, &[entry_path], window, cx);
-                        }
+                    } else if let Some(project_path) = item.project_path(cx)
+                        && let Some(entry_path) = project.read(cx).absolute_path(&project_path, cx)
+                    {
+                        add_paths_to_terminal(pane, &[entry_path], window, cx);
                     }
                 }
             } else if let Some(selection) = dropped_item.downcast_ref::<DraggedSelection>() {
@@ -1103,10 +1100,8 @@ pub fn new_terminal_pane(
                 {
                     add_paths_to_terminal(pane, &[entry_path], window, cx);
                 }
-            } else if is_local {
-                if let Some(paths) = dropped_item.downcast_ref::<ExternalPaths>() {
-                    add_paths_to_terminal(pane, paths.paths(), window, cx);
-                }
+            } else if is_local && let Some(paths) = dropped_item.downcast_ref::<ExternalPaths>() {
+                add_paths_to_terminal(pane, paths.paths(), window, cx);
             }
 
             ControlFlow::Break(())
@@ -1181,10 +1176,10 @@ impl Render for TerminalPanel {
                 registrar.size_full().child(self.center.render(
                     workspace.zoomed_item(),
                     &workspace::PaneRenderContext {
-                        follower_states: &&HashMap::default(),
+                        follower_states: &HashMap::default(),
                         active_call: workspace.active_call(),
                         active_pane: &self.active_pane,
-                        app_state: &workspace.app_state(),
+                        app_state: workspace.app_state(),
                         project: workspace.project(),
                         workspace: &workspace.weak_handle(),
                     },

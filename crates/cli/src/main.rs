@@ -518,11 +518,11 @@ mod linux {
         ) -> Result<(), std::io::Error> {
             for _ in 0..100 {
                 thread::sleep(Duration::from_millis(10));
-                if sock.connect_addr(&sock_addr).is_ok() {
+                if sock.connect_addr(sock_addr).is_ok() {
                     return Ok(());
                 }
             }
-            sock.connect_addr(&sock_addr)
+            sock.connect_addr(sock_addr)
         }
     }
 }
@@ -587,13 +587,10 @@ mod flatpak {
     pub fn set_bin_if_no_escape(mut args: super::Args) -> super::Args {
         if env::var(NO_ESCAPE_ENV_NAME).is_ok()
             && env::var("FLATPAK_ID").map_or(false, |id| id.starts_with("dev.zed.Zed"))
+            && args.zed.is_none()
         {
-            if args.zed.is_none() {
-                args.zed = Some("/app/libexec/zed-editor".into());
-                unsafe {
-                    env::set_var("ZED_UPDATE_EXPLANATION", "Please use flatpak to update zed")
-                };
-            }
+            args.zed = Some("/app/libexec/zed-editor".into());
+            unsafe { env::set_var("ZED_UPDATE_EXPLANATION", "Please use flatpak to update zed") };
         }
         args
     }

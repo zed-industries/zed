@@ -1,4 +1,4 @@
-use std::{path::Path, rc::Rc, sync::Arc};
+use std::{any::Any, path::Path, rc::Rc, sync::Arc};
 
 use agent_servers::AgentServer;
 use anyhow::Result;
@@ -65,5 +65,9 @@ impl AgentServer for NativeAgentServer {
 
             Ok(Rc::new(connection) as Rc<dyn acp_thread::AgentConnection>)
         })
+    }
+
+    fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
+        self
     }
 }

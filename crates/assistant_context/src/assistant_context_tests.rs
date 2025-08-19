@@ -1300,7 +1300,7 @@ fn test_summarize_error(
         context.assist(cx);
     });
 
-    simulate_successful_response(&model, cx);
+    simulate_successful_response(model, cx);
 
     context.read_with(cx, |context, _| {
         assert!(!context.summary().content().unwrap().done);

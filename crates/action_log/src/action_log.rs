@@ -290,7 +290,7 @@ impl ActionLog {
                 }
                 _ = git_diff_updates_rx.changed().fuse() => {
                     if let Some(git_diff) = git_diff.as_ref() {
-                        Self::keep_committed_edits(&this, &buffer, &git_diff, cx).await?;
+                        Self::keep_committed_edits(&this, &buffer, git_diff, cx).await?;
                     }
                 }
             }
@@ -498,7 +498,7 @@ impl ActionLog {
                                     new: new_range,
                                 },
                                 &new_diff_base,
-                                &buffer_snapshot.as_rope(),
+                                buffer_snapshot.as_rope(),
                             ));
                         }
                         unreviewed_edits
@@ -614,10 +614,10 @@ impl ActionLog {
                         false
                     }
                 });
-                if tracked_buffer.unreviewed_edits.is_empty() {
-                    if let TrackedBufferStatus::Created { .. } = &mut tracked_buffer.status {
-                        tracked_buffer.status = TrackedBufferStatus::Modified;
-                    }
+                if tracked_buffer.unreviewed_edits.is_empty()
+                    && let TrackedBufferStatus::Created { .. } = &mut tracked_buffer.status
+                {
+                    tracked_buffer.status = TrackedBufferStatus::Modified;
                 }
                 tracked_buffer.schedule_diff_update(ChangeAuthor::User, cx);
             }
@@ -964,7 +964,7 @@ impl TrackedBuffer {
     fn has_edits(&self, cx: &App) -> bool {
         self.diff
             .read(cx)
-            .hunks(&self.buffer.read(cx), cx)
+            .hunks(self.buffer.read(cx), cx)
             .next()
             .is_some()
     }
@@ -2268,7 +2268,7 @@ mod tests {
             log::info!("quiescing...");
             cx.run_until_parked();
             action_log.update(cx, |log, cx| {
-                let tracked_buffer = log.tracked_buffers.get(&buffer).unwrap();
+                let tracked_buffer = log.tracked_buffers.get(buffer).unwrap();
                 let mut old_text = tracked_buffer.diff_base.clone();
                 let new_text = buffer.read(cx).as_rope();
                 for edit in tracked_buffer.unreviewed_edits.edits() {
