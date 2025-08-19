@@ -1891,7 +1891,7 @@ impl Terminal {
             }
             #[cfg(windows)]
             {
-                return std::os::windows::process::ExitStatusExt::from_raw(code as u32);
+                std::os::windows::process::ExitStatusExt::from_raw(code as u32)
             }
         });
 
