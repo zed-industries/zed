@@ -116,6 +116,7 @@ CREATE TABLE "project_repositories" (
     "scan_id" INTEGER NOT NULL,
     "is_deleted" BOOL NOT NULL,
     "current_merge_conflicts" VARCHAR,
+    "merge_message" VARCHAR,
     "branch_summary" VARCHAR,
     "head_commit_details" VARCHAR,
     PRIMARY KEY (project_id, id)
