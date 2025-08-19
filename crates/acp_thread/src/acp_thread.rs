@@ -24,6 +24,7 @@ use std::fmt::{Formatter, Write};
 use std::ops::Range;
 use std::process::ExitStatus;
 use std::rc::Rc;
+use std::time::{Duration, Instant};
 use std::{fmt::Display, mem, path::PathBuf, sync::Arc};
 use ui::App;
 use util::ResultExt;
@@ -658,6 +659,15 @@ impl PlanEntry {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct RetryStatus {
+    pub last_error: SharedString,
+    pub attempt: usize,
+    pub max_attempts: usize,
+    pub started_at: Instant,
+    pub duration: Duration,
+}
+
 pub struct AcpThread {
     title: SharedString,
     entries: Vec<AgentThreadEntry>,
@@ -676,6 +686,7 @@ pub enum AcpThreadEvent {
     EntryUpdated(usize),
     EntriesRemoved(Range<usize>),
     ToolAuthorizationRequired,
+    Retry(RetryStatus),
     Stopped,
     Error,
     ServerExited(ExitStatus),
@@ -914,6 +925,10 @@ impl AcpThread {
     fn push_entry(&mut self, entry: AgentThreadEntry, cx: &mut Context<Self>) {
         self.entries.push(entry);
         cx.emit(AcpThreadEvent::NewEntry);
+    }
+
+    pub fn update_retry_status(&mut self, status: RetryStatus, cx: &mut Context<Self>) {
+        cx.emit(AcpThreadEvent::Retry(status));
     }
 
     pub fn update_tool_call(

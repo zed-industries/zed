@@ -1523,6 +1523,7 @@ impl AgentDiff {
             AcpThreadEvent::EntriesRemoved(_)
             | AcpThreadEvent::Stopped
             | AcpThreadEvent::ToolAuthorizationRequired
+            | AcpThreadEvent::Retry(_)
             | AcpThreadEvent::Error
             | AcpThreadEvent::ServerExited(_) => {}
         }

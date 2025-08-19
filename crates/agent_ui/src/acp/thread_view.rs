@@ -1,7 +1,7 @@
 use acp_thread::{
     AcpThread, AcpThreadEvent, AgentThreadEntry, AssistantMessage, AssistantMessageChunk,
-    AuthRequired, LoadError, MentionUri, ThreadStatus, ToolCall, ToolCallContent, ToolCallStatus,
-    UserMessageId,
+    AuthRequired, LoadError, MentionUri, RetryStatus, ThreadStatus, ToolCall, ToolCallContent,
+    ToolCallStatus, UserMessageId,
 };
 use acp_thread::{AgentConnection, Plan};
 use action_log::ActionLog;
@@ -35,6 +35,7 @@ use prompt_store::PromptId;
 use rope::Point;
 use settings::{Settings as _, SettingsStore};
 use std::sync::Arc;
+use std::time::Instant;
 use std::{collections::BTreeMap, process::ExitStatus, rc::Rc, time::Duration};
 use text::Anchor;
 use theme::ThemeSettings;
@@ -115,6 +116,7 @@ pub struct AcpThreadView {
     profile_selector: Option<Entity<ProfileSelector>>,
     notifications: Vec<WindowHandle<AgentNotification>>,
     notification_subscriptions: HashMap<WindowHandle<AgentNotification>, Vec<Subscription>>,
+    thread_retry_status: Option<RetryStatus>,
     thread_error: Option<ThreadError>,
     list_state: ListState,
     scrollbar_state: ScrollbarState,
@@ -209,6 +211,7 @@ impl AcpThreadView {
             notification_subscriptions: HashMap::default(),
             list_state: list_state.clone(),
             scrollbar_state: ScrollbarState::new(list_state).parent_entity(&cx.entity()),
+            thread_retry_status: None,
             thread_error: None,
             auth_task: None,
             expanded_tool_calls: HashSet::default(),
@@ -445,6 +448,7 @@ impl AcpThreadView {
 
     pub fn cancel_generation(&mut self, cx: &mut Context<Self>) {
         self.thread_error.take();
+        self.thread_retry_status.take();
 
         if let Some(thread) = self.thread() {
             self._cancel_task = Some(thread.update(cx, |thread, cx| thread.cancel(cx)));
@@ -775,7 +779,11 @@ impl AcpThreadView {
             AcpThreadEvent::ToolAuthorizationRequired => {
                 self.notify_with_sound("Waiting for tool confirmation", IconName::Info, window, cx);
             }
+            AcpThreadEvent::Retry(retry) => {
+                self.thread_retry_status = Some(retry.clone());
+            }
             AcpThreadEvent::Stopped => {
+                self.thread_retry_status.take();
                 let used_tools = thread.read(cx).used_tools_since_last_user_message();
                 self.notify_with_sound(
                     if used_tools {
@@ -789,6 +797,7 @@ impl AcpThreadView {
                 );
             }
             AcpThreadEvent::Error => {
+                self.thread_retry_status.take();
                 self.notify_with_sound(
                     "Agent stopped due to an error",
                     IconName::Warning,
@@ -797,6 +806,7 @@ impl AcpThreadView {
                 );
             }
             AcpThreadEvent::ServerExited(status) => {
+                self.thread_retry_status.take();
                 self.thread_state = ThreadState::ServerExited { status: *status };
             }
         }
@@ -3413,7 +3423,51 @@ impl AcpThreadView {
         })
     }
 
-    fn render_thread_error(&self, window: &mut Window, cx: &mut Context<'_, Self>) -> Option<Div> {
+    fn render_thread_retry_status_callout(
+        &self,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) -> Option<Callout> {
+        let state = self.thread_retry_status.as_ref()?;
+
+        let next_attempt_in = state
+            .duration
+            .saturating_sub(Instant::now().saturating_duration_since(state.started_at));
+        if next_attempt_in.is_zero() {
+            return None;
+        }
+
+        let next_attempt_in_secs = next_attempt_in.as_secs() + 1;
+
+        let retry_message = if state.max_attempts == 1 {
+            if next_attempt_in_secs == 1 {
+                "Retrying. Next attempt in 1 second.".to_string()
+            } else {
+                format!("Retrying. Next attempt in {next_attempt_in_secs} seconds.")
+            }
+        } else {
+            if next_attempt_in_secs == 1 {
+                format!(
+                    "Retrying. Next attempt in 1 second (Attempt {} of {}).",
+                    state.attempt, state.max_attempts,
+                )
+            } else {
+                format!(
+                    "Retrying. Next attempt in {next_attempt_in_secs} seconds (Attempt {} of {}).",
+                    state.attempt, state.max_attempts,
+                )
+            }
+        };
+
+        Some(
+            Callout::new()
+                .severity(Severity::Warning)
+                .title(state.last_error.clone())
+                .description(retry_message),
+        )
+    }
+
+    fn render_thread_error(&self, window: &mut Window, cx: &mut Context<Self>) -> Option<Div> {
         let content = match self.thread_error.as_ref()? {
             ThreadError::Other(error) => self.render_any_thread_error(error.clone(), cx),
             ThreadError::PaymentRequired => self.render_payment_required_error(cx),
@@ -3678,6 +3732,7 @@ impl Render for AcpThreadView {
                 }
                 _ => this,
             })
+            .children(self.render_thread_retry_status_callout(window, cx))
             .children(self.render_thread_error(window, cx))
             .child(self.render_message_editor(window, cx))
     }
