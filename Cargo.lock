@@ -3872,7 +3872,7 @@ dependencies = [
  "jni",
  "js-sys",
  "libc",
- "mach2",
+ "mach2 0.4.2",
  "ndk",
  "ndk-context",
  "num-derive",
@@ -4022,7 +4022,7 @@ checksum = "031ed29858d90cfdf27fe49fae28028a1f20466db97962fa2f4ea34809aeebf3"
 dependencies = [
  "cfg-if",
  "libc",
- "mach2",
+ "mach2 0.4.2",
 ]
 
 [[package]]
@@ -4034,7 +4034,7 @@ dependencies = [
  "cfg-if",
  "crash-context",
  "libc",
- "mach2",
+ "mach2 0.4.2",
  "parking_lot",
 ]
 
@@ -4044,6 +4044,7 @@ version = "0.1.0"
 dependencies = [
  "crash-handler",
  "log",
+ "mach2 0.5.0",
  "minidumper",
  "paths",
  "release_channel",
@@ -9867,6 +9868,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "mach2"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6a1b95cd5421ec55b445b5ae102f5ea0e768de1f82bd3001e11f426c269c3aea"
+dependencies = [
+ "libc",
+]
+
+[[package]]
 name = "malloc_buf"
 version = "0.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -10202,7 +10212,7 @@ dependencies = [
  "goblin",
  "libc",
  "log",
- "mach2",
+ "mach2 0.4.2",
  "memmap2",
  "memoffset",
  "minidump-common",
@@ -18292,7 +18302,7 @@ dependencies = [
  "indexmap",
  "libc",
  "log",
- "mach2",
+ "mach2 0.4.2",
  "memfd",
  "object",
  "once_cell",
