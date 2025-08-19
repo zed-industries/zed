@@ -253,6 +253,22 @@ impl StashListDelegate {
         });
         cx.emit(DismissEvent);
     }
+
+    fn apply_stash(&self, stash_index: usize, window: &mut Window, cx: &mut Context<Picker<Self>>) {
+        let Some(repo) = self.repo.clone() else {
+            return;
+        };
+
+        cx.spawn(async move |_, cx| {
+            repo.update(cx, |repo, cx| repo.stash_apply(Some(stash_index), cx))?
+                .await?;
+            Ok(())
+        })
+        .detach_and_prompt_err("Failed to apply stash", window, cx, |e, _, _| {
+            Some(e.to_string())
+        });
+        cx.emit(DismissEvent);
+    }
 }
 
 impl PickerDelegate for StashListDelegate {
@@ -356,12 +372,16 @@ impl PickerDelegate for StashListDelegate {
         })
     }
 
-    fn confirm(&mut self, _: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
+    fn confirm(&mut self, secondary: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
         let Some(entry_match) = self.matches.get(self.selected_index()) else {
             return;
         };
         let stash_index = entry_match.entry.index;
-        self.pop_stash(stash_index, window, cx);
+        if secondary {
+            self.pop_stash(stash_index, window, cx);
+        } else {
+            self.apply_stash(stash_index, window, cx);
+        }
     }
 
     fn dismissed(&mut self, _: &mut Window, cx: &mut Context<Picker<Self>>) {
@@ -486,7 +506,7 @@ impl PickerDelegate for StashListDelegate {
                                 }),
                         )
                         .child(
-                            Button::new("pop-stash", "Pop")
+                            Button::new("apply-stash", "Apply")
                                 .key_binding(
                                     KeyBinding::for_action_in(
                                         &menu::Confirm,
@@ -498,6 +518,21 @@ impl PickerDelegate for StashListDelegate {
                                 )
                                 .on_click(|_, window, cx| {
                                     window.dispatch_action(menu::Confirm.boxed_clone(), cx)
+                                }),
+                        )
+                        .child(
+                            Button::new("pop-stash", "Pop")
+                                .key_binding(
+                                    KeyBinding::for_action_in(
+                                        &menu::SecondaryConfirm,
+                                        &focus_handle,
+                                        window,
+                                        cx,
+                                    )
+                                    .map(|kb| kb.size(rems_from_px(12.))),
+                                )
+                                .on_click(|_, window, cx| {
+                                    window.dispatch_action(menu::SecondaryConfirm.boxed_clone(), cx)
                                 }),
                         ),
                 )

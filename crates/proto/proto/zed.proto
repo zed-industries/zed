@@ -397,7 +397,8 @@ message Envelope {
 
         LspQuery lsp_query = 365;
         LspQueryResponse lsp_query_response = 366;
-        StashDrop stash_drop = 367; // current max
+        StashDrop stash_drop = 367;
+        StashApply stash_apply = 368; // current max
     }
 
     reserved 87 to 88;

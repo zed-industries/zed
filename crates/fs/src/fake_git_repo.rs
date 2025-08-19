@@ -424,6 +424,14 @@ impl GitRepository for FakeGitRepository {
         unimplemented!()
     }
 
+    fn stash_apply(
+        &self,
+        _index: Option<usize>,
+        _env: Arc<HashMap<String, String>>,
+    ) -> BoxFuture<'_, Result<()>> {
+        unimplemented!()
+    }
+
     fn stash_drop(
         &self,
         _index: Option<usize>,

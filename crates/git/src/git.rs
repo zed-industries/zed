@@ -60,6 +60,8 @@ actions!(
         StashAll,
         /// Pops the most recent stash.
         StashPop,
+        /// Apply the most recent stash.
+        StashApply,
         /// Restores all tracked files to their last committed state.
         RestoreTrackedFiles,
         /// Moves all untracked files to trash.
