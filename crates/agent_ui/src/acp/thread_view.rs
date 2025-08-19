@@ -2033,7 +2033,7 @@ impl AcpThreadView {
                                     .icon_size(IconSize::XSmall)
                                     .icon_color(Color::Ignored)
                                     .on_click(cx.listener(Self::handle_open_rules))
-                                    .tooltip(Tooltip::text("View Rules")),
+                                    .tooltip(Tooltip::text("View Project Rules")),
                             ),
                     )
                 })
