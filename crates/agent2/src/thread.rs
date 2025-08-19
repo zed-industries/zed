@@ -1,5 +1,8 @@
 use crate::{
-    ContextServerRegistry, DbLanguageModel, DbThread, SystemPromptTemplate, Template, Templates,
+    ContextServerRegistry, CopyPathTool, CreateDirectoryTool, DbLanguageModel, DbThread,
+    DeletePathTool, DiagnosticsTool, EditFileTool, FetchTool, FindPathTool, GrepTool,
+    ListDirectoryTool, MovePathTool, NowTool, OpenTool, ReadFileTool, SystemPromptTemplate,
+    Template, Templates, TerminalTool, ThinkingTool, WebSearchTool,
 };
 use acp_thread::{MentionUri, UserMessageId};
 use action_log::ActionLog;
@@ -22,10 +25,10 @@ use git::repository::DiffType;
 use gpui::{App, AppContext, AsyncApp, Context, Entity, SharedString, Task, WeakEntity};
 use language_model::{
     LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelImage,
-    LanguageModelProviderId, LanguageModelRequest, LanguageModelRequestMessage,
-    LanguageModelRequestTool, LanguageModelToolResult, LanguageModelToolResultContent,
-    LanguageModelToolSchemaFormat, LanguageModelToolUse, LanguageModelToolUseId, Role, StopReason,
-    TokenUsage,
+    LanguageModelProviderId, LanguageModelRegistry, LanguageModelRequest,
+    LanguageModelRequestMessage, LanguageModelRequestTool, LanguageModelToolResult,
+    LanguageModelToolResultContent, LanguageModelToolSchemaFormat, LanguageModelToolUse,
+    LanguageModelToolUseId, Role, SelectedModel, StopReason, TokenUsage,
 };
 use project::{
     Project,
@@ -518,8 +521,8 @@ pub struct Thread {
     templates: Arc<Templates>,
     model: Option<Arc<dyn LanguageModel>>,
     summarization_model: Option<Arc<dyn LanguageModel>>,
-    project: Entity<Project>,
-    action_log: Entity<ActionLog>,
+    pub(crate) project: Entity<Project>,
+    pub(crate) action_log: Entity<ActionLog>,
 }
 
 impl Thread {
@@ -530,7 +533,6 @@ impl Thread {
         action_log: Entity<ActionLog>,
         templates: Arc<Templates>,
         model: Option<Arc<dyn LanguageModel>>,
-        summarization_model: Option<Arc<dyn LanguageModel>>,
         cx: &mut Context<Self>,
     ) -> Self {
         let profile_id = AgentSettings::get_global(cx).default_profile.clone();
@@ -559,7 +561,7 @@ impl Thread {
             project_context,
             templates,
             model,
-            summarization_model,
+            summarization_model: None,
             project,
             action_log,
         }
@@ -662,13 +664,25 @@ impl Thread {
         context_server_registry: Entity<ContextServerRegistry>,
         action_log: Entity<ActionLog>,
         templates: Arc<Templates>,
-        model: Arc<dyn LanguageModel>,
-        summarization_model: Option<Arc<dyn LanguageModel>>,
         cx: &mut Context<Self>,
     ) -> Self {
         let profile_id = db_thread
             .profile
             .unwrap_or_else(|| AgentSettings::get_global(cx).default_profile.clone());
+        let model = LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
+            db_thread
+                .model
+                .and_then(|model| {
+                    let model = SelectedModel {
+                        provider: model.provider.clone().into(),
+                        model: model.model.clone().into(),
+                    };
+                    registry.select_model(&model, cx)
+                })
+                .or_else(|| registry.default_model())
+                .map(|model| model.model)
+        });
+
         Self {
             id,
             prompt_id: PromptId::new(),
@@ -679,7 +693,7 @@ impl Thread {
             },
             summary: db_thread.summary,
             messages: db_thread.messages,
-            completion_mode: CompletionMode::Normal,
+            completion_mode: db_thread.completion_mode.unwrap_or_default(),
             running_turn: None,
             pending_message: None,
             tools: BTreeMap::default(),
@@ -691,8 +705,8 @@ impl Thread {
             profile_id,
             project_context,
             templates,
-            model: Some(model),
-            summarization_model,
+            model,
+            summarization_model: None,
             project,
             action_log,
             updated_at: db_thread.updated_at,
@@ -886,6 +900,32 @@ impl Thread {
         } else {
             self.messages.last().cloned()
         }
+    }
+
+    pub fn add_default_tools(&mut self, cx: &mut Context<Self>) {
+        let language_registry = self.project.read(cx).languages().clone();
+        self.add_tool(CopyPathTool::new(self.project.clone()));
+        self.add_tool(CreateDirectoryTool::new(self.project.clone()));
+        self.add_tool(DeletePathTool::new(
+            self.project.clone(),
+            self.action_log.clone(),
+        ));
+        self.add_tool(DiagnosticsTool::new(self.project.clone()));
+        self.add_tool(EditFileTool::new(cx.weak_entity(), language_registry));
+        self.add_tool(FetchTool::new(self.project.read(cx).client().http_client()));
+        self.add_tool(FindPathTool::new(self.project.clone()));
+        self.add_tool(GrepTool::new(self.project.clone()));
+        self.add_tool(ListDirectoryTool::new(self.project.clone()));
+        self.add_tool(MovePathTool::new(self.project.clone()));
+        self.add_tool(NowTool);
+        self.add_tool(OpenTool::new(self.project.clone()));
+        self.add_tool(ReadFileTool::new(
+            self.project.clone(),
+            self.action_log.clone(),
+        ));
+        self.add_tool(TerminalTool::new(self.project.clone(), cx));
+        self.add_tool(ThinkingTool);
+        self.add_tool(WebSearchTool); // TODO: Enable this only if it's a zed model.
     }
 
     pub fn add_tool(&mut self, tool: impl AgentTool) {

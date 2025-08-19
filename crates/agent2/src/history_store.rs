@@ -16,29 +16,29 @@ const SAVE_RECENTLY_OPENED_ENTRIES_DEBOUNCE: Duration = Duration::from_millis(50
 
 #[derive(Clone, Debug)]
 pub enum HistoryEntry {
-    Thread(DbThreadMetadata),
-    Context(SavedContextMetadata),
+    AcpThread(DbThreadMetadata),
+    TextThread(SavedContextMetadata),
 }
 
 impl HistoryEntry {
     pub fn updated_at(&self) -> DateTime<Utc> {
         match self {
-            HistoryEntry::Thread(thread) => thread.updated_at,
-            HistoryEntry::Context(context) => context.mtime.to_utc(),
+            HistoryEntry::AcpThread(thread) => thread.updated_at,
+            HistoryEntry::TextThread(context) => context.mtime.to_utc(),
         }
     }
 
     pub fn id(&self) -> HistoryEntryId {
         match self {
-            HistoryEntry::Thread(thread) => HistoryEntryId::Thread(thread.id.clone()),
-            HistoryEntry::Context(context) => HistoryEntryId::Context(context.path.clone()),
+            HistoryEntry::AcpThread(thread) => HistoryEntryId::Thread(thread.id.clone()),
+            HistoryEntry::TextThread(context) => HistoryEntryId::Context(context.path.clone()),
         }
     }
 
     pub fn title(&self) -> &SharedString {
         match self {
-            HistoryEntry::Thread(thread) => &thread.title,
-            HistoryEntry::Context(context) => &context.title,
+            HistoryEntry::AcpThread(thread) => &thread.title,
+            HistoryEntry::TextThread(context) => &context.title,
         }
     }
 }
@@ -115,40 +115,7 @@ impl HistoryStore {
         })
     }
 
-    pub fn save_thread(
-        &self,
-        id: acp::SessionId,
-        thread: DbThread,
-        cx: &mut Context<Self>,
-    ) -> Task<Result<()>> {
-        let database_future = ThreadsDatabase::connect(cx);
-        cx.spawn(async move |this, cx| {
-            let database = database_future.await.map_err(|err| anyhow!(err))?;
-            database.save_thread(id, thread).await?;
-
-            this.update(cx, |this, cx| this.reload(cx))?.await
-        })
-    }
-
-    pub fn delete_thread(
-        &mut self,
-        id: &acp::SessionId,
-        cx: &mut Context<Self>,
-    ) -> Task<Result<()>> {
-        let id = id.clone();
-        let database_future = ThreadsDatabase::connect(cx);
-        cx.spawn(async move |this, cx| {
-            let database = database_future.await.map_err(|err| anyhow!(err))?;
-            database.delete_thread(id.clone()).await?;
-
-            this.update(cx, |this, cx| {
-                this.threads.retain(|thread| thread.id != id);
-                cx.notify();
-            })
-        })
-    }
-
-    pub fn reload(&self, cx: &mut Context<Self>) -> Task<Result<()>> {
+    pub fn reload(&self, cx: &mut Context<Self>) {
         let database_future = ThreadsDatabase::connect(cx);
         cx.spawn(async move |this, cx| {
             let threads = database_future
@@ -162,6 +129,7 @@ impl HistoryStore {
                 cx.notify();
             })
         })
+        .detach_and_log_err(cx);
     }
 
     pub fn entries(&self, cx: &mut Context<Self>) -> Vec<HistoryEntry> {
@@ -172,13 +140,14 @@ impl HistoryStore {
             return history_entries;
         }
 
-        history_entries.extend(self.threads.iter().cloned().map(HistoryEntry::Thread));
+        history_entries.extend(self.threads.iter().cloned().map(HistoryEntry::AcpThread));
+        // todo! validate what's in the context store.
         history_entries.extend(
             self.context_store
                 .read(cx)
                 .unordered_contexts()
                 .cloned()
-                .map(HistoryEntry::Context),
+                .map(HistoryEntry::TextThread),
         );
 
         history_entries.sort_unstable_by_key(|entry| std::cmp::Reverse(entry.updated_at()));
@@ -201,7 +170,7 @@ impl HistoryStore {
                 .enumerate()
                 .flat_map(|(index, entry)| match entry {
                     HistoryEntryId::Thread(id) if &thread.id == id => {
-                        Some((index, HistoryEntry::Thread(thread.clone())))
+                        Some((index, HistoryEntry::AcpThread(thread.clone())))
                     }
                     _ => None,
                 })
@@ -217,7 +186,7 @@ impl HistoryStore {
                         .enumerate()
                         .flat_map(|(index, entry)| match entry {
                             HistoryEntryId::Context(path) if &context.path == path => {
-                                Some((index, HistoryEntry::Context(context.clone())))
+                                Some((index, HistoryEntry::TextThread(context.clone())))
                             }
                             _ => None,
                         })

@@ -280,12 +280,22 @@ impl ThreadsDatabase {
         connection: &Arc<Mutex<Connection>>,
         id: acp::SessionId,
         thread: DbThread,
-    ) -> Result<DbThreadMetadata> {
+    ) -> Result<()> {
         const COMPRESSION_LEVEL: i32 = 3;
 
-        let json_data = serde_json::to_string(&thread)?;
+        #[derive(Serialize)]
+        struct SerializedThread {
+            #[serde(flatten)]
+            thread: DbThread,
+            version: &'static str,
+        }
+
         let title = thread.title.to_string();
         let updated_at = thread.updated_at.to_rfc3339();
+        let json_data = serde_json::to_string(&SerializedThread {
+            thread,
+            version: DbThread::VERSION,
+        })?;
 
         let connection = connection.lock();
 
@@ -299,11 +309,7 @@ impl ThreadsDatabase {
 
         insert((id.0.clone(), title, updated_at, data_type, data))?;
 
-        Ok(DbThreadMetadata {
-            id,
-            title: thread.title,
-            updated_at: thread.updated_at,
-        })
+        Ok(())
     }
 
     pub fn list_threads(&self) -> Task<Result<Vec<DbThreadMetadata>>> {
@@ -350,7 +356,8 @@ impl ThreadsDatabase {
                     }
                     DataType::Json => String::from_utf8(data)?,
                 };
-                let thread = DbThread::from_json(json_data.as_bytes())?;
+                dbg!(&json_data);
+                let thread = dbg!(DbThread::from_json(json_data.as_bytes()))?;
                 Ok(Some(thread))
             } else {
                 Ok(None)
@@ -358,11 +365,7 @@ impl ThreadsDatabase {
         })
     }
 
-    pub fn save_thread(
-        &self,
-        id: acp::SessionId,
-        thread: DbThread,
-    ) -> Task<Result<DbThreadMetadata>> {
+    pub fn save_thread(&self, id: acp::SessionId, thread: DbThread) -> Task<Result<()>> {
         let connection = self.connection.clone();
 
         self.executor
