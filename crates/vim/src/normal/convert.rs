@@ -201,7 +201,7 @@ impl Vim {
             let snapshot = editor.buffer().read(cx).snapshot(cx);
             for selection in editor.selections.all_adjusted(cx) {
                 match vim.mode {
-                    Mode::Visual | Mode::VisualLine => {
+                    Mode::Visual | Mode::VisualLine | Mode::HelixSelect => {
                         ranges.push(selection.start..selection.end);
                         cursor_positions.push(selection.start..selection.start);
                     }
