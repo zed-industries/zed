@@ -55,6 +55,7 @@ members = [
     "crates/diagnostics",
     "crates/docs_preprocessor",
     "crates/editor",
+    "crates/encodings",
     "crates/eval",
     "crates/explorer_command_injector",
     "crates/extension",
@@ -214,7 +215,7 @@ members = [
     #
 
     "tooling/workspace-hack",
-    "tooling/xtask",
+    "tooling/xtask", "crates/encodings",
 ]
 default-members = ["crates/zed"]
 
@@ -309,6 +310,7 @@ icons = { path = "crates/icons" }
 image_viewer = { path = "crates/image_viewer" }
 edit_prediction = { path = "crates/edit_prediction" }
 edit_prediction_button = { path = "crates/edit_prediction_button" }
+encodings = {path = "crates/encodings"}
 inspector_ui = { path = "crates/inspector_ui" }
 install_cli = { path = "crates/install_cli" }
 jj = { path = "crates/jj" }
