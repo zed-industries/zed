@@ -12,10 +12,10 @@ use project::project_settings::ProjectSettings;
 use settings::{Settings as _, update_settings_file};
 use theme::{FontFamilyCache, FontFamilyName, ThemeSettings};
 use ui::{
-    ButtonLike, ListItem, ListItemSpacing, NumericStepper, PopoverMenu, SwitchField,
-    ToggleButtonGroup, ToggleButtonGroupStyle, ToggleButtonSimple, ToggleState, Tooltip,
-    prelude::*,
+    ButtonLike, ListItem, ListItemSpacing, PopoverMenu, SwitchField, ToggleButtonGroup,
+    ToggleButtonGroupStyle, ToggleButtonSimple, ToggleState, Tooltip, prelude::*,
 };
+use ui_input::NumericStepper;
 
 use crate::{ImportCursorSettings, ImportVsCodeSettings, SettingsImportState};
 
@@ -350,14 +350,19 @@ fn render_font_customization_section(
                             NumericStepper::new(
                                 "ui-font-size",
                                 ui_font_size.to_string(),
+                                move |size, cx| {
+                                    write_ui_font_size(Pixels::from(size), cx);
+                                },
                                 move |_, _, cx| {
                                     write_ui_font_size(ui_font_size - px(1.), cx);
                                 },
                                 move |_, _, cx| {
                                     write_ui_font_size(ui_font_size + px(1.), cx);
                                 },
+                                window,
+                                cx,
                             )
-                            .style(ui::NumericStepperStyle::Outlined)
+                            .style(ui_input::NumericStepperStyle::Outlined)
                             .tab_index({
                                 *tab_index += 2;
                                 *tab_index - 2
@@ -414,14 +419,19 @@ fn render_font_customization_section(
                             NumericStepper::new(
                                 "buffer-font-size",
                                 buffer_font_size.to_string(),
+                                move |size, cx| {
+                                    write_buffer_font_size(Pixels::from(size), cx);
+                                },
                                 move |_, _, cx| {
                                     write_buffer_font_size(buffer_font_size - px(1.), cx);
                                 },
                                 move |_, _, cx| {
                                     write_buffer_font_size(buffer_font_size + px(1.), cx);
                                 },
+                                window,
+                                cx,
                             )
-                            .style(ui::NumericStepperStyle::Outlined)
+                            .style(ui_input::NumericStepperStyle::Outlined)
                             .tab_index({
                                 *tab_index += 2;
                                 *tab_index - 2

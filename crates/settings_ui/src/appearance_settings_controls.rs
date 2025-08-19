@@ -6,9 +6,10 @@ use theme::{
     FontFamilyCache, FontFamilyName, SystemAppearance, ThemeMode, ThemeRegistry, ThemeSettings,
 };
 use ui::{
-    CheckboxWithLabel, ContextMenu, DropdownMenu, NumericStepper, SettingsContainer, SettingsGroup,
-    ToggleButton, prelude::*,
+    CheckboxWithLabel, ContextMenu, DropdownMenu, SettingsContainer, SettingsGroup, ToggleButton,
+    prelude::*,
 };
+use ui_input::NumericStepper;
 
 #[derive(IntoElement)]
 pub struct AppearanceSettingsControls {}
@@ -254,7 +255,7 @@ impl EditableSettingControl for UiFontSizeControl {
 }
 
 impl RenderOnce for UiFontSizeControl {
-    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let value = Self::read(cx);
 
         h_flex()
@@ -263,12 +264,17 @@ impl RenderOnce for UiFontSizeControl {
             .child(NumericStepper::new(
                 "ui-font-size",
                 value.to_string(),
+                move |size, cx| {
+                    Self::write(Pixels::from(size), cx);
+                },
                 move |_, _, cx| {
                     Self::write(value - px(1.), cx);
                 },
                 move |_, _, cx| {
                     Self::write(value + px(1.), cx);
                 },
+                window,
+                cx,
             ))
     }
 }
