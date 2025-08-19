@@ -500,13 +500,12 @@ impl LspCommand for PerformRename {
         mut cx: AsyncApp,
     ) -> Result<ProjectTransaction> {
         if let Some(edit) = message {
-            let (lsp_adapter, lsp_server) =
+            let (_, lsp_server) =
                 language_server_for_buffer(&lsp_store, &buffer, server_id, &mut cx)?;
             LocalLspStore::deserialize_workspace_edit(
                 lsp_store,
                 edit,
                 self.push_to_history,
-                lsp_adapter,
                 lsp_server,
                 &mut cx,
             )
@@ -1116,18 +1115,12 @@ pub async fn location_links_from_lsp(
         }
     }
 
-    let (lsp_adapter, language_server) =
-        language_server_for_buffer(&lsp_store, &buffer, server_id, &mut cx)?;
+    let (_, language_server) = language_server_for_buffer(&lsp_store, &buffer, server_id, &mut cx)?;
     let mut definitions = Vec::new();
     for (origin_range, target_uri, target_range) in unresolved_links {
         let target_buffer_handle = lsp_store
             .update(&mut cx, |this, cx| {
-                this.open_local_buffer_via_lsp(
-                    target_uri,
-                    language_server.server_id(),
-                    lsp_adapter.name.clone(),
-                    cx,
-                )
+                this.open_local_buffer_via_lsp(target_uri, language_server.server_id(), cx)
             })?
             .await?;
 
@@ -1172,8 +1165,7 @@ pub async fn location_link_from_lsp(
     server_id: LanguageServerId,
     cx: &mut AsyncApp,
 ) -> Result<LocationLink> {
-    let (lsp_adapter, language_server) =
-        language_server_for_buffer(&lsp_store, &buffer, server_id, cx)?;
+    let (_, language_server) = language_server_for_buffer(lsp_store, buffer, server_id, cx)?;
 
     let (origin_range, target_uri, target_range) = (
         link.origin_selection_range,
@@ -1183,12 +1175,7 @@ pub async fn location_link_from_lsp(
 
     let target_buffer_handle = lsp_store
         .update(cx, |lsp_store, cx| {
-            lsp_store.open_local_buffer_via_lsp(
-                target_uri,
-                language_server.server_id(),
-                lsp_adapter.name.clone(),
-                cx,
-            )
+            lsp_store.open_local_buffer_via_lsp(target_uri, language_server.server_id(), cx)
         })?
         .await?;
 
@@ -1326,7 +1313,7 @@ impl LspCommand for GetReferences {
         mut cx: AsyncApp,
     ) -> Result<Vec<Location>> {
         let mut references = Vec::new();
-        let (lsp_adapter, language_server) =
+        let (_, language_server) =
             language_server_for_buffer(&lsp_store, &buffer, server_id, &mut cx)?;
 
         if let Some(locations) = locations {
@@ -1336,7 +1323,6 @@ impl LspCommand for GetReferences {
                         lsp_store.open_local_buffer_via_lsp(
                             lsp_location.uri,
                             language_server.server_id(),
-                            lsp_adapter.name.clone(),
                             cx,
                         )
                     })?

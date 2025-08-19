@@ -37,7 +37,7 @@ pub(crate) fn should_auto_close(
         let text = buffer
             .text_for_range(edited_range.clone())
             .collect::<String>();
-        let edited_range = edited_range.to_offset(&buffer);
+        let edited_range = edited_range.to_offset(buffer);
         if !text.ends_with(">") {
             continue;
         }

@@ -90,7 +90,7 @@ mod tests {
         ];
 
         for handle in focus_handles.iter() {
-            tab.insert(&handle);
+            tab.insert(handle);
         }
         assert_eq!(
             tab.handles

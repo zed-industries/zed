@@ -129,7 +129,7 @@ fn handle_frontmatter(book: &mut Book, errors: &mut HashSet<PreprocessorError>) 
                 let Some((name, value)) = line.split_once(':') else {
                     errors.insert(PreprocessorError::InvalidFrontmatterLine(format!(
                         "{}: {}",
-                        chapter_breadcrumbs(&chapter),
+                        chapter_breadcrumbs(chapter),
                         line
                     )));
                     continue;
@@ -402,11 +402,11 @@ fn handle_postprocessing() -> Result<()> {
         path: &'a std::path::PathBuf,
         root: &'a std::path::PathBuf,
     ) -> &'a std::path::Path {
-        &path.strip_prefix(&root).unwrap_or(&path)
+        path.strip_prefix(&root).unwrap_or(path)
     }
     fn extract_title_from_page(contents: &str, pretty_path: &std::path::Path) -> String {
         let title_tag_contents = &title_regex()
-            .captures(&contents)
+            .captures(contents)
             .with_context(|| format!("Failed to find title in {:?}", pretty_path))
             .expect("Page has <title> element")[1];
         let title = title_tag_contents

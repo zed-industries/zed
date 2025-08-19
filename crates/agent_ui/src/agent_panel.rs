@@ -48,9 +48,8 @@ use feature_flags::{self, FeatureFlagAppExt};
 use fs::Fs;
 use gpui::{
     Action, Animation, AnimationExt as _, AnyElement, App, AsyncWindowContext, ClipboardItem,
-    Corner, DismissEvent, Entity, EventEmitter, ExternalPaths, FocusHandle, Focusable, Hsla,
-    KeyContext, Pixels, Subscription, Task, UpdateGlobal, WeakEntity, prelude::*,
-    pulsating_between,
+    Corner, DismissEvent, Entity, EventEmitter, ExternalPaths, FocusHandle, Focusable, KeyContext,
+    Pixels, Subscription, Task, UpdateGlobal, WeakEntity, prelude::*, pulsating_between,
 };
 use language::LanguageRegistry;
 use language_model::{
@@ -573,6 +572,7 @@ impl AgentPanel {
                         panel.width = serialized_panel.width.map(|w| w.round());
                         if let Some(selected_agent) = serialized_panel.selected_agent {
                             panel.selected_agent = selected_agent;
+                            panel.new_agent_thread(selected_agent, window, cx);
                         }
                         cx.notify();
                     });
@@ -1631,15 +1631,52 @@ impl AgentPanel {
         menu
     }
 
-    pub fn set_selected_agent(&mut self, agent: AgentType, cx: &mut Context<Self>) {
+    pub fn set_selected_agent(
+        &mut self,
+        agent: AgentType,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if self.selected_agent != agent {
             self.selected_agent = agent;
             self.serialize(cx);
+            self.new_agent_thread(agent, window, cx);
         }
     }
 
     pub fn selected_agent(&self) -> AgentType {
         self.selected_agent
+    }
+
+    pub fn new_agent_thread(
+        &mut self,
+        agent: AgentType,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match agent {
+            AgentType::Zed => {
+                window.dispatch_action(
+                    NewThread {
+                        from_thread_id: None,
+                    }
+                    .boxed_clone(),
+                    cx,
+                );
+            }
+            AgentType::TextThread => {
+                window.dispatch_action(NewTextThread.boxed_clone(), cx);
+            }
+            AgentType::NativeAgent => {
+                self.new_external_thread(Some(crate::ExternalAgent::NativeAgent), window, cx)
+            }
+            AgentType::Gemini => {
+                self.new_external_thread(Some(crate::ExternalAgent::Gemini), window, cx)
+            }
+            AgentType::ClaudeCode => {
+                self.new_external_thread(Some(crate::ExternalAgent::ClaudeCode), window, cx)
+            }
+        }
     }
 }
 
@@ -2221,16 +2258,13 @@ impl AgentPanel {
                                                         panel.update(cx, |panel, cx| {
                                                             panel.set_selected_agent(
                                                                 AgentType::Zed,
+                                                                window,
                                                                 cx,
                                                             );
                                                         });
                                                     }
                                                 });
                                             }
-                                            window.dispatch_action(
-                                                NewThread::default().boxed_clone(),
-                                                cx,
-                                            );
                                         }
                                     }),
                             )
@@ -2250,13 +2284,13 @@ impl AgentPanel {
                                                         panel.update(cx, |panel, cx| {
                                                             panel.set_selected_agent(
                                                                 AgentType::TextThread,
+                                                                window,
                                                                 cx,
                                                             );
                                                         });
                                                     }
                                                 });
                                             }
-                                            window.dispatch_action(NewTextThread.boxed_clone(), cx);
                                         }
                                     }),
                             )
@@ -2275,19 +2309,13 @@ impl AgentPanel {
                                                         panel.update(cx, |panel, cx| {
                                                             panel.set_selected_agent(
                                                                 AgentType::NativeAgent,
+                                                                window,
                                                                 cx,
                                                             );
                                                         });
                                                     }
                                                 });
                                             }
-                                            window.dispatch_action(
-                                                NewExternalAgentThread {
-                                                    agent: Some(crate::ExternalAgent::NativeAgent),
-                                                }
-                                                .boxed_clone(),
-                                                cx,
-                                            );
                                         }
                                     }),
                             )
@@ -2308,19 +2336,13 @@ impl AgentPanel {
                                                         panel.update(cx, |panel, cx| {
                                                             panel.set_selected_agent(
                                                                 AgentType::Gemini,
+                                                                window,
                                                                 cx,
                                                             );
                                                         });
                                                     }
                                                 });
                                             }
-                                            window.dispatch_action(
-                                                NewExternalAgentThread {
-                                                    agent: Some(crate::ExternalAgent::Gemini),
-                                                }
-                                                .boxed_clone(),
-                                                cx,
-                                            );
                                         }
                                     }),
                             )
@@ -2339,19 +2361,13 @@ impl AgentPanel {
                                                         panel.update(cx, |panel, cx| {
                                                             panel.set_selected_agent(
                                                                 AgentType::ClaudeCode,
+                                                                window,
                                                                 cx,
                                                             );
                                                         });
                                                     }
                                                 });
                                             }
-                                            window.dispatch_action(
-                                                NewExternalAgentThread {
-                                                    agent: Some(crate::ExternalAgent::ClaudeCode),
-                                                }
-                                                .boxed_clone(),
-                                                cx,
-                                            );
                                         }
                                     }),
                             );
@@ -2602,7 +2618,13 @@ impl AgentPanel {
         }
 
         match &self.active_view {
-            ActiveView::Thread { .. } | ActiveView::TextThread { .. } => {
+            ActiveView::History | ActiveView::Configuration => false,
+            ActiveView::ExternalAgentThread { thread_view, .. }
+                if thread_view.read(cx).as_native_thread(cx).is_none() =>
+            {
+                false
+            }
+            _ => {
                 let history_is_empty = self
                     .history_store
                     .update(cx, |store, cx| store.recent_entries(1, cx).is_empty());
@@ -2617,9 +2639,6 @@ impl AgentPanel {
 
                 history_is_empty || !has_configured_non_zed_providers
             }
-            ActiveView::ExternalAgentThread { .. }
-            | ActiveView::History
-            | ActiveView::Configuration => false,
         }
     }
 
@@ -2692,20 +2711,22 @@ impl AgentPanel {
         action_slot: Option<AnyElement>,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        h_flex()
-            .mt_2()
-            .pl_1p5()
-            .pb_1()
-            .w_full()
-            .justify_between()
-            .border_b_1()
-            .border_color(cx.theme().colors().border_variant)
-            .child(
-                Label::new(label.into())
-                    .size(LabelSize::Small)
-                    .color(Color::Muted),
-            )
-            .children(action_slot)
+        div().pl_1().pr_1p5().child(
+            h_flex()
+                .mt_2()
+                .pl_1p5()
+                .pb_1()
+                .w_full()
+                .justify_between()
+                .border_b_1()
+                .border_color(cx.theme().colors().border_variant)
+                .child(
+                    Label::new(label.into())
+                        .size(LabelSize::Small)
+                        .color(Color::Muted),
+                )
+                .children(action_slot),
+        )
     }
 
     fn render_thread_empty_state(
@@ -2811,22 +2832,12 @@ impl AgentPanel {
                                                 }),
                                         ),
                                 )
-                        })
-                        .when_some(configuration_error.as_ref(), |this, err| {
-                            this.child(self.render_configuration_error(
-                                err,
-                                &focus_handle,
-                                window,
-                                cx,
-                            ))
                         }),
                 )
             })
             .when(!recent_history.is_empty(), |parent| {
-                let focus_handle = focus_handle.clone();
                 parent
                     .overflow_hidden()
-                    .p_1p5()
                     .justify_end()
                     .gap_1()
                     .child(
@@ -2854,10 +2865,11 @@ impl AgentPanel {
                         ),
                     )
                     .child(
-                        v_flex()
-                            .gap_1()
-                            .children(recent_history.into_iter().enumerate().map(
-                                |(index, entry)| {
+                        v_flex().p_1().pr_1p5().gap_1().children(
+                            recent_history
+                                .into_iter()
+                                .enumerate()
+                                .map(|(index, entry)| {
                                     // TODO: Add keyboard navigation.
                                     let is_hovered =
                                         self.hovered_recent_history_item == Some(index);
@@ -2876,49 +2888,94 @@ impl AgentPanel {
                                             },
                                         ))
                                         .into_any_element()
-                                },
-                            )),
+                                }),
+                        ),
                     )
-                    .when_some(configuration_error.as_ref(), |this, err| {
-                        this.child(self.render_configuration_error(err, &focus_handle, window, cx))
-                    })
+            })
+            .when_some(configuration_error.as_ref(), |this, err| {
+                this.child(self.render_configuration_error(false, err, &focus_handle, window, cx))
             })
     }
 
     fn render_configuration_error(
         &self,
+        border_bottom: bool,
         configuration_error: &ConfigurationError,
         focus_handle: &FocusHandle,
         window: &mut Window,
         cx: &mut App,
     ) -> impl IntoElement {
-        match configuration_error {
-            ConfigurationError::ModelNotFound
-            | ConfigurationError::ProviderNotAuthenticated(_)
-            | ConfigurationError::NoProvider => Banner::new()
-                .severity(ui::Severity::Warning)
-                .child(Label::new(configuration_error.to_string()))
-                .action_slot(
-                    Button::new("settings", "Configure Provider")
+        let zed_provider_configured = AgentSettings::get_global(cx)
+            .default_model
+            .as_ref()
+            .map_or(false, |selection| {
+                selection.provider.0.as_str() == "zed.dev"
+            });
+
+        let callout = if zed_provider_configured {
+            Callout::new()
+                .icon(IconName::Warning)
+                .severity(Severity::Warning)
+                .when(border_bottom, |this| {
+                    this.border_position(ui::BorderPosition::Bottom)
+                })
+                .title("Sign in to continue using Zed as your LLM provider.")
+                .actions_slot(
+                    Button::new("sign_in", "Sign In")
+                        .style(ButtonStyle::Tinted(ui::TintColor::Warning))
+                        .label_size(LabelSize::Small)
+                        .on_click({
+                            let workspace = self.workspace.clone();
+                            move |_, _, cx| {
+                                let Ok(client) =
+                                    workspace.update(cx, |workspace, _| workspace.client().clone())
+                                else {
+                                    return;
+                                };
+
+                                cx.spawn(async move |cx| {
+                                    client.sign_in_with_optional_connect(true, cx).await
+                                })
+                                .detach_and_log_err(cx);
+                            }
+                        }),
+                )
+        } else {
+            Callout::new()
+                .icon(IconName::Warning)
+                .severity(Severity::Warning)
+                .when(border_bottom, |this| {
+                    this.border_position(ui::BorderPosition::Bottom)
+                })
+                .title(configuration_error.to_string())
+                .actions_slot(
+                    Button::new("settings", "Configure")
                         .style(ButtonStyle::Tinted(ui::TintColor::Warning))
                         .label_size(LabelSize::Small)
                         .key_binding(
-                            KeyBinding::for_action_in(&OpenSettings, &focus_handle, window, cx)
+                            KeyBinding::for_action_in(&OpenSettings, focus_handle, window, cx)
                                 .map(|kb| kb.size(rems_from_px(12.))),
                         )
                         .on_click(|_event, window, cx| {
                             window.dispatch_action(OpenSettings.boxed_clone(), cx)
                         }),
-                ),
+                )
+        };
+
+        match configuration_error {
+            ConfigurationError::ModelNotFound
+            | ConfigurationError::ProviderNotAuthenticated(_)
+            | ConfigurationError::NoProvider => callout.into_any_element(),
             ConfigurationError::ProviderPendingTermsAcceptance(provider) => {
-                Banner::new().severity(ui::Severity::Warning).child(
-                    h_flex().w_full().children(
+                Banner::new()
+                    .severity(Severity::Warning)
+                    .child(h_flex().w_full().children(
                         provider.render_accept_terms(
                             LanguageModelProviderTosView::ThreadEmptyState,
                             cx,
                         ),
-                    ),
-                )
+                    ))
+                    .into_any_element()
             }
         }
     }
@@ -2950,7 +3007,7 @@ impl AgentPanel {
         let focus_handle = self.focus_handle(cx);
 
         let banner = Banner::new()
-            .severity(ui::Severity::Info)
+            .severity(Severity::Info)
             .child(Label::new("Consecutive tool use limit reached.").size(LabelSize::Small))
             .action_slot(
                 h_flex()
@@ -3061,10 +3118,6 @@ impl AgentPanel {
             }))
     }
 
-    fn error_callout_bg(&self, cx: &Context<Self>) -> Hsla {
-        cx.theme().status().error.opacity(0.08)
-    }
-
     fn render_payment_required_error(
         &self,
         thread: &Entity<ActiveThread>,
@@ -3073,23 +3126,18 @@ impl AgentPanel {
         const ERROR_MESSAGE: &str =
             "You reached your free usage limit. Upgrade to Zed Pro for more prompts.";
 
-        let icon = Icon::new(IconName::XCircle)
-            .size(IconSize::Small)
-            .color(Color::Error);
-
-        div()
-            .border_t_1()
-            .border_color(cx.theme().colors().border)
-            .child(
-                Callout::new()
-                    .icon(icon)
-                    .title("Free Usage Exceeded")
-                    .description(ERROR_MESSAGE)
-                    .tertiary_action(self.upgrade_button(thread, cx))
-                    .secondary_action(self.create_copy_button(ERROR_MESSAGE))
-                    .primary_action(self.dismiss_error_button(thread, cx))
-                    .bg_color(self.error_callout_bg(cx)),
+        Callout::new()
+            .severity(Severity::Error)
+            .icon(IconName::XCircle)
+            .title("Free Usage Exceeded")
+            .description(ERROR_MESSAGE)
+            .actions_slot(
+                h_flex()
+                    .gap_0p5()
+                    .child(self.upgrade_button(thread, cx))
+                    .child(self.create_copy_button(ERROR_MESSAGE)),
             )
+            .dismiss_action(self.dismiss_error_button(thread, cx))
             .into_any_element()
     }
 
@@ -3104,23 +3152,37 @@ impl AgentPanel {
             Plan::ZedProTrial | Plan::ZedFree => "Upgrade to Zed Pro for more prompts.",
         };
 
-        let icon = Icon::new(IconName::XCircle)
-            .size(IconSize::Small)
-            .color(Color::Error);
-
-        div()
-            .border_t_1()
-            .border_color(cx.theme().colors().border)
-            .child(
-                Callout::new()
-                    .icon(icon)
-                    .title("Model Prompt Limit Reached")
-                    .description(error_message)
-                    .tertiary_action(self.upgrade_button(thread, cx))
-                    .secondary_action(self.create_copy_button(error_message))
-                    .primary_action(self.dismiss_error_button(thread, cx))
-                    .bg_color(self.error_callout_bg(cx)),
+        Callout::new()
+            .severity(Severity::Error)
+            .title("Model Prompt Limit Reached")
+            .description(error_message)
+            .actions_slot(
+                h_flex()
+                    .gap_0p5()
+                    .child(self.upgrade_button(thread, cx))
+                    .child(self.create_copy_button(error_message)),
             )
+            .dismiss_action(self.dismiss_error_button(thread, cx))
+            .into_any_element()
+    }
+
+    fn render_retry_button(&self, thread: &Entity<ActiveThread>) -> AnyElement {
+        Button::new("retry", "Retry")
+            .icon(IconName::RotateCw)
+            .icon_position(IconPosition::Start)
+            .icon_size(IconSize::Small)
+            .label_size(LabelSize::Small)
+            .on_click({
+                let thread = thread.clone();
+                move |_, window, cx| {
+                    thread.update(cx, |thread, cx| {
+                        thread.clear_last_error();
+                        thread.thread().update(cx, |thread, cx| {
+                            thread.retry_last_completion(Some(window.window_handle()), cx);
+                        });
+                    });
+                }
+            })
             .into_any_element()
     }
 
@@ -3133,40 +3195,18 @@ impl AgentPanel {
     ) -> AnyElement {
         let message_with_header = format!("{}\n{}", header, message);
 
-        let icon = Icon::new(IconName::XCircle)
-            .size(IconSize::Small)
-            .color(Color::Error);
-
-        let retry_button = Button::new("retry", "Retry")
-            .icon(IconName::RotateCw)
-            .icon_position(IconPosition::Start)
-            .icon_size(IconSize::Small)
-            .label_size(LabelSize::Small)
-            .on_click({
-                let thread = thread.clone();
-                move |_, window, cx| {
-                    thread.update(cx, |thread, cx| {
-                        thread.clear_last_error();
-                        thread.thread().update(cx, |thread, cx| {
-                            thread.retry_last_completion(Some(window.window_handle()), cx);
-                        });
-                    });
-                }
-            });
-
-        div()
-            .border_t_1()
-            .border_color(cx.theme().colors().border)
-            .child(
-                Callout::new()
-                    .icon(icon)
-                    .title(header)
-                    .description(message.clone())
-                    .primary_action(retry_button)
-                    .secondary_action(self.dismiss_error_button(thread, cx))
-                    .tertiary_action(self.create_copy_button(message_with_header))
-                    .bg_color(self.error_callout_bg(cx)),
+        Callout::new()
+            .severity(Severity::Error)
+            .icon(IconName::XCircle)
+            .title(header)
+            .description(message.clone())
+            .actions_slot(
+                h_flex()
+                    .gap_0p5()
+                    .child(self.render_retry_button(thread))
+                    .child(self.create_copy_button(message_with_header)),
             )
+            .dismiss_action(self.dismiss_error_button(thread, cx))
             .into_any_element()
     }
 
@@ -3175,60 +3215,39 @@ impl AgentPanel {
         message: SharedString,
         can_enable_burn_mode: bool,
         thread: &Entity<ActiveThread>,
-        cx: &mut Context<Self>,
     ) -> AnyElement {
-        let icon = Icon::new(IconName::XCircle)
-            .size(IconSize::Small)
-            .color(Color::Error);
-
-        let retry_button = Button::new("retry", "Retry")
-            .icon(IconName::RotateCw)
-            .icon_position(IconPosition::Start)
-            .icon_size(IconSize::Small)
-            .label_size(LabelSize::Small)
-            .on_click({
-                let thread = thread.clone();
-                move |_, window, cx| {
-                    thread.update(cx, |thread, cx| {
-                        thread.clear_last_error();
-                        thread.thread().update(cx, |thread, cx| {
-                            thread.retry_last_completion(Some(window.window_handle()), cx);
-                        });
-                    });
-                }
-            });
-
-        let mut callout = Callout::new()
-            .icon(icon)
+        Callout::new()
+            .severity(Severity::Error)
             .title("Error")
             .description(message.clone())
-            .bg_color(self.error_callout_bg(cx))
-            .primary_action(retry_button);
-
-        if can_enable_burn_mode {
-            let burn_mode_button = Button::new("enable_burn_retry", "Enable Burn Mode and Retry")
-                .icon(IconName::ZedBurnMode)
-                .icon_position(IconPosition::Start)
-                .icon_size(IconSize::Small)
-                .label_size(LabelSize::Small)
-                .on_click({
-                    let thread = thread.clone();
-                    move |_, window, cx| {
-                        thread.update(cx, |thread, cx| {
-                            thread.clear_last_error();
-                            thread.thread().update(cx, |thread, cx| {
-                                thread.enable_burn_mode_and_retry(Some(window.window_handle()), cx);
-                            });
-                        });
-                    }
-                });
-            callout = callout.secondary_action(burn_mode_button);
-        }
-
-        div()
-            .border_t_1()
-            .border_color(cx.theme().colors().border)
-            .child(callout)
+            .actions_slot(
+                h_flex()
+                    .gap_0p5()
+                    .when(can_enable_burn_mode, |this| {
+                        this.child(
+                            Button::new("enable_burn_retry", "Enable Burn Mode and Retry")
+                                .icon(IconName::ZedBurnMode)
+                                .icon_position(IconPosition::Start)
+                                .icon_size(IconSize::Small)
+                                .label_size(LabelSize::Small)
+                                .on_click({
+                                    let thread = thread.clone();
+                                    move |_, window, cx| {
+                                        thread.update(cx, |thread, cx| {
+                                            thread.clear_last_error();
+                                            thread.thread().update(cx, |thread, cx| {
+                                                thread.enable_burn_mode_and_retry(
+                                                    Some(window.window_handle()),
+                                                    cx,
+                                                );
+                                            });
+                                        });
+                                    }
+                                }),
+                        )
+                    })
+                    .child(self.render_retry_button(thread)),
+            )
             .into_any_element()
     }
 
@@ -3309,7 +3328,7 @@ impl AgentPanel {
                     .paths()
                     .into_iter()
                     .map(|path| {
-                        Workspace::project_path_for_path(this.project.clone(), &path, false, cx)
+                        Workspace::project_path_for_path(this.project.clone(), path, false, cx)
                     })
                     .collect::<Vec<_>>();
                 cx.spawn_in(window, async move |this, cx| {
@@ -3483,7 +3502,6 @@ impl Render for AgentPanel {
                                         message,
                                         can_enable_burn_mode,
                                         thread,
-                                        cx,
                                     ),
                                 })
                                 .into_any(),
@@ -3511,16 +3529,13 @@ impl Render for AgentPanel {
                             if !self.should_render_onboarding(cx)
                                 && let Some(err) = configuration_error.as_ref()
                             {
-                                this.child(
-                                    div().bg(cx.theme().colors().editor_background).p_2().child(
-                                        self.render_configuration_error(
-                                            err,
-                                            &self.focus_handle(cx),
-                                            window,
-                                            cx,
-                                        ),
-                                    ),
-                                )
+                                this.child(self.render_configuration_error(
+                                    true,
+                                    err,
+                                    &self.focus_handle(cx),
+                                    window,
+                                    cx,
+                                ))
                             } else {
                                 this
                             }
@@ -3579,7 +3594,7 @@ impl rules_library::InlineAssistDelegate for PromptLibraryInlineAssist {
             let text_thread_store = None;
             let context_store = cx.new(|_| ContextStore::new(project.clone(), None));
             assistant.assist(
-                &prompt_editor,
+                prompt_editor,
                 self.workspace.clone(),
                 context_store,
                 project,

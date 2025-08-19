@@ -661,7 +661,7 @@ pub struct WeakEntity<T> {
 
 impl<T> std::fmt::Debug for WeakEntity<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct(&type_name::<Self>())
+        f.debug_struct(type_name::<Self>())
             .field("entity_id", &self.any_entity.entity_id)
             .field("entity_type", &type_name::<T>())
             .finish()

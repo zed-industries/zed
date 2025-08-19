@@ -520,7 +520,7 @@ async fn judge_example(
     enable_telemetry: bool,
     cx: &AsyncApp,
 ) -> JudgeOutput {
-    let judge_output = example.judge(model.clone(), &run_output, cx).await;
+    let judge_output = example.judge(model.clone(), run_output, cx).await;
 
     if enable_telemetry {
         telemetry::event!(

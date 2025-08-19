@@ -48,7 +48,7 @@ pub struct Inlay {
 impl Inlay {
     pub fn hint(id: usize, position: Anchor, hint: &project::InlayHint) -> Self {
         let mut text = hint.text();
-        if hint.padding_right && text.chars_at(text.len().saturating_sub(1)).next() != Some(' ') {
+        if hint.padding_right && text.reversed_chars_at(text.len()).next() != Some(' ') {
             text.push(" ");
         }
         if hint.padding_left && text.chars_at(0).next() != Some(' ') {
@@ -1302,6 +1302,29 @@ mod tests {
             .to_string(),
             " a ",
             "Should not change already padded label"
+        );
+    }
+
+    #[gpui::test]
+    fn test_inlay_hint_padding_with_multibyte_chars() {
+        assert_eq!(
+            Inlay::hint(
+                0,
+                Anchor::min(),
+                &InlayHint {
+                    label: InlayHintLabel::String("🎨".to_string()),
+                    position: text::Anchor::default(),
+                    padding_left: true,
+                    padding_right: true,
+                    tooltip: None,
+                    kind: None,
+                    resolve_state: ResolveState::Resolved,
+                },
+            )
+            .text
+            .to_string(),
+            " 🎨 ",
+            "Should pad single emoji correctly"
         );
     }
 

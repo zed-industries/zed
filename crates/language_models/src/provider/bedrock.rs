@@ -150,7 +150,7 @@ impl State {
         let credentials_provider = <dyn CredentialsProvider>::global(cx);
         cx.spawn(async move |this, cx| {
             credentials_provider
-                .delete_credentials(AMAZON_AWS_URL, &cx)
+                .delete_credentials(AMAZON_AWS_URL, cx)
                 .await
                 .log_err();
             this.update(cx, |this, cx| {
@@ -174,7 +174,7 @@ impl State {
                     AMAZON_AWS_URL,
                     "Bearer",
                     &serde_json::to_vec(&credentials)?,
-                    &cx,
+                    cx,
                 )
                 .await?;
             this.update(cx, |this, cx| {
@@ -206,7 +206,7 @@ impl State {
                     (credentials, true)
                 } else {
                     let (_, credentials) = credentials_provider
-                        .read_credentials(AMAZON_AWS_URL, &cx)
+                        .read_credentials(AMAZON_AWS_URL, cx)
                         .await?
                         .ok_or_else(|| AuthenticateError::CredentialsNotFound)?;
                     (
@@ -348,7 +348,12 @@ impl LanguageModelProvider for BedrockLanguageModelProvider {
         self.state.update(cx, |state, cx| state.authenticate(cx))
     }
 
-    fn configuration_view(&self, window: &mut Window, cx: &mut App) -> AnyView {
+    fn configuration_view(
+        &self,
+        _target_agent: language_model::ConfigurationViewTargetAgent,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> AnyView {
         cx.new(|cx| ConfigurationView::new(self.state.clone(), window, cx))
             .into()
     }
@@ -460,7 +465,7 @@ impl BedrockModel {
         Result<BoxStream<'static, Result<BedrockStreamingResponse, BedrockError>>>,
     > {
         let Ok(runtime_client) = self
-            .get_or_init_client(&cx)
+            .get_or_init_client(cx)
             .cloned()
             .context("Bedrock client not initialized")
         else {

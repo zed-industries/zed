@@ -131,7 +131,7 @@ async fn get_context(
 
     let (project, _lsp_open_handle, buffer) = if use_language_server {
         let (project, lsp_open_handle, buffer) =
-            open_buffer_with_language_server(&worktree_path, &cursor.path, &app_state, cx).await?;
+            open_buffer_with_language_server(&worktree_path, &cursor.path, app_state, cx).await?;
         (Some(project), Some(lsp_open_handle), buffer)
     } else {
         let abs_path = worktree_path.join(&cursor.path);
@@ -260,7 +260,7 @@ pub fn wait_for_lang_server(
         .update(cx, |buffer, cx| {
             lsp_store.update(cx, |lsp_store, cx| {
                 lsp_store
-                    .language_servers_for_local_buffer(&buffer, cx)
+                    .language_servers_for_local_buffer(buffer, cx)
                     .next()
                     .is_some()
             })
@@ -291,7 +291,7 @@ pub fn wait_for_lang_server(
                 _ => {}
             }
         }),
-        cx.subscribe(&project, {
+        cx.subscribe(project, {
             let buffer = buffer.clone();
             move |project, event, cx| match event {
                 project::Event::LanguageServerAdded(_, _, _) => {

@@ -423,7 +423,7 @@ zlog_settings = { path = "crates/zlog_settings" }
 #
 
 agentic-coding-protocol = "0.0.10"
-agent-client-protocol = "0.0.25"
+agent-client-protocol = "0.0.26"
 aho-corasick = "1.1"
 alacritty_terminal = { git = "https://github.com/zed-industries/alacritty.git", branch = "add-hush-login-flag" }
 any_vec = "0.14"
@@ -582,6 +582,7 @@ serde_json_lenient = { version = "0.2", features = [
     "raw_value",
 ] }
 serde_repr = "0.1"
+serde_urlencoded = "0.7"
 sha2 = "0.10"
 shellexpand = "2.1.0"
 shlex = "1.3.0"
@@ -659,9 +660,7 @@ which = "6.0.0"
 windows-core = "0.61"
 wit-component = "0.221"
 workspace-hack = "0.1.0"
-# We can switch back to the published version once https://github.com/infinitefield/yawc/pull/16 is merged and a new
-# version is released.
-yawc = { git = "https://github.com/deviant-forks/yawc", rev = "1899688f3e69ace4545aceb97b2a13881cf26142" }
+yawc = "0.2.5"
 zstd = "0.11"
 
 [workspace.dependencies.windows]
@@ -825,6 +824,7 @@ module_inception = { level = "deny" }
 question_mark = { level = "deny" }
 redundant_closure = { level = "deny" }
 declare_interior_mutable_const = { level = "deny" }
+needless_borrow = { level = "warn"}
 # Individual rules that have violations in the codebase:
 type_complexity = "allow"
 # We often return trait objects from `new` functions.
@@ -833,6 +833,8 @@ new_ret_no_self = { level = "allow" }
 # compared to Iterator::next. Yet, clippy complains about those.
 should_implement_trait = { level = "allow" }
 let_underscore_future = "allow"
+# It doesn't make sense to implement `Default` unilaterally.
+new_without_default = "allow"
 
 # in Rust it can be very tedious to reduce argument count without
 # running afoul of the borrow checker.

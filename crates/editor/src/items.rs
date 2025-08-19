@@ -524,8 +524,8 @@ fn serialize_selection(
 ) -> proto::Selection {
     proto::Selection {
         id: selection.id as u64,
-        start: Some(serialize_anchor(&selection.start, &buffer)),
-        end: Some(serialize_anchor(&selection.end, &buffer)),
+        start: Some(serialize_anchor(&selection.start, buffer)),
+        end: Some(serialize_anchor(&selection.end, buffer)),
         reversed: selection.reversed,
     }
 }
@@ -1010,7 +1010,7 @@ impl Item for Editor {
         self.workspace = Some((workspace.weak_handle(), workspace.database_id()));
         if let Some(workspace) = &workspace.weak_handle().upgrade() {
             cx.subscribe(
-                &workspace,
+                workspace,
                 |editor, _, event: &workspace::Event, _cx| match event {
                     workspace::Event::ModalOpened => {
                         editor.mouse_context_menu.take();
@@ -1296,7 +1296,7 @@ impl SerializableItem for Editor {
             project
                 .read(cx)
                 .worktree_for_id(worktree_id, cx)
-                .and_then(|worktree| worktree.read(cx).absolutize(&file.path()).ok())
+                .and_then(|worktree| worktree.read(cx).absolutize(file.path()).ok())
                 .or_else(|| {
                     let full_path = file.full_path(cx);
                     let project_path = project.read(cx).find_project_path(&full_path, cx)?;
@@ -1385,14 +1385,14 @@ impl ProjectItem for Editor {
                     })
                 {
                     editor.fold_ranges(
-                        clip_ranges(&restoration_data.folds, &snapshot),
+                        clip_ranges(&restoration_data.folds, snapshot),
                         false,
                         window,
                         cx,
                     );
                     if !restoration_data.selections.is_empty() {
                         editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
-                            s.select_ranges(clip_ranges(&restoration_data.selections, &snapshot));
+                            s.select_ranges(clip_ranges(&restoration_data.selections, snapshot));
                         });
                     }
                     let (top_row, offset) = restoration_data.scroll_position;

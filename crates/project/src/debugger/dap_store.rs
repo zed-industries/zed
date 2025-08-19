@@ -215,7 +215,7 @@ impl DapStore {
                     dap_settings.and_then(|s| s.binary.as_ref().map(PathBuf::from));
                 let user_args = dap_settings.map(|s| s.args.clone());
 
-                let delegate = self.delegate(&worktree, console, cx);
+                let delegate = self.delegate(worktree, console, cx);
                 let cwd: Arc<Path> = worktree.read(cx).abs_path().as_ref().into();
 
                 cx.spawn(async move |this, cx| {
@@ -902,7 +902,7 @@ impl dap::adapters::DapDelegate for DapAdapterDelegate {
     }
 
     fn worktree_root_path(&self) -> &Path {
-        &self.worktree.abs_path()
+        self.worktree.abs_path()
     }
     fn http_client(&self) -> Arc<dyn HttpClient> {
         self.http_client.clone()

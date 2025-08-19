@@ -72,6 +72,7 @@ impl MessageEditor {
         project: Entity<Project>,
         thread_store: Entity<ThreadStore>,
         text_thread_store: Entity<TextThreadStore>,
+        placeholder: impl Into<Arc<str>>,
         mode: EditorMode,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -95,7 +96,7 @@ impl MessageEditor {
             let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
 
             let mut editor = Editor::new(mode, buffer, None, window, cx);
-            editor.set_placeholder_text("Message the agent － @ to include files", cx);
+            editor.set_placeholder_text(placeholder, cx);
             editor.set_show_indent_guides(false, cx);
             editor.set_soft_wrap();
             editor.set_use_modal_editing(true);
@@ -1325,7 +1326,7 @@ impl MentionSet {
                         })
                     }
                     MentionUri::Fetch { url } => {
-                        let Some(content) = self.fetch_results.get(&url).cloned() else {
+                        let Some(content) = self.fetch_results.get(url).cloned() else {
                             return Task::ready(Err(anyhow!("missing fetch result")));
                         };
                         let uri = uri.clone();
@@ -1411,6 +1412,7 @@ mod tests {
                     project.clone(),
                     thread_store.clone(),
                     text_thread_store.clone(),
+                    "Test",
                     EditorMode::AutoHeight {
                         min_lines: 1,
                         max_lines: None,
@@ -1608,6 +1610,7 @@ mod tests {
                     project.clone(),
                     thread_store.clone(),
                     text_thread_store.clone(),
+                    "Test",
                     EditorMode::AutoHeight {
                         max_lines: None,
                         min_lines: 1,

@@ -518,11 +518,11 @@ mod linux {
         ) -> Result<(), std::io::Error> {
             for _ in 0..100 {
                 thread::sleep(Duration::from_millis(10));
-                if sock.connect_addr(&sock_addr).is_ok() {
+                if sock.connect_addr(sock_addr).is_ok() {
                     return Ok(());
                 }
             }
-            sock.connect_addr(&sock_addr)
+            sock.connect_addr(sock_addr)
         }
     }
 }

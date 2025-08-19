@@ -237,11 +237,17 @@ impl AgentTool for EditFileTool {
             });
         }
 
-        let request = self.thread.update(cx, |thread, cx| {
-            thread.build_completion_request(CompletionIntent::ToolResults, cx)
-        });
+        let Some(request) = self.thread.update(cx, |thread, cx| {
+            thread
+                .build_completion_request(CompletionIntent::ToolResults, cx)
+                .ok()
+        }) else {
+            return Task::ready(Err(anyhow!("Failed to build completion request")));
+        };
         let thread = self.thread.read(cx);
-        let model = thread.model().clone();
+        let Some(model) = thread.model().cloned() else {
+            return Task::ready(Err(anyhow!("No language model configured")));
+        };
         let action_log = thread.action_log().clone();
 
         let authorize = self.authorize(&input, &event_stream, cx);
@@ -465,7 +471,7 @@ fn resolve_path(
 
             let parent_entry = parent_project_path
                 .as_ref()
-                .and_then(|path| project.entry_for_path(&path, cx))
+                .and_then(|path| project.entry_for_path(path, cx))
                 .context("Can't create file: parent directory doesn't exist")?;
 
             anyhow::ensure!(
@@ -520,7 +526,7 @@ mod tests {
                 context_server_registry,
                 action_log,
                 Templates::new(),
-                model,
+                Some(model),
                 cx,
             )
         });
@@ -717,7 +723,7 @@ mod tests {
                 context_server_registry,
                 action_log.clone(),
                 Templates::new(),
-                model.clone(),
+                Some(model.clone()),
                 cx,
             )
         });
@@ -853,7 +859,7 @@ mod tests {
                 context_server_registry,
                 action_log.clone(),
                 Templates::new(),
-                model.clone(),
+                Some(model.clone()),
                 cx,
             )
         });
@@ -979,7 +985,7 @@ mod tests {
                 context_server_registry,
                 action_log.clone(),
                 Templates::new(),
-                model.clone(),
+                Some(model.clone()),
                 cx,
             )
         });
@@ -1116,7 +1122,7 @@ mod tests {
                 context_server_registry,
                 action_log.clone(),
                 Templates::new(),
-                model.clone(),
+                Some(model.clone()),
                 cx,
             )
         });
@@ -1226,7 +1232,7 @@ mod tests {
                 context_server_registry.clone(),
                 action_log.clone(),
                 Templates::new(),
-                model.clone(),
+                Some(model.clone()),
                 cx,
             )
         });
@@ -1307,7 +1313,7 @@ mod tests {
                 context_server_registry.clone(),
                 action_log.clone(),
                 Templates::new(),
-                model.clone(),
+                Some(model.clone()),
                 cx,
             )
         });
@@ -1391,7 +1397,7 @@ mod tests {
                 context_server_registry.clone(),
                 action_log.clone(),
                 Templates::new(),
-                model.clone(),
+                Some(model.clone()),
                 cx,
             )
         });
@@ -1472,7 +1478,7 @@ mod tests {
                 context_server_registry,
                 action_log.clone(),
                 Templates::new(),
-                model.clone(),
+                Some(model.clone()),
                 cx,
             )
         });

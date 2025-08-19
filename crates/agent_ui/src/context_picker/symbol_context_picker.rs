@@ -289,7 +289,7 @@ pub(crate) fn search_symbols(
                         .iter()
                         .enumerate()
                         .map(|(id, symbol)| {
-                            StringMatchCandidate::new(id, &symbol.label.filter_text())
+                            StringMatchCandidate::new(id, symbol.label.filter_text())
                         })
                         .partition(|candidate| {
                             project

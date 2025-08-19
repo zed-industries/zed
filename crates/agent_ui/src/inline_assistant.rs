@@ -526,9 +526,9 @@ impl InlineAssistant {
 
             if assist_to_focus.is_none() {
                 let focus_assist = if newest_selection.reversed {
-                    range.start.to_point(&snapshot) == newest_selection.start
+                    range.start.to_point(snapshot) == newest_selection.start
                 } else {
-                    range.end.to_point(&snapshot) == newest_selection.end
+                    range.end.to_point(snapshot) == newest_selection.end
                 };
                 if focus_assist {
                     assist_to_focus = Some(assist_id);
@@ -550,7 +550,7 @@ impl InlineAssistant {
         let editor_assists = self
             .assists_by_editor
             .entry(editor.downgrade())
-            .or_insert_with(|| EditorInlineAssists::new(&editor, window, cx));
+            .or_insert_with(|| EditorInlineAssists::new(editor, window, cx));
         let mut assist_group = InlineAssistGroup::new();
         for (assist_id, range, prompt_editor, prompt_block_id, end_block_id) in assists {
             let codegen = prompt_editor.read(cx).codegen().clone();
@@ -649,7 +649,7 @@ impl InlineAssistant {
         let editor_assists = self
             .assists_by_editor
             .entry(editor.downgrade())
-            .or_insert_with(|| EditorInlineAssists::new(&editor, window, cx));
+            .or_insert_with(|| EditorInlineAssists::new(editor, window, cx));
 
         let mut assist_group = InlineAssistGroup::new();
         self.assists.insert(

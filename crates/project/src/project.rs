@@ -84,7 +84,7 @@ use lsp::{
 };
 use lsp_command::*;
 use lsp_store::{CompletionDocumentation, LspFormatTarget, OpenLspBufferHandle};
-pub use manifest_tree::ManifestProviders;
+pub use manifest_tree::ManifestProvidersStore;
 use node_runtime::NodeRuntime;
 use parking_lot::Mutex;
 pub use prettier_store::PrettierStore;
@@ -1115,7 +1115,11 @@ impl Project {
                     buffer_store.clone(),
                     worktree_store.clone(),
                     prettier_store.clone(),
-                    toolchain_store.clone(),
+                    toolchain_store
+                        .read(cx)
+                        .as_local_store()
+                        .expect("Toolchain store to be local")
+                        .clone(),
                     environment.clone(),
                     manifest_tree,
                     languages.clone(),
@@ -1260,7 +1264,6 @@ impl Project {
                 LspStore::new_remote(
                     buffer_store.clone(),
                     worktree_store.clone(),
-                    Some(toolchain_store.clone()),
                     languages.clone(),
                     ssh_proto.clone(),
                     SSH_PROJECT_ID,
@@ -1485,7 +1488,6 @@ impl Project {
             let mut lsp_store = LspStore::new_remote(
                 buffer_store.clone(),
                 worktree_store.clone(),
-                None,
                 languages.clone(),
                 client.clone().into(),
                 remote_id,
@@ -1846,7 +1848,7 @@ impl Project {
         cx: &'a mut App,
     ) -> Shared<Task<Option<HashMap<String, String>>>> {
         self.environment.update(cx, |environment, cx| {
-            environment.get_buffer_environment(&buffer, &worktree_store, cx)
+            environment.get_buffer_environment(buffer, worktree_store, cx)
         })
     }
 
@@ -2590,7 +2592,7 @@ impl Project {
         cx: &mut App,
     ) -> OpenLspBufferHandle {
         self.lsp_store.update(cx, |lsp_store, cx| {
-            lsp_store.register_buffer_with_language_servers(&buffer, HashSet::default(), false, cx)
+            lsp_store.register_buffer_with_language_servers(buffer, HashSet::default(), false, cx)
         })
     }
 
@@ -3596,16 +3598,10 @@ impl Project {
         &mut self,
         abs_path: lsp::Url,
         language_server_id: LanguageServerId,
-        language_server_name: LanguageServerName,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Buffer>>> {
         self.lsp_store.update(cx, |lsp_store, cx| {
-            lsp_store.open_local_buffer_via_lsp(
-                abs_path,
-                language_server_id,
-                language_server_name,
-                cx,
-            )
+            lsp_store.open_local_buffer_via_lsp(abs_path, language_server_id, cx)
         })
     }
 
@@ -4171,15 +4167,14 @@ impl Project {
             })
             .collect();
 
-        cx.spawn(async move |_, mut cx| {
+        cx.spawn(async move |_, cx| {
             if let Some(buffer_worktree_id) = buffer_worktree_id {
                 if let Some((worktree, _)) = worktrees_with_ids
                     .iter()
                     .find(|(_, id)| *id == buffer_worktree_id)
                 {
                     for candidate in candidates.iter() {
-                        if let Some(path) =
-                            Self::resolve_path_in_worktree(&worktree, candidate, &mut cx)
+                        if let Some(path) = Self::resolve_path_in_worktree(worktree, candidate, cx)
                         {
                             return Some(path);
                         }
@@ -4191,9 +4186,7 @@ impl Project {
                     continue;
                 }
                 for candidate in candidates.iter() {
-                    if let Some(path) =
-                        Self::resolve_path_in_worktree(&worktree, candidate, &mut cx)
-                    {
+                    if let Some(path) = Self::resolve_path_in_worktree(&worktree, candidate, cx) {
                         return Some(path);
                     }
                 }
@@ -5333,7 +5326,7 @@ impl ResolvedPath {
 
     pub fn project_path(&self) -> Option<&ProjectPath> {
         match self {
-            Self::ProjectPath { project_path, .. } => Some(&project_path),
+            Self::ProjectPath { project_path, .. } => Some(project_path),
             _ => None,
         }
     }
@@ -5403,7 +5396,7 @@ impl Completion {
                 _ => None,
             })
             .unwrap_or(DEFAULT_KIND_KEY);
-        (kind_key, &self.label.filter_text())
+        (kind_key, self.label.filter_text())
     }
 
     /// Whether this completion is a snippet.

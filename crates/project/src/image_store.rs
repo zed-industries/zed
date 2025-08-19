@@ -224,7 +224,7 @@ impl ProjectItem for ImageItem {
         path: &ProjectPath,
         cx: &mut App,
     ) -> Option<Task<anyhow::Result<Entity<Self>>>> {
-        if is_image_file(&project, &path, cx) {
+        if is_image_file(project, path, cx) {
             Some(cx.spawn({
                 let path = path.clone();
                 let project = project.clone();

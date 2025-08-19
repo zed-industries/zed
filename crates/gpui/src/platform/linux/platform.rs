@@ -294,6 +294,7 @@ impl<P: LinuxClient + 'static> Platform for P {
                 let request = match ashpd::desktop::file_chooser::OpenFileRequest::default()
                     .modal(true)
                     .title(title)
+                    .accept_label(options.prompt.as_ref().map(crate::SharedString::as_str))
                     .multiple(options.multiple)
                     .directory(options.directories)
                     .send()
@@ -641,7 +642,7 @@ pub(super) fn get_xkb_compose_state(cx: &xkb::Context) -> Option<xkb::compose::S
     let mut state: Option<xkb::compose::State> = None;
     for locale in locales {
         if let Ok(table) =
-            xkb::compose::Table::new_from_locale(&cx, &locale, xkb::compose::COMPILE_NO_FLAGS)
+            xkb::compose::Table::new_from_locale(cx, &locale, xkb::compose::COMPILE_NO_FLAGS)
         {
             state = Some(xkb::compose::State::new(
                 &table,

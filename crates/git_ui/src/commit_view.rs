@@ -160,7 +160,7 @@ impl CommitView {
             });
         }
 
-        cx.spawn(async move |this, mut cx| {
+        cx.spawn(async move |this, cx| {
             for file in commit_diff.files {
                 let is_deleted = file.new_text.is_none();
                 let new_text = file.new_text.unwrap_or_default();
@@ -179,9 +179,9 @@ impl CommitView {
                     worktree_id,
                 }) as Arc<dyn language::File>;
 
-                let buffer = build_buffer(new_text, file, &language_registry, &mut cx).await?;
+                let buffer = build_buffer(new_text, file, &language_registry, cx).await?;
                 let buffer_diff =
-                    build_buffer_diff(old_text, &buffer, &language_registry, &mut cx).await?;
+                    build_buffer_diff(old_text, &buffer, &language_registry, cx).await?;
 
                 this.update(cx, |this, cx| {
                     this.multibuffer.update(cx, |multibuffer, cx| {

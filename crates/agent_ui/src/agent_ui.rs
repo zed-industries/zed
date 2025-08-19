@@ -146,7 +146,7 @@ pub struct NewExternalAgentThread {
     agent: Option<ExternalAgent>,
 }
 
-#[derive(Default, Clone, Copy, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Default, Debug, Clone, Copy, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 enum ExternalAgent {
     #[default]
@@ -320,7 +320,7 @@ fn init_language_model_settings(cx: &mut App) {
     cx.subscribe(
         &LanguageModelRegistry::global(cx),
         |_, event: &language_model::Event, cx| match event {
-            language_model::Event::ProviderStateChanged
+            language_model::Event::ProviderStateChanged(_)
             | language_model::Event::AddedProvider(_)
             | language_model::Event::RemovedProvider(_) => {
                 update_active_language_model_from_settings(cx);
