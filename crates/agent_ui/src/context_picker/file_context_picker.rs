@@ -239,9 +239,7 @@ pub(crate) fn search_files(
 
                 PathMatchCandidateSet {
                     snapshot: worktree.snapshot(),
-                    include_ignored: worktree
-                        .root_entry()
-                        .map_or(false, |entry| entry.is_ignored),
+                    include_ignored: worktree.root_entry().is_some_and(|entry| entry.is_ignored),
                     include_root_name: true,
                     candidates: project::Candidates::Entries,
                 }

@@ -763,14 +763,16 @@ fn confirm_completion_callback(
             message_editor
                 .clone()
                 .update(cx, |message_editor, cx| {
-                    message_editor.confirm_completion(
-                        crease_text,
-                        start,
-                        content_len,
-                        mention_uri,
-                        window,
-                        cx,
-                    )
+                    message_editor
+                        .confirm_completion(
+                            crease_text,
+                            start,
+                            content_len,
+                            mention_uri,
+                            window,
+                            cx,
+                        )
+                        .detach();
                 })
                 .ok();
         });
@@ -795,7 +797,7 @@ impl MentionCompletion {
             && line
                 .chars()
                 .nth(last_mention_start - 1)
-                .map_or(false, |c| !c.is_whitespace())
+                .is_some_and(|c| !c.is_whitespace())
         {
             return None;
         }

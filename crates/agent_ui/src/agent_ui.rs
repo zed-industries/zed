@@ -156,11 +156,15 @@ enum ExternalAgent {
 }
 
 impl ExternalAgent {
-    pub fn server(&self, fs: Arc<dyn fs::Fs>) -> Rc<dyn agent_servers::AgentServer> {
+    pub fn server(
+        &self,
+        fs: Arc<dyn fs::Fs>,
+        history: Entity<agent2::HistoryStore>,
+    ) -> Rc<dyn agent_servers::AgentServer> {
         match self {
             ExternalAgent::Gemini => Rc::new(agent_servers::Gemini),
             ExternalAgent::ClaudeCode => Rc::new(agent_servers::ClaudeCode),
-            ExternalAgent::NativeAgent => Rc::new(agent2::NativeAgentServer::new(fs)),
+            ExternalAgent::NativeAgent => Rc::new(agent2::NativeAgentServer::new(fs, history)),
         }
     }
 }

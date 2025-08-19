@@ -568,16 +568,14 @@ impl ChannelStore {
         self.channel_index
             .by_id()
             .get(&channel_id)
-            .map_or(false, |channel| channel.is_root_channel())
+            .is_some_and(|channel| channel.is_root_channel())
     }
 
     pub fn is_public_channel(&self, channel_id: ChannelId) -> bool {
         self.channel_index
             .by_id()
             .get(&channel_id)
-            .map_or(false, |channel| {
-                channel.visibility == ChannelVisibility::Public
-            })
+            .is_some_and(|channel| channel.visibility == ChannelVisibility::Public)
     }
 
     pub fn channel_capability(&self, channel_id: ChannelId) -> Capability {
@@ -908,9 +906,9 @@ impl ChannelStore {
     async fn handle_update_channels(
         this: Entity<Self>,
         message: TypedEnvelope<proto::UpdateChannels>,
-        mut cx: AsyncApp,
+        cx: AsyncApp,
     ) -> Result<()> {
-        this.read_with(&mut cx, |this, _| {
+        this.read_with(&cx, |this, _| {
             this.update_channels_tx
                 .unbounded_send(message.payload)
                 .unwrap();

@@ -295,7 +295,7 @@ fn dump_all_gpui_actions() -> Vec<ActionDef> {
 
     actions.sort_by_key(|a| a.name);
 
-    return actions;
+    actions
 }
 
 fn handle_postprocessing() -> Result<()> {

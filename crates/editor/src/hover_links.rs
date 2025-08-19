@@ -271,7 +271,7 @@ impl Editor {
             Task::ready(Ok(Navigated::No))
         };
         self.select(SelectPhase::End, window, cx);
-        return navigate_task;
+        navigate_task
     }
 }
 
@@ -655,11 +655,11 @@ pub fn show_link_definition(
 pub(crate) fn find_url(
     buffer: &Entity<language::Buffer>,
     position: text::Anchor,
-    mut cx: AsyncWindowContext,
+    cx: AsyncWindowContext,
 ) -> Option<(Range<text::Anchor>, String)> {
     const LIMIT: usize = 2048;
 
-    let Ok(snapshot) = buffer.read_with(&mut cx, |buffer, _| buffer.snapshot()) else {
+    let Ok(snapshot) = buffer.read_with(&cx, |buffer, _| buffer.snapshot()) else {
         return None;
     };
 
@@ -717,11 +717,11 @@ pub(crate) fn find_url(
 pub(crate) fn find_url_from_range(
     buffer: &Entity<language::Buffer>,
     range: Range<text::Anchor>,
-    mut cx: AsyncWindowContext,
+    cx: AsyncWindowContext,
 ) -> Option<String> {
     const LIMIT: usize = 2048;
 
-    let Ok(snapshot) = buffer.read_with(&mut cx, |buffer, _| buffer.snapshot()) else {
+    let Ok(snapshot) = buffer.read_with(&cx, |buffer, _| buffer.snapshot()) else {
         return None;
     };
 
@@ -871,7 +871,7 @@ fn surrounding_filename(
         .peekable();
     while let Some(ch) = forwards.next() {
         // Skip escaped whitespace
-        if ch == '\\' && forwards.peek().map_or(false, |ch| ch.is_whitespace()) {
+        if ch == '\\' && forwards.peek().is_some_and(|ch| ch.is_whitespace()) {
             token_end += ch.len_utf8();
             let whitespace = forwards.next().unwrap();
             token_end += whitespace.len_utf8();

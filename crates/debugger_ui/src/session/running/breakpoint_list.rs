@@ -528,7 +528,7 @@ impl BreakpointList {
             cx.background_executor()
                 .spawn(async move { KEY_VALUE_STORE.write_kvp(key, value?).await })
         } else {
-            return Task::ready(Result::Ok(()));
+            Task::ready(Result::Ok(()))
         }
     }
 

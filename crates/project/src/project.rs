@@ -1613,25 +1613,23 @@ impl Project {
             .into_iter()
             .map(|s| match s {
                 EntitySubscription::BufferStore(subscription) => {
-                    subscription.set_entity(&buffer_store, &mut cx)
+                    subscription.set_entity(&buffer_store, &cx)
                 }
                 EntitySubscription::WorktreeStore(subscription) => {
-                    subscription.set_entity(&worktree_store, &mut cx)
+                    subscription.set_entity(&worktree_store, &cx)
                 }
                 EntitySubscription::GitStore(subscription) => {
-                    subscription.set_entity(&git_store, &mut cx)
+                    subscription.set_entity(&git_store, &cx)
                 }
                 EntitySubscription::SettingsObserver(subscription) => {
-                    subscription.set_entity(&settings_observer, &mut cx)
+                    subscription.set_entity(&settings_observer, &cx)
                 }
-                EntitySubscription::Project(subscription) => {
-                    subscription.set_entity(&this, &mut cx)
-                }
+                EntitySubscription::Project(subscription) => subscription.set_entity(&this, &cx),
                 EntitySubscription::LspStore(subscription) => {
-                    subscription.set_entity(&lsp_store, &mut cx)
+                    subscription.set_entity(&lsp_store, &cx)
                 }
                 EntitySubscription::DapStore(subscription) => {
-                    subscription.set_entity(&dap_store, &mut cx)
+                    subscription.set_entity(&dap_store, &cx)
                 }
             })
             .collect::<Vec<_>>();
@@ -1899,7 +1897,7 @@ impl Project {
             return true;
         }
 
-        return false;
+        false
     }
 
     pub fn ssh_connection_string(&self, cx: &App) -> Option<SharedString> {
@@ -1907,7 +1905,7 @@ impl Project {
             return Some(ssh_state.read(cx).connection_string().into());
         }
 
-        return None;
+        None
     }
 
     pub fn ssh_connection_state(&self, cx: &App) -> Option<remote::ConnectionState> {
@@ -2226,28 +2224,28 @@ impl Project {
         self.client_subscriptions.extend([
             self.client
                 .subscribe_to_entity(project_id)?
-                .set_entity(&cx.entity(), &mut cx.to_async()),
+                .set_entity(&cx.entity(), &cx.to_async()),
             self.client
                 .subscribe_to_entity(project_id)?
-                .set_entity(&self.worktree_store, &mut cx.to_async()),
+                .set_entity(&self.worktree_store, &cx.to_async()),
             self.client
                 .subscribe_to_entity(project_id)?
-                .set_entity(&self.buffer_store, &mut cx.to_async()),
+                .set_entity(&self.buffer_store, &cx.to_async()),
             self.client
                 .subscribe_to_entity(project_id)?
-                .set_entity(&self.lsp_store, &mut cx.to_async()),
+                .set_entity(&self.lsp_store, &cx.to_async()),
             self.client
                 .subscribe_to_entity(project_id)?
-                .set_entity(&self.settings_observer, &mut cx.to_async()),
+                .set_entity(&self.settings_observer, &cx.to_async()),
             self.client
                 .subscribe_to_entity(project_id)?
-                .set_entity(&self.dap_store, &mut cx.to_async()),
+                .set_entity(&self.dap_store, &cx.to_async()),
             self.client
                 .subscribe_to_entity(project_id)?
-                .set_entity(&self.breakpoint_store, &mut cx.to_async()),
+                .set_entity(&self.breakpoint_store, &cx.to_async()),
             self.client
                 .subscribe_to_entity(project_id)?
-                .set_entity(&self.git_store, &mut cx.to_async()),
+                .set_entity(&self.git_store, &cx.to_async()),
         ]);
 
         self.buffer_store.update(cx, |buffer_store, cx| {
@@ -4136,7 +4134,7 @@ impl Project {
                 }
             })
         } else {
-            return Task::ready(None);
+            Task::ready(None)
         }
     }
 
@@ -5189,7 +5187,7 @@ impl<'a> fuzzy::PathMatchCandidateSet<'a> for PathMatchCandidateSet {
     }
 
     fn prefix(&self) -> Arc<str> {
-        if self.snapshot.root_entry().map_or(false, |e| e.is_file()) {
+        if self.snapshot.root_entry().is_some_and(|e| e.is_file()) {
             self.snapshot.root_name().into()
         } else if self.include_root_name {
             format!("{}{}", self.snapshot.root_name(), std::path::MAIN_SEPARATOR).into()
@@ -5399,7 +5397,7 @@ impl Completion {
         self.source
             // `lsp::CompletionListItemDefaults` has `insert_text_format` field
             .lsp_completion(true)
-            .map_or(false, |lsp_completion| {
+            .is_some_and(|lsp_completion| {
                 lsp_completion.insert_text_format == Some(lsp::InsertTextFormat::SNIPPET)
             })
     }
@@ -5455,9 +5453,10 @@ fn provide_inline_values(
                     .collect::<String>();
                 let point = snapshot.offset_to_point(capture_range.end);
 
-                while scopes.last().map_or(false, |scope: &Range<_>| {
-                    !scope.contains(&capture_range.start)
-                }) {
+                while scopes
+                    .last()
+                    .is_some_and(|scope: &Range<_>| !scope.contains(&capture_range.start))
+                {
                     scopes.pop();
                 }
 
@@ -5467,7 +5466,7 @@ fn provide_inline_values(
 
                 let scope = if scopes
                     .last()
-                    .map_or(true, |scope| !scope.contains(&active_debug_line_offset))
+                    .is_none_or(|scope| !scope.contains(&active_debug_line_offset))
                 {
                     VariableScope::Global
                 } else {

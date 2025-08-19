@@ -314,7 +314,7 @@ impl LanguageServerTree {
     pub(crate) fn remove_nodes(&mut self, ids: &BTreeSet<LanguageServerId>) {
         for servers in self.instances.values_mut() {
             for nodes in &mut servers.roots.values_mut() {
-                nodes.retain(|_, (node, _)| node.id.get().map_or(true, |id| !ids.contains(id)));
+                nodes.retain(|_, (node, _)| node.id.get().is_none_or(|id| !ids.contains(id)));
             }
         }
     }

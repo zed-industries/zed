@@ -664,9 +664,7 @@ impl CollabPanel {
 
                 let has_children = channel_store
                     .channel_at_index(mat.candidate_id + 1)
-                    .map_or(false, |next_channel| {
-                        next_channel.parent_path.ends_with(&[channel.id])
-                    });
+                    .is_some_and(|next_channel| next_channel.parent_path.ends_with(&[channel.id]));
 
                 match &self.channel_editing_state {
                     Some(ChannelEditingState::Create {
@@ -1125,7 +1123,7 @@ impl CollabPanel {
     }
 
     fn has_subchannels(&self, ix: usize) -> bool {
-        self.entries.get(ix).map_or(false, |entry| {
+        self.entries.get(ix).is_some_and(|entry| {
             if let ListEntry::Channel { has_children, .. } = entry {
                 *has_children
             } else {

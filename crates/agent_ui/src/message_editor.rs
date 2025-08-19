@@ -156,7 +156,7 @@ impl ProfileProvider for Entity<Thread> {
     fn profiles_supported(&self, cx: &App) -> bool {
         self.read(cx)
             .configured_model()
-            .map_or(false, |model| model.model.supports_tools())
+            .is_some_and(|model| model.model.supports_tools())
     }
 
     fn profile_id(&self, cx: &App) -> AgentProfileId {
@@ -1289,7 +1289,7 @@ impl MessageEditor {
         self.thread
             .read(cx)
             .configured_model()
-            .map_or(false, |model| model.provider.id() == ZED_CLOUD_PROVIDER_ID)
+            .is_some_and(|model| model.provider.id() == ZED_CLOUD_PROVIDER_ID)
     }
 
     fn render_usage_callout(&self, line_height: Pixels, cx: &mut Context<Self>) -> Option<Div> {
@@ -1442,7 +1442,7 @@ impl MessageEditor {
                     let message_text = editor.read(cx).text(cx);
 
                     if message_text.is_empty()
-                        && loaded_context.map_or(true, |loaded_context| loaded_context.is_empty())
+                        && loaded_context.is_none_or(|loaded_context| loaded_context.is_empty())
                     {
                         return None;
                     }

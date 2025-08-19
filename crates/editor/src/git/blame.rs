@@ -415,7 +415,7 @@ impl GitBlame {
             let old_end = cursor.end();
             if row_edits
                 .peek()
-                .map_or(true, |next_edit| next_edit.old.start >= old_end)
+                .is_none_or(|next_edit| next_edit.old.start >= old_end)
                 && let Some(entry) = cursor.item()
             {
                 if old_end > edit.old.end {

@@ -489,7 +489,7 @@ where
     fn should_serialize(&self, event: &dyn Any, cx: &App) -> bool {
         event
             .downcast_ref::<T::Event>()
-            .map_or(false, |event| self.read(cx).should_serialize(event))
+            .is_some_and(|event| self.read(cx).should_serialize(event))
     }
 }
 

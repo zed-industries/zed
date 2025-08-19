@@ -653,7 +653,7 @@ impl MacWindow {
                     .and_then(|titlebar| titlebar.traffic_light_position),
                 transparent_titlebar: titlebar
                     .as_ref()
-                    .map_or(true, |titlebar| titlebar.appears_transparent),
+                    .is_none_or(|titlebar| titlebar.appears_transparent),
                 previous_modifiers_changed_event: None,
                 keystroke_for_do_command: None,
                 do_command_handled: None,
@@ -688,7 +688,7 @@ impl MacWindow {
                 });
             }
 
-            if titlebar.map_or(true, |titlebar| titlebar.appears_transparent) {
+            if titlebar.is_none_or(|titlebar| titlebar.appears_transparent) {
                 native_window.setTitlebarAppearsTransparent_(YES);
                 native_window.setTitleVisibility_(NSWindowTitleVisibility::NSWindowTitleHidden);
             }

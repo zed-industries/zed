@@ -368,7 +368,7 @@ impl App {
             }),
         });
 
-        init_app_menus(platform.as_ref(), &mut app.borrow_mut());
+        init_app_menus(platform.as_ref(), &app.borrow());
 
         platform.on_keyboard_layout_change(Box::new({
             let app = Rc::downgrade(&app);
@@ -1332,7 +1332,7 @@ impl App {
         }
 
         inner(
-            &mut self.keystroke_observers,
+            &self.keystroke_observers,
             Box::new(move |event, window, cx| {
                 f(event, window, cx);
                 true
@@ -1358,7 +1358,7 @@ impl App {
         }
 
         inner(
-            &mut self.keystroke_interceptors,
+            &self.keystroke_interceptors,
             Box::new(move |event, window, cx| {
                 f(event, window, cx);
                 true

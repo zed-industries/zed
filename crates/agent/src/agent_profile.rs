@@ -90,7 +90,7 @@ impl AgentProfile {
             return false;
         };
 
-        return Self::is_enabled(settings, source, tool_name);
+        Self::is_enabled(settings, source, tool_name)
     }
 
     fn is_enabled(settings: &AgentProfileSettings, source: ToolSource, name: String) -> bool {

@@ -392,7 +392,7 @@ impl LogStore {
                         session.label(),
                         session
                             .adapter_client()
-                            .map_or(false, |client| client.has_adapter_logs()),
+                            .is_some_and(|client| client.has_adapter_logs()),
                     )
                 });
 

@@ -562,12 +562,12 @@ impl ExtensionStore {
                 extensions
                     .into_iter()
                     .filter(|extension| {
-                        this.extension_index.extensions.get(&extension.id).map_or(
-                            true,
-                            |installed_extension| {
+                        this.extension_index
+                            .extensions
+                            .get(&extension.id)
+                            .is_none_or(|installed_extension| {
                                 installed_extension.manifest.version != extension.manifest.version
-                            },
-                        )
+                            })
                     })
                     .collect()
             })
@@ -1451,7 +1451,7 @@ impl ExtensionStore {
 
                     if extension_dir
                         .file_name()
-                        .map_or(false, |file_name| file_name == ".DS_Store")
+                        .is_some_and(|file_name| file_name == ".DS_Store")
                     {
                         continue;
                     }

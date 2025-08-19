@@ -55,7 +55,7 @@ pub fn init_env_filter(filter: env_config::EnvFilter) {
 }
 
 pub fn is_possibly_enabled_level(level: log::Level) -> bool {
-    return level as u8 <= LEVEL_ENABLED_MAX_CONFIG.load(Ordering::Relaxed);
+    level as u8 <= LEVEL_ENABLED_MAX_CONFIG.load(Ordering::Relaxed)
 }
 
 pub fn is_scope_enabled(scope: &Scope, module_path: Option<&str>, level: log::Level) -> bool {
@@ -70,7 +70,7 @@ pub fn is_scope_enabled(scope: &Scope, module_path: Option<&str>, level: log::Le
     let is_enabled_by_default = level <= unsafe { LEVEL_ENABLED_MAX_STATIC };
     let global_scope_map = SCOPE_MAP.read().unwrap_or_else(|err| {
         SCOPE_MAP.clear_poison();
-        return err.into_inner();
+        err.into_inner()
     });
 
     let Some(map) = global_scope_map.as_ref() else {
@@ -83,11 +83,11 @@ pub fn is_scope_enabled(scope: &Scope, module_path: Option<&str>, level: log::Le
         return is_enabled_by_default;
     }
     let enabled_status = map.is_enabled(scope, module_path, level);
-    return match enabled_status {
+    match enabled_status {
         EnabledStatus::NotConfigured => is_enabled_by_default,
         EnabledStatus::Enabled => true,
         EnabledStatus::Disabled => false,
-    };
+    }
 }
 
 pub fn refresh_from_settings(settings: &HashMap<String, String>) {
@@ -132,7 +132,7 @@ fn level_filter_from_str(level_str: &str) -> Option<log::LevelFilter> {
             return None;
         }
     };
-    return Some(level);
+    Some(level)
 }
 
 fn scope_alloc_from_scope_str(scope_str: &str) -> Option<ScopeAlloc> {
@@ -143,7 +143,7 @@ fn scope_alloc_from_scope_str(scope_str: &str) -> Option<ScopeAlloc> {
         let Some(scope) = scope_iter.next() else {
             break;
         };
-        if scope == "" {
+        if scope.is_empty() {
             continue;
         }
         scope_buf[index] = scope;
@@ -159,7 +159,7 @@ fn scope_alloc_from_scope_str(scope_str: &str) -> Option<ScopeAlloc> {
         return None;
     }
     let scope = scope_buf.map(|s| s.to_string());
-    return Some(scope);
+    Some(scope)
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -280,7 +280,7 @@ impl ScopeMap {
                     cursor += 1;
                 }
                 let sub_items_end = cursor;
-                if scope_name == "" {
+                if scope_name.is_empty() {
                     assert_eq!(sub_items_start + 1, sub_items_end);
                     assert_ne!(depth, 0);
                     assert_ne!(parent_index, usize::MAX);
@@ -288,7 +288,7 @@ impl ScopeMap {
                     this.entries[parent_index].enabled = Some(items[sub_items_start].1);
                     continue;
                 }
-                let is_valid_scope = scope_name != "";
+                let is_valid_scope = !scope_name.is_empty();
                 let is_last = depth + 1 == SCOPE_DEPTH_MAX || !is_valid_scope;
                 let mut enabled = None;
                 if is_last {
@@ -321,7 +321,7 @@ impl ScopeMap {
             }
         }
 
-        return this;
+        this
     }
 
     pub fn is_empty(&self) -> bool {
@@ -358,7 +358,7 @@ impl ScopeMap {
                 }
                 break 'search;
             }
-            return enabled;
+            enabled
         }
 
         let mut enabled = search(self, scope);
@@ -394,7 +394,7 @@ impl ScopeMap {
             }
             return EnabledStatus::Disabled;
         }
-        return EnabledStatus::NotConfigured;
+        EnabledStatus::NotConfigured
     }
 }
 
@@ -456,7 +456,7 @@ mod tests {
             let Some(scope) = scope_iter.next() else {
                 break;
             };
-            if scope == "" {
+            if scope.is_empty() {
                 continue;
             }
             scope_buf[index] = scope;
@@ -464,7 +464,7 @@ mod tests {
         }
         assert_ne!(index, 0);
         assert!(scope_iter.next().is_none());
-        return scope_buf;
+        scope_buf
     }
 
     #[test]

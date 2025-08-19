@@ -1410,7 +1410,7 @@ impl RemoteServerProjects {
         if ssh_settings
             .ssh_connections
             .as_ref()
-            .map_or(false, |connections| {
+            .is_some_and(|connections| {
                 state
                     .servers
                     .iter()

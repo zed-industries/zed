@@ -710,9 +710,7 @@ impl LinuxClient for WaylandClient {
     fn set_cursor_style(&self, style: CursorStyle) {
         let mut state = self.0.borrow_mut();
 
-        let need_update = state
-            .cursor_style
-            .map_or(true, |current_style| current_style != style);
+        let need_update = state.cursor_style != Some(style);
 
         if need_update {
             let serial = state.serial_tracker.get(SerialKind::MouseEnter);
@@ -1577,7 +1575,7 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                     if state
                         .keyboard_focused_window
                         .as_ref()
-                        .map_or(false, |keyboard_window| window.ptr_eq(keyboard_window))
+                        .is_some_and(|keyboard_window| window.ptr_eq(keyboard_window))
                     {
                         state.enter_token = None;
                     }

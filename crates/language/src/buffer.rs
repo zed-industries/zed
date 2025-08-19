@@ -1406,7 +1406,7 @@ impl Buffer {
                     })
                     .unwrap_or(true);
                 let result = any_sub_ranges_contain_range;
-                return result;
+                result
             })
             .last()
             .map(|info| info.language.clone())
@@ -1520,12 +1520,12 @@ impl Buffer {
                     let new_syntax_map = parse_task.await;
                     this.update(cx, move |this, cx| {
                         let grammar_changed =
-                            this.language.as_ref().map_or(true, |current_language| {
+                            this.language.as_ref().is_none_or(|current_language| {
                                 !Arc::ptr_eq(&language, current_language)
                             });
                         let language_registry_changed = new_syntax_map
                             .contains_unknown_injections()
-                            && language_registry.map_or(false, |registry| {
+                            && language_registry.is_some_and(|registry| {
                                 registry.version() != new_syntax_map.language_registry_version()
                             });
                         let parse_again = language_registry_changed
@@ -1719,8 +1719,7 @@ impl Buffer {
                                 })
                                 .with_delta(suggestion.delta, language_indent_size);
 
-                            if old_suggestions.get(&new_row).map_or(
-                                true,
+                            if old_suggestions.get(&new_row).is_none_or(
                                 |(old_indentation, was_within_error)| {
                                     suggested_indent != *old_indentation
                                         && (!suggestion.within_error || *was_within_error)
@@ -2014,7 +2013,7 @@ impl Buffer {
 
     fn was_changed(&mut self) {
         self.change_bits.retain(|change_bit| {
-            change_bit.upgrade().map_or(false, |bit| {
+            change_bit.upgrade().is_some_and(|bit| {
                 bit.replace(true);
                 true
             })
@@ -2191,7 +2190,7 @@ impl Buffer {
         if self
             .remote_selections
             .get(&self.text.replica_id())
-            .map_or(true, |set| !set.selections.is_empty())
+            .is_none_or(|set| !set.selections.is_empty())
         {
             self.set_active_selections(Arc::default(), false, Default::default(), cx);
         }
@@ -2839,7 +2838,7 @@ impl Buffer {
         let mut edits: Vec<(Range<usize>, String)> = Vec::new();
         let mut last_end = None;
         for _ in 0..old_range_count {
-            if last_end.map_or(false, |last_end| last_end >= self.len()) {
+            if last_end.is_some_and(|last_end| last_end >= self.len()) {
                 break;
             }
 
@@ -3059,14 +3058,14 @@ impl BufferSnapshot {
                 if config
                     .decrease_indent_pattern
                     .as_ref()
-                    .map_or(false, |regex| regex.is_match(line))
+                    .is_some_and(|regex| regex.is_match(line))
                 {
                     indent_change_rows.push((row, Ordering::Less));
                 }
                 if config
                     .increase_indent_pattern
                     .as_ref()
-                    .map_or(false, |regex| regex.is_match(line))
+                    .is_some_and(|regex| regex.is_match(line))
                 {
                     indent_change_rows.push((row + 1, Ordering::Greater));
                 }
@@ -3082,7 +3081,7 @@ impl BufferSnapshot {
                     }
                 }
                 for rule in &config.decrease_indent_patterns {
-                    if rule.pattern.as_ref().map_or(false, |r| r.is_match(line)) {
+                    if rule.pattern.as_ref().is_some_and(|r| r.is_match(line)) {
                         let row_start_column = self.indent_size_for_line(row).len;
                         let basis_row = rule
                             .valid_after
@@ -3295,8 +3294,7 @@ impl BufferSnapshot {
         range: Range<D>,
     ) -> Option<SyntaxLayer<'_>> {
         let range = range.to_offset(self);
-        return self
-            .syntax
+        self.syntax
             .layers_for_range(range, &self.text, false)
             .max_by(|a, b| {
                 if a.depth != b.depth {
@@ -3306,7 +3304,7 @@ impl BufferSnapshot {
                 } else {
                     a.node().end_byte().cmp(&b.node().end_byte()).reverse()
                 }
-            });
+            })
     }
 
     /// Returns the main [`Language`].
@@ -3365,8 +3363,7 @@ impl BufferSnapshot {
             }
 
             if let Some(range) = range
-                && smallest_range_and_depth.as_ref().map_or(
-                    true,
+                && smallest_range_and_depth.as_ref().is_none_or(
                     |(smallest_range, smallest_range_depth)| {
                         if layer.depth > *smallest_range_depth {
                             true
@@ -3543,7 +3540,7 @@ impl BufferSnapshot {
             }
         }
 
-        return Some(cursor.node());
+        Some(cursor.node())
     }
 
     /// Returns the outline for the buffer.
@@ -3572,7 +3569,7 @@ impl BufferSnapshot {
         )?;
         let mut prev_depth = None;
         items.retain(|item| {
-            let result = prev_depth.map_or(true, |prev_depth| item.depth > prev_depth);
+            let result = prev_depth.is_none_or(|prev_depth| item.depth > prev_depth);
             prev_depth = Some(item.depth);
             result
         });
@@ -4449,7 +4446,7 @@ impl BufferSnapshot {
 
     pub fn words_in_range(&self, query: WordsQuery) -> BTreeMap<String, Range<Anchor>> {
         let query_str = query.fuzzy_contents;
-        if query_str.map_or(false, |query| query.is_empty()) {
+        if query_str.is_some_and(|query| query.is_empty()) {
             return BTreeMap::default();
         }
 
@@ -4490,7 +4487,7 @@ impl BufferSnapshot {
                         .and_then(|first_chunk| first_chunk.chars().next());
                     // Skip empty and "words" starting with digits as a heuristic to reduce useless completions
                     if !query.skip_digits
-                        || first_char.map_or(true, |first_char| !first_char.is_digit(10))
+                        || first_char.is_none_or(|first_char| !first_char.is_digit(10))
                     {
                         words.insert(word_text.collect(), word_range);
                     }

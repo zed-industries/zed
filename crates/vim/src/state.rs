@@ -606,11 +606,11 @@ impl MarksState {
         match target? {
             MarkLocation::Buffer(entity_id) => {
                 let anchors = self.multibuffer_marks.get(entity_id)?;
-                return Some(Mark::Buffer(*entity_id, anchors.get(name)?.clone()));
+                Some(Mark::Buffer(*entity_id, anchors.get(name)?.clone()))
             }
             MarkLocation::Path(path) => {
                 let points = self.serialized_marks.get(path)?;
-                return Some(Mark::Path(path.clone(), points.get(name)?.clone()));
+                Some(Mark::Path(path.clone(), points.get(name)?.clone()))
             }
         }
     }

@@ -503,16 +503,16 @@ impl SearchData {
             && multi_buffer_snapshot
                 .chars_at(extended_context_left_border)
                 .last()
-                .map_or(false, |c| !c.is_whitespace());
+                .is_some_and(|c| !c.is_whitespace());
         let truncated_right = entire_context_text
             .chars()
             .last()
-            .map_or(true, |c| !c.is_whitespace())
+            .is_none_or(|c| !c.is_whitespace())
             && extended_context_right_border > context_right_border
             && multi_buffer_snapshot
                 .chars_at(extended_context_right_border)
                 .next()
-                .map_or(false, |c| !c.is_whitespace());
+                .is_some_and(|c| !c.is_whitespace());
         search_match_indices.iter_mut().for_each(|range| {
             range.start = multi_buffer_snapshot.clip_offset(
                 range.start.saturating_sub(left_whitespaces_offset),
@@ -1259,7 +1259,7 @@ impl OutlinePanel {
                                 dirs_worktree_id == worktree_id
                                     && dirs
                                         .last()
-                                        .map_or(false, |dir| dir.path.as_ref() == parent_path)
+                                        .is_some_and(|dir| dir.path.as_ref() == parent_path)
                             }
                             _ => false,
                         })
@@ -1453,9 +1453,7 @@ impl OutlinePanel {
         if self
             .unfolded_dirs
             .get(&directory_worktree)
-            .map_or(true, |unfolded_dirs| {
-                !unfolded_dirs.contains(&directory_entry.id)
-            })
+            .is_none_or(|unfolded_dirs| !unfolded_dirs.contains(&directory_entry.id))
         {
             return false;
         }
@@ -2156,7 +2154,7 @@ impl OutlinePanel {
                 ExcerptOutlines::Invalidated(outlines) => Some(outlines),
                 ExcerptOutlines::NotFetched => None,
             })
-            .map_or(false, |outlines| !outlines.is_empty());
+            .is_some_and(|outlines| !outlines.is_empty());
         let is_expanded = !self
             .collapsed_entries
             .contains(&CollapsedEntry::Excerpt(excerpt.buffer_id, excerpt.id));
@@ -2953,7 +2951,7 @@ impl OutlinePanel {
                                                         .map(|(parent_dir_id, _)| {
                                                             new_unfolded_dirs
                                                                 .get(&directory.worktree_id)
-                                                                .map_or(true, |unfolded_dirs| {
+                                                                .is_none_or(|unfolded_dirs| {
                                                                     unfolded_dirs
                                                                         .contains(parent_dir_id)
                                                                 })
@@ -3444,9 +3442,8 @@ impl OutlinePanel {
     }
 
     fn is_singleton_active(&self, cx: &App) -> bool {
-        self.active_editor().map_or(false, |active_editor| {
-            active_editor.read(cx).buffer().read(cx).is_singleton()
-        })
+        self.active_editor()
+            .is_some_and(|active_editor| active_editor.read(cx).buffer().read(cx).is_singleton())
     }
 
     fn invalidate_outlines(&mut self, ids: &[ExcerptId]) {
@@ -3664,7 +3661,7 @@ impl OutlinePanel {
                             let is_root = project
                                 .read(cx)
                                 .worktree_for_id(directory_entry.worktree_id, cx)
-                                .map_or(false, |worktree| {
+                                .is_some_and(|worktree| {
                                     worktree.read(cx).root_entry() == Some(&directory_entry.entry)
                                 });
                             let folded = auto_fold_dirs
@@ -3672,7 +3669,7 @@ impl OutlinePanel {
                                 && outline_panel
                                     .unfolded_dirs
                                     .get(&directory_entry.worktree_id)
-                                    .map_or(true, |unfolded_dirs| {
+                                    .is_none_or(|unfolded_dirs| {
                                         !unfolded_dirs.contains(&directory_entry.entry.id)
                                     });
                             let fs_depth = outline_panel
@@ -3752,7 +3749,7 @@ impl OutlinePanel {
                                                 .iter()
                                                 .rev()
                                                 .nth(folded_dirs.entries.len() + 1)
-                                                .map_or(true, |parent| parent.expanded);
+                                                .is_none_or(|parent| parent.expanded);
                                         if start_of_collapsed_dir_sequence
                                             || parent_expanded
                                             || query.is_some()
@@ -3812,7 +3809,7 @@ impl OutlinePanel {
                                             .iter()
                                             .all(|entry| entry.path != parent.path)
                                     })
-                                    .map_or(true, |parent| parent.expanded);
+                                    .is_none_or(|parent| parent.expanded);
                                 if !is_singleton && (parent_expanded || query.is_some()) {
                                     outline_panel.push_entry(
                                         &mut generation_state,
@@ -3837,7 +3834,7 @@ impl OutlinePanel {
                                             .iter()
                                             .all(|entry| entry.path != parent.path)
                                     })
-                                    .map_or(true, |parent| parent.expanded);
+                                    .is_none_or(|parent| parent.expanded);
                                 if !is_singleton && (parent_expanded || query.is_some()) {
                                     outline_panel.push_entry(
                                         &mut generation_state,
@@ -3958,7 +3955,7 @@ impl OutlinePanel {
                                 .iter()
                                 .all(|entry| entry.path != parent.path)
                         })
-                        .map_or(true, |parent| parent.expanded);
+                        .is_none_or(|parent| parent.expanded);
                     if parent_expanded || query.is_some() {
                         outline_panel.push_entry(
                             &mut generation_state,
@@ -4438,7 +4435,7 @@ impl OutlinePanel {
     }
 
     fn should_replace_active_item(&self, new_active_item: &dyn ItemHandle) -> bool {
-        self.active_item().map_or(true, |active_item| {
+        self.active_item().is_none_or(|active_item| {
             !self.pinned && active_item.item_id() != new_active_item.item_id()
         })
     }

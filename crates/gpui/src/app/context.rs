@@ -472,7 +472,7 @@ impl<'a, T: 'static> Context<'a, T> {
 
         let view = self.weak_entity();
         inner(
-            &mut self.keystroke_observers,
+            &self.keystroke_observers,
             Box::new(move |event, window, cx| {
                 if let Some(view) = view.upgrade() {
                     view.update(cx, |view, cx| f(view, event, window, cx));
