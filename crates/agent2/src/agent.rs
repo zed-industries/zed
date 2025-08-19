@@ -553,21 +553,6 @@ impl NativeAgent {
             history.update(cx, |history, cx| history.reload(cx)).ok();
         });
     }
-
-    pub fn delete_thread(
-        &mut self,
-        id: &acp::SessionId,
-        cx: &mut Context<Self>,
-    ) -> Task<Result<()>> {
-        let id = id.clone();
-        let database_future = ThreadsDatabase::connect(cx);
-        let history = self.history.clone();
-        cx.spawn(async move |_, cx| {
-            let database = database_future.await.map_err(|err| anyhow!(err))?;
-            database.delete_thread(id.clone()).await?;
-            history.update(cx, |history, cx| history.reload(cx))
-        })
-    }
 }
 
 /// Wrapper struct that implements the AgentConnection trait

@@ -1,4 +1,4 @@
-use crate::{DbThread, DbThreadMetadata, ThreadsDatabase};
+use crate::{DbThreadMetadata, ThreadsDatabase};
 use agent_client_protocol as acp;
 use anyhow::{Context as _, Result, anyhow};
 use assistant_context::SavedContextMetadata;
@@ -13,6 +13,8 @@ use util::ResultExt as _;
 const MAX_RECENTLY_OPENED_ENTRIES: usize = 6;
 const NAVIGATION_HISTORY_PATH: &str = "agent-navigation-history.json";
 const SAVE_RECENTLY_OPENED_ENTRIES_DEBOUNCE: Duration = Duration::from_millis(50);
+
+const DEFAULT_TITLE: &SharedString = &SharedString::new_static("New Thread");
 
 #[derive(Clone, Debug)]
 pub enum HistoryEntry {
@@ -37,6 +39,7 @@ impl HistoryEntry {
 
     pub fn title(&self) -> &SharedString {
         match self {
+            HistoryEntry::AcpThread(thread) if thread.title.is_empty() => DEFAULT_TITLE,
             HistoryEntry::AcpThread(thread) => &thread.title,
             HistoryEntry::TextThread(context) => &context.title,
         }
@@ -98,20 +101,26 @@ impl HistoryStore {
         }
     }
 
-    pub fn open_thread(
-        &self,
-        id: &acp::SessionId,
+    pub fn delete_thread(
+        &mut self,
+        id: acp::SessionId,
         cx: &mut Context<Self>,
-    ) -> Task<Result<DbThread>> {
-        let id = id.clone();
+    ) -> Task<Result<()>> {
         let database_future = ThreadsDatabase::connect(cx);
-        cx.background_spawn(async move {
+        cx.spawn(async move |this, cx| {
             let database = database_future.await.map_err(|err| anyhow!(err))?;
-            let thread = database
-                .load_thread(id.clone())
-                .await?
-                .with_context(|| format!("no thread found with ID: {id:?}"))?;
-            Ok(thread)
+            database.delete_thread(id.clone()).await?;
+            this.update(cx, |this, cx| this.reload(cx))
+        })
+    }
+
+    pub fn delete_text_thread(
+        &mut self,
+        path: Arc<Path>,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<()>> {
+        self.context_store.update(cx, |context_store, cx| {
+            context_store.delete_local_context(path, cx)
         })
     }
 

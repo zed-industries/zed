@@ -990,7 +990,6 @@ impl AgentPanel {
         let workspace = self.workspace.clone();
         let project = self.project.clone();
         let fs = self.fs.clone();
-        let history = self.acp_history_store.clone();
 
         const LAST_USED_EXTERNAL_AGENT_KEY: &str = "agent_panel__last_used_external_agent";
 
@@ -1674,8 +1673,8 @@ impl AgentPanel {
         if self.selected_agent != agent {
             self.selected_agent = agent;
             self.serialize(cx);
-            self.new_agent_thread(agent, window, cx);
         }
+        self.new_agent_thread(agent, window, cx);
     }
 
     pub fn selected_agent(&self) -> AgentType {

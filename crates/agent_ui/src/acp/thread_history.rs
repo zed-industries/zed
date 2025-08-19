@@ -1,14 +1,12 @@
 use crate::RemoveSelectedThread;
-use agent_servers::AgentServer;
-use agent2::{HistoryEntry, HistoryStore, NativeAgentServer};
+use agent2::{HistoryEntry, HistoryStore};
 use chrono::{Datelike as _, Local, NaiveDate, TimeDelta};
 use editor::{Editor, EditorEvent};
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    App, Empty, Entity, EventEmitter, FocusHandle, Focusable, Global, ScrollStrategy, Stateful,
-    Task, UniformListScrollHandle, Window, uniform_list,
+    App, Empty, Entity, EventEmitter, FocusHandle, Focusable, ScrollStrategy, Stateful, Task,
+    UniformListScrollHandle, Window, uniform_list,
 };
-use project::Project;
 use std::{fmt::Display, ops::Range, sync::Arc};
 use time::{OffsetDateTime, UtcOffset};
 use ui::{
@@ -205,14 +203,7 @@ impl AcpThreadHistory {
                 let mut candidates = Vec::with_capacity(all_entries.len());
 
                 for (idx, entry) in all_entries.iter().enumerate() {
-                    match entry {
-                        HistoryEntry::AcpThread(thread) => {
-                            candidates.push(StringMatchCandidate::new(idx, &thread.title));
-                        }
-                        HistoryEntry::TextThread(context) => {
-                            candidates.push(StringMatchCandidate::new(idx, &context.title));
-                        }
-                    }
+                    candidates.push(StringMatchCandidate::new(idx, &entry.title()));
                 }
 
                 const MAX_MATCHES: usize = 100;
@@ -411,22 +402,6 @@ impl AcpThreadHistory {
             return;
         };
         cx.emit(ThreadHistoryEvent::Open(entry.clone()));
-        // let task_result = match entry {
-        //     HistoryEntry::Thread(thread) => {
-        //         self.agent_panel.update(cx, move |agent_panel, cx| todo!())
-        //     }
-        //     HistoryEntry::Context(context) => {
-        //         self.agent_panel.update(cx, move |agent_panel, cx| {
-        //             agent_panel.open_saved_prompt_editor(context.path.clone(), window, cx)
-        //         })
-        //     }
-        // };
-
-        // if let Some(task) = task_result.log_err() {
-        //     task.detach_and_log_err(cx);
-        // };
-
-        cx.notify();
     }
 
     fn remove_selected_thread(
@@ -442,19 +417,16 @@ impl AcpThreadHistory {
         let Some(entry) = self.get_match(ix) else {
             return;
         };
-        todo!();
-        // let task_result = match entry {
-        //     HistoryEntry::Thread(thread) => todo!(),
-        //     HistoryEntry::Context(context) => self
-        //         .agent_panel
-        //         .update(cx, |this, cx| this.delete_context(context.path.clone(), cx)),
-        // };
 
-        // if let Some(task) = task_result.log_err() {
-        //     task.detach_and_log_err(cx);
-        // };
-
-        cx.notify();
+        let task = match entry {
+            HistoryEntry::AcpThread(thread) => self
+                .history_store
+                .update(cx, |this, cx| this.delete_thread(thread.id.clone(), cx)),
+            HistoryEntry::TextThread(context) => self.history_store.update(cx, |this, cx| {
+                this.delete_text_thread(context.path.clone(), cx)
+            }),
+        };
+        task.detach_and_log_err(cx);
     }
 
     fn list_items(
