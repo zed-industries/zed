@@ -1061,12 +1061,20 @@ impl AcpThreadView {
         if let Some(editing_index) = self.editing_message.as_ref()
             && *editing_index < entry_ix
         {
-            div()
-                .child(primary)
-                .opacity(0.2)
+            let backdrop = div()
+                .id(("backdrop", entry_ix))
+                .size_full()
+                .absolute()
+                .inset_0()
+                .bg(cx.theme().colors().panel_background)
+                .opacity(0.8)
                 .block_mouse_except_scroll()
-                .id("overlay")
-                .on_click(cx.listener(Self::cancel_editing))
+                .on_click(cx.listener(Self::cancel_editing));
+
+            div()
+                .relative()
+                .child(primary)
+                .child(backdrop)
                 .into_any_element()
         } else {
             primary
