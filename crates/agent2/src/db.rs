@@ -1,4 +1,5 @@
 use crate::{AgentMessage, AgentMessageContent, UserMessage, UserMessageContent};
+use acp_thread::{AcpThreadMetadata, AgentServerName};
 use agent::thread_store;
 use agent_client_protocol as acp;
 use agent_settings::{AgentProfileId, CompletionMode};
@@ -28,6 +29,17 @@ pub struct DbThreadMetadata {
     #[serde(alias = "summary")]
     pub title: SharedString,
     pub updated_at: DateTime<Utc>,
+}
+
+impl DbThreadMetadata {
+    pub fn to_acp(self, agent: AgentServerName) -> AcpThreadMetadata {
+        AcpThreadMetadata {
+            agent,
+            id: self.id,
+            title: self.title,
+            updated_at: self.updated_at,
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -288,7 +300,7 @@ impl ThreadsDatabase {
         connection: &Arc<Mutex<Connection>>,
         id: acp::SessionId,
         thread: DbThread,
-    ) -> Result<()> {
+    ) -> Result<DbThreadMetadata> {
         let json_data = serde_json::to_string(&thread)?;
         let title = thread.title.to_string();
         let updated_at = thread.updated_at.to_rfc3339();
@@ -303,9 +315,13 @@ impl ThreadsDatabase {
             INSERT OR REPLACE INTO threads (id, summary, updated_at, data_type, data) VALUES (?, ?, ?, ?, ?)
         "})?;
 
-        insert((id.0, title, updated_at, data_type, data))?;
+        insert((id.0.clone(), title, updated_at, data_type, data))?;
 
-        Ok(())
+        Ok(DbThreadMetadata {
+            id,
+            title: thread.title,
+            updated_at: thread.updated_at,
+        })
     }
 
     pub fn list_threads(&self) -> Task<Result<Vec<DbThreadMetadata>>> {
@@ -360,7 +376,11 @@ impl ThreadsDatabase {
         })
     }
 
-    pub fn save_thread(&self, id: acp::SessionId, thread: DbThread) -> Task<Result<()>> {
+    pub fn save_thread(
+        &self,
+        id: acp::SessionId,
+        thread: DbThread,
+    ) -> Task<Result<DbThreadMetadata>> {
         let connection = self.connection.clone();
 
         self.executor

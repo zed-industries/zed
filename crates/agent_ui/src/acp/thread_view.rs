@@ -18,6 +18,7 @@ use editor::scroll::Autoscroll;
 use editor::{Editor, EditorMode, MultiBuffer, PathKey, SelectionEffects};
 use file_icons::FileIcons;
 use fs::Fs;
+use futures::StreamExt;
 use gpui::{
     Action, Animation, AnimationExt, App, BorderStyle, ClickEvent, ClipboardItem, EdgesRefinement,
     Empty, Entity, FocusHandle, Focusable, Hsla, Length, ListOffset, ListState, MouseButton,
@@ -123,6 +124,7 @@ pub struct AcpThreadView {
     editor_expanded: bool,
     terminal_expanded: bool,
     editing_message: Option<usize>,
+    history_store: Entity<agent2::HistoryStore>,
     _cancel_task: Option<Task<()>>,
     _subscriptions: [Subscription; 3],
 }
@@ -134,6 +136,7 @@ enum ThreadState {
     Ready {
         thread: Entity<AcpThread>,
         _subscription: [Subscription; 2],
+        _history_task: Option<Task<()>>,
     },
     LoadError(LoadError),
     Unauthenticated {
@@ -149,6 +152,7 @@ impl AcpThreadView {
         agent: Rc<dyn AgentServer>,
         workspace: WeakEntity<Workspace>,
         project: Entity<Project>,
+        history_store: Entity<agent2::HistoryStore>,
         thread_store: Entity<ThreadStore>,
         text_thread_store: Entity<TextThreadStore>,
         restore_thread: Option<AcpThreadMetadata>,
@@ -196,11 +200,13 @@ impl AcpThreadView {
             thread_state: Self::initial_state(
                 agent,
                 restore_thread,
+                history_store.clone(),
                 workspace,
                 project,
                 window,
                 cx,
             ),
+            history_store,
             message_editor,
             model_selector: None,
             profile_selector: None,
@@ -225,6 +231,7 @@ impl AcpThreadView {
     fn initial_state(
         agent: Rc<dyn AgentServer>,
         restore_thread: Option<AcpThreadMetadata>,
+        history_store: Entity<agent2::HistoryStore>,
         workspace: WeakEntity<Workspace>,
         project: Entity<Project>,
         window: &mut Window,
@@ -251,6 +258,25 @@ impl AcpThreadView {
                 }
             };
 
+            let mut history_task = None;
+            let history = connection.clone().history();
+            if let Some(history) = history.clone() {
+                if let Some(mut history) = cx.update(|_, cx| history.observe_history(cx)).ok() {
+                    history_task = Some(cx.spawn(async move |cx| {
+                        while let Some(update) = history.next().await {
+                            if !history_store
+                                .update(cx, |history_store, cx| {
+                                    history_store.update_history(update, cx)
+                                })
+                                .is_ok()
+                            {
+                                break;
+                            }
+                        }
+                    }));
+                }
+            }
+
             // this.update_in(cx, |_this, _window, cx| {
             //     let status = connection.exit_status(cx);
             //     cx.spawn(async move |this, cx| {
@@ -264,15 +290,12 @@ impl AcpThreadView {
             //     .detach();
             // })
             // .ok();
-            //
+            let history = connection.clone().history();
             let task = cx.update(|_, cx| {
-                if let Some(restore_thread) = restore_thread {
-                    connection.clone().load_thread(
-                        project.clone(),
-                        &root_dir,
-                        restore_thread.id,
-                        cx,
-                    )
+                if let Some(restore_thread) = restore_thread
+                    && let Some(history) = history
+                {
+                    history.load_thread(project.clone(), &root_dir, restore_thread.id, cx)
                 } else {
                     connection
                         .clone()
@@ -342,6 +365,7 @@ impl AcpThreadView {
                         this.thread_state = ThreadState::Ready {
                             thread,
                             _subscription: [thread_subscription, action_log_subscription],
+                            _history_task: history_task,
                         };
 
                         this.profile_selector = this.as_native_thread(cx).map(|thread| {
@@ -751,6 +775,7 @@ impl AcpThreadView {
                         this.thread_state = Self::initial_state(
                             agent,
                             None, // todo!()
+                            this.history_store.clone(),
                             this.workspace.clone(),
                             project.clone(),
                             window,
@@ -3755,6 +3780,8 @@ pub(crate) mod tests {
             cx.update(|_window, cx| cx.new(|cx| ThreadStore::fake(project.clone(), cx)));
         let text_thread_store =
             cx.update(|_window, cx| cx.new(|cx| TextThreadStore::fake(project.clone(), cx)));
+        let history_store =
+            cx.update(|_window, cx| cx.new(|cx| agent2::HistoryStore::get_or_init(cx)));
 
         let thread_view = cx.update(|window, cx| {
             cx.new(|cx| {
@@ -3762,6 +3789,7 @@ pub(crate) mod tests {
                     Rc::new(agent),
                     workspace.downgrade(),
                     project,
+                    history_store.clone(),
                     thread_store.clone(),
                     text_thread_store.clone(),
                     None,
@@ -3954,6 +3982,8 @@ pub(crate) mod tests {
             cx.update(|_window, cx| cx.new(|cx| ThreadStore::fake(project.clone(), cx)));
         let text_thread_store =
             cx.update(|_window, cx| cx.new(|cx| TextThreadStore::fake(project.clone(), cx)));
+        let history_store =
+            cx.update(|_window, cx| cx.new(|cx| agent2::HistoryStore::get_or_init(cx)));
 
         let connection = Rc::new(StubAgentConnection::new());
         let thread_view = cx.update(|window, cx| {
@@ -3962,6 +3992,7 @@ pub(crate) mod tests {
                     Rc::new(StubAgentServer::new(connection.as_ref().clone())),
                     workspace.downgrade(),
                     project.clone(),
+                    history_store,
                     thread_store.clone(),
                     text_thread_store.clone(),
                     None,

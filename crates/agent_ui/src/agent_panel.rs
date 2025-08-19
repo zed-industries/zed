@@ -1031,11 +1031,13 @@ impl AgentPanel {
             };
 
             this.update_in(cx, |this, window, cx| {
+                let acp_history_store = this.acp_history.read(cx).history_store.clone();
                 let thread_view = cx.new(|cx| {
                     crate::acp::AcpThreadView::new(
                         server,
                         workspace.clone(),
                         project,
+                        acp_history_store,
                         thread_store.clone(),
                         text_thread_store.clone(),
                         restore_thread,

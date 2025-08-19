@@ -937,7 +937,6 @@ impl AcpThread {
     }
 
     pub fn update_title(&mut self, title: SharedString, cx: &mut Context<Self>) -> Result<()> {
-        dbg!("update title", &title);
         self.title = title;
         cx.emit(AcpThreadEvent::TitleUpdated);
         Ok(())

@@ -2,6 +2,7 @@ use crate::{AcpThread, AcpThreadMetadata};
 use agent_client_protocol::{self as acp};
 use anyhow::Result;
 use collections::IndexMap;
+use futures::channel::mpsc::UnboundedReceiver;
 use gpui::{Entity, SharedString, Task};
 use project::Project;
 use serde::{Deserialize, Serialize};
@@ -25,25 +26,6 @@ pub trait AgentConnection {
         cwd: &Path,
         cx: &mut App,
     ) -> Task<Result<Entity<AcpThread>>>;
-
-    // todo!(expose a history trait, and include list_threads and load_thread)
-    // todo!(write a test)
-    fn list_threads(
-        &self,
-        _cx: &mut App,
-    ) -> Option<watch::Receiver<Option<Vec<AcpThreadMetadata>>>> {
-        return None;
-    }
-
-    fn load_thread(
-        self: Rc<Self>,
-        _project: Entity<Project>,
-        _cwd: &Path,
-        _session_id: acp::SessionId,
-        _cx: &mut App,
-    ) -> Task<Result<Entity<AcpThread>>> {
-        Task::ready(Err(anyhow::anyhow!("load thread not implemented")))
-    }
 
     fn auth_methods(&self) -> &[acp::AuthMethod];
 
@@ -82,6 +64,10 @@ pub trait AgentConnection {
         None
     }
 
+    fn history(self: Rc<Self>) -> Option<Rc<dyn AgentHistory>> {
+        None
+    }
+
     fn into_any(self: Rc<Self>) -> Rc<dyn Any>;
 }
 
@@ -97,6 +83,18 @@ pub trait AgentSessionEditor {
 
 pub trait AgentSessionResume {
     fn run(&self, cx: &mut App) -> Task<Result<acp::PromptResponse>>;
+}
+
+pub trait AgentHistory {
+    fn list_threads(&self, cx: &mut App) -> Task<Result<Vec<AcpThreadMetadata>>>;
+    fn observe_history(&self, cx: &mut App) -> UnboundedReceiver<AcpThreadMetadata>;
+    fn load_thread(
+        self: Rc<Self>,
+        _project: Entity<Project>,
+        _cwd: &Path,
+        _session_id: acp::SessionId,
+        _cx: &mut App,
+    ) -> Task<Result<Entity<AcpThread>>>;
 }
 
 #[derive(Debug)]

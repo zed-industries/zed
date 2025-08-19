@@ -6,7 +6,7 @@ use crate::{
     UserMessageContent, WebSearchTool, templates::Templates,
 };
 use crate::{ThreadsDatabase, generate_session_id};
-use acp_thread::{AcpThread, AcpThreadMetadata, AgentModelSelector};
+use acp_thread::{AcpThread, AcpThreadMetadata, AgentHistory, AgentModelSelector};
 use agent_client_protocol as acp;
 use agent_settings::AgentSettings;
 use anyhow::{Context as _, Result, anyhow};
@@ -56,7 +56,7 @@ struct Session {
     thread: Entity<Thread>,
     /// The ACP thread that handles protocol communication
     acp_thread: WeakEntity<acp_thread::AcpThread>,
-    save_task: Task<Result<()>>,
+    save_task: Task<()>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -173,8 +173,7 @@ pub struct NativeAgent {
     project: Entity<Project>,
     prompt_store: Option<Entity<PromptStore>>,
     thread_database: Arc<ThreadsDatabase>,
-    history: watch::Sender<Option<Vec<AcpThreadMetadata>>>,
-    load_history: Task<()>,
+    history_watchers: Vec<mpsc::UnboundedSender<AcpThreadMetadata>>,
     fs: Arc<dyn Fs>,
     _subscriptions: Vec<Subscription>,
 }
@@ -212,7 +211,7 @@ impl NativeAgent {
 
             let (project_context_needs_refresh_tx, project_context_needs_refresh_rx) =
                 watch::channel(());
-            let mut this = Self {
+            Self {
                 sessions: HashMap::new(),
                 project_context: Rc::new(RefCell::new(project_context)),
                 project_context_needs_refresh: project_context_needs_refresh_tx,
@@ -228,12 +227,9 @@ impl NativeAgent {
                 project,
                 prompt_store,
                 fs,
-                history: watch::channel(None).0,
-                load_history: Task::ready(()),
+                history_watchers: Vec::new(),
                 _subscriptions: subscriptions,
-            };
-            this.reload_history(cx);
-            this
+            }
         })
     }
 
@@ -250,7 +246,7 @@ impl NativeAgent {
             Session {
                 thread: thread.clone(),
                 acp_thread: weak_thread.clone(),
-                save_task: Task::ready(Ok(())),
+                save_task: Task::ready(()),
                 _subscriptions: vec![
                     cx.observe_release(&acp_thread, |this, acp_thread, _cx| {
                         this.sessions.remove(acp_thread.session_id());
@@ -285,35 +281,23 @@ impl NativeAgent {
         session.save_task = cx.spawn(async move |this, cx| {
             cx.background_executor().timer(SAVE_THREAD_DEBOUNCE).await;
 
-            let db_thread = thread.update(cx, |thread, cx| thread.to_db(cx))?.await;
-            thread_database.save_thread(id, db_thread).await?;
-            this.update(cx, |this, cx| this.reload_history(cx))?;
-            Ok(())
-        });
-    }
-
-    fn reload_history(&mut self, cx: &mut Context<Self>) {
-        let thread_database = self.thread_database.clone();
-        self.load_history = cx.spawn(async move |this, cx| {
-            let results = cx
-                .background_spawn(async move {
-                    let results = thread_database.list_threads().await?;
-                    anyhow::Ok(
-                        results
-                            .into_iter()
-                            .map(|thread| AcpThreadMetadata {
-                                agent: NATIVE_AGENT_SERVER_NAME.clone(),
-                                id: thread.id.into(),
-                                title: thread.title,
-                                updated_at: thread.updated_at,
-                            })
-                            .collect(),
-                    )
+            let Some(task) = thread.update(cx, |thread, cx| thread.to_db(cx)).ok() else {
+                return;
+            };
+            let db_thread = task.await;
+            let metadata = thread_database
+                .save_thread(id.clone(), db_thread)
+                .await
+                .log_err();
+            if let Some(metadata) = metadata {
+                this.update(cx, |this, _| {
+                    for watcher in this.history_watchers.iter_mut() {
+                        watcher
+                            .unbounded_send(metadata.clone().to_acp(NATIVE_AGENT_SERVER_NAME))
+                            .log_err();
+                    }
                 })
-                .await;
-            if let Some(results) = results.log_err() {
-                this.update(cx, |this, _| this.history.send(Some(results)))
-                    .ok();
+                .ok();
             }
         });
     }
@@ -667,7 +651,6 @@ impl NativeAgentConnection {
                                 })??;
                             }
                             ThreadEvent::TitleUpdate(title) => {
-                                dbg!("updating title");
                                 acp_thread
                                     .update(cx, |thread, cx| thread.update_title(title, cx))??;
                             }
@@ -884,11 +867,106 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
         Task::ready(Ok(()))
     }
 
-    fn list_threads(
+    fn model_selector(&self) -> Option<Rc<dyn AgentModelSelector>> {
+        Some(Rc::new(self.clone()) as Rc<dyn AgentModelSelector>)
+    }
+
+    fn prompt(
         &self,
+        id: Option<acp_thread::UserMessageId>,
+        params: acp::PromptRequest,
         cx: &mut App,
-    ) -> Option<watch::Receiver<Option<Vec<AcpThreadMetadata>>>> {
-        Some(self.0.read(cx).history.receiver())
+    ) -> Task<Result<acp::PromptResponse>> {
+        let id = id.expect("UserMessageId is required");
+        let session_id = params.session_id.clone();
+        log::info!("Received prompt request for session: {}", session_id);
+        log::debug!("Prompt blocks count: {}", params.prompt.len());
+
+        self.run_turn(session_id, cx, |thread, cx| {
+            let content: Vec<UserMessageContent> = params
+                .prompt
+                .into_iter()
+                .map(Into::into)
+                .collect::<Vec<_>>();
+            log::info!("Converted prompt to message: {} chars", content.len());
+            log::debug!("Message id: {:?}", id);
+            log::debug!("Message content: {:?}", content);
+
+            thread.update(cx, |thread, cx| thread.send(id, content, cx))
+        })
+    }
+
+    fn resume(
+        &self,
+        session_id: &acp::SessionId,
+        _cx: &mut App,
+    ) -> Option<Rc<dyn acp_thread::AgentSessionResume>> {
+        Some(Rc::new(NativeAgentSessionResume {
+            connection: self.clone(),
+            session_id: session_id.clone(),
+        }) as _)
+    }
+
+    fn cancel(&self, session_id: &acp::SessionId, cx: &mut App) {
+        log::info!("Cancelling on session: {}", session_id);
+        self.0.update(cx, |agent, cx| {
+            if let Some(agent) = agent.sessions.get(session_id) {
+                agent.thread.update(cx, |thread, cx| thread.cancel(cx));
+            }
+        });
+    }
+
+    fn session_editor(
+        &self,
+        session_id: &agent_client_protocol::SessionId,
+        cx: &mut App,
+    ) -> Option<Rc<dyn acp_thread::AgentSessionEditor>> {
+        self.0.update(cx, |agent, _cx| {
+            agent
+                .sessions
+                .get(session_id)
+                .map(|session| Rc::new(NativeAgentSessionEditor(session.thread.clone())) as _)
+        })
+    }
+
+    fn history(self: Rc<Self>) -> Option<Rc<dyn AgentHistory>> {
+        Some(self)
+    }
+
+    fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
+        self
+    }
+}
+
+struct NativeAgentSessionEditor(Entity<Thread>);
+
+impl acp_thread::AgentSessionEditor for NativeAgentSessionEditor {
+    fn truncate(&self, message_id: acp_thread::UserMessageId, cx: &mut App) -> Task<Result<()>> {
+        Task::ready(
+            self.0
+                .update(cx, |thread, cx| thread.truncate(message_id, cx)),
+        )
+    }
+}
+
+impl acp_thread::AgentHistory for NativeAgentConnection {
+    fn list_threads(&self, cx: &mut App) -> Task<Result<Vec<AcpThreadMetadata>>> {
+        let database = self.0.read(cx).thread_database.clone();
+        cx.background_executor().spawn(async move {
+            let threads = database.list_threads().await?;
+            anyhow::Ok(
+                threads
+                    .into_iter()
+                    .map(|thread| thread.to_acp(NATIVE_AGENT_SERVER_NAME))
+                    .collect::<Vec<_>>(),
+            )
+        })
+    }
+
+    fn observe_history(&self, cx: &mut App) -> mpsc::UnboundedReceiver<AcpThreadMetadata> {
+        let (tx, rx) = mpsc::unbounded();
+        self.0.update(cx, |this, _| this.history_watchers.push(tx));
+        rx
     }
 
     fn load_thread(
@@ -979,83 +1057,6 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
 
             Ok(acp_thread)
         })
-    }
-
-    fn model_selector(&self) -> Option<Rc<dyn AgentModelSelector>> {
-        Some(Rc::new(self.clone()) as Rc<dyn AgentModelSelector>)
-    }
-
-    fn prompt(
-        &self,
-        id: Option<acp_thread::UserMessageId>,
-        params: acp::PromptRequest,
-        cx: &mut App,
-    ) -> Task<Result<acp::PromptResponse>> {
-        let id = id.expect("UserMessageId is required");
-        let session_id = params.session_id.clone();
-        log::info!("Received prompt request for session: {}", session_id);
-        log::debug!("Prompt blocks count: {}", params.prompt.len());
-
-        self.run_turn(session_id, cx, |thread, cx| {
-            let content: Vec<UserMessageContent> = params
-                .prompt
-                .into_iter()
-                .map(Into::into)
-                .collect::<Vec<_>>();
-            log::info!("Converted prompt to message: {} chars", content.len());
-            log::debug!("Message id: {:?}", id);
-            log::debug!("Message content: {:?}", content);
-
-            thread.update(cx, |thread, cx| thread.send(id, content, cx))
-        })
-    }
-
-    fn resume(
-        &self,
-        session_id: &acp::SessionId,
-        _cx: &mut App,
-    ) -> Option<Rc<dyn acp_thread::AgentSessionResume>> {
-        Some(Rc::new(NativeAgentSessionResume {
-            connection: self.clone(),
-            session_id: session_id.clone(),
-        }) as _)
-    }
-
-    fn cancel(&self, session_id: &acp::SessionId, cx: &mut App) {
-        log::info!("Cancelling on session: {}", session_id);
-        self.0.update(cx, |agent, cx| {
-            if let Some(agent) = agent.sessions.get(session_id) {
-                agent.thread.update(cx, |thread, cx| thread.cancel(cx));
-            }
-        });
-    }
-
-    fn session_editor(
-        &self,
-        session_id: &agent_client_protocol::SessionId,
-        cx: &mut App,
-    ) -> Option<Rc<dyn acp_thread::AgentSessionEditor>> {
-        self.0.update(cx, |agent, _cx| {
-            agent
-                .sessions
-                .get(session_id)
-                .map(|session| Rc::new(NativeAgentSessionEditor(session.thread.clone())) as _)
-        })
-    }
-
-    fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
-        self
-    }
-}
-
-struct NativeAgentSessionEditor(Entity<Thread>);
-
-impl acp_thread::AgentSessionEditor for NativeAgentSessionEditor {
-    fn truncate(&self, message_id: acp_thread::UserMessageId, cx: &mut App) -> Task<Result<()>> {
-        Task::ready(
-            self.0
-                .update(cx, |thread, cx| thread.truncate(message_id, cx)),
-        )
     }
 }
 
@@ -1274,16 +1275,22 @@ mod tests {
         )
         .await
         .unwrap();
-        let connection = NativeAgentConnection(agent.clone());
-        let history_store = cx.new(|cx| {
-            let mut store = HistoryStore::new(cx);
-            store.register_agent(NATIVE_AGENT_SERVER_NAME.clone(), &connection, cx);
-            store
-        });
+        let connection = Rc::new(NativeAgentConnection(agent.clone()));
+        let history = connection.clone().history().unwrap();
+        let history_store = cx.new(|cx| HistoryStore::get_or_init(cx));
+
+        history_store
+            .update(cx, |history_store, cx| {
+                history_store.load_history(NATIVE_AGENT_SERVER_NAME.clone(), history.as_ref(), cx)
+            })
+            .await
+            .unwrap();
 
         let acp_thread = cx
             .update(|cx| {
-                Rc::new(connection.clone()).new_thread(project.clone(), Path::new(path!("")), cx)
+                connection
+                    .clone()
+                    .new_thread(project.clone(), Path::new(path!("")), cx)
             })
             .await
             .unwrap();

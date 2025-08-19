@@ -5,8 +5,8 @@ use chrono::{Datelike as _, Local, NaiveDate, TimeDelta};
 use editor::{Editor, EditorEvent};
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    App, Empty, Entity, EventEmitter, FocusHandle, Focusable, ScrollStrategy, Stateful, Task,
-    UniformListScrollHandle, Window, uniform_list,
+    App, Empty, Entity, EventEmitter, FocusHandle, Focusable, Global, ScrollStrategy, Stateful,
+    Task, UniformListScrollHandle, Window, uniform_list,
 };
 use project::Project;
 use std::{fmt::Display, ops::Range, sync::Arc};
@@ -18,7 +18,7 @@ use ui::{
 use util::ResultExt;
 
 pub struct AcpThreadHistory {
-    history_store: Entity<HistoryStore>,
+    pub(crate) history_store: Entity<HistoryStore>,
     scroll_handle: UniformListScrollHandle,
     selected_index: usize,
     hovered_index: Option<usize>,
@@ -69,37 +69,12 @@ impl AcpThreadHistory {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let history_store = cx.new(|cx| agent2::HistoryStore::new(cx));
-
-        let agent = NativeAgentServer::new(project.read(cx).fs().clone());
-
-        let root_dir = project
-            .read(cx)
-            .visible_worktrees(cx)
-            .next()
-            .map(|worktree| worktree.read(cx).abs_path())
-            .unwrap_or_else(|| paths::home_dir().as_path().into());
-
-        // todo!() reuse this connection for sending messages
-        let connect = agent.connect(&root_dir, project, cx);
-        cx.spawn(async move |this, cx| {
-            let connection = connect.await?;
-            this.update(cx, |this, cx| {
-                this.history_store.update(cx, |this, cx| {
-                    this.register_agent(agent.name(), connection.as_ref(), cx)
-                })
-            })?;
-            // todo!() we must keep it alive
-            std::mem::forget(connection);
-            anyhow::Ok(())
-        })
-        .detach();
-
         let search_editor = cx.new(|cx| {
             let mut editor = Editor::single_line(window, cx);
             editor.set_placeholder_text("Search threads...", cx);
             editor
         });
+        let history_store = HistoryStore::get_or_init(project, cx);
 
         let search_editor_subscription =
             cx.subscribe(&search_editor, |this, search_editor, event, cx| {
