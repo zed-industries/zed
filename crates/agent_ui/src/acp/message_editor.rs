@@ -892,6 +892,10 @@ impl MessageEditor {
                     .ok();
                 }
             } else {
+                this.update(cx, |this, _cx| {
+                    this.mention_set.images.remove(&crease_id);
+                })
+                .ok();
                 editor
                     .update(cx, |editor, cx| {
                         editor.display_map.update(cx, |display_map, cx| {
