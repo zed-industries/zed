@@ -14,7 +14,7 @@ use editor::Editor;
 use extension::ExtensionHostProxy;
 use extension_host::ExtensionStore;
 use fs::{Fs, RealFs};
-use futures::{StreamExt, channel::oneshot, future};
+use futures::{FutureExt, StreamExt, channel::oneshot, future, select_biased};
 use git::GitHostingProviderRegistry;
 use gpui::{App, AppContext as _, Application, AsyncApp, Focusable as _, UpdateGlobal as _};
 use postage::stream::Stream as _;
@@ -733,6 +733,8 @@ pub fn main() {
             }
         }
 
+        // todo! cleanup
+        let fs = app_state.fs.clone();
         let app_state = app_state.clone();
 
         crate::zed::component_preview::init(app_state.clone(), cx);
@@ -754,38 +756,85 @@ pub fn main() {
                 "Will run {} when the selection changes",
                 selection_change_command
             );
-            let mut cursor_reciever = editor::LAST_CURSOR_POSITION_WATCH.1.clone();
+
+            let mut cursor_receiver = editor::LAST_CURSOR_POSITION_WATCH.1.clone();
             cx.background_spawn(async move {
-                while let Some(mut cursor) = cursor_reciever.recv().await {
-                    loop {
-                        // todo! Check if it's changed meanwhile and refresh.
-                        if let Some(cursor) = dbg!(&cursor) {
-                            let status = smol::process::Command::new(&selection_change_command)
-                                .arg(cursor.worktree_path.as_ref())
-                                .arg(format!(
-                                    "{}:{}:{}",
-                                    cursor.path.display(),
-                                    cursor.point.row + 1,
-                                    cursor.point.column + 1
-                                ))
-                                .status()
-                                .await;
-                            match status {
-                                Ok(status) => {
-                                    if !status.success() {
-                                        log::error!("Command failed with status {}", status);
-                                    }
-                                }
-                                Err(err) => {
-                                    log::error!("Command failed with error {}", err);
-                                }
+                // Set up file watcher for the command file
+                let command_path = PathBuf::from(&selection_change_command);
+                let mut file_changes = if command_path.exists() {
+                    let (events, _) = fs
+                        .watch(&command_path, std::time::Duration::from_millis(100))
+                        .await;
+                    Some(events)
+                } else {
+                    log::warn!(
+                        "Command file {} does not exist, only watching selection changes",
+                        command_path.display()
+                    );
+                    None
+                };
+
+                loop {
+                    select_biased! {
+                        // Handle cursor position changes
+                        cursor_update = cursor_receiver.recv().fuse() => {
+                            if cursor_update.is_none() {
+                                // Cursor watcher ended
+                                log::warn!("Cursor watcher for {} ended", command_path.display());
+                                break;
+                            }
+                        },
+
+                        // Handle file changes to the command file
+                        file_change = async {
+                            if let Some(ref mut events) = file_changes {
+                                events.next().await
+                            } else {
+                                future::pending().await
+                            }
+                        }.fuse() => {
+                            if file_change.is_none() {
+                                // File watcher ended
+                                log::warn!("File watcher for {} ended", command_path.display());
+                                file_changes = None;
                             }
                         }
-                        let new_cursor = cursor_reciever.borrow();
-                        if *new_cursor == cursor {
+                    }
+
+                    // TODO: Could be more efficient
+                    let Some(mut cursor) = cursor_receiver.borrow().clone() else {
+                        continue;
+                    };
+
+                    loop {
+                        let status = smol::process::Command::new(&selection_change_command)
+                            .arg(cursor.worktree_path.as_ref())
+                            .arg(format!(
+                                "{}:{}:{}",
+                                cursor.path.display(),
+                                cursor.point.row + 1,
+                                cursor.point.column + 1
+                            ))
+                            .status()
+                            .await;
+                        match status {
+                            Ok(status) => {
+                                if !status.success() {
+                                    log::error!("Command failed with status {}", status);
+                                }
+                            }
+                            Err(err) => {
+                                log::error!("Command failed with error {}", err);
+                            }
+                        }
+
+                        let Some(new_cursor) = cursor_receiver.borrow().clone() else {
+                            break;
+                        };
+                        if new_cursor == cursor {
                             break;
                         }
-                        cursor = new_cursor.clone();
+                        cursor = new_cursor;
                     }
                 }
             })
