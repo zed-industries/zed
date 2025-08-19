@@ -5,6 +5,8 @@ use std::{
     fmt::{Display, Write},
 };
 
+use crate::PlatformKeyboardMapper;
+
 /// TODO:
 pub trait AsKeystroke {
     /// TODO:
@@ -281,30 +283,23 @@ impl Keystroke {
         }
         self
     }
-
-    /// TODO:
-    pub fn into_shifted(self) -> Self {
-        let Keystroke {
-            modifiers,
-            key,
-            key_char,
-        } = self;
-        let (key, modifiers) = into_shifted_key(key, modifiers);
-        Self {
-            key,
-            modifiers,
-            key_char,
-        }
-    }
 }
 
 impl KeybindingKeystroke {
     /// Create a new keybinding keystroke from the given keystroke
-    pub fn new(inner: Keystroke) -> Self {
-        let key = inner.key.clone();
-        let modifiers = inner.modifiers;
+    pub fn new(
+        inner: Keystroke,
+        use_key_equivalents: bool,
+        keyboard_mapper: &dyn PlatformKeyboardMapper,
+    ) -> Self {
+        keyboard_mapper.map_key_equivalent(inner, use_key_equivalents)
+    }
+
+    pub(crate) fn from_keystroke(keystroke: Keystroke) -> Self {
+        let key = keystroke.key.clone();
+        let modifiers = keystroke.modifiers;
         KeybindingKeystroke {
-            inner,
+            inner: keystroke,
             modifiers,
             key,
         }
@@ -608,191 +603,6 @@ impl AsKeystroke for KeybindingKeystroke {
     }
 }
 
-fn to_unshifted_key(key: &str, modifiers: &Modifiers) -> (String, Modifiers) {
-    let mut modifiers = modifiers.clone();
-    match key {
-        "~" => {
-            modifiers.shift = true;
-            ("`".to_string(), modifiers)
-        }
-        "!" => {
-            modifiers.shift = true;
-            ("1".to_string(), modifiers)
-        }
-        "@" => {
-            modifiers.shift = true;
-            ("2".to_string(), modifiers)
-        }
-        "#" => {
-            modifiers.shift = true;
-            ("3".to_string(), modifiers)
-        }
-        "$" => {
-            modifiers.shift = true;
-            ("4".to_string(), modifiers)
-        }
-        "%" => {
-            modifiers.shift = true;
-            ("5".to_string(), modifiers)
-        }
-        "^" => {
-            modifiers.shift = true;
-            ("6".to_string(), modifiers)
-        }
-        "&" => {
-            modifiers.shift = true;
-            ("7".to_string(), modifiers)
-        }
-        "*" => {
-            modifiers.shift = true;
-            ("8".to_string(), modifiers)
-        }
-        "(" => {
-            modifiers.shift = true;
-            ("9".to_string(), modifiers)
-        }
-        ")" => {
-            modifiers.shift = true;
-            ("0".to_string(), modifiers)
-        }
-        "_" => {
-            modifiers.shift = true;
-            ("-".to_string(), modifiers)
-        }
-        "+" => {
-            modifiers.shift = true;
-            ("=".to_string(), modifiers)
-        }
-        "{" => {
-            modifiers.shift = true;
-            ("[".to_string(), modifiers)
-        }
-        "}" => {
-            modifiers.shift = true;
-            ("]".to_string(), modifiers)
-        }
-        "|" => {
-            modifiers.shift = true;
-            ("\\".to_string(), modifiers)
-        }
-        ":" => {
-            modifiers.shift = true;
-            (";".to_string(), modifiers)
-        }
-        "\"" => {
-            modifiers.shift = true;
-            ("'".to_string(), modifiers)
-        }
-        "<" => {
-            modifiers.shift = true;
-            (",".to_string(), modifiers)
-        }
-        ">" => {
-            modifiers.shift = true;
-            (">".to_string(), modifiers)
-        }
-        "?" => {
-            modifiers.shift = true;
-            ("/".to_string(), modifiers)
-        }
-        _ => (key.to_string(), modifiers),
-    }
-}
-
-fn into_shifted_key(key: String, mut modifiers: Modifiers) -> (String, Modifiers) {
-    if !modifiers.shift {
-        (key, modifiers)
-    } else {
-        match key.as_str() {
-            "`" => {
-                modifiers.shift = false;
-                ("~".to_string(), modifiers)
-            }
-            "1" => {
-                modifiers.shift = false;
-                ("!".to_string(), modifiers)
-            }
-            "2" => {
-                modifiers.shift = false;
-                ("@".to_string(), modifiers)
-            }
-            "3" => {
-                modifiers.shift = false;
-                ("#".to_string(), modifiers)
-            }
-            "4" => {
-                modifiers.shift = false;
-                ("$".to_string(), modifiers)
-            }
-            "5" => {
-                modifiers.shift = false;
-                ("%".to_string(), modifiers)
-            }
-            "6" => {
-                modifiers.shift = false;
-                ("^".to_string(), modifiers)
-            }
-            "7" => {
-                modifiers.shift = false;
-                ("&".to_string(), modifiers)
-            }
-            "8" => {
-                modifiers.shift = false;
-                ("*".to_string(), modifiers)
-            }
-            "9" => {
-                modifiers.shift = false;
-                ("(".to_string(), modifiers)
-            }
-            "0" => {
-                modifiers.shift = false;
-                (")".to_string(), modifiers)
-            }
-            "-" => {
-                modifiers.shift = false;
-                ("_".to_string(), modifiers)
-            }
-            "=" => {
-                modifiers.shift = false;
-                ("+".to_string(), modifiers)
-            }
-            "[" => {
-                modifiers.shift = false;
-                ("{".to_string(), modifiers)
-            }
-            "]" => {
-                modifiers.shift = false;
-                ("}".to_string(), modifiers)
-            }
-            "\\" => {
-                modifiers.shift = false;
-                ("|".to_string(), modifiers)
-            }
-            ";" => {
-                modifiers.shift = false;
-                (":".to_string(), modifiers)
-            }
-            "'" => {
-                modifiers.shift = false;
-                ("\"".to_string(), modifiers)
-            }
-            "," => {
-                modifiers.shift = false;
-                ("<".to_string(), modifiers)
-            }
-            "." => {
-                modifiers.shift = false;
-                (">".to_string(), modifiers)
-            }
-            "/" => {
-                modifiers.shift = false;
-                ("?".to_string(), modifiers)
-            }
-            _ => (key, modifiers),
-        }
-    }
-}
-
 fn display_modifiers(modifiers: &Modifiers, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
     if modifiers.control {
         #[cfg(target_os = "macos")]
@@ -857,46 +667,4 @@ fn display_key(key: &str, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         key => return f.write_str(key),
     };
     f.write_char(key)
-}
-
-#[cfg(test)]
-mod tests {
-    use crate::{KeybindingKeystroke, Keystroke, Modifiers};
-
-    #[test]
-    fn test_parsing_keystroke_on_windows() {
-        // On windows, users prefer to use "ctrl-shift-key", so here we support
-        // both "ctrl-$" and "ctrl-shift-4"
-        let source = "ctrl-$";
-        let keystroke = Keystroke::parse(source).unwrap();
-        assert_eq!(keystroke.modifiers, Modifiers::control());
-        assert_eq!(keystroke.key, "$");
-        assert_eq!(keystroke.key_char, None);
-
-        let keystroke_display = KeybindingKeystroke::new(keystroke.clone());
-        assert_eq!(keystroke_display.inner, keystroke);
-        assert_eq!(keystroke_display.key, "4");
-        assert_eq!(keystroke_display.modifiers, Modifiers::control_shift());
-
-        let source = "ctrl-shift-4";
-        let keystroke = Keystroke::parse(source).unwrap();
-        assert_eq!(keystroke.modifiers, Modifiers::control_shift());
-        assert_eq!(keystroke.key, "4");
-        assert_eq!(keystroke.key_char, None);
-
-        let keystroke = keystroke.into_shifted();
-        assert_eq!(keystroke.modifiers, Modifiers::control());
-        assert_eq!(keystroke.key, "$");
-        let keystroke_display = KeybindingKeystroke::new(keystroke.clone());
-        assert_eq!(
-            keystroke_display.inner,
-            Keystroke {
-                modifiers: Modifiers::control(),
-                key: "$".to_string(),
-                key_char: None
-            }
-        );
-        assert_eq!(keystroke_display.key, "4");
-        assert_eq!(keystroke_display.modifiers, Modifiers::control_shift());
-    }
 }

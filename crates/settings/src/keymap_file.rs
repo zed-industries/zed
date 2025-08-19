@@ -279,6 +279,7 @@ impl KeymapFile {
                         keystrokes,
                         action,
                         context_predicate.clone(),
+                        *use_key_equivalents,
                         key_equivalents,
                         cx,
                     );
@@ -337,6 +338,7 @@ impl KeymapFile {
         keystrokes: &str,
         action: &KeymapAction,
         context: Option<Rc<KeyBindingContextPredicate>>,
+        use_key_equivalents: bool,
         key_equivalents: Option<&HashMap<char, char>>,
         cx: &App,
     ) -> std::result::Result<KeyBinding, String> {
@@ -405,8 +407,10 @@ impl KeymapFile {
             keystrokes,
             action,
             context,
+            use_key_equivalents,
             key_equivalents,
             action_input_string.map(SharedString::from),
+            cx.keyboard_mapper(),
         ) {
             Ok(key_binding) => key_binding,
             Err(InvalidKeystrokeError { keystroke }) => {
@@ -1021,7 +1025,7 @@ impl From<KeybindSource> for KeyBindingMetaIndex {
 
 #[cfg(test)]
 mod tests {
-    use gpui::{KeybindingKeystroke, Keystroke};
+    use gpui::{DummyKeyboardMapper, KeybindingKeystroke, Keystroke};
     use unindent::Unindent;
 
     use crate::{
@@ -1059,7 +1063,13 @@ mod tests {
     fn parse_keystrokes(keystrokes: &str) -> Vec<KeybindingKeystroke> {
         keystrokes
             .split(' ')
-            .map(|s| KeybindingKeystroke::new(Keystroke::parse(s).expect("Keystrokes valid")))
+            .map(|s| {
+                KeybindingKeystroke::new(
+                    Keystroke::parse(s).expect("Keystrokes valid"),
+                    false,
+                    &DummyKeyboardMapper,
+                )
+            })
             .collect()
     }
 

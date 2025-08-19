@@ -1,4 +1,5 @@
 use anyhow::Result;
+use collections::HashMap;
 use windows::Win32::UI::{
     Input::KeyboardAndMouse::{
         GetKeyboardLayoutNameW, MAPVK_VK_TO_CHAR, MAPVK_VK_TO_VSC, MapVirtualKeyW, ToUnicode,
@@ -19,7 +20,11 @@ pub(crate) struct WindowsKeyboardLayout {
     name: String,
 }
 
-pub(crate) struct WindowsKeyboardMapper;
+pub(crate) struct WindowsKeyboardMapper {
+    key_to_vkey: HashMap<String, (u16, bool)>,
+    vkey_to_key: HashMap<u16, String>,
+    vkey_to_shifted: HashMap<u16, String>,
+}
 
 impl PlatformKeyboardLayout for WindowsKeyboardLayout {
     fn id(&self) -> &str {
@@ -32,9 +37,14 @@ impl PlatformKeyboardLayout for WindowsKeyboardLayout {
 }
 
 impl PlatformKeyboardMapper for WindowsKeyboardMapper {
-    fn map_key_equivalent(&self, mut keystroke: Keystroke) -> KeybindingKeystroke {
-        let Some((vkey, shifted_key)) = key_needs_processing(&keystroke.key) else {
-            return KeybindingKeystroke::new(keystroke);
+    fn map_key_equivalent(
+        &self,
+        mut keystroke: Keystroke,
+        use_key_equivalents: bool,
+    ) -> KeybindingKeystroke {
+        let Some((vkey, shifted_key)) = self.get_vkey_from_key(&keystroke.key, use_key_equivalents)
+        else {
+            return KeybindingKeystroke::from_keystroke(keystroke);
         };
         if shifted_key && keystroke.modifiers.shift {
             log::warn!(
@@ -46,31 +56,22 @@ impl PlatformKeyboardMapper for WindowsKeyboardMapper {
         let shift = shifted_key || keystroke.modifiers.shift;
         keystroke.modifiers.shift = false;
 
-        let Some(key) = get_key_from_vkey(vkey) else {
+        let Some(key) = self.vkey_to_key.get(&vkey).cloned() else {
             log::error!(
                 "Failed to map key equivalent '{:?}' to a valid key",
                 keystroke
             );
-            return KeybindingKeystroke::new(keystroke);
+            return KeybindingKeystroke::from_keystroke(keystroke);
         };
 
         keystroke.key = if shift {
-            let scan_code = unsafe { MapVirtualKeyW(vkey.0 as u32, MAPVK_VK_TO_VSC) };
-            if scan_code == 0 {
-                log::error!(
-                    "Failed to map keystroke {:?} with virtual key '{:?}' to a scan code",
-                    keystroke,
-                    vkey
-                );
-                return KeybindingKeystroke::new(keystroke);
-            }
-            let Some(shifted_key) = get_shifted_key(vkey, scan_code) else {
+            let Some(shifted_key) = self.vkey_to_shifted.get(&vkey).cloned() else {
                 log::error!(
                     "Failed to map keystroke {:?} with virtual key '{:?}' to a shifted key",
                     keystroke,
                     vkey
                 );
-                return KeybindingKeystroke::new(keystroke);
+                return KeybindingKeystroke::from_keystroke(keystroke);
             };
             shifted_key
         } else {
@@ -113,7 +114,36 @@ impl WindowsKeyboardLayout {
 
 impl WindowsKeyboardMapper {
     pub(crate) fn new() -> Self {
-        Self
+        let mut key_to_vkey = HashMap::default();
+        let mut vkey_to_key = HashMap::default();
+        let mut vkey_to_shifted = HashMap::default();
+        for vkey in CANDIDATE_VKEYS {
+            if let Some(key) = get_key_from_vkey(*vkey) {
+                key_to_vkey.insert(key.clone(), (vkey.0, false));
+                vkey_to_key.insert(vkey.0, key);
+            }
+            let scan_code = unsafe { MapVirtualKeyW(vkey.0 as u32, MAPVK_VK_TO_VSC) };
+            if scan_code == 0 {
+                continue;
+            }
+            if let Some(shifted_key) = get_shifted_key(*vkey, scan_code) {
+                key_to_vkey.insert(shifted_key.clone(), (vkey.0, true));
+                vkey_to_shifted.insert(vkey.0, shifted_key);
+            }
+        }
+        Self {
+            key_to_vkey,
+            vkey_to_key,
+            vkey_to_shifted,
+        }
+    }
+
+    fn get_vkey_from_key(&self, key: &str, use_key_equivalents: bool) -> Option<(u16, bool)> {
+        if use_key_equivalents {
+            key_needs_processing(key)
+        } else {
+            self.key_to_vkey.get(key).cloned()
+        }
     }
 }
 
@@ -210,53 +240,80 @@ pub(crate) fn generate_key_char(
     }
 }
 
-fn key_needs_processing(key: &str) -> Option<(VIRTUAL_KEY, bool)> {
+fn key_needs_processing(key: &str) -> Option<(u16, bool)> {
     match key {
-        "`" => Some((VK_OEM_3, false)),
-        "~" => Some((VK_OEM_3, true)),
-        "1" => Some((VK_1, false)),
-        "!" => Some((VK_1, true)),
-        "2" => Some((VK_2, false)),
-        "@" => Some((VK_2, true)),
-        "3" => Some((VK_3, false)),
-        "#" => Some((VK_3, true)),
-        "4" => Some((VK_4, false)),
-        "$" => Some((VK_4, true)),
-        "5" => Some((VK_5, false)),
-        "%" => Some((VK_5, true)),
-        "6" => Some((VK_6, false)),
-        "^" => Some((VK_6, true)),
-        "7" => Some((VK_7, false)),
-        "&" => Some((VK_7, true)),
-        "8" => Some((VK_8, false)),
-        "*" => Some((VK_8, true)),
-        "9" => Some((VK_9, false)),
-        "(" => Some((VK_9, true)),
-        "0" => Some((VK_0, false)),
-        ")" => Some((VK_0, true)),
-        "-" => Some((VK_OEM_MINUS, false)),
-        "_" => Some((VK_OEM_MINUS, true)),
-        "=" => Some((VK_OEM_PLUS, false)),
-        "+" => Some((VK_OEM_PLUS, true)),
-        "[" => Some((VK_OEM_4, false)),
-        "{" => Some((VK_OEM_4, true)),
-        "]" => Some((VK_OEM_6, false)),
-        "}" => Some((VK_OEM_6, true)),
-        "\\" => Some((VK_OEM_5, false)),
-        "|" => Some((VK_OEM_5, true)),
-        ";" => Some((VK_OEM_1, false)),
-        ":" => Some((VK_OEM_1, true)),
-        "'" => Some((VK_OEM_7, false)),
-        "\"" => Some((VK_OEM_7, true)),
-        "," => Some((VK_OEM_COMMA, false)),
-        "<" => Some((VK_OEM_COMMA, true)),
-        "." => Some((VK_OEM_PERIOD, false)),
-        ">" => Some((VK_OEM_PERIOD, true)),
-        "/" => Some((VK_OEM_2, false)),
-        "?" => Some((VK_OEM_2, true)),
+        "`" => Some((VK_OEM_3.0, false)),
+        "~" => Some((VK_OEM_3.0, true)),
+        "1" => Some((VK_1.0, false)),
+        "!" => Some((VK_1.0, true)),
+        "2" => Some((VK_2.0, false)),
+        "@" => Some((VK_2.0, true)),
+        "3" => Some((VK_3.0, false)),
+        "#" => Some((VK_3.0, true)),
+        "4" => Some((VK_4.0, false)),
+        "$" => Some((VK_4.0, true)),
+        "5" => Some((VK_5.0, false)),
+        "%" => Some((VK_5.0, true)),
+        "6" => Some((VK_6.0, false)),
+        "^" => Some((VK_6.0, true)),
+        "7" => Some((VK_7.0, false)),
+        "&" => Some((VK_7.0, true)),
+        "8" => Some((VK_8.0, false)),
+        "*" => Some((VK_8.0, true)),
+        "9" => Some((VK_9.0, false)),
+        "(" => Some((VK_9.0, true)),
+        "0" => Some((VK_0.0, false)),
+        ")" => Some((VK_0.0, true)),
+        "-" => Some((VK_OEM_MINUS.0, false)),
+        "_" => Some((VK_OEM_MINUS.0, true)),
+        "=" => Some((VK_OEM_PLUS.0, false)),
+        "+" => Some((VK_OEM_PLUS.0, true)),
+        "[" => Some((VK_OEM_4.0, false)),
+        "{" => Some((VK_OEM_4.0, true)),
+        "]" => Some((VK_OEM_6.0, false)),
+        "}" => Some((VK_OEM_6.0, true)),
+        "\\" => Some((VK_OEM_5.0, false)),
+        "|" => Some((VK_OEM_5.0, true)),
+        ";" => Some((VK_OEM_1.0, false)),
+        ":" => Some((VK_OEM_1.0, true)),
+        "'" => Some((VK_OEM_7.0, false)),
+        "\"" => Some((VK_OEM_7.0, true)),
+        "," => Some((VK_OEM_COMMA.0, false)),
+        "<" => Some((VK_OEM_COMMA.0, true)),
+        "." => Some((VK_OEM_PERIOD.0, false)),
+        ">" => Some((VK_OEM_PERIOD.0, true)),
+        "/" => Some((VK_OEM_2.0, false)),
+        "?" => Some((VK_OEM_2.0, true)),
         _ => None,
     }
 }
+
+const CANDIDATE_VKEYS: &[VIRTUAL_KEY] = &[
+    VK_OEM_3,
+    VK_OEM_MINUS,
+    VK_OEM_PLUS,
+    VK_OEM_4,
+    VK_OEM_5,
+    VK_OEM_6,
+    VK_OEM_1,
+    VK_OEM_7,
+    VK_OEM_COMMA,
+    VK_OEM_PERIOD,
+    VK_OEM_2,
+    VK_OEM_102,
+    VK_OEM_8,
+    VK_ABNT_C1,
+    VK_0,
+    VK_1,
+    VK_2,
+    VK_3,
+    VK_4,
+    VK_5,
+    VK_6,
+    VK_7,
+    VK_8,
+    VK_9,
+];
 
 #[cfg(test)]
 mod tests {
@@ -272,7 +329,7 @@ mod tests {
             key: "a".to_string(),
             key_char: None,
         };
-        let mapped = mapper.map_key_equivalent(keystroke.clone());
+        let mapped = mapper.map_key_equivalent(keystroke.clone(), true);
         assert_eq!(mapped.inner, keystroke);
         assert_eq!(mapped.key, "a");
         assert_eq!(mapped.modifiers, Modifiers::control());
@@ -283,7 +340,7 @@ mod tests {
             key: "$".to_string(),
             key_char: None,
         };
-        let mapped = mapper.map_key_equivalent(keystroke.clone());
+        let mapped = mapper.map_key_equivalent(keystroke.clone(), true);
         assert_eq!(mapped.inner, keystroke);
         assert_eq!(mapped.key, "4");
         assert_eq!(mapped.modifiers, Modifiers::control_shift());
@@ -294,7 +351,7 @@ mod tests {
             key: "$".to_string(),
             key_char: None,
         };
-        let mapped = mapper.map_key_equivalent(keystroke.clone());
+        let mapped = mapper.map_key_equivalent(keystroke.clone(), true);
         assert_eq!(mapped.inner.modifiers, Modifiers::control());
         assert_eq!(mapped.key, "4");
         assert_eq!(mapped.modifiers, Modifiers::control_shift());
@@ -305,7 +362,7 @@ mod tests {
             key: "4".to_string(),
             key_char: None,
         };
-        let mapped = mapper.map_key_equivalent(keystroke.clone());
+        let mapped = mapper.map_key_equivalent(keystroke.clone(), true);
         assert_eq!(mapped.inner.modifiers, Modifiers::control());
         assert_eq!(mapped.inner.key, "$");
         assert_eq!(mapped.key, "4");

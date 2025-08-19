@@ -3,8 +3,8 @@ use std::rc::Rc;
 use collections::HashMap;
 
 use crate::{
-    Action, AsKeystroke, InvalidKeystrokeError, KeyBindingContextPredicate, KeybindingKeystroke,
-    Keystroke, SharedString,
+    Action, AsKeystroke, DummyKeyboardMapper, InvalidKeystrokeError, KeyBindingContextPredicate,
+    KeybindingKeystroke, Keystroke, PlatformKeyboardMapper, SharedString,
 };
 use smallvec::SmallVec;
 
@@ -35,7 +35,16 @@ impl KeyBinding {
     pub fn new<A: Action>(keystrokes: &str, action: A, context: Option<&str>) -> Self {
         let context_predicate =
             context.map(|context| KeyBindingContextPredicate::parse(context).unwrap().into());
-        Self::load(keystrokes, Box::new(action), context_predicate, None, None).unwrap()
+        Self::load(
+            keystrokes,
+            Box::new(action),
+            context_predicate,
+            false,
+            None,
+            None,
+            &DummyKeyboardMapper,
+        )
+        .unwrap()
     }
 
     /// Load a keybinding from the given raw data.
@@ -43,12 +52,14 @@ impl KeyBinding {
         keystrokes: &str,
         action: Box<dyn Action>,
         context_predicate: Option<Rc<KeyBindingContextPredicate>>,
+        use_key_equivalents: bool,
         key_equivalents: Option<&HashMap<char, char>>,
         action_input: Option<SharedString>,
+        keyboard_mapper: &dyn PlatformKeyboardMapper,
     ) -> std::result::Result<Self, InvalidKeystrokeError> {
         let mut keystrokes: SmallVec<[Keystroke; 2]> = keystrokes
             .split_whitespace()
-            .map(|source| Keystroke::parse(source).map(|keystroke| keystroke.into_shifted()))
+            .map(Keystroke::parse)
             .collect::<std::result::Result<_, _>>()?;
 
         if let Some(equivalents) = key_equivalents {
@@ -63,7 +74,9 @@ impl KeyBinding {
 
         let keystrokes = keystrokes
             .into_iter()
-            .map(KeybindingKeystroke::new)
+            .map(|keystroke| {
+                KeybindingKeystroke::new(keystroke, use_key_equivalents, keyboard_mapper)
+            })
             .collect();
 
         Ok(Self {
