@@ -401,8 +401,7 @@ impl PickerDelegate for StashListDelegate {
             Self::format_message(entry_match.entry.index, &entry_match.entry.message);
         let mut positions = entry_match.positions.clone();
 
-        let max_width = self.max_width.to_pixels(window.rem_size());
-        let normal_em = {
+        let max_chars_msg = {
             let style = window.text_style();
             let font_id = window.text_system().resolve_font(&style.font());
             let font_size = ui::TextSize::Default.rems(cx).to_pixels(window.rem_size());
@@ -410,34 +409,31 @@ impl PickerDelegate for StashListDelegate {
                 .text_system()
                 .em_width(font_id, font_size)
                 .unwrap_or(px(16.));
-            normal
+            let max_width = (self.max_width - rems(2.)).to_pixels(window.rem_size());
+            (max_width / normal) as usize
         };
-
-        let max_chars = ((max_width * 0.9) / normal_em) as usize;
-
-        if stash_message.len() > max_chars && max_chars > 1 {
-            let mut index = max_chars - 1;
-            while !stash_message.is_char_boundary(index) && index != 0 {
-                index -= 1;
-            }
-            stash_message.truncate(index);
-            stash_message.push_str("…");
-            positions.retain(|&pos| pos < index);
+        if max_chars_msg > 5 {
+            stash_message = util::truncate_and_trailoff(&stash_message, max_chars_msg);
+            positions.retain(|&pos| pos < max_chars_msg);
         }
+        let stash_label = HighlightedLabel::new(stash_message, positions).into_any_element();
 
-        let stash_name = HighlightedLabel::new(stash_message, positions).into_any_element();
-
+        let max_chars_branch = {
+            let style = window.text_style();
+            let font_id = window.text_system().resolve_font(&style.font());
+            let font_size = ui::TextSize::Small.rems(cx).to_pixels(window.rem_size());
+            let small = cx
+                .text_system()
+                .em_width(font_id, font_size)
+                .unwrap_or(px(10.));
+            let max_width =
+                (self.max_width - rems(3.) - IconSize::Small.rems()).to_pixels(window.rem_size());
+            (max_width / small) as usize
+        };
         let mut branch_name = entry_match.entry.branch.clone().unwrap_or_default();
-        let max_branch_chars = ((max_width * 0.9) / normal_em) as usize;
-        if branch_name.len() > max_branch_chars && max_branch_chars > 1 {
-            let mut index = max_branch_chars - 1;
-            while !branch_name.is_char_boundary(index) && index != 0 {
-                index -= 1;
-            }
-            branch_name.truncate(index);
-            branch_name.push_str("…");
+        if max_chars_branch > 5 {
+            branch_name = util::truncate_and_trailoff(&branch_name, max_chars_branch);
         }
-
         let branch_label = h_flex()
             .gap_1()
             .child(
@@ -445,7 +441,11 @@ impl PickerDelegate for StashListDelegate {
                     .color(Color::Muted)
                     .size(IconSize::Small),
             )
-            .child(Label::new(branch_name).color(Color::Muted));
+            .child(
+                Label::new(branch_name)
+                    .color(Color::Muted)
+                    .size(LabelSize::Small),
+            );
 
         let tooltip_text = format!(
             "stash@{{{}}} created {}",
@@ -459,7 +459,7 @@ impl PickerDelegate for StashListDelegate {
                 .toggle_state(selected)
                 .child(
                     v_flex()
-                        .child(stash_name)
+                        .child(stash_label)
                         .child(branch_label.into_element()),
                 )
                 .tooltip(Tooltip::text(tooltip_text)),
