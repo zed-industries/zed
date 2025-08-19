@@ -399,7 +399,6 @@ impl Server {
             .add_request_handler(forward_mutating_project_request::<proto::OnTypeFormatting>)
             .add_request_handler(forward_mutating_project_request::<proto::SaveBuffer>)
             .add_request_handler(forward_mutating_project_request::<proto::BlameBuffer>)
-            // TODO kb add the same for the headless part
             // TODO kb tidy up the proto types
             // TODO kb return back the multi lsp handler so that it's compatible with the Preview
             .add_request_handler(lsp_query)

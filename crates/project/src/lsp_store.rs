@@ -7998,7 +7998,7 @@ impl LspStore {
     async fn handle_lsp_query(
         lsp_store: Entity<Self>,
         envelope: TypedEnvelope<proto::LspQuery>,
-        cx: AsyncApp,
+        mut cx: AsyncApp,
     ) -> Result<proto::Ack> {
         use proto::lsp_query::Request;
         let sender_id = envelope.original_sender_id().unwrap_or_default();
@@ -8007,7 +8007,7 @@ impl LspStore {
         match lsp_query.request.context("invalid LSP query request")? {
             Request::GetReferences(get_references) => {
                 let position = get_references.position.clone().and_then(deserialize_anchor);
-                Self::query_lsp::<GetReferences>(
+                Self::query_lsp_locally::<GetReferences>(
                     lsp_store,
                     sender_id,
                     lsp_request_id,
@@ -8018,7 +8018,7 @@ impl LspStore {
                 .await?;
             }
             Request::GetDocumentColor(get_document_color) => {
-                Self::query_lsp::<GetDocumentColor>(
+                Self::query_lsp_locally::<GetDocumentColor>(
                     lsp_store,
                     sender_id,
                     lsp_request_id,
@@ -8030,7 +8030,7 @@ impl LspStore {
             }
             Request::GetHover(get_hover) => {
                 let position = get_hover.position.clone().and_then(deserialize_anchor);
-                Self::query_lsp::<GetHover>(
+                Self::query_lsp_locally::<GetHover>(
                     lsp_store,
                     sender_id,
                     lsp_request_id,
@@ -8041,7 +8041,7 @@ impl LspStore {
                 .await?;
             }
             Request::GetCodeActions(get_code_actions) => {
-                Self::query_lsp::<GetCodeActions>(
+                Self::query_lsp_locally::<GetCodeActions>(
                     lsp_store,
                     sender_id,
                     lsp_request_id,
@@ -8056,7 +8056,7 @@ impl LspStore {
                     .position
                     .clone()
                     .and_then(deserialize_anchor);
-                Self::query_lsp::<GetSignatureHelp>(
+                Self::query_lsp_locally::<GetSignatureHelp>(
                     lsp_store,
                     sender_id,
                     lsp_request_id,
@@ -8067,7 +8067,7 @@ impl LspStore {
                 .await?;
             }
             Request::GetCodeLens(get_code_lens) => {
-                Self::query_lsp::<GetCodeLens>(
+                Self::query_lsp_locally::<GetCodeLens>(
                     lsp_store,
                     sender_id,
                     lsp_request_id,
@@ -8077,20 +8077,9 @@ impl LspStore {
                 )
                 .await?;
             }
-            Request::GetDocumentDiagnostics(get_document_diagnostics) => {
-                Self::query_lsp::<GetDocumentDiagnostics>(
-                    lsp_store,
-                    sender_id,
-                    lsp_request_id,
-                    get_document_diagnostics,
-                    None,
-                    cx.clone(),
-                )
-                .await?;
-            }
             Request::GetDefinition(get_definition) => {
                 let position = get_definition.position.clone().and_then(deserialize_anchor);
-                Self::query_lsp::<GetDefinitions>(
+                Self::query_lsp_locally::<GetDefinitions>(
                     lsp_store,
                     sender_id,
                     lsp_request_id,
@@ -8105,7 +8094,7 @@ impl LspStore {
                     .position
                     .clone()
                     .and_then(deserialize_anchor);
-                Self::query_lsp::<GetDeclarations>(
+                Self::query_lsp_locally::<GetDeclarations>(
                     lsp_store,
                     sender_id,
                     lsp_request_id,
@@ -8120,7 +8109,7 @@ impl LspStore {
                     .position
                     .clone()
                     .and_then(deserialize_anchor);
-                Self::query_lsp::<GetTypeDefinitions>(
+                Self::query_lsp_locally::<GetTypeDefinitions>(
                     lsp_store,
                     sender_id,
                     lsp_request_id,
@@ -8135,7 +8124,7 @@ impl LspStore {
                     .position
                     .clone()
                     .and_then(deserialize_anchor);
-                Self::query_lsp::<GetImplementations>(
+                Self::query_lsp_locally::<GetImplementations>(
                     lsp_store,
                     sender_id,
                     lsp_request_id,
@@ -8144,6 +8133,46 @@ impl LspStore {
                     cx.clone(),
                 )
                 .await?;
+            }
+            // Diagnostics pull synchronizes internally via the buffer state, and cannot be handled generically as the other requests.
+            Request::GetDocumentDiagnostics(get_document_diagnostics) => {
+                let buffer_id = BufferId::new(get_document_diagnostics.buffer_id())?;
+                let version = deserialize_version(get_document_diagnostics.version());
+                let buffer = lsp_store.update(&mut cx, |this, cx| {
+                    this.buffer_store.read(cx).get_existing(buffer_id)
+                })??;
+                buffer
+                    .update(&mut cx, |buffer, _| {
+                        buffer.wait_for_version(version.clone())
+                    })?
+                    .await?;
+                lsp_store.update(&mut cx, |lsp_store, cx| {
+                    let existing_queries = lsp_store
+                        .running_lsp_requests
+                        .entry(TypeId::of::<GetDocumentDiagnostics>())
+                        .or_default();
+                    if <GetDocumentDiagnostics as LspCommand>::ProtoRequest::stop_previous_requests(
+                    ) || buffer.read(cx).version.changed_since(&existing_queries.0)
+                    {
+                        existing_queries.1.clear();
+                    }
+                    existing_queries.1.insert(
+                        lsp_request_id,
+                        cx.spawn(async move |lsp_store, cx| {
+                            let diagnostics_pull = lsp_store
+                                .update(cx, |lsp_store, cx| {
+                                    lsp_store.pull_diagnostics_for_buffer(buffer, cx)
+                                })
+                                .ok();
+                            if let Some(diagnostics_pull) = diagnostics_pull {
+                                match diagnostics_pull.await {
+                                    Ok(()) => {}
+                                    Err(e) => log::error!("Failed to pull diagnostics: {e:#}"),
+                                };
+                            }
+                        }),
+                    );
+                })?;
             }
         }
         Ok(proto::Ack {})
@@ -12037,7 +12066,7 @@ impl LspStore {
         Ok(())
     }
 
-    async fn query_lsp<T>(
+    async fn query_lsp_locally<T>(
         lsp_store: Entity<Self>,
         sender_id: proto::PeerId,
         lsp_request_id: LspRequestId,
