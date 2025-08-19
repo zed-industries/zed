@@ -921,7 +921,9 @@ impl EditorElement {
                 clippy::collapsible_if,
                 reason = "The cfg-block below makes this a false positive"
             )]
-            if !text_hitbox.is_hovered(window) || editor.read_only(cx) {}
+            if !text_hitbox.is_hovered(window) || editor.read_only(cx) {
+                return;
+            }
 
             #[cfg(any(target_os = "linux", target_os = "freebsd"))]
             if EditorSettings::get_global(cx).middle_click_paste {
