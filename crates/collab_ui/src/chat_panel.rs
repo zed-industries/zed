@@ -890,7 +890,7 @@ impl ChatPanel {
                         this.highlighted_message = Some((highlight_message_id, task));
                     }
 
-                    if this.active_chat.as_ref().map_or(false, |(c, _)| *c == chat) {
+                    if this.active_chat.as_ref().is_some_and(|(c, _)| *c == chat) {
                         this.message_list.scroll_to(ListOffset {
                             item_ix,
                             offset_in_item: px(0.0),
@@ -1186,7 +1186,7 @@ impl Panel for ChatPanel {
                 let is_in_call = ActiveCall::global(cx)
                     .read(cx)
                     .room()
-                    .map_or(false, |room| room.read(cx).contains_guests());
+                    .is_some_and(|room| room.read(cx).contains_guests());
 
                 self.active || is_in_call
             }

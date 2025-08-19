@@ -89,7 +89,7 @@ impl Editor {
                     .lsp_task_source()?;
                 if lsp_settings
                     .get(&lsp_tasks_source)
-                    .map_or(true, |s| s.enable_lsp_tasks)
+                    .is_none_or(|s| s.enable_lsp_tasks)
                 {
                     let buffer_id = buffer.read(cx).remote_id();
                     Some((lsp_tasks_source, buffer_id))

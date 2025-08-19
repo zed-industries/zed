@@ -1429,7 +1429,7 @@ impl SelectionHistory {
         if self
             .undo_stack
             .back()
-            .map_or(true, |e| e.selections != entry.selections)
+            .is_none_or(|e| e.selections != entry.selections)
         {
             self.undo_stack.push_back(entry);
             if self.undo_stack.len() > MAX_SELECTION_HISTORY_LEN {
@@ -1442,7 +1442,7 @@ impl SelectionHistory {
         if self
             .redo_stack
             .back()
-            .map_or(true, |e| e.selections != entry.selections)
+            .is_none_or(|e| e.selections != entry.selections)
         {
             self.redo_stack.push_back(entry);
             if self.redo_stack.len() > MAX_SELECTION_HISTORY_LEN {
@@ -2512,9 +2512,7 @@ impl Editor {
             .context_menu
             .borrow()
             .as_ref()
-            .map_or(false, |context| {
-                matches!(context, CodeContextMenu::Completions(_))
-            });
+            .is_some_and(|context| matches!(context, CodeContextMenu::Completions(_)));
 
         showing_completions
             || self.edit_prediction_requires_modifier()
@@ -2545,7 +2543,7 @@ impl Editor {
                 || binding
                     .keystrokes()
                     .first()
-                    .map_or(false, |keystroke| keystroke.modifiers.modified())
+                    .is_some_and(|keystroke| keystroke.modifiers.modified())
         }))
     }
 
@@ -2941,7 +2939,7 @@ impl Editor {
             return false;
         };
 
-        scope.override_name().map_or(false, |scope_name| {
+        scope.override_name().is_some_and(|scope_name| {
             settings
                 .edit_predictions_disabled_in
                 .iter()
@@ -4033,18 +4031,18 @@ impl Editor {
                             let following_text_allows_autoclose = snapshot
                                 .chars_at(selection.start)
                                 .next()
-                                .map_or(true, |c| scope.should_autoclose_before(c));
+                                .is_none_or(|c| scope.should_autoclose_before(c));
 
                             let preceding_text_allows_autoclose = selection.start.column == 0
-                                || snapshot.reversed_chars_at(selection.start).next().map_or(
-                                    true,
-                                    |c| {
+                                || snapshot
+                                    .reversed_chars_at(selection.start)
+                                    .next()
+                                    .is_none_or(|c| {
                                         bracket_pair.start != bracket_pair.end
                                             || !snapshot
                                                 .char_classifier_at(selection.start)
                                                 .is_word(c)
-                                    },
-                                );
+                                    });
 
                             let is_closing_quote = if bracket_pair.end == bracket_pair.start
                                 && bracket_pair.start.len() == 1
@@ -4185,7 +4183,7 @@ impl Editor {
             if !self.linked_edit_ranges.is_empty() {
                 let start_anchor = snapshot.anchor_before(selection.start);
 
-                let is_word_char = text.chars().next().map_or(true, |char| {
+                let is_word_char = text.chars().next().is_none_or(|char| {
                     let classifier = snapshot
                         .char_classifier_at(start_anchor.to_offset(&snapshot))
                         .ignore_punctuation(true);
@@ -5427,11 +5425,11 @@ impl Editor {
 
         let sort_completions = provider
             .as_ref()
-            .map_or(false, |provider| provider.sort_completions());
+            .is_some_and(|provider| provider.sort_completions());
 
         let filter_completions = provider
             .as_ref()
-            .map_or(true, |provider| provider.filter_completions());
+            .is_none_or(|provider| provider.filter_completions());
 
         let trigger_kind = match trigger {
             Some(trigger) if buffer.read(cx).completion_triggers().contains(trigger) => {
@@ -5537,7 +5535,7 @@ impl Editor {
 
         let skip_digits = query
             .as_ref()
-            .map_or(true, |query| !query.chars().any(|c| c.is_digit(10)));
+            .is_none_or(|query| !query.chars().any(|c| c.is_digit(10)));
 
         let (mut words, provider_responses) = match &provider {
             Some(provider) => {
@@ -5971,7 +5969,7 @@ impl Editor {
         let show_new_completions_on_confirm = completion
             .confirm
             .as_ref()
-            .map_or(false, |confirm| confirm(intent, window, cx));
+            .is_some_and(|confirm| confirm(intent, window, cx));
         if show_new_completions_on_confirm {
             self.show_completions(&ShowCompletions { trigger: None }, window, cx);
         }
@@ -6103,10 +6101,10 @@ impl Editor {
             let spawn_straight_away = quick_launch
                 && resolved_tasks
                     .as_ref()
-                    .map_or(false, |tasks| tasks.templates.len() == 1)
+                    .is_some_and(|tasks| tasks.templates.len() == 1)
                 && code_actions
                     .as_ref()
-                    .map_or(true, |actions| actions.is_empty())
+                    .is_none_or(|actions| actions.is_empty())
                 && debug_scenarios.is_empty();
 
             editor.update_in(cx, |editor, window, cx| {
@@ -6720,9 +6718,9 @@ impl Editor {
 
                     let buffer_id = cursor_position.buffer_id;
                     let buffer = this.buffer.read(cx);
-                    if !buffer
+                    if buffer
                         .text_anchor_for_position(cursor_position, cx)
-                        .map_or(false, |(buffer, _)| buffer == cursor_buffer)
+                        .is_none_or(|(buffer, _)| buffer != cursor_buffer)
                     {
                         return;
                     }
@@ -6972,9 +6970,7 @@ impl Editor {
             || self
                 .quick_selection_highlight_task
                 .as_ref()
-                .map_or(true, |(prev_anchor_range, _)| {
-                    prev_anchor_range != &query_range
-                })
+                .is_none_or(|(prev_anchor_range, _)| prev_anchor_range != &query_range)
         {
             let multi_buffer_visible_start = self
                 .scroll_manager
@@ -7003,9 +6999,7 @@ impl Editor {
             || self
                 .debounced_selection_highlight_task
                 .as_ref()
-                .map_or(true, |(prev_anchor_range, _)| {
-                    prev_anchor_range != &query_range
-                })
+                .is_none_or(|(prev_anchor_range, _)| prev_anchor_range != &query_range)
         {
             let multi_buffer_start = multi_buffer_snapshot
                 .anchor_before(0)
@@ -7140,9 +7134,7 @@ impl Editor {
             && self
                 .edit_prediction_provider
                 .as_ref()
-                .map_or(false, |provider| {
-                    provider.provider.show_completions_in_menu()
-                });
+                .is_some_and(|provider| provider.provider.show_completions_in_menu());
 
         let preview_requires_modifier =
             all_language_settings(file, cx).edit_predictions_mode() == EditPredictionsMode::Subtle;
@@ -7726,7 +7718,7 @@ impl Editor {
             || self
                 .active_edit_prediction
                 .as_ref()
-                .map_or(false, |completion| {
+                .is_some_and(|completion| {
                     let invalidation_range = completion.invalidation_range.to_offset(&multibuffer);
                     let invalidation_range = invalidation_range.start..=invalidation_range.end;
                     !invalidation_range.contains(&offset_selection.head())
@@ -8427,7 +8419,7 @@ impl Editor {
                 .context_menu
                 .borrow()
                 .as_ref()
-                .map_or(false, |menu| menu.visible())
+                .is_some_and(|menu| menu.visible())
     }
 
     pub fn context_menu_origin(&self) -> Option<ContextMenuOrigin> {
@@ -8973,9 +8965,8 @@ impl Editor {
                     let end_row = start_row + line_count as u32;
                     visible_row_range.contains(&start_row)
                         && visible_row_range.contains(&end_row)
-                        && cursor_row.map_or(true, |cursor_row| {
-                            !((start_row..end_row).contains(&cursor_row))
-                        })
+                        && cursor_row
+                            .is_none_or(|cursor_row| !((start_row..end_row).contains(&cursor_row)))
                 })?;
 
             content_origin
@@ -9585,7 +9576,7 @@ impl Editor {
                 .tabstops
                 .iter()
                 .map(|tabstop| {
-                    let is_end_tabstop = tabstop.ranges.first().map_or(false, |tabstop| {
+                    let is_end_tabstop = tabstop.ranges.first().is_some_and(|tabstop| {
                         tabstop.is_empty() && tabstop.start == snippet.text.len() as isize
                     });
                     let mut tabstop_ranges = tabstop
@@ -11716,7 +11707,7 @@ impl Editor {
                     let transpose_start = display_map
                         .buffer_snapshot
                         .clip_offset(transpose_offset.saturating_sub(1), Bias::Left);
-                    if edits.last().map_or(true, |e| e.0.end <= transpose_start) {
+                    if edits.last().is_none_or(|e| e.0.end <= transpose_start) {
                         let transpose_end = display_map
                             .buffer_snapshot
                             .clip_offset(transpose_offset + 1, Bias::Right);
@@ -16229,23 +16220,21 @@ impl Editor {
 
         if split {
             workspace.split_item(SplitDirection::Right, item.clone(), window, cx);
-        } else {
-            if PreviewTabsSettings::get_global(cx).enable_preview_from_code_navigation {
-                let (preview_item_id, preview_item_idx) =
-                    workspace.active_pane().read_with(cx, |pane, _| {
-                        (pane.preview_item_id(), pane.preview_item_idx())
-                    });
+        } else if PreviewTabsSettings::get_global(cx).enable_preview_from_code_navigation {
+            let (preview_item_id, preview_item_idx) =
+                workspace.active_pane().read_with(cx, |pane, _| {
+                    (pane.preview_item_id(), pane.preview_item_idx())
+                });
 
-                workspace.add_item_to_active_pane(item.clone(), preview_item_idx, true, window, cx);
+            workspace.add_item_to_active_pane(item.clone(), preview_item_idx, true, window, cx);
 
-                if let Some(preview_item_id) = preview_item_id {
-                    workspace.active_pane().update(cx, |pane, cx| {
-                        pane.remove_item(preview_item_id, false, false, window, cx);
-                    });
-                }
-            } else {
-                workspace.add_item_to_active_pane(item.clone(), None, true, window, cx);
+            if let Some(preview_item_id) = preview_item_id {
+                workspace.active_pane().update(cx, |pane, cx| {
+                    pane.remove_item(preview_item_id, false, false, window, cx);
+                });
             }
+        } else {
+            workspace.add_item_to_active_pane(item.clone(), None, true, window, cx);
         }
         workspace.active_pane().update(cx, |pane, cx| {
             pane.set_preview_item_id(Some(item_id), cx);
@@ -19010,7 +18999,7 @@ impl Editor {
 
     fn has_blame_entries(&self, cx: &App) -> bool {
         self.blame()
-            .map_or(false, |blame| blame.read(cx).has_generated_entries())
+            .is_some_and(|blame| blame.read(cx).has_generated_entries())
     }
 
     fn newest_selection_head_on_empty_line(&self, cx: &App) -> bool {
@@ -19660,7 +19649,7 @@ impl Editor {
     pub fn has_background_highlights<T: 'static>(&self) -> bool {
         self.background_highlights
             .get(&HighlightKey::Type(TypeId::of::<T>()))
-            .map_or(false, |(_, highlights)| !highlights.is_empty())
+            .is_some_and(|(_, highlights)| !highlights.is_empty())
     }
 
     pub fn background_highlights_in_range(
@@ -20582,7 +20571,7 @@ impl Editor {
     // For now, don't allow opening excerpts in buffers that aren't backed by
     // regular project files.
     fn can_open_excerpts_in_file(file: Option<&Arc<dyn language::File>>) -> bool {
-        file.map_or(true, |file| project::File::from_dyn(Some(file)).is_some())
+        file.is_none_or(|file| project::File::from_dyn(Some(file)).is_some())
     }
 
     fn marked_text_ranges(&self, cx: &App) -> Option<Vec<Range<OffsetUtf16>>> {
@@ -21125,7 +21114,7 @@ impl Editor {
 
     pub fn has_visible_completions_menu(&self) -> bool {
         !self.edit_prediction_preview_is_active()
-            && self.context_menu.borrow().as_ref().map_or(false, |menu| {
+            && self.context_menu.borrow().as_ref().is_some_and(|menu| {
                 menu.visible() && matches!(menu, CodeContextMenu::Completions(_))
             })
     }
@@ -21548,9 +21537,9 @@ fn is_grapheme_whitespace(text: &str) -> bool {
 }
 
 fn should_stay_with_preceding_ideograph(text: &str) -> bool {
-    text.chars().next().map_or(false, |ch| {
-        matches!(ch, '。' | '、' | '，' | '？' | '！' | '：' | '；' | '…')
-    })
+    text.chars()
+        .next()
+        .is_some_and(|ch| matches!(ch, '。' | '、' | '，' | '？' | '！' | '：' | '；' | '…'))
 }
 
 #[derive(PartialEq, Eq, Debug, Clone, Copy)]
@@ -21589,11 +21578,11 @@ impl<'a> Iterator for WordBreakingTokenizer<'a> {
             } else {
                 let mut words = self.input[offset..].split_word_bound_indices().peekable();
                 let mut next_word_bound = words.peek().copied();
-                if next_word_bound.map_or(false, |(i, _)| i == 0) {
+                if next_word_bound.is_some_and(|(i, _)| i == 0) {
                     next_word_bound = words.next();
                 }
                 while let Some(grapheme) = iter.peek().copied() {
-                    if next_word_bound.map_or(false, |(i, _)| i == offset) {
+                    if next_word_bound.is_some_and(|(i, _)| i == offset) {
                         break;
                     };
                     if is_grapheme_whitespace(grapheme) != is_whitespace

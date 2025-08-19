@@ -1897,7 +1897,7 @@ impl Project {
             return true;
         }
 
-        return false;
+        false
     }
 
     pub fn ssh_connection_string(&self, cx: &App) -> Option<SharedString> {
@@ -1905,7 +1905,7 @@ impl Project {
             return Some(ssh_state.read(cx).connection_string().into());
         }
 
-        return None;
+        None
     }
 
     pub fn ssh_connection_state(&self, cx: &App) -> Option<remote::ConnectionState> {
@@ -4134,7 +4134,7 @@ impl Project {
                 }
             })
         } else {
-            return Task::ready(None);
+            Task::ready(None)
         }
     }
 
@@ -5187,7 +5187,7 @@ impl<'a> fuzzy::PathMatchCandidateSet<'a> for PathMatchCandidateSet {
     }
 
     fn prefix(&self) -> Arc<str> {
-        if self.snapshot.root_entry().map_or(false, |e| e.is_file()) {
+        if self.snapshot.root_entry().is_some_and(|e| e.is_file()) {
             self.snapshot.root_name().into()
         } else if self.include_root_name {
             format!("{}{}", self.snapshot.root_name(), std::path::MAIN_SEPARATOR).into()
@@ -5397,7 +5397,7 @@ impl Completion {
         self.source
             // `lsp::CompletionListItemDefaults` has `insert_text_format` field
             .lsp_completion(true)
-            .map_or(false, |lsp_completion| {
+            .is_some_and(|lsp_completion| {
                 lsp_completion.insert_text_format == Some(lsp::InsertTextFormat::SNIPPET)
             })
     }
@@ -5453,9 +5453,10 @@ fn provide_inline_values(
                     .collect::<String>();
                 let point = snapshot.offset_to_point(capture_range.end);
 
-                while scopes.last().map_or(false, |scope: &Range<_>| {
-                    !scope.contains(&capture_range.start)
-                }) {
+                while scopes
+                    .last()
+                    .is_some_and(|scope: &Range<_>| !scope.contains(&capture_range.start))
+                {
                     scopes.pop();
                 }
 
@@ -5465,7 +5466,7 @@ fn provide_inline_values(
 
                 let scope = if scopes
                     .last()
-                    .map_or(true, |scope| !scope.contains(&active_debug_line_offset))
+                    .is_none_or(|scope| !scope.contains(&active_debug_line_offset))
                 {
                     VariableScope::Global
                 } else {

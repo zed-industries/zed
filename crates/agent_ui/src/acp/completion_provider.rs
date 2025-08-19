@@ -797,7 +797,7 @@ impl MentionCompletion {
             && line
                 .chars()
                 .nth(last_mention_start - 1)
-                .map_or(false, |c| !c.is_whitespace())
+                .is_some_and(|c| !c.is_whitespace())
         {
             return None;
         }

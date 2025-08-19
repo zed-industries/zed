@@ -828,7 +828,7 @@ impl ToolchainLister for PythonToolchainProvider {
                         .get_env_var("CONDA_PREFIX".to_string())
                         .map(|conda_prefix| {
                             let is_match = |exe: &Option<PathBuf>| {
-                                exe.as_ref().map_or(false, |e| e.starts_with(&conda_prefix))
+                                exe.as_ref().is_some_and(|e| e.starts_with(&conda_prefix))
                             };
                             match (is_match(&lhs.executable), is_match(&rhs.executable)) {
                                 (true, false) => Ordering::Less,

@@ -99,7 +99,7 @@ impl Project {
             }
         }
 
-        return None;
+        None
     }
 
     pub fn create_terminal(
@@ -518,7 +518,7 @@ impl Project {
                 smol::block_on(fs.metadata(&bin_path))
                     .ok()
                     .flatten()
-                    .map_or(false, |meta| meta.is_dir)
+                    .is_some_and(|meta| meta.is_dir)
             })
     }
 

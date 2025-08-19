@@ -742,7 +742,7 @@ async fn expect_tool_call(events: &mut UnboundedReceiver<Result<ThreadEvent>>) -
         .expect("no tool call authorization event received")
         .unwrap();
     match event {
-        ThreadEvent::ToolCall(tool_call) => return tool_call,
+        ThreadEvent::ToolCall(tool_call) => tool_call,
         event => {
             panic!("Unexpected event {event:?}");
         }
@@ -758,9 +758,7 @@ async fn expect_tool_call_update_fields(
         .expect("no tool call authorization event received")
         .unwrap();
     match event {
-        ThreadEvent::ToolCallUpdate(acp_thread::ToolCallUpdate::UpdateFields(update)) => {
-            return update;
-        }
+        ThreadEvent::ToolCallUpdate(acp_thread::ToolCallUpdate::UpdateFields(update)) => update,
         event => {
             panic!("Unexpected event {event:?}");
         }

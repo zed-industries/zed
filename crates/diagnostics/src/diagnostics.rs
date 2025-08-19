@@ -383,12 +383,10 @@ impl ProjectDiagnosticsEditor {
             } else {
                 self.update_all_diagnostics(false, window, cx);
             }
+        } else if self.update_excerpts_task.is_some() {
+            self.update_excerpts_task = None;
         } else {
-            if self.update_excerpts_task.is_some() {
-                self.update_excerpts_task = None;
-            } else {
-                self.update_all_diagnostics(false, window, cx);
-            }
+            self.update_all_diagnostics(false, window, cx);
         }
         cx.notify();
     }
@@ -542,7 +540,7 @@ impl ProjectDiagnosticsEditor {
                     return true;
                 }
                 this.diagnostics.insert(buffer_id, diagnostics.clone());
-                return false;
+                false
             })?;
             if unchanged {
                 return Ok(());

@@ -1552,14 +1552,14 @@ impl SemanticsProvider for SlashCommandSemanticsProvider {
             return None;
         }
         let range = snapshot.anchor_after(start)..snapshot.anchor_after(end);
-        return Some(Task::ready(vec![project::Hover {
+        Some(Task::ready(vec![project::Hover {
             contents: vec![project::HoverBlock {
                 text: "Slash commands are not supported".into(),
                 kind: project::HoverBlockKind::PlainText,
             }],
             range: Some(range),
             language: None,
-        }]));
+        }]))
     }
 
     fn inline_values(

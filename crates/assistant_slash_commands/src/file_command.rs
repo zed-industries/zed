@@ -92,7 +92,7 @@ impl FileSlashCommand {
                         snapshot: worktree.snapshot(),
                         include_ignored: worktree
                             .root_entry()
-                            .map_or(false, |entry| entry.is_ignored),
+                            .is_some_and(|entry| entry.is_ignored),
                         include_root_name: true,
                         candidates: project::Candidates::Entries,
                     }
@@ -536,7 +536,7 @@ mod custom_path_matcher {
             let path_str = path.to_string_lossy();
             let separator = std::path::MAIN_SEPARATOR_STR;
             if path_str.ends_with(separator) {
-                return false;
+                false
             } else {
                 self.glob.is_match(path_str.to_string() + separator)
             }

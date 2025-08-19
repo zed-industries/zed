@@ -414,7 +414,7 @@ pub(crate) fn new_debugger_pane(
                     .and_then(|item| item.downcast::<SubView>());
                 let is_hovered = as_subview
                     .as_ref()
-                    .map_or(false, |item| item.read(cx).hovered);
+                    .is_some_and(|item| item.read(cx).hovered);
 
                 h_flex()
                     .track_focus(&focus_handle)
@@ -427,7 +427,6 @@ pub(crate) fn new_debugger_pane(
                     .bg(cx.theme().colors().tab_bar_background)
                     .on_action(|_: &menu::Cancel, window, cx| {
                         if cx.stop_active_drag(window) {
-                            return;
                         } else {
                             cx.propagate();
                         }
@@ -449,7 +448,7 @@ pub(crate) fn new_debugger_pane(
                             .children(pane.items().enumerate().map(|(ix, item)| {
                                 let selected = active_pane_item
                                     .as_ref()
-                                    .map_or(false, |active| active.item_id() == item.item_id());
+                                    .is_some_and(|active| active.item_id() == item.item_id());
                                 let deemphasized = !pane.has_focus(window, cx);
                                 let item_ = item.boxed_clone();
                                 div()

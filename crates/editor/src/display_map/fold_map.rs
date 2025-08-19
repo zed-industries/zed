@@ -491,14 +491,14 @@ impl FoldMap {
 
                 while folds
                     .peek()
-                    .map_or(false, |(_, fold_range)| fold_range.start < edit.new.end)
+                    .is_some_and(|(_, fold_range)| fold_range.start < edit.new.end)
                 {
                     let (fold, mut fold_range) = folds.next().unwrap();
                     let sum = new_transforms.summary();
 
                     assert!(fold_range.start.0 >= sum.input.len);
 
-                    while folds.peek().map_or(false, |(next_fold, next_fold_range)| {
+                    while folds.peek().is_some_and(|(next_fold, next_fold_range)| {
                         next_fold_range.start < fold_range.end
                             || (next_fold_range.start == fold_range.end
                                 && fold.placeholder.merge_adjacent
@@ -575,14 +575,14 @@ impl FoldMap {
 
                 for mut edit in inlay_edits {
                     old_transforms.seek(&edit.old.start, Bias::Left);
-                    if old_transforms.item().map_or(false, |t| t.is_fold()) {
+                    if old_transforms.item().is_some_and(|t| t.is_fold()) {
                         edit.old.start = old_transforms.start().0;
                     }
                     let old_start =
                         old_transforms.start().1.0 + (edit.old.start - old_transforms.start().0).0;
 
                     old_transforms.seek_forward(&edit.old.end, Bias::Right);
-                    if old_transforms.item().map_or(false, |t| t.is_fold()) {
+                    if old_transforms.item().is_some_and(|t| t.is_fold()) {
                         old_transforms.next();
                         edit.old.end = old_transforms.start().0;
                     }
@@ -590,14 +590,14 @@ impl FoldMap {
                         old_transforms.start().1.0 + (edit.old.end - old_transforms.start().0).0;
 
                     new_transforms.seek(&edit.new.start, Bias::Left);
-                    if new_transforms.item().map_or(false, |t| t.is_fold()) {
+                    if new_transforms.item().is_some_and(|t| t.is_fold()) {
                         edit.new.start = new_transforms.start().0;
                     }
                     let new_start =
                         new_transforms.start().1.0 + (edit.new.start - new_transforms.start().0).0;
 
                     new_transforms.seek_forward(&edit.new.end, Bias::Right);
-                    if new_transforms.item().map_or(false, |t| t.is_fold()) {
+                    if new_transforms.item().is_some_and(|t| t.is_fold()) {
                         new_transforms.next();
                         edit.new.end = new_transforms.start().0;
                     }
@@ -709,7 +709,7 @@ impl FoldSnapshot {
             .transforms
             .cursor::<Dimensions<InlayPoint, FoldPoint>>(&());
         cursor.seek(&point, Bias::Right);
-        if cursor.item().map_or(false, |t| t.is_fold()) {
+        if cursor.item().is_some_and(|t| t.is_fold()) {
             if bias == Bias::Left || point == cursor.start().0 {
                 cursor.start().1
             } else {
@@ -788,7 +788,7 @@ impl FoldSnapshot {
         let inlay_offset = self.inlay_snapshot.to_inlay_offset(buffer_offset);
         let mut cursor = self.transforms.cursor::<InlayOffset>(&());
         cursor.seek(&inlay_offset, Bias::Right);
-        cursor.item().map_or(false, |t| t.placeholder.is_some())
+        cursor.item().is_some_and(|t| t.placeholder.is_some())
     }
 
     pub fn is_line_folded(&self, buffer_row: MultiBufferRow) -> bool {
@@ -839,7 +839,7 @@ impl FoldSnapshot {
 
         let inlay_end = if transform_cursor
             .item()
-            .map_or(true, |transform| transform.is_fold())
+            .is_none_or(|transform| transform.is_fold())
         {
             inlay_start
         } else if range.end < transform_end.0 {
@@ -1348,7 +1348,7 @@ impl FoldChunks<'_> {
         let inlay_end = if self
             .transform_cursor
             .item()
-            .map_or(true, |transform| transform.is_fold())
+            .is_none_or(|transform| transform.is_fold())
         {
             inlay_start
         } else if range.end < transform_end.0 {
@@ -1463,7 +1463,7 @@ impl FoldOffset {
             .transforms
             .cursor::<Dimensions<FoldOffset, TransformSummary>>(&());
         cursor.seek(&self, Bias::Right);
-        let overshoot = if cursor.item().map_or(true, |t| t.is_fold()) {
+        let overshoot = if cursor.item().is_none_or(|t| t.is_fold()) {
             Point::new(0, (self.0 - cursor.start().0.0) as u32)
         } else {
             let inlay_offset = cursor.start().1.input.len + self.0 - cursor.start().0.0;

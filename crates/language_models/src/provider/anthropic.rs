@@ -554,7 +554,7 @@ pub fn into_anthropic(
                     .into_iter()
                     .filter_map(|content| match content {
                         MessageContent::Text(text) => {
-                            let text = if text.chars().last().map_or(false, |c| c.is_whitespace()) {
+                            let text = if text.chars().last().is_some_and(|c| c.is_whitespace()) {
                                 text.trim_end().to_string()
                             } else {
                                 text
@@ -813,7 +813,7 @@ impl AnthropicEventMapper {
                             ))];
                         }
                     }
-                    return vec![];
+                    vec![]
                 }
             },
             Event::ContentBlockStop { index } => {

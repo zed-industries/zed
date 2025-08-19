@@ -177,11 +177,11 @@ impl AskPassSession {
             _ = askpass_opened_rx.fuse() => {
                 // Note: this await can only resolve after we are dropped.
                 askpass_kill_master_rx.await.ok();
-                return AskPassResult::CancelledByUser
+                AskPassResult::CancelledByUser
             }
 
             _ = futures::FutureExt::fuse(smol::Timer::after(connection_timeout)) => {
-                return AskPassResult::Timedout
+                AskPassResult::Timedout
             }
         }
     }
@@ -215,7 +215,7 @@ pub fn main(socket: &str) {
     }
 
     #[cfg(target_os = "windows")]
-    while buffer.last().map_or(false, |&b| b == b'\n' || b == b'\r') {
+    while buffer.last().is_some_and(|&b| b == b'\n' || b == b'\r') {
         buffer.pop();
     }
     if buffer.last() != Some(&b'\0') {
