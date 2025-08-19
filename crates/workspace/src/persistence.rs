@@ -1441,7 +1441,9 @@ impl WorkspaceDb {
                 name: name.into(),
                 path: path.into(),
                 language_name,
-                as_json: serde_json::Value::from_str(&raw_json).ok()?
+                as_json: serde_json::Value::from_str(&raw_json).ok()?,
+                // todo refresh?
+                startup_script: Default::default(),
             })))
         })
         .await
@@ -1465,7 +1467,9 @@ impl WorkspaceDb {
                 name: name.into(),
                 path: path.into(),
                 language_name: LanguageName::new(&language_name),
-                as_json: serde_json::Value::from_str(&raw_json).ok()?
+                as_json: serde_json::Value::from_str(&raw_json).ok()?,
+                // todo refresh?
+                startup_script: Default::default(),
             }, WorktreeId::from_proto(worktree_id), Arc::from(relative_worktree_path.as_ref())))).collect())
         })
         .await

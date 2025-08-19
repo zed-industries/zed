@@ -12,6 +12,7 @@ message Toolchain {
     string name = 1;
     string path = 2;
     string raw_json = 3;
+    map<string, string> activation_script = 4;
 }
 
 message ToolchainGroup {

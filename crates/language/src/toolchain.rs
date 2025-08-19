@@ -10,14 +10,14 @@ use std::{
 };
 
 use async_trait::async_trait;
-use collections::HashMap;
+use collections::{FxHashMap, HashMap};
 use gpui::{AsyncApp, SharedString};
 use settings::WorktreeId;
 
 use crate::{LanguageName, ManifestName};
 
 /// Represents a single toolchain.
-#[derive(Clone, Debug, Eq)]
+#[derive(Clone, Eq, Debug)]
 pub struct Toolchain {
     /// User-facing label
     pub name: SharedString,
@@ -25,24 +25,41 @@ pub struct Toolchain {
     pub language_name: LanguageName,
     /// Full toolchain data (including language-specific details)
     pub as_json: serde_json::Value,
+    /// shell -> script
+    pub startup_script: FxHashMap<String, String>,
 }
 
 impl std::hash::Hash for Toolchain {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.name.hash(state);
-        self.path.hash(state);
-        self.language_name.hash(state);
+        let Self {
+            name,
+            path,
+            language_name,
+            as_json: _,
+            startup_script: _,
+        } = self;
+        name.hash(state);
+        path.hash(state);
+        language_name.hash(state);
     }
 }
 
 impl PartialEq for Toolchain {
     fn eq(&self, other: &Self) -> bool {
+        let Self {
+            name,
+            path,
+            language_name,
+            as_json: _,
+            startup_script,
+        } = self;
         // Do not use as_json for comparisons; it shouldn't impact equality, as it's not user-surfaced.
         // Thus, there could be multiple entries that look the same in the UI.
-        (&self.name, &self.path, &self.language_name).eq(&(
+        (name, path, language_name, startup_script).eq(&(
             &other.name,
             &other.path,
             &other.language_name,
+            &other.startup_script,
         ))
     }
 }
@@ -82,7 +99,7 @@ pub trait LocalLanguageToolchainStore: Send + Sync + 'static {
     ) -> Option<Toolchain>;
 }
 
-#[async_trait(?Send )]
+#[async_trait(?Send)]
 impl<T: LocalLanguageToolchainStore> LanguageToolchainStore for T {
     async fn active_toolchain(
         self: Arc<Self>,

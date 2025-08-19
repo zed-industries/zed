@@ -354,6 +354,7 @@ impl TerminalBuilder {
         window_id: u64,
         completion_tx: Option<Sender<Option<ExitStatus>>>,
         cx: &App,
+        startup_script: Option<String>,
     ) -> Result<TerminalBuilder> {
         // If the parent environment doesn't have a locale set
         // (As is the case when launched from a .app on MacOS),
@@ -517,6 +518,7 @@ impl TerminalBuilder {
             last_hyperlink_search_position: None,
             #[cfg(windows)]
             shell_program,
+            startup_script,
             template: CopyTemplate {
                 shell,
                 env,
@@ -710,6 +712,7 @@ pub struct Terminal {
     #[cfg(windows)]
     shell_program: Option<String>,
     template: CopyTemplate,
+    startup_script: Option<String>,
 }
 
 struct CopyTemplate {
@@ -1983,6 +1986,7 @@ impl Terminal {
             self.template.window_id,
             None,
             cx,
+            self.startup_script.clone(),
         )
     }
 }
@@ -2214,6 +2218,7 @@ mod tests {
                 0,
                 Some(completion_tx),
                 cx,
+                None,
             )
             .unwrap()
             .subscribe(cx)

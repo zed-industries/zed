@@ -880,6 +880,8 @@ impl ToolchainLister for PythonToolchainProvider {
                     path: toolchain.executable.as_ref()?.to_str()?.to_owned().into(),
                     language_name: LanguageName::new("Python"),
                     as_json: serde_json::to_value(toolchain).ok()?,
+                    startup_script: std::iter::once(("fish".to_owned(), "test".to_owned()))
+                        .collect(),
                 })
             })
             .collect();

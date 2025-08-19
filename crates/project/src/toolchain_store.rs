@@ -138,6 +138,7 @@ impl ToolchainStore {
                 // Do we need to convert path to native string?
                 path: PathBuf::from(toolchain.path).to_proto().into(),
                 as_json: serde_json::Value::from_str(&toolchain.raw_json)?,
+                startup_script: toolchain.activation_script.into_iter().collect(),
                 language_name,
             };
             let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
@@ -178,6 +179,7 @@ impl ToolchainStore {
                     name: toolchain.name.into(),
                     path: path.to_proto(),
                     raw_json: toolchain.as_json.to_string(),
+                    activation_script: toolchain.startup_script.into_iter().collect(),
                 }
             }),
         })
@@ -221,6 +223,7 @@ impl ToolchainStore {
                         name: toolchain.name.to_string(),
                         path: path.to_proto(),
                         raw_json: toolchain.as_json.to_string(),
+                        activation_script: toolchain.startup_script.into_iter().collect(),
                     }
                 })
                 .collect::<Vec<_>>();
@@ -444,6 +447,7 @@ impl RemoteToolchainStore {
                                 name: toolchain.name.into(),
                                 path: path.to_proto(),
                                 raw_json: toolchain.as_json.to_string(),
+                                activation_script: toolchain.startup_script.into_iter().collect(),
                             }),
                             path: Some(project_path.path.to_string_lossy().into_owned()),
                         })
@@ -496,6 +500,7 @@ impl RemoteToolchainStore {
                             .to_string()
                             .into(),
                         as_json: serde_json::Value::from_str(&toolchain.raw_json).ok()?,
+                        startup_script: toolchain.activation_script.into_iter().collect(),
                     })
                 })
                 .collect();
@@ -552,6 +557,7 @@ impl RemoteToolchainStore {
                         .to_string()
                         .into(),
                     as_json: serde_json::Value::from_str(&toolchain.raw_json).ok()?,
+                    startup_script: toolchain.activation_script.into_iter().collect(),
                 })
             })
         })

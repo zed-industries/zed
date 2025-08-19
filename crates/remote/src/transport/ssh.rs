@@ -113,6 +113,7 @@ impl RemoteConnection for SshRemoteConnection {
         input_args: &[String],
         input_env: &HashMap<String, String>,
         working_dir: Option<String>,
+        activation_script: Option<String>,
         port_forward: Option<(u16, String, u16)>,
     ) -> Result<CommandTemplate> {
         use std::fmt::Write as _;
@@ -134,6 +135,9 @@ impl RemoteConnection for SshRemoteConnection {
         } else {
             write!(&mut script, "cd; ").unwrap();
         };
+        if let Some(activation_script) = activation_script {
+            write!(&mut script, " {activation_script};").unwrap();
+        }
 
         for (k, v) in input_env.iter() {
             if let Some((k, v)) = shlex::try_quote(k).ok().zip(shlex::try_quote(v).ok()) {

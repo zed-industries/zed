@@ -9,7 +9,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use task::{Shell, ShellBuilder, SpawnInTerminal};
+use task::{Shell, ShellBuilder, SpawnInTerminal, system_shell};
 use terminal::{
     TaskState, TaskStatus, Terminal, TerminalBuilder, terminal_settings::TerminalSettings,
 };
@@ -82,7 +82,6 @@ impl Project {
         env.extend(settings.env);
 
         let local_path = if is_via_remote { None } else { path.clone() };
-
         let task_state = Some(TaskState {
             id: spawn_task.id,
             full_label: spawn_task.full_label,
@@ -107,6 +106,7 @@ impl Project {
                     &mut env,
                     path,
                     remote_client,
+                    None,
                     cx,
                 )?,
                 None => {
@@ -135,6 +135,7 @@ impl Project {
             cx.entity_id().as_u64(),
             Some(completion_tx),
             cx,
+            None,
         )
         .map(|builder| {
             let terminal_handle = cx.new(|cx| builder.subscribe(cx));
@@ -196,20 +197,52 @@ impl Project {
         let toolchain =
             project_path_context.map(|p| self.active_toolchain(p, LanguageName::new("Python"), cx));
         let remote_client = self.remote_client.clone();
-        cx.spawn(async move |project, cx| {
-            let toolchain = maybe!(async {
-                let toolchain = toolchain?.await?;
+        let shell = match &remote_client {
+            Some(remote_client) => remote_client
+                .read(cx)
+                .shell()
+                .unwrap_or_else(|| "sh".to_owned()),
+            None => match &settings.shell {
+                Shell::Program(program) => program.clone(),
+                Shell::WithArguments {
+                    program,
+                    args: _,
+                    title_override: _,
+                } => program.clone(),
+                Shell::System => system_shell(),
+            },
+        };
 
-                Some(())
+        cx.spawn(async move |project, cx| {
+            let scripts = maybe!(async {
+                let toolchain = toolchain?.await?;
+                Some(toolchain.startup_script)
             })
             .await;
-
+            let activation_script = scripts.as_ref().and_then(|it| it.get(&shell));
             project.update(cx, move |this, cx| {
                 let shell = {
                     match remote_client {
-                        Some(remote_client) => {
-                            create_remote_shell(None, &mut env, path, remote_client, cx)?
-                        }
+                        Some(remote_client) => create_remote_shell(
+                            None,
+                            &mut env,
+                            path,
+                            remote_client,
+                            activation_script.cloned(),
+                            cx,
+                        )?,
+                        None if activation_script.is_some() => Shell::WithArguments {
+                            program: shell.clone(),
+                            args: vec![
+                                "-c".to_owned(),
+                                format!(
+                                    "{}; exec {} -l",
+                                    activation_script.unwrap().to_string(),
+                                    shell
+                                ),
+                            ],
+                            title_override: None,
+                        },
                         None => settings.shell,
                     }
                 };
@@ -225,6 +258,7 @@ impl Project {
                     cx.entity_id().as_u64(),
                     None,
                     cx,
+                    None,
                 )
                 .map(|builder| {
                     let terminal_handle = cx.new(|cx| builder.subscribe(cx));
@@ -320,10 +354,14 @@ impl Project {
 
         match remote_client {
             Some(remote_client) => {
-                let command_template =
-                    remote_client
-                        .read(cx)
-                        .build_command(Some(command), &args, &env, None, None)?;
+                let command_template = remote_client.read(cx).build_command(
+                    Some(command),
+                    &args,
+                    &env,
+                    None,
+                    None,
+                    None,
+                )?;
                 let mut command = std::process::Command::new(command_template.program);
                 command.args(command_template.args);
                 command.envs(command_template.env);
@@ -351,6 +389,7 @@ fn create_remote_shell(
     env: &mut HashMap<String, String>,
     working_directory: Option<Arc<Path>>,
     remote_client: Entity<RemoteClient>,
+    activation_script: Option<String>,
     cx: &mut App,
 ) -> Result<Shell> {
     // Alacritty sets its terminfo to `alacritty`, this requiring hosts to have it installed
@@ -370,6 +409,7 @@ fn create_remote_shell(
         args.as_slice(),
         env,
         working_directory.map(|path| path.display().to_string()),
+        activation_script,
         None,
     )?;
     *env = command.env;

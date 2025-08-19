@@ -9205,6 +9205,7 @@ fn python_lang(fs: Arc<FakeFs>) -> Arc<Language> {
                         path: venv_path.to_string_lossy().into_owned().into(),
                         language_name: LanguageName(SharedString::new_static("Python")),
                         as_json: serde_json::Value::Null,
+                        startup_script: Default::default(),
                     })
                 }
             }

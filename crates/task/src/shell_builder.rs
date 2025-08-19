@@ -178,7 +178,7 @@ impl ShellKind {
     }
 }
 
-fn system_shell() -> String {
+pub fn system_shell() -> String {
     if cfg!(target_os = "windows") {
         // `alacritty_terminal` uses this as default on Windows. See:
         // https://github.com/alacritty/alacritty/blob/0d4ab7bca43213d96ddfe40048fc0f922543c6f8/alacritty_terminal/src/tty/windows/mod.rs#L130
