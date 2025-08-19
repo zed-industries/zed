@@ -8,7 +8,7 @@ use anyhow::{Context as _, Result, anyhow};
 use assistant_tool::adapt_schema_to_format;
 use chrono::{DateTime, Utc};
 use cloud_llm_client::{CompletionIntent, CompletionRequestStatus};
-use collections::IndexMap;
+use collections::{HashMap, IndexMap};
 use fs::Fs;
 use futures::{
     FutureExt,
@@ -505,8 +505,7 @@ pub struct Thread {
     pending_message: Option<AgentMessage>,
     tools: BTreeMap<SharedString, Arc<dyn AnyAgentTool>>,
     tool_use_limit_reached: bool,
-    #[allow(unused)]
-    request_token_usage: Vec<TokenUsage>,
+    request_token_usage: HashMap<UserMessageId, acp_thread::TokenUsage>,
     #[allow(unused)]
     cumulative_token_usage: TokenUsage,
     #[allow(unused)]
@@ -545,7 +544,7 @@ impl Thread {
             pending_message: None,
             tools: BTreeMap::default(),
             tool_use_limit_reached: false,
-            request_token_usage: Vec::new(),
+            request_token_usage: HashMap::default(),
             cumulative_token_usage: TokenUsage::default(),
             initial_project_snapshot: {
                 let project_snapshot = Self::project_snapshot(project.clone(), cx);
@@ -840,6 +839,15 @@ impl Thread {
         self.flush_pending_message(cx);
     }
 
+    pub fn update_token_usage(&mut self, update: acp_thread::TokenUsage) {
+        let Some(last_user_message) = self.last_user_message() else {
+            return;
+        };
+
+        self.request_token_usage
+            .insert(last_user_message.id.clone(), update);
+    }
+
     pub fn truncate(&mut self, message_id: UserMessageId, cx: &mut Context<Self>) -> Result<()> {
         self.cancel(cx);
         let Some(position) = self.messages.iter().position(
@@ -847,9 +855,23 @@ impl Thread {
         ) else {
             return Err(anyhow!("Message not found"));
         };
-        self.messages.truncate(position);
+
+        for message in self.messages.drain(position..) {
+            match message {
+                Message::User(message) => {
+                    self.request_token_usage.remove(&message.id);
+                }
+                Message::Agent(_) | Message::Resume => {}
+            }
+        }
+
         cx.notify();
         Ok(())
+    }
+
+    pub fn latest_token_usage(&self) -> Option<acp_thread::TokenUsage> {
+        let last_user_message = self.last_user_message()?;
+        self.request_token_usage.get(&last_user_message.id).cloned()
     }
 
     pub fn resume(
@@ -1038,14 +1060,19 @@ impl Thread {
                         *tool_use_limit_reached = true;
                     }
                     Ok(LanguageModelCompletionEvent::UsageUpdate(token_usage)) => {
-                        event_stream.send_token_usage_update(acp_thread::TokenUsage {
+                        let usage = acp_thread::TokenUsage {
                             max_tokens: model.max_token_count_for_mode(
                                 request
                                     .mode
                                     .unwrap_or(cloud_llm_client::CompletionMode::Normal),
                             ),
                             used_tokens: token_usage.total_tokens(),
-                        });
+                        };
+
+                        this.update(cx, |this, _cx| this.update_token_usage(usage.clone()))
+                            .ok();
+
+                        event_stream.send_token_usage_update(usage);
                     }
                     Ok(LanguageModelCompletionEvent::Stop(StopReason::Refusal)) => {
                         *refusal = true;
@@ -1430,6 +1457,16 @@ impl Thread {
                 cx.notify();
             })
         }))
+    }
+    fn last_user_message(&self) -> Option<&UserMessage> {
+        self.messages
+            .iter()
+            .rev()
+            .find_map(|message| match message {
+                Message::User(user_message) => Some(user_message),
+                Message::Agent(_) => None,
+                Message::Resume => None,
+            })
     }
 
     fn pending_message(&mut self) -> &mut AgentMessage {

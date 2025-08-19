@@ -664,7 +664,7 @@ impl PlanEntry {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TokenUsage {
     pub max_tokens: u64,
     pub used_tokens: u64,
@@ -950,8 +950,8 @@ impl AcpThread {
         Ok(())
     }
 
-    pub fn update_token_usage(&mut self, usage: TokenUsage, cx: &mut Context<Self>) {
-        self.token_usage = Some(usage);
+    pub fn update_token_usage(&mut self, usage: Option<TokenUsage>, cx: &mut Context<Self>) {
+        self.token_usage = usage;
         cx.emit(AcpThreadEvent::TokenUsageUpdated);
     }
 

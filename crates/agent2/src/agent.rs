@@ -4,7 +4,7 @@ use crate::{
     OpenTool, ReadFileTool, TerminalTool, ThinkingTool, Thread, ThreadEvent, ToolCallAuthorization,
     UserMessageContent, WebSearchTool, templates::Templates,
 };
-use acp_thread::AgentModelSelector;
+use acp_thread::{AcpThread, AgentModelSelector};
 use action_log::ActionLog;
 use agent_client_protocol as acp;
 use agent_settings::AgentSettings;
@@ -558,7 +558,7 @@ impl NativeAgentConnection {
                             }
                             ThreadEvent::TokenUsageUpdate(usage) => {
                                 acp_thread.update(cx, |thread, cx| {
-                                    thread.update_token_usage(usage, cx)
+                                    thread.update_token_usage(Some(usage), cx)
                                 })?;
                             }
                             ThreadEvent::TitleUpdate(title) => {
@@ -834,10 +834,12 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
         cx: &mut App,
     ) -> Option<Rc<dyn acp_thread::AgentSessionEditor>> {
         self.0.update(cx, |agent, _cx| {
-            agent
-                .sessions
-                .get(session_id)
-                .map(|session| Rc::new(NativeAgentSessionEditor(session.thread.clone())) as _)
+            agent.sessions.get(session_id).map(|session| {
+                Rc::new(NativeAgentSessionEditor {
+                    thread: session.thread.clone(),
+                    acp_thread: session.acp_thread.clone(),
+                }) as _
+            })
         })
     }
 
@@ -846,14 +848,27 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
     }
 }
 
-struct NativeAgentSessionEditor(Entity<Thread>);
+struct NativeAgentSessionEditor {
+    thread: Entity<Thread>,
+    acp_thread: WeakEntity<AcpThread>,
+}
 
 impl acp_thread::AgentSessionEditor for NativeAgentSessionEditor {
     fn truncate(&self, message_id: acp_thread::UserMessageId, cx: &mut App) -> Task<Result<()>> {
-        Task::ready(
-            self.0
-                .update(cx, |thread, cx| thread.truncate(message_id, cx)),
-        )
+        match self.thread.update(cx, |thread, cx| {
+            thread.truncate(message_id.clone(), cx)?;
+            Ok(thread.latest_token_usage())
+        }) {
+            Ok(usage) => {
+                self.acp_thread
+                    .update(cx, |thread, cx| {
+                        thread.update_token_usage(usage, cx);
+                    })
+                    .ok();
+                Task::ready(Ok(()))
+            }
+            Err(error) => Task::ready(Err(error)),
+        }
     }
 }
 
