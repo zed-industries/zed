@@ -1450,6 +1450,7 @@ async fn test_send_retry_on_error(cx: &mut TestAppContext) {
         provider: LanguageModelProviderName::new("Anthropic"),
         retry_after: Some(Duration::from_secs(3)),
     });
+    fake_model.end_last_completion_stream();
 
     cx.executor().advance_clock(Duration::from_secs(3));
     cx.run_until_parked();
@@ -1509,11 +1510,10 @@ async fn test_send_max_retries_exceeded(cx: &mut TestAppContext) {
                 retry_after: Some(Duration::from_secs(3)),
             },
         );
+        fake_model.end_last_completion_stream();
         cx.executor().advance_clock(Duration::from_secs(3));
         cx.run_until_parked();
     }
-
-    fake_model.end_last_completion_stream();
 
     let mut errors = Vec::new();
     let mut retry_events = Vec::new();
