@@ -690,11 +690,7 @@ impl MessageEditor {
             .as_ref()
             .map(|model| {
                 self.incompatible_tools_state.update(cx, |state, cx| {
-                    state
-                        .incompatible_tools(&model.model, cx)
-                        .iter()
-                        .cloned()
-                        .collect::<Vec<_>>()
+                    state.incompatible_tools(&model.model, cx).to_vec()
                 })
             })
             .unwrap_or_default();

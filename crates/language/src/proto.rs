@@ -86,7 +86,7 @@ pub fn serialize_operation(operation: &crate::Operation) -> proto::Operation {
                 proto::operation::UpdateCompletionTriggers {
                     replica_id: lamport_timestamp.replica_id as u32,
                     lamport_timestamp: lamport_timestamp.value,
-                    triggers: triggers.iter().cloned().collect(),
+                    triggers: triggers.clone(),
                     language_server_id: server_id.to_proto(),
                 },
             ),

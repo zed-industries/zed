@@ -601,7 +601,7 @@ fn pick_default_screen(cx: &App) -> Task<anyhow::Result<Option<Rc<dyn ScreenCapt
                     .metadata()
                     .is_ok_and(|meta| meta.is_main.unwrap_or_default())
             })
-            .or_else(|| available_sources.iter().next())
+            .or_else(|| available_sources.first())
             .cloned())
     })
 }
