@@ -141,7 +141,7 @@ impl MentionUri {
     pub fn icon_path(&self, cx: &mut App) -> SharedString {
         match self {
             MentionUri::File { abs_path } => {
-                FileIcons::get_icon(&abs_path, cx).unwrap_or_else(|| IconName::File.path().into())
+                FileIcons::get_icon(abs_path, cx).unwrap_or_else(|| IconName::File.path().into())
             }
             MentionUri::Directory { .. } => FileIcons::get_folder_icon(false, cx)
                 .unwrap_or_else(|| IconName::Folder.path().into()),
