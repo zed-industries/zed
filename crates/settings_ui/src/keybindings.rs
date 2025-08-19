@@ -2021,21 +2021,21 @@ impl RenderOnce for SyntaxHighlightedText {
 
 #[derive(PartialEq)]
 struct InputError {
-    severity: ui::Severity,
+    severity: Severity,
     content: SharedString,
 }
 
 impl InputError {
     fn warning(message: impl Into<SharedString>) -> Self {
         Self {
-            severity: ui::Severity::Warning,
+            severity: Severity::Warning,
             content: message.into(),
         }
     }
 
     fn error(message: anyhow::Error) -> Self {
         Self {
-            severity: ui::Severity::Error,
+            severity: Severity::Error,
             content: message.to_string().into(),
         }
     }
@@ -2162,9 +2162,11 @@ impl KeybindingEditorModal {
     }
 
     fn set_error(&mut self, error: InputError, cx: &mut Context<Self>) -> bool {
-        if self.error.as_ref().is_some_and(|old_error| {
-            old_error.severity == ui::Severity::Warning && *old_error == error
-        }) {
+        if self
+            .error
+            .as_ref()
+            .is_some_and(|old_error| old_error.severity == Severity::Warning && *old_error == error)
+        {
             false
         } else {
             self.error = Some(error);
