@@ -1732,8 +1732,8 @@ where
     fn initial_title(&self, input: Result<Self::Input, serde_json::Value>) -> SharedString;
 
     /// Returns the JSON schema that describes the tool's input.
-    fn input_schema(&self) -> Schema {
-        schemars::schema_for!(Self::Input)
+    fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> Schema {
+        crate::tool_schema::root_schema_for::<Self::Input>(format)
     }
 
     /// Some tools rely on a provider for the underlying billing or other reasons.
@@ -1819,7 +1819,7 @@ where
     }
 
     fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> Result<serde_json::Value> {
-        let mut json = serde_json::to_value(self.0.input_schema())?;
+        let mut json = serde_json::to_value(self.0.input_schema(format))?;
         adapt_schema_to_format(&mut json, format)?;
         Ok(json)
     }

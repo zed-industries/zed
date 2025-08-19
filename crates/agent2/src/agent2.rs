@@ -2,6 +2,7 @@ mod agent;
 mod native_agent_server;
 mod templates;
 mod thread;
+mod tool_schema;
 mod tools;
 
 #[cfg(test)]
