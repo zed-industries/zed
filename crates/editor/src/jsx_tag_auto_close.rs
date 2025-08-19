@@ -263,8 +263,7 @@ pub(crate) fn generate_auto_close_edits(
             }
 
             let is_after_open_tag = |node: &Node| {
-                node.start_byte() < open_tag.start_byte()
-                    && node.end_byte() < open_tag.start_byte()
+                node.start_byte() < open_tag.start_byte() && node.end_byte() < open_tag.start_byte()
             };
 
             // perf: use cursor for more efficient traversal
@@ -455,12 +454,9 @@ pub(crate) fn handle_from(
             let ensure_no_edits_since_start = || -> Option<()> {
                 let has_edits_since_start = this
                     .read_with(cx, |this, cx| {
-                        this.buffer
-                            .read(cx)
-                            .buffer(buffer_id)
-                            .is_none_or(|buffer| {
-                                buffer.read(cx).has_edits_since(&buffer_version_initial)
-                            })
+                        this.buffer.read(cx).buffer(buffer_id).is_none_or(|buffer| {
+                            buffer.read(cx).has_edits_since(&buffer_version_initial)
+                        })
                     })
                     .ok()?;
 

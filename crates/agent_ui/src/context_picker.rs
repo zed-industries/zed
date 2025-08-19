@@ -610,9 +610,7 @@ pub(crate) fn available_context_picker_entries(
         .read(cx)
         .active_item(cx)
         .and_then(|item| item.downcast::<Editor>())
-        .is_some_and(|editor| {
-            editor.update(cx, |editor, cx| editor.has_non_empty_selection(cx))
-        });
+        .is_some_and(|editor| editor.update(cx, |editor, cx| editor.has_non_empty_selection(cx)));
     if has_selection {
         entries.push(ContextPickerEntry::Action(
             ContextPickerAction::AddSelections,

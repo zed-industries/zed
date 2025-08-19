@@ -4795,9 +4795,7 @@ impl BackgroundScanner {
         for (&work_directory_id, entry) in snapshot.git_repositories.iter() {
             let exists_in_snapshot = snapshot
                 .entry_for_id(work_directory_id)
-                .is_some_and(|entry| {
-                    snapshot.entry_for_path(entry.path.join(*DOT_GIT)).is_some()
-                });
+                .is_some_and(|entry| snapshot.entry_for_path(entry.path.join(*DOT_GIT)).is_some());
 
             if exists_in_snapshot
                 || matches!(

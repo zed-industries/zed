@@ -2564,9 +2564,7 @@ impl AgentPanel {
             }
             ActiveView::ExternalAgentThread { .. }
             | ActiveView::History
-            | ActiveView::Configuration => {
-                None
-            }
+            | ActiveView::Configuration => None,
         }
     }
 
@@ -2907,9 +2905,7 @@ impl AgentPanel {
         let zed_provider_configured = AgentSettings::get_global(cx)
             .default_model
             .as_ref()
-            .is_some_and(|selection| {
-                selection.provider.0.as_str() == "zed.dev"
-            });
+            .is_some_and(|selection| selection.provider.0.as_str() == "zed.dev");
 
         let callout = if zed_provider_configured {
             Callout::new()

@@ -3294,8 +3294,7 @@ impl BufferSnapshot {
         range: Range<D>,
     ) -> Option<SyntaxLayer<'_>> {
         let range = range.to_offset(self);
-        self
-            .syntax
+        self.syntax
             .layers_for_range(range, &self.text, false)
             .max_by(|a, b| {
                 if a.depth != b.depth {

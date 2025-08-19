@@ -894,9 +894,7 @@ impl GitPanel {
         let have_entries = self
             .active_repository
             .as_ref()
-            .is_some_and(|active_repository| {
-                active_repository.read(cx).status_summary().count > 0
-            });
+            .is_some_and(|active_repository| active_repository.read(cx).status_summary().count > 0);
         if have_entries && self.selected_entry.is_none() {
             self.selected_entry = Some(1);
             self.scroll_to_selected_entry(cx);
@@ -1207,8 +1205,7 @@ impl GitPanel {
                 })
                 .ok();
             }
-            _ => {
-            }
+            _ => {}
         })
         .detach();
     }
@@ -1641,8 +1638,7 @@ impl GitPanel {
         if !text.trim().is_empty() {
             true
         } else if text.is_empty() {
-            self
-                .suggest_commit_message(cx)
+            self.suggest_commit_message(cx)
                 .is_some_and(|text| !text.trim().is_empty())
         } else {
             false
@@ -2937,7 +2933,7 @@ impl GitPanel {
             .matches(git::repository::REMOTE_CANCELLED_BY_USER)
             .next()
             .is_some()
-        {// Hide the cancelled by user message
+        { // Hide the cancelled by user message
         } else {
             workspace.update(cx, |workspace, cx| {
                 let workspace_weak = cx.weak_entity();
@@ -4810,19 +4806,18 @@ impl RenderOnce for PanelRepoFooter {
 
         // ideally, show the whole branch and repo names but
         // when we can't, use a budget to allocate space between the two
-        let (repo_display_len, branch_display_len) = if branch_actual_len + repo_actual_len
-            <= LABEL_CHARACTER_BUDGET
-        {
-            (repo_actual_len, branch_actual_len)
-        } else if branch_actual_len <= MAX_BRANCH_LEN {
-            let repo_space = (LABEL_CHARACTER_BUDGET - branch_actual_len).min(MAX_REPO_LEN);
-            (repo_space, branch_actual_len)
-        } else if repo_actual_len <= MAX_REPO_LEN {
-            let branch_space = (LABEL_CHARACTER_BUDGET - repo_actual_len).min(MAX_BRANCH_LEN);
-            (repo_actual_len, branch_space)
-        } else {
-            (MAX_REPO_LEN, MAX_BRANCH_LEN)
-        };
+        let (repo_display_len, branch_display_len) =
+            if branch_actual_len + repo_actual_len <= LABEL_CHARACTER_BUDGET {
+                (repo_actual_len, branch_actual_len)
+            } else if branch_actual_len <= MAX_BRANCH_LEN {
+                let repo_space = (LABEL_CHARACTER_BUDGET - branch_actual_len).min(MAX_REPO_LEN);
+                (repo_space, branch_actual_len)
+            } else if repo_actual_len <= MAX_REPO_LEN {
+                let branch_space = (LABEL_CHARACTER_BUDGET - repo_actual_len).min(MAX_BRANCH_LEN);
+                (repo_actual_len, branch_space)
+            } else {
+                (MAX_REPO_LEN, MAX_BRANCH_LEN)
+            };
 
         let truncated_repo_name = if repo_actual_len <= repo_display_len {
             active_repo_name.to_string()

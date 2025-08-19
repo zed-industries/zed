@@ -72,7 +72,8 @@ async fn process_updates(
     let fs = this.read_with(&cx, |this, _| this.fs.clone())?;
     for entry_path in entries {
         if entry_path
-            .extension().is_none_or(|extension| extension != "json")
+            .extension()
+            .is_none_or(|extension| extension != "json")
         {
             continue;
         }

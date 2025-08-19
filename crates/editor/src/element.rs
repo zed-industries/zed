@@ -921,8 +921,7 @@ impl EditorElement {
                 clippy::collapsible_if,
                 reason = "The cfg-block below makes this a false positive"
             )]
-            if !text_hitbox.is_hovered(window) || editor.read_only(cx) {
-            }
+            if !text_hitbox.is_hovered(window) || editor.read_only(cx) {}
 
             #[cfg(any(target_os = "linux", target_os = "freebsd"))]
             if EditorSettings::get_global(cx).middle_click_paste {
@@ -2215,11 +2214,11 @@ impl EditorElement {
                 cmp::max(padded_line, min_start)
             };
 
-            let behind_edit_prediction_popover = edit_prediction_popover_origin.as_ref().is_some_and(
-                |edit_prediction_popover_origin| {
+            let behind_edit_prediction_popover = edit_prediction_popover_origin
+                .as_ref()
+                .is_some_and(|edit_prediction_popover_origin| {
                     (pos_y..pos_y + line_height).contains(&edit_prediction_popover_origin.y)
-                },
-            );
+                });
             let opacity = if behind_edit_prediction_popover {
                 0.5
             } else {
@@ -2285,9 +2284,7 @@ impl EditorElement {
                         None
                     }
                 })
-                .is_some_and(|source| {
-                    matches!(source, CodeActionSource::Indicator(..))
-                });
+                .is_some_and(|source| matches!(source, CodeActionSource::Indicator(..)));
             Some(editor.render_inline_code_actions(icon_size, display_point.row(), active, cx))
         })?;
 
@@ -7065,9 +7062,7 @@ impl EditorElement {
         let unstaged_hollow = ProjectSettings::get_global(cx)
             .git
             .hunk_style
-            .is_some_and(|style| {
-                matches!(style, GitHunkStyleSetting::UnstagedHollow)
-            });
+            .is_some_and(|style| matches!(style, GitHunkStyleSetting::UnstagedHollow));
 
         unstaged == unstaged_hollow
     }

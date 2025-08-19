@@ -1023,9 +1023,11 @@ impl AssistantContext {
                     summary: new_summary,
                     ..
                 } => {
-                    if self.summary.timestamp().is_none_or(|current_timestamp| {
-                        new_summary.timestamp > current_timestamp
-                    }) {
+                    if self
+                        .summary
+                        .timestamp()
+                        .is_none_or(|current_timestamp| new_summary.timestamp > current_timestamp)
+                    {
                         self.summary = ContextSummary::Content(new_summary);
                         summary_generated = true;
                     }
@@ -2313,10 +2315,7 @@ impl AssistantContext {
             let mut request_message = LanguageModelRequestMessage {
                 role: message.role,
                 content: Vec::new(),
-                cache: message
-                    .cache
-                    .as_ref()
-                    .is_some_and(|cache| cache.is_anchor),
+                cache: message.cache.as_ref().is_some_and(|cache| cache.is_anchor),
             };
 
             while let Some(content) = contents.peek() {

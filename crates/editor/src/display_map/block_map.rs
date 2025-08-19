@@ -528,10 +528,7 @@ impl BlockMap {
             if let Some(transform) = cursor.item()
                 && transform.summary.input_rows > 0
                 && cursor.end() == old_start
-                && transform
-                    .block
-                    .as_ref()
-                    .is_none_or(|b| !b.is_replacement())
+                && transform.block.as_ref().is_none_or(|b| !b.is_replacement())
             {
                 // Preserve the transform (push and next)
                 new_transforms.push(transform.clone(), &());

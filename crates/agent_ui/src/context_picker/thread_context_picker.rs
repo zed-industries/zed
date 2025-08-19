@@ -237,11 +237,9 @@ pub fn render_thread_context_entry(
         ThreadContextEntry::Thread { id, .. } => context_store
             .upgrade()
             .is_some_and(|ctx_store| ctx_store.read(cx).includes_thread(id)),
-        ThreadContextEntry::Context { path, .. } => {
-            context_store.upgrade().is_some_and(|ctx_store| {
-                ctx_store.read(cx).includes_text_thread(path)
-            })
-        }
+        ThreadContextEntry::Context { path, .. } => context_store
+            .upgrade()
+            .is_some_and(|ctx_store| ctx_store.read(cx).includes_text_thread(path)),
     };
 
     h_flex()

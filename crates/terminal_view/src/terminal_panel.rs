@@ -894,9 +894,9 @@ impl TerminalPanel {
     }
 
     fn is_enabled(&self, cx: &App) -> bool {
-        self.workspace.upgrade().is_some_and(|workspace| {
-            is_enabled_in_workspace(workspace.read(cx), cx)
-        })
+        self.workspace
+            .upgrade()
+            .is_some_and(|workspace| is_enabled_in_workspace(workspace.read(cx), cx))
     }
 
     fn activate_pane_in_direction(

@@ -568,12 +568,9 @@ impl KeymapEditor {
                                                 query.modifiers.is_subset_of(&keystroke.modifiers)
                                                     && ((query.key.is_empty()
                                                         || query.key == keystroke.key)
-                                                        && query
-                                                            .key_char
-                                                            .as_ref()
-                                                            .is_none_or(|q_kc| {
-                                                                q_kc == &keystroke.key
-                                                            }));
+                                                        && query.key_char.as_ref().is_none_or(
+                                                            |q_kc| q_kc == &keystroke.key,
+                                                        ));
                                             if matches {
                                                 found_count += 1;
                                                 query_cursor += 1;
@@ -2889,9 +2886,9 @@ impl CompletionProvider for KeyContextCompletionProvider {
         _menu_is_open: bool,
         _cx: &mut Context<Editor>,
     ) -> bool {
-        text.chars().last().is_some_and(|last_char| {
-            last_char.is_ascii_alphanumeric() || last_char == '_'
-        })
+        text.chars()
+            .last()
+            .is_some_and(|last_char| last_char.is_ascii_alphanumeric() || last_char == '_')
     }
 }
 

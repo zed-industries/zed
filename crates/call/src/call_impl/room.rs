@@ -939,8 +939,7 @@ impl Room {
                                 self.client.user_id()
                             )
                         })?;
-                if self.live_kit.as_ref().is_none_or(|kit| kit.deafened) && publication.is_audio()
-                {
+                if self.live_kit.as_ref().is_none_or(|kit| kit.deafened) && publication.is_audio() {
                     publication.set_enabled(false, cx);
                 }
                 match track {
@@ -1247,9 +1246,9 @@ impl Room {
     }
 
     pub fn is_sharing_screen(&self) -> bool {
-        self.live_kit.as_ref().is_some_and(|live_kit| {
-            !matches!(live_kit.screen_track, LocalTrack::None)
-        })
+        self.live_kit
+            .as_ref()
+            .is_some_and(|live_kit| !matches!(live_kit.screen_track, LocalTrack::None))
     }
 
     pub fn shared_screen_id(&self) -> Option<u64> {
@@ -1262,9 +1261,9 @@ impl Room {
     }
 
     pub fn is_sharing_mic(&self) -> bool {
-        self.live_kit.as_ref().is_some_and(|live_kit| {
-            !matches!(live_kit.microphone_track, LocalTrack::None)
-        })
+        self.live_kit
+            .as_ref()
+            .is_some_and(|live_kit| !matches!(live_kit.microphone_track, LocalTrack::None))
     }
 
     pub fn is_muted(&self) -> bool {

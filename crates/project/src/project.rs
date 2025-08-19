@@ -5453,9 +5453,10 @@ fn provide_inline_values(
                     .collect::<String>();
                 let point = snapshot.offset_to_point(capture_range.end);
 
-                while scopes.last().is_some_and(|scope: &Range<_>| {
-                    !scope.contains(&capture_range.start)
-                }) {
+                while scopes
+                    .last()
+                    .is_some_and(|scope: &Range<_>| !scope.contains(&capture_range.start))
+                {
                     scopes.pop();
                 }
 

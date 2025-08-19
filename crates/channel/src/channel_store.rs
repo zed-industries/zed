@@ -575,9 +575,7 @@ impl ChannelStore {
         self.channel_index
             .by_id()
             .get(&channel_id)
-            .is_some_and(|channel| {
-                channel.visibility == ChannelVisibility::Public
-            })
+            .is_some_and(|channel| channel.visibility == ChannelVisibility::Public)
     }
 
     pub fn channel_capability(&self, channel_id: ChannelId) -> Capability {

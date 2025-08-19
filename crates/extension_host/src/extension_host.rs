@@ -562,11 +562,12 @@ impl ExtensionStore {
                 extensions
                     .into_iter()
                     .filter(|extension| {
-                        this.extension_index.extensions.get(&extension.id).is_none_or(
-                            |installed_extension| {
+                        this.extension_index
+                            .extensions
+                            .get(&extension.id)
+                            .is_none_or(|installed_extension| {
                                 installed_extension.manifest.version != extension.manifest.version
-                            },
-                        )
+                            })
                     })
                     .collect()
             })

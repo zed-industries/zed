@@ -21,9 +21,7 @@ pub fn run_package_conformity(_args: PackageConformityArgs) -> Result<()> {
             .manifest_path
             .parent()
             .and_then(|parent| parent.parent())
-            .is_some_and(|grandparent_dir| {
-                grandparent_dir.ends_with("extensions")
-            });
+            .is_some_and(|grandparent_dir| grandparent_dir.ends_with("extensions"));
 
         let cargo_toml = read_cargo_toml(&package.manifest_path)?;
 

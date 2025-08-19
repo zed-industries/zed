@@ -781,9 +781,7 @@ impl GitStore {
 
         let is_unmerged = self
             .repository_and_path_for_buffer_id(buffer_id, cx)
-            .is_some_and(|(repo, path)| {
-                repo.read(cx).snapshot.has_conflict(&path)
-            });
+            .is_some_and(|(repo, path)| repo.read(cx).snapshot.has_conflict(&path));
         let git_store = cx.weak_entity();
         let buffer_git_state = self
             .diffs

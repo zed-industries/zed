@@ -710,8 +710,7 @@ where
     T: LocalDapCommand + PartialEq + Eq + Hash,
 {
     fn dyn_eq(&self, rhs: &dyn CacheableCommand) -> bool {
-        (rhs as &dyn Any)
-            .downcast_ref::<Self>() == Some(self)
+        (rhs as &dyn Any).downcast_ref::<Self>() == Some(self)
     }
 
     fn dyn_hash(&self, mut hasher: &mut dyn Hasher) {

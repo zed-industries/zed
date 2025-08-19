@@ -111,8 +111,7 @@ impl RenderContext {
     /// buffer font size changes. The callees of this function should be reimplemented to use real
     /// relative sizing once that is implemented in GPUI
     pub fn scaled_rems(&self, rems: f32) -> Rems {
-        self
-            .buffer_text_style
+        self.buffer_text_style
             .font_size
             .to_rems(self.window_rem_size)
             .mul(rems)

@@ -1453,9 +1453,7 @@ impl OutlinePanel {
         if self
             .unfolded_dirs
             .get(&directory_worktree)
-            .is_none_or(|unfolded_dirs| {
-                !unfolded_dirs.contains(&directory_entry.id)
-            })
+            .is_none_or(|unfolded_dirs| !unfolded_dirs.contains(&directory_entry.id))
         {
             return false;
         }
@@ -3444,9 +3442,8 @@ impl OutlinePanel {
     }
 
     fn is_singleton_active(&self, cx: &App) -> bool {
-        self.active_editor().is_some_and(|active_editor| {
-            active_editor.read(cx).buffer().read(cx).is_singleton()
-        })
+        self.active_editor()
+            .is_some_and(|active_editor| active_editor.read(cx).buffer().read(cx).is_singleton())
     }
 
     fn invalidate_outlines(&mut self, ids: &[ExcerptId]) {

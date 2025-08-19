@@ -3198,9 +3198,10 @@ impl MultiBuffer {
             // If this is the last edit that intersects the current diff transform,
             // then recreate the content up to the end of this transform, to prepare
             // for reusing additional slices of the old transforms.
-            if excerpt_edits.peek().is_none_or(|next_edit| {
-                next_edit.old.start >= old_diff_transforms.end().0
-            }) {
+            if excerpt_edits
+                .peek()
+                .is_none_or(|next_edit| next_edit.old.start >= old_diff_transforms.end().0)
+            {
                 let keep_next_old_transform = (old_diff_transforms.start().0 >= edit.old.end)
                     && match old_diff_transforms.item() {
                         Some(DiffTransform::BufferContent {

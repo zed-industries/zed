@@ -639,9 +639,7 @@ mod tests {
         }
 
         fn partial_eq(&self, action: &dyn Action) -> bool {
-            action
-                .as_any()
-                .downcast_ref::<Self>() == Some(self)
+            action.as_any().downcast_ref::<Self>() == Some(self)
         }
 
         fn boxed_clone(&self) -> std::boxed::Box<dyn Action> {

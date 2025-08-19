@@ -2246,9 +2246,7 @@ impl ActiveThread {
         let after_editing_message = self
             .editing_message
             .as_ref()
-            .is_some_and(|(editing_message_id, _)| {
-                message_id > *editing_message_id
-            });
+            .is_some_and(|(editing_message_id, _)| message_id > *editing_message_id);
 
         let backdrop = div()
             .id(("backdrop", ix))

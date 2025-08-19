@@ -1111,9 +1111,8 @@ impl CompletionsMenu {
             let query_start_doesnt_match_split_words = query_start_lower
                 .map(|query_char| {
                     !split_words(&string_match.string).any(|word| {
-                        word.chars()
-                            .next()
-                            .and_then(|c| c.to_lowercase().next()) == Some(query_char)
+                        word.chars().next().and_then(|c| c.to_lowercase().next())
+                            == Some(query_char)
                     })
                 })
                 .unwrap_or(false);
