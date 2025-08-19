@@ -1,5 +1,5 @@
-use std::path::Path;
 use std::rc::Rc;
+use std::{any::Any, path::Path};
 
 use crate::{AgentServer, AgentServerCommand};
 use acp_thread::{AgentConnection, LoadError};
@@ -85,6 +85,10 @@ impl AgentServer for Gemini {
             }
             result
         })
+    }
+
+    fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
+        self
     }
 }
 

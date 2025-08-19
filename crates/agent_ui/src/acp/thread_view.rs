@@ -7,7 +7,7 @@ use acp_thread::{AgentConnection, Plan};
 use action_log::ActionLog;
 use agent::{TextThreadStore, ThreadStore};
 use agent_client_protocol::{self as acp};
-use agent_servers::AgentServer;
+use agent_servers::{AgentServer, ClaudeCode};
 use agent_settings::{AgentProfileId, AgentSettings, CompletionMode, NotifyWhenAgentWaiting};
 use anyhow::bail;
 use audio::{Audio, Sound};
@@ -160,6 +160,7 @@ impl AcpThreadView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        let prevent_slash_commands = agent.clone().downcast::<ClaudeCode>().is_some();
         let message_editor = cx.new(|cx| {
             MessageEditor::new(
                 workspace.clone(),
@@ -167,6 +168,7 @@ impl AcpThreadView {
                 thread_store.clone(),
                 text_thread_store.clone(),
                 "Message the agent － @ to include context",
+                prevent_slash_commands,
                 editor::EditorMode::AutoHeight {
                     min_lines: MIN_EDITOR_LINES,
                     max_lines: Some(MAX_EDITOR_LINES),
@@ -184,6 +186,7 @@ impl AcpThreadView {
                 project.clone(),
                 thread_store.clone(),
                 text_thread_store.clone(),
+                prevent_slash_commands,
             )
         });
 
@@ -3924,6 +3927,10 @@ pub(crate) mod tests {
             _cx: &mut App,
         ) -> Task<gpui::Result<Rc<dyn AgentConnection>>> {
             Task::ready(Ok(Rc::new(self.connection.clone())))
+        }
+
+        fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
+            self
         }
     }
 

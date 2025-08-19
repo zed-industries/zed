@@ -10,7 +10,8 @@ use assistant_slash_commands::codeblock_fence_for_path;
 use collections::{HashMap, HashSet};
 use editor::{
     Anchor, AnchorRangeExt, ContextMenuOptions, ContextMenuPlacement, Editor, EditorElement,
-    EditorMode, EditorStyle, ExcerptId, FoldPlaceholder, MultiBuffer, ToOffset,
+    EditorEvent, EditorMode, EditorStyle, ExcerptId, FoldPlaceholder, MultiBuffer,
+    SemanticsProvider, ToOffset,
     actions::Paste,
     display_map::{Crease, CreaseId, FoldId},
 };
@@ -19,8 +20,9 @@ use futures::{
     future::{Shared, join_all, try_join_all},
 };
 use gpui::{
-    AppContext, ClipboardEntry, Context, Entity, EventEmitter, FocusHandle, Focusable, Image,
-    ImageFormat, Img, Task, TextStyle, WeakEntity,
+    AppContext, ClipboardEntry, Context, Entity, EventEmitter, FocusHandle, Focusable,
+    HighlightStyle, Image, ImageFormat, Img, Subscription, Task, TextStyle, UnderlineStyle,
+    WeakEntity,
 };
 use language::{Buffer, Language};
 use language_model::LanguageModelImage;
@@ -28,25 +30,29 @@ use project::{CompletionIntent, Project, ProjectPath, Worktree};
 use rope::Point;
 use settings::Settings;
 use std::{
+    cell::Cell,
     ffi::OsStr,
     fmt::{Display, Write},
     ops::Range,
     path::{Path, PathBuf},
     rc::Rc,
     sync::Arc,
+    time::Duration,
 };
-use text::OffsetRangeExt;
+use text::{OffsetRangeExt, ToOffset as _};
 use theme::ThemeSettings;
 use ui::{
     ActiveTheme, AnyElement, App, ButtonCommon, ButtonLike, ButtonStyle, Color, Icon, IconName,
     IconSize, InteractiveElement, IntoElement, Label, LabelCommon, LabelSize, ParentElement,
     Render, SelectableButton, SharedString, Styled, TextSize, TintColor, Toggleable, Window, div,
-    h_flex,
+    h_flex, px,
 };
 use url::Url;
 use util::ResultExt;
 use workspace::{Workspace, notifications::NotifyResultExt as _};
 use zed_actions::agent::Chat;
+
+const PARSE_SLASH_COMMAND_DEBOUNCE: Duration = Duration::from_millis(50);
 
 pub struct MessageEditor {
     mention_set: MentionSet,
@@ -55,6 +61,9 @@ pub struct MessageEditor {
     workspace: WeakEntity<Workspace>,
     thread_store: Entity<ThreadStore>,
     text_thread_store: Entity<TextThreadStore>,
+    prevent_slash_commands: bool,
+    _subscriptions: Vec<Subscription>,
+    _parse_slash_command_task: Task<()>,
 }
 
 #[derive(Clone, Copy)]
@@ -73,6 +82,7 @@ impl MessageEditor {
         thread_store: Entity<ThreadStore>,
         text_thread_store: Entity<TextThreadStore>,
         placeholder: impl Into<Arc<str>>,
+        prevent_slash_commands: bool,
         mode: EditorMode,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -90,6 +100,9 @@ impl MessageEditor {
             text_thread_store.downgrade(),
             cx.weak_entity(),
         );
+        let semantics_provider = Rc::new(SlashCommandSemanticsProvider {
+            range: Cell::new(None),
+        });
         let mention_set = MentionSet::default();
         let editor = cx.new(|cx| {
             let buffer = cx.new(|cx| Buffer::local("", cx).with_language(Arc::new(language), cx));
@@ -106,6 +119,9 @@ impl MessageEditor {
                 max_entries_visible: 12,
                 placement: Some(ContextMenuPlacement::Above),
             });
+            if prevent_slash_commands {
+                editor.set_semantics_provider(Some(semantics_provider.clone()));
+            }
             editor
         });
 
@@ -114,6 +130,24 @@ impl MessageEditor {
         })
         .detach();
 
+        let mut subscriptions = Vec::new();
+        if prevent_slash_commands {
+            subscriptions.push(cx.subscribe_in(&editor, window, {
+                let semantics_provider = semantics_provider.clone();
+                move |this, editor, event, window, cx| match event {
+                    EditorEvent::Edited { .. } => {
+                        this.highlight_slash_command(
+                            semantics_provider.clone(),
+                            editor.clone(),
+                            window,
+                            cx,
+                        );
+                    }
+                    _ => {}
+                }
+            }));
+        }
+
         Self {
             editor,
             project,
@@ -121,6 +155,9 @@ impl MessageEditor {
             thread_store,
             text_thread_store,
             workspace,
+            prevent_slash_commands,
+            _subscriptions: subscriptions,
+            _parse_slash_command_task: Task::ready(()),
         }
     }
 
@@ -590,6 +627,7 @@ impl MessageEditor {
             self.mention_set
                 .contents(self.project.clone(), self.thread_store.clone(), window, cx);
         let editor = self.editor.clone();
+        let prevent_slash_commands = self.prevent_slash_commands;
 
         cx.spawn(async move |_, cx| {
             let contents = contents.await?;
@@ -612,7 +650,15 @@ impl MessageEditor {
 
                         let crease_range = crease.range().to_offset(&snapshot.buffer_snapshot);
                         if crease_range.start > ix {
-                            chunks.push(text[ix..crease_range.start].into());
+                            let chunk = if prevent_slash_commands
+                                && ix == 0
+                                && parse_slash_command(&text[ix..]).is_some()
+                            {
+                                format!(" {}", &text[ix..crease_range.start]).into()
+                            } else {
+                                text[ix..crease_range.start].into()
+                            };
+                            chunks.push(chunk);
                         }
                         let chunk = match mention {
                             Mention::Text { uri, content } => {
@@ -644,7 +690,14 @@ impl MessageEditor {
                     }
 
                     if ix < text.len() {
-                        let last_chunk = text[ix..].trim_end();
+                        let last_chunk = if prevent_slash_commands
+                            && ix == 0
+                            && parse_slash_command(&text[ix..]).is_some()
+                        {
+                            format!(" {}", text[ix..].trim_end())
+                        } else {
+                            text[ix..].trim_end().to_owned()
+                        };
                         if !last_chunk.is_empty() {
                             chunks.push(last_chunk.into());
                         }
@@ -988,6 +1041,48 @@ impl MessageEditor {
             }
         }
         cx.notify();
+    }
+
+    fn highlight_slash_command(
+        &mut self,
+        semantics_provider: Rc<SlashCommandSemanticsProvider>,
+        editor: Entity<Editor>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        struct InvalidSlashCommand;
+
+        self._parse_slash_command_task = cx.spawn_in(window, async move |_, cx| {
+            cx.background_executor()
+                .timer(PARSE_SLASH_COMMAND_DEBOUNCE)
+                .await;
+            editor
+                .update_in(cx, |editor, window, cx| {
+                    let snapshot = editor.snapshot(window, cx);
+                    let range = parse_slash_command(&editor.text(cx));
+                    semantics_provider.range.set(range);
+                    if let Some((start, end)) = range {
+                        editor.highlight_text::<InvalidSlashCommand>(
+                            vec![
+                                snapshot.buffer_snapshot.anchor_after(start)
+                                    ..snapshot.buffer_snapshot.anchor_before(end),
+                            ],
+                            HighlightStyle {
+                                underline: Some(UnderlineStyle {
+                                    thickness: px(1.),
+                                    color: Some(gpui::red()),
+                                    wavy: true,
+                                }),
+                                ..Default::default()
+                            },
+                            cx,
+                        );
+                    } else {
+                        editor.clear_highlights::<InvalidSlashCommand>(cx);
+                    }
+                })
+                .ok();
+        })
     }
 
     #[cfg(test)]
@@ -1416,6 +1511,118 @@ impl MentionSet {
     }
 }
 
+struct SlashCommandSemanticsProvider {
+    range: Cell<Option<(usize, usize)>>,
+}
+
+impl SemanticsProvider for SlashCommandSemanticsProvider {
+    fn hover(
+        &self,
+        buffer: &Entity<Buffer>,
+        position: text::Anchor,
+        cx: &mut App,
+    ) -> Option<Task<Vec<project::Hover>>> {
+        let snapshot = buffer.read(cx).snapshot();
+        let offset = position.to_offset(&snapshot);
+        let (start, end) = self.range.get()?;
+        if !(start..end).contains(&offset) {
+            return None;
+        }
+        let range = snapshot.anchor_after(start)..snapshot.anchor_after(end);
+        return Some(Task::ready(vec![project::Hover {
+            contents: vec![project::HoverBlock {
+                text: "Slash commands are not supported".into(),
+                kind: project::HoverBlockKind::PlainText,
+            }],
+            range: Some(range),
+            language: None,
+        }]));
+    }
+
+    fn inline_values(
+        &self,
+        _buffer_handle: Entity<Buffer>,
+        _range: Range<text::Anchor>,
+        _cx: &mut App,
+    ) -> Option<Task<anyhow::Result<Vec<project::InlayHint>>>> {
+        None
+    }
+
+    fn inlay_hints(
+        &self,
+        _buffer_handle: Entity<Buffer>,
+        _range: Range<text::Anchor>,
+        _cx: &mut App,
+    ) -> Option<Task<anyhow::Result<Vec<project::InlayHint>>>> {
+        None
+    }
+
+    fn resolve_inlay_hint(
+        &self,
+        _hint: project::InlayHint,
+        _buffer_handle: Entity<Buffer>,
+        _server_id: lsp::LanguageServerId,
+        _cx: &mut App,
+    ) -> Option<Task<anyhow::Result<project::InlayHint>>> {
+        None
+    }
+
+    fn supports_inlay_hints(&self, _buffer: &Entity<Buffer>, _cx: &mut App) -> bool {
+        false
+    }
+
+    fn document_highlights(
+        &self,
+        _buffer: &Entity<Buffer>,
+        _position: text::Anchor,
+        _cx: &mut App,
+    ) -> Option<Task<Result<Vec<project::DocumentHighlight>>>> {
+        None
+    }
+
+    fn definitions(
+        &self,
+        _buffer: &Entity<Buffer>,
+        _position: text::Anchor,
+        _kind: editor::GotoDefinitionKind,
+        _cx: &mut App,
+    ) -> Option<Task<Result<Vec<project::LocationLink>>>> {
+        None
+    }
+
+    fn range_for_rename(
+        &self,
+        _buffer: &Entity<Buffer>,
+        _position: text::Anchor,
+        _cx: &mut App,
+    ) -> Option<Task<Result<Option<Range<text::Anchor>>>>> {
+        None
+    }
+
+    fn perform_rename(
+        &self,
+        _buffer: &Entity<Buffer>,
+        _position: text::Anchor,
+        _new_name: String,
+        _cx: &mut App,
+    ) -> Option<Task<Result<project::ProjectTransaction>>> {
+        None
+    }
+}
+
+fn parse_slash_command(text: &str) -> Option<(usize, usize)> {
+    if let Some(remainder) = text.strip_prefix('/') {
+        let pos = remainder
+            .find(char::is_whitespace)
+            .unwrap_or(remainder.len());
+        let command = &remainder[..pos];
+        if !command.is_empty() && command.chars().all(char::is_alphanumeric) {
+            return Some((0, 1 + command.len()));
+        }
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use std::{ops::Range, path::Path, sync::Arc};
@@ -1463,6 +1670,7 @@ mod tests {
                     thread_store.clone(),
                     text_thread_store.clone(),
                     "Test",
+                    false,
                     EditorMode::AutoHeight {
                         min_lines: 1,
                         max_lines: None,
@@ -1661,6 +1869,7 @@ mod tests {
                     thread_store.clone(),
                     text_thread_store.clone(),
                     "Test",
+                    false,
                     EditorMode::AutoHeight {
                         max_lines: None,
                         min_lines: 1,
