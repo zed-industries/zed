@@ -1411,6 +1411,7 @@ impl AcpThreadView {
                             .group(&card_header_id)
                             .relative()
                             .w_full()
+                            .min_h_6()
                             .text_size(self.tool_name_font_size())
                             .child(self.render_tool_call_icon(
                                 card_header_id,
