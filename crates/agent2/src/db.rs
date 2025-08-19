@@ -367,8 +367,9 @@ impl ThreadsDatabase {
                     }
                     DataType::Json => String::from_utf8(data)?,
                 };
+                dbg!(&json_data);
 
-                let thread = DbThread::from_json(json_data.as_bytes())?;
+                let thread = dbg!(DbThread::from_json(json_data.as_bytes()))?;
                 Ok(Some(thread))
             } else {
                 Ok(None)

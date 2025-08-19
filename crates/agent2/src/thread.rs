@@ -610,7 +610,7 @@ impl Thread {
             summarization_model,
             project,
             action_log,
-            updated_at: db_thread.updated_at, // todo!(figure out if we can remove the "recently opened" list)
+            updated_at: db_thread.updated_at,
         }
     }
 
