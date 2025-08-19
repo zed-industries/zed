@@ -3,6 +3,7 @@ use crate::{
 };
 use collections::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
+use stacksafe::{StackSafe, stacksafe};
 use std::{fmt::Debug, ops::Range};
 use taffy::{
     TaffyTree, TraversePartialTree as _,
@@ -11,8 +12,15 @@ use taffy::{
     tree::NodeId,
 };
 
-type NodeMeasureFn = Box<
-    dyn FnMut(Size<Option<Pixels>>, Size<AvailableSpace>, &mut Window, &mut App) -> Size<Pixels>,
+type NodeMeasureFn = StackSafe<
+    Box<
+        dyn FnMut(
+            Size<Option<Pixels>>,
+            Size<AvailableSpace>,
+            &mut Window,
+            &mut App,
+        ) -> Size<Pixels>,
+    >,
 >;
 
 struct NodeContext {
@@ -88,7 +96,7 @@ impl TaffyLayoutEngine {
             .new_leaf_with_context(
                 taffy_style,
                 NodeContext {
-                    measure: Box::new(measure),
+                    measure: StackSafe::new(Box::new(measure)),
                 },
             )
             .expect(EXPECT_MESSAGE)
@@ -143,6 +151,7 @@ impl TaffyLayoutEngine {
         Ok(edges)
     }
 
+    #[stacksafe]
     pub fn compute_layout(
         &mut self,
         id: LayoutId,
