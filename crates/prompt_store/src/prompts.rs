@@ -286,7 +286,7 @@ impl PromptBuilder {
                             break;
                         }
                     for event in changed_paths {
-                        if event.path.starts_with(&templates_dir) && event.path.extension().map_or(false, |ext| ext == "hbs") {
+                        if event.path.starts_with(&templates_dir) && event.path.extension().is_some_and(|ext| ext == "hbs") {
                             log::info!("Reloading prompt template override: {}", event.path.display());
                             if let Some(content) = params.fs.load(&event.path).await.log_err() {
                                 let file_name = event.path.file_stem().unwrap().to_string_lossy();

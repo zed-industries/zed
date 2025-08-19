@@ -216,7 +216,8 @@ impl Tool for TerminalTool {
             async move |cx| {
                 let program = program.await;
                 let env = env.await;
-                let terminal = project
+
+                project
                     .update(cx, |project, cx| {
                         project.create_terminal(
                             TerminalKind::Task(task::SpawnInTerminal {
@@ -229,8 +230,7 @@ impl Tool for TerminalTool {
                             cx,
                         )
                     })?
-                    .await;
-                terminal
+                    .await
             }
         });
 
@@ -387,7 +387,7 @@ fn working_dir(
     let project = project.read(cx);
     let cd = &input.cd;
 
-    if cd == "." || cd == "" {
+    if cd == "." || cd.is_empty() {
         // Accept "." or "" as meaning "the one worktree" if we only have one worktree.
         let mut worktrees = project.worktrees(cx);
 
@@ -412,10 +412,8 @@ fn working_dir(
             {
                 return Ok(Some(input_path.into()));
             }
-        } else {
-            if let Some(worktree) = project.worktree_for_root_name(cd, cx) {
-                return Ok(Some(worktree.read(cx).abs_path().to_path_buf()));
-            }
+        } else if let Some(worktree) = project.worktree_for_root_name(cd, cx) {
+            return Ok(Some(worktree.read(cx).abs_path().to_path_buf()));
         }
 
         anyhow::bail!("`cd` directory {cd:?} was not in any of the project's worktrees.");

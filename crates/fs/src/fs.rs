@@ -625,13 +625,13 @@ impl Fs for RealFs {
     async fn is_file(&self, path: &Path) -> bool {
         smol::fs::metadata(path)
             .await
-            .map_or(false, |metadata| metadata.is_file())
+            .is_ok_and(|metadata| metadata.is_file())
     }
 
     async fn is_dir(&self, path: &Path) -> bool {
         smol::fs::metadata(path)
             .await
-            .map_or(false, |metadata| metadata.is_dir())
+            .is_ok_and(|metadata| metadata.is_dir())
     }
 
     async fn metadata(&self, path: &Path) -> Result<Option<Metadata>> {
@@ -2419,12 +2419,11 @@ impl Fs for FakeFs {
                 let watcher = watcher.clone();
                 move |events| {
                     let result = events.iter().any(|evt_path| {
-                        let result = watcher
+                        watcher
                             .prefixes
                             .lock()
                             .iter()
-                            .any(|prefix| evt_path.path.starts_with(prefix));
-                        result
+                            .any(|prefix| evt_path.path.starts_with(prefix))
                     });
                     let executor = executor.clone();
                     async move {

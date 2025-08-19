@@ -434,7 +434,7 @@ fn runnable_ranges(
 
     if start_language
         .zip(end_language)
-        .map_or(false, |(start, end)| start == end)
+        .is_some_and(|(start, end)| start == end)
     {
         (vec![snippet_range], None)
     } else {

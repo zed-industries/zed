@@ -285,7 +285,7 @@ impl AgentDiffPane {
                     && buffer
                         .read(cx)
                         .file()
-                        .map_or(false, |file| file.disk_state() == DiskState::Deleted)
+                        .is_some_and(|file| file.disk_state() == DiskState::Deleted)
                 {
                     editor.fold_buffer(snapshot.text.remote_id(), cx)
                 }
@@ -322,16 +322,14 @@ impl AgentDiffPane {
     }
 
     fn handle_native_thread_event(&mut self, event: &ThreadEvent, cx: &mut Context<Self>) {
-        match event {
-            ThreadEvent::SummaryGenerated => self.update_title(cx),
-            _ => {}
+        if let ThreadEvent::SummaryGenerated = event {
+            self.update_title(cx)
         }
     }
 
     fn handle_acp_thread_event(&mut self, event: &AcpThreadEvent, cx: &mut Context<Self>) {
-        match event {
-            AcpThreadEvent::TitleUpdated => self.update_title(cx),
-            _ => {}
+        if let AcpThreadEvent::TitleUpdated = event {
+            self.update_title(cx)
         }
     }
 
@@ -1063,7 +1061,7 @@ impl ToolbarItemView for AgentDiffToolbar {
         }
 
         self.active_item = None;
-        return self.location(cx);
+        self.location(cx)
     }
 
     fn pane_focus_update(
@@ -1509,7 +1507,7 @@ impl AgentDiff {
                     .read(cx)
                     .entries()
                     .last()
-                    .map_or(false, |entry| entry.diffs().next().is_some())
+                    .is_some_and(|entry| entry.diffs().next().is_some())
                 {
                     self.update_reviewing_editors(workspace, window, cx);
                 }
@@ -1519,7 +1517,7 @@ impl AgentDiff {
                     .read(cx)
                     .entries()
                     .get(*ix)
-                    .map_or(false, |entry| entry.diffs().next().is_some())
+                    .is_some_and(|entry| entry.diffs().next().is_some())
                 {
                     self.update_reviewing_editors(workspace, window, cx);
                 }
@@ -1528,6 +1526,7 @@ impl AgentDiff {
                 self.update_reviewing_editors(workspace, window, cx);
             }
             AcpThreadEvent::TitleUpdated
+            | AcpThreadEvent::TokenUsageUpdated
             | AcpThreadEvent::EntriesRemoved(_)
             | AcpThreadEvent::ToolAuthorizationRequired
             | AcpThreadEvent::Retry(_) => {}
@@ -1541,15 +1540,11 @@ impl AgentDiff {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        match event {
-            workspace::Event::ItemAdded { item } => {
-                if let Some(editor) = item.downcast::<Editor>()
-                    && let Some(buffer) = Self::full_editor_buffer(editor.read(cx), cx)
-                {
-                    self.register_editor(workspace.downgrade(), buffer.clone(), editor, window, cx);
-                }
-            }
-            _ => {}
+        if let workspace::Event::ItemAdded { item } = event
+            && let Some(editor) = item.downcast::<Editor>()
+            && let Some(buffer) = Self::full_editor_buffer(editor.read(cx), cx)
+        {
+            self.register_editor(workspace.downgrade(), buffer.clone(), editor, window, cx);
         }
     }
 
@@ -1709,7 +1704,7 @@ impl AgentDiff {
                 .read_with(cx, |editor, _cx| editor.workspace())
                 .ok()
                 .flatten()
-                .map_or(false, |editor_workspace| {
+                .is_some_and(|editor_workspace| {
                     editor_workspace.entity_id() == workspace.entity_id()
                 });
 
@@ -1868,7 +1863,7 @@ impl AgentDiff {
             }
         }
 
-        return Some(Task::ready(Ok(())));
+        Some(Task::ready(Ok(())))
     }
 }
 

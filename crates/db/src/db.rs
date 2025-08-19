@@ -37,7 +37,7 @@ const FALLBACK_DB_NAME: &str = "FALLBACK_MEMORY_DB";
 const DB_FILE_NAME: &str = "db.sqlite";
 
 pub static ZED_STATELESS: LazyLock<bool> =
-    LazyLock::new(|| env::var("ZED_STATELESS").map_or(false, |v| !v.is_empty()));
+    LazyLock::new(|| env::var("ZED_STATELESS").is_ok_and(|v| !v.is_empty()));
 
 pub static ALL_FILE_DB_FAILED: LazyLock<AtomicBool> = LazyLock::new(|| AtomicBool::new(false));
 

@@ -102,7 +102,7 @@ impl ProfileProvider for Entity<agent2::Thread> {
     fn profiles_supported(&self, cx: &App) -> bool {
         self.read(cx)
             .model()
-            .map_or(false, |model| model.supports_tools())
+            .is_some_and(|model| model.supports_tools())
     }
 }
 
@@ -816,7 +816,7 @@ impl AcpThreadView {
                 self.thread_retry_status.take();
                 self.thread_state = ThreadState::ServerExited { status: *status };
             }
-            AcpThreadEvent::TitleUpdated => {}
+            AcpThreadEvent::TitleUpdated | AcpThreadEvent::TokenUsageUpdated => {}
         }
         cx.notify();
     }
@@ -2199,7 +2199,7 @@ impl AcpThreadView {
                     .map(|view| div().px_4().w_full().max_w_128().child(view)),
             )
             .child(h_flex().mt_1p5().justify_center().children(
-                connection.auth_methods().into_iter().map(|method| {
+                connection.auth_methods().iter().map(|method| {
                     Button::new(SharedString::from(method.id.0.clone()), method.name.clone())
                         .on_click({
                             let method_id = method.id.clone();
@@ -2649,7 +2649,7 @@ impl AcpThreadView {
     ) -> Div {
         let editor_bg_color = cx.theme().colors().editor_background;
 
-        v_flex().children(changed_buffers.into_iter().enumerate().flat_map(
+        v_flex().children(changed_buffers.iter().enumerate().flat_map(
             |(index, (buffer, _diff))| {
                 let file = buffer.read(cx).file()?;
                 let path = file.path();
@@ -2869,6 +2869,7 @@ impl AcpThreadView {
                     .child(
                         h_flex()
                             .gap_1()
+                            .children(self.render_token_usage(cx))
                             .children(self.profile_selector.clone())
                             .children(self.model_selector.clone())
                             .child(self.render_send_button(cx)),
@@ -2889,6 +2890,44 @@ impl AcpThreadView {
         let acp_thread = self.thread()?.read(cx);
         self.as_native_connection(cx)?
             .thread(acp_thread.session_id(), cx)
+    }
+
+    fn render_token_usage(&self, cx: &mut Context<Self>) -> Option<Div> {
+        let thread = self.thread()?.read(cx);
+        let usage = thread.token_usage()?;
+        let is_generating = thread.status() != ThreadStatus::Idle;
+
+        let used = crate::text_thread_editor::humanize_token_count(usage.used_tokens);
+        let max = crate::text_thread_editor::humanize_token_count(usage.max_tokens);
+
+        Some(
+            h_flex()
+                .flex_shrink_0()
+                .gap_0p5()
+                .mr_1()
+                .child(
+                    Label::new(used)
+                        .size(LabelSize::Small)
+                        .color(Color::Muted)
+                        .map(|label| {
+                            if is_generating {
+                                label
+                                    .with_animation(
+                                        "used-tokens-label",
+                                        Animation::new(Duration::from_secs(2))
+                                            .repeat()
+                                            .with_easing(pulsating_between(0.6, 1.)),
+                                        |label, delta| label.alpha(delta),
+                                    )
+                                    .into_any()
+                            } else {
+                                label.into_any_element()
+                            }
+                        }),
+                )
+                .child(Label::new("/").size(LabelSize::Small).color(Color::Muted))
+                .child(Label::new(max).size(LabelSize::Small).color(Color::Muted)),
+        )
     }
 
     fn toggle_burn_mode(
@@ -2918,7 +2957,7 @@ impl AcpThreadView {
 
         if thread
             .model()
-            .map_or(true, |model| !model.supports_burn_mode())
+            .is_none_or(|model| !model.supports_burn_mode())
         {
             return None;
         }
@@ -2950,9 +2989,9 @@ impl AcpThreadView {
 
     fn render_send_button(&self, cx: &mut Context<Self>) -> AnyElement {
         let is_editor_empty = self.message_editor.read(cx).is_empty(cx);
-        let is_generating = self.thread().map_or(false, |thread| {
-            thread.read(cx).status() != ThreadStatus::Idle
-        });
+        let is_generating = self
+            .thread()
+            .is_some_and(|thread| thread.read(cx).status() != ThreadStatus::Idle);
 
         if is_generating && is_editor_empty {
             IconButton::new("stop-generation", IconName::Stop)
@@ -3504,8 +3543,7 @@ impl AcpThreadView {
         cx: &mut Context<Self>,
     ) {
         self.message_editor.update(cx, |message_editor, cx| {
-            message_editor.insert_dragged_files(paths, window, cx);
-            drop(added_worktrees);
+            message_editor.insert_dragged_files(paths, added_worktrees, window, cx);
         })
     }
 
@@ -3531,18 +3569,16 @@ impl AcpThreadView {
             } else {
                 format!("Retrying. Next attempt in {next_attempt_in_secs} seconds.")
             }
+        } else if next_attempt_in_secs == 1 {
+            format!(
+                "Retrying. Next attempt in 1 second (Attempt {} of {}).",
+                state.attempt, state.max_attempts,
+            )
         } else {
-            if next_attempt_in_secs == 1 {
-                format!(
-                    "Retrying. Next attempt in 1 second (Attempt {} of {}).",
-                    state.attempt, state.max_attempts,
-                )
-            } else {
-                format!(
-                    "Retrying. Next attempt in {next_attempt_in_secs} seconds (Attempt {} of {}).",
-                    state.attempt, state.max_attempts,
-                )
-            }
+            format!(
+                "Retrying. Next attempt in {next_attempt_in_secs} seconds (Attempt {} of {}).",
+                state.attempt, state.max_attempts,
+            )
         };
 
         Some(
@@ -3628,7 +3664,7 @@ impl AcpThreadView {
         let supports_burn_mode = thread
             .read(cx)
             .model()
-            .map_or(false, |model| model.supports_burn_mode());
+            .is_some_and(|model| model.supports_burn_mode());
 
         let focus_handle = self.focus_handle(cx);
 

@@ -452,7 +452,7 @@ async fn get_cached_server_binary(container_dir: PathBuf) -> Option<LanguageServ
                 && entry
                     .file_name()
                     .to_str()
-                    .map_or(false, |name| name.starts_with("gopls_"))
+                    .is_some_and(|name| name.starts_with("gopls_"))
             {
                 last_binary_path = Some(entry.path());
             }

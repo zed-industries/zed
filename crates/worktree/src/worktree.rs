@@ -3393,12 +3393,10 @@ impl File {
 
         let disk_state = if proto.is_deleted {
             DiskState::Deleted
+        } else if let Some(mtime) = proto.mtime.map(&Into::into) {
+            DiskState::Present { mtime }
         } else {
-            if let Some(mtime) = proto.mtime.map(&Into::into) {
-                DiskState::Present { mtime }
-            } else {
-                DiskState::New
-            }
+            DiskState::New
         };
 
         Ok(Self {
@@ -4074,10 +4072,10 @@ impl BackgroundScanner {
                     }
                 }
 
-                let parent_dir_is_loaded = relative_path.parent().map_or(true, |parent| {
+                let parent_dir_is_loaded = relative_path.parent().is_none_or(|parent| {
                     snapshot
                         .entry_for_path(parent)
-                        .map_or(false, |entry| entry.kind == EntryKind::Dir)
+                        .is_some_and(|entry| entry.kind == EntryKind::Dir)
                 });
                 if !parent_dir_is_loaded {
                     log::debug!("ignoring event {relative_path:?} within unloaded directory");
@@ -4630,7 +4628,7 @@ impl BackgroundScanner {
             while let Some(parent_abs_path) = ignores_to_update.next() {
                 while ignores_to_update
                     .peek()
-                    .map_or(false, |p| p.starts_with(&parent_abs_path))
+                    .is_some_and(|p| p.starts_with(&parent_abs_path))
                 {
                     ignores_to_update.next().unwrap();
                 }
@@ -4797,9 +4795,7 @@ impl BackgroundScanner {
         for (&work_directory_id, entry) in snapshot.git_repositories.iter() {
             let exists_in_snapshot = snapshot
                 .entry_for_id(work_directory_id)
-                .map_or(false, |entry| {
-                    snapshot.entry_for_path(entry.path.join(*DOT_GIT)).is_some()
-                });
+                .is_some_and(|entry| snapshot.entry_for_path(entry.path.join(*DOT_GIT)).is_some());
 
             if exists_in_snapshot
                 || matches!(
@@ -4924,10 +4920,10 @@ fn build_diff(
     new_paths.next();
     for path in event_paths {
         let path = PathKey(path.clone());
-        if old_paths.item().map_or(false, |e| e.path < path.0) {
+        if old_paths.item().is_some_and(|e| e.path < path.0) {
             old_paths.seek_forward(&path, Bias::Left);
         }
-        if new_paths.item().map_or(false, |e| e.path < path.0) {
+        if new_paths.item().is_some_and(|e| e.path < path.0) {
             new_paths.seek_forward(&path, Bias::Left);
         }
         loop {
@@ -4977,7 +4973,7 @@ fn build_diff(
                             let is_newly_loaded = phase == InitialScan
                                 || last_newly_loaded_dir_path
                                     .as_ref()
-                                    .map_or(false, |dir| new_entry.path.starts_with(dir));
+                                    .is_some_and(|dir| new_entry.path.starts_with(dir));
                             changes.push((
                                 new_entry.path.clone(),
                                 new_entry.id,
@@ -4995,7 +4991,7 @@ fn build_diff(
                     let is_newly_loaded = phase == InitialScan
                         || last_newly_loaded_dir_path
                             .as_ref()
-                            .map_or(false, |dir| new_entry.path.starts_with(dir));
+                            .is_some_and(|dir| new_entry.path.starts_with(dir));
                     changes.push((
                         new_entry.path.clone(),
                         new_entry.id,

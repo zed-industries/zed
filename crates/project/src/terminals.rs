@@ -67,13 +67,11 @@ pub struct SshDetails {
 
 impl Project {
     pub fn active_project_directory(&self, cx: &App) -> Option<Arc<Path>> {
-        let worktree = self
-            .active_entry()
+        self.active_entry()
             .and_then(|entry_id| self.worktree_for_entry(entry_id, cx))
             .into_iter()
             .chain(self.worktrees(cx))
-            .find_map(|tree| tree.read(cx).root_dir());
-        worktree
+            .find_map(|tree| tree.read(cx).root_dir())
     }
 
     pub fn first_project_directory(&self, cx: &App) -> Option<PathBuf> {
@@ -99,7 +97,7 @@ impl Project {
             }
         }
 
-        return None;
+        None
     }
 
     pub fn create_terminal(
@@ -518,7 +516,7 @@ impl Project {
                 smol::block_on(fs.metadata(&bin_path))
                     .ok()
                     .flatten()
-                    .map_or(false, |meta| meta.is_dir)
+                    .is_some_and(|meta| meta.is_dir)
             })
     }
 

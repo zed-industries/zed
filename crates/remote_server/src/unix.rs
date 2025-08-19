@@ -334,7 +334,7 @@ fn start_server(
             let (mut stdin_msg_tx, mut stdin_msg_rx) = mpsc::unbounded::<Envelope>();
             cx.background_spawn(async move {
                 while let Ok(msg) = read_message(&mut stdin_stream, &mut input_buffer).await {
-                    if let Err(_) = stdin_msg_tx.send(msg).await {
+                    if (stdin_msg_tx.send(msg).await).is_err() {
                         break;
                     }
                 }
@@ -891,7 +891,8 @@ pub fn handle_settings_file_changes(
 
 fn read_proxy_settings(cx: &mut Context<HeadlessProject>) -> Option<Url> {
     let proxy_str = ProxySettings::get_global(cx).proxy.to_owned();
-    let proxy_url = proxy_str
+
+    proxy_str
         .as_ref()
         .and_then(|input: &String| {
             input
@@ -899,8 +900,7 @@ fn read_proxy_settings(cx: &mut Context<HeadlessProject>) -> Option<Url> {
                 .inspect_err(|e| log::error!("Error parsing proxy settings: {}", e))
                 .ok()
         })
-        .or_else(read_proxy_from_env);
-    proxy_url
+        .or_else(read_proxy_from_env)
 }
 
 fn daemonize() -> Result<ControlFlow<()>> {

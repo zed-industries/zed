@@ -94,9 +94,7 @@ impl<'a, S: Summary, D: Dimension<'a, S> + Ord> SeekTarget<'a, S, D> for D {
 }
 
 impl<'a, T: Summary> Dimension<'a, T> for () {
-    fn zero(_: &T::Context) -> Self {
-        ()
-    }
+    fn zero(_: &T::Context) -> Self {}
 
     fn add_summary(&mut self, _: &'a T, _: &T::Context) {}
 }
@@ -728,7 +726,7 @@ impl<T: KeyedItem> SumTree<T> {
 
                 if old_item
                     .as_ref()
-                    .map_or(false, |old_item| old_item.key() < new_key)
+                    .is_some_and(|old_item| old_item.key() < new_key)
                 {
                     new_tree.extend(buffered_items.drain(..), cx);
                     let slice = cursor.slice(&new_key, Bias::Left);

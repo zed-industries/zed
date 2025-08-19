@@ -562,12 +562,12 @@ impl ExtensionStore {
                 extensions
                     .into_iter()
                     .filter(|extension| {
-                        this.extension_index.extensions.get(&extension.id).map_or(
-                            true,
-                            |installed_extension| {
+                        this.extension_index
+                            .extensions
+                            .get(&extension.id)
+                            .is_none_or(|installed_extension| {
                                 installed_extension.manifest.version != extension.manifest.version
-                            },
-                        )
+                            })
                     })
                     .collect()
             })
@@ -1451,7 +1451,7 @@ impl ExtensionStore {
 
                     if extension_dir
                         .file_name()
-                        .map_or(false, |file_name| file_name == ".DS_Store")
+                        .is_some_and(|file_name| file_name == ".DS_Store")
                     {
                         continue;
                     }
@@ -1675,9 +1675,8 @@ impl ExtensionStore {
                 let schema_path = &extension::build_debug_adapter_schema_path(adapter_name, meta);
 
                 if fs.is_file(&src_dir.join(schema_path)).await {
-                    match schema_path.parent() {
-                        Some(parent) => fs.create_dir(&tmp_dir.join(parent)).await?,
-                        None => {}
+                    if let Some(parent) = schema_path.parent() {
+                        fs.create_dir(&tmp_dir.join(parent)).await?
                     }
                     fs.copy_file(
                         &src_dir.join(schema_path),

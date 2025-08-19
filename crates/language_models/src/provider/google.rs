@@ -530,7 +530,7 @@ pub fn into_google(
     let system_instructions = if request
         .messages
         .first()
-        .map_or(false, |msg| matches!(msg.role, Role::System))
+        .is_some_and(|msg| matches!(msg.role, Role::System))
     {
         let message = request.messages.remove(0);
         Some(SystemInstruction {

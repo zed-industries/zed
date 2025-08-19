@@ -207,7 +207,7 @@ impl TextDiffView {
             path: Some(format!("Clipboard ↔ {selection_location_path}").into()),
             buffer_changes_tx,
             _recalculate_diff_task: cx.spawn(async move |_, cx| {
-                while let Ok(_) = buffer_changes_rx.recv().await {
+                while buffer_changes_rx.recv().await.is_ok() {
                     loop {
                         let mut timer = cx
                             .background_executor()
