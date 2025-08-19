@@ -3834,22 +3834,22 @@ impl Repository {
                     ..
                 } => {
                     let result = backend.stash_drop(index, environment).await;
-                    if result.is_ok() {
-                        if let Ok(stash_entries) = backend.stash_entries().await {
-                            let snapshot = this.update(&mut cx, |this, cx| {
-                                this.snapshot.stash_entries = stash_entries;
-                                let snapshot = this.snapshot.clone();
-                                cx.emit(RepositoryEvent::Updated {
-                                    full_scan: false,
-                                    new_instance: false,
-                                });
-                                snapshot
-                            })?;
-                            if let Some(updates_tx) = updates_tx {
-                                updates_tx
-                                    .unbounded_send(DownstreamUpdate::UpdateRepository(snapshot))
-                                    .ok();
-                            }
+                    if result.is_ok()
+                        && let Ok(stash_entries) = backend.stash_entries().await
+                    {
+                        let snapshot = this.update(&mut cx, |this, cx| {
+                            this.snapshot.stash_entries = stash_entries;
+                            let snapshot = this.snapshot.clone();
+                            cx.emit(RepositoryEvent::Updated {
+                                full_scan: false,
+                                new_instance: false,
+                            });
+                            snapshot
+                        })?;
+                        if let Some(updates_tx) = updates_tx {
+                            updates_tx
+                                .unbounded_send(DownstreamUpdate::UpdateRepository(snapshot))
+                                .ok();
                         }
                     }
 
@@ -4753,14 +4753,12 @@ impl Repository {
                         this.snapshot.scan_id += 1;
                     }
 
-                    if needs_update {
-                        if let Some(updates_tx) = updates_tx {
-                            updates_tx
-                                .unbounded_send(DownstreamUpdate::UpdateRepository(
-                                    this.snapshot.clone(),
-                                ))
-                                .ok();
-                        }
+                    if needs_update && let Some(updates_tx) = updates_tx {
+                        updates_tx
+                            .unbounded_send(DownstreamUpdate::UpdateRepository(
+                                this.snapshot.clone(),
+                            ))
+                            .ok();
                     }
                     cx.emit(RepositoryEvent::Updated {
                         full_scan: false,
