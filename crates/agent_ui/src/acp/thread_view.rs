@@ -2786,10 +2786,10 @@ impl AcpThreadView {
             .child(
                 h_flex()
                     .flex_none()
+                    .flex_wrap()
                     .justify_between()
                     .child(
                         h_flex()
-                            .gap_1()
                             .child(self.render_follow_toggle(cx))
                             .children(self.render_burn_mode_toggle(cx)),
                     )
