@@ -143,7 +143,7 @@ impl RenderOnce for BufferFontSizeControl {
         h_flex()
             .gap_2()
             .child(Icon::new(IconName::FontSize))
-            .child(div()) // todo!(Numeric stepper was here)
+            .child(div()) // TODO: Re-evaluate this whole crate once settings UI is complete
     }
 }
 

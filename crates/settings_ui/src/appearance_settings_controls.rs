@@ -9,7 +9,7 @@ use ui::{
     CheckboxWithLabel, ContextMenu, DropdownMenu, SettingsContainer, SettingsGroup, ToggleButton,
     prelude::*,
 };
-use ui_input::NumericStepper;
+// use ui_input::NumericStepper;
 
 #[derive(IntoElement)]
 pub struct AppearanceSettingsControls {}
@@ -255,27 +255,26 @@ impl EditableSettingControl for UiFontSizeControl {
 }
 
 impl RenderOnce for UiFontSizeControl {
-    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let value = Self::read(cx);
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+        // let value = Self::read(cx);
 
-        h_flex()
-            .gap_2()
-            .child(Icon::new(IconName::FontSize))
-            .child(NumericStepper::new(
-                "ui-font-size",
-                value.to_string(),
-                move |size, cx| {
-                    Self::write(Pixels::from(size), cx);
-                },
-                move |_, _, cx| {
-                    Self::write(value - px(1.), cx);
-                },
-                move |_, _, cx| {
-                    Self::write(value + px(1.), cx);
-                },
-                window,
-                cx,
-            ))
+        h_flex().gap_2().child(Icon::new(IconName::FontSize))
+        // TODO: Re-evaluate this whole crate once settings UI project starts
+        // .child(NumericStepper::new(
+        //     "ui-font-size",
+        //     value.to_string(),
+        //     move |size, cx| {
+        //         Self::write(Pixels::from(size), cx);
+        //     },
+        //     move |_, _, cx| {
+        //         Self::write(value - px(1.), cx);
+        //     },
+        //     move |_, _, cx| {
+        //         Self::write(value + px(1.), cx);
+        //     },
+        //     window,
+        //     cx,
+        // ))
     }
 }
 

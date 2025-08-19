@@ -15,7 +15,6 @@ use ui::{
     ButtonLike, ListItem, ListItemSpacing, PopoverMenu, SwitchField, ToggleButtonGroup,
     ToggleButtonGroupStyle, ToggleButtonSimple, ToggleState, Tooltip, prelude::*,
 };
-use ui_input::NumericStepper;
 
 use crate::{ImportCursorSettings, ImportVsCodeSettings, SettingsImportState};
 
@@ -110,7 +109,7 @@ fn write_ui_font_family(font: SharedString, cx: &mut App) {
     });
 }
 
-fn write_ui_font_size(size: Pixels, cx: &mut App) {
+fn _write_ui_font_size(size: Pixels, cx: &mut App) {
     let fs = <dyn Fs>::global(cx);
 
     update_settings_file::<ThemeSettings>(fs, cx, move |theme_settings, _| {
@@ -118,7 +117,7 @@ fn write_ui_font_size(size: Pixels, cx: &mut App) {
     });
 }
 
-fn write_buffer_font_size(size: Pixels, cx: &mut App) {
+fn _write_buffer_font_size(size: Pixels, cx: &mut App) {
     let fs = <dyn Fs>::global(cx);
 
     update_settings_file::<ThemeSettings>(fs, cx, move |theme_settings, _| {
@@ -278,10 +277,10 @@ fn render_font_customization_section(
     cx: &mut App,
 ) -> impl IntoElement {
     let theme_settings = ThemeSettings::get_global(cx);
-    let ui_font_size = theme_settings.ui_font_size(cx);
+    // let ui_font_size = theme_settings.ui_font_size(cx);
     let ui_font_family = theme_settings.ui_font.family.clone();
     let buffer_font_family = theme_settings.buffer_font.family.clone();
-    let buffer_font_size = theme_settings.buffer_font_size(cx);
+    // let buffer_font_size = theme_settings.buffer_font_size(cx);
 
     let ui_font_picker =
         cx.new(|cx| font_picker(ui_font_family.clone(), write_ui_font_family, window, cx));
@@ -307,67 +306,62 @@ fn render_font_customization_section(
                 .gap_1()
                 .child(Label::new("UI Font"))
                 .child(
-                    h_flex()
-                        .w_full()
-                        .justify_between()
-                        .gap_2()
-                        .child(
-                            PopoverMenu::new("ui-font-picker")
-                                .menu({
-                                    let ui_font_picker = ui_font_picker.clone();
-                                    move |_window, _cx| Some(ui_font_picker.clone())
-                                })
-                                .trigger(
-                                    ButtonLike::new("ui-font-family-button")
-                                        .style(ButtonStyle::Outlined)
-                                        .size(ButtonSize::Medium)
-                                        .full_width()
-                                        .tab_index({
-                                            *tab_index += 1;
-                                            *tab_index - 1
-                                        })
-                                        .child(
-                                            h_flex()
-                                                .w_full()
-                                                .justify_between()
-                                                .child(Label::new(ui_font_family))
-                                                .child(
-                                                    Icon::new(IconName::ChevronUpDown)
-                                                        .color(Color::Muted)
-                                                        .size(IconSize::XSmall),
-                                                ),
-                                        ),
-                                )
-                                .full_width(true)
-                                .anchor(gpui::Corner::TopLeft)
-                                .offset(gpui::Point {
-                                    x: px(0.0),
-                                    y: px(4.0),
-                                })
-                                .with_handle(ui_font_handle),
-                        )
-                        .child(
-                            NumericStepper::new(
-                                "ui-font-size",
-                                ui_font_size.to_string(),
-                                move |size, cx| {
-                                    write_ui_font_size(Pixels::from(size), cx);
-                                },
-                                move |_, _, cx| {
-                                    write_ui_font_size(ui_font_size - px(1.), cx);
-                                },
-                                move |_, _, cx| {
-                                    write_ui_font_size(ui_font_size + px(1.), cx);
-                                },
-                                window,
-                                cx,
+                    h_flex().w_full().justify_between().gap_2().child(
+                        PopoverMenu::new("ui-font-picker")
+                            .menu({
+                                let ui_font_picker = ui_font_picker.clone();
+                                move |_window, _cx| Some(ui_font_picker.clone())
+                            })
+                            .trigger(
+                                ButtonLike::new("ui-font-family-button")
+                                    .style(ButtonStyle::Outlined)
+                                    .size(ButtonSize::Medium)
+                                    .full_width()
+                                    .tab_index({
+                                        *tab_index += 1;
+                                        *tab_index - 1
+                                    })
+                                    .child(
+                                        h_flex()
+                                            .w_full()
+                                            .justify_between()
+                                            .child(Label::new(ui_font_family))
+                                            .child(
+                                                Icon::new(IconName::ChevronUpDown)
+                                                    .color(Color::Muted)
+                                                    .size(IconSize::XSmall),
+                                            ),
+                                    ),
                             )
-                            .style(ui_input::NumericStepperStyle::Outlined)
-                            .tab_index({
-                                *tab_index += 2;
-                                *tab_index - 2
-                            }),
-                        ),
+                            .full_width(true)
+                            .anchor(gpui::Corner::TopLeft)
+                            .offset(gpui::Point {
+                                x: px(0.0),
+                                y: px(4.0),
+                            })
+                            .with_handle(ui_font_handle),
+                    ), // .child(
+                       //     NumericStepper::new(
+                       //         "ui-font-size",
+                       //         ui_font_size.to_string(),
+                       //         move |size, cx| {
+                       //             write_ui_font_size(Pixels::from(size), cx);
+                       //         },
+                       //         move |_, _, cx| {
+                       //             write_ui_font_size(ui_font_size - px(1.), cx);
+                       //         },
+                       //         move |_, _, cx| {
+                       //             write_ui_font_size(ui_font_size + px(1.), cx);
+                       //         },
+                       //         window,
+                       //         cx,
+                       //     )
+                       //     .style(ui_input::NumericStepperStyle::Outlined)
+                       //     .tab_index({
+                       //         *tab_index += 2;
+                       //         *tab_index - 2
+                       //     }),
+                       // ),
                 ),
         )
         .child(
@@ -376,67 +370,62 @@ fn render_font_customization_section(
                 .gap_1()
                 .child(Label::new("Editor Font"))
                 .child(
-                    h_flex()
-                        .w_full()
-                        .justify_between()
-                        .gap_2()
-                        .child(
-                            PopoverMenu::new("buffer-font-picker")
-                                .menu({
-                                    let buffer_font_picker = buffer_font_picker.clone();
-                                    move |_window, _cx| Some(buffer_font_picker.clone())
-                                })
-                                .trigger(
-                                    ButtonLike::new("buffer-font-family-button")
-                                        .style(ButtonStyle::Outlined)
-                                        .size(ButtonSize::Medium)
-                                        .full_width()
-                                        .tab_index({
-                                            *tab_index += 1;
-                                            *tab_index - 1
-                                        })
-                                        .child(
-                                            h_flex()
-                                                .w_full()
-                                                .justify_between()
-                                                .child(Label::new(buffer_font_family))
-                                                .child(
-                                                    Icon::new(IconName::ChevronUpDown)
-                                                        .color(Color::Muted)
-                                                        .size(IconSize::XSmall),
-                                                ),
-                                        ),
-                                )
-                                .full_width(true)
-                                .anchor(gpui::Corner::TopLeft)
-                                .offset(gpui::Point {
-                                    x: px(0.0),
-                                    y: px(4.0),
-                                })
-                                .with_handle(buffer_font_handle),
-                        )
-                        .child(
-                            NumericStepper::new(
-                                "buffer-font-size",
-                                buffer_font_size.to_string(),
-                                move |size, cx| {
-                                    write_buffer_font_size(Pixels::from(size), cx);
-                                },
-                                move |_, _, cx| {
-                                    write_buffer_font_size(buffer_font_size - px(1.), cx);
-                                },
-                                move |_, _, cx| {
-                                    write_buffer_font_size(buffer_font_size + px(1.), cx);
-                                },
-                                window,
-                                cx,
+                    h_flex().w_full().justify_between().gap_2().child(
+                        PopoverMenu::new("buffer-font-picker")
+                            .menu({
+                                let buffer_font_picker = buffer_font_picker.clone();
+                                move |_window, _cx| Some(buffer_font_picker.clone())
+                            })
+                            .trigger(
+                                ButtonLike::new("buffer-font-family-button")
+                                    .style(ButtonStyle::Outlined)
+                                    .size(ButtonSize::Medium)
+                                    .full_width()
+                                    .tab_index({
+                                        *tab_index += 1;
+                                        *tab_index - 1
+                                    })
+                                    .child(
+                                        h_flex()
+                                            .w_full()
+                                            .justify_between()
+                                            .child(Label::new(buffer_font_family))
+                                            .child(
+                                                Icon::new(IconName::ChevronUpDown)
+                                                    .color(Color::Muted)
+                                                    .size(IconSize::XSmall),
+                                            ),
+                                    ),
                             )
-                            .style(ui_input::NumericStepperStyle::Outlined)
-                            .tab_index({
-                                *tab_index += 2;
-                                *tab_index - 2
-                            }),
-                        ),
+                            .full_width(true)
+                            .anchor(gpui::Corner::TopLeft)
+                            .offset(gpui::Point {
+                                x: px(0.0),
+                                y: px(4.0),
+                            })
+                            .with_handle(buffer_font_handle),
+                    ), // .child( todo!
+                       //     NumericStepper::new(
+                       //         "buffer-font-size",
+                       //         buffer_font_size.to_string(),
+                       //         move |size, cx| {
+                       //             write_buffer_font_size(Pixels::from(size), cx);
+                       //         },
+                       //         move |_, _, cx| {
+                       //             write_buffer_font_size(buffer_font_size - px(1.), cx);
+                       //         },
+                       //         move |_, _, cx| {
+                       //             write_buffer_font_size(buffer_font_size + px(1.), cx);
+                       //         },
+                       //         window,
+                       //         cx,
+                       //     )
+                       //     .style(ui_input::NumericStepperStyle::Outlined)
+                       //     .tab_index({
+                       //         *tab_index += 2;
+                       //         *tab_index - 2
+                       //     }),
+                       // ),
                 ),
         )
 }

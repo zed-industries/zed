@@ -1,5 +1,11 @@
+use std::{
+    fmt::Display,
+    ops::{Add, Sub},
+    str::FromStr,
+};
+
 use editor::Editor;
-use gpui::{ClickEvent, Entity, Focusable};
+use gpui::{ClickEvent, Entity, FocusHandle, Focusable, Modifiers};
 
 use ui::{IconButtonShape, prelude::*};
 
@@ -17,94 +23,128 @@ pub enum NumericStepperMode {
     Edit,
 }
 
-#[derive(IntoElement, RegisterComponent)]
-pub struct NumericStepper {
+pub trait NumericStepperType:
+    Display + Add<Output = Self> + Sub<Output = Self> + Copy + Clone + Sized + FromStr + 'static
+{
+    fn default_format(value: &Self) -> String {
+        format!("{}", value)
+    }
+    fn default_step() -> Self;
+    fn large_step() -> Self;
+    fn small_step() -> Self;
+}
+
+macro_rules! impl_numeric_stepper_int {
+    ($type:ident) => {
+        impl NumericStepperType for $type {
+            fn default_step() -> Self {
+                1
+            }
+
+            fn large_step() -> Self {
+                10
+            }
+
+            fn small_step() -> Self {
+                1
+            }
+        }
+    };
+}
+
+macro_rules! impl_numeric_stepper_float {
+    ($type:ident) => {
+        impl NumericStepperType for $type {
+            fn default_format(value: &Self) -> String {
+                format!("{:.2}", value)
+            }
+
+            fn default_step() -> Self {
+                1.0
+            }
+
+            fn large_step() -> Self {
+                10.0
+            }
+
+            fn small_step() -> Self {
+                0.1
+            }
+        }
+    };
+}
+
+impl_numeric_stepper_float!(f32);
+impl_numeric_stepper_float!(f64);
+impl_numeric_stepper_int!(isize);
+impl_numeric_stepper_int!(usize);
+impl_numeric_stepper_int!(i32);
+impl_numeric_stepper_int!(u32);
+impl_numeric_stepper_int!(i64);
+impl_numeric_stepper_int!(u64);
+
+// TODO: Add a new register component macro to support a specific type when using generics
+pub struct NumericStepper<T> {
     id: ElementId,
-    value: SharedString,
+    value: Entity<T>,
     style: NumericStepperStyle,
-    input_field: Entity<Editor>,
+    focus_handle: FocusHandle,
     mode: Entity<NumericStepperMode>,
-    set_value_to: Box<dyn Fn(usize, &mut App) + 'static>,
-    on_decrement: Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>,
-    on_increment: Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>,
-    /// Whether to reserve space for the reset button.
-    reserve_space_for_reset: bool,
+    format: Box<dyn FnOnce(&T) -> String>,
+    large_step: T,
+    small_step: T,
+    step: T,
     on_reset: Option<Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
     tab_index: Option<isize>,
 }
 
-impl NumericStepper {
+impl<T: NumericStepperType> NumericStepper<T> {
     pub fn new(
         id: impl Into<ElementId>,
-        value: impl Into<SharedString>,
-        set_value_to: impl Fn(usize, &mut App) + 'static,
-        on_decrement: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
-        on_increment: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+        value: Entity<T>,
         window: &mut Window,
         cx: &mut App,
     ) -> Self {
         let id = id.into();
-        let value = value.into();
-
-        let (input_field, mode) = window.with_global_id(id.clone(), |global_id, window| {
-            // todo! Make sure that using this api is inline and appropriate with the codebase
-            window.with_element_state::<(Entity<Editor>, Entity<NumericStepperMode>), _>(
-                global_id,
-                |mut editor, window| {
-                    let state = editor
-                        .get_or_insert_with(|| {
-                            let mode = cx.new(|_| NumericStepperMode::default());
-                            let weak_mode = mode.downgrade();
-                            let editor = cx.new(|cx| {
-                                let editor = Editor::single_line(window, cx);
-
-                                cx.on_focus_out(
-                                    &editor.focus_handle(cx),
-                                    window,
-                                    move |this, _, window, cx| {
-                                        this.clear(window, cx);
-
-                                        weak_mode
-                                            .update(cx, |mode, _| *mode = NumericStepperMode::Read)
-                                            .ok();
-                                    },
-                                )
-                                .detach();
-
-                                editor
-                            });
-
-                            (editor, mode)
-                        })
-                        .clone();
-
-                    (state.clone(), state)
-                },
-            )
-        });
+        let mode = window.use_state(cx, |_, _| NumericStepperMode::default());
 
         Self {
             id,
-            value,
-            input_field,
+            focus_handle: cx.focus_handle(),
             mode,
-            set_value_to: Box::new(set_value_to),
-            on_decrement: Box::new(on_decrement),
-            on_increment: Box::new(on_increment),
+            value,
             style: NumericStepperStyle::default(),
-            reserve_space_for_reset: false,
+            format: Box::new(T::default_format),
+            large_step: T::large_step(),
+            step: T::default_step(),
+            small_step: T::small_step(),
             on_reset: None,
             tab_index: None,
         }
     }
 
-    pub fn style(mut self, style: NumericStepperStyle) -> Self {
-        self.style = style;
+    pub fn format(mut self, format: impl FnOnce(&T) -> String + 'static) -> Self {
+        self.format = Box::new(format);
         self
     }
 
-    pub fn reserve_space_for_reset(mut self, reserve_space_for_reset: bool) -> Self {
-        self.reserve_space_for_reset = reserve_space_for_reset;
+    pub fn small_step(mut self, step: T) -> Self {
+        self.small_step = step;
+        self
+    }
+
+    pub fn normal_step(mut self, step: T) -> Self {
+        self.step = step;
+        self
+    }
+
+    pub fn large_step(mut self, step: T) -> Self {
+        self.large_step = step;
+        self
+    }
+
+    pub fn style(mut self, style: NumericStepperStyle) -> Self {
+        self.style = style;
         self
     }
 
@@ -122,7 +162,15 @@ impl NumericStepper {
     }
 }
 
-impl RenderOnce for NumericStepper {
+impl<T: NumericStepperType> IntoElement for NumericStepper<T> {
+    type Element = gpui::Component<Self>;
+
+    fn into_element(self) -> Self::Element {
+        gpui::Component::new(self)
+    }
+}
+
+impl<T: NumericStepperType> RenderOnce for NumericStepper<T> {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let shape = IconButtonShape::Square;
         let icon_size = IconSize::Small;
@@ -130,31 +178,36 @@ impl RenderOnce for NumericStepper {
         let is_outlined = matches!(self.style, NumericStepperStyle::Outlined);
         let mut tab_index = self.tab_index;
 
+        let get_step = {
+            let large_step = self.large_step;
+            let step = self.step;
+            let small_step = self.small_step;
+            move |modifiers: Modifiers| -> T {
+                if modifiers.shift {
+                    large_step
+                } else if modifiers.alt {
+                    small_step
+                } else {
+                    step
+                }
+            }
+        };
+
         h_flex()
             .id(self.id.clone())
+            .track_focus(&self.focus_handle)
             .gap_1()
-            .map(|element| {
-                if let Some(on_reset) = self.on_reset {
-                    element.child(
-                        IconButton::new("reset", IconName::RotateCcw)
-                            .shape(shape)
-                            .icon_size(icon_size)
-                            .when_some(tab_index.as_mut(), |this, tab_index| {
-                                *tab_index += 1;
-                                this.tab_index(*tab_index - 1)
-                            })
-                            .on_click(on_reset),
-                    )
-                } else if self.reserve_space_for_reset {
-                    element.child(
-                        h_flex()
-                            .size(icon_size.square(window, cx))
-                            .flex_none()
-                            .into_any_element(),
-                    )
-                } else {
-                    element
-                }
+            .when_some(self.on_reset, |this, on_reset| {
+                this.child(
+                    IconButton::new("reset", IconName::RotateCcw)
+                        .shape(shape)
+                        .icon_size(icon_size)
+                        .when_some(tab_index.as_mut(), |this, tab_index| {
+                            *tab_index += 1;
+                            this.tab_index(*tab_index - 1)
+                        })
+                        .on_click(on_reset),
+                )
             })
             .child(
                 h_flex()
@@ -171,6 +224,15 @@ impl RenderOnce for NumericStepper {
                         }
                     })
                     .map(|decrement| {
+                        let decrement_handler = {
+                            let value = self.value.clone();
+                            move |click: &ClickEvent, _: &mut Window, cx: &mut App| {
+                                let step = get_step(click.modifiers());
+                                let current_value = *value.read(cx);
+                                value.write(cx, current_value - step);
+                            }
+                        };
+
                         if is_outlined {
                             decrement.child(
                                 h_flex()
@@ -188,7 +250,7 @@ impl RenderOnce for NumericStepper {
                                             style.bg(cx.theme().colors().element_hover)
                                         })
                                     })
-                                    .on_click(self.on_decrement),
+                                    .on_click(decrement_handler),
                             )
                         } else {
                             decrement.child(
@@ -199,64 +261,66 @@ impl RenderOnce for NumericStepper {
                                         *tab_index += 1;
                                         this.tab_index(*tab_index - 1)
                                     })
-                                    .on_click(self.on_decrement),
+                                    .on_click(decrement_handler),
                             )
                         }
                     })
-                    .child(if matches!(self.mode.read(cx), NumericStepperMode::Read) {
-                        div()
-                            .id(SharedString::new(format!(
-                                "numeric_stepper_label{}",
-                                &self.id,
-                            )))
-                            .child(Label::new(self.value).mx_3())
+                    .child(match *self.mode.read(cx) {
+                        NumericStepperMode::Read => div()
+                            .id("numeric_stepper_label")
+                            .child(Label::new((self.format)(self.value.read(cx))).mx_3())
                             .on_click({
-                                let mode = self.mode.downgrade();
-                                let input_field_focus_handle = self.input_field.focus_handle(cx);
+                                let mode = self.mode.clone();
 
-                                move |click, window, cx| {
+                                move |click, _, cx| {
                                     if click.click_count() == 2 {
-                                        mode.update(cx, |mode, _| {
-                                            *mode = NumericStepperMode::Edit;
-                                        })
-                                        .ok();
-
-                                        window.focus(&input_field_focus_handle);
+                                        mode.write(cx, NumericStepperMode::Edit);
                                     }
                                 }
                             })
-                            .into_any_element()
-                    } else {
-                        div()
-                            .child(self.input_field.clone())
-                            .child("todo!(This should be removed. It's only here to get input_field to render correctly)")
+                            .into_any_element(),
+                        NumericStepperMode::Edit => div()
+                            .child(window.use_state(cx, {
+                                |window, cx| {
+                                    let mut editor = Editor::single_line(window, cx);
+                                    editor.set_text(format!("{}", self.value.read(cx)), window, cx);
+                                    cx.on_focus_out(&editor.focus_handle(cx), window, {
+                                        let mode = self.mode.clone();
+                                        let value = self.value.clone();
+                                        move |this, _, _window, cx| {
+                                            if let Ok(new_value) = this.text(cx).parse::<T>() {
+                                                value.write(cx, new_value);
+                                            };
+                                            mode.write(cx, NumericStepperMode::Read);
+                                        }
+                                    })
+                                    .detach();
+
+                                    window.focus(&editor.focus_handle(cx));
+
+                                    editor
+                                }
+                            }))
                             .on_action::<menu::Confirm>({
-                                let input_field = self.input_field.downgrade();
-                                let mode = self.mode.downgrade();
-                                let set_value = self.set_value_to;
-
-                                move |_, _, cx| {
-                                    input_field
-                                        .update(cx, |input_field, cx| {
-                                            if let Some(number) =
-                                                input_field.text(cx).parse::<usize>().ok()
-                                            {
-                                                set_value(number, cx);
-
-                                                mode.update(cx, |mode, _| {
-                                                    *mode = NumericStepperMode::Read
-                                                })
-                                                .ok();
-                                            }
-                                        })
-                                        .ok();
+                                let focus = self.focus_handle.clone();
+                                move |_, window, _| {
+                                    window.focus(&focus);
                                 }
                             })
                             .w_full()
                             .mx_3()
-                            .into_any_element()
+                            .into_any_element(),
                     })
                     .map(|increment| {
+                        let increment_handler = {
+                            let value = self.value.clone();
+                            move |click: &ClickEvent, _: &mut Window, cx: &mut App| {
+                                let step = get_step(click.modifiers());
+                                let current_value = *value.read(cx);
+                                value.write(cx, current_value + step);
+                            }
+                        };
+
                         if is_outlined {
                             increment.child(
                                 h_flex()
@@ -274,7 +338,7 @@ impl RenderOnce for NumericStepper {
                                             style.bg(cx.theme().colors().element_hover)
                                         })
                                     })
-                                    .on_click(self.on_increment),
+                                    .on_click(increment_handler),
                             )
                         } else {
                             increment.child(
@@ -285,7 +349,7 @@ impl RenderOnce for NumericStepper {
                                         *tab_index += 1;
                                         this.tab_index(*tab_index - 1)
                                     })
-                                    .on_click(self.on_increment),
+                                    .on_click(increment_handler),
                             )
                         }
                     }),
@@ -293,7 +357,7 @@ impl RenderOnce for NumericStepper {
     }
 }
 
-impl Component for NumericStepper {
+impl<T: NumericStepperType> Component for NumericStepper<T> {
     fn scope() -> ComponentScope {
         ComponentScope::Input
     }
@@ -311,6 +375,8 @@ impl Component for NumericStepper {
     }
 
     fn preview(window: &mut Window, cx: &mut App) -> Option<AnyElement> {
+        let first_stepper = window.use_state(cx, |_, _| 10usize);
+        let second_stepper = window.use_state(cx, |_, _| 10.0);
         Some(
             v_flex()
                 .gap_6()
@@ -321,10 +387,7 @@ impl Component for NumericStepper {
                             "Default",
                             NumericStepper::new(
                                 "numeric-stepper-component-preview",
-                                "10",
-                                move |_, _| {},
-                                move |_, _, _| {},
-                                move |_, _, _| {},
+                                first_stepper,
                                 window,
                                 cx,
                             )
@@ -334,10 +397,7 @@ impl Component for NumericStepper {
                             "Outlined",
                             NumericStepper::new(
                                 "numeric-stepper-with-border-component-preview",
-                                "10",
-                                move |_, _| {},
-                                move |_, _, _| {},
-                                move |_, _, _| {},
+                                second_stepper,
                                 window,
                                 cx,
                             )
