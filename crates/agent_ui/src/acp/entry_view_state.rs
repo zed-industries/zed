@@ -24,6 +24,7 @@ pub struct EntryViewState {
     thread_store: Entity<ThreadStore>,
     text_thread_store: Entity<TextThreadStore>,
     entries: Vec<Entry>,
+    prevent_slash_commands: bool,
 }
 
 impl EntryViewState {
@@ -32,6 +33,7 @@ impl EntryViewState {
         project: Entity<Project>,
         thread_store: Entity<ThreadStore>,
         text_thread_store: Entity<TextThreadStore>,
+        prevent_slash_commands: bool,
     ) -> Self {
         Self {
             workspace,
@@ -39,6 +41,7 @@ impl EntryViewState {
             thread_store,
             text_thread_store,
             entries: Vec::new(),
+            prevent_slash_commands,
         }
     }
 
@@ -77,6 +80,7 @@ impl EntryViewState {
                             self.thread_store.clone(),
                             self.text_thread_store.clone(),
                             "Edit message － @ to include context",
+                            self.prevent_slash_commands,
                             editor::EditorMode::AutoHeight {
                                 min_lines: 1,
                                 max_lines: None,
@@ -382,6 +386,7 @@ mod tests {
                 project.clone(),
                 thread_store,
                 text_thread_store,
+                false,
             )
         });
 

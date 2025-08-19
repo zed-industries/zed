@@ -167,7 +167,8 @@ pub fn hover_at_inlay(
 
                 let language_registry = project.read_with(cx, |p, _| p.languages().clone())?;
                 let blocks = vec![inlay_hover.tooltip];
-                let parsed_content = parse_blocks(&blocks, &language_registry, None, cx).await;
+                let parsed_content =
+                    parse_blocks(&blocks, Some(&language_registry), None, cx).await;
 
                 let scroll_handle = ScrollHandle::new();
 
@@ -251,7 +252,9 @@ fn show_hover(
 
     let (excerpt_id, _, _) = editor.buffer().read(cx).excerpt_containing(anchor, cx)?;
 
-    let language_registry = editor.project()?.read(cx).languages().clone();
+    let language_registry = editor
+        .project()
+        .map(|project| project.read(cx).languages().clone());
     let provider = editor.semantics_provider.clone()?;
 
     if !ignore_timeout {
@@ -443,7 +446,8 @@ fn show_hover(
                     text: format!("Unicode character U+{:02X}", invisible as u32),
                     kind: HoverBlockKind::PlainText,
                 }];
-                let parsed_content = parse_blocks(&blocks, &language_registry, None, cx).await;
+                let parsed_content =
+                    parse_blocks(&blocks, language_registry.as_ref(), None, cx).await;
                 let scroll_handle = ScrollHandle::new();
                 let subscription = this
                     .update(cx, |_, cx| {
@@ -493,7 +497,8 @@ fn show_hover(
 
                 let blocks = hover_result.contents;
                 let language = hover_result.language;
-                let parsed_content = parse_blocks(&blocks, &language_registry, language, cx).await;
+                let parsed_content =
+                    parse_blocks(&blocks, language_registry.as_ref(), language, cx).await;
                 let scroll_handle = ScrollHandle::new();
                 hover_highlights.push(range.clone());
                 let subscription = this
@@ -583,7 +588,7 @@ fn same_diagnostic_hover(editor: &Editor, snapshot: &EditorSnapshot, anchor: Anc
 
 async fn parse_blocks(
     blocks: &[HoverBlock],
-    language_registry: &Arc<LanguageRegistry>,
+    language_registry: Option<&Arc<LanguageRegistry>>,
     language: Option<Arc<Language>>,
     cx: &mut AsyncWindowContext,
 ) -> Option<Entity<Markdown>> {
@@ -603,7 +608,7 @@ async fn parse_blocks(
         .new_window_entity(|_window, cx| {
             Markdown::new(
                 combined_text.into(),
-                Some(language_registry.clone()),
+                language_registry.cloned(),
                 language.map(|language| language.name()),
                 cx,
             )
