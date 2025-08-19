@@ -111,7 +111,7 @@
       "ctrl-shift-end": "editor::SelectToEnd",
       "ctrl-a": "editor::SelectAll",
       "ctrl-l": "editor::SelectLine",
-      "ctrl-shift-i": "editor::Format",
+      "shift-alt-f": "editor::Format",
       "alt-shift-o": "editor::OrganizeImports",
       "shift-home": ["editor::SelectToBeginningOfLine", { "stop_at_soft_wraps": true, "stop_at_indent": true }],
       "shift-end": ["editor::SelectToEndOfLine", { "stop_at_soft_wraps": true }],
@@ -501,13 +501,13 @@
     "bindings": {
       "ctrl-[": "editor::Outdent",
       "ctrl-]": "editor::Indent",
-      "shift-alt-up": "editor::AddSelectionAbove", // Insert Cursor Above
-      "shift-alt-down": "editor::AddSelectionBelow", // Insert Cursor Below
+      "ctrl-shift-alt-up": "editor::AddSelectionAbove", // Insert Cursor Above
+      "ctrl-shift-alt-down": "editor::AddSelectionBelow", // Insert Cursor Below
       "ctrl-shift-k": "editor::DeleteLine",
       "alt-up": "editor::MoveLineUp",
       "alt-down": "editor::MoveLineDown",
-      "ctrl-alt-shift-up": "editor::DuplicateLineUp",
-      "ctrl-alt-shift-down": "editor::DuplicateLineDown",
+      "alt-shift-up": "editor::DuplicateLineUp",
+      "alt-shift-down": "editor::DuplicateLineDown",
       "alt-shift-right": "editor::SelectLargerSyntaxNode", // Expand Selection
       "alt-shift-left": "editor::SelectSmallerSyntaxNode", // Shrink Selection
       "ctrl-shift-l": "editor::SelectAllMatches", // Select all occurrences of current selection
@@ -526,8 +526,8 @@
       "f12": "editor::GoToDefinition",
       "alt-f12": "editor::GoToDefinitionSplit",
       "ctrl-shift-f10": "editor::GoToDefinitionSplit",
-      "ctrl-f12": "editor::GoToTypeDefinition",
-      "shift-f12": "editor::GoToImplementation",
+      "ctrl-f12": "editor::GoToImplementation",
+      "shift-f12": "editor::GoToTypeDefinition",
       "alt-ctrl-f12": "editor::GoToTypeDefinitionSplit",
       "alt-shift-f12": "editor::FindAllReferences",
       "ctrl-m": "editor::MoveToEnclosingBracket", // from jetbrains
