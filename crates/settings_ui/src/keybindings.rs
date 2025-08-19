@@ -472,13 +472,7 @@ impl KeymapEditor {
 
     fn current_keystroke_query(&self, cx: &App) -> Vec<Keystroke> {
         match self.search_mode {
-            SearchMode::KeyStroke { .. } => self
-                .keystroke_editor
-                .read(cx)
-                .keystrokes()
-                .iter()
-                .cloned()
-                .collect(),
+            SearchMode::KeyStroke { .. } => self.keystroke_editor.read(cx).keystrokes().to_vec(),
             SearchMode::Normal => Default::default(),
         }
     }

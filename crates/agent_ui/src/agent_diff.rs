@@ -503,8 +503,7 @@ fn update_editor_selection(
                         &[last_kept_hunk_end..editor::Anchor::max()],
                         buffer_snapshot,
                     )
-                    .skip(1)
-                    .next()
+                    .nth(1)
             })
             .or_else(|| {
                 let first_kept_hunk = diff_hunks.first()?;

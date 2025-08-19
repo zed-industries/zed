@@ -820,6 +820,11 @@ single_range_in_vec_init = "allow"
 style = { level = "allow", priority = -1 }
 
 # Temporary list of style lints that we've fixed so far.
+iter_cloned_collect = "warn"
+iter_next_slice = "warn"
+iter_nth = "warn"
+iter_nth_zero = "warn"
+iter_skip_next = "warn"
 module_inception = { level = "deny" }
 question_mark = { level = "deny" }
 redundant_closure = { level = "deny" }

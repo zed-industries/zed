@@ -20932,7 +20932,7 @@ impl Editor {
 
         let existing_pending = self
             .text_highlights::<PendingInput>(cx)
-            .map(|(_, ranges)| ranges.iter().cloned().collect::<Vec<_>>());
+            .map(|(_, ranges)| ranges.to_vec());
         if existing_pending.is_none() && pending.is_empty() {
             return;
         }
