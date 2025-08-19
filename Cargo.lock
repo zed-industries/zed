@@ -11,7 +11,6 @@ dependencies = [
  "agent-client-protocol",
  "anyhow",
  "buffer_diff",
- "chrono",
  "collections",
  "editor",
  "env_logger 0.11.8",
