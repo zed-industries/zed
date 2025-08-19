@@ -394,7 +394,7 @@ fn start_server(
     })
     .detach();
 
-    SshRemoteClient::proto_client_from_channels(incoming_rx, outgoing_tx, cx, "server").into()
+    SshRemoteClient::proto_client_from_channels(incoming_rx, outgoing_tx, cx, "server")
 }
 
 fn init_paths() -> anyhow::Result<()> {
