@@ -426,8 +426,6 @@ impl GitPanel {
         let git_store = project.read(cx).git_store().clone();
         let active_repository = project.read(cx).active_repository(cx);
 
-        
-
         cx.new(|cx| {
             let focus_handle = cx.focus_handle();
             cx.on_focus(&focus_handle, window, Self::focus_in).detach();
@@ -1198,11 +1196,13 @@ impl GitPanel {
             window,
             cx,
         );
-        cx.spawn(async move |this, cx| if let Ok(RestoreCancel::RestoreTrackedFiles) = prompt.await {
-            this.update(cx, |this, cx| {
-                this.perform_checkout(entries, cx);
-            })
-            .ok();
+        cx.spawn(async move |this, cx| {
+            if let Ok(RestoreCancel::RestoreTrackedFiles) = prompt.await {
+                this.update(cx, |this, cx| {
+                    this.perform_checkout(entries, cx);
+                })
+                .ok();
+            }
         })
         .detach();
     }

@@ -1645,8 +1645,6 @@ impl Thread {
         self.tool_use
             .request_tool_use(tool_message_id, tool_use, tool_use_metadata.clone(), cx);
 
-        
-
         self.tool_use.insert_tool_output(
             tool_use_id.clone(),
             tool_name,

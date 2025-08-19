@@ -470,7 +470,6 @@ impl DapStore {
         session_id: impl Borrow<SessionId>,
     ) -> Option<Entity<session::Session>> {
         let session_id = session_id.borrow();
-        
 
         self.sessions.get(session_id).cloned()
     }

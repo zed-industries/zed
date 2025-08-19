@@ -508,7 +508,6 @@ impl RunningMode {
                         .ok();
                 }
 
-                
                 if configuration_done_supported {
                     this.request(ConfigurationDone {})
                 } else {
@@ -838,8 +837,6 @@ impl Session {
                 BreakpointStoreEvent::SetDebugLine | BreakpointStoreEvent::ClearDebugLines => {}
             })
             .detach();
-
-            
 
             Self {
                 mode: SessionState::Booting(None),

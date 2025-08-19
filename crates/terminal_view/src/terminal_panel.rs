@@ -253,21 +253,21 @@ impl TerminalPanel {
                 .transpose()
                 .log_err()
                 .flatten()
-                && let Ok(serialized) = workspace
-                    .update_in(&mut cx, |workspace, window, cx| {
-                        deserialize_terminal_panel(
-                            workspace.weak_handle(),
-                            workspace.project().clone(),
-                            database_id,
-                            serialized_panel,
-                            window,
-                            cx,
-                        )
-                    })?
-                    .await
-            {
-                terminal_panel = Some(serialized);
-            }
+            && let Ok(serialized) = workspace
+                .update_in(&mut cx, |workspace, window, cx| {
+                    deserialize_terminal_panel(
+                        workspace.weak_handle(),
+                        workspace.project().clone(),
+                        database_id,
+                        serialized_panel,
+                        window,
+                        cx,
+                    )
+                })?
+                .await
+        {
+            terminal_panel = Some(serialized);
+        }
 
         let terminal_panel = if let Some(panel) = terminal_panel {
             panel

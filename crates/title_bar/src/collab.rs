@@ -41,7 +41,7 @@ fn toggle_screen_sharing(
             let Some(room) = call.room().cloned() else {
                 return;
             };
-            
+
             room.update(cx, |room, cx| {
                 let clicked_on_currently_shared_screen =
                     room.shared_screen_id().is_some_and(|screen_id| {

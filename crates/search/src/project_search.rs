@@ -1113,7 +1113,7 @@ impl ProjectSearchView {
                     .await
                     .log_err();
                 }
-                
+
                 result != 2
             } else {
                 true

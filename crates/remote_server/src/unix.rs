@@ -891,7 +891,7 @@ pub fn handle_settings_file_changes(
 
 fn read_proxy_settings(cx: &mut Context<HeadlessProject>) -> Option<Url> {
     let proxy_str = ProxySettings::get_global(cx).proxy.to_owned();
-    
+
     proxy_str
         .as_ref()
         .and_then(|input: &String| {

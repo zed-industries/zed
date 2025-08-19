@@ -655,7 +655,6 @@ mod tests {
             mode: mode.clone(),
         };
 
-        
         cx.update(|cx| resolve_path(&input, project, cx))
     }
 

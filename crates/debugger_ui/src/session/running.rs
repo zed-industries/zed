@@ -358,8 +358,6 @@ pub(crate) fn new_debugger_pane(
         }
     };
 
-    
-
     cx.new(move |cx| {
         let mut pane = Pane::new(
             workspace.clone(),

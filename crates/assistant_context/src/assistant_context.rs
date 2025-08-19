@@ -590,7 +590,6 @@ impl From<&Message> for MessageMetadata {
 
 impl MessageMetadata {
     pub fn is_cache_valid(&self, buffer: &BufferSnapshot, range: &Range<usize>) -> bool {
-        
         match &self.cache {
             Some(MessageCacheMetadata { cached_at, .. }) => !buffer.has_edits_since_in_range(
                 cached_at,

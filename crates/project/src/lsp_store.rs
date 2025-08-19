@@ -1060,10 +1060,8 @@ impl LocalLspStore {
         };
         let delegate: Arc<dyn ManifestDelegate> =
             Arc::new(ManifestQueryDelegate::new(worktree.read(cx).snapshot()));
-        
 
-        self
-            .lsp_tree
+        self.lsp_tree
             .get(
                 project_path,
                 language.name(),
@@ -2397,7 +2395,6 @@ impl LocalLspStore {
 
                 let server_id = server_node.server_id_or_init(|disposition| {
                     let path = &disposition.path;
-                    
 
                     {
                         let uri =
@@ -3046,8 +3043,6 @@ impl LocalLspStore {
                         for (range, text) in edits {
                             buffer.edit([(range, text)], None, cx);
                         }
-
-                        
 
                         buffer.end_transaction(cx).and_then(|transaction_id| {
                             if push_to_history {
@@ -4370,13 +4365,11 @@ impl LspStore {
         if let Some((client, downstream_project_id)) = self.downstream_client.clone()
             && let Some(diangostic_summaries) = self.diagnostic_summaries.get(&worktree.id())
         {
-            let mut summaries = diangostic_summaries
-                .iter()
-                .flat_map(|(path, summaries)| {
-                    summaries
-                        .iter()
-                        .map(|(server_id, summary)| summary.to_proto(*server_id, path))
-                });
+            let mut summaries = diangostic_summaries.iter().flat_map(|(path, summaries)| {
+                summaries
+                    .iter()
+                    .map(|(server_id, summary)| summary.to_proto(*server_id, path))
+            });
             if let Some(summary) = summaries.next() {
                 client
                     .send(proto::UpdateDiagnosticSummary {
@@ -4564,7 +4557,6 @@ impl LspStore {
                 anyhow::anyhow!(message)
             })?;
 
-            
             request
                 .response_from_lsp(
                     response,

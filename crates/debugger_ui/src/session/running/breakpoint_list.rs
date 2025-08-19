@@ -329,33 +329,39 @@ impl BreakpointList {
                 let text = self.input.read(cx).text(cx);
 
                 match mode {
-                    ActiveBreakpointStripMode::Log => if let BreakpointEntryKind::LineBreakpoint(line_breakpoint) = &entry.kind {
-                        Self::edit_line_breakpoint_inner(
-                            &self.breakpoint_store,
-                            line_breakpoint.breakpoint.path.clone(),
-                            line_breakpoint.breakpoint.row,
-                            BreakpointEditAction::EditLogMessage(Arc::from(text)),
-                            cx,
-                        );
-                    },
-                    ActiveBreakpointStripMode::Condition => if let BreakpointEntryKind::LineBreakpoint(line_breakpoint) = &entry.kind {
-                        Self::edit_line_breakpoint_inner(
-                            &self.breakpoint_store,
-                            line_breakpoint.breakpoint.path.clone(),
-                            line_breakpoint.breakpoint.row,
-                            BreakpointEditAction::EditCondition(Arc::from(text)),
-                            cx,
-                        );
-                    },
-                    ActiveBreakpointStripMode::HitCondition => if let BreakpointEntryKind::LineBreakpoint(line_breakpoint) = &entry.kind {
-                        Self::edit_line_breakpoint_inner(
-                            &self.breakpoint_store,
-                            line_breakpoint.breakpoint.path.clone(),
-                            line_breakpoint.breakpoint.row,
-                            BreakpointEditAction::EditHitCondition(Arc::from(text)),
-                            cx,
-                        );
-                    },
+                    ActiveBreakpointStripMode::Log => {
+                        if let BreakpointEntryKind::LineBreakpoint(line_breakpoint) = &entry.kind {
+                            Self::edit_line_breakpoint_inner(
+                                &self.breakpoint_store,
+                                line_breakpoint.breakpoint.path.clone(),
+                                line_breakpoint.breakpoint.row,
+                                BreakpointEditAction::EditLogMessage(Arc::from(text)),
+                                cx,
+                            );
+                        }
+                    }
+                    ActiveBreakpointStripMode::Condition => {
+                        if let BreakpointEntryKind::LineBreakpoint(line_breakpoint) = &entry.kind {
+                            Self::edit_line_breakpoint_inner(
+                                &self.breakpoint_store,
+                                line_breakpoint.breakpoint.path.clone(),
+                                line_breakpoint.breakpoint.row,
+                                BreakpointEditAction::EditCondition(Arc::from(text)),
+                                cx,
+                            );
+                        }
+                    }
+                    ActiveBreakpointStripMode::HitCondition => {
+                        if let BreakpointEntryKind::LineBreakpoint(line_breakpoint) = &entry.kind {
+                            Self::edit_line_breakpoint_inner(
+                                &self.breakpoint_store,
+                                line_breakpoint.breakpoint.path.clone(),
+                                line_breakpoint.breakpoint.row,
+                                BreakpointEditAction::EditHitCondition(Arc::from(text)),
+                                cx,
+                            );
+                        }
+                    }
                 }
                 self.focus_handle.focus(window);
             } else {

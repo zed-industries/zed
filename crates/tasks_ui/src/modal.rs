@@ -550,7 +550,6 @@ impl PickerDelegate for TasksModalDelegate {
                     list_item.tooltip(move |_, _| item_label.clone())
                 })
                 .map(|item| {
-                    
                     if matches!(source_kind, TaskSourceKind::UserInput)
                         || Some(ix) <= self.divider_index
                     {

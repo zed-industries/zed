@@ -67,9 +67,7 @@ pub struct SshDetails {
 
 impl Project {
     pub fn active_project_directory(&self, cx: &App) -> Option<Arc<Path>> {
-        
-        self
-            .active_entry()
+        self.active_entry()
             .and_then(|entry_id| self.worktree_for_entry(entry_id, cx))
             .into_iter()
             .chain(self.worktrees(cx))

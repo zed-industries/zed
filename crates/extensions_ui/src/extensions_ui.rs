@@ -863,8 +863,6 @@ impl ExtensionsPage {
         window: &mut Window,
         cx: &mut App,
     ) -> Entity<ContextMenu> {
-        
-
         ContextMenu::build(window, cx, |context_menu, window, _| {
             context_menu
                 .entry(

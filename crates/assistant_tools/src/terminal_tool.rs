@@ -216,7 +216,7 @@ impl Tool for TerminalTool {
             async move |cx| {
                 let program = program.await;
                 let env = env.await;
-                
+
                 project
                     .update(cx, |project, cx| {
                         project.create_terminal(

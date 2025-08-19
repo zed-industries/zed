@@ -255,13 +255,11 @@ impl MarksState {
     pub fn new(workspace: &Workspace, cx: &mut App) -> Entity<MarksState> {
         cx.new(|cx| {
             let buffer_store = workspace.project().read(cx).buffer_store().clone();
-            let subscription =
-                cx.subscribe(
-                    &buffer_store,
-                    move |this: &mut Self, _, event, cx| if let project::buffer_store::BufferStoreEvent::BufferAdded(buffer) = event {
-                        this.on_buffer_loaded(buffer, cx);
-                    },
-                );
+            let subscription = cx.subscribe(&buffer_store, move |this: &mut Self, _, event, cx| {
+                if let project::buffer_store::BufferStoreEvent::BufferAdded(buffer) = event {
+                    this.on_buffer_loaded(buffer, cx);
+                }
+            });
 
             let mut this = Self {
                 workspace: workspace.weak_handle(),
@@ -1707,26 +1705,25 @@ impl VimDb {
         marks: HashMap<String, Vec<Point>>,
     ) -> Result<()> {
         log::debug!("Setting path {path:?} for {} marks", marks.len());
-        
-        self
-            .write(move |conn| {
-                let mut query = conn.exec_bound(sql!(
-                    INSERT OR REPLACE INTO vim_marks
-                        (workspace_id, mark_name, path, value)
-                    VALUES
-                        (?, ?, ?, ?)
-                ))?;
-                for (mark_name, value) in marks {
-                    let pairs: Vec<(u32, u32)> = value
-                        .into_iter()
-                        .map(|point| (point.row, point.column))
-                        .collect();
-                    let serialized = serde_json::to_string(&pairs)?;
-                    query((workspace_id, mark_name, path.clone(), serialized))?;
-                }
-                Ok(())
-            })
-            .await
+
+        self.write(move |conn| {
+            let mut query = conn.exec_bound(sql!(
+                INSERT OR REPLACE INTO vim_marks
+                    (workspace_id, mark_name, path, value)
+                VALUES
+                    (?, ?, ?, ?)
+            ))?;
+            for (mark_name, value) in marks {
+                let pairs: Vec<(u32, u32)> = value
+                    .into_iter()
+                    .map(|point| (point.row, point.column))
+                    .collect();
+                let serialized = serde_json::to_string(&pairs)?;
+                query((workspace_id, mark_name, path.clone(), serialized))?;
+            }
+            Ok(())
+        })
+        .await
     }
 
     fn get_marks(&self, workspace_id: WorkspaceId) -> Result<Vec<SerializedMark>> {

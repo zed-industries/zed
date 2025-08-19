@@ -215,7 +215,11 @@ impl MessageEditor {
 
         let subscriptions = vec![
             cx.subscribe_in(&context_strip, window, Self::handle_context_strip_event),
-            cx.subscribe(&editor, |this, _, event: &EditorEvent, cx| if event == &EditorEvent::BufferEdited { this.handle_message_changed(cx) }),
+            cx.subscribe(&editor, |this, _, event: &EditorEvent, cx| {
+                if event == &EditorEvent::BufferEdited {
+                    this.handle_message_changed(cx)
+                }
+            }),
             cx.observe(&context_store, |this, _, cx| {
                 // When context changes, reload it for token counting.
                 let _ = this.reload_context(cx);
@@ -1602,7 +1606,7 @@ pub fn extract_message_creases(
         .collect::<HashMap<_, _>>();
     // Filter the addon's list of creases based on what the editor reports,
     // since the addon might have removed creases in it.
-    
+
     editor.display_map.update(cx, |display_map, cx| {
         display_map
             .snapshot(cx)

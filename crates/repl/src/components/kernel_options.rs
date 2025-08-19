@@ -269,7 +269,6 @@ where
         };
 
         let picker_view = cx.new(|cx| {
-            
             Picker::uniform_list(delegate, window, cx)
                 .width(rems(30.))
                 .max_height(Some(rems(20.).into()))

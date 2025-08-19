@@ -1513,7 +1513,9 @@ impl Language {
             .map(|ix| {
                 let mut config = BracketsPatternConfig::default();
                 for setting in query.property_settings(ix) {
-                    if setting.key.as_ref() == "newline.only" { config.newline_only = true }
+                    if setting.key.as_ref() == "newline.only" {
+                        config.newline_only = true
+                    }
                 }
                 config
             })

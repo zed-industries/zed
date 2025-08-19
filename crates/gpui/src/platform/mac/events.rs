@@ -426,8 +426,6 @@ unsafe fn parse_keystroke(native_event: id) -> Keystroke {
                     key_char = Some(chars_for_modified_key(native_event.keyCode(), mods));
                 }
 
-                
-
                 if shift
                     && chars_ignoring_modifiers
                         .chars()

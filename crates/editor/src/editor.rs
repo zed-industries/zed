@@ -1944,12 +1944,13 @@ impl Editor {
             let project = project.clone();
             project_subscriptions.push(cx.subscribe(&git_store, move |this, _, event, cx| {
                 if let GitStoreEvent::RepositoryUpdated(
-                        _,
-                        RepositoryEvent::Updated {
-                            new_instance: true, ..
-                        },
-                        _,
-                    ) = event {
+                    _,
+                    RepositoryEvent::Updated {
+                        new_instance: true, ..
+                    },
+                    _,
+                ) = event
+                {
                     this.load_diff_task = Some(
                         update_uncommitted_diff_for_buffer(
                             cx.entity(),
@@ -3218,8 +3219,8 @@ impl Editor {
             selections.select_anchors(other_selections);
         });
 
-        let other_subscription =
-            cx.subscribe(&other, |this, other, other_evt, cx| if let EditorEvent::SelectionsChanged { local: true } = other_evt {
+        let other_subscription = cx.subscribe(&other, |this, other, other_evt, cx| {
+            if let EditorEvent::SelectionsChanged { local: true } = other_evt {
                 let other_selections = other.read(cx).selections.disjoint.to_vec();
                 if other_selections.is_empty() {
                     return;
@@ -3227,10 +3228,11 @@ impl Editor {
                 this.selections.change_with(cx, |selections| {
                     selections.select_anchors(other_selections);
                 });
-            });
+            }
+        });
 
-        let this_subscription =
-            cx.subscribe_self::<EditorEvent>(move |this, this_evt, cx| if let EditorEvent::SelectionsChanged { local: true } = this_evt {
+        let this_subscription = cx.subscribe_self::<EditorEvent>(move |this, this_evt, cx| {
+            if let EditorEvent::SelectionsChanged { local: true } = this_evt {
                 let these_selections = this.selections.disjoint.to_vec();
                 if these_selections.is_empty() {
                     return;
@@ -3240,7 +3242,8 @@ impl Editor {
                         selections.select_anchors(these_selections);
                     })
                 });
-            });
+            }
+        });
 
         Subscription::join(other_subscription, this_subscription)
     }
@@ -5652,14 +5655,18 @@ impl Editor {
 
                 let Ok(()) = editor.update_in(cx, |editor, window, cx| {
                     // Newer menu already set, so exit.
-                    if let Some(CodeContextMenu::Completions(prev_menu)) = editor.context_menu.borrow().as_ref()
-                        && prev_menu.id > id {
-                            return;
-                        };
+                    if let Some(CodeContextMenu::Completions(prev_menu)) =
+                        editor.context_menu.borrow().as_ref()
+                        && prev_menu.id > id
+                    {
+                        return;
+                    };
 
                     // Only valid to take prev_menu because it the new menu is immediately set
                     // below, or the menu is hidden.
-                    if let Some(CodeContextMenu::Completions(prev_menu)) = editor.context_menu.borrow_mut().take() {
+                    if let Some(CodeContextMenu::Completions(prev_menu)) =
+                        editor.context_menu.borrow_mut().take()
+                    {
                         let position_matches =
                             if prev_menu.initial_position == menu.initial_position {
                                 true
@@ -6163,7 +6170,6 @@ impl Editor {
                 }
             });
             Some(cx.background_spawn(async move {
-                
                 futures::future::join_all(scenarios)
                     .await
                     .into_iter()
@@ -10619,9 +10625,7 @@ impl Editor {
             .buffer_snapshot
             .anchor_after(Point::new(row, line_len));
 
-        
-        self
-            .breakpoint_store
+        self.breakpoint_store
             .as_ref()?
             .read_with(cx, |breakpoint_store, cx| {
                 breakpoint_store

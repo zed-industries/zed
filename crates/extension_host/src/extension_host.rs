@@ -1675,7 +1675,9 @@ impl ExtensionStore {
                 let schema_path = &extension::build_debug_adapter_schema_path(adapter_name, meta);
 
                 if fs.is_file(&src_dir.join(schema_path)).await {
-                    if let Some(parent) = schema_path.parent() { fs.create_dir(&tmp_dir.join(parent)).await? }
+                    if let Some(parent) = schema_path.parent() {
+                        fs.create_dir(&tmp_dir.join(parent)).await?
+                    }
                     fs.copy_file(
                         &src_dir.join(schema_path),
                         &tmp_dir.join(schema_path),

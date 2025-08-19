@@ -213,14 +213,16 @@ impl GitBlame {
         let project_subscription = cx.subscribe(&project, {
             let buffer = buffer.clone();
 
-            move |this, _, event, cx| if let project::Event::WorktreeUpdatedEntries(_, updated) = event {
-                let project_entry_id = buffer.read(cx).entry_id(cx);
-                if updated
-                    .iter()
-                    .any(|(_, entry_id, _)| project_entry_id == Some(*entry_id))
-                {
-                    log::debug!("Updated buffers. Regenerating blame data...",);
-                    this.generate(cx);
+            move |this, _, event, cx| {
+                if let project::Event::WorktreeUpdatedEntries(_, updated) = event {
+                    let project_entry_id = buffer.read(cx).entry_id(cx);
+                    if updated
+                        .iter()
+                        .any(|(_, entry_id, _)| project_entry_id == Some(*entry_id))
+                    {
+                        log::debug!("Updated buffers. Regenerating blame data...",);
+                        this.generate(cx);
+                    }
                 }
             }
         });

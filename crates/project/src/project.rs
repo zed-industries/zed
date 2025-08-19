@@ -3177,10 +3177,11 @@ impl Project {
         cx: &mut Context<Self>,
     ) -> Option<()> {
         if let ImageItemEvent::ReloadNeeded = event
-            && !self.is_via_collab() {
-                self.reload_images([image.clone()].into_iter().collect(), cx)
-                    .detach_and_log_err(cx);
-            }
+            && !self.is_via_collab()
+        {
+            self.reload_images([image.clone()].into_iter().collect(), cx)
+                .detach_and_log_err(cx);
+        }
 
         None
     }

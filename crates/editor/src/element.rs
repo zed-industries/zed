@@ -2439,9 +2439,12 @@ impl EditorElement {
 
             if let Some(edit_prediction) = editor.active_edit_prediction.as_ref()
                 && let EditPrediction::Edit {
-                        display_mode: EditDisplayMode::TabAccept,
-                        ..
-                    } = &edit_prediction.completion { padding += INLINE_ACCEPT_SUGGESTION_EM_WIDTHS }
+                    display_mode: EditDisplayMode::TabAccept,
+                    ..
+                } = &edit_prediction.completion
+            {
+                padding += INLINE_ACCEPT_SUGGESTION_EM_WIDTHS
+            }
 
             padding * em_width
         };
@@ -2973,8 +2976,6 @@ impl EditorElement {
             .widest_line_number()
             .ilog10()
             + 1;
-
-        
 
         buffer_rows
             .iter()

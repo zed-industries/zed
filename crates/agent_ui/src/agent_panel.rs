@@ -756,22 +756,25 @@ impl AgentPanel {
                 .ok();
         });
 
-        let _default_model_subscription = cx.subscribe(
-            &LanguageModelRegistry::global(cx),
-            |this, _, event: &language_model::Event, cx| if let language_model::Event::DefaultModelChanged = event { match &this.active_view {
-                ActiveView::Thread { thread, .. } => {
-                    thread
-                        .read(cx)
-                        .thread()
-                        .clone()
-                        .update(cx, |thread, cx| thread.get_or_init_configured_model(cx));
-                }
-                ActiveView::ExternalAgentThread { .. }
-                | ActiveView::TextThread { .. }
-                | ActiveView::History
-                | ActiveView::Configuration => {}
-            } },
-        );
+        let _default_model_subscription =
+            cx.subscribe(
+                &LanguageModelRegistry::global(cx),
+                |this, _, event: &language_model::Event, cx| {
+                    if let language_model::Event::DefaultModelChanged = event {
+                        match &this.active_view {
+                            ActiveView::Thread { thread, .. } => {
+                                thread.read(cx).thread().clone().update(cx, |thread, cx| {
+                                    thread.get_or_init_configured_model(cx)
+                                });
+                            }
+                            ActiveView::ExternalAgentThread { .. }
+                            | ActiveView::TextThread { .. }
+                            | ActiveView::History
+                            | ActiveView::Configuration => {}
+                        }
+                    }
+                },
+            );
 
         let onboarding = cx.new(|cx| {
             AgentPanelOnboarding::new(

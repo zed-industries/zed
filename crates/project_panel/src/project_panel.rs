@@ -4422,7 +4422,6 @@ impl ProjectPanel {
                                     let components = Path::new(&file_name)
                                         .components()
                                         .map(|comp| {
-                                            
                                             comp.as_os_str().to_string_lossy().into_owned()
                                         })
                                         .collect::<Vec<_>>();

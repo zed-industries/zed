@@ -58,16 +58,14 @@ impl TaffyLayoutEngine {
         children: &[LayoutId],
     ) -> LayoutId {
         let taffy_style = style.to_taffy(rem_size);
-        
+
         if children.is_empty() {
             self.taffy
                 .new_leaf(taffy_style)
                 .expect(EXPECT_MESSAGE)
                 .into()
         } else {
-            
-            self
-                .taffy
+            self.taffy
                 // This is safe because LayoutId is repr(transparent) to taffy::tree::NodeId.
                 .new_with_children(taffy_style, unsafe {
                     std::mem::transmute::<&[LayoutId], &[taffy::NodeId]>(children)
@@ -91,9 +89,7 @@ impl TaffyLayoutEngine {
     ) -> LayoutId {
         let taffy_style = style.to_taffy(rem_size);
 
-        
-        self
-            .taffy
+        self.taffy
             .new_leaf_with_context(
                 taffy_style,
                 NodeContext {

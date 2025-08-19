@@ -203,12 +203,10 @@ impl ScopeMap {
                 .map(|(scope_str, level_filter)| (scope_str.as_str(), *level_filter))
         });
 
-        let new_filters = items_input_map
-            .iter()
-            .filter_map(|(scope_str, level_str)| {
-                let level_filter = level_filter_from_str(level_str)?;
-                Some((scope_str.as_str(), level_filter))
-            });
+        let new_filters = items_input_map.iter().filter_map(|(scope_str, level_str)| {
+            let level_filter = level_filter_from_str(level_str)?;
+            Some((scope_str.as_str(), level_filter))
+        });
 
         let all_filters = default_filters
             .iter()

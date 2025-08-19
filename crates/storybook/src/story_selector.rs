@@ -109,8 +109,6 @@ static ALL_STORY_SELECTORS: OnceLock<Vec<StorySelector>> = OnceLock::new();
 
 impl ValueEnum for StorySelector {
     fn value_variants<'a>() -> &'a [Self] {
-        
-
         (ALL_STORY_SELECTORS.get_or_init(|| {
             let component_stories = ComponentStory::iter().map(StorySelector::Component);
 

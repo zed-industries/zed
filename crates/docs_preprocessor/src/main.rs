@@ -406,7 +406,7 @@ fn handle_postprocessing() -> Result<()> {
             .captures(contents)
             .with_context(|| format!("Failed to find title in {:?}", pretty_path))
             .expect("Page has <title> element")[1];
-        
+
         title_tag_contents
             .trim()
             .strip_suffix("- Zed")

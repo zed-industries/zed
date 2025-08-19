@@ -435,7 +435,6 @@ impl HttpClient for FakeHttpClient {
         &self,
         req: Request<AsyncBody>,
     ) -> BoxFuture<'static, anyhow::Result<Response<AsyncBody>>> {
-        
         ((self.handler.lock().as_ref().unwrap())(req)) as _
     }
 

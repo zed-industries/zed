@@ -50,10 +50,7 @@ impl RealJujutsuRepository {
 
 impl JujutsuRepository for RealJujutsuRepository {
     fn list_bookmarks(&self) -> Vec<Bookmark> {
-        
-
-        self
-            .repository
+        self.repository
             .view()
             .bookmarks()
             .map(|(ref_name, _target)| Bookmark {

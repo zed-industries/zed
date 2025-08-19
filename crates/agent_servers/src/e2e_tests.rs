@@ -428,10 +428,7 @@ pub async fn new_test_thread(
         .await
         .unwrap();
 
-    
-
-    cx
-        .update(|cx| connection.new_thread(project.clone(), current_dir.as_ref(), cx))
+    cx.update(|cx| connection.new_thread(project.clone(), current_dir.as_ref(), cx))
         .await
         .unwrap()
 }

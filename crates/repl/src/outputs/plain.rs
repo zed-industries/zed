@@ -68,8 +68,6 @@ pub fn text_style(window: &mut Window, cx: &mut App) -> TextStyle {
 
     let theme = cx.theme();
 
-    
-
     TextStyle {
         font_family,
         font_features,

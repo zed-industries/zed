@@ -1707,7 +1707,7 @@ impl App {
             .unwrap_or_else(|| {
                 is_first = true;
                 let future = A::load(source.clone(), self);
-                
+
                 self.background_executor().spawn(future).shared()
             });
 

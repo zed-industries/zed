@@ -1937,7 +1937,6 @@ impl SearchableItem for TerminalView {
         // Selection head might have a value if there's a selection that isn't
         // associated with a match. Therefore, if there are no matches, we should
         // report None, no matter the state of the terminal
-        
 
         if !matches.is_empty() {
             if let Some(selection_head) = self.terminal().read(cx).selection_head {

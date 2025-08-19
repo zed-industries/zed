@@ -184,8 +184,7 @@ impl SvgPreviewView {
                             if let workspace::Event::ActiveItemChanged = event {
                                 let workspace_read = workspace.read(cx);
                                 if let Some(active_item) = workspace_read.active_item(cx)
-                                    && let Some(editor_entity) =
-                                        active_item.downcast::<Editor>()
+                                    && let Some(editor_entity) = active_item.downcast::<Editor>()
                                     && Self::is_svg_file(&editor_entity, cx)
                                 {
                                     let new_path = Self::get_svg_path(&editor_entity, cx);

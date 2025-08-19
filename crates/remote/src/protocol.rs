@@ -31,7 +31,7 @@ pub async fn read_message<S: AsyncRead + Unpin>(
     stream.read_exact(buffer).await?;
 
     let len = message_len_from_buffer(buffer);
-    
+
     read_message_with_len(stream, buffer, len).await
 }
 

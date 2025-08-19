@@ -103,88 +103,89 @@ impl ActivityIndicator {
             cx.subscribe_in(
                 &workspace_handle,
                 window,
-                |activity_indicator, _, event, window, cx| if let workspace::Event::ClearActivityIndicator { .. } = event
-                    && activity_indicator.statuses.pop().is_some() {
-                        activity_indicator.dismiss_error_message(
-                            &DismissErrorMessage,
-                            window,
-                            cx,
-                        );
+                |activity_indicator, _, event, window, cx| {
+                    if let workspace::Event::ClearActivityIndicator { .. } = event
+                        && activity_indicator.statuses.pop().is_some()
+                    {
+                        activity_indicator.dismiss_error_message(&DismissErrorMessage, window, cx);
                         cx.notify();
-                    },
+                    }
+                },
             )
             .detach();
 
             cx.subscribe(
                 &project.read(cx).lsp_store(),
-                |activity_indicator, _, event, cx| if let LspStoreEvent::LanguageServerUpdate { name, message, .. } = event {
-                    if let proto::update_language_server::Variant::StatusUpdate(status_update) =
-                        message
-                    {
-                        let Some(name) = name.clone() else {
-                            return;
-                        };
-                        let status = match &status_update.status {
-                            Some(proto::status_update::Status::Binary(binary_status)) => {
-                                if let Some(binary_status) =
-                                    proto::ServerBinaryStatus::from_i32(*binary_status)
-                                {
-                                    let binary_status = match binary_status {
-                                        proto::ServerBinaryStatus::None => BinaryStatus::None,
-                                        proto::ServerBinaryStatus::CheckingForUpdate => {
-                                            BinaryStatus::CheckingForUpdate
-                                        }
-                                        proto::ServerBinaryStatus::Downloading => {
-                                            BinaryStatus::Downloading
-                                        }
-                                        proto::ServerBinaryStatus::Starting => {
-                                            BinaryStatus::Starting
-                                        }
-                                        proto::ServerBinaryStatus::Stopping => {
-                                            BinaryStatus::Stopping
-                                        }
-                                        proto::ServerBinaryStatus::Stopped => {
-                                            BinaryStatus::Stopped
-                                        }
-                                        proto::ServerBinaryStatus::Failed => {
-                                            let Some(error) = status_update.message.clone()
-                                            else {
-                                                return;
-                                            };
-                                            BinaryStatus::Failed { error }
-                                        }
-                                    };
-                                    LanguageServerStatusUpdate::Binary(binary_status)
-                                } else {
-                                    return;
+                |activity_indicator, _, event, cx| {
+                    if let LspStoreEvent::LanguageServerUpdate { name, message, .. } = event {
+                        if let proto::update_language_server::Variant::StatusUpdate(status_update) =
+                            message
+                        {
+                            let Some(name) = name.clone() else {
+                                return;
+                            };
+                            let status = match &status_update.status {
+                                Some(proto::status_update::Status::Binary(binary_status)) => {
+                                    if let Some(binary_status) =
+                                        proto::ServerBinaryStatus::from_i32(*binary_status)
+                                    {
+                                        let binary_status = match binary_status {
+                                            proto::ServerBinaryStatus::None => BinaryStatus::None,
+                                            proto::ServerBinaryStatus::CheckingForUpdate => {
+                                                BinaryStatus::CheckingForUpdate
+                                            }
+                                            proto::ServerBinaryStatus::Downloading => {
+                                                BinaryStatus::Downloading
+                                            }
+                                            proto::ServerBinaryStatus::Starting => {
+                                                BinaryStatus::Starting
+                                            }
+                                            proto::ServerBinaryStatus::Stopping => {
+                                                BinaryStatus::Stopping
+                                            }
+                                            proto::ServerBinaryStatus::Stopped => {
+                                                BinaryStatus::Stopped
+                                            }
+                                            proto::ServerBinaryStatus::Failed => {
+                                                let Some(error) = status_update.message.clone()
+                                                else {
+                                                    return;
+                                                };
+                                                BinaryStatus::Failed { error }
+                                            }
+                                        };
+                                        LanguageServerStatusUpdate::Binary(binary_status)
+                                    } else {
+                                        return;
+                                    }
                                 }
-                            }
-                            Some(proto::status_update::Status::Health(health_status)) => {
-                                if let Some(health) =
-                                    proto::ServerHealth::from_i32(*health_status)
-                                {
-                                    let health = match health {
-                                        proto::ServerHealth::Ok => ServerHealth::Ok,
-                                        proto::ServerHealth::Warning => ServerHealth::Warning,
-                                        proto::ServerHealth::Error => ServerHealth::Error,
-                                    };
-                                    LanguageServerStatusUpdate::Health(
-                                        health,
-                                        status_update.message.clone().map(SharedString::from),
-                                    )
-                                } else {
-                                    return;
+                                Some(proto::status_update::Status::Health(health_status)) => {
+                                    if let Some(health) =
+                                        proto::ServerHealth::from_i32(*health_status)
+                                    {
+                                        let health = match health {
+                                            proto::ServerHealth::Ok => ServerHealth::Ok,
+                                            proto::ServerHealth::Warning => ServerHealth::Warning,
+                                            proto::ServerHealth::Error => ServerHealth::Error,
+                                        };
+                                        LanguageServerStatusUpdate::Health(
+                                            health,
+                                            status_update.message.clone().map(SharedString::from),
+                                        )
+                                    } else {
+                                        return;
+                                    }
                                 }
-                            }
-                            None => return,
-                        };
+                                None => return,
+                            };
 
-                        activity_indicator.statuses.retain(|s| s.name != name);
-                        activity_indicator
-                            .statuses
-                            .push(ServerStatus { name, status });
+                            activity_indicator.statuses.retain(|s| s.name != name);
+                            activity_indicator
+                                .statuses
+                                .push(ServerStatus { name, status });
+                        }
+                        cx.notify()
                     }
-                    cx.notify()
                 },
             )
             .detach();
@@ -199,7 +200,11 @@ impl ActivityIndicator {
 
             cx.subscribe(
                 &project.read(cx).git_store().clone(),
-                |_, _, event: &GitStoreEvent, cx| if let project::git_store::GitStoreEvent::JobsUpdated = event { cx.notify() },
+                |_, _, event: &GitStoreEvent, cx| {
+                    if let project::git_store::GitStoreEvent::JobsUpdated = event {
+                        cx.notify()
+                    }
+                },
             )
             .detach();
 

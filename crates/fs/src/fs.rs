@@ -2419,7 +2419,6 @@ impl Fs for FakeFs {
                 let watcher = watcher.clone();
                 move |events| {
                     let result = events.iter().any(|evt_path| {
-                        
                         watcher
                             .prefixes
                             .lock()

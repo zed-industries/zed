@@ -447,11 +447,12 @@ impl ImageStore {
         cx: &mut Context<Self>,
     ) {
         if let ImageItemEvent::FileHandleChanged = event
-            && let Some(local) = self.state.as_local() {
-                local.update(cx, |local, cx| {
-                    local.image_changed_file(image, cx);
-                })
-            }
+            && let Some(local) = self.state.as_local()
+        {
+            local.update(cx, |local, cx| {
+                local.image_changed_file(image, cx);
+            })
+        }
     }
 }
 
@@ -528,9 +529,10 @@ impl LocalImageStore {
     fn subscribe_to_worktree(&mut self, worktree: &Entity<Worktree>, cx: &mut Context<Self>) {
         cx.subscribe(worktree, |this, worktree, event, cx| {
             if worktree.read(cx).is_local()
-                && let worktree::Event::UpdatedEntries(changes) = event {
-                    this.local_worktree_entries_changed(&worktree, changes, cx);
-                }
+                && let worktree::Event::UpdatedEntries(changes) = event
+            {
+                this.local_worktree_entries_changed(&worktree, changes, cx);
+            }
         })
         .detach();
     }

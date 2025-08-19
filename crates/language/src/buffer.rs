@@ -1395,8 +1395,7 @@ impl Buffer {
                     is_first = false;
                     return true;
                 }
-                
-                
+
                 layer
                     .included_sub_ranges
                     .map(|sub_ranges| {

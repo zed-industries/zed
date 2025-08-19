@@ -678,7 +678,8 @@ pub fn wait_for_lang_server(
         [
             cx.subscribe(&lsp_store, {
                 let log_prefix = log_prefix.clone();
-                move |_, event, _| if let project::LspStoreEvent::LanguageServerUpdate {
+                move |_, event, _| {
+                    if let project::LspStoreEvent::LanguageServerUpdate {
                         message:
                             client::proto::update_language_server::Variant::WorkProgress(
                                 LspWorkProgress {
@@ -687,7 +688,11 @@ pub fn wait_for_lang_server(
                                 },
                             ),
                         ..
-                    } = event { println!("{}⟲ {message}", log_prefix) }
+                    } = event
+                    {
+                        println!("{}⟲ {message}", log_prefix)
+                    }
+                }
             }),
             cx.subscribe(project, {
                 let buffer = buffer.clone();

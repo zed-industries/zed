@@ -155,9 +155,8 @@ fn expand_changed_word_selection(
         let classifier = map
             .buffer_snapshot
             .char_classifier_at(selection.start.to_point(map));
-        
-        map
-            .buffer_chars_at(selection.head().to_offset(map, Bias::Left))
+
+        map.buffer_chars_at(selection.head().to_offset(map, Bias::Left))
             .next()
             .map(|(c, _)| !classifier.is_whitespace(c))
             .unwrap_or_default()

@@ -119,7 +119,7 @@ impl SelectionsCollection {
         cx: &mut App,
     ) -> Option<Selection<D>> {
         let map = self.display_map(cx);
-        
+
         resolve_selections(self.pending_anchor().as_ref(), &map).next()
     }
 
@@ -276,7 +276,7 @@ impl SelectionsCollection {
         cx: &mut App,
     ) -> Selection<D> {
         let map = self.display_map(cx);
-        
+
         resolve_selections([self.newest_anchor()], &map)
             .next()
             .unwrap()
@@ -284,7 +284,7 @@ impl SelectionsCollection {
 
     pub fn newest_display(&self, cx: &mut App) -> Selection<DisplayPoint> {
         let map = self.display_map(cx);
-        
+
         resolve_selections_display([self.newest_anchor()], &map)
             .next()
             .unwrap()
@@ -303,7 +303,7 @@ impl SelectionsCollection {
         cx: &mut App,
     ) -> Selection<D> {
         let map = self.display_map(cx);
-        
+
         resolve_selections([self.oldest_anchor()], &map)
             .next()
             .unwrap()

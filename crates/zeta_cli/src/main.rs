@@ -190,7 +190,9 @@ async fn get_context(
         .await;
 
     // Disable data collection for these requests, as this is currently just used for evals
-    if let Ok(gather_context_output) = gather_context_output.as_mut() { gather_context_output.body.can_collect_data = false }
+    if let Ok(gather_context_output) = gather_context_output.as_mut() {
+        gather_context_output.body.can_collect_data = false
+    }
 
     gather_context_output
 }
@@ -274,7 +276,8 @@ pub fn wait_for_lang_server(
     let subscriptions = [
         cx.subscribe(&lsp_store, {
             let log_prefix = log_prefix.clone();
-            move |_, event, _| if let project::LspStoreEvent::LanguageServerUpdate {
+            move |_, event, _| {
+                if let project::LspStoreEvent::LanguageServerUpdate {
                     message:
                         client::proto::update_language_server::Variant::WorkProgress(
                             client::proto::LspWorkProgress {
@@ -283,7 +286,11 @@ pub fn wait_for_lang_server(
                             },
                         ),
                     ..
-                } = event { println!("{}⟲ {message}", log_prefix) }
+                } = event
+                {
+                    println!("{}⟲ {message}", log_prefix)
+                }
+            }
         }),
         cx.subscribe(project, {
             let buffer = buffer.clone();
