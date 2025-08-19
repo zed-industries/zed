@@ -170,23 +170,23 @@ pub fn new_journal_entry(workspace: &Workspace, window: &mut Window, cx: &mut Ap
                     .await
             };
 
-            if let Some(Some(Ok(item))) = opened.first() {
-                if let Some(editor) = item.downcast::<Editor>().map(|editor| editor.downgrade()) {
-                    editor.update_in(cx, |editor, window, cx| {
-                        let len = editor.buffer().read(cx).len(cx);
-                        editor.change_selections(
-                            SelectionEffects::scroll(Autoscroll::center()),
-                            window,
-                            cx,
-                            |s| s.select_ranges([len..len]),
-                        );
-                        if len > 0 {
-                            editor.insert("\n\n", window, cx);
-                        }
-                        editor.insert(&entry_heading, window, cx);
+            if let Some(Some(Ok(item))) = opened.first()
+                && let Some(editor) = item.downcast::<Editor>().map(|editor| editor.downgrade())
+            {
+                editor.update_in(cx, |editor, window, cx| {
+                    let len = editor.buffer().read(cx).len(cx);
+                    editor.change_selections(
+                        SelectionEffects::scroll(Autoscroll::center()),
+                        window,
+                        cx,
+                        |s| s.select_ranges([len..len]),
+                    );
+                    if len > 0 {
                         editor.insert("\n\n", window, cx);
-                    })?;
-                }
+                    }
+                    editor.insert(&entry_heading, window, cx);
+                    editor.insert("\n\n", window, cx);
+                })?;
             }
 
             anyhow::Ok(())

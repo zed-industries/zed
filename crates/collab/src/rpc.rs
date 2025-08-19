@@ -616,10 +616,10 @@ impl Server {
                             }
                         }
 
-                        if let Some(live_kit) = livekit_client.as_ref() {
-                            if delete_livekit_room {
-                                live_kit.delete_room(livekit_room).await.trace_err();
-                            }
+                        if let Some(live_kit) = livekit_client.as_ref()
+                            && delete_livekit_room
+                        {
+                            live_kit.delete_room(livekit_room).await.trace_err();
                         }
                     }
                 }
@@ -1015,47 +1015,47 @@ impl Server {
         inviter_id: UserId,
         invitee_id: UserId,
     ) -> Result<()> {
-        if let Some(user) = self.app_state.db.get_user_by_id(inviter_id).await? {
-            if let Some(code) = &user.invite_code {
-                let pool = self.connection_pool.lock();
-                let invitee_contact = contact_for_user(invitee_id, false, &pool);
-                for connection_id in pool.user_connection_ids(inviter_id) {
-                    self.peer.send(
-                        connection_id,
-                        proto::UpdateContacts {
-                            contacts: vec![invitee_contact.clone()],
-                            ..Default::default()
-                        },
-                    )?;
-                    self.peer.send(
-                        connection_id,
-                        proto::UpdateInviteInfo {
-                            url: format!("{}{}", self.app_state.config.invite_link_prefix, &code),
-                            count: user.invite_count as u32,
-                        },
-                    )?;
-                }
+        if let Some(user) = self.app_state.db.get_user_by_id(inviter_id).await?
+            && let Some(code) = &user.invite_code
+        {
+            let pool = self.connection_pool.lock();
+            let invitee_contact = contact_for_user(invitee_id, false, &pool);
+            for connection_id in pool.user_connection_ids(inviter_id) {
+                self.peer.send(
+                    connection_id,
+                    proto::UpdateContacts {
+                        contacts: vec![invitee_contact.clone()],
+                        ..Default::default()
+                    },
+                )?;
+                self.peer.send(
+                    connection_id,
+                    proto::UpdateInviteInfo {
+                        url: format!("{}{}", self.app_state.config.invite_link_prefix, &code),
+                        count: user.invite_count as u32,
+                    },
+                )?;
             }
         }
         Ok(())
     }
 
     pub async fn invite_count_updated(self: &Arc<Self>, user_id: UserId) -> Result<()> {
-        if let Some(user) = self.app_state.db.get_user_by_id(user_id).await? {
-            if let Some(invite_code) = &user.invite_code {
-                let pool = self.connection_pool.lock();
-                for connection_id in pool.user_connection_ids(user_id) {
-                    self.peer.send(
-                        connection_id,
-                        proto::UpdateInviteInfo {
-                            url: format!(
-                                "{}{}",
-                                self.app_state.config.invite_link_prefix, invite_code
-                            ),
-                            count: user.invite_count as u32,
-                        },
-                    )?;
-                }
+        if let Some(user) = self.app_state.db.get_user_by_id(user_id).await?
+            && let Some(invite_code) = &user.invite_code
+        {
+            let pool = self.connection_pool.lock();
+            for connection_id in pool.user_connection_ids(user_id) {
+                self.peer.send(
+                    connection_id,
+                    proto::UpdateInviteInfo {
+                        url: format!(
+                            "{}{}",
+                            self.app_state.config.invite_link_prefix, invite_code
+                        ),
+                        count: user.invite_count as u32,
+                    },
+                )?;
             }
         }
         Ok(())
@@ -1101,10 +1101,10 @@ fn broadcast<F>(
     F: FnMut(ConnectionId) -> anyhow::Result<()>,
 {
     for receiver_id in receiver_ids {
-        if Some(receiver_id) != sender_id {
-            if let Err(error) = f(receiver_id) {
-                tracing::error!("failed to send to {:?} {}", receiver_id, error);
-            }
+        if Some(receiver_id) != sender_id
+            && let Err(error) = f(receiver_id)
+        {
+            tracing::error!("failed to send to {:?} {}", receiver_id, error);
         }
     }
 }
@@ -2294,11 +2294,10 @@ async fn update_language_server(
     let db = session.db().await;
 
     if let Some(proto::update_language_server::Variant::MetadataUpdated(update)) = &request.variant
+        && let Some(capabilities) = update.capabilities.clone()
     {
-        if let Some(capabilities) = update.capabilities.clone() {
-            db.update_server_capabilities(project_id, request.language_server_id, capabilities)
-                .await?;
-        }
+        db.update_server_capabilities(project_id, request.language_server_id, capabilities)
+            .await?;
     }
 
     let project_connection_ids = db

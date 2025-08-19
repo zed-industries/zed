@@ -47,7 +47,6 @@ impl Vim {
         }
         self.stop_recording_immediately(action.boxed_clone(), cx);
         self.switch_mode(Mode::HelixNormal, false, window, cx);
-        return;
     }
 
     pub fn helix_normal_motion(
@@ -547,27 +546,27 @@ mod test {
         );
     }
 
-    // #[gpui::test]
-    // async fn test_delete_character_end_of_line(cx: &mut gpui::TestAppContext) {
-    //     let mut cx = VimTestContext::new(cx, true).await;
+    #[gpui::test]
+    async fn test_delete_character_end_of_line(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
 
-    //     cx.set_state(
-    //         indoc! {"
-    //         The quick brownˇ
-    //         fox jumps over
-    //         the lazy dog."},
-    //         Mode::HelixNormal,
-    //     );
+        cx.set_state(
+            indoc! {"
+            The quick brownˇ
+            fox jumps over
+            the lazy dog."},
+            Mode::HelixNormal,
+        );
 
-    //     cx.simulate_keystrokes("d");
+        cx.simulate_keystrokes("d");
 
-    //     cx.assert_state(
-    //         indoc! {"
-    //         The quick brownˇfox jumps over
-    //         the lazy dog."},
-    //         Mode::HelixNormal,
-    //     );
-    // }
+        cx.assert_state(
+            indoc! {"
+            The quick brownˇfox jumps over
+            the lazy dog."},
+            Mode::HelixNormal,
+        );
+    }
 
     // #[gpui::test]
     // async fn test_delete_character_end_of_buffer(cx: &mut gpui::TestAppContext) {

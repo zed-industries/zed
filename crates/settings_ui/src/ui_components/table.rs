@@ -343,7 +343,7 @@ impl TableInteractionState {
             .on_any_mouse_down(|_, _, cx| {
                 cx.stop_propagation();
             })
-            .on_scroll_wheel(Self::listener(&this, |_, _, _, cx| {
+            .on_scroll_wheel(Self::listener(this, |_, _, _, cx| {
                 cx.notify();
             }))
             .children(Scrollbar::vertical(
@@ -731,7 +731,7 @@ impl<const COLS: usize> ColumnWidths<COLS> {
         }
         widths[col_idx] = widths[col_idx] + (diff - diff_remaining);
 
-        return diff_remaining;
+        diff_remaining
     }
 }
 

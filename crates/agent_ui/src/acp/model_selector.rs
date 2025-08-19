@@ -330,7 +330,7 @@ async fn fuzzy_search(
             .collect::<Vec<_>>();
         let mut matches = match_strings(
             &candidates,
-            &query,
+            query,
             false,
             true,
             100,

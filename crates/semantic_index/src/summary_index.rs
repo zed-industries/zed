@@ -324,7 +324,7 @@ impl SummaryIndex {
     ) -> Vec<(Arc<Path>, Option<MTime>)> {
         let entry_db_key = db_key_for_path(&entry.path);
 
-        match digest_db.get(&txn, &entry_db_key) {
+        match digest_db.get(txn, &entry_db_key) {
             Ok(opt_saved_digest) => {
                 // The file path is the same, but the mtime is different. (Or there was no mtime.)
                 // It needs updating, so add it to the backlog! Then, if the backlog is full, drain it and summarize its contents.
@@ -379,18 +379,14 @@ impl SummaryIndex {
                     | project::PathChange::Added
                     | project::PathChange::Updated
                     | project::PathChange::AddedOrUpdated => {
-                        if let Some(entry) = worktree.entry_for_id(*entry_id) {
-                            if entry.is_file() {
-                                let needs_summary = Self::add_to_backlog(
-                                    Arc::clone(&backlog),
-                                    digest_db,
-                                    &txn,
-                                    entry,
-                                );
+                        if let Some(entry) = worktree.entry_for_id(*entry_id)
+                            && entry.is_file()
+                        {
+                            let needs_summary =
+                                Self::add_to_backlog(Arc::clone(&backlog), digest_db, &txn, entry);
 
-                                if !needs_summary.is_empty() {
-                                    tx.send(needs_summary).await?;
-                                }
+                            if !needs_summary.is_empty() {
+                                tx.send(needs_summary).await?;
                             }
                         }
                     }
@@ -575,7 +571,7 @@ impl SummaryIndex {
 
         let code_len = code.len();
         cx.spawn(async move |cx| {
-            let stream = model.stream_completion(request, &cx);
+            let stream = model.stream_completion(request, cx);
             cx.background_spawn(async move {
                 let answer: String = stream
                     .await?

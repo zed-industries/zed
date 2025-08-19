@@ -401,7 +401,7 @@ impl ExtensionBuilder {
         let mut clang_path = wasi_sdk_dir.clone();
         clang_path.extend(["bin", &format!("clang{}", env::consts::EXE_SUFFIX)]);
 
-        if fs::metadata(&clang_path).map_or(false, |metadata| metadata.is_file()) {
+        if fs::metadata(&clang_path).is_ok_and(|metadata| metadata.is_file()) {
             return Ok(clang_path);
         }
 
@@ -452,7 +452,7 @@ impl ExtensionBuilder {
         let mut output = Vec::new();
         let mut stack = Vec::new();
 
-        for payload in Parser::new(0).parse_all(&input) {
+        for payload in Parser::new(0).parse_all(input) {
             let payload = payload?;
 
             // Track nesting depth, so that we don't mess with inner producer sections:

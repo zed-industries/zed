@@ -16,6 +16,23 @@ use vim_mode_setting::VimModeSetting;
 
 use crate::theme_preview::{ThemePreviewStyle, ThemePreviewTile};
 
+const LIGHT_THEMES: [&'static str; 3] = ["One Light", "Ayu Light", "Gruvbox Light"];
+const DARK_THEMES: [&'static str; 3] = ["One Dark", "Ayu Dark", "Gruvbox Dark"];
+const FAMILY_NAMES: [SharedString; 3] = [
+    SharedString::new_static("One"),
+    SharedString::new_static("Ayu"),
+    SharedString::new_static("Gruvbox"),
+];
+
+fn get_theme_family_themes(theme_name: &str) -> Option<(&'static str, &'static str)> {
+    for i in 0..LIGHT_THEMES.len() {
+        if LIGHT_THEMES[i] == theme_name || DARK_THEMES[i] == theme_name {
+            return Some((LIGHT_THEMES[i], DARK_THEMES[i]));
+        }
+    }
+    None
+}
+
 fn render_theme_section(tab_index: &mut isize, cx: &mut App) -> impl IntoElement {
     let theme_selection = ThemeSettings::get_global(cx).theme_selection.clone();
     let system_appearance = theme::SystemAppearance::global(cx);
@@ -89,14 +106,6 @@ fn render_theme_section(tab_index: &mut isize, cx: &mut App) -> impl IntoElement
             ThemeMode::System => *system_appearance,
         };
         let current_theme_name = theme_selection.theme(appearance);
-
-        const LIGHT_THEMES: [&'static str; 3] = ["One Light", "Ayu Light", "Gruvbox Light"];
-        const DARK_THEMES: [&'static str; 3] = ["One Dark", "Ayu Dark", "Gruvbox Dark"];
-        const FAMILY_NAMES: [SharedString; 3] = [
-            SharedString::new_static("One"),
-            SharedString::new_static("Ayu"),
-            SharedString::new_static("Gruvbox"),
-        ];
 
         let theme_names = match appearance {
             Appearance::Light => LIGHT_THEMES,
@@ -184,10 +193,13 @@ fn render_theme_section(tab_index: &mut isize, cx: &mut App) -> impl IntoElement
         let theme = theme.into();
         update_settings_file::<ThemeSettings>(fs, cx, move |settings, cx| {
             if theme_mode == ThemeMode::System {
+                let (light_theme, dark_theme) =
+                    get_theme_family_themes(&theme).unwrap_or((theme.as_ref(), theme.as_ref()));
+
                 settings.theme = Some(ThemeSelection::Dynamic {
                     mode: ThemeMode::System,
-                    light: ThemeName(theme.clone()),
-                    dark: ThemeName(theme.clone()),
+                    light: ThemeName(light_theme.into()),
+                    dark: ThemeName(dark_theme.into()),
                 });
             } else {
                 let appearance = *SystemAppearance::global(cx);

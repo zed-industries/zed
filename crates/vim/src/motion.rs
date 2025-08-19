@@ -1811,10 +1811,10 @@ fn previous_word_end(
         .ignore_punctuation(ignore_punctuation);
     let mut point = point.to_point(map);
 
-    if point.column < map.buffer_snapshot.line_len(MultiBufferRow(point.row)) {
-        if let Some(ch) = map.buffer_snapshot.chars_at(point).next() {
-            point.column += ch.len_utf8() as u32;
-        }
+    if point.column < map.buffer_snapshot.line_len(MultiBufferRow(point.row))
+        && let Some(ch) = map.buffer_snapshot.chars_at(point).next()
+    {
+        point.column += ch.len_utf8() as u32;
     }
     for _ in 0..times {
         let new_point = movement::find_preceding_boundary_point(
@@ -1986,10 +1986,10 @@ fn previous_subword_end(
         .ignore_punctuation(ignore_punctuation);
     let mut point = point.to_point(map);
 
-    if point.column < map.buffer_snapshot.line_len(MultiBufferRow(point.row)) {
-        if let Some(ch) = map.buffer_snapshot.chars_at(point).next() {
-            point.column += ch.len_utf8() as u32;
-        }
+    if point.column < map.buffer_snapshot.line_len(MultiBufferRow(point.row))
+        && let Some(ch) = map.buffer_snapshot.chars_at(point).next()
+    {
+        point.column += ch.len_utf8() as u32;
     }
     for _ in 0..times {
         let new_point = movement::find_preceding_boundary_point(
@@ -2054,10 +2054,10 @@ pub(crate) fn last_non_whitespace(
     let classifier = map.buffer_snapshot.char_classifier_at(from.to_point(map));
 
     // NOTE: depending on clip_at_line_end we may already be one char back from the end.
-    if let Some((ch, _)) = map.buffer_chars_at(end_of_line).next() {
-        if classifier.kind(ch) != CharKind::Whitespace {
-            return end_of_line.to_display_point(map);
-        }
+    if let Some((ch, _)) = map.buffer_chars_at(end_of_line).next()
+        && classifier.kind(ch) != CharKind::Whitespace
+    {
+        return end_of_line.to_display_point(map);
     }
 
     for (ch, offset) in map.reverse_buffer_chars_at(end_of_line) {
@@ -2280,8 +2280,8 @@ fn go_to_line(map: &DisplaySnapshot, display_point: DisplayPoint, line: usize) -
     }
     let mut last_position = None;
     for (excerpt, buffer, range) in map.buffer_snapshot.excerpts() {
-        let excerpt_range = language::ToOffset::to_offset(&range.context.start, &buffer)
-            ..language::ToOffset::to_offset(&range.context.end, &buffer);
+        let excerpt_range = language::ToOffset::to_offset(&range.context.start, buffer)
+            ..language::ToOffset::to_offset(&range.context.end, buffer);
         if offset >= excerpt_range.start && offset <= excerpt_range.end {
             let text_anchor = buffer.anchor_after(offset);
             let anchor = Anchor::in_buffer(excerpt, buffer.remote_id(), text_anchor);
@@ -2375,7 +2375,7 @@ fn matching_tag(map: &DisplaySnapshot, head: DisplayPoint) -> Option<DisplayPoin
         }
     }
 
-    return None;
+    None
 }
 
 fn matching(map: &DisplaySnapshot, display_point: DisplayPoint) -> DisplayPoint {
@@ -2517,7 +2517,7 @@ fn unmatched_forward(
         }
         display_point = new_point;
     }
-    return display_point;
+    display_point
 }
 
 fn unmatched_backward(
@@ -2882,7 +2882,7 @@ fn method_motion(
         } else {
             possibilities.min().unwrap_or(offset)
         };
-        let new_point = map.clip_point(dest.to_display_point(&map), Bias::Left);
+        let new_point = map.clip_point(dest.to_display_point(map), Bias::Left);
         if new_point == display_point {
             break;
         }
@@ -2936,7 +2936,7 @@ fn comment_motion(
         } else {
             possibilities.min().unwrap_or(offset)
         };
-        let new_point = map.clip_point(dest.to_display_point(&map), Bias::Left);
+        let new_point = map.clip_point(dest.to_display_point(map), Bias::Left);
         if new_point == display_point {
             break;
         }
@@ -3003,7 +3003,7 @@ fn section_motion(
                 possibilities.min().unwrap_or(map.buffer_snapshot.len())
             };
 
-            let new_point = map.clip_point(offset.to_display_point(&map), Bias::Left);
+            let new_point = map.clip_point(offset.to_display_point(map), Bias::Left);
             if new_point == display_point {
                 break;
             }

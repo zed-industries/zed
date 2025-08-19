@@ -20,6 +20,7 @@ dependencies = [
  "indoc",
  "itertools 0.14.0",
  "language",
+ "language_model",
  "markdown",
  "parking_lot",
  "project",
@@ -130,7 +131,6 @@ dependencies = [
  "component",
  "context_server",
  "convert_case 0.8.0",
- "feature_flags",
  "fs",
  "futures 0.3.31",
  "git",
@@ -191,10 +191,12 @@ version = "0.1.0"
 dependencies = [
  "acp_thread",
  "action_log",
+ "agent",
  "agent-client-protocol",
  "agent_servers",
  "agent_settings",
  "anyhow",
+ "assistant_context",
  "assistant_tool",
  "assistant_tools",
  "chrono",
@@ -208,6 +210,7 @@ dependencies = [
  "env_logger 0.11.8",
  "fs",
  "futures 0.3.31",
+ "git",
  "gpui",
  "gpui_tokio",
  "handlebars 4.5.0",
@@ -221,6 +224,7 @@ dependencies = [
  "log",
  "lsp",
  "open",
+ "parking_lot",
  "paths",
  "portable-pty",
  "pretty_assertions",
@@ -233,6 +237,7 @@ dependencies = [
  "serde_json",
  "settings",
  "smol",
+ "sqlez",
  "task",
  "tempfile",
  "terminal",
@@ -249,6 +254,7 @@ dependencies = [
  "workspace-hack",
  "worktree",
  "zlog",
+ "zstd",
 ]
 
 [[package]]
@@ -256,7 +262,9 @@ name = "agent_servers"
 version = "0.1.0"
 dependencies = [
  "acp_thread",
+ "action_log",
  "agent-client-protocol",
+ "agent_settings",
  "agentic-coding-protocol",
  "anyhow",
  "collections",
@@ -267,6 +275,8 @@ dependencies = [
  "indoc",
  "itertools 0.14.0",
  "language",
+ "language_model",
+ "language_models",
  "libc",
  "log",
  "nix 0.29.0",
@@ -3070,6 +3080,7 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
+ "serde_urlencoded",
  "settings",
  "sha2",
  "smol",
@@ -7477,6 +7488,7 @@ dependencies = [
  "slotmap",
  "smallvec",
  "smol",
+ "stacksafe",
  "strum 0.27.1",
  "sum_tree",
  "taffy",
@@ -15537,6 +15549,40 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a8f112729512f8e442d81f95a8a7ddf2b7c6b8a1a6f509a95864142b30cab2d3"
 
 [[package]]
+name = "stacker"
+version = "0.1.21"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cddb07e32ddb770749da91081d8d0ac3a16f1a569a18b20348cd371f5dead06b"
+dependencies = [
+ "cc",
+ "cfg-if",
+ "libc",
+ "psm",
+ "windows-sys 0.59.0",
+]
+
+[[package]]
+name = "stacksafe"
+version = "0.1.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1d9c1172965d317e87ddb6d364a040d958b40a1db82b6ef97da26253a8b3d090"
+dependencies = [
+ "stacker",
+ "stacksafe-macro",
+]
+
+[[package]]
+name = "stacksafe-macro"
+version = "0.1.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "172175341049678163e979d9107ca3508046d4d2a7c6682bee46ac541b17db69"
+dependencies = [
+ "proc-macro-error2",
+ "quote",
+ "syn 2.0.101",
+]
+
+[[package]]
 name = "static_assertions"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -20196,8 +20242,9 @@ checksum = "cfe53a6657fd280eaa890a3bc59152892ffa3e30101319d168b781ed6529b049"
 
 [[package]]
 name = "yawc"
-version = "0.2.4"
-source = "git+https://github.com/deviant-forks/yawc?rev=1899688f3e69ace4545aceb97b2a13881cf26142#1899688f3e69ace4545aceb97b2a13881cf26142"
+version = "0.2.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "19a5d82922135b4ae73a079a4ffb5501e9aadb4d785b8c660eaa0a8b899028c5"
 dependencies = [
  "base64 0.22.1",
  "bytes 1.10.1",

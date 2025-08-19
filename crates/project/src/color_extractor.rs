@@ -102,7 +102,7 @@ fn parse(str: &str, mode: ParseMode) -> Option<Hsla> {
         };
     }
 
-    return None;
+    None
 }
 
 fn parse_component(value: &str, max: f32) -> Option<f32> {

@@ -363,7 +363,7 @@ fn anonymous_fd(path: &str) -> Option<fs::File> {
 
         let fd: fd::RawFd = fd_str.parse().ok()?;
         let file = unsafe { fs::File::from_raw_fd(fd) };
-        return Some(file);
+        Some(file)
     }
     #[cfg(any(target_os = "macos", target_os = "freebsd"))]
     {
@@ -381,13 +381,13 @@ fn anonymous_fd(path: &str) -> Option<fs::File> {
         }
         let fd: fd::RawFd = fd_str.parse().ok()?;
         let file = unsafe { fs::File::from_raw_fd(fd) };
-        return Some(file);
+        Some(file)
     }
     #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "freebsd")))]
     {
         _ = path;
         // not implemented for bsd, windows. Could be, but isn't yet
-        return None;
+        None
     }
 }
 
@@ -518,11 +518,11 @@ mod linux {
         ) -> Result<(), std::io::Error> {
             for _ in 0..100 {
                 thread::sleep(Duration::from_millis(10));
-                if sock.connect_addr(&sock_addr).is_ok() {
+                if sock.connect_addr(sock_addr).is_ok() {
                     return Ok(());
                 }
             }
-            sock.connect_addr(&sock_addr)
+            sock.connect_addr(sock_addr)
         }
     }
 }
@@ -586,14 +586,11 @@ mod flatpak {
 
     pub fn set_bin_if_no_escape(mut args: super::Args) -> super::Args {
         if env::var(NO_ESCAPE_ENV_NAME).is_ok()
-            && env::var("FLATPAK_ID").map_or(false, |id| id.starts_with("dev.zed.Zed"))
+            && env::var("FLATPAK_ID").is_ok_and(|id| id.starts_with("dev.zed.Zed"))
+            && args.zed.is_none()
         {
-            if args.zed.is_none() {
-                args.zed = Some("/app/libexec/zed-editor".into());
-                unsafe {
-                    env::set_var("ZED_UPDATE_EXPLANATION", "Please use flatpak to update zed")
-                };
-            }
+            args.zed = Some("/app/libexec/zed-editor".into());
+            unsafe { env::set_var("ZED_UPDATE_EXPLANATION", "Please use flatpak to update zed") };
         }
         args
     }

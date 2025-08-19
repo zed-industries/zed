@@ -530,10 +530,9 @@ impl DebugPanel {
                     .active_session
                     .as_ref()
                     .map(|session| session.entity_id())
+                    && active_session_id == entity_id
                 {
-                    if active_session_id == entity_id {
-                        this.active_session = this.sessions_with_children.keys().next().cloned();
-                    }
+                    this.active_session = this.sessions_with_children.keys().next().cloned();
                 }
                 cx.notify()
             })
@@ -693,7 +692,7 @@ impl DebugPanel {
                                                 )
                                                 .icon_size(IconSize::Small)
                                                 .on_click(window.listener_for(
-                                                    &running_state,
+                                                    running_state,
                                                     |this, _, _window, cx| {
                                                         this.pause_thread(cx);
                                                     },
@@ -719,7 +718,7 @@ impl DebugPanel {
                                                 )
                                                 .icon_size(IconSize::Small)
                                                 .on_click(window.listener_for(
-                                                    &running_state,
+                                                    running_state,
                                                     |this, _, _window, cx| this.continue_thread(cx),
                                                 ))
                                                 .disabled(thread_status != ThreadStatus::Stopped)
@@ -742,7 +741,7 @@ impl DebugPanel {
                                         IconButton::new("debug-step-over", IconName::ArrowRight)
                                             .icon_size(IconSize::Small)
                                             .on_click(window.listener_for(
-                                                &running_state,
+                                                running_state,
                                                 |this, _, _window, cx| {
                                                     this.step_over(cx);
                                                 },
@@ -768,7 +767,7 @@ impl DebugPanel {
                                         )
                                         .icon_size(IconSize::Small)
                                         .on_click(window.listener_for(
-                                            &running_state,
+                                            running_state,
                                             |this, _, _window, cx| {
                                                 this.step_in(cx);
                                             },
@@ -791,7 +790,7 @@ impl DebugPanel {
                                         IconButton::new("debug-step-out", IconName::ArrowUpRight)
                                             .icon_size(IconSize::Small)
                                             .on_click(window.listener_for(
-                                                &running_state,
+                                                running_state,
                                                 |this, _, _window, cx| {
                                                     this.step_out(cx);
                                                 },
@@ -815,7 +814,7 @@ impl DebugPanel {
                                         IconButton::new("debug-restart", IconName::RotateCcw)
                                             .icon_size(IconSize::Small)
                                             .on_click(window.listener_for(
-                                                &running_state,
+                                                running_state,
                                                 |this, _, window, cx| {
                                                     this.rerun_session(window, cx);
                                                 },
@@ -837,7 +836,7 @@ impl DebugPanel {
                                         IconButton::new("debug-stop", IconName::Power)
                                             .icon_size(IconSize::Small)
                                             .on_click(window.listener_for(
-                                                &running_state,
+                                                running_state,
                                                 |this, _, _window, cx| {
                                                     if this.session().read(cx).is_building() {
                                                         this.session().update(cx, |session, cx| {
@@ -892,7 +891,7 @@ impl DebugPanel {
                                                 )
                                                 .icon_size(IconSize::Small)
                                                 .on_click(window.listener_for(
-                                                    &running_state,
+                                                    running_state,
                                                     |this, _, _, cx| {
                                                         this.detach_client(cx);
                                                     },
@@ -1160,7 +1159,7 @@ impl DebugPanel {
                         workspace
                             .project()
                             .read(cx)
-                            .project_path_for_absolute_path(&path, cx)
+                            .project_path_for_absolute_path(path, cx)
                             .context(
                                 "Couldn't get project path for .zed/debug.json in active worktree",
                             )
@@ -1302,10 +1301,10 @@ impl DebugPanel {
         cx: &mut Context<'_, Self>,
     ) -> Option<SharedString> {
         let adapter = parent_session.read(cx).adapter();
-        if let Some(adapter) = DapRegistry::global(cx).adapter(&adapter) {
-            if let Some(label) = adapter.label_for_child_session(request) {
-                return Some(label.into());
-            }
+        if let Some(adapter) = DapRegistry::global(cx).adapter(&adapter)
+            && let Some(label) = adapter.label_for_child_session(request)
+        {
+            return Some(label.into());
         }
         None
     }

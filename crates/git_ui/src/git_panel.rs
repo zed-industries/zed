@@ -103,7 +103,7 @@ fn prompt<T>(
 where
     T: IntoEnumIterator + VariantNames + 'static,
 {
-    let rx = window.prompt(PromptLevel::Info, msg, detail, &T::VARIANTS, cx);
+    let rx = window.prompt(PromptLevel::Info, msg, detail, T::VARIANTS, cx);
     cx.spawn(async move |_| Ok(T::iter().nth(rx.await?).unwrap()))
 }
 
@@ -652,14 +652,14 @@ impl GitPanel {
         if GitPanelSettings::get_global(cx).sort_by_path {
             return self
                 .entries
-                .binary_search_by(|entry| entry.status_entry().unwrap().repo_path.cmp(&path))
+                .binary_search_by(|entry| entry.status_entry().unwrap().repo_path.cmp(path))
                 .ok();
         }
 
         if self.conflicted_count > 0 {
             let conflicted_start = 1;
             if let Ok(ix) = self.entries[conflicted_start..conflicted_start + self.conflicted_count]
-                .binary_search_by(|entry| entry.status_entry().unwrap().repo_path.cmp(&path))
+                .binary_search_by(|entry| entry.status_entry().unwrap().repo_path.cmp(path))
             {
                 return Some(conflicted_start + ix);
             }
@@ -671,7 +671,7 @@ impl GitPanel {
                 0
             } + 1;
             if let Ok(ix) = self.entries[tracked_start..tracked_start + self.tracked_count]
-                .binary_search_by(|entry| entry.status_entry().unwrap().repo_path.cmp(&path))
+                .binary_search_by(|entry| entry.status_entry().unwrap().repo_path.cmp(path))
             {
                 return Some(tracked_start + ix);
             }
@@ -687,7 +687,7 @@ impl GitPanel {
                 0
             } + 1;
             if let Ok(ix) = self.entries[untracked_start..untracked_start + self.new_count]
-                .binary_search_by(|entry| entry.status_entry().unwrap().repo_path.cmp(&path))
+                .binary_search_by(|entry| entry.status_entry().unwrap().repo_path.cmp(path))
             {
                 return Some(untracked_start + ix);
             }
@@ -775,7 +775,7 @@ impl GitPanel {
 
         if window
             .focused(cx)
-            .map_or(false, |focused| self.focus_handle == focused)
+            .is_some_and(|focused| self.focus_handle == focused)
         {
             dispatch_context.add("menu");
             dispatch_context.add("ChangesList");
@@ -894,9 +894,7 @@ impl GitPanel {
         let have_entries = self
             .active_repository
             .as_ref()
-            .map_or(false, |active_repository| {
-                active_repository.read(cx).status_summary().count > 0
-            });
+            .is_some_and(|active_repository| active_repository.read(cx).status_summary().count > 0);
         if have_entries && self.selected_entry.is_none() {
             self.selected_entry = Some(1);
             self.scroll_to_selected_entry(cx);
@@ -926,19 +924,17 @@ impl GitPanel {
             let workspace = self.workspace.upgrade()?;
             let git_repo = self.active_repository.as_ref()?;
 
-            if let Some(project_diff) = workspace.read(cx).active_item_as::<ProjectDiff>(cx) {
-                if let Some(project_path) = project_diff.read(cx).active_path(cx) {
-                    if Some(&entry.repo_path)
-                        == git_repo
-                            .read(cx)
-                            .project_path_to_repo_path(&project_path, cx)
-                            .as_ref()
-                    {
-                        project_diff.focus_handle(cx).focus(window);
-                        project_diff.update(cx, |project_diff, cx| project_diff.autoscroll(cx));
-                        return None;
-                    }
-                }
+            if let Some(project_diff) = workspace.read(cx).active_item_as::<ProjectDiff>(cx)
+                && let Some(project_path) = project_diff.read(cx).active_path(cx)
+                && Some(&entry.repo_path)
+                    == git_repo
+                        .read(cx)
+                        .project_path_to_repo_path(&project_path, cx)
+                        .as_ref()
+            {
+                project_diff.focus_handle(cx).focus(window);
+                project_diff.update(cx, |project_diff, cx| project_diff.autoscroll(cx));
+                return None;
             };
 
             self.workspace
@@ -1209,9 +1205,7 @@ impl GitPanel {
                 })
                 .ok();
             }
-            _ => {
-                return;
-            }
+            _ => {}
         })
         .detach();
     }
@@ -1341,7 +1335,7 @@ impl GitPanel {
                     .iter()
                     .filter_map(|entry| entry.status_entry())
                     .filter(|status_entry| {
-                        section.contains(&status_entry, repository)
+                        section.contains(status_entry, repository)
                             && status_entry.staging.as_bool() != Some(goal_staged_state)
                     })
                     .map(|status_entry| status_entry.clone())
@@ -1642,13 +1636,12 @@ impl GitPanel {
     fn has_commit_message(&self, cx: &mut Context<Self>) -> bool {
         let text = self.commit_editor.read(cx).text(cx);
         if !text.trim().is_empty() {
-            return true;
+            true
         } else if text.is_empty() {
-            return self
-                .suggest_commit_message(cx)
-                .is_some_and(|text| !text.trim().is_empty());
+            self.suggest_commit_message(cx)
+                .is_some_and(|text| !text.trim().is_empty())
         } else {
-            return false;
+            false
         }
     }
 
@@ -1833,7 +1826,9 @@ impl GitPanel {
 
         let git_status_entry = if let Some(staged_entry) = &self.single_staged_entry {
             Some(staged_entry)
-        } else if let Some(single_tracked_entry) = &self.single_tracked_entry {
+        } else if self.total_staged_count() == 0
+            && let Some(single_tracked_entry) = &self.single_tracked_entry
+        {
             Some(single_tracked_entry)
         } else {
             None
@@ -1950,7 +1945,7 @@ impl GitPanel {
                     thinking_allowed: false,
                 };
 
-                let stream = model.stream_completion_text(request, &cx);
+                let stream = model.stream_completion_text(request, cx);
                 match stream.await {
                     Ok(mut messages) => {
                         if !text_empty {
@@ -2086,6 +2081,7 @@ impl GitPanel {
             files: false,
             directories: true,
             multiple: false,
+            prompt: Some("Select as Repository Destination".into()),
         });
 
         let workspace = self.workspace.clone();
@@ -2511,10 +2507,11 @@ impl GitPanel {
                 new_co_authors.push((name.clone(), email.clone()))
             }
         }
-        if !project.is_local() && !project.is_read_only(cx) {
-            if let Some(local_committer) = self.local_committer(room, cx) {
-                new_co_authors.push(local_committer);
-            }
+        if !project.is_local()
+            && !project.is_read_only(cx)
+            && let Some(local_committer) = self.local_committer(room, cx)
+        {
+            new_co_authors.push(local_committer);
         }
         new_co_authors
     }
@@ -2753,16 +2750,15 @@ impl GitPanel {
         for pending in self.pending.iter() {
             if pending.target_status == TargetStatus::Staged {
                 pending_staged_count += pending.entries.len();
-                last_pending_staged = pending.entries.iter().next().cloned();
+                last_pending_staged = pending.entries.first().cloned();
             }
-            if let Some(single_staged) = &single_staged_entry {
-                if pending
+            if let Some(single_staged) = &single_staged_entry
+                && pending
                     .entries
                     .iter()
                     .any(|entry| entry.repo_path == single_staged.repo_path)
-                {
-                    pending_status_for_single_staged = Some(pending.target_status);
-                }
+            {
+                pending_status_for_single_staged = Some(pending.target_status);
             }
         }
 
@@ -2937,8 +2933,7 @@ impl GitPanel {
             .matches(git::repository::REMOTE_CANCELLED_BY_USER)
             .next()
             .is_some()
-        {
-            return; // Hide the cancelled by user message
+        { // Hide the cancelled by user message
         } else {
             workspace.update(cx, |workspace, cx| {
                 let workspace_weak = cx.weak_entity();
@@ -3271,12 +3266,10 @@ impl GitPanel {
             } else {
                 "Amend Tracked"
             }
+        } else if self.has_staged_changes() {
+            "Commit"
         } else {
-            if self.has_staged_changes() {
-                "Commit"
-            } else {
-                "Commit Tracked"
-            }
+            "Commit Tracked"
         }
     }
 
@@ -4497,7 +4490,7 @@ impl Render for GitPanel {
 
         let has_write_access = self.has_write_access(cx);
 
-        let has_co_authors = room.map_or(false, |room| {
+        let has_co_authors = room.is_some_and(|room| {
             self.load_local_committer(cx);
             let room = room.read(cx);
             room.remote_participants()
@@ -4617,7 +4610,7 @@ impl editor::Addon for GitPanelAddon {
 
         git_panel
             .read(cx)
-            .render_buffer_header_controls(&git_panel, &file, window, cx)
+            .render_buffer_header_controls(&git_panel, file, window, cx)
     }
 }
 
@@ -4813,12 +4806,10 @@ impl RenderOnce for PanelRepoFooter {
 
         // ideally, show the whole branch and repo names but
         // when we can't, use a budget to allocate space between the two
-        let (repo_display_len, branch_display_len) = if branch_actual_len + repo_actual_len
-            <= LABEL_CHARACTER_BUDGET
-        {
-            (repo_actual_len, branch_actual_len)
-        } else {
-            if branch_actual_len <= MAX_BRANCH_LEN {
+        let (repo_display_len, branch_display_len) =
+            if branch_actual_len + repo_actual_len <= LABEL_CHARACTER_BUDGET {
+                (repo_actual_len, branch_actual_len)
+            } else if branch_actual_len <= MAX_BRANCH_LEN {
                 let repo_space = (LABEL_CHARACTER_BUDGET - branch_actual_len).min(MAX_REPO_LEN);
                 (repo_space, branch_actual_len)
             } else if repo_actual_len <= MAX_REPO_LEN {
@@ -4826,8 +4817,7 @@ impl RenderOnce for PanelRepoFooter {
                 (repo_actual_len, branch_space)
             } else {
                 (MAX_REPO_LEN, MAX_BRANCH_LEN)
-            }
-        };
+            };
 
         let truncated_repo_name = if repo_actual_len <= repo_display_len {
             active_repo_name.to_string()
@@ -5258,7 +5248,7 @@ mod tests {
             project
                 .read(cx)
                 .worktrees(cx)
-                .nth(0)
+                .next()
                 .unwrap()
                 .read(cx)
                 .as_local()
@@ -5383,7 +5373,7 @@ mod tests {
             project
                 .read(cx)
                 .worktrees(cx)
-                .nth(0)
+                .next()
                 .unwrap()
                 .read(cx)
                 .as_local()
@@ -5434,7 +5424,7 @@ mod tests {
             project
                 .read(cx)
                 .worktrees(cx)
-                .nth(0)
+                .next()
                 .unwrap()
                 .read(cx)
                 .as_local()
@@ -5483,7 +5473,7 @@ mod tests {
             project
                 .read(cx)
                 .worktrees(cx)
-                .nth(0)
+                .next()
                 .unwrap()
                 .read(cx)
                 .as_local()

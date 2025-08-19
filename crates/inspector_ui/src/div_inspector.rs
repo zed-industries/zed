@@ -395,11 +395,11 @@ impl DivInspector {
             .zip(self.rust_completion_replace_range.as_ref())
         {
             let before_text = snapshot
-                .text_for_range(0..completion_range.start.to_offset(&snapshot))
+                .text_for_range(0..completion_range.start.to_offset(snapshot))
                 .collect::<String>();
             let after_text = snapshot
                 .text_for_range(
-                    completion_range.end.to_offset(&snapshot)
+                    completion_range.end.to_offset(snapshot)
                         ..snapshot.clip_offset(usize::MAX, Bias::Left),
                 )
                 .collect::<String>();
@@ -702,10 +702,10 @@ impl CompletionProvider for RustStyleCompletionProvider {
 }
 
 fn completion_replace_range(snapshot: &BufferSnapshot, anchor: &Anchor) -> Option<Range<Anchor>> {
-    let point = anchor.to_point(&snapshot);
-    let offset = point.to_offset(&snapshot);
-    let line_start = Point::new(point.row, 0).to_offset(&snapshot);
-    let line_end = Point::new(point.row, snapshot.line_len(point.row)).to_offset(&snapshot);
+    let point = anchor.to_point(snapshot);
+    let offset = point.to_offset(snapshot);
+    let line_start = Point::new(point.row, 0).to_offset(snapshot);
+    let line_end = Point::new(point.row, snapshot.line_len(point.row)).to_offset(snapshot);
     let mut lines = snapshot.text_for_range(line_start..line_end).lines();
     let line = lines.next()?;
 

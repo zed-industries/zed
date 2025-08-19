@@ -1,3 +1,4 @@
+use action_log::ActionLog;
 use agent_client_protocol::{self as acp, Agent as _};
 use anyhow::anyhow;
 use collections::HashMap;
@@ -140,21 +141,27 @@ impl AgentConnection for AcpConnection {
                 .await
                 .map_err(|err| {
                     if err.code == acp::ErrorCode::AUTH_REQUIRED.code {
-                        anyhow!(AuthRequired)
+                        let mut error = AuthRequired::new();
+
+                        if err.message != acp::ErrorCode::AUTH_REQUIRED.message {
+                            error = error.with_description(err.message);
+                        }
+
+                        anyhow!(error)
                     } else {
                         anyhow!(err)
                     }
                 })?;
 
             let session_id = response.session_id;
-
-            let thread = cx.new(|cx| {
+            let action_log = cx.new(|_| ActionLog::new(project.clone()))?;
+            let thread = cx.new(|_cx| {
                 AcpThread::new(
                     self.server_name,
                     self.clone(),
                     project,
+                    action_log,
                     session_id.clone(),
-                    cx,
                 )
             })?;
 

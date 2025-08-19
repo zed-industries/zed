@@ -155,7 +155,7 @@ fn init_panic_hook(session_id: String) {
         log::error!(
             "panic occurred: {}\nBacktrace:\n{}",
             &payload,
-            (&backtrace).join("\n")
+            backtrace.join("\n")
         );
 
         let panic_data = telemetry_events::Panic {
@@ -622,7 +622,7 @@ pub fn execute_proxy(identifier: String, is_reconnecting: bool) -> Result<()> {
                     Err(anyhow!(error))?;
                 }
                 n => {
-                    stderr.write_all(&mut stderr_buffer[..n]).await?;
+                    stderr.write_all(&stderr_buffer[..n]).await?;
                     stderr.flush().await?;
                 }
             }
@@ -796,11 +796,8 @@ fn initialize_settings(
     fs: Arc<dyn Fs>,
     cx: &mut App,
 ) -> watch::Receiver<Option<NodeBinaryOptions>> {
-    let user_settings_file_rx = watch_config_file(
-        &cx.background_executor(),
-        fs,
-        paths::settings_file().clone(),
-    );
+    let user_settings_file_rx =
+        watch_config_file(cx.background_executor(), fs, paths::settings_file().clone());
 
     handle_settings_file_changes(user_settings_file_rx, cx, {
         let session = session.clone();
@@ -954,13 +951,13 @@ fn cleanup_old_binaries() -> Result<()> {
     for entry in std::fs::read_dir(server_dir)? {
         let path = entry?.path();
 
-        if let Some(file_name) = path.file_name() {
-            if let Some(version) = file_name.to_string_lossy().strip_prefix(&prefix) {
-                if !is_new_version(version) && !is_file_in_use(file_name) {
-                    log::info!("removing old remote server binary: {:?}", path);
-                    std::fs::remove_file(&path)?;
-                }
-            }
+        if let Some(file_name) = path.file_name()
+            && let Some(version) = file_name.to_string_lossy().strip_prefix(&prefix)
+            && !is_new_version(version)
+            && !is_file_in_use(file_name)
+        {
+            log::info!("removing old remote server binary: {:?}", path);
+            std::fs::remove_file(&path)?;
         }
     }
 

@@ -1,8 +1,10 @@
 mod mcp_server;
 pub mod tools;
 
+use action_log::ActionLog;
 use collections::HashMap;
 use context_server::listener::McpServerTool;
+use language_models::provider::anthropic::AnthropicLanguageModelProvider;
 use project::Project;
 use settings::SettingsStore;
 use smol::process::Child;
@@ -30,7 +32,7 @@ use util::{ResultExt, debug_panic};
 use crate::claude::mcp_server::{ClaudeZedMcpServer, McpConfig};
 use crate::claude::tools::ClaudeTool;
 use crate::{AgentServer, AgentServerCommand, AllAgentServersSettings};
-use acp_thread::{AcpThread, AgentConnection};
+use acp_thread::{AcpThread, AgentConnection, AuthRequired};
 
 #[derive(Clone)]
 pub struct ClaudeCode;
@@ -64,6 +66,10 @@ impl AgentServer for ClaudeCode {
 
         Task::ready(Ok(Rc::new(connection) as _))
     }
+
+    fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
+        self
+    }
 }
 
 struct ClaudeAgentConnection {
@@ -79,25 +85,6 @@ impl AgentConnection for ClaudeAgentConnection {
     ) -> Task<Result<Entity<AcpThread>>> {
         let cwd = cwd.to_owned();
         cx.spawn(async move |cx| {
-            let (mut thread_tx, thread_rx) = watch::channel(WeakEntity::new_invalid());
-            let permission_mcp_server = ClaudeZedMcpServer::new(thread_rx.clone(), cx).await?;
-
-            let mut mcp_servers = HashMap::default();
-            mcp_servers.insert(
-                mcp_server::SERVER_NAME.to_string(),
-                permission_mcp_server.server_config()?,
-            );
-            let mcp_config = McpConfig { mcp_servers };
-
-            let mcp_config_file = tempfile::NamedTempFile::new()?;
-            let (mcp_config_file, mcp_config_path) = mcp_config_file.into_parts();
-
-            let mut mcp_config_file = smol::fs::File::from(mcp_config_file);
-            mcp_config_file
-                .write_all(serde_json::to_string(&mcp_config)?.as_bytes())
-                .await?;
-            mcp_config_file.flush().await?;
-
             let settings = cx.read_global(|settings: &SettingsStore, _| {
                 settings.get::<AllAgentServersSettings>(None).claude.clone()
             })?;
@@ -115,6 +102,39 @@ impl AgentConnection for ClaudeAgentConnection {
                 anyhow::bail!("Failed to find claude binary");
             };
 
+            let api_key =
+                cx.update(AnthropicLanguageModelProvider::api_key)?
+                    .await
+                    .map_err(|err| {
+                        if err.is::<language_model::AuthenticateError>() {
+                            anyhow!(AuthRequired::new().with_language_model_provider(
+                                language_model::ANTHROPIC_PROVIDER_ID
+                            ))
+                        } else {
+                            anyhow!(err)
+                        }
+                    })?;
+
+            let (mut thread_tx, thread_rx) = watch::channel(WeakEntity::new_invalid());
+            let fs = project.read_with(cx, |project, _cx| project.fs().clone())?;
+            let permission_mcp_server = ClaudeZedMcpServer::new(thread_rx.clone(), fs, cx).await?;
+
+            let mut mcp_servers = HashMap::default();
+            mcp_servers.insert(
+                mcp_server::SERVER_NAME.to_string(),
+                permission_mcp_server.server_config()?,
+            );
+            let mcp_config = McpConfig { mcp_servers };
+
+            let mcp_config_file = tempfile::NamedTempFile::new()?;
+            let (mcp_config_file, mcp_config_path) = mcp_config_file.into_parts();
+
+            let mut mcp_config_file = smol::fs::File::from(mcp_config_file);
+            mcp_config_file
+                .write_all(serde_json::to_string(&mcp_config)?.as_bytes())
+                .await?;
+            mcp_config_file.flush().await?;
+
             let (incoming_message_tx, mut incoming_message_rx) = mpsc::unbounded();
             let (outgoing_tx, outgoing_rx) = mpsc::unbounded();
 
@@ -126,6 +146,7 @@ impl AgentConnection for ClaudeAgentConnection {
                 &command,
                 ClaudeSessionMode::Start,
                 session_id.clone(),
+                api_key,
                 &mcp_config_path,
                 &cwd,
             )?;
@@ -183,20 +204,27 @@ impl AgentConnection for ClaudeAgentConnection {
                         .await
                     }
 
-                    if let Some(status) = child.status().await.log_err() {
-                        if let Some(thread) = thread_rx.recv().await.ok() {
-                            thread
-                                .update(cx, |thread, cx| {
-                                    thread.emit_server_exited(status, cx);
-                                })
-                                .ok();
-                        }
+                    if let Some(status) = child.status().await.log_err()
+                        && let Some(thread) = thread_rx.recv().await.ok()
+                    {
+                        thread
+                            .update(cx, |thread, cx| {
+                                thread.emit_server_exited(status, cx);
+                            })
+                            .ok();
                     }
                 }
             });
 
-            let thread = cx.new(|cx| {
-                AcpThread::new("Claude Code", self.clone(), project, session_id.clone(), cx)
+            let action_log = cx.new(|_| ActionLog::new(project.clone()))?;
+            let thread = cx.new(|_cx| {
+                AcpThread::new(
+                    "Claude Code",
+                    self.clone(),
+                    project,
+                    action_log,
+                    session_id.clone(),
+                )
             })?;
 
             thread_tx.send(thread.downgrade())?;
@@ -276,7 +304,7 @@ impl AgentConnection for ClaudeAgentConnection {
 
     fn cancel(&self, session_id: &acp::SessionId, _cx: &mut App) {
         let sessions = self.sessions.borrow();
-        let Some(session) = sessions.get(&session_id) else {
+        let Some(session) = sessions.get(session_id) else {
             log::warn!("Attempted to cancel nonexistent session {}", session_id);
             return;
         };
@@ -320,6 +348,7 @@ fn spawn_claude(
     command: &AgentServerCommand,
     mode: ClaudeSessionMode,
     session_id: acp::SessionId,
+    api_key: language_models::provider::anthropic::ApiKey,
     mcp_config_path: &Path,
     root_dir: &Path,
 ) -> Result<Child> {
@@ -355,6 +384,8 @@ fn spawn_claude(
             ClaudeSessionMode::Resume => ["--resume".to_string(), session_id.to_string()],
         })
         .args(command.args.iter().map(|arg| arg.as_str()))
+        .envs(command.env.iter().flatten())
+        .env("ANTHROPIC_API_KEY", api_key.key)
         .current_dir(root_dir)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())

@@ -1099,9 +1099,9 @@ async fn test_reporting_fs_changes_to_language_servers(cx: &mut gpui::TestAppCon
     let prev_read_dir_count = fs.read_dir_call_count();
 
     let fake_server = fake_servers.next().await.unwrap();
-    let (server_id, server_name) = lsp_store.read_with(cx, |lsp_store, _| {
-        let (id, status) = lsp_store.language_server_statuses().next().unwrap();
-        (id, status.name.clone())
+    let server_id = lsp_store.read_with(cx, |lsp_store, _| {
+        let (id, _) = lsp_store.language_server_statuses().next().unwrap();
+        id
     });
 
     // Simulate jumping to a definition in a dependency outside of the worktree.
@@ -1110,7 +1110,6 @@ async fn test_reporting_fs_changes_to_language_servers(cx: &mut gpui::TestAppCon
             project.open_local_buffer_via_lsp(
                 lsp::Url::from_file_path(path!("/the-registry/dep1/src/dep1.rs")).unwrap(),
                 server_id,
-                server_name.clone(),
                 cx,
             )
         })
@@ -2948,9 +2947,10 @@ fn chunks_with_diagnostics<T: ToOffset + ToPoint>(
 ) -> Vec<(String, Option<DiagnosticSeverity>)> {
     let mut chunks: Vec<(String, Option<DiagnosticSeverity>)> = Vec::new();
     for chunk in buffer.snapshot().chunks(range, true) {
-        if chunks.last().map_or(false, |prev_chunk| {
-            prev_chunk.1 == chunk.diagnostic_severity
-        }) {
+        if chunks
+            .last()
+            .is_some_and(|prev_chunk| prev_chunk.1 == chunk.diagnostic_severity)
+        {
             chunks.last_mut().unwrap().0.push_str(chunk.text);
         } else {
             chunks.push((chunk.text.to_string(), chunk.diagnostic_severity));

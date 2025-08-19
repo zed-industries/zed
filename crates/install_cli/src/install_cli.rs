@@ -105,7 +105,7 @@ pub fn install_cli(window: &mut Window, cx: &mut Context<Workspace>) {
                 cx,
             )
         })?;
-        register_zed_scheme(&cx).await.log_err();
+        register_zed_scheme(cx).await.log_err();
         Ok(())
     })
     .detach_and_prompt_err("Error installing zed cli", window, cx, |_, _, _| None);

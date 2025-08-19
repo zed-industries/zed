@@ -171,7 +171,11 @@ impl HeadlessProject {
                 buffer_store.clone(),
                 worktree_store.clone(),
                 prettier_store.clone(),
-                toolchain_store.clone(),
+                toolchain_store
+                    .read(cx)
+                    .as_local_store()
+                    .expect("Toolchain store to be local")
+                    .clone(),
                 environment,
                 manifest_tree,
                 languages.clone(),
@@ -344,7 +348,7 @@ impl HeadlessProject {
                         .iter()
                         .map(|action| action.title.to_string())
                         .collect(),
-                    level: Some(prompt_to_proto(&prompt)),
+                    level: Some(prompt_to_proto(prompt)),
                     lsp_name: prompt.lsp_name.clone(),
                     message: prompt.message.clone(),
                 });
@@ -368,7 +372,7 @@ impl HeadlessProject {
         mut cx: AsyncApp,
     ) -> Result<proto::AddWorktreeResponse> {
         use client::ErrorCodeExt;
-        let fs = this.read_with(&mut cx, |this, _| this.fs.clone())?;
+        let fs = this.read_with(&cx, |this, _| this.fs.clone())?;
         let path = PathBuf::from_proto(shellexpand::tilde(&message.payload.path).to_string());
 
         let canonicalized = match fs.canonicalize(&path).await {
@@ -384,7 +388,7 @@ impl HeadlessProject {
                 let parent = fs.canonicalize(parent).await.map_err(|_| {
                     anyhow!(
                         proto::ErrorCode::DevServerProjectPathDoesNotExist
-                            .with_tag("path", &path.to_string_lossy().as_ref())
+                            .with_tag("path", path.to_string_lossy().as_ref())
                     )
                 })?;
                 parent.join(path.file_name().unwrap())
@@ -392,7 +396,7 @@ impl HeadlessProject {
         };
 
         let worktree = this
-            .read_with(&mut cx.clone(), |this, _| {
+            .read_with(&cx.clone(), |this, _| {
                 Worktree::local(
                     Arc::from(canonicalized.as_path()),
                     message.payload.visible,
@@ -403,7 +407,7 @@ impl HeadlessProject {
             })?
             .await?;
 
-        let response = this.read_with(&mut cx, |_, cx| {
+        let response = this.read_with(&cx, |_, cx| {
             let worktree = worktree.read(cx);
             proto::AddWorktreeResponse {
                 worktree_id: worktree.id().to_proto(),
@@ -582,7 +586,7 @@ impl HeadlessProject {
         let buffer_store = this.read_with(&cx, |this, _| this.buffer_store.clone())?;
 
         while let Ok(buffer) = results.recv().await {
-            let buffer_id = buffer.read_with(&mut cx, |this, _| this.remote_id())?;
+            let buffer_id = buffer.read_with(&cx, |this, _| this.remote_id())?;
             response.buffer_ids.push(buffer_id.to_proto());
             buffer_store
                 .update(&mut cx, |buffer_store, cx| {

@@ -175,14 +175,14 @@ impl Render for QuickActionBar {
                 let code_action_menu = menu_ref
                     .as_ref()
                     .filter(|menu| matches!(menu, CodeContextMenu::CodeActions(..)));
-                code_action_menu.as_ref().map_or(false, |menu| {
-                    matches!(menu.origin(), ContextMenuOrigin::QuickActionBar)
-                })
+                code_action_menu
+                    .as_ref()
+                    .is_some_and(|menu| matches!(menu.origin(), ContextMenuOrigin::QuickActionBar))
             };
             let code_action_element = if is_deployed {
                 editor.update(cx, |editor, cx| {
                     if let Some(style) = editor.style() {
-                        editor.render_context_menu(&style, MAX_CODE_ACTION_MENU_LINES, window, cx)
+                        editor.render_context_menu(style, MAX_CODE_ACTION_MENU_LINES, window, cx)
                     } else {
                         None
                     }

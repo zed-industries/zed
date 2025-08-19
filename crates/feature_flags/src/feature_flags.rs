@@ -14,7 +14,7 @@ struct FeatureFlags {
 }
 
 pub static ZED_DISABLE_STAFF: LazyLock<bool> = LazyLock::new(|| {
-    std::env::var("ZED_DISABLE_STAFF").map_or(false, |value| !value.is_empty() && value != "0")
+    std::env::var("ZED_DISABLE_STAFF").is_ok_and(|value| !value.is_empty() && value != "0")
 });
 
 impl FeatureFlags {
@@ -77,14 +77,6 @@ impl FeatureFlag for NotebookFeatureFlag {
     const NAME: &'static str = "notebooks";
 }
 
-pub struct ThreadAutoCaptureFeatureFlag {}
-impl FeatureFlag for ThreadAutoCaptureFeatureFlag {
-    const NAME: &'static str = "thread-auto-capture";
-
-    fn enabled_for_staff() -> bool {
-        false
-    }
-}
 pub struct PanicFeatureFlag;
 
 impl FeatureFlag for PanicFeatureFlag {
@@ -101,6 +93,12 @@ pub struct AcpFeatureFlag;
 
 impl FeatureFlag for AcpFeatureFlag {
     const NAME: &'static str = "acp";
+}
+
+pub struct ClaudeCodeFeatureFlag;
+
+impl FeatureFlag for ClaudeCodeFeatureFlag {
+    const NAME: &'static str = "claude-code";
 }
 
 pub trait FeatureFlagViewExt<V: 'static> {

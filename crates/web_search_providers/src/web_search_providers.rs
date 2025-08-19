@@ -46,7 +46,7 @@ fn register_zed_web_search_provider(
     let using_zed_provider = language_model_registry
         .read(cx)
         .default_model()
-        .map_or(false, |default| default.is_provided_by_zed());
+        .is_some_and(|default| default.is_provided_by_zed());
     if using_zed_provider {
         registry.register_provider(cloud::CloudWebSearchProvider::new(client, cx), cx)
     } else {

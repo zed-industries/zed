@@ -116,6 +116,7 @@ pub fn init(cx: &mut App) {
                         files: false,
                         directories: true,
                         multiple: false,
+                        prompt: None,
                     },
                     DirectoryLister::Local(
                         workspace.project().clone(),
@@ -1030,15 +1031,14 @@ impl ExtensionsPage {
                                 .read(cx)
                                 .extension_manifest_for_id(&extension_id)
                                 .cloned()
+                                && let Some(events) = extension::ExtensionEvents::try_global(cx)
                             {
-                                if let Some(events) = extension::ExtensionEvents::try_global(cx) {
-                                    events.update(cx, |this, cx| {
-                                        this.emit(
-                                            extension::Event::ConfigureExtensionRequested(manifest),
-                                            cx,
-                                        )
-                                    });
-                                }
+                                events.update(cx, |this, cx| {
+                                    this.emit(
+                                        extension::Event::ConfigureExtensionRequested(manifest),
+                                        cx,
+                                    )
+                                });
                             }
                         }
                     })

@@ -105,7 +105,7 @@ impl Tool for TerminalTool {
                 let first_line = lines.next().unwrap_or_default();
                 let remaining_line_count = lines.count();
                 match remaining_line_count {
-                    0 => MarkdownInlineCode(&first_line).to_string(),
+                    0 => MarkdownInlineCode(first_line).to_string(),
                     1 => MarkdownInlineCode(&format!(
                         "{} - {} more line",
                         first_line, remaining_line_count
@@ -387,7 +387,7 @@ fn working_dir(
     let project = project.read(cx);
     let cd = &input.cd;
 
-    if cd == "." || cd == "" {
+    if cd == "." || cd.is_empty() {
         // Accept "." or "" as meaning "the one worktree" if we only have one worktree.
         let mut worktrees = project.worktrees(cx);
 
@@ -412,10 +412,8 @@ fn working_dir(
             {
                 return Ok(Some(input_path.into()));
             }
-        } else {
-            if let Some(worktree) = project.worktree_for_root_name(cd, cx) {
-                return Ok(Some(worktree.read(cx).abs_path().to_path_buf()));
-            }
+        } else if let Some(worktree) = project.worktree_for_root_name(cd, cx) {
+            return Ok(Some(worktree.read(cx).abs_path().to_path_buf()));
         }
 
         anyhow::bail!("`cd` directory {cd:?} was not in any of the project's worktrees.");

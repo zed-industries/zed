@@ -373,7 +373,7 @@ impl TextThreadEditor {
             .map(|default| default.provider);
         if provider
             .as_ref()
-            .map_or(false, |provider| provider.must_accept_terms(cx))
+            .is_some_and(|provider| provider.must_accept_terms(cx))
         {
             self.show_accept_terms = true;
             cx.notify();
@@ -457,7 +457,7 @@ impl TextThreadEditor {
                         || snapshot
                             .chars_at(newest_cursor)
                             .next()
-                            .map_or(false, |ch| ch != '\n')
+                            .is_some_and(|ch| ch != '\n')
                     {
                         editor.move_to_end_of_line(
                             &MoveToEndOfLine {
@@ -745,32 +745,27 @@ impl TextThreadEditor {
     ) {
         if let Some(invoked_slash_command) =
             self.context.read(cx).invoked_slash_command(&command_id)
+            && let InvokedSlashCommandStatus::Finished = invoked_slash_command.status
         {
-            if let InvokedSlashCommandStatus::Finished = invoked_slash_command.status {
-                let run_commands_in_ranges = invoked_slash_command
-                    .run_commands_in_ranges
-                    .iter()
-                    .cloned()
-                    .collect::<Vec<_>>();
-                for range in run_commands_in_ranges {
-                    let commands = self.context.update(cx, |context, cx| {
-                        context.reparse(cx);
-                        context
-                            .pending_commands_for_range(range.clone(), cx)
-                            .to_vec()
-                    });
+            let run_commands_in_ranges = invoked_slash_command.run_commands_in_ranges.clone();
+            for range in run_commands_in_ranges {
+                let commands = self.context.update(cx, |context, cx| {
+                    context.reparse(cx);
+                    context
+                        .pending_commands_for_range(range.clone(), cx)
+                        .to_vec()
+                });
 
-                    for command in commands {
-                        self.run_command(
-                            command.source_range,
-                            &command.name,
-                            &command.arguments,
-                            false,
-                            self.workspace.clone(),
-                            window,
-                            cx,
-                        );
-                    }
+                for command in commands {
+                    self.run_command(
+                        command.source_range,
+                        &command.name,
+                        &command.arguments,
+                        false,
+                        self.workspace.clone(),
+                        window,
+                        cx,
+                    );
                 }
             }
         }
