@@ -540,7 +540,7 @@ impl TextThreadEditor {
             let context = self.context.read(cx);
             let sections = context
                 .slash_command_output_sections()
-                .into_iter()
+                .iter()
                 .filter(|section| section.is_valid(context.buffer().read(cx)))
                 .cloned()
                 .collect::<Vec<_>>();
@@ -1237,7 +1237,7 @@ impl TextThreadEditor {
             let mut new_blocks = vec![];
             let mut block_index_to_message = vec![];
             for message in self.context.read(cx).messages(cx) {
-                if let Some(_) = blocks_to_remove.remove(&message.id) {
+                if blocks_to_remove.remove(&message.id).is_some() {
                     // This is an old message that we might modify.
                     let Some((meta, block_id)) = old_blocks.get_mut(&message.id) else {
                         debug_assert!(
@@ -1275,7 +1275,7 @@ impl TextThreadEditor {
         context_editor_view: &Entity<TextThreadEditor>,
         cx: &mut Context<Workspace>,
     ) -> Option<(String, bool)> {
-        const CODE_FENCE_DELIMITER: &'static str = "```";
+        const CODE_FENCE_DELIMITER: &str = "```";
 
         let context_editor = context_editor_view.read(cx).editor.clone();
         context_editor.update(cx, |context_editor, cx| {
@@ -2161,8 +2161,8 @@ impl TextThreadEditor {
 
 /// Returns the contents of the *outermost* fenced code block that contains the given offset.
 fn find_surrounding_code_block(snapshot: &BufferSnapshot, offset: usize) -> Option<Range<usize>> {
-    const CODE_BLOCK_NODE: &'static str = "fenced_code_block";
-    const CODE_BLOCK_CONTENT: &'static str = "code_fence_content";
+    const CODE_BLOCK_NODE: &str = "fenced_code_block";
+    const CODE_BLOCK_CONTENT: &str = "code_fence_content";
 
     let layer = snapshot.syntax_layers().next()?;
 
@@ -3129,7 +3129,7 @@ mod tests {
         let context_editor = window
             .update(&mut cx, |_, window, cx| {
                 cx.new(|cx| {
-                    let editor = TextThreadEditor::for_context(
+                    TextThreadEditor::for_context(
                         context.clone(),
                         fs,
                         workspace.downgrade(),
@@ -3137,8 +3137,7 @@ mod tests {
                         None,
                         window,
                         cx,
-                    );
-                    editor
+                    )
                 })
             })
             .unwrap();

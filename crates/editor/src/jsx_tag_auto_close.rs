@@ -808,10 +808,7 @@ mod jsx_tag_autoclose_tests {
             );
             buf
         });
-        let buffer_c = cx.new(|cx| {
-            let buf = language::Buffer::local("<span", cx);
-            buf
-        });
+        let buffer_c = cx.new(|cx| language::Buffer::local("<span", cx));
         let buffer = cx.new(|cx| {
             let mut buf = MultiBuffer::new(language::Capability::ReadWrite);
             buf.push_excerpts(

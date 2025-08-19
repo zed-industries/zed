@@ -426,7 +426,7 @@ unsafe fn parse_keystroke(native_event: id) -> Keystroke {
                     key_char = Some(chars_for_modified_key(native_event.keyCode(), mods));
                 }
 
-                let mut key = if shift
+                if shift
                     && chars_ignoring_modifiers
                         .chars()
                         .all(|c| c.is_ascii_lowercase())
@@ -437,9 +437,7 @@ unsafe fn parse_keystroke(native_event: id) -> Keystroke {
                     chars_with_shift
                 } else {
                     chars_ignoring_modifiers
-                };
-
-                key
+                }
             }
         };
 

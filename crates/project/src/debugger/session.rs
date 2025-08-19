@@ -226,7 +226,7 @@ impl RunningMode {
 
     fn unset_breakpoints_from_paths(&self, paths: &Vec<Arc<Path>>, cx: &mut App) -> Task<()> {
         let tasks: Vec<_> = paths
-            .into_iter()
+            .iter()
             .map(|path| {
                 self.request(dap_command::SetBreakpoints {
                     source: client_source(path),
@@ -508,13 +508,12 @@ impl RunningMode {
                         .ok();
                 }
 
-                let ret = if configuration_done_supported {
+                if configuration_done_supported {
                     this.request(ConfigurationDone {})
                 } else {
                     Task::ready(Ok(()))
                 }
-                .await;
-                ret
+                .await
             }
         });
 
@@ -839,7 +838,7 @@ impl Session {
             })
             .detach();
 
-            let this = Self {
+            Self {
                 mode: SessionState::Booting(None),
                 id: session_id,
                 child_session_ids: HashSet::default(),
@@ -868,9 +867,7 @@ impl Session {
                 task_context,
                 memory: memory::Memory::new(),
                 quirks,
-            };
-
-            this
+            }
         })
     }
 

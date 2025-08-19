@@ -2419,12 +2419,11 @@ impl Fs for FakeFs {
                 let watcher = watcher.clone();
                 move |events| {
                     let result = events.iter().any(|evt_path| {
-                        let result = watcher
+                        watcher
                             .prefixes
                             .lock()
                             .iter()
-                            .any(|prefix| evt_path.path.starts_with(prefix));
-                        result
+                            .any(|prefix| evt_path.path.starts_with(prefix))
                     });
                     let executor = executor.clone();
                     async move {

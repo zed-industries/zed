@@ -1943,26 +1943,24 @@ impl Editor {
             let git_store = project.read(cx).git_store().clone();
             let project = project.clone();
             project_subscriptions.push(cx.subscribe(&git_store, move |this, _, event, cx| {
-                match event {
-                    GitStoreEvent::RepositoryUpdated(
-                        _,
-                        RepositoryEvent::Updated {
-                            new_instance: true, ..
-                        },
-                        _,
-                    ) => {
-                        this.load_diff_task = Some(
-                            update_uncommitted_diff_for_buffer(
-                                cx.entity(),
-                                &project,
-                                this.buffer.read(cx).all_buffers(),
-                                this.buffer.clone(),
-                                cx,
-                            )
-                            .shared(),
-                        );
-                    }
-                    _ => {}
+                if let GitStoreEvent::RepositoryUpdated(
+                    _,
+                    RepositoryEvent::Updated {
+                        new_instance: true, ..
+                    },
+                    _,
+                ) = event
+                {
+                    this.load_diff_task = Some(
+                        update_uncommitted_diff_for_buffer(
+                            cx.entity(),
+                            &project,
+                            this.buffer.read(cx).all_buffers(),
+                            this.buffer.clone(),
+                            cx,
+                        )
+                        .shared(),
+                    );
                 }
             }));
         }
@@ -3221,35 +3219,31 @@ impl Editor {
             selections.select_anchors(other_selections);
         });
 
-        let other_subscription =
-            cx.subscribe(&other, |this, other, other_evt, cx| match other_evt {
-                EditorEvent::SelectionsChanged { local: true } => {
-                    let other_selections = other.read(cx).selections.disjoint.to_vec();
-                    if other_selections.is_empty() {
-                        return;
-                    }
-                    this.selections.change_with(cx, |selections| {
-                        selections.select_anchors(other_selections);
-                    });
+        let other_subscription = cx.subscribe(&other, |this, other, other_evt, cx| {
+            if let EditorEvent::SelectionsChanged { local: true } = other_evt {
+                let other_selections = other.read(cx).selections.disjoint.to_vec();
+                if other_selections.is_empty() {
+                    return;
                 }
-                _ => {}
-            });
+                this.selections.change_with(cx, |selections| {
+                    selections.select_anchors(other_selections);
+                });
+            }
+        });
 
-        let this_subscription =
-            cx.subscribe_self::<EditorEvent>(move |this, this_evt, cx| match this_evt {
-                EditorEvent::SelectionsChanged { local: true } => {
-                    let these_selections = this.selections.disjoint.to_vec();
-                    if these_selections.is_empty() {
-                        return;
-                    }
-                    other.update(cx, |other_editor, cx| {
-                        other_editor.selections.change_with(cx, |selections| {
-                            selections.select_anchors(these_selections);
-                        })
-                    });
+        let this_subscription = cx.subscribe_self::<EditorEvent>(move |this, this_evt, cx| {
+            if let EditorEvent::SelectionsChanged { local: true } = this_evt {
+                let these_selections = this.selections.disjoint.to_vec();
+                if these_selections.is_empty() {
+                    return;
                 }
-                _ => {}
-            });
+                other.update(cx, |other_editor, cx| {
+                    other_editor.selections.change_with(cx, |selections| {
+                        selections.select_anchors(these_selections);
+                    })
+                });
+            }
+        });
 
         Subscription::join(other_subscription, this_subscription)
     }
@@ -5661,34 +5655,31 @@ impl Editor {
 
                 let Ok(()) = editor.update_in(cx, |editor, window, cx| {
                     // Newer menu already set, so exit.
-                    match editor.context_menu.borrow().as_ref() {
-                        Some(CodeContextMenu::Completions(prev_menu)) => {
-                            if prev_menu.id > id {
-                                return;
-                            }
-                        }
-                        _ => {}
+                    if let Some(CodeContextMenu::Completions(prev_menu)) =
+                        editor.context_menu.borrow().as_ref()
+                        && prev_menu.id > id
+                    {
+                        return;
                     };
 
                     // Only valid to take prev_menu because it the new menu is immediately set
                     // below, or the menu is hidden.
-                    match editor.context_menu.borrow_mut().take() {
-                        Some(CodeContextMenu::Completions(prev_menu)) => {
-                            let position_matches =
-                                if prev_menu.initial_position == menu.initial_position {
-                                    true
-                                } else {
-                                    let snapshot = editor.buffer.read(cx).read(cx);
-                                    prev_menu.initial_position.to_offset(&snapshot)
-                                        == menu.initial_position.to_offset(&snapshot)
-                                };
-                            if position_matches {
-                                // Preserve markdown cache before `set_filter_results` because it will
-                                // try to populate the documentation cache.
-                                menu.preserve_markdown_cache(prev_menu);
-                            }
+                    if let Some(CodeContextMenu::Completions(prev_menu)) =
+                        editor.context_menu.borrow_mut().take()
+                    {
+                        let position_matches =
+                            if prev_menu.initial_position == menu.initial_position {
+                                true
+                            } else {
+                                let snapshot = editor.buffer.read(cx).read(cx);
+                                prev_menu.initial_position.to_offset(&snapshot)
+                                    == menu.initial_position.to_offset(&snapshot)
+                            };
+                        if position_matches {
+                            // Preserve markdown cache before `set_filter_results` because it will
+                            // try to populate the documentation cache.
+                            menu.preserve_markdown_cache(prev_menu);
                         }
-                        _ => {}
                     };
 
                     menu.set_filter_results(matches, provider, window, cx);
@@ -6179,12 +6170,11 @@ impl Editor {
                 }
             });
             Some(cx.background_spawn(async move {
-                let scenarios = futures::future::join_all(scenarios)
+                futures::future::join_all(scenarios)
                     .await
                     .into_iter()
                     .flatten()
-                    .collect::<Vec<_>>();
-                scenarios
+                    .collect::<Vec<_>>()
             }))
         })
         .unwrap_or_else(|| Task::ready(vec![]))
@@ -7740,12 +7730,9 @@ impl Editor {
         self.edit_prediction_settings =
             self.edit_prediction_settings_at_position(&buffer, cursor_buffer_position, cx);
 
-        match self.edit_prediction_settings {
-            EditPredictionSettings::Disabled => {
-                self.discard_edit_prediction(false, cx);
-                return None;
-            }
-            _ => {}
+        if let EditPredictionSettings::Disabled = self.edit_prediction_settings {
+            self.discard_edit_prediction(false, cx);
+            return None;
         };
 
         self.edit_prediction_indent_conflict = multibuffer.is_line_whitespace_upto(cursor);
@@ -10638,8 +10625,7 @@ impl Editor {
             .buffer_snapshot
             .anchor_after(Point::new(row, line_len));
 
-        let bp = self
-            .breakpoint_store
+        self.breakpoint_store
             .as_ref()?
             .read_with(cx, |breakpoint_store, cx| {
                 breakpoint_store
@@ -10664,8 +10650,7 @@ impl Editor {
                             None
                         }
                     })
-            });
-        bp
+            })
     }
 
     pub fn edit_log_breakpoint(
@@ -10701,7 +10686,7 @@ impl Editor {
         let cursors = self
             .selections
             .disjoint_anchors()
-            .into_iter()
+            .iter()
             .map(|selection| {
                 let cursor_position: Point = selection.head().to_point(&snapshot.buffer_snapshot);
 
@@ -14878,7 +14863,7 @@ impl Editor {
                     let start = parent.start - offset;
                     offset += parent.len() - text.len();
                     selections.push(Selection {
-                        id: id,
+                        id,
                         start,
                         end: start + text.len(),
                         reversed: false,
@@ -19202,7 +19187,7 @@ impl Editor {
         let locations = self
             .selections
             .all_anchors(cx)
-            .into_iter()
+            .iter()
             .map(|selection| Location {
                 buffer: buffer.clone(),
                 range: selection.start.text_anchor..selection.end.text_anchor,
@@ -19914,11 +19899,8 @@ impl Editor {
         event: &SessionEvent,
         cx: &mut Context<Self>,
     ) {
-        match event {
-            SessionEvent::InvalidateInlineValue => {
-                self.refresh_inline_values(cx);
-            }
-            _ => {}
+        if let SessionEvent::InvalidateInlineValue = event {
+            self.refresh_inline_values(cx);
         }
     }
 

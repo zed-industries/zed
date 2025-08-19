@@ -134,8 +134,8 @@ impl MessageEditor {
         if prevent_slash_commands {
             subscriptions.push(cx.subscribe_in(&editor, window, {
                 let semantics_provider = semantics_provider.clone();
-                move |this, editor, event, window, cx| match event {
-                    EditorEvent::Edited { .. } => {
+                move |this, editor, event, window, cx| {
+                    if let EditorEvent::Edited { .. } = event {
                         this.highlight_slash_command(
                             semantics_provider.clone(),
                             editor.clone(),
@@ -143,7 +143,6 @@ impl MessageEditor {
                             cx,
                         );
                     }
-                    _ => {}
                 }
             }));
         }

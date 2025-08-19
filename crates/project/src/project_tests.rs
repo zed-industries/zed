@@ -695,7 +695,7 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
         assert_eq!(
             buffer
                 .completion_triggers()
-                .into_iter()
+                .iter()
                 .cloned()
                 .collect::<Vec<_>>(),
             &[".".to_string(), "::".to_string()]
@@ -747,7 +747,7 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
         assert_eq!(
             buffer
                 .completion_triggers()
-                .into_iter()
+                .iter()
                 .cloned()
                 .collect::<Vec<_>>(),
             &[":".to_string()]
@@ -766,7 +766,7 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
         assert_eq!(
             buffer
                 .completion_triggers()
-                .into_iter()
+                .iter()
                 .cloned()
                 .collect::<Vec<_>>(),
             &[".".to_string(), "::".to_string()]

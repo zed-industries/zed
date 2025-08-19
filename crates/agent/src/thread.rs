@@ -1645,15 +1645,13 @@ impl Thread {
         self.tool_use
             .request_tool_use(tool_message_id, tool_use, tool_use_metadata.clone(), cx);
 
-        let pending_tool_use = self.tool_use.insert_tool_output(
+        self.tool_use.insert_tool_output(
             tool_use_id.clone(),
             tool_name,
             tool_output,
             self.configured_model.as_ref(),
             self.completion_mode,
-        );
-
-        pending_tool_use
+        )
     }
 
     pub fn stream_completion(

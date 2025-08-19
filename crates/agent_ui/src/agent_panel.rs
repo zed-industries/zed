@@ -354,7 +354,7 @@ impl ActiveView {
         Self::Thread {
             change_title_editor: editor,
             thread: active_thread,
-            message_editor: message_editor,
+            message_editor,
             _subscriptions: subscriptions,
         }
     }
@@ -756,25 +756,25 @@ impl AgentPanel {
                 .ok();
         });
 
-        let _default_model_subscription = cx.subscribe(
-            &LanguageModelRegistry::global(cx),
-            |this, _, event: &language_model::Event, cx| match event {
-                language_model::Event::DefaultModelChanged => match &this.active_view {
-                    ActiveView::Thread { thread, .. } => {
-                        thread
-                            .read(cx)
-                            .thread()
-                            .clone()
-                            .update(cx, |thread, cx| thread.get_or_init_configured_model(cx));
+        let _default_model_subscription =
+            cx.subscribe(
+                &LanguageModelRegistry::global(cx),
+                |this, _, event: &language_model::Event, cx| {
+                    if let language_model::Event::DefaultModelChanged = event {
+                        match &this.active_view {
+                            ActiveView::Thread { thread, .. } => {
+                                thread.read(cx).thread().clone().update(cx, |thread, cx| {
+                                    thread.get_or_init_configured_model(cx)
+                                });
+                            }
+                            ActiveView::ExternalAgentThread { .. }
+                            | ActiveView::TextThread { .. }
+                            | ActiveView::History
+                            | ActiveView::Configuration => {}
+                        }
                     }
-                    ActiveView::ExternalAgentThread { .. }
-                    | ActiveView::TextThread { .. }
-                    | ActiveView::History
-                    | ActiveView::Configuration => {}
                 },
-                _ => {}
-            },
-        );
+            );
 
         let onboarding = cx.new(|cx| {
             AgentPanelOnboarding::new(
@@ -1589,17 +1589,14 @@ impl AgentPanel {
         let current_is_special = current_is_history || current_is_config;
         let new_is_special = new_is_history || new_is_config;
 
-        match &self.active_view {
-            ActiveView::Thread { thread, .. } => {
-                let thread = thread.read(cx);
-                if thread.is_empty() {
-                    let id = thread.thread().read(cx).id().clone();
-                    self.history_store.update(cx, |store, cx| {
-                        store.remove_recently_opened_thread(id, cx);
-                    });
-                }
+        if let ActiveView::Thread { thread, .. } = &self.active_view {
+            let thread = thread.read(cx);
+            if thread.is_empty() {
+                let id = thread.thread().read(cx).id().clone();
+                self.history_store.update(cx, |store, cx| {
+                    store.remove_recently_opened_thread(id, cx);
+                });
             }
-            _ => {}
         }
 
         match &new_view {
@@ -3465,7 +3462,7 @@ impl AgentPanel {
             .on_drop(cx.listener(move |this, paths: &ExternalPaths, window, cx| {
                 let tasks = paths
                     .paths()
-                    .into_iter()
+                    .iter()
                     .map(|path| {
                         Workspace::project_path_for_path(this.project.clone(), path, false, cx)
                     })
