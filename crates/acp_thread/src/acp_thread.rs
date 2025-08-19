@@ -2155,7 +2155,7 @@ mod tests {
                 "}
             );
         });
-        assert_eq!(fs.files(), vec![Path::new("/test/file-0")]);
+        assert_eq!(fs.files(), vec![Path::new(path!("/test/file-0"))]);
 
         cx.update(|cx| thread.update(cx, |thread, cx| thread.send(vec!["ipsum".into()], cx)))
             .await
@@ -2185,7 +2185,10 @@ mod tests {
         });
         assert_eq!(
             fs.files(),
-            vec![Path::new("/test/file-0"), Path::new("/test/file-1")]
+            vec![
+                Path::new(path!("/test/file-0")),
+                Path::new(path!("/test/file-1"))
+            ]
         );
 
         // Checkpoint isn't stored when there are no changes.
@@ -2226,7 +2229,10 @@ mod tests {
         });
         assert_eq!(
             fs.files(),
-            vec![Path::new("/test/file-0"), Path::new("/test/file-1")]
+            vec![
+                Path::new(path!("/test/file-0")),
+                Path::new(path!("/test/file-1"))
+            ]
         );
 
         // Rewinding the conversation truncates the history and restores the checkpoint.
@@ -2254,7 +2260,7 @@ mod tests {
                 "}
             );
         });
-        assert_eq!(fs.files(), vec![Path::new("/test/file-0")]);
+        assert_eq!(fs.files(), vec![Path::new(path!("/test/file-0"))]);
     }
 
     async fn run_until_first_tool_call(

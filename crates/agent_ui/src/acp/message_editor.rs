@@ -1640,7 +1640,7 @@ mod tests {
     use serde_json::json;
     use text::Point;
     use ui::{App, Context, IntoElement, Render, SharedString, Window};
-    use util::path;
+    use util::{path, uri};
     use workspace::{AppState, Item, Workspace};
 
     use crate::acp::{
@@ -1950,13 +1950,12 @@ mod tests {
             editor.confirm_completion(&editor::actions::ConfirmCompletion::default(), window, cx);
         });
 
+        let url_one = uri!("file:///dir/a/one.txt");
         editor.update(&mut cx, |editor, cx| {
-            assert_eq!(editor.text(cx), "Lorem [@one.txt](file:///dir/a/one.txt) ");
+            let text = editor.text(cx);
+            assert_eq!(text, format!("Lorem [@one.txt]({url_one}) "));
             assert!(!editor.has_visible_completions_menu());
-            assert_eq!(
-                fold_ranges(editor, cx),
-                vec![Point::new(0, 6)..Point::new(0, 39)]
-            );
+            assert_eq!(fold_ranges(editor, cx).len(), 1);
         });
 
         let contents = message_editor
@@ -1977,47 +1976,35 @@ mod tests {
             contents,
             [Mention::Text {
                 content: "1".into(),
-                uri: "file:///dir/a/one.txt".parse().unwrap()
+                uri: url_one.parse().unwrap()
             }]
         );
 
         cx.simulate_input(" ");
 
         editor.update(&mut cx, |editor, cx| {
-            assert_eq!(editor.text(cx), "Lorem [@one.txt](file:///dir/a/one.txt)  ");
+            let text = editor.text(cx);
+            assert_eq!(text, format!("Lorem [@one.txt]({url_one})  "));
             assert!(!editor.has_visible_completions_menu());
-            assert_eq!(
-                fold_ranges(editor, cx),
-                vec![Point::new(0, 6)..Point::new(0, 39)]
-            );
+            assert_eq!(fold_ranges(editor, cx).len(), 1);
         });
 
         cx.simulate_input("Ipsum ");
 
         editor.update(&mut cx, |editor, cx| {
-            assert_eq!(
-                editor.text(cx),
-                "Lorem [@one.txt](file:///dir/a/one.txt)  Ipsum ",
-            );
+            let text = editor.text(cx);
+            assert_eq!(text, format!("Lorem [@one.txt]({url_one})  Ipsum "),);
             assert!(!editor.has_visible_completions_menu());
-            assert_eq!(
-                fold_ranges(editor, cx),
-                vec![Point::new(0, 6)..Point::new(0, 39)]
-            );
+            assert_eq!(fold_ranges(editor, cx).len(), 1);
         });
 
         cx.simulate_input("@file ");
 
         editor.update(&mut cx, |editor, cx| {
-            assert_eq!(
-                editor.text(cx),
-                "Lorem [@one.txt](file:///dir/a/one.txt)  Ipsum @file ",
-            );
+            let text = editor.text(cx);
+            assert_eq!(text, format!("Lorem [@one.txt]({url_one})  Ipsum @file "),);
             assert!(editor.has_visible_completions_menu());
-            assert_eq!(
-                fold_ranges(editor, cx),
-                vec![Point::new(0, 6)..Point::new(0, 39)]
-            );
+            assert_eq!(fold_ranges(editor, cx).len(), 1);
         });
 
         editor.update_in(&mut cx, |editor, window, cx| {
@@ -2041,28 +2028,23 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert_eq!(contents.len(), 2);
+        let url_eight = uri!("file:///dir/b/eight.txt");
         pretty_assertions::assert_eq!(
             contents[1],
             Mention::Text {
                 content: "8".to_string(),
-                uri: "file:///dir/b/eight.txt".parse().unwrap(),
+                uri: url_eight.parse().unwrap(),
             }
         );
 
         editor.update(&mut cx, |editor, cx| {
-                assert_eq!(
-                    editor.text(cx),
-                    "Lorem [@one.txt](file:///dir/a/one.txt)  Ipsum [@eight.txt](file:///dir/b/eight.txt) "
-                );
-                assert!(!editor.has_visible_completions_menu());
-                assert_eq!(
-                    fold_ranges(editor, cx),
-                    vec![
-                        Point::new(0, 6)..Point::new(0, 39),
-                        Point::new(0, 47)..Point::new(0, 84)
-                    ]
-                );
-            });
+            assert_eq!(
+                editor.text(cx),
+                format!("Lorem [@one.txt]({url_one})  Ipsum [@eight.txt]({url_eight}) ")
+            );
+            assert!(!editor.has_visible_completions_menu());
+            assert_eq!(fold_ranges(editor, cx).len(), 2);
+        });
 
         let plain_text_language = Arc::new(language::Language::new(
             language::LanguageConfig {
@@ -2108,7 +2090,7 @@ mod tests {
 
         let fake_language_server = fake_language_servers.next().await.unwrap();
         fake_language_server.set_request_handler::<lsp::WorkspaceSymbolRequest, _, _>(
-            |_, _| async move {
+            move |_, _| async move {
                 Ok(Some(lsp::WorkspaceSymbolResponse::Flat(vec![
                     #[allow(deprecated)]
                     lsp::SymbolInformation {
@@ -2132,18 +2114,13 @@ mod tests {
         cx.simulate_input("@symbol ");
 
         editor.update(&mut cx, |editor, cx| {
-                assert_eq!(
-                    editor.text(cx),
-                    "Lorem [@one.txt](file:///dir/a/one.txt)  Ipsum [@eight.txt](file:///dir/b/eight.txt) @symbol "
-                );
-                assert!(editor.has_visible_completions_menu());
-                assert_eq!(
-                    current_completion_labels(editor),
-                    &[
-                        "MySymbol",
-                    ]
-                );
-            });
+            assert_eq!(
+                editor.text(cx),
+                format!("Lorem [@one.txt]({url_one})  Ipsum [@eight.txt]({url_eight}) @symbol ")
+            );
+            assert!(editor.has_visible_completions_menu());
+            assert_eq!(current_completion_labels(editor), &["MySymbol"]);
+        });
 
         editor.update_in(&mut cx, |editor, window, cx| {
             editor.confirm_completion(&editor::actions::ConfirmCompletion::default(), window, cx);
@@ -2165,9 +2142,7 @@ mod tests {
             contents[2],
             Mention::Text {
                 content: "1".into(),
-                uri: "file:///dir/a/one.txt?symbol=MySymbol#L1:1"
-                    .parse()
-                    .unwrap(),
+                uri: format!("{url_one}?symbol=MySymbol#L1:1").parse().unwrap(),
             }
         );
 
@@ -2176,7 +2151,7 @@ mod tests {
         editor.read_with(&cx, |editor, cx| {
                 assert_eq!(
                     editor.text(cx),
-                    "Lorem [@one.txt](file:///dir/a/one.txt)  Ipsum [@eight.txt](file:///dir/b/eight.txt) [@MySymbol](file:///dir/a/one.txt?symbol=MySymbol#L1:1) "
+                    format!("Lorem [@one.txt]({url_one})  Ipsum [@eight.txt]({url_eight}) [@MySymbol]({url_one}?symbol=MySymbol#L1:1) ")
                 );
             });
     }

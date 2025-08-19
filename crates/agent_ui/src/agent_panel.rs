@@ -4,7 +4,6 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
 
-use agent_servers::AgentServer;
 use agent2::{DbThreadMetadata, HistoryEntry};
 use db::kvp::{Dismissable, KEY_VALUE_STORE};
 use serde::{Deserialize, Serialize};
@@ -46,7 +45,7 @@ use assistant_tool::ToolWorkingSet;
 use client::{UserStore, zed_urls};
 use cloud_llm_client::{CompletionIntent, Plan, UsageLimit};
 use editor::{Anchor, AnchorRangeExt as _, Editor, EditorEvent, MultiBuffer};
-use feature_flags::{self, AcpFeatureFlag, FeatureFlagAppExt};
+use feature_flags::{self, AcpFeatureFlag, ClaudeCodeFeatureFlag, FeatureFlagAppExt};
 use fs::Fs;
 use gpui::{
     Action, Animation, AnimationExt as _, AnyElement, App, AsyncWindowContext, ClipboardItem,
@@ -1021,7 +1020,7 @@ impl AgentPanel {
         let history = self.acp_history_store.clone();
 
         cx.spawn_in(window, async move |this, cx| {
-            let server: Rc<dyn AgentServer> = match agent_choice {
+            let ext_agent = match agent_choice {
                 Some(agent) => {
                     cx.background_spawn(async move {
                         if let Some(serialized) =
@@ -1035,10 +1034,10 @@ impl AgentPanel {
                     })
                     .detach();
 
-                    agent.server(fs, history)
+                    agent
                 }
-                None => cx
-                    .background_spawn(async move {
+                None => {
+                    cx.background_spawn(async move {
                         KEY_VALUE_STORE.read_kvp(LAST_USED_EXTERNAL_AGENT_KEY)
                     })
                     .await
@@ -1049,10 +1048,25 @@ impl AgentPanel {
                     })
                     .unwrap_or_default()
                     .agent
-                    .server(fs, history),
+                }
             };
 
+            let server = ext_agent.server(fs, history);
+
             this.update_in(cx, |this, window, cx| {
+                match ext_agent {
+                    crate::ExternalAgent::Gemini | crate::ExternalAgent::NativeAgent => {
+                        if !cx.has_flag::<AcpFeatureFlag>() {
+                            return;
+                        }
+                    }
+                    crate::ExternalAgent::ClaudeCode => {
+                        if !cx.has_flag::<ClaudeCodeFeatureFlag>() {
+                            return;
+                        }
+                    }
+                }
+
                 let thread_view = cx.new(|cx| {
                     crate::acp::AcpThreadView::new(
                         server,
@@ -2444,56 +2458,60 @@ impl AgentPanel {
                             )
                             .separator()
                             .header("External Agents")
-                            .item(
-                                ContextMenuEntry::new("New Gemini Thread")
-                                    .icon(IconName::AiGemini)
-                                    .icon_color(Color::Muted)
-                                    .handler({
-                                        let workspace = workspace.clone();
-                                        move |window, cx| {
-                                            if let Some(workspace) = workspace.upgrade() {
-                                                workspace.update(cx, |workspace, cx| {
-                                                    if let Some(panel) =
-                                                        workspace.panel::<AgentPanel>(cx)
-                                                    {
-                                                        panel.update(cx, |panel, cx| {
-                                                            panel.set_selected_agent(
-                                                                AgentType::Gemini,
-                                                                window,
-                                                                cx,
-                                                            );
-                                                        });
-                                                    }
-                                                });
+                            .when(cx.has_flag::<AcpFeatureFlag>(), |menu| {
+                                menu.item(
+                                    ContextMenuEntry::new("New Gemini Thread")
+                                        .icon(IconName::AiGemini)
+                                        .icon_color(Color::Muted)
+                                        .handler({
+                                            let workspace = workspace.clone();
+                                            move |window, cx| {
+                                                if let Some(workspace) = workspace.upgrade() {
+                                                    workspace.update(cx, |workspace, cx| {
+                                                        if let Some(panel) =
+                                                            workspace.panel::<AgentPanel>(cx)
+                                                        {
+                                                            panel.update(cx, |panel, cx| {
+                                                                panel.set_selected_agent(
+                                                                    AgentType::Gemini,
+                                                                    window,
+                                                                    cx,
+                                                                );
+                                                            });
+                                                        }
+                                                    });
+                                                }
                                             }
-                                        }
-                                    }),
-                            )
-                            .item(
-                                ContextMenuEntry::new("New Claude Code Thread")
-                                    .icon(IconName::AiClaude)
-                                    .icon_color(Color::Muted)
-                                    .handler({
-                                        let workspace = workspace.clone();
-                                        move |window, cx| {
-                                            if let Some(workspace) = workspace.upgrade() {
-                                                workspace.update(cx, |workspace, cx| {
-                                                    if let Some(panel) =
-                                                        workspace.panel::<AgentPanel>(cx)
-                                                    {
-                                                        panel.update(cx, |panel, cx| {
-                                                            panel.set_selected_agent(
-                                                                AgentType::ClaudeCode,
-                                                                window,
-                                                                cx,
-                                                            );
-                                                        });
-                                                    }
-                                                });
+                                        }),
+                                )
+                            })
+                            .when(cx.has_flag::<ClaudeCodeFeatureFlag>(), |menu| {
+                                menu.item(
+                                    ContextMenuEntry::new("New Claude Code Thread")
+                                        .icon(IconName::AiClaude)
+                                        .icon_color(Color::Muted)
+                                        .handler({
+                                            let workspace = workspace.clone();
+                                            move |window, cx| {
+                                                if let Some(workspace) = workspace.upgrade() {
+                                                    workspace.update(cx, |workspace, cx| {
+                                                        if let Some(panel) =
+                                                            workspace.panel::<AgentPanel>(cx)
+                                                        {
+                                                            panel.update(cx, |panel, cx| {
+                                                                panel.set_selected_agent(
+                                                                    AgentType::ClaudeCode,
+                                                                    window,
+                                                                    cx,
+                                                                );
+                                                            });
+                                                        }
+                                                    });
+                                                }
                                             }
-                                        }
-                                    }),
-                            );
+                                        }),
+                                )
+                            });
                         menu
                     }))
                 }
@@ -2563,7 +2581,9 @@ impl AgentPanel {
     }
 
     fn render_toolbar(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        if cx.has_flag::<feature_flags::AcpFeatureFlag>() {
+        if cx.has_flag::<feature_flags::AcpFeatureFlag>()
+            || cx.has_flag::<feature_flags::ClaudeCodeFeatureFlag>()
+        {
             self.render_toolbar_new(window, cx).into_any_element()
         } else {
             self.render_toolbar_old(window, cx).into_any_element()
