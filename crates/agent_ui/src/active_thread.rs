@@ -2597,7 +2597,7 @@ impl ActiveThread {
             .id(("message-container", ix))
             .py_1()
             .px_2p5()
-            .child(Banner::new().severity(ui::Severity::Warning).child(message))
+            .child(Banner::new().severity(Severity::Warning).child(message))
     }
 
     fn render_message_thinking_segment(

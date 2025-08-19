@@ -3259,44 +3259,33 @@ impl AcpThreadView {
             }
         };
 
-        Some(
-            div()
-                .border_t_1()
-                .border_color(cx.theme().colors().border)
-                .child(content),
-        )
+        Some(div().child(content))
     }
 
     fn render_any_thread_error(&self, error: SharedString, cx: &mut Context<'_, Self>) -> Callout {
-        let icon = Icon::new(IconName::XCircle)
-            .size(IconSize::Small)
-            .color(Color::Error);
-
         Callout::new()
-            .icon(icon)
+            .severity(Severity::Error)
             .title("Error")
             .description(error.clone())
-            .secondary_action(self.create_copy_button(error.to_string()))
-            .primary_action(self.dismiss_error_button(cx))
-            .bg_color(self.error_callout_bg(cx))
+            .actions_slot(self.create_copy_button(error.to_string()))
+            .dismiss_action(self.dismiss_error_button(cx))
     }
 
     fn render_payment_required_error(&self, cx: &mut Context<Self>) -> Callout {
         const ERROR_MESSAGE: &str =
             "You reached your free usage limit. Upgrade to Zed Pro for more prompts.";
 
-        let icon = Icon::new(IconName::XCircle)
-            .size(IconSize::Small)
-            .color(Color::Error);
-
         Callout::new()
-            .icon(icon)
+            .severity(Severity::Error)
             .title("Free Usage Exceeded")
             .description(ERROR_MESSAGE)
-            .tertiary_action(self.upgrade_button(cx))
-            .secondary_action(self.create_copy_button(ERROR_MESSAGE))
-            .primary_action(self.dismiss_error_button(cx))
-            .bg_color(self.error_callout_bg(cx))
+            .actions_slot(
+                h_flex()
+                    .gap_0p5()
+                    .child(self.upgrade_button(cx))
+                    .child(self.create_copy_button(ERROR_MESSAGE)),
+            )
+            .dismiss_action(self.dismiss_error_button(cx))
     }
 
     fn render_model_request_limit_reached_error(
@@ -3311,18 +3300,17 @@ impl AcpThreadView {
             }
         };
 
-        let icon = Icon::new(IconName::XCircle)
-            .size(IconSize::Small)
-            .color(Color::Error);
-
         Callout::new()
-            .icon(icon)
+            .severity(Severity::Error)
             .title("Model Prompt Limit Reached")
             .description(error_message)
-            .tertiary_action(self.upgrade_button(cx))
-            .secondary_action(self.create_copy_button(error_message))
-            .primary_action(self.dismiss_error_button(cx))
-            .bg_color(self.error_callout_bg(cx))
+            .actions_slot(
+                h_flex()
+                    .gap_0p5()
+                    .child(self.upgrade_button(cx))
+                    .child(self.create_copy_button(error_message)),
+            )
+            .dismiss_action(self.dismiss_error_button(cx))
     }
 
     fn render_tool_use_limit_reached_error(
@@ -3338,52 +3326,59 @@ impl AcpThreadView {
 
         let focus_handle = self.focus_handle(cx);
 
-        let icon = Icon::new(IconName::Info)
-            .size(IconSize::Small)
-            .color(Color::Info);
-
         Some(
             Callout::new()
-                .icon(icon)
+                .icon(IconName::Info)
                 .title("Consecutive tool use limit reached.")
-                .when(supports_burn_mode, |this| {
-                    this.secondary_action(
-                        Button::new("continue-burn-mode", "Continue with Burn Mode")
-                            .style(ButtonStyle::Filled)
-                            .style(ButtonStyle::Tinted(ui::TintColor::Accent))
-                            .layer(ElevationIndex::ModalSurface)
-                            .label_size(LabelSize::Small)
-                            .key_binding(
-                                KeyBinding::for_action_in(
-                                    &ContinueWithBurnMode,
-                                    &focus_handle,
-                                    window,
-                                    cx,
-                                )
-                                .map(|kb| kb.size(rems_from_px(10.))),
+                .actions_slot(
+                    h_flex()
+                        .gap_0p5()
+                        .when(supports_burn_mode, |this| {
+                            this.child(
+                                Button::new("continue-burn-mode", "Continue with Burn Mode")
+                                    .style(ButtonStyle::Filled)
+                                    .style(ButtonStyle::Tinted(ui::TintColor::Accent))
+                                    .layer(ElevationIndex::ModalSurface)
+                                    .label_size(LabelSize::Small)
+                                    .key_binding(
+                                        KeyBinding::for_action_in(
+                                            &ContinueWithBurnMode,
+                                            &focus_handle,
+                                            window,
+                                            cx,
+                                        )
+                                        .map(|kb| kb.size(rems_from_px(10.))),
+                                    )
+                                    .tooltip(Tooltip::text(
+                                        "Enable Burn Mode for unlimited tool use.",
+                                    ))
+                                    .on_click({
+                                        cx.listener(move |this, _, _window, cx| {
+                                            thread.update(cx, |thread, _cx| {
+                                                thread.set_completion_mode(CompletionMode::Burn);
+                                            });
+                                            this.resume_chat(cx);
+                                        })
+                                    }),
                             )
-                            .tooltip(Tooltip::text("Enable Burn Mode for unlimited tool use."))
-                            .on_click({
-                                cx.listener(move |this, _, _window, cx| {
-                                    thread.update(cx, |thread, _cx| {
-                                        thread.set_completion_mode(CompletionMode::Burn);
-                                    });
+                        })
+                        .child(
+                            Button::new("continue-conversation", "Continue")
+                                .layer(ElevationIndex::ModalSurface)
+                                .label_size(LabelSize::Small)
+                                .key_binding(
+                                    KeyBinding::for_action_in(
+                                        &ContinueThread,
+                                        &focus_handle,
+                                        window,
+                                        cx,
+                                    )
+                                    .map(|kb| kb.size(rems_from_px(10.))),
+                                )
+                                .on_click(cx.listener(|this, _, _window, cx| {
                                     this.resume_chat(cx);
-                                })
-                            }),
-                    )
-                })
-                .primary_action(
-                    Button::new("continue-conversation", "Continue")
-                        .layer(ElevationIndex::ModalSurface)
-                        .label_size(LabelSize::Small)
-                        .key_binding(
-                            KeyBinding::for_action_in(&ContinueThread, &focus_handle, window, cx)
-                                .map(|kb| kb.size(rems_from_px(10.))),
-                        )
-                        .on_click(cx.listener(|this, _, _window, cx| {
-                            this.resume_chat(cx);
-                        })),
+                                })),
+                        ),
                 ),
         )
     }
@@ -3423,10 +3418,6 @@ impl AcpThreadView {
                     cx.open_url(&zed_urls::upgrade_to_zed_pro_url(cx));
                 }
             }))
-    }
-
-    fn error_callout_bg(&self, cx: &Context<Self>) -> Hsla {
-        cx.theme().status().error.opacity(0.08)
     }
 }
 
