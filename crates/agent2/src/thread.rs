@@ -1356,7 +1356,7 @@ impl Thread {
 
         // Ensure the last message ends in the current tool use
         let last_message = self.pending_message();
-        let push_new_tool_use = last_message.content.last_mut().map_or(true, |content| {
+        let push_new_tool_use = last_message.content.last_mut().is_none_or(|content| {
             if let AgentMessageContent::ToolUse(last_tool_use) = content {
                 if last_tool_use.id == tool_use.id {
                     *last_tool_use = tool_use.clone();
@@ -1408,7 +1408,7 @@ impl Thread {
             status: Some(acp::ToolCallStatus::InProgress),
             ..Default::default()
         });
-        let supports_images = self.model().map_or(false, |model| model.supports_images());
+        let supports_images = self.model().is_some_and(|model| model.supports_images());
         let tool_result = tool.run(tool_use.input, tool_event_stream, cx);
         log::info!("Running tool {}", tool_use.name);
         Some(cx.foreground_executor().spawn(async move {

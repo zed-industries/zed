@@ -781,9 +781,7 @@ impl GitStore {
 
         let is_unmerged = self
             .repository_and_path_for_buffer_id(buffer_id, cx)
-            .map_or(false, |(repo, path)| {
-                repo.read(cx).snapshot.has_conflict(&path)
-            });
+            .is_some_and(|(repo, path)| repo.read(cx).snapshot.has_conflict(&path));
         let git_store = cx.weak_entity();
         let buffer_git_state = self
             .diffs
@@ -2501,14 +2499,14 @@ impl BufferGitState {
     pub fn wait_for_recalculation(&mut self) -> Option<impl Future<Output = ()> + use<>> {
         if *self.recalculating_tx.borrow() {
             let mut rx = self.recalculating_tx.subscribe();
-            return Some(async move {
+            Some(async move {
                 loop {
                     let is_recalculating = rx.recv().await;
                     if is_recalculating != Some(true) {
                         break;
                     }
                 }
-            });
+            })
         } else {
             None
         }
@@ -2879,7 +2877,7 @@ impl RepositorySnapshot {
             self.merge.conflicted_paths.contains(repo_path);
         let has_conflict_currently = self
             .status_for_path(repo_path)
-            .map_or(false, |entry| entry.status.is_conflicted());
+            .is_some_and(|entry| entry.status.is_conflicted());
         had_conflict_on_last_merge_head_change || has_conflict_currently
     }
 
@@ -3531,7 +3529,7 @@ impl Repository {
                         && buffer
                             .read(cx)
                             .file()
-                            .map_or(false, |file| file.disk_state().exists())
+                            .is_some_and(|file| file.disk_state().exists())
                     {
                         save_futures.push(buffer_store.save_buffer(buffer, cx));
                     }
@@ -3597,7 +3595,7 @@ impl Repository {
                         && buffer
                             .read(cx)
                             .file()
-                            .map_or(false, |file| file.disk_state().exists())
+                            .is_some_and(|file| file.disk_state().exists())
                     {
                         save_futures.push(buffer_store.save_buffer(buffer, cx));
                     }

@@ -71,12 +71,10 @@ impl KeyContextView {
                         } else {
                             None
                         }
+                    } else if this.action_matches(&e.action, binding.action()) {
+                        Some(true)
                     } else {
-                        if this.action_matches(&e.action, binding.action()) {
-                            Some(true)
-                        } else {
-                            Some(false)
-                        }
+                        Some(false)
                     };
                     let predicate = if let Some(predicate) = binding.predicate() {
                         format!("{}", predicate)

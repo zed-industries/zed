@@ -196,7 +196,7 @@ impl PickerDelegate for ProjectSymbolsDelegate {
                         .partition(|candidate| {
                             project
                                 .entry_for_path(&symbols[candidate.id].path, cx)
-                                .map_or(false, |e| !e.is_ignored)
+                                .is_some_and(|e| !e.is_ignored)
                         });
 
                     delegate.visible_match_candidates = visible_match_candidates;

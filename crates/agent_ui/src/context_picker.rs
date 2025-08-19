@@ -610,9 +610,7 @@ pub(crate) fn available_context_picker_entries(
         .read(cx)
         .active_item(cx)
         .and_then(|item| item.downcast::<Editor>())
-        .map_or(false, |editor| {
-            editor.update(cx, |editor, cx| editor.has_non_empty_selection(cx))
-        });
+        .is_some_and(|editor| editor.update(cx, |editor, cx| editor.has_non_empty_selection(cx)));
     if has_selection {
         entries.push(ContextPickerEntry::Action(
             ContextPickerAction::AddSelections,
@@ -680,7 +678,7 @@ pub(crate) fn recent_context_picker_entries(
             .filter(|(_, abs_path)| {
                 abs_path
                     .as_ref()
-                    .map_or(true, |path| !exclude_paths.contains(path.as_path()))
+                    .is_none_or(|path| !exclude_paths.contains(path.as_path()))
             })
             .take(4)
             .filter_map(|(project_path, _)| {

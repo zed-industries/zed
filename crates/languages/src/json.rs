@@ -280,7 +280,7 @@ impl JsonLspAdapter {
             )
         })?;
         writer.replace(config.clone());
-        return Ok(config);
+        Ok(config)
     }
 }
 

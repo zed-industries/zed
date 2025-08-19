@@ -86,7 +86,7 @@ fn register_web_search_tool(registry: &Entity<LanguageModelRegistry>, cx: &mut A
     let using_zed_provider = registry
         .read(cx)
         .default_model()
-        .map_or(false, |default| default.is_provided_by_zed());
+        .is_some_and(|default| default.is_provided_by_zed());
     if using_zed_provider {
         ToolRegistry::global(cx).register_tool(WebSearchTool);
     } else {

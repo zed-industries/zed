@@ -345,7 +345,7 @@ impl<T: 'static> PromptEditor<T> {
                 let prompt = self.editor.read(cx).text(cx);
                 if self
                     .prompt_history_ix
-                    .map_or(true, |ix| self.prompt_history[ix] != prompt)
+                    .is_none_or(|ix| self.prompt_history[ix] != prompt)
                 {
                     self.prompt_history_ix.take();
                     self.pending_prompt = prompt;

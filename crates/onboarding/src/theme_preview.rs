@@ -210,12 +210,12 @@ impl ThemePreviewTile {
     }
 
     fn render_borderless(seed: f32, theme: Arc<Theme>) -> impl IntoElement {
-        return Self::render_editor(
+        Self::render_editor(
             seed,
             theme,
             Self::SIDEBAR_WIDTH_DEFAULT,
             Self::SKELETON_HEIGHT_DEFAULT,
-        );
+        )
     }
 
     fn render_border(seed: f32, theme: Arc<Theme>) -> impl IntoElement {
@@ -246,7 +246,7 @@ impl ThemePreviewTile {
     ) -> impl IntoElement {
         let sidebar_width = relative(0.20);
 
-        return div()
+        div()
             .size_full()
             .p(Self::ROOT_PADDING)
             .rounded(Self::ROOT_RADIUS)
@@ -278,7 +278,7 @@ impl ThemePreviewTile {
                             )),
                     ),
             )
-            .into_any_element();
+            .into_any_element()
     }
 }
 

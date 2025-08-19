@@ -919,6 +919,7 @@ impl EditorElement {
         {
             #[allow(
                 clippy::collapsible_if,
+                clippy::needless_return,
                 reason = "The cfg-block below makes this a false positive"
             )]
             if !text_hitbox.is_hovered(window) || editor.read_only(cx) {
@@ -1126,26 +1127,24 @@ impl EditorElement {
 
         let hovered_diff_hunk_row = if let Some(control_row) = hovered_diff_control {
             Some(control_row)
-        } else {
-            if text_hovered {
-                let current_row = valid_point.row();
-                position_map.display_hunks.iter().find_map(|(hunk, _)| {
-                    if let DisplayDiffHunk::Unfolded {
-                        display_row_range, ..
-                    } = hunk
-                    {
-                        if display_row_range.contains(&current_row) {
-                            Some(display_row_range.start)
-                        } else {
-                            None
-                        }
+        } else if text_hovered {
+            let current_row = valid_point.row();
+            position_map.display_hunks.iter().find_map(|(hunk, _)| {
+                if let DisplayDiffHunk::Unfolded {
+                    display_row_range, ..
+                } = hunk
+                {
+                    if display_row_range.contains(&current_row) {
+                        Some(display_row_range.start)
                     } else {
                         None
                     }
-                })
-            } else {
-                None
-            }
+                } else {
+                    None
+                }
+            })
+        } else {
+            None
         };
 
         if hovered_diff_hunk_row != editor.hovered_diff_hunk_row {
@@ -1159,11 +1158,11 @@ impl EditorElement {
                 .inline_blame_popover
                 .as_ref()
                 .and_then(|state| state.popover_bounds)
-                .map_or(false, |bounds| bounds.contains(&event.position));
+                .is_some_and(|bounds| bounds.contains(&event.position));
             let keyboard_grace = editor
                 .inline_blame_popover
                 .as_ref()
-                .map_or(false, |state| state.keyboard_grace);
+                .is_some_and(|state| state.keyboard_grace);
 
             if mouse_over_inline_blame || mouse_over_popover {
                 editor.show_blame_popover(blame_entry, event.position, false, cx);
@@ -1190,10 +1189,10 @@ impl EditorElement {
                 let is_visible = editor
                     .gutter_breakpoint_indicator
                     .0
-                    .map_or(false, |indicator| indicator.is_active);
+                    .is_some_and(|indicator| indicator.is_active);
 
                 let has_existing_breakpoint =
-                    editor.breakpoint_store.as_ref().map_or(false, |store| {
+                    editor.breakpoint_store.as_ref().is_some_and(|store| {
                         let Some(project) = &editor.project else {
                             return false;
                         };
@@ -2220,12 +2219,11 @@ impl EditorElement {
                 cmp::max(padded_line, min_start)
             };
 
-            let behind_edit_prediction_popover = edit_prediction_popover_origin.as_ref().map_or(
-                false,
-                |edit_prediction_popover_origin| {
+            let behind_edit_prediction_popover = edit_prediction_popover_origin
+                .as_ref()
+                .is_some_and(|edit_prediction_popover_origin| {
                     (pos_y..pos_y + line_height).contains(&edit_prediction_popover_origin.y)
-                },
-            );
+                });
             let opacity = if behind_edit_prediction_popover {
                 0.5
             } else {
@@ -2291,9 +2289,7 @@ impl EditorElement {
                         None
                     }
                 })
-                .map_or(false, |source| {
-                    matches!(source, CodeActionSource::Indicator(..))
-                });
+                .is_some_and(|source| matches!(source, CodeActionSource::Indicator(..)));
             Some(editor.render_inline_code_actions(icon_size, display_point.row(), active, cx))
         })?;
 
@@ -2909,7 +2905,7 @@ impl EditorElement {
                         if multibuffer_row
                             .0
                             .checked_sub(1)
-                            .map_or(false, |previous_row| {
+                            .is_some_and(|previous_row| {
                                 snapshot.is_line_folded(MultiBufferRow(previous_row))
                             })
                         {
@@ -3900,7 +3896,7 @@ impl EditorElement {
         for (row, block) in fixed_blocks {
             let block_id = block.id();
 
-            if focused_block.as_ref().map_or(false, |b| b.id == block_id) {
+            if focused_block.as_ref().is_some_and(|b| b.id == block_id) {
                 focused_block = None;
             }
 
@@ -3957,7 +3953,7 @@ impl EditorElement {
             };
             let block_id = block.id();
 
-            if focused_block.as_ref().map_or(false, |b| b.id == block_id) {
+            if focused_block.as_ref().is_some_and(|b| b.id == block_id) {
                 focused_block = None;
             }
 
@@ -4736,7 +4732,7 @@ impl EditorElement {
                 }
             };
 
-            let source_included = source_display_point.map_or(true, |source_display_point| {
+            let source_included = source_display_point.is_none_or(|source_display_point| {
                 visible_range
                     .to_inclusive()
                     .contains(&source_display_point.row())
@@ -4916,7 +4912,7 @@ impl EditorElement {
         let intersects_menu = |bounds: Bounds<Pixels>| -> bool {
             context_menu_layout
                 .as_ref()
-                .map_or(false, |menu| bounds.intersects(&menu.bounds))
+                .is_some_and(|menu| bounds.intersects(&menu.bounds))
         };
 
         let can_place_above = {
@@ -5101,7 +5097,7 @@ impl EditorElement {
 
                 if active_positions
                     .iter()
-                    .any(|p| p.map_or(false, |p| display_row_range.contains(&p.row())))
+                    .any(|p| p.is_some_and(|p| display_row_range.contains(&p.row())))
                 {
                     let y = display_row_range.start.as_f32() * line_height
                         + text_hitbox.bounds.top()
@@ -5214,7 +5210,7 @@ impl EditorElement {
         let intersects_menu = |bounds: Bounds<Pixels>| -> bool {
             context_menu_layout
                 .as_ref()
-                .map_or(false, |menu| bounds.intersects(&menu.bounds))
+                .is_some_and(|menu| bounds.intersects(&menu.bounds))
         };
 
         let final_origin = if popover_bounds_above.is_contained_within(hitbox)
@@ -5299,7 +5295,7 @@ impl EditorElement {
                     let mut end_row = start_row.0;
                     while active_rows
                         .peek()
-                        .map_or(false, |(active_row, has_selection)| {
+                        .is_some_and(|(active_row, has_selection)| {
                             active_row.0 == end_row + 1
                                 && has_selection.selection == contains_non_empty_selection.selection
                         })
@@ -6687,25 +6683,23 @@ impl EditorElement {
                                 editor.set_scroll_position(position, window, cx);
                             }
                             cx.stop_propagation();
-                        } else {
-                            if minimap_hitbox.is_hovered(window) {
-                                editor.scroll_manager.set_is_hovering_minimap_thumb(
-                                    !event.dragging()
-                                        && layout
-                                            .thumb_layout
-                                            .thumb_bounds
-                                            .is_some_and(|bounds| bounds.contains(&event.position)),
-                                    cx,
-                                );
+                        } else if minimap_hitbox.is_hovered(window) {
+                            editor.scroll_manager.set_is_hovering_minimap_thumb(
+                                !event.dragging()
+                                    && layout
+                                        .thumb_layout
+                                        .thumb_bounds
+                                        .is_some_and(|bounds| bounds.contains(&event.position)),
+                                cx,
+                            );
 
-                                // Stop hover events from propagating to the
-                                // underlying editor if the minimap hitbox is hovered
-                                if !event.dragging() {
-                                    cx.stop_propagation();
-                                }
-                            } else {
-                                editor.scroll_manager.hide_minimap_thumb(cx);
+                            // Stop hover events from propagating to the
+                            // underlying editor if the minimap hitbox is hovered
+                            if !event.dragging() {
+                                cx.stop_propagation();
                             }
+                        } else {
+                            editor.scroll_manager.hide_minimap_thumb(cx);
                         }
                         mouse_position = event.position;
                     });
@@ -7084,9 +7078,7 @@ impl EditorElement {
         let unstaged_hollow = ProjectSettings::get_global(cx)
             .git
             .hunk_style
-            .map_or(false, |style| {
-                matches!(style, GitHunkStyleSetting::UnstagedHollow)
-            });
+            .is_some_and(|style| matches!(style, GitHunkStyleSetting::UnstagedHollow));
 
         unstaged == unstaged_hollow
     }
@@ -8183,7 +8175,7 @@ impl Element for EditorElement {
                     let is_row_soft_wrapped = |row: usize| {
                         row_infos
                             .get(row)
-                            .map_or(true, |info| info.buffer_row.is_none())
+                            .is_none_or(|info| info.buffer_row.is_none())
                     };
 
                     let start_anchor = if start_row == Default::default() {
@@ -9718,14 +9710,12 @@ impl PointForPosition {
             false
         } else if start_row == end_row {
             candidate_col >= start_col && candidate_col < end_col
+        } else if candidate_row == start_row {
+            candidate_col >= start_col
+        } else if candidate_row == end_row {
+            candidate_col < end_col
         } else {
-            if candidate_row == start_row {
-                candidate_col >= start_col
-            } else if candidate_row == end_row {
-                candidate_col < end_col
-            } else {
-                true
-            }
+            true
         }
     }
 }

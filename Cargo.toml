@@ -821,6 +821,7 @@ single_range_in_vec_init = "allow"
 style = { level = "allow", priority = -1 }
 
 # Temporary list of style lints that we've fixed so far.
+comparison_to_empty = "warn"
 iter_cloned_collect = "warn"
 iter_next_slice = "warn"
 iter_nth = "warn"
@@ -831,8 +832,13 @@ question_mark = { level = "deny" }
 redundant_closure = { level = "deny" }
 declare_interior_mutable_const = { level = "deny" }
 collapsible_if = { level = "warn"}
+collapsible_else_if = { level = "warn" }
 needless_borrow = { level = "warn"}
+needless_return = { level = "warn" }
 unnecessary_mut_passed = {level = "warn"}
+unnecessary_map_or = { level = "warn" }
+unused_unit = "warn"
+
 # Individual rules that have violations in the codebase:
 type_complexity = "allow"
 # We often return trait objects from `new` functions.

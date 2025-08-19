@@ -54,7 +54,7 @@ impl AssertionsReport {
     pub fn passed_count(&self) -> usize {
         self.ran
             .iter()
-            .filter(|a| a.result.as_ref().map_or(false, |result| result.passed))
+            .filter(|a| a.result.as_ref().is_ok_and(|result| result.passed))
             .count()
     }
 

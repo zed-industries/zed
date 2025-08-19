@@ -47,7 +47,6 @@ impl Vim {
         }
         self.stop_recording_immediately(action.boxed_clone(), cx);
         self.switch_mode(Mode::HelixNormal, false, window, cx);
-        return;
     }
 
     pub fn helix_normal_motion(

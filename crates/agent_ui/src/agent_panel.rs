@@ -1463,7 +1463,7 @@ impl AgentPanel {
             AssistantConfigurationEvent::NewThread(provider) => {
                 if LanguageModelRegistry::read_global(cx)
                     .default_model()
-                    .map_or(true, |model| model.provider.id() != provider.id())
+                    .is_none_or(|model| model.provider.id() != provider.id())
                     && let Some(model) = provider.default_model(cx)
                 {
                     update_settings_file::<AgentSettings>(
@@ -2708,9 +2708,7 @@ impl AgentPanel {
             }
             ActiveView::ExternalAgentThread { .. }
             | ActiveView::History
-            | ActiveView::Configuration => {
-                return None;
-            }
+            | ActiveView::Configuration => None,
         }
     }
 
@@ -2726,7 +2724,7 @@ impl AgentPanel {
                     .thread()
                     .read(cx)
                     .configured_model()
-                    .map_or(false, |model| {
+                    .is_some_and(|model| {
                         model.provider.id() != language_model::ZED_CLOUD_PROVIDER_ID
                     })
                 {
@@ -2737,7 +2735,7 @@ impl AgentPanel {
                 if LanguageModelRegistry::global(cx)
                     .read(cx)
                     .default_model()
-                    .map_or(false, |model| {
+                    .is_some_and(|model| {
                         model.provider.id() != language_model::ZED_CLOUD_PROVIDER_ID
                     })
                 {
@@ -3051,9 +3049,7 @@ impl AgentPanel {
         let zed_provider_configured = AgentSettings::get_global(cx)
             .default_model
             .as_ref()
-            .map_or(false, |selection| {
-                selection.provider.0.as_str() == "zed.dev"
-            });
+            .is_some_and(|selection| selection.provider.0.as_str() == "zed.dev");
 
         let callout = if zed_provider_configured {
             Callout::new()

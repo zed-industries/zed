@@ -271,7 +271,7 @@ impl Editor {
             Task::ready(Ok(Navigated::No))
         };
         self.select(SelectPhase::End, window, cx);
-        return navigate_task;
+        navigate_task
     }
 }
 
@@ -871,7 +871,7 @@ fn surrounding_filename(
         .peekable();
     while let Some(ch) = forwards.next() {
         // Skip escaped whitespace
-        if ch == '\\' && forwards.peek().map_or(false, |ch| ch.is_whitespace()) {
+        if ch == '\\' && forwards.peek().is_some_and(|ch| ch.is_whitespace()) {
             token_end += ch.len_utf8();
             let whitespace = forwards.next().unwrap();
             token_end += whitespace.len_utf8();

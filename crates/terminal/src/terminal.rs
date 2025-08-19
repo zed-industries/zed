@@ -1299,23 +1299,19 @@ impl Terminal {
                 let selection = Selection::new(selection_type, point, side);
                 self.events
                     .push_back(InternalEvent::SetSelection(Some((selection, point))));
-                return;
             }
 
             "escape" => {
                 self.events.push_back(InternalEvent::SetSelection(None));
-                return;
             }
 
             "y" => {
                 self.copy(Some(false));
-                return;
             }
 
             "i" => {
                 self.scroll_to_bottom();
                 self.toggle_vi_mode();
-                return;
             }
             _ => {}
         }
@@ -1891,11 +1887,11 @@ impl Terminal {
         let e: Option<ExitStatus> = error_code.map(|code| {
             #[cfg(unix)]
             {
-                return std::os::unix::process::ExitStatusExt::from_raw(code);
+                std::os::unix::process::ExitStatusExt::from_raw(code)
             }
             #[cfg(windows)]
             {
-                return std::os::windows::process::ExitStatusExt::from_raw(code as u32);
+                std::os::windows::process::ExitStatusExt::from_raw(code as u32)
             }
         });
 

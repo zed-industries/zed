@@ -189,7 +189,7 @@ impl TitleBar {
                             .as_ref()?
                             .read(cx)
                             .is_being_followed(collaborator.peer_id);
-                        let is_present = project_id.map_or(false, |project_id| {
+                        let is_present = project_id.is_some_and(|project_id| {
                             collaborator.location
                                 == ParticipantLocation::SharedProject { project_id }
                         });

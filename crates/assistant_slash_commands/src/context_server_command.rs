@@ -62,9 +62,10 @@ impl SlashCommand for ContextServerSlashCommand {
     }
 
     fn requires_argument(&self) -> bool {
-        self.prompt.arguments.as_ref().map_or(false, |args| {
-            args.iter().any(|arg| arg.required == Some(true))
-        })
+        self.prompt
+            .arguments
+            .as_ref()
+            .is_some_and(|args| args.iter().any(|arg| arg.required == Some(true)))
     }
 
     fn complete_argument(

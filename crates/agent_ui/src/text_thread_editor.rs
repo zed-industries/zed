@@ -373,7 +373,7 @@ impl TextThreadEditor {
             .map(|default| default.provider);
         if provider
             .as_ref()
-            .map_or(false, |provider| provider.must_accept_terms(cx))
+            .is_some_and(|provider| provider.must_accept_terms(cx))
         {
             self.show_accept_terms = true;
             cx.notify();
@@ -457,7 +457,7 @@ impl TextThreadEditor {
                         || snapshot
                             .chars_at(newest_cursor)
                             .next()
-                            .map_or(false, |ch| ch != '\n')
+                            .is_some_and(|ch| ch != '\n')
                     {
                         editor.move_to_end_of_line(
                             &MoveToEndOfLine {

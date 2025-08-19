@@ -140,12 +140,10 @@ impl PickerDelegate for SlashCommandDelegate {
                     );
                     ret.push(index - 1);
                 }
-            } else {
-                if let SlashCommandEntry::Advert { .. } = command {
-                    previous_is_advert = true;
-                    if index != 0 {
-                        ret.push(index - 1);
-                    }
+            } else if let SlashCommandEntry::Advert { .. } = command {
+                previous_is_advert = true;
+                if index != 0 {
+                    ret.push(index - 1);
                 }
             }
         }

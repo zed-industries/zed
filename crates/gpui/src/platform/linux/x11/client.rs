@@ -1586,11 +1586,11 @@ impl LinuxClient for X11Client {
 
     fn read_from_primary(&self) -> Option<crate::ClipboardItem> {
         let state = self.0.borrow_mut();
-        return state
+        state
             .clipboard
             .get_any(clipboard::ClipboardKind::Primary)
             .context("X11: Failed to read from clipboard (primary)")
-            .log_with_level(log::Level::Debug);
+            .log_with_level(log::Level::Debug)
     }
 
     fn read_from_clipboard(&self) -> Option<crate::ClipboardItem> {
@@ -1603,11 +1603,11 @@ impl LinuxClient for X11Client {
         {
             return state.clipboard_item.clone();
         }
-        return state
+        state
             .clipboard
             .get_any(clipboard::ClipboardKind::Clipboard)
             .context("X11: Failed to read from clipboard (clipboard)")
-            .log_with_level(log::Level::Debug);
+            .log_with_level(log::Level::Debug)
     }
 
     fn run(&self) {
@@ -2010,12 +2010,12 @@ fn check_gtk_frame_extents_supported(
 }
 
 fn xdnd_is_atom_supported(atom: u32, atoms: &XcbAtoms) -> bool {
-    return atom == atoms.TEXT
+    atom == atoms.TEXT
         || atom == atoms.STRING
         || atom == atoms.UTF8_STRING
         || atom == atoms.TEXT_PLAIN
         || atom == atoms.TEXT_PLAIN_UTF8
-        || atom == atoms.TextUriList;
+        || atom == atoms.TextUriList
 }
 
 fn xdnd_get_supported_atom(
@@ -2043,7 +2043,7 @@ fn xdnd_get_supported_atom(
             }
         }
     }
-    return 0;
+    0
 }
 
 fn xdnd_send_finished(
@@ -2144,7 +2144,7 @@ fn current_pointer_device_states(
     if pointer_device_states.is_empty() {
         log::error!("Found no xinput mouse pointers.");
     }
-    return Some(pointer_device_states);
+    Some(pointer_device_states)
 }
 
 /// Returns true if the device is a pointer device. Does not include pointer device groups.

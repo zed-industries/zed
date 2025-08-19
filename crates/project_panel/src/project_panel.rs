@@ -563,7 +563,7 @@ impl ProjectPanel {
                         if project_panel
                             .edit_state
                             .as_ref()
-                            .map_or(false, |state| state.processing_filename.is_none())
+                            .is_some_and(|state| state.processing_filename.is_none())
                         {
                             project_panel.edit_state = None;
                             project_panel.update_visible_entries(None, cx);
@@ -3091,7 +3091,7 @@ impl ProjectPanel {
                     entry.id == new_entry_id || {
                         self.ancestors
                             .get(&entry.id)
-                            .map_or(false, |entries| entries.ancestors.contains(&new_entry_id))
+                            .is_some_and(|entries| entries.ancestors.contains(&new_entry_id))
                     }
                 } else {
                     false
@@ -3974,7 +3974,7 @@ impl ProjectPanel {
         let is_marked = self.marked_entries.contains(&selection);
         let is_active = self
             .selection
-            .map_or(false, |selection| selection.entry_id == entry_id);
+            .is_some_and(|selection| selection.entry_id == entry_id);
 
         let file_name = details.filename.clone();
 
@@ -4181,7 +4181,7 @@ impl ProjectPanel {
                             || this
                                 .expanded_dir_ids
                                 .get(&details.worktree_id)
-                                .map_or(false, |ids| ids.binary_search(&entry_id).is_ok())
+                                .is_some_and(|ids| ids.binary_search(&entry_id).is_ok())
                         {
                             return;
                         }
@@ -4401,19 +4401,17 @@ impl ProjectPanel {
                         } else {
                             h_flex().child(Icon::from_path(icon.to_string()).color(Color::Muted))
                         }
+                    } else if let Some((icon_name, color)) =
+                        entry_diagnostic_aware_icon_name_and_color(diagnostic_severity)
+                    {
+                        h_flex()
+                            .size(IconSize::default().rems())
+                            .child(Icon::new(icon_name).color(color).size(IconSize::Small))
                     } else {
-                        if let Some((icon_name, color)) =
-                            entry_diagnostic_aware_icon_name_and_color(diagnostic_severity)
-                        {
-                            h_flex()
-                                .size(IconSize::default().rems())
-                                .child(Icon::new(icon_name).color(color).size(IconSize::Small))
-                        } else {
-                            h_flex()
-                                .size(IconSize::default().rems())
-                                .invisible()
-                                .flex_none()
-                        }
+                        h_flex()
+                            .size(IconSize::default().rems())
+                            .invisible()
+                            .flex_none()
                     })
                     .child(
                         if let (Some(editor), true) = (Some(&self.filename_editor), show_editor) {
@@ -4465,7 +4463,7 @@ impl ProjectPanel {
                                                                     );
                                                                 } else {
                                                                     let is_current_target = this.folded_directory_drag_target
-                                                                        .map_or(false, |target|
+                                                                        .is_some_and(|target|
                                                                             target.entry_id == entry_id &&
                                                                             target.index == delimiter_target_index &&
                                                                             target.is_delimiter_target
@@ -4509,7 +4507,7 @@ impl ProjectPanel {
                                                             } else {
                                                                 let is_current_target = this.folded_directory_drag_target
                                                                     .as_ref()
-                                                                    .map_or(false, |target|
+                                                                    .is_some_and(|target|
                                                                         target.entry_id == entry_id &&
                                                                         target.index == index &&
                                                                         !target.is_delimiter_target
@@ -4528,7 +4526,7 @@ impl ProjectPanel {
                                                             this.drag_onto(selections, target_entry_id, kind.is_file(), window, cx);
                                                         }
                                                     }))
-                                                    .when(folded_directory_drag_target.map_or(false, |target|
+                                                    .when(folded_directory_drag_target.is_some_and(|target|
                                                         target.entry_id == entry_id &&
                                                         target.index == index
                                                     ), |this| {
@@ -4694,7 +4692,7 @@ impl ProjectPanel {
         let is_cut = self
             .clipboard
             .as_ref()
-            .map_or(false, |e| e.is_cut() && e.items().contains(&selection));
+            .is_some_and(|e| e.is_cut() && e.items().contains(&selection));
 
         EntryDetails {
             filename,
@@ -4892,7 +4890,7 @@ impl ProjectPanel {
         if skip_ignored
             && worktree
                 .entry_for_id(entry_id)
-                .map_or(true, |entry| entry.is_ignored && !entry.is_always_included)
+                .is_none_or(|entry| entry.is_ignored && !entry.is_always_included)
         {
             anyhow::bail!("can't reveal an ignored entry in the project panel");
         }
@@ -5687,7 +5685,7 @@ impl Panel for ProjectPanel {
         project.visible_worktrees(cx).any(|tree| {
             tree.read(cx)
                 .root_entry()
-                .map_or(false, |entry| entry.is_dir())
+                .is_some_and(|entry| entry.is_dir())
         })
     }
 

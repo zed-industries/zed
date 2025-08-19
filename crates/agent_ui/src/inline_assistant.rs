@@ -1120,7 +1120,7 @@ impl InlineAssistant {
             if editor_assists
                 .scroll_lock
                 .as_ref()
-                .map_or(false, |lock| lock.assist_id == assist_id)
+                .is_some_and(|lock| lock.assist_id == assist_id)
             {
                 editor_assists.scroll_lock = None;
             }

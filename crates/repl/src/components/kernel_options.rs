@@ -126,7 +126,7 @@ impl PickerDelegate for KernelPickerDelegate {
                 .collect()
         };
 
-        return Task::ready(());
+        Task::ready(())
     }
 
     fn confirm(&mut self, _secondary: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {

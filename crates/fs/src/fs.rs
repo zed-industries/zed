@@ -625,13 +625,13 @@ impl Fs for RealFs {
     async fn is_file(&self, path: &Path) -> bool {
         smol::fs::metadata(path)
             .await
-            .map_or(false, |metadata| metadata.is_file())
+            .is_ok_and(|metadata| metadata.is_file())
     }
 
     async fn is_dir(&self, path: &Path) -> bool {
         smol::fs::metadata(path)
             .await
-            .map_or(false, |metadata| metadata.is_dir())
+            .is_ok_and(|metadata| metadata.is_dir())
     }
 
     async fn metadata(&self, path: &Path) -> Result<Option<Metadata>> {

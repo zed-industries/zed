@@ -294,7 +294,7 @@ pub(crate) fn search_symbols(
                         .partition(|candidate| {
                             project
                                 .entry_for_path(&symbols[candidate.id].path, cx)
-                                .map_or(false, |e| !e.is_ignored)
+                                .is_some_and(|e| !e.is_ignored)
                         })
                 })
                 .log_err()
