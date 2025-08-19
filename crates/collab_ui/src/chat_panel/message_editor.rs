@@ -245,7 +245,7 @@ impl MessageEditor {
             if !candidates.is_empty() {
                 return cx.spawn(async move |_, cx| {
                     let completion_response = Self::completions_for_candidates(
-                        &cx,
+                        cx,
                         query.as_str(),
                         &candidates,
                         start_anchor..end_anchor,
@@ -263,7 +263,7 @@ impl MessageEditor {
             if !candidates.is_empty() {
                 return cx.spawn(async move |_, cx| {
                     let completion_response = Self::completions_for_candidates(
-                        &cx,
+                        cx,
                         query.as_str(),
                         candidates,
                         start_anchor..end_anchor,

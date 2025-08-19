@@ -36,8 +36,8 @@ pub fn is_invisible(c: char) -> bool {
     } else if c >= '\u{7f}' {
         c <= '\u{9f}'
             || (c.is_whitespace() && c != IDEOGRAPHIC_SPACE)
-            || contains(c, &FORMAT)
-            || contains(c, &OTHER)
+            || contains(c, FORMAT)
+            || contains(c, OTHER)
     } else {
         false
     }
@@ -50,7 +50,7 @@ pub fn replacement(c: char) -> Option<&'static str> {
         Some(C0_SYMBOLS[c as usize])
     } else if c == '\x7f' {
         Some(DEL)
-    } else if contains(c, &PRESERVE) {
+    } else if contains(c, PRESERVE) {
         None
     } else {
         Some("\u{2007}") // fixed width space

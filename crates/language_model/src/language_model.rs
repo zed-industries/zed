@@ -634,7 +634,12 @@ pub trait LanguageModelProvider: 'static {
     }
     fn is_authenticated(&self, cx: &App) -> bool;
     fn authenticate(&self, cx: &mut App) -> Task<Result<(), AuthenticateError>>;
-    fn configuration_view(&self, window: &mut Window, cx: &mut App) -> AnyView;
+    fn configuration_view(
+        &self,
+        target_agent: ConfigurationViewTargetAgent,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> AnyView;
     fn must_accept_terms(&self, _cx: &App) -> bool {
         false
     }
@@ -646,6 +651,13 @@ pub trait LanguageModelProvider: 'static {
         None
     }
     fn reset_credentials(&self, cx: &mut App) -> Task<Result<()>>;
+}
+
+#[derive(Default, Clone, Copy)]
+pub enum ConfigurationViewTargetAgent {
+    #[default]
+    ZedAgent,
+    Other(&'static str),
 }
 
 #[derive(PartialEq, Eq)]

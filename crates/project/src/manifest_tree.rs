@@ -199,7 +199,7 @@ impl ManifestTree {
     ) {
         match evt {
             WorktreeStoreEvent::WorktreeRemoved(_, worktree_id) => {
-                self.root_points.remove(&worktree_id);
+                self.root_points.remove(worktree_id);
             }
             _ => {}
         }

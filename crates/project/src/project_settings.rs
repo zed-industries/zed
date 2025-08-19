@@ -1105,7 +1105,7 @@ impl SettingsObserver {
         cx: &mut Context<Self>,
     ) -> Task<()> {
         let mut user_tasks_file_rx =
-            watch_config_file(&cx.background_executor(), fs, file_path.clone());
+            watch_config_file(cx.background_executor(), fs, file_path.clone());
         let user_tasks_content = cx.background_executor().block(user_tasks_file_rx.next());
         let weak_entry = cx.weak_entity();
         cx.spawn(async move |settings_observer, cx| {
@@ -1160,7 +1160,7 @@ impl SettingsObserver {
         cx: &mut Context<Self>,
     ) -> Task<()> {
         let mut user_tasks_file_rx =
-            watch_config_file(&cx.background_executor(), fs, file_path.clone());
+            watch_config_file(cx.background_executor(), fs, file_path.clone());
         let user_tasks_content = cx.background_executor().block(user_tasks_file_rx.next());
         let weak_entry = cx.weak_entity();
         cx.spawn(async move |settings_observer, cx| {

@@ -1490,7 +1490,7 @@ impl RemoteServerProjects {
                 .track_focus(&self.focus_handle(cx))
                 .id("ssh-server-list")
                 .overflow_y_scroll()
-                .track_scroll(&scroll_handle)
+                .track_scroll(scroll_handle)
                 .size_full()
                 .child(connect_button)
                 .child(

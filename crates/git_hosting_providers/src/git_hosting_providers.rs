@@ -55,7 +55,7 @@ pub fn get_host_from_git_remote_url(remote_url: &str) -> Result<String> {
             }
         }
 
-        Url::parse(&remote_url)
+        Url::parse(remote_url)
             .ok()
             .and_then(|remote_url| remote_url.host_str().map(|host| host.to_string()))
     })

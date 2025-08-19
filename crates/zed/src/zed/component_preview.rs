@@ -650,7 +650,7 @@ impl ComponentPreview {
         _window: &mut Window,
         _cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let component = self.component_map.get(&component_id);
+        let component = self.component_map.get(component_id);
 
         if let Some(component) = component {
             v_flex()

@@ -1289,7 +1289,7 @@ impl VariableList {
                             }),
                         )
                         .child(self.render_variable_value(
-                            &entry,
+                            entry,
                             &variable_color,
                             watcher.value.to_string(),
                             cx,
@@ -1494,7 +1494,7 @@ impl VariableList {
                             }),
                         )
                         .child(self.render_variable_value(
-                            &variable,
+                            variable,
                             &variable_color,
                             dap.value.clone(),
                             cx,

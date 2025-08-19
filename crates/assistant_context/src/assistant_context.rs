@@ -592,7 +592,7 @@ impl MessageMetadata {
     pub fn is_cache_valid(&self, buffer: &BufferSnapshot, range: &Range<usize>) -> bool {
         let result = match &self.cache {
             Some(MessageCacheMetadata { cached_at, .. }) => !buffer.has_edits_since_in_range(
-                &cached_at,
+                cached_at,
                 Range {
                     start: buffer.anchor_at(range.start, Bias::Right),
                     end: buffer.anchor_at(range.end, Bias::Left),
@@ -1413,7 +1413,7 @@ impl AssistantContext {
         }
 
         let request = {
-            let mut req = self.to_completion_request(Some(&model), cx);
+            let mut req = self.to_completion_request(Some(model), cx);
             // Skip the last message because it's likely to change and
             // therefore would be a waste to cache.
             req.messages.pop();
@@ -1428,7 +1428,7 @@ impl AssistantContext {
         let model = Arc::clone(model);
         self.pending_cache_warming_task = cx.spawn(async move |this, cx| {
             async move {
-                match model.stream_completion(request, &cx).await {
+                match model.stream_completion(request, cx).await {
                     Ok(mut stream) => {
                         stream.next().await;
                         log::info!("Cache warming completed successfully");
@@ -1661,12 +1661,12 @@ impl AssistantContext {
     ) -> Range<usize> {
         let buffer = self.buffer.read(cx);
         let start_ix = match all_annotations
-            .binary_search_by(|probe| probe.range().end.cmp(&range.start, &buffer))
+            .binary_search_by(|probe| probe.range().end.cmp(&range.start, buffer))
         {
             Ok(ix) | Err(ix) => ix,
         };
         let end_ix = match all_annotations
-            .binary_search_by(|probe| probe.range().start.cmp(&range.end, &buffer))
+            .binary_search_by(|probe| probe.range().start.cmp(&range.end, buffer))
         {
             Ok(ix) => ix + 1,
             Err(ix) => ix,
@@ -2045,7 +2045,7 @@ impl AssistantContext {
 
         let task = cx.spawn({
             async move |this, cx| {
-                let stream = model.stream_completion(request, &cx);
+                let stream = model.stream_completion(request, cx);
                 let assistant_message_id = assistant_message.id;
                 let mut response_latency = None;
                 let stream_completion = async {
@@ -2708,7 +2708,7 @@ impl AssistantContext {
 
             self.summary_task = cx.spawn(async move |this, cx| {
                 let result = async {
-                    let stream = model.model.stream_completion_text(request, &cx);
+                    let stream = model.model.stream_completion_text(request, cx);
                     let mut messages = stream.await?;
 
                     let mut replaced = !replace_old;
@@ -2927,7 +2927,7 @@ impl AssistantContext {
                 if let Some(old_path) = old_path.as_ref() {
                     if new_path.as_path() != old_path.as_ref() {
                         fs.rename(
-                            &old_path,
+                            old_path,
                             &new_path,
                             RenameOptions {
                                 overwrite: true,

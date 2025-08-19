@@ -439,17 +439,17 @@ pub fn start_of_excerpt(
     };
     match direction {
         Direction::Prev => {
-            let mut start = excerpt.start_anchor().to_display_point(&map);
+            let mut start = excerpt.start_anchor().to_display_point(map);
             if start >= display_point && start.row() > DisplayRow(0) {
                 let Some(excerpt) = map.buffer_snapshot.excerpt_before(excerpt.id()) else {
                     return display_point;
                 };
-                start = excerpt.start_anchor().to_display_point(&map);
+                start = excerpt.start_anchor().to_display_point(map);
             }
             start
         }
         Direction::Next => {
-            let mut end = excerpt.end_anchor().to_display_point(&map);
+            let mut end = excerpt.end_anchor().to_display_point(map);
             *end.row_mut() += 1;
             map.clip_point(end, Bias::Right)
         }
@@ -467,7 +467,7 @@ pub fn end_of_excerpt(
     };
     match direction {
         Direction::Prev => {
-            let mut start = excerpt.start_anchor().to_display_point(&map);
+            let mut start = excerpt.start_anchor().to_display_point(map);
             if start.row() > DisplayRow(0) {
                 *start.row_mut() -= 1;
             }
@@ -476,7 +476,7 @@ pub fn end_of_excerpt(
             start
         }
         Direction::Next => {
-            let mut end = excerpt.end_anchor().to_display_point(&map);
+            let mut end = excerpt.end_anchor().to_display_point(map);
             *end.column_mut() = 0;
             if end <= display_point {
                 *end.row_mut() += 1;
@@ -485,7 +485,7 @@ pub fn end_of_excerpt(
                 else {
                     return display_point;
                 };
-                end = excerpt.end_anchor().to_display_point(&map);
+                end = excerpt.end_anchor().to_display_point(map);
                 *end.column_mut() = 0;
             }
             end

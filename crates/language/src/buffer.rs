@@ -716,7 +716,7 @@ impl EditPreview {
                     &self.applied_edits_snapshot,
                     &self.syntax_snapshot,
                     None,
-                    &syntax_theme,
+                    syntax_theme,
                 );
             }
 
@@ -727,7 +727,7 @@ impl EditPreview {
                     &current_snapshot.text,
                     &current_snapshot.syntax,
                     Some(deletion_highlight_style),
-                    &syntax_theme,
+                    syntax_theme,
                 );
             }
 
@@ -737,7 +737,7 @@ impl EditPreview {
                     &self.applied_edits_snapshot,
                     &self.syntax_snapshot,
                     Some(insertion_highlight_style),
-                    &syntax_theme,
+                    syntax_theme,
                 );
             }
 
@@ -749,7 +749,7 @@ impl EditPreview {
             &self.applied_edits_snapshot,
             &self.syntax_snapshot,
             None,
-            &syntax_theme,
+            syntax_theme,
         );
 
         highlighted_text.build()
@@ -2271,13 +2271,11 @@ impl Buffer {
             }
             let new_text = new_text.into();
             if !new_text.is_empty() || !range.is_empty() {
-                if let Some((prev_range, prev_text)) = edits.last_mut() {
-                    if prev_range.end >= range.start {
-                        prev_range.end = cmp::max(prev_range.end, range.end);
-                        *prev_text = format!("{prev_text}{new_text}").into();
-                    } else {
-                        edits.push((range, new_text));
-                    }
+                if let Some((prev_range, prev_text)) = edits.last_mut()
+                    && prev_range.end >= range.start
+                {
+                    prev_range.end = cmp::max(prev_range.end, range.end);
+                    *prev_text = format!("{prev_text}{new_text}").into();
                 } else {
                     edits.push((range, new_text));
                 }
@@ -2297,10 +2295,27 @@ impl Buffer {
 
         if let Some((before_edit, mode)) = autoindent_request {
             let mut delta = 0isize;
-            let entries = edits
+            let mut previous_setting = None;
+            let entries: Vec<_> = edits
                 .into_iter()
                 .enumerate()
                 .zip(&edit_operation.as_edit().unwrap().new_text)
+                .filter(|((_, (range, _)), _)| {
+                    let language = before_edit.language_at(range.start);
+                    let language_id = language.map(|l| l.id());
+                    if let Some((cached_language_id, auto_indent)) = previous_setting
+                        && cached_language_id == language_id
+                    {
+                        auto_indent
+                    } else {
+                        // The auto-indent setting is not present in editorconfigs, hence
+                        // we can avoid passing the file here.
+                        let auto_indent =
+                            language_settings(language.map(|l| l.name()), None, cx).auto_indent;
+                        previous_setting = Some((language_id, auto_indent));
+                        auto_indent
+                    }
+                })
                 .map(|((ix, (range, _)), new_text)| {
                     let new_text_length = new_text.len();
                     let old_start = range.start.to_point(&before_edit);
@@ -2374,12 +2389,14 @@ impl Buffer {
                 })
                 .collect();
 
-            self.autoindent_requests.push(Arc::new(AutoindentRequest {
-                before_edit,
-                entries,
-                is_block_mode: matches!(mode, AutoindentMode::Block { .. }),
-                ignore_empty_lines: false,
-            }));
+            if !entries.is_empty() {
+                self.autoindent_requests.push(Arc::new(AutoindentRequest {
+                    before_edit,
+                    entries,
+                    is_block_mode: matches!(mode, AutoindentMode::Block { .. }),
+                    ignore_empty_lines: false,
+                }));
+            }
         }
 
         self.end_transaction(cx);

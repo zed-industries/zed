@@ -661,7 +661,7 @@ impl LogStore {
             IoKind::StdOut => true,
             IoKind::StdIn => false,
             IoKind::StdErr => {
-                self.add_language_server_log(language_server_id, MessageType::LOG, &message, cx);
+                self.add_language_server_log(language_server_id, MessageType::LOG, message, cx);
                 return Some(());
             }
         };

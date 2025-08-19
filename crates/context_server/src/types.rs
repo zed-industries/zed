@@ -691,7 +691,7 @@ impl CallToolResponse {
         let mut text = String::new();
         for chunk in &self.content {
             if let ToolResponseContent::Text { text: chunk } = chunk {
-                text.push_str(&chunk)
+                text.push_str(chunk)
             };
         }
         text

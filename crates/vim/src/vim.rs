@@ -265,7 +265,7 @@ pub fn init(cx: &mut App) {
 
         workspace.register_action(|workspace, _: &MaximizePane, window, cx| {
             let pane = workspace.active_pane();
-            let Some(size) = workspace.bounding_box_for_pane(&pane) else {
+            let Some(size) = workspace.bounding_box_for_pane(pane) else {
                 return;
             };
 
@@ -1599,7 +1599,7 @@ impl Vim {
                             second_char,
                             smartcase: VimSettings::get_global(cx).use_smartcase_find,
                         };
-                        Vim::globals(cx).last_find = Some((&sneak).clone());
+                        Vim::globals(cx).last_find = Some(sneak.clone());
                         self.motion(sneak, window, cx)
                     }
                 } else {
@@ -1616,7 +1616,7 @@ impl Vim {
                             second_char,
                             smartcase: VimSettings::get_global(cx).use_smartcase_find,
                         };
-                        Vim::globals(cx).last_find = Some((&sneak).clone());
+                        Vim::globals(cx).last_find = Some(sneak.clone());
                         self.motion(sneak, window, cx)
                     }
                 } else {

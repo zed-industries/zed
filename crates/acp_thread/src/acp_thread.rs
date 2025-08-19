@@ -486,7 +486,7 @@ impl ContentBlock {
     }
 
     fn resource_link_md(uri: &str) -> String {
-        if let Some(uri) = MentionUri::parse(&uri).log_err() {
+        if let Some(uri) = MentionUri::parse(uri).log_err() {
             uri.as_link().to_string()
         } else {
             uri.to_string()
@@ -680,6 +680,7 @@ pub struct AcpThread {
     session_id: acp::SessionId,
 }
 
+#[derive(Debug)]
 pub enum AcpThreadEvent {
     NewEntry,
     EntryUpdated(usize),
@@ -1214,17 +1215,21 @@ impl AcpThread {
         } else {
             None
         };
-        self.push_entry(
-            AgentThreadEntry::UserMessage(UserMessage {
-                id: message_id.clone(),
-                content: block,
-                chunks: message,
-                checkpoint: None,
-            }),
-            cx,
-        );
 
         self.run_turn(cx, async move |this, cx| {
+            this.update(cx, |this, cx| {
+                this.push_entry(
+                    AgentThreadEntry::UserMessage(UserMessage {
+                        id: message_id.clone(),
+                        content: block,
+                        chunks: message,
+                        checkpoint: None,
+                    }),
+                    cx,
+                );
+            })
+            .ok();
+
             let old_checkpoint = git_store
                 .update(cx, |git, cx| git.checkpoint(cx))?
                 .await
@@ -1426,7 +1431,7 @@ impl AcpThread {
     fn user_message(&self, id: &UserMessageId) -> Option<&UserMessage> {
         self.entries.iter().find_map(|entry| {
             if let AgentThreadEntry::UserMessage(message) = entry {
-                if message.id.as_ref() == Some(&id) {
+                if message.id.as_ref() == Some(id) {
                     Some(message)
                 } else {
                     None
@@ -1440,7 +1445,7 @@ impl AcpThread {
     fn user_message_mut(&mut self, id: &UserMessageId) -> Option<(usize, &mut UserMessage)> {
         self.entries.iter_mut().enumerate().find_map(|(ix, entry)| {
             if let AgentThreadEntry::UserMessage(message) = entry {
-                if message.id.as_ref() == Some(&id) {
+                if message.id.as_ref() == Some(id) {
                     Some((ix, message))
                 } else {
                     None
@@ -2366,7 +2371,7 @@ mod tests {
 
         fn cancel(&self, session_id: &acp::SessionId, cx: &mut App) {
             let sessions = self.sessions.lock();
-            let thread = sessions.get(&session_id).unwrap().clone();
+            let thread = sessions.get(session_id).unwrap().clone();
 
             cx.spawn(async move |cx| {
                 thread

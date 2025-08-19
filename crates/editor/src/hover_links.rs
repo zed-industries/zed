@@ -794,7 +794,7 @@ pub(crate) async fn find_file(
     ) -> Option<ResolvedPath> {
         project
             .update(cx, |project, cx| {
-                project.resolve_path_in_buffer(&candidate_file_path, buffer, cx)
+                project.resolve_path_in_buffer(candidate_file_path, buffer, cx)
             })
             .ok()?
             .await

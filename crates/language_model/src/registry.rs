@@ -21,7 +21,7 @@ impl Global for GlobalLanguageModelRegistry {}
 pub enum ConfigurationError {
     #[error("Configure at least one LLM provider to start using the panel.")]
     NoProvider,
-    #[error("LLM Provider is not configured or does not support the configured model.")]
+    #[error("LLM provider is not configured or does not support the configured model.")]
     ModelNotFound,
     #[error("{} LLM provider is not configured.", .0.name().0)]
     ProviderNotAuthenticated(Arc<dyn LanguageModelProvider>),
@@ -107,7 +107,7 @@ pub enum Event {
     InlineAssistantModelChanged,
     CommitMessageModelChanged,
     ThreadSummaryModelChanged,
-    ProviderStateChanged,
+    ProviderStateChanged(LanguageModelProviderId),
     AddedProvider(LanguageModelProviderId),
     RemovedProvider(LanguageModelProviderId),
 }
@@ -148,8 +148,11 @@ impl LanguageModelRegistry {
     ) {
         let id = provider.id();
 
-        let subscription = provider.subscribe(cx, |_, cx| {
-            cx.emit(Event::ProviderStateChanged);
+        let subscription = provider.subscribe(cx, {
+            let id = id.clone();
+            move |_, cx| {
+                cx.emit(Event::ProviderStateChanged(id.clone()));
+            }
         });
         if let Some(subscription) = subscription {
             subscription.detach();

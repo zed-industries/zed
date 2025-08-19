@@ -637,7 +637,7 @@ impl PickerDelegate for OpenPathDelegate {
                 FileIcons::get_folder_icon(false, cx)?
             } else {
                 let path = path::Path::new(&candidate.path.string);
-                FileIcons::get_icon(&path, cx)?
+                FileIcons::get_icon(path, cx)?
             };
             Some(Icon::from_path(icon).color(Color::Muted))
         });
