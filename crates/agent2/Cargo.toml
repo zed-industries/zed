@@ -19,6 +19,7 @@ agent-client-protocol.workspace = true
 agent_servers.workspace = true
 agent_settings.workspace = true
 anyhow.workspace = true
+assistant_context.workspace = true
 assistant_tool.workspace = true
 assistant_tools.workspace = true
 chrono.workspace = true
@@ -39,6 +40,7 @@ language_model.workspace = true
 language_models.workspace = true
 log.workspace = true
 open.workspace = true
+parking_lot.workspace = true
 paths.workspace = true
 portable-pty.workspace = true
 project.workspace = true
@@ -49,6 +51,7 @@ serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true
 smol.workspace = true
+sqlez.workspace = true
 task.workspace = true
 terminal.workspace = true
 text.workspace = true
@@ -59,6 +62,7 @@ watch.workspace = true
 web_search.workspace = true
 which.workspace = true
 workspace-hack.workspace = true
+zstd.workspace = true
 
 [dev-dependencies]
 agent = { workspace = true, "features" = ["test-support"] }
