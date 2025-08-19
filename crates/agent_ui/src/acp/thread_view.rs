@@ -2823,6 +2823,7 @@ impl AcpThreadView {
             h_flex()
                 .flex_shrink_0()
                 .gap_0p5()
+                .mr_1()
                 .child(Label::new(used).size(LabelSize::Small).color(Color::Muted))
                 .child(Label::new("/").size(LabelSize::Small).color(Color::Muted))
                 .child(Label::new(max).size(LabelSize::Small).color(Color::Muted)),
