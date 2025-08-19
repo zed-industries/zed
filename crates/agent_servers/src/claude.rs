@@ -370,9 +370,7 @@ fn spawn_claude(
             ),
             "--allowedTools",
             &format!(
-                "mcp__{}__{},mcp__{}__{}",
-                mcp_server::SERVER_NAME,
-                mcp_server::EditTool::NAME,
+                "mcp__{}__{}",
                 mcp_server::SERVER_NAME,
                 mcp_server::ReadTool::NAME
             ),
