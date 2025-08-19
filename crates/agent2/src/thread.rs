@@ -25,7 +25,7 @@ use schemars::{JsonSchema, Schema};
 use serde::{Deserialize, Serialize};
 use settings::{Settings, update_settings_file};
 use smol::stream::StreamExt;
-use std::{cell::RefCell, collections::BTreeMap, path::Path, rc::Rc, sync::Arc};
+use std::{collections::BTreeMap, path::Path, sync::Arc};
 use std::{fmt::Write, ops::Range};
 use util::{ResultExt, markdown::MarkdownCodeBlock};
 use uuid::Uuid;
@@ -479,7 +479,7 @@ pub struct Thread {
     tool_use_limit_reached: bool,
     context_server_registry: Entity<ContextServerRegistry>,
     profile_id: AgentProfileId,
-    project_context: Rc<RefCell<ProjectContext>>,
+    project_context: Entity<ProjectContext>,
     templates: Arc<Templates>,
     model: Option<Arc<dyn LanguageModel>>,
     project: Entity<Project>,
@@ -489,7 +489,7 @@ pub struct Thread {
 impl Thread {
     pub fn new(
         project: Entity<Project>,
-        project_context: Rc<RefCell<ProjectContext>>,
+        project_context: Entity<ProjectContext>,
         context_server_registry: Entity<ContextServerRegistry>,
         action_log: Entity<ActionLog>,
         templates: Arc<Templates>,
@@ -518,6 +518,10 @@ impl Thread {
 
     pub fn project(&self) -> &Entity<Project> {
         &self.project
+    }
+
+    pub fn project_context(&self) -> &Entity<ProjectContext> {
+        &self.project_context
     }
 
     pub fn action_log(&self) -> &Entity<ActionLog> {
@@ -750,10 +754,10 @@ impl Thread {
         Ok(events_rx)
     }
 
-    pub fn build_system_message(&self) -> LanguageModelRequestMessage {
+    pub fn build_system_message(&self, cx: &App) -> LanguageModelRequestMessage {
         log::debug!("Building system message");
         let prompt = SystemPromptTemplate {
-            project: &self.project_context.borrow(),
+            project: &self.project_context.read(cx),
             available_tools: self.tools.keys().cloned().collect(),
         }
         .render(&self.templates)
@@ -1030,7 +1034,7 @@ impl Thread {
         log::debug!("Completion intent: {:?}", completion_intent);
         log::debug!("Completion mode: {:?}", self.completion_mode);
 
-        let messages = self.build_request_messages();
+        let messages = self.build_request_messages(cx);
         log::info!("Request will include {} messages", messages.len());
 
         let tools = if let Some(tools) = self.tools(cx).log_err() {
@@ -1101,12 +1105,12 @@ impl Thread {
             )))
     }
 
-    fn build_request_messages(&self) -> Vec<LanguageModelRequestMessage> {
+    fn build_request_messages(&self, cx: &App) -> Vec<LanguageModelRequestMessage> {
         log::trace!(
             "Building request messages from {} thread messages",
             self.messages.len()
         );
-        let mut messages = vec![self.build_system_message()];
+        let mut messages = vec![self.build_system_message(cx)];
         for message in &self.messages {
             match message {
                 Message::User(message) => messages.push(message.to_request()),

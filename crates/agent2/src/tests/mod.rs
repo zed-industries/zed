@@ -25,7 +25,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use settings::SettingsStore;
 use smol::stream::StreamExt;
-use std::{cell::RefCell, path::Path, rc::Rc, sync::Arc, time::Duration};
+use std::{path::Path, rc::Rc, sync::Arc, time::Duration};
 use util::path;
 
 mod test_tools;
@@ -101,7 +101,9 @@ async fn test_system_prompt(cx: &mut TestAppContext) {
     } = setup(cx, TestModel::Fake).await;
     let fake_model = model.as_fake();
 
-    project_context.borrow_mut().shell = "test-shell".into();
+    project_context.update(cx, |project_context, _cx| {
+        project_context.shell = "test-shell".into()
+    });
     thread.update(cx, |thread, _| thread.add_tool(EchoTool));
     thread
         .update(cx, |thread, cx| {
@@ -1447,7 +1449,7 @@ fn stop_events(result_events: Vec<Result<AgentResponseEvent>>) -> Vec<acp::StopR
 struct ThreadTest {
     model: Arc<dyn LanguageModel>,
     thread: Entity<Thread>,
-    project_context: Rc<RefCell<ProjectContext>>,
+    project_context: Entity<ProjectContext>,
     fs: Arc<FakeFs>,
 }
 
@@ -1543,7 +1545,7 @@ async fn setup(cx: &mut TestAppContext, model: TestModel) -> ThreadTest {
         })
         .await;
 
-    let project_context = Rc::new(RefCell::new(ProjectContext::default()));
+    let project_context = cx.new(|_cx| ProjectContext::default());
     let context_server_registry =
         cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
     let action_log = cx.new(|_| ActionLog::new(project.clone()));
