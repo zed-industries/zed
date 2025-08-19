@@ -528,7 +528,7 @@ impl WaylandClient {
 
                             client.common.appearance = appearance;
 
-                            for (_, window) in &mut client.windows {
+                            for window in client.windows.values_mut() {
                                 window.set_appearance(appearance);
                             }
                         }
