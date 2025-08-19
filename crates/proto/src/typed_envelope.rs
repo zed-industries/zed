@@ -41,6 +41,8 @@ pub trait LspRequestMessage: EnvelopedMessage {
     fn buffer_id(&self) -> u64;
 
     fn version(&self) -> &[crate::VectorClockEntry];
+
+    fn stop_previous_requests() -> bool;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

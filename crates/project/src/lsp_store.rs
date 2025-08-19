@@ -92,7 +92,7 @@ use sha2::{Digest, Sha256};
 use smol::channel::Sender;
 use snippet::Snippet;
 use std::{
-    any::Any,
+    any::{Any, TypeId},
     borrow::Cow,
     cell::RefCell,
     cmp::{Ordering, Reverse},
@@ -3490,8 +3490,7 @@ pub struct LspStore {
     pub(super) lsp_server_capabilities: HashMap<LanguageServerId, lsp::ServerCapabilities>,
     lsp_document_colors: HashMap<BufferId, DocumentColorData>,
     lsp_code_lens: HashMap<BufferId, CodeLensData>,
-    // TODO kb what is the key for deduplication? Use `TypeId`?
-    running_lsp_requests: HashMap<LspRequestId, Task<()>>,
+    running_lsp_requests: HashMap<TypeId, (Global, HashMap<LspRequestId, Task<()>>)>,
 }
 
 #[derive(Debug, Default, Clone)]
@@ -12072,7 +12071,16 @@ impl LspStore {
         lsp_store.update(&mut cx, |lsp_store, cx| {
             let request_task =
                 lsp_store.request_multiple_lsp_locally(&buffer, position, request, cx);
-            lsp_store.running_lsp_requests.insert(
+            let existing_queries = lsp_store
+                .running_lsp_requests
+                .entry(TypeId::of::<T>())
+                .or_default();
+            if T::ProtoRequest::stop_previous_requests()
+                || buffer_version.changed_since(&existing_queries.0)
+            {
+                existing_queries.1.clear();
+            }
+            existing_queries.1.insert(
                 lsp_request_id,
                 cx.spawn(async move |lsp_store, cx| {
                     let response = request_task.await;

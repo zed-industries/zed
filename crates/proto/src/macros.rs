@@ -72,7 +72,7 @@ macro_rules! entity_messages {
 
 #[macro_export]
 macro_rules! lsp_messages {
-    ($(($request_name:ident, $response_name:ident)),* $(,)?) => {
+    ($(($request_name:ident, $response_name:ident, $stop_previous_requests:expr)),* $(,)?) => {
         $(impl LspRequestMessage for $request_name {
             type Response = $response_name;
 
@@ -90,6 +90,10 @@ macro_rules! lsp_messages {
 
             fn version(&self) -> &[crate::VectorClockEntry] {
                 &self.version
+            }
+
+            fn stop_previous_requests() -> bool {
+                $stop_previous_requests
             }
         })*
     };

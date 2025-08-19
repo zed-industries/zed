@@ -483,8 +483,8 @@ request_messages!(
 );
 
 lsp_messages!(
-    (GetReferences, GetReferencesResponse),
-    (GetDocumentColor, GetDocumentColorResponse),
+    (GetReferences, GetReferencesResponse, true),
+    (GetDocumentColor, GetDocumentColorResponse, true),
 );
 
 entity_messages!(

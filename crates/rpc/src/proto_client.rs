@@ -232,8 +232,6 @@ impl AnyProtoClient {
     where
         T: LspRequestMessage,
     {
-        // TODO kb how to deduplicate requests for the same kind?
-        // Should `LspRequestMessage` get another method?
         let new_id = LspRequestId(
             self.0
                 .next_lsp_request_id
