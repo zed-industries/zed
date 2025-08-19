@@ -132,6 +132,7 @@ use crate::persistence::{
 };
 use crate::{item::ItemBufferKind, notifications::NotificationId};
 
+
 pub const SERIALIZATION_THROTTLE_TIME: Duration = Duration::from_millis(200);
 
 static ZED_WINDOW_SIZE: LazyLock<Option<Size<Pixels>>> = LazyLock::new(|| {
