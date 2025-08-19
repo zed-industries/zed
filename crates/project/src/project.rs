@@ -1900,14 +1900,6 @@ impl Project {
         return false;
     }
 
-    pub fn ssh_connection_string(&self, cx: &App) -> Option<SharedString> {
-        if let Some(ssh_state) = &self.ssh_client {
-            return Some(ssh_state.read(cx).connection_string().into());
-        }
-
-        return None;
-    }
-
     pub fn ssh_connection_state(&self, cx: &App) -> Option<remote::ConnectionState> {
         self.ssh_client
             .as_ref()
