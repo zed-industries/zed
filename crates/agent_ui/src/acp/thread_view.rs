@@ -1107,7 +1107,7 @@ impl AcpThreadView {
     }
 
     fn tool_card_border_color(&self, cx: &Context<Self>) -> Hsla {
-        cx.theme().colors().border.opacity(0.6)
+        cx.theme().colors().border.opacity(0.8)
     }
 
     fn tool_name_font_size(&self) -> Rems {
@@ -1343,7 +1343,20 @@ impl AcpThreadView {
             cx.theme().colors().panel_background
         };
 
-        let tool_output_display = match &tool_call.status {
+        // let has_displayable_diff = tool_call.content.iter().any(|content| match content {
+        //     ToolCallContent::Diff(diff) => {
+        //         if let Some(entry) = self.entry_view_state.read(cx).entry(entry_ix)
+        //             && let Some(editor) = entry.editor_for_diff(diff)
+        //         {
+        //             !editor.read(cx).is_empty(cx)
+        //         } else {
+        //             false
+        //         }
+        //     }
+        //     _ => false,
+        // });
+
+        let tool_output_display = match dbg!(&tool_call.status) {
             ToolCallStatus::WaitingForConfirmation { options, .. } => v_flex()
                 .w_full()
                 .children(tool_call.content.iter().map(|content| {
@@ -1359,25 +1372,26 @@ impl AcpThreadView {
                     tool_call.id.clone(),
                     tool_call.content.is_empty(),
                     cx,
-                )),
+                ))
+                .into_any(),
+            ToolCallStatus::Pending | ToolCallStatus::InProgress
+                if is_edit && dbg!(tool_call.content.is_empty()) =>
+            {
+                self.render_diff_loading(cx).into_any()
+            }
             ToolCallStatus::Pending
             | ToolCallStatus::InProgress
             | ToolCallStatus::Completed
             | ToolCallStatus::Failed
-            | ToolCallStatus::Canceled => {
-                v_flex()
-                    .w_full()
-                    .children(tool_call.content.iter().map(|content| {
-                        div()
-                            .child(
-                                self.render_tool_call_content(
-                                    entry_ix, content, tool_call, window, cx,
-                                ),
-                            )
-                            .into_any_element()
-                    }))
-            }
-            ToolCallStatus::Rejected => v_flex().size_0(),
+            | ToolCallStatus::Canceled => v_flex()
+                .w_full()
+                .children(tool_call.content.iter().map(|content| {
+                    div().child(
+                        self.render_tool_call_content(entry_ix, content, tool_call, window, cx),
+                    )
+                }))
+                .into_any(),
+            ToolCallStatus::Rejected => Empty.into_any(),
         };
 
         v_flex()
@@ -1397,7 +1411,7 @@ impl AcpThreadView {
                     .map(|this| {
                         if use_card_layout {
                             this.pl_2()
-                                .pr_1()
+                                .pr_1p5()
                                 .py_1()
                                 .rounded_t_md()
                                 .bg(self.tool_card_header_bg(cx))
@@ -1652,6 +1666,51 @@ impl AcpThreadView {
             })))
     }
 
+    fn render_diff_loading(&self, cx: &Context<Self>) -> AnyElement {
+        let styles = [
+            ("w_4_5", (0.1, 0.85), 2000),
+            ("w_1_4", (0.2, 0.75), 2200),
+            ("w_2_4", (0.15, 0.64), 1900),
+            ("w_3_5", (0.25, 0.72), 2300),
+            ("w_2_5", (0.3, 0.56), 1800),
+        ];
+
+        let mut container = v_flex()
+            .p_3()
+            .gap_1()
+            .rounded_b_md()
+            .border_t_1()
+            .border_color(self.tool_card_border_color(cx))
+            .bg(cx.theme().colors().editor_background);
+
+        for (width_method, pulse_range, duration_ms) in styles.iter() {
+            let (min_opacity, max_opacity) = *pulse_range;
+            let placeholder = match *width_method {
+                "w_4_5" => div().w_3_4(),
+                "w_1_4" => div().w_1_4(),
+                "w_2_4" => div().w_2_4(),
+                "w_3_5" => div().w_3_5(),
+                "w_2_5" => div().w_2_5(),
+                _ => div().w_1_2(),
+            }
+            .id("loading_div")
+            .h_1()
+            .rounded_full()
+            .bg(cx.theme().colors().element_active)
+            .with_animation(
+                "loading_pulsate",
+                Animation::new(Duration::from_millis(*duration_ms))
+                    .repeat()
+                    .with_easing(pulsating_between(min_opacity, max_opacity)),
+                |label, delta| label.opacity(delta),
+            );
+
+            container = container.child(placeholder);
+        }
+
+        container.into_any_element()
+    }
+
     fn render_diff_editor(
         &self,
         entry_ix: usize,
@@ -1665,10 +1724,11 @@ impl AcpThreadView {
             .child(
                 if let Some(entry) = self.entry_view_state.read(cx).entry(entry_ix)
                     && let Some(editor) = entry.editor_for_diff(diff)
+                    && !diff.read(cx).is_empty(cx)
                 {
                     editor.clone().into_any_element()
                 } else {
-                    Empty.into_any()
+                    self.render_diff_loading(cx)
                 },
             )
             .into_any()
@@ -1989,7 +2049,7 @@ impl AcpThreadView {
 
         Some(
             v_flex()
-                .px_2p5()
+                // .px_2p5()
                 .gap_1()
                 .when_some(user_rules_text, |parent, user_rules_text| {
                     parent.child(
