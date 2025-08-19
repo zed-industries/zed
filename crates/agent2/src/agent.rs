@@ -954,7 +954,7 @@ mod tests {
         .await;
         let project = Project::test(fs.clone(), [], cx).await;
         let context_store = cx.new(|cx| assistant_context::ContextStore::fake(project.clone(), cx));
-        let history_store = cx.new(|cx| HistoryStore::new(context_store, [], cx));
+        let history_store = cx.new(|cx| HistoryStore::new(context_store, cx));
         let agent = NativeAgent::new(
             project.clone(),
             history_store,
@@ -1012,7 +1012,7 @@ mod tests {
         fs.insert_tree("/", json!({ "a": {}  })).await;
         let project = Project::test(fs.clone(), [], cx).await;
         let context_store = cx.new(|cx| assistant_context::ContextStore::fake(project.clone(), cx));
-        let history_store = cx.new(|cx| HistoryStore::new(context_store, [], cx));
+        let history_store = cx.new(|cx| HistoryStore::new(context_store, cx));
         let connection = NativeAgentConnection(
             NativeAgent::new(
                 project.clone(),
@@ -1068,7 +1068,7 @@ mod tests {
         let project = Project::test(fs.clone(), [], cx).await;
 
         let context_store = cx.new(|cx| assistant_context::ContextStore::fake(project.clone(), cx));
-        let history_store = cx.new(|cx| HistoryStore::new(context_store, [], cx));
+        let history_store = cx.new(|cx| HistoryStore::new(context_store, cx));
 
         // Create the agent and connection
         let agent = NativeAgent::new(
