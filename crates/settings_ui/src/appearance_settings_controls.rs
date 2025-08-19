@@ -255,7 +255,7 @@ impl EditableSettingControl for UiFontSizeControl {
 }
 
 impl RenderOnce for UiFontSizeControl {
-    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
         // let value = Self::read(cx);
 
         h_flex().gap_2().child(Icon::new(IconName::FontSize))

@@ -24,7 +24,15 @@ pub enum NumericStepperMode {
 }
 
 pub trait NumericStepperType:
-    Display + Add<Output = Self> + Sub<Output = Self> + Copy + Clone + Sized + FromStr + 'static
+    Display
+    + Add<Output = Self>
+    + Sub<Output = Self>
+    + Copy
+    + Clone
+    + Sized
+    + PartialOrd
+    + FromStr
+    + 'static
 {
     fn default_format(value: &Self) -> String {
         format!("{}", value)
@@ -32,6 +40,8 @@ pub trait NumericStepperType:
     fn default_step() -> Self;
     fn large_step() -> Self;
     fn small_step() -> Self;
+    fn min_value() -> Self;
+    fn max_value() -> Self;
 }
 
 macro_rules! impl_numeric_stepper_int {
@@ -48,6 +58,14 @@ macro_rules! impl_numeric_stepper_int {
             fn small_step() -> Self {
                 1
             }
+
+            fn min_value() -> Self {
+                <$type>::MIN
+            }
+
+            fn max_value() -> Self {
+                <$type>::MAX
+            }
         }
     };
 }
@@ -56,7 +74,10 @@ macro_rules! impl_numeric_stepper_float {
     ($type:ident) => {
         impl NumericStepperType for $type {
             fn default_format(value: &Self) -> String {
-                format!("{:.2}", value)
+                format!("{:^4}", value)
+                    .trim_end_matches('0')
+                    .trim_end_matches('.')
+                    .to_string()
             }
 
             fn default_step() -> Self {
@@ -69,6 +90,14 @@ macro_rules! impl_numeric_stepper_float {
 
             fn small_step() -> Self {
                 0.1
+            }
+
+            fn min_value() -> Self {
+                <$type>::MIN
+            }
+
+            fn max_value() -> Self {
+                <$type>::MAX
             }
         }
     };
@@ -83,8 +112,8 @@ impl_numeric_stepper_int!(u32);
 impl_numeric_stepper_int!(i64);
 impl_numeric_stepper_int!(u64);
 
-// TODO: Add a new register component macro to support a specific type when using generics
-pub struct NumericStepper<T> {
+#[derive(RegisterComponent)]
+pub struct NumericStepper<T = usize> {
     id: ElementId,
     value: Entity<T>,
     style: NumericStepperStyle,
@@ -94,6 +123,8 @@ pub struct NumericStepper<T> {
     large_step: T,
     small_step: T,
     step: T,
+    min_value: T,
+    max_value: T,
     on_reset: Option<Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
     tab_index: Option<isize>,
 }
@@ -106,18 +137,25 @@ impl<T: NumericStepperType> NumericStepper<T> {
         cx: &mut App,
     ) -> Self {
         let id = id.into();
-        let mode = window.use_state(cx, |_, _| NumericStepperMode::default());
+
+        let (mode, focus_handle) = window.with_id(id.clone(), |window| {
+            let mode = window.use_state(cx, |_, _| NumericStepperMode::default());
+            let focus_handle = window.use_state(cx, |_, cx| cx.focus_handle());
+            (mode, focus_handle)
+        });
 
         Self {
             id,
-            focus_handle: cx.focus_handle(),
             mode,
             value,
+            focus_handle: focus_handle.read(cx).clone(),
             style: NumericStepperStyle::default(),
             format: Box::new(T::default_format),
             large_step: T::large_step(),
             step: T::default_step(),
             small_step: T::small_step(),
+            min_value: T::min_value(),
+            max_value: T::max_value(),
             on_reset: None,
             tab_index: None,
         }
@@ -140,6 +178,16 @@ impl<T: NumericStepperType> NumericStepper<T> {
 
     pub fn large_step(mut self, step: T) -> Self {
         self.large_step = step;
+        self
+    }
+
+    pub fn min(mut self, min: T) -> Self {
+        self.min_value = min;
+        self
+    }
+
+    pub fn max(mut self, max: T) -> Self {
+        self.max_value = max;
         self
     }
 
@@ -226,10 +274,15 @@ impl<T: NumericStepperType> RenderOnce for NumericStepper<T> {
                     .map(|decrement| {
                         let decrement_handler = {
                             let value = self.value.clone();
-                            move |click: &ClickEvent, _: &mut Window, cx: &mut App| {
+                            let focus = self.focus_handle.clone();
+                            let min = self.min_value;
+                            move |click: &ClickEvent, window: &mut Window, cx: &mut App| {
                                 let step = get_step(click.modifiers());
                                 let current_value = *value.read(cx);
-                                value.write(cx, current_value - step);
+                                let new_value = current_value - step;
+                                let new_value = if new_value < min { min } else { new_value };
+                                value.write(cx, new_value);
+                                window.focus(&focus);
                             }
                         };
 
@@ -265,59 +318,93 @@ impl<T: NumericStepperType> RenderOnce for NumericStepper<T> {
                             )
                         }
                     })
-                    .child(match *self.mode.read(cx) {
-                        NumericStepperMode::Read => div()
-                            .id("numeric_stepper_label")
-                            .child(Label::new((self.format)(self.value.read(cx))).mx_3())
-                            .on_click({
-                                let mode = self.mode.clone();
-
-                                move |click, _, cx| {
-                                    if click.click_count() == 2 {
-                                        mode.write(cx, NumericStepperMode::Edit);
-                                    }
-                                }
+                    .child(
+                        div()
+                            .text_color(gpui::red())
+                            .in_focus(|this| {
+                                this.border_1()
+                                    .border_color(cx.theme().colors().border_focused)
                             })
-                            .into_any_element(),
-                        NumericStepperMode::Edit => div()
-                            .child(window.use_state(cx, {
-                                |window, cx| {
-                                    let mut editor = Editor::single_line(window, cx);
-                                    editor.set_text(format!("{}", self.value.read(cx)), window, cx);
-                                    cx.on_focus_out(&editor.focus_handle(cx), window, {
+                            .child(match *self.mode.read(cx) {
+                                NumericStepperMode::Read => div()
+                                    .id("numeric_stepper_label")
+                                    .child(Label::new((self.format)(self.value.read(cx))).mx_3())
+                                    .on_click({
                                         let mode = self.mode.clone();
-                                        let value = self.value.clone();
-                                        move |this, _, _window, cx| {
-                                            if let Ok(new_value) = this.text(cx).parse::<T>() {
-                                                value.write(cx, new_value);
-                                            };
-                                            mode.write(cx, NumericStepperMode::Read);
+
+                                        move |click, _, cx| {
+                                            if click.click_count() == 2 {
+                                                mode.write(cx, NumericStepperMode::Edit);
+                                            }
                                         }
                                     })
-                                    .detach();
+                                    .w(px(4.0 * 14.0)) // w_14
+                                    .h_8()
+                                    .overflow_scroll()
+                                    .into_any_element(),
+                                NumericStepperMode::Edit => div()
+                                    .child(window.use_state(cx, {
+                                        |window, cx| {
+                                            let mut editor = Editor::single_line(window, cx);
 
-                                    window.focus(&editor.focus_handle(cx));
+                                            editor.set_text(
+                                                format!("{}", self.value.read(cx)),
+                                                window,
+                                                cx,
+                                            );
+                                            cx.on_focus_out(&editor.focus_handle(cx), window, {
+                                                let mode = self.mode.clone();
+                                                let value = self.value.clone();
+                                                let min = self.min_value;
+                                                let max = self.max_value;
+                                                move |this, _, _window, cx| {
+                                                    if let Ok(new_value) =
+                                                        this.text(cx).parse::<T>()
+                                                    {
+                                                        let new_value = if new_value < min {
+                                                            min
+                                                        } else if new_value > max {
+                                                            max
+                                                        } else {
+                                                            new_value
+                                                        };
+                                                        value.write(cx, new_value);
+                                                    };
+                                                    mode.write(cx, NumericStepperMode::Read);
+                                                }
+                                            })
+                                            .detach();
 
-                                    editor
-                                }
-                            }))
-                            .on_action::<menu::Confirm>({
-                                let focus = self.focus_handle.clone();
-                                move |_, window, _| {
-                                    window.focus(&focus);
-                                }
-                            })
-                            .w_full()
-                            .mx_3()
-                            .into_any_element(),
-                    })
+                                            window.focus(&editor.focus_handle(cx));
+
+                                            editor
+                                        }
+                                    }))
+                                    .on_action::<menu::Confirm>({
+                                        let focus = self.focus_handle.clone();
+                                        move |_, window, _| {
+                                            window.focus(&focus);
+                                        }
+                                    })
+                                    .size_full()
+                                    .w(px(4.0 * 14.0)) // w_14
+                                    .h_8()
+                                    .mx_3()
+                                    .into_any_element(),
+                            }),
+                    )
                     .map(|increment| {
                         let increment_handler = {
                             let value = self.value.clone();
-                            move |click: &ClickEvent, _: &mut Window, cx: &mut App| {
+                            let focus = self.focus_handle.clone();
+                            let max = self.max_value;
+                            move |click: &ClickEvent, window: &mut Window, cx: &mut App| {
                                 let step = get_step(click.modifiers());
                                 let current_value = *value.read(cx);
-                                value.write(cx, current_value + step);
+                                let new_value = current_value + step;
+                                let new_value = if new_value > max { max } else { new_value };
+                                value.write(cx, new_value);
+                                window.focus(&focus);
                             }
                         };
 
@@ -342,7 +429,7 @@ impl<T: NumericStepperType> RenderOnce for NumericStepper<T> {
                             )
                         } else {
                             increment.child(
-                                IconButton::new("increment", IconName::Dash)
+                                IconButton::new("increment", IconName::Plus)
                                     .shape(shape)
                                     .icon_size(icon_size)
                                     .when_some(tab_index.as_mut(), |this, tab_index| {
@@ -357,7 +444,7 @@ impl<T: NumericStepperType> RenderOnce for NumericStepper<T> {
     }
 }
 
-impl<T: NumericStepperType> Component for NumericStepper<T> {
+impl Component for NumericStepper<usize> {
     fn scope() -> ComponentScope {
         ComponentScope::Input
     }
@@ -375,8 +462,8 @@ impl<T: NumericStepperType> Component for NumericStepper<T> {
     }
 
     fn preview(window: &mut Window, cx: &mut App) -> Option<AnyElement> {
-        let first_stepper = window.use_state(cx, |_, _| 10usize);
-        let second_stepper = window.use_state(cx, |_, _| 10.0);
+        let first_stepper = window.use_state(cx, |_, _| 100usize);
+        let second_stepper = window.use_state(cx, |_, _| 100.0);
         Some(
             v_flex()
                 .gap_6()
@@ -401,6 +488,8 @@ impl<T: NumericStepperType> Component for NumericStepper<T> {
                                 window,
                                 cx,
                             )
+                            .min(1.0)
+                            .max(100.0)
                             .style(NumericStepperStyle::Outlined)
                             .into_any_element(),
                         ),
