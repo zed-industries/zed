@@ -88,11 +88,8 @@ impl DisconnectedOverlay {
         self.finished = true;
         cx.emit(DismissEvent);
 
-        match &self.host {
-            Host::SshRemoteProject(ssh_connection_options) => {
-                self.reconnect_to_ssh_remote(ssh_connection_options.clone(), window, cx);
-            }
-            _ => {}
+        if let Host::SshRemoteProject(ssh_connection_options) = &self.host {
+            self.reconnect_to_ssh_remote(ssh_connection_options.clone(), window, cx);
         }
     }
 

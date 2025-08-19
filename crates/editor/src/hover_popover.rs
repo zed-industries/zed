@@ -603,7 +603,9 @@ async fn parse_blocks(
         })
         .join("\n\n");
 
-    let rendered_block = cx
+    
+
+    cx
         .new_window_entity(|_window, cx| {
             Markdown::new(
                 combined_text.into(),
@@ -612,9 +614,7 @@ async fn parse_blocks(
                 cx,
             )
         })
-        .ok();
-
-    rendered_block
+        .ok()
 }
 
 pub fn hover_markdown_style(window: &Window, cx: &App) -> MarkdownStyle {

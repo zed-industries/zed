@@ -4,8 +4,8 @@ use gpui::{Hsla, Rgba};
 use lsp::{CompletionItem, Documentation};
 use regex::{Regex, RegexBuilder};
 
-const HEX: &'static str = r#"(#(?:[\da-fA-F]{3}){1,2})"#;
-const RGB_OR_HSL: &'static str = r#"(rgba?|hsla?)\(\s*(\d{1,3}%?)\s*,\s*(\d{1,3}%?)\s*,\s*(\d{1,3}%?)\s*(?:,\s*(1|0?\.\d+))?\s*\)"#;
+const HEX: &str = r#"(#(?:[\da-fA-F]{3}){1,2})"#;
+const RGB_OR_HSL: &str = r#"(rgba?|hsla?)\(\s*(\d{1,3}%?)\s*,\s*(\d{1,3}%?)\s*,\s*(\d{1,3}%?)\s*(?:,\s*(1|0?\.\d+))?\s*\)"#;
 
 static RELAXED_HEX_REGEX: LazyLock<Regex> = LazyLock::new(|| {
     RegexBuilder::new(HEX)
@@ -141,7 +141,7 @@ mod tests {
     use gpui::rgba;
     use lsp::{CompletionItem, CompletionItemKind};
 
-    pub const COLOR_TABLE: &[(&'static str, Option<u32>)] = &[
+    pub const COLOR_TABLE: &[(&str, Option<u32>)] = &[
         // -- Invalid --
         // Invalid hex
         ("f0f", None),

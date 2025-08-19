@@ -5205,14 +5205,9 @@ impl MultiBufferSnapshot {
         if offset == diff_transforms.start().0
             && bias == Bias::Left
             && let Some(prev_item) = diff_transforms.prev_item()
-        {
-            match prev_item {
-                DiffTransform::DeletedHunk { .. } => {
-                    diff_transforms.prev();
-                }
-                _ => {}
+            && let DiffTransform::DeletedHunk { .. } = prev_item {
+                diff_transforms.prev();
             }
-        }
         let offset_in_transform = offset - diff_transforms.start().0;
         let mut excerpt_offset = diff_transforms.start().1;
         let mut diff_base_anchor = None;

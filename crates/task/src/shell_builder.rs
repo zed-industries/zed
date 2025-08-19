@@ -238,7 +238,7 @@ impl ShellBuilder {
     ) -> (String, Vec<String>) {
         if let Some(task_command) = task_command {
             let combined_command = task_args
-                .into_iter()
+                .iter()
                 .fold(task_command, |mut command, arg| {
                     command.push(' ');
                     command.push_str(&self.kind.to_shell_variable(arg));

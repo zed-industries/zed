@@ -72,11 +72,8 @@ pub fn init(http_client: Arc<HttpClientWithUrl>, cx: &mut App) {
     register_web_search_tool(&LanguageModelRegistry::global(cx), cx);
     cx.subscribe(
         &LanguageModelRegistry::global(cx),
-        move |registry, event, cx| match event {
-            language_model::Event::DefaultModelChanged => {
-                register_web_search_tool(&registry, cx);
-            }
-            _ => {}
+        move |registry, event, cx| if let language_model::Event::DefaultModelChanged = event {
+            register_web_search_tool(&registry, cx);
         },
     )
     .detach();

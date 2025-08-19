@@ -258,11 +258,8 @@ impl MarksState {
             let subscription =
                 cx.subscribe(
                     &buffer_store,
-                    move |this: &mut Self, _, event, cx| match event {
-                        project::buffer_store::BufferStoreEvent::BufferAdded(buffer) => {
-                            this.on_buffer_loaded(buffer, cx);
-                        }
-                        _ => {}
+                    move |this: &mut Self, _, event, cx| if let project::buffer_store::BufferStoreEvent::BufferAdded(buffer) = event {
+                        this.on_buffer_loaded(buffer, cx);
                     },
                 );
 
@@ -596,7 +593,7 @@ impl MarksState {
             if let Some(anchors) = self.buffer_marks.get(&buffer_id) {
                 let text_anchors = anchors.get(name)?;
                 let anchors = text_anchors
-                    .into_iter()
+                    .iter()
                     .map(|anchor| Anchor::in_buffer(excerpt_id, buffer_id, *anchor))
                     .collect();
                 return Some(Mark::Local(anchors));
@@ -1710,7 +1707,8 @@ impl VimDb {
         marks: HashMap<String, Vec<Point>>,
     ) -> Result<()> {
         log::debug!("Setting path {path:?} for {} marks", marks.len());
-        let result = self
+        
+        self
             .write(move |conn| {
                 let mut query = conn.exec_bound(sql!(
                     INSERT OR REPLACE INTO vim_marks
@@ -1728,8 +1726,7 @@ impl VimDb {
                 }
                 Ok(())
             })
-            .await;
-        result
+            .await
     }
 
     fn get_marks(&self, workspace_id: WorkspaceId) -> Result<Vec<SerializedMark>> {

@@ -428,12 +428,12 @@ pub async fn new_test_thread(
         .await
         .unwrap();
 
-    let thread = cx
+    
+
+    cx
         .update(|cx| connection.new_thread(project.clone(), current_dir.as_ref(), cx))
         .await
-        .unwrap();
-
-    thread
+        .unwrap()
 }
 
 pub async fn run_until_first_tool_call(

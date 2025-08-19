@@ -329,41 +329,32 @@ impl BreakpointList {
                 let text = self.input.read(cx).text(cx);
 
                 match mode {
-                    ActiveBreakpointStripMode::Log => match &entry.kind {
-                        BreakpointEntryKind::LineBreakpoint(line_breakpoint) => {
-                            Self::edit_line_breakpoint_inner(
-                                &self.breakpoint_store,
-                                line_breakpoint.breakpoint.path.clone(),
-                                line_breakpoint.breakpoint.row,
-                                BreakpointEditAction::EditLogMessage(Arc::from(text)),
-                                cx,
-                            );
-                        }
-                        _ => {}
+                    ActiveBreakpointStripMode::Log => if let BreakpointEntryKind::LineBreakpoint(line_breakpoint) = &entry.kind {
+                        Self::edit_line_breakpoint_inner(
+                            &self.breakpoint_store,
+                            line_breakpoint.breakpoint.path.clone(),
+                            line_breakpoint.breakpoint.row,
+                            BreakpointEditAction::EditLogMessage(Arc::from(text)),
+                            cx,
+                        );
                     },
-                    ActiveBreakpointStripMode::Condition => match &entry.kind {
-                        BreakpointEntryKind::LineBreakpoint(line_breakpoint) => {
-                            Self::edit_line_breakpoint_inner(
-                                &self.breakpoint_store,
-                                line_breakpoint.breakpoint.path.clone(),
-                                line_breakpoint.breakpoint.row,
-                                BreakpointEditAction::EditCondition(Arc::from(text)),
-                                cx,
-                            );
-                        }
-                        _ => {}
+                    ActiveBreakpointStripMode::Condition => if let BreakpointEntryKind::LineBreakpoint(line_breakpoint) = &entry.kind {
+                        Self::edit_line_breakpoint_inner(
+                            &self.breakpoint_store,
+                            line_breakpoint.breakpoint.path.clone(),
+                            line_breakpoint.breakpoint.row,
+                            BreakpointEditAction::EditCondition(Arc::from(text)),
+                            cx,
+                        );
                     },
-                    ActiveBreakpointStripMode::HitCondition => match &entry.kind {
-                        BreakpointEntryKind::LineBreakpoint(line_breakpoint) => {
-                            Self::edit_line_breakpoint_inner(
-                                &self.breakpoint_store,
-                                line_breakpoint.breakpoint.path.clone(),
-                                line_breakpoint.breakpoint.row,
-                                BreakpointEditAction::EditHitCondition(Arc::from(text)),
-                                cx,
-                            );
-                        }
-                        _ => {}
+                    ActiveBreakpointStripMode::HitCondition => if let BreakpointEntryKind::LineBreakpoint(line_breakpoint) = &entry.kind {
+                        Self::edit_line_breakpoint_inner(
+                            &self.breakpoint_store,
+                            line_breakpoint.breakpoint.path.clone(),
+                            line_breakpoint.breakpoint.row,
+                            BreakpointEditAction::EditHitCondition(Arc::from(text)),
+                            cx,
+                        );
                     },
                 }
                 self.focus_handle.focus(window);
@@ -426,13 +417,10 @@ impl BreakpointList {
             return;
         };
 
-        match &mut entry.kind {
-            BreakpointEntryKind::LineBreakpoint(line_breakpoint) => {
-                let path = line_breakpoint.breakpoint.path.clone();
-                let row = line_breakpoint.breakpoint.row;
-                self.edit_line_breakpoint(path, row, BreakpointEditAction::Toggle, cx);
-            }
-            _ => {}
+        if let BreakpointEntryKind::LineBreakpoint(line_breakpoint) = &mut entry.kind {
+            let path = line_breakpoint.breakpoint.path.clone();
+            let row = line_breakpoint.breakpoint.row;
+            self.edit_line_breakpoint(path, row, BreakpointEditAction::Toggle, cx);
         }
         cx.notify();
     }
@@ -967,7 +955,7 @@ impl LineBreakpoint {
                     props,
                     breakpoint: BreakpointEntry {
                         kind: BreakpointEntryKind::LineBreakpoint(self.clone()),
-                        weak: weak,
+                        weak,
                     },
                     is_selected,
                     focus_handle,
@@ -1179,7 +1167,7 @@ impl ExceptionBreakpoint {
                     props,
                     breakpoint: BreakpointEntry {
                         kind: BreakpointEntryKind::ExceptionBreakpoint(self.clone()),
-                        weak: weak,
+                        weak,
                     },
                     is_selected,
                     focus_handle,

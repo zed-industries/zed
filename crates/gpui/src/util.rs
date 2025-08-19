@@ -59,7 +59,7 @@ pub trait FluentBuilder {
         Self: Sized,
     {
         self.map(|this| {
-            if let Some(_) = option {
+            if option.is_some() {
                 this
             } else {
                 then(this)

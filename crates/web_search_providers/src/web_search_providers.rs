@@ -27,11 +27,8 @@ fn register_web_search_providers(
 
     cx.subscribe(
         &LanguageModelRegistry::global(cx),
-        move |this, registry, event, cx| match event {
-            language_model::Event::DefaultModelChanged => {
-                register_zed_web_search_provider(this, client.clone(), &registry, cx)
-            }
-            _ => {}
+        move |this, registry, event, cx| if let language_model::Event::DefaultModelChanged = event {
+            register_zed_web_search_provider(this, client.clone(), &registry, cx)
         },
     )
     .detach();
