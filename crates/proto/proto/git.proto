@@ -121,6 +121,7 @@ message UpdateRepository {
     uint64 scan_id = 9;
     bool is_last_update = 10;
     optional GitCommitDetails head_commit_details = 11;
+    optional string merge_message = 12;
 }
 
 message RemoveRepository {
