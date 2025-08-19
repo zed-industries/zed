@@ -453,7 +453,7 @@ mod tests {
             .unwrap();
 
         // Open that same thread using the new agent.
-        let db = cx.update(|cx| ThreadsDatabase::connect(cx)).await.unwrap();
+        let db = cx.update(ThreadsDatabase::connect).await.unwrap();
         let threads = db.list_threads().await.unwrap();
         assert_eq!(threads.len(), 1);
         let thread = db

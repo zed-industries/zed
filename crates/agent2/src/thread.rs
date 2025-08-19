@@ -699,7 +699,7 @@ impl Thread {
             tools: BTreeMap::default(),
             tool_use_limit_reached: false,
             request_token_usage: db_thread.request_token_usage.clone(),
-            cumulative_token_usage: db_thread.cumulative_token_usage.clone(),
+            cumulative_token_usage: db_thread.cumulative_token_usage,
             initial_project_snapshot: Task::ready(db_thread.initial_project_snapshot).shared(),
             context_server_registry,
             profile_id,
@@ -718,16 +718,16 @@ impl Thread {
         let mut thread = DbThread {
             title: self.title.clone().unwrap_or_default(),
             messages: self.messages.clone(),
-            updated_at: self.updated_at.clone(),
+            updated_at: self.updated_at,
             summary: self.summary.clone(),
             initial_project_snapshot: None,
-            cumulative_token_usage: self.cumulative_token_usage.clone(),
+            cumulative_token_usage: self.cumulative_token_usage,
             request_token_usage: self.request_token_usage.clone(),
             model: self.model.as_ref().map(|model| DbLanguageModel {
                 provider: model.provider_id().to_string(),
                 model: model.name().0.to_string(),
             }),
-            completion_mode: Some(self.completion_mode.into()),
+            completion_mode: Some(self.completion_mode),
             profile: Some(self.profile_id.clone()),
         };
 

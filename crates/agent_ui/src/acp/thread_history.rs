@@ -165,14 +165,13 @@ impl AcpThreadHistory {
                                 this.all_entries.len().saturating_sub(1),
                                 cx,
                             );
-                        } else if let Some(prev_id) = previously_selected_entry {
-                            if let Some(new_ix) = this
+                        } else if let Some(prev_id) = previously_selected_entry
+                            && let Some(new_ix) = this
                                 .all_entries
                                 .iter()
                                 .position(|probe| probe.id() == prev_id)
-                            {
-                                this.set_selected_entry_index(new_ix, cx);
-                            }
+                        {
+                            this.set_selected_entry_index(new_ix, cx);
                         }
                     }
                     SearchState::Searching { query, .. } | SearchState::Searched { query, .. } => {
@@ -203,7 +202,7 @@ impl AcpThreadHistory {
                 let mut candidates = Vec::with_capacity(all_entries.len());
 
                 for (idx, entry) in all_entries.iter().enumerate() {
-                    candidates.push(StringMatchCandidate::new(idx, &entry.title()));
+                    candidates.push(StringMatchCandidate::new(idx, entry.title()));
                 }
 
                 const MAX_MATCHES: usize = 100;
