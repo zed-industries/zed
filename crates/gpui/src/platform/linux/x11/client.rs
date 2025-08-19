@@ -2015,7 +2015,7 @@ fn xdnd_is_atom_supported(atom: u32, atoms: &XcbAtoms) -> bool {
         || atom == atoms.UTF8_STRING
         || atom == atoms.TEXT_PLAIN
         || atom == atoms.TEXT_PLAIN_UTF8
-        || atom == atoms.TextUriList;
+        || atom == atoms.TextUriList
 }
 
 fn xdnd_get_supported_atom(
