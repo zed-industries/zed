@@ -1051,6 +1051,7 @@ impl AgentPanel {
                 self.set_active_view(previous_view, window, cx);
             }
         } else {
+            // todo!("call reload on the history store")
             self.thread_store
                 .update(cx, |thread_store, cx| thread_store.reload(cx))
                 .detach_and_log_err(cx);

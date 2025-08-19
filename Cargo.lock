@@ -196,6 +196,7 @@ dependencies = [
  "agent_servers",
  "agent_settings",
  "anyhow",
+ "assistant_context",
  "assistant_tool",
  "assistant_tools",
  "chrono",

@@ -226,14 +226,6 @@ struct GlobalThreadsDatabase(Shared<Task<Result<Arc<ThreadsDatabase>, Arc<anyhow
 impl Global for GlobalThreadsDatabase {}
 
 impl ThreadsDatabase {
-    fn connection(&self) -> Arc<Mutex<Connection>> {
-        self.connection.clone()
-    }
-
-    const COMPRESSION_LEVEL: i32 = 3;
-}
-
-impl ThreadsDatabase {
     pub fn connect(cx: &mut App) -> Shared<Task<Result<Arc<ThreadsDatabase>, Arc<anyhow::Error>>>> {
         if cx.has_global::<GlobalThreadsDatabase>() {
             return cx.global::<GlobalThreadsDatabase>().0.clone();
@@ -289,13 +281,15 @@ impl ThreadsDatabase {
         id: acp::SessionId,
         thread: DbThread,
     ) -> Result<DbThreadMetadata> {
+        const COMPRESSION_LEVEL: i32 = 3;
+
         let json_data = serde_json::to_string(&thread)?;
         let title = thread.title.to_string();
         let updated_at = thread.updated_at.to_rfc3339();
 
         let connection = connection.lock();
 
-        let compressed = zstd::encode_all(json_data.as_bytes(), Self::COMPRESSION_LEVEL)?;
+        let compressed = zstd::encode_all(json_data.as_bytes(), COMPRESSION_LEVEL)?;
         let data_type = DataType::Zstd;
         let data = compressed;
 

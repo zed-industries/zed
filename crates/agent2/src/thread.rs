@@ -1,4 +1,6 @@
-use crate::{ContextServerRegistry, SystemPromptTemplate, Template, Templates};
+use crate::{
+    ContextServerRegistry, DbLanguageModel, DbThread, SystemPromptTemplate, Template, Templates,
+};
 use acp_thread::{MentionUri, UserMessageId};
 use action_log::ActionLog;
 use agent::thread::{DetailedSummaryState, GitState, ProjectSnapshot, WorktreeSnapshot};
@@ -17,7 +19,7 @@ use futures::{
     stream::FuturesUnordered,
 };
 use git::repository::DiffType;
-use gpui::{App, AsyncApp, Context, Entity, SharedString, Task, WeakEntity};
+use gpui::{App, AppContext, AsyncApp, Context, Entity, SharedString, Task, WeakEntity};
 use language_model::{
     LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelImage,
     LanguageModelProviderId, LanguageModelRequest, LanguageModelRequestMessage,
@@ -650,6 +652,76 @@ impl Thread {
                 ..Default::default()
             },
         );
+    }
+
+    pub fn from_db(
+        id: acp::SessionId,
+        db_thread: DbThread,
+        project: Entity<Project>,
+        project_context: Entity<ProjectContext>,
+        context_server_registry: Entity<ContextServerRegistry>,
+        action_log: Entity<ActionLog>,
+        templates: Arc<Templates>,
+        model: Arc<dyn LanguageModel>,
+        summarization_model: Option<Arc<dyn LanguageModel>>,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let profile_id = db_thread
+            .profile
+            .unwrap_or_else(|| AgentSettings::get_global(cx).default_profile.clone());
+        Self {
+            id,
+            prompt_id: PromptId::new(),
+            title: if db_thread.title.is_empty() {
+                None
+            } else {
+                Some(db_thread.title.clone())
+            },
+            summary: db_thread.summary,
+            messages: db_thread.messages,
+            completion_mode: CompletionMode::Normal,
+            running_turn: None,
+            pending_message: None,
+            tools: BTreeMap::default(),
+            tool_use_limit_reached: false,
+            request_token_usage: db_thread.request_token_usage.clone(),
+            cumulative_token_usage: db_thread.cumulative_token_usage.clone(),
+            initial_project_snapshot: Task::ready(db_thread.initial_project_snapshot).shared(),
+            context_server_registry,
+            profile_id,
+            project_context,
+            templates,
+            model: Some(model),
+            summarization_model,
+            project,
+            action_log,
+            updated_at: db_thread.updated_at,
+        }
+    }
+
+    pub fn to_db(&self, cx: &App) -> Task<DbThread> {
+        let initial_project_snapshot = self.initial_project_snapshot.clone();
+        let mut thread = DbThread {
+            title: self.title.clone().unwrap_or_default(),
+            messages: self.messages.clone(),
+            updated_at: self.updated_at.clone(),
+            summary: self.summary.clone(),
+            initial_project_snapshot: None,
+            cumulative_token_usage: self.cumulative_token_usage.clone(),
+            request_token_usage: self.request_token_usage.clone(),
+            model: self.model.as_ref().map(|model| DbLanguageModel {
+                provider: model.provider_id().to_string(),
+                model: model.name().0.to_string(),
+            }),
+            completion_mode: Some(self.completion_mode.into()),
+            profile: Some(self.profile_id.clone()),
+        };
+
+        cx.background_spawn(async move {
+            let initial_project_snapshot = initial_project_snapshot.await;
+            thread.initial_project_snapshot = initial_project_snapshot;
+            thread
+        })
     }
 
     /// Create a snapshot of the current project state including git information and unsaved buffers.
