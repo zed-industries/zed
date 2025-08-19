@@ -1248,7 +1248,7 @@ mod tests {
     use serde_json::json;
     use text::Point;
     use ui::{App, Context, IntoElement, Render, SharedString, Window};
-    use util::path;
+    use util::{path, uri};
     use workspace::{AppState, Item, Workspace};
 
     use crate::acp::{
@@ -1556,7 +1556,7 @@ mod tests {
             editor.confirm_completion(&editor::actions::ConfirmCompletion::default(), window, cx);
         });
 
-        let url_one = url::Url::from_file_path(path!("/dir/a/one.txt")).unwrap();
+        let url_one = uri!("file:///dir/a/one.txt");
         editor.update(&mut cx, |editor, cx| {
             let text = editor.text(cx);
             assert_eq!(text, format!("Lorem [@one.txt]({url_one}) "));
@@ -1634,7 +1634,7 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert_eq!(contents.len(), 2);
-        let url_eight = url::Url::from_file_path(path!("/dir/b/eight.txt")).unwrap();
+        let url_eight = uri!("file:///dir/b/eight.txt");
         pretty_assertions::assert_eq!(
             contents[1],
             Mention::Text {

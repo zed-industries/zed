@@ -77,8 +77,6 @@ impl MentionUri {
                         Ok(Self::Selection { path, line_range })
                     }
                 } else {
-                    // let file_path =
-                    //     PathBuf::from(format!("{}{}", url.host_str().unwrap_or(""), path));
                     let is_directory = input.ends_with("/");
 
                     Ok(Self::File {
@@ -265,18 +263,20 @@ pub fn selection_name(path: &Path, line_range: &Range<u32>) -> String {
 
 #[cfg(test)]
 mod tests {
+    use util::{path, uri};
+
     use super::*;
 
     #[test]
     fn test_parse_file_uri() {
-        let file_uri = "file:///path/to/file.rs";
+        let file_uri = uri!("file:///path/to/file.rs");
         let parsed = MentionUri::parse(file_uri).unwrap();
         match &parsed {
             MentionUri::File {
                 abs_path,
                 is_directory,
             } => {
-                assert_eq!(abs_path.to_str().unwrap(), "/path/to/file.rs");
+                assert_eq!(abs_path.to_str().unwrap(), path!("/path/to/file.rs"));
                 assert!(!is_directory);
             }
             _ => panic!("Expected File variant"),
@@ -286,14 +286,14 @@ mod tests {
 
     #[test]
     fn test_parse_directory_uri() {
-        let file_uri = "file:///path/to/dir/";
+        let file_uri = uri!("file:///path/to/dir/");
         let parsed = MentionUri::parse(file_uri).unwrap();
         match &parsed {
             MentionUri::File {
                 abs_path,
                 is_directory,
             } => {
-                assert_eq!(abs_path.to_str().unwrap(), "/path/to/dir/");
+                assert_eq!(abs_path.to_str().unwrap(), path!("/path/to/dir/"));
                 assert!(is_directory);
             }
             _ => panic!("Expected File variant"),
@@ -304,24 +304,26 @@ mod tests {
     #[test]
     fn test_to_directory_uri_with_slash() {
         let uri = MentionUri::File {
-            abs_path: PathBuf::from("/path/to/dir/"),
+            abs_path: PathBuf::from(path!("/path/to/dir/")),
             is_directory: true,
         };
-        assert_eq!(uri.to_uri().to_string(), "file:///path/to/dir/");
+        let expected = uri!("file:///path/to/dir/");
+        assert_eq!(uri.to_uri().to_string(), expected);
     }
 
     #[test]
     fn test_to_directory_uri_without_slash() {
         let uri = MentionUri::File {
-            abs_path: PathBuf::from("/path/to/dir"),
+            abs_path: PathBuf::from(path!("/path/to/dir")),
             is_directory: true,
         };
-        assert_eq!(uri.to_uri().to_string(), "file:///path/to/dir/");
+        let expected = uri!("file:///path/to/dir/");
+        assert_eq!(uri.to_uri().to_string(), expected);
     }
 
     #[test]
     fn test_parse_symbol_uri() {
-        let symbol_uri = "file:///path/to/file.rs?symbol=MySymbol#L10:20";
+        let symbol_uri = uri!("file:///path/to/file.rs?symbol=MySymbol#L10:20");
         let parsed = MentionUri::parse(symbol_uri).unwrap();
         match &parsed {
             MentionUri::Symbol {
@@ -329,7 +331,7 @@ mod tests {
                 name,
                 line_range,
             } => {
-                assert_eq!(path.to_str().unwrap(), "/path/to/file.rs");
+                assert_eq!(path.to_str().unwrap(), path!("/path/to/file.rs"));
                 assert_eq!(name, "MySymbol");
                 assert_eq!(line_range.start, 9);
                 assert_eq!(line_range.end, 19);
@@ -341,11 +343,11 @@ mod tests {
 
     #[test]
     fn test_parse_selection_uri() {
-        let selection_uri = "file:///path/to/file.rs#L5:15";
+        let selection_uri = uri!("file:///path/to/file.rs#L5:15");
         let parsed = MentionUri::parse(selection_uri).unwrap();
         match &parsed {
             MentionUri::Selection { path, line_range } => {
-                assert_eq!(path.to_str().unwrap(), "/path/to/file.rs");
+                assert_eq!(path.to_str().unwrap(), path!("/path/to/file.rs"));
                 assert_eq!(line_range.start, 4);
                 assert_eq!(line_range.end, 14);
             }
@@ -427,32 +429,32 @@ mod tests {
     #[test]
     fn test_invalid_line_range_format() {
         // Missing L prefix
-        assert!(MentionUri::parse("file:///path/to/file.rs#10:20").is_err());
+        assert!(MentionUri::parse(uri!("file:///path/to/file.rs#10:20")).is_err());
 
         // Missing colon separator
-        assert!(MentionUri::parse("file:///path/to/file.rs#L1020").is_err());
+        assert!(MentionUri::parse(uri!("file:///path/to/file.rs#L1020")).is_err());
 
         // Invalid numbers
-        assert!(MentionUri::parse("file:///path/to/file.rs#L10:abc").is_err());
-        assert!(MentionUri::parse("file:///path/to/file.rs#Labc:20").is_err());
+        assert!(MentionUri::parse(uri!("file:///path/to/file.rs#L10:abc")).is_err());
+        assert!(MentionUri::parse(uri!("file:///path/to/file.rs#Labc:20")).is_err());
     }
 
     #[test]
     fn test_invalid_query_parameters() {
         // Invalid query parameter name
-        assert!(MentionUri::parse("file:///path/to/file.rs#L10:20?invalid=test").is_err());
+        assert!(MentionUri::parse(uri!("file:///path/to/file.rs#L10:20?invalid=test")).is_err());
 
         // Too many query parameters
         assert!(
-            MentionUri::parse("file:///path/to/file.rs#L10:20?symbol=test&another=param").is_err()
+            MentionUri::parse(uri!("file:///path/to/file.rs#L10:20?symbol=test&another=param")).is_err()
         );
     }
 
     #[test]
     fn test_zero_based_line_numbers() {
         // Test that 0-based line numbers are rejected (should be 1-based)
-        assert!(MentionUri::parse("file:///path/to/file.rs#L0:10").is_err());
-        assert!(MentionUri::parse("file:///path/to/file.rs#L1:0").is_err());
-        assert!(MentionUri::parse("file:///path/to/file.rs#L0:0").is_err());
+        assert!(MentionUri::parse(uri!("file:///path/to/file.rs#L0:10")).is_err());
+        assert!(MentionUri::parse(uri!("file:///path/to/file.rs#L1:0")).is_err());
+        assert!(MentionUri::parse(uri!("file:///path/to/file.rs#L0:0")).is_err());
     }
 }
