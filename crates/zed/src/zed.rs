@@ -443,6 +443,8 @@ pub fn initialize_workspace(
             }
         });
 
+        let encoding_indicator = cx.new(|_cx| encodings::Encoding::Utf8(workspace.weak_handle()));
+
         let cursor_position =
             cx.new(|_| go_to_line::cursor_position::CursorPosition::new(workspace));
         let line_ending_indicator =
@@ -458,6 +460,7 @@ pub fn initialize_workspace(
             status_bar.add_right_item(line_ending_indicator, window, cx);
             status_bar.add_right_item(vim_mode_indicator, window, cx);
             status_bar.add_right_item(cursor_position, window, cx);
+            status_bar.add_right_item(encoding_indicator, window, cx);
             status_bar.add_right_item(image_info, window, cx);
         });
 

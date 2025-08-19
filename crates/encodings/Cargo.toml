@@ -1,0 +1,17 @@
+[package]
+name = "encodings"
+version = "0.1.0"
+publish.workspace = true
+edition.workspace = true
+
+[dependencies]
+ui.workspace = true
+workspace.workspace = true
+gpui.workspace = true
+picker.workspace = true
+language.workspace = true
+util.workspace = true
+fuzzy.workspace = true
+
+[lints]
+workspace = true
