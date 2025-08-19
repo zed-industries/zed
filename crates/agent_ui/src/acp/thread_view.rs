@@ -36,7 +36,7 @@ use rope::Point;
 use settings::{Settings as _, SettingsStore};
 use std::sync::Arc;
 use std::time::Instant;
-use std::{collections::BTreeMap, process::ExitStatus, rc::Rc, time::Duration};
+use std::{collections::BTreeMap, rc::Rc, time::Duration};
 use text::Anchor;
 use theme::ThemeSettings;
 use ui::{
@@ -147,9 +147,6 @@ enum ThreadState {
         configuration_view: Option<AnyView>,
         _subscription: Option<Subscription>,
     },
-    ServerExited {
-        status: ExitStatus,
-    },
 }
 
 impl AcpThreadView {
@@ -253,20 +250,6 @@ impl AcpThreadView {
                     return;
                 }
             };
-
-            // this.update_in(cx, |_this, _window, cx| {
-            //     let status = connection.exit_status(cx);
-            //     cx.spawn(async move |this, cx| {
-            //         let status = status.await.ok();
-            //         this.update(cx, |this, cx| {
-            //             this.thread_state = ThreadState::ServerExited { status };
-            //             cx.notify();
-            //         })
-            //         .ok();
-            //     })
-            //     .detach();
-            // })
-            // .ok();
 
             let Some(result) = cx
                 .update(|_, cx| {
@@ -431,8 +414,7 @@ impl AcpThreadView {
             ThreadState::Ready { thread, .. } => Some(thread),
             ThreadState::Unauthenticated { .. }
             | ThreadState::Loading { .. }
-            | ThreadState::LoadError(..)
-            | ThreadState::ServerExited { .. } => None,
+            | ThreadState::LoadError { .. } => None,
         }
     }
 
@@ -442,7 +424,6 @@ impl AcpThreadView {
             ThreadState::Loading { .. } => "Loading…".into(),
             ThreadState::LoadError(_) => "Failed to load".into(),
             ThreadState::Unauthenticated { .. } => "Authentication Required".into(),
-            ThreadState::ServerExited { .. } => "Server exited unexpectedly".into(),
         }
     }
 
@@ -804,9 +785,9 @@ impl AcpThreadView {
                     cx,
                 );
             }
-            AcpThreadEvent::ServerExited(status) => {
+            AcpThreadEvent::LoadError(error) => {
                 self.thread_retry_status.take();
-                self.thread_state = ThreadState::ServerExited { status: *status };
+                self.thread_state = ThreadState::LoadError(error.clone());
             }
         }
         cx.notify();
@@ -2124,28 +2105,6 @@ impl AcpThreadView {
                         })
                 }),
             ))
-    }
-
-    fn render_server_exited(&self, status: ExitStatus, _cx: &Context<Self>) -> AnyElement {
-        v_flex()
-            .items_center()
-            .justify_center()
-            .child(self.render_error_agent_logo())
-            .child(
-                v_flex()
-                    .mt_4()
-                    .mb_2()
-                    .gap_0p5()
-                    .text_center()
-                    .items_center()
-                    .child(Headline::new("Server exited unexpectedly").size(HeadlineSize::Medium))
-                    .child(
-                        Label::new(format!("Exit status: {}", status.code().unwrap_or(-127)))
-                            .size(LabelSize::Small)
-                            .color(Color::Muted),
-                    ),
-            )
-            .into_any_element()
     }
 
     fn render_load_error(&self, e: &LoadError, cx: &Context<Self>) -> AnyElement {
@@ -3675,12 +3634,6 @@ impl Render for AcpThreadView {
                     .items_center()
                     .justify_center()
                     .child(self.render_load_error(e, cx)),
-                ThreadState::ServerExited { status } => v_flex()
-                    .p_2()
-                    .flex_1()
-                    .items_center()
-                    .justify_center()
-                    .child(self.render_server_exited(*status, cx)),
                 ThreadState::Ready { thread, .. } => {
                     let thread_clone = thread.clone();
 

@@ -13,7 +13,7 @@ use anyhow::{Context as _, Result};
 use gpui::{App, AppContext as _, AsyncApp, Entity, Task, WeakEntity};
 
 use crate::{AgentServerCommand, acp::UnsupportedVersion};
-use acp_thread::{AcpThread, AgentConnection, AuthRequired};
+use acp_thread::{AcpThread, AgentConnection, AuthRequired, LoadError};
 
 pub struct AcpConnection {
     server_name: &'static str,
@@ -86,7 +86,9 @@ impl AcpConnection {
                 for session in sessions.borrow().values() {
                     session
                         .thread
-                        .update(cx, |thread, cx| thread.emit_server_exited(status, cx))
+                        .update(cx, |thread, cx| {
+                            thread.emit_load_error(LoadError::Exited { status }, cx)
+                        })
                         .ok();
                 }
 
