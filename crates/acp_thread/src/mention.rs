@@ -49,6 +49,7 @@ impl MentionUri {
         let path = url.path();
         match url.scheme() {
             "file" => {
+                let path = url.to_file_path().ok().context("Extracting file path")?;
                 if let Some(fragment) = url.fragment() {
                     let range = fragment
                         .strip_prefix("L")
@@ -79,12 +80,12 @@ impl MentionUri {
                         })
                     }
                 } else {
-                    let file_path =
-                        PathBuf::from(format!("{}{}", url.host_str().unwrap_or(""), path));
+                    // let file_path =
+                    //     PathBuf::from(format!("{}{}", url.host_str().unwrap_or(""), path));
                     let is_directory = input.ends_with("/");
 
                     Ok(Self::File {
-                        abs_path: file_path,
+                        abs_path: path.into(),
                         is_directory,
                     })
                 }

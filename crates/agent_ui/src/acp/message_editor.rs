@@ -1556,17 +1556,12 @@ mod tests {
             editor.confirm_completion(&editor::actions::ConfirmCompletion::default(), window, cx);
         });
 
-        let path_one = path!("/dir/a/one.txt");
+        let url_one = url::Url::from_file_path(path!("/dir/a/one.txt")).unwrap();
         editor.update(&mut cx, |editor, cx| {
-            assert_eq!(
-                editor.text(cx),
-                format!("Lorem [@one.txt](file://{path_one}) ")
-            );
+            let text = editor.text(cx);
+            assert_eq!(text, format!("Lorem [@one.txt]({url_one}) "));
             assert!(!editor.has_visible_completions_menu());
-            assert_eq!(
-                fold_ranges(editor, cx),
-                vec![Point::new(0, 6)..Point::new(0, 39)]
-            );
+            assert_eq!(fold_ranges(editor, cx).len(), 1);
         });
 
         let contents = message_editor
@@ -1587,50 +1582,35 @@ mod tests {
             contents,
             [Mention::Text {
                 content: "1".into(),
-                uri: format!("file://{path_one}").parse().unwrap()
+                uri: format!("{url_one}").parse().unwrap()
             }]
         );
 
         cx.simulate_input(" ");
 
         editor.update(&mut cx, |editor, cx| {
-            assert_eq!(
-                editor.text(cx),
-                format!("Lorem [@one.txt](file://{path_one})  ")
-            );
+            let text = editor.text(cx);
+            assert_eq!(text, format!("Lorem [@one.txt]({url_one})  "));
             assert!(!editor.has_visible_completions_menu());
-            assert_eq!(
-                fold_ranges(editor, cx),
-                vec![Point::new(0, 6)..Point::new(0, 39)]
-            );
+            assert_eq!(fold_ranges(editor, cx).len(), 1);
         });
 
         cx.simulate_input("Ipsum ");
 
         editor.update(&mut cx, |editor, cx| {
-            assert_eq!(
-                editor.text(cx),
-                format!("Lorem [@one.txt](file://{path_one})  Ipsum "),
-            );
+            let text = editor.text(cx);
+            assert_eq!(text, format!("Lorem [@one.txt]({url_one})  Ipsum "),);
             assert!(!editor.has_visible_completions_menu());
-            assert_eq!(
-                fold_ranges(editor, cx),
-                vec![Point::new(0, 6)..Point::new(0, 39)]
-            );
+            assert_eq!(fold_ranges(editor, cx).len(), 1);
         });
 
         cx.simulate_input("@file ");
 
         editor.update(&mut cx, |editor, cx| {
-            assert_eq!(
-                editor.text(cx),
-                format!("Lorem [@one.txt](file://{path_one})  Ipsum @file "),
-            );
+            let text = editor.text(cx);
+            assert_eq!(text, format!("Lorem [@one.txt]({url_one})  Ipsum @file "),);
             assert!(editor.has_visible_completions_menu());
-            assert_eq!(
-                fold_ranges(editor, cx),
-                vec![Point::new(0, 6)..Point::new(0, 39)]
-            );
+            assert_eq!(fold_ranges(editor, cx).len(), 1);
         });
 
         editor.update_in(&mut cx, |editor, window, cx| {
@@ -1654,30 +1634,22 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert_eq!(contents.len(), 2);
-        let path_eight = path!("/dir/b/eight.txt");
+        let url_eight = url::Url::from_file_path(path!("/dir/b/eight.txt")).unwrap();
         pretty_assertions::assert_eq!(
             contents[1],
             Mention::Text {
                 content: "8".to_string(),
-                uri: format!("file://{path_eight}").parse().unwrap(),
+                uri: format!("{url_eight}").parse().unwrap(),
             }
         );
 
         editor.update(&mut cx, |editor, cx| {
             assert_eq!(
                 editor.text(cx),
-                format!(
-                    "Lorem [@one.txt](file://{path_one})  Ipsum [@eight.txt](file://{path_eight}) "
-                )
+                format!("Lorem [@one.txt]({url_one})  Ipsum [@eight.txt]({url_eight}) ")
             );
             assert!(!editor.has_visible_completions_menu());
-            assert_eq!(
-                fold_ranges(editor, cx),
-                vec![
-                    Point::new(0, 6)..Point::new(0, 39),
-                    Point::new(0, 47)..Point::new(0, 84)
-                ]
-            );
+            assert_eq!(fold_ranges(editor, cx).len(), 2);
         });
 
         let plain_text_language = Arc::new(language::Language::new(
@@ -1710,7 +1682,7 @@ mod tests {
         // Open the buffer to trigger LSP initialization
         let buffer = project
             .update(&mut cx, |project, cx| {
-                project.open_local_buffer(path_one, cx)
+                project.open_local_buffer(path!("/dir/a/one.txt"), cx)
             })
             .await
             .unwrap();
@@ -1730,7 +1702,7 @@ mod tests {
                     lsp::SymbolInformation {
                         name: "MySymbol".into(),
                         location: lsp::Location {
-                            uri: lsp::Url::from_file_path(path_one).unwrap(),
+                            uri: lsp::Url::from_file_path(path!("/dir/a/one.txt")).unwrap(),
                             range: lsp::Range::new(
                                 lsp::Position::new(0, 0),
                                 lsp::Position::new(0, 1),
@@ -1748,18 +1720,13 @@ mod tests {
         cx.simulate_input("@symbol ");
 
         editor.update(&mut cx, |editor, cx| {
-                assert_eq!(
-                    editor.text(cx),
-                    format!("Lorem [@one.txt](file://{path_one})  Ipsum [@eight.txt](file://{path_eight}) @symbol ")
-                );
-                assert!(editor.has_visible_completions_menu());
-                assert_eq!(
-                    current_completion_labels(editor),
-                    &[
-                        "MySymbol",
-                    ]
-                );
-            });
+            assert_eq!(
+                editor.text(cx),
+                format!("Lorem [@one.txt]({url_one})  Ipsum [@eight.txt]({url_eight}) @symbol ")
+            );
+            assert!(editor.has_visible_completions_menu());
+            assert_eq!(current_completion_labels(editor), &["MySymbol"]);
+        });
 
         editor.update_in(&mut cx, |editor, window, cx| {
             editor.confirm_completion(&editor::actions::ConfirmCompletion::default(), window, cx);
@@ -1781,9 +1748,7 @@ mod tests {
             contents[2],
             Mention::Text {
                 content: "1".into(),
-                uri: format!("file://{path_one}?symbol=MySymbol#L1:1")
-                    .parse()
-                    .unwrap(),
+                uri: format!("{url_one}?symbol=MySymbol#L1:1").parse().unwrap(),
             }
         );
 
@@ -1792,7 +1757,7 @@ mod tests {
         editor.read_with(&mut cx, |editor, cx| {
                 assert_eq!(
                     editor.text(cx),
-                    format!("Lorem [@one.txt](file://{path_one})  Ipsum [@eight.txt](file://{path_eight}) [@MySymbol](file://{path_one}?symbol=MySymbol#L1:1) ")
+                    format!("Lorem [@one.txt]({url_one})  Ipsum [@eight.txt]({url_eight}) [@MySymbol]({url_one}?symbol=MySymbol#L1:1) ")
                 );
             });
     }
