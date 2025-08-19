@@ -4,16 +4,16 @@ use async_trait::async_trait;
 use collections::HashMap;
 use gpui::{App, Task};
 use gpui::{AsyncApp, SharedString};
+use language::Toolchain;
 use language::ToolchainList;
 use language::ToolchainLister;
 use language::language_settings::language_settings;
 use language::{ContextLocation, LanguageToolchainStore};
 use language::{ContextProvider, LspAdapter, LspAdapterDelegate};
 use language::{LanguageName, ManifestName, ManifestProvider, ManifestQuery};
-use language::{Toolchain, WorkspaceFoldersContent};
 use lsp::LanguageServerBinary;
 use lsp::LanguageServerName;
-use node_runtime::NodeRuntime;
+use node_runtime::{NodeRuntime, VersionStrategy};
 use pet_core::Configuration;
 use pet_core::os_environment::Environment;
 use pet_core::python_environment::PythonEnvironmentKind;
@@ -127,7 +127,7 @@ impl LspAdapter for PythonLspAdapter {
     async fn check_if_user_installed(
         &self,
         delegate: &dyn LspAdapterDelegate,
-        _: Arc<dyn LanguageToolchainStore>,
+        _: Option<Toolchain>,
         _: &AsyncApp,
     ) -> Option<LanguageServerBinary> {
         if let Some(pyright_bin) = delegate.which("pyright-langserver".as_ref()).await {
@@ -204,8 +204,8 @@ impl LspAdapter for PythonLspAdapter {
             .should_install_npm_package(
                 Self::SERVER_NAME.as_ref(),
                 &server_path,
-                &container_dir,
-                &version,
+                container_dir,
+                VersionStrategy::Latest(version),
             )
             .await;
 
@@ -319,17 +319,9 @@ impl LspAdapter for PythonLspAdapter {
         self: Arc<Self>,
         _: &dyn Fs,
         adapter: &Arc<dyn LspAdapterDelegate>,
-        toolchains: Arc<dyn LanguageToolchainStore>,
+        toolchain: Option<Toolchain>,
         cx: &mut AsyncApp,
     ) -> Result<Value> {
-        let toolchain = toolchains
-            .active_toolchain(
-                adapter.worktree_id(),
-                Arc::from("".as_ref()),
-                LanguageName::new("Python"),
-                cx,
-            )
-            .await;
         cx.update(move |cx| {
             let mut user_settings =
                 language_server_settings(adapter.as_ref(), &Self::SERVER_NAME, cx)
@@ -396,12 +388,6 @@ impl LspAdapter for PythonLspAdapter {
 
             user_settings
         })
-    }
-    fn manifest_name(&self) -> Option<ManifestName> {
-        Some(SharedString::new_static("pyproject.toml").into())
-    }
-    fn workspace_folders_content(&self) -> WorkspaceFoldersContent {
-        WorkspaceFoldersContent::WorktreeRoot
     }
 }
 
@@ -1046,8 +1032,8 @@ impl LspAdapter for PyLspAdapter {
     async fn check_if_user_installed(
         &self,
         delegate: &dyn LspAdapterDelegate,
-        toolchains: Arc<dyn LanguageToolchainStore>,
-        cx: &AsyncApp,
+        toolchain: Option<Toolchain>,
+        _: &AsyncApp,
     ) -> Option<LanguageServerBinary> {
         if let Some(pylsp_bin) = delegate.which(Self::SERVER_NAME.as_ref()).await {
             let env = delegate.shell_env().await;
@@ -1057,14 +1043,7 @@ impl LspAdapter for PyLspAdapter {
                 arguments: vec![],
             })
         } else {
-            let venv = toolchains
-                .active_toolchain(
-                    delegate.worktree_id(),
-                    Arc::from("".as_ref()),
-                    LanguageName::new("Python"),
-                    &mut cx.clone(),
-                )
-                .await?;
+            let venv = toolchain?;
             let pylsp_path = Path::new(venv.path.as_ref()).parent()?.join("pylsp");
             pylsp_path.exists().then(|| LanguageServerBinary {
                 path: venv.path.to_string().into(),
@@ -1211,17 +1190,9 @@ impl LspAdapter for PyLspAdapter {
         self: Arc<Self>,
         _: &dyn Fs,
         adapter: &Arc<dyn LspAdapterDelegate>,
-        toolchains: Arc<dyn LanguageToolchainStore>,
+        toolchain: Option<Toolchain>,
         cx: &mut AsyncApp,
     ) -> Result<Value> {
-        let toolchain = toolchains
-            .active_toolchain(
-                adapter.worktree_id(),
-                Arc::from("".as_ref()),
-                LanguageName::new("Python"),
-                cx,
-            )
-            .await;
         cx.update(move |cx| {
             let mut user_settings =
                 language_server_settings(adapter.as_ref(), &Self::SERVER_NAME, cx)
@@ -1281,12 +1252,6 @@ impl LspAdapter for PyLspAdapter {
 
             user_settings
         })
-    }
-    fn manifest_name(&self) -> Option<ManifestName> {
-        Some(SharedString::new_static("pyproject.toml").into())
-    }
-    fn workspace_folders_content(&self) -> WorkspaceFoldersContent {
-        WorkspaceFoldersContent::WorktreeRoot
     }
 }
 
@@ -1377,8 +1342,8 @@ impl LspAdapter for BasedPyrightLspAdapter {
     async fn check_if_user_installed(
         &self,
         delegate: &dyn LspAdapterDelegate,
-        toolchains: Arc<dyn LanguageToolchainStore>,
-        cx: &AsyncApp,
+        toolchain: Option<Toolchain>,
+        _: &AsyncApp,
     ) -> Option<LanguageServerBinary> {
         if let Some(bin) = delegate.which(Self::BINARY_NAME.as_ref()).await {
             let env = delegate.shell_env().await;
@@ -1388,15 +1353,7 @@ impl LspAdapter for BasedPyrightLspAdapter {
                 arguments: vec!["--stdio".into()],
             })
         } else {
-            let venv = toolchains
-                .active_toolchain(
-                    delegate.worktree_id(),
-                    Arc::from("".as_ref()),
-                    LanguageName::new("Python"),
-                    &mut cx.clone(),
-                )
-                .await?;
-            let path = Path::new(venv.path.as_ref())
+            let path = Path::new(toolchain?.path.as_ref())
                 .parent()?
                 .join(Self::BINARY_NAME);
             path.exists().then(|| LanguageServerBinary {
@@ -1543,17 +1500,9 @@ impl LspAdapter for BasedPyrightLspAdapter {
         self: Arc<Self>,
         _: &dyn Fs,
         adapter: &Arc<dyn LspAdapterDelegate>,
-        toolchains: Arc<dyn LanguageToolchainStore>,
+        toolchain: Option<Toolchain>,
         cx: &mut AsyncApp,
     ) -> Result<Value> {
-        let toolchain = toolchains
-            .active_toolchain(
-                adapter.worktree_id(),
-                Arc::from("".as_ref()),
-                LanguageName::new("Python"),
-                cx,
-            )
-            .await;
         cx.update(move |cx| {
             let mut user_settings =
                 language_server_settings(adapter.as_ref(), &Self::SERVER_NAME, cx)
@@ -1620,14 +1569,6 @@ impl LspAdapter for BasedPyrightLspAdapter {
 
             user_settings
         })
-    }
-
-    fn manifest_name(&self) -> Option<ManifestName> {
-        Some(SharedString::new_static("pyproject.toml").into())
-    }
-
-    fn workspace_folders_content(&self) -> WorkspaceFoldersContent {
-        WorkspaceFoldersContent::WorktreeRoot
     }
 }
 

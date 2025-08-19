@@ -414,6 +414,7 @@ impl GitStore {
     pub fn init(client: &AnyProtoClient) {
         client.add_entity_request_handler(Self::handle_get_remotes);
         client.add_entity_request_handler(Self::handle_get_branches);
+        client.add_entity_request_handler(Self::handle_get_default_branch);
         client.add_entity_request_handler(Self::handle_change_branch);
         client.add_entity_request_handler(Self::handle_create_branch);
         client.add_entity_request_handler(Self::handle_git_init);
@@ -560,7 +561,7 @@ impl GitStore {
     pub fn active_repository(&self) -> Option<Entity<Repository>> {
         self.active_repo_id
             .as_ref()
-            .map(|id| self.repositories[&id].clone())
+            .map(|id| self.repositories[id].clone())
     }
 
     pub fn open_unstaged_diff(
@@ -1276,7 +1277,7 @@ impl GitStore {
     ) {
         match event {
             BufferStoreEvent::BufferAdded(buffer) => {
-                cx.subscribe(&buffer, |this, buffer, event, cx| {
+                cx.subscribe(buffer, |this, buffer, event, cx| {
                     if let BufferEvent::LanguageChanged = event {
                         let buffer_id = buffer.read(cx).remote_id();
                         if let Some(diff_state) = this.diffs.get(&buffer_id) {
@@ -1294,7 +1295,7 @@ impl GitStore {
                 }
             }
             BufferStoreEvent::BufferDropped(buffer_id) => {
-                self.diffs.remove(&buffer_id);
+                self.diffs.remove(buffer_id);
                 for diffs in self.shared_diffs.values_mut() {
                     diffs.remove(buffer_id);
                 }
@@ -1383,8 +1384,8 @@ impl GitStore {
             repository.update(cx, |repository, cx| {
                 let repo_abs_path = &repository.work_directory_abs_path;
                 if changed_repos.iter().any(|update| {
-                    update.old_work_directory_abs_path.as_ref() == Some(&repo_abs_path)
-                        || update.new_work_directory_abs_path.as_ref() == Some(&repo_abs_path)
+                    update.old_work_directory_abs_path.as_ref() == Some(repo_abs_path)
+                        || update.new_work_directory_abs_path.as_ref() == Some(repo_abs_path)
                 }) {
                     repository.reload_buffer_diff_bases(cx);
                 }
@@ -1535,7 +1536,7 @@ impl GitStore {
             });
             if is_new {
                 this._subscriptions
-                    .push(cx.subscribe(&repo, Self::on_repository_event))
+                    .push(cx.subscribe(repo, Self::on_repository_event))
             }
 
             repo.update(cx, {
@@ -1893,6 +1894,23 @@ impl GitStore {
                 .map(|branch| branch_to_proto(&branch))
                 .collect::<Vec<_>>(),
         })
+    }
+    async fn handle_get_default_branch(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::GetDefaultBranch>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::GetDefaultBranchResponse> {
+        let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
+        let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
+
+        let branch = repository_handle
+            .update(&mut cx, |repository_handle, _| {
+                repository_handle.default_branch()
+            })?
+            .await??
+            .map(Into::into);
+
+        Ok(proto::GetDefaultBranchResponse { branch })
     }
     async fn handle_create_branch(
         this: Entity<Self>,
@@ -2331,16 +2349,20 @@ impl GitStore {
                         return None;
                     };
 
-                    let mut paths = vec![];
+                    let mut paths = Vec::new();
                     // All paths prefixed by a given repo will constitute a continuous range.
                     while let Some(path) = entries.get(ix)
                         && let Some(repo_path) =
-                            RepositorySnapshot::abs_path_to_repo_path_inner(&repo_path, &path)
+                            RepositorySnapshot::abs_path_to_repo_path_inner(&repo_path, path)
                     {
                         paths.push((repo_path, ix));
                         ix += 1;
                     }
-                    Some((repo, paths))
+                    if paths.is_empty() {
+                        None
+                    } else {
+                        Some((repo, paths))
+                    }
                 });
                 tasks.push_back(task);
             }
@@ -2752,6 +2774,7 @@ impl RepositorySnapshot {
                 .iter()
                 .map(|repo_path| repo_path.to_proto())
                 .collect(),
+            merge_message: self.merge.message.as_ref().map(|msg| msg.to_string()),
             project_id,
             id: self.id.to_proto(),
             abs_path: self.work_directory_abs_path.to_proto(),
@@ -2814,6 +2837,7 @@ impl RepositorySnapshot {
                 .iter()
                 .map(|path| path.as_ref().to_proto())
                 .collect(),
+            merge_message: self.merge.message.as_ref().map(|msg| msg.to_string()),
             project_id,
             id: self.id.to_proto(),
             abs_path: self.work_directory_abs_path.to_proto(),
@@ -2853,14 +2877,14 @@ impl RepositorySnapshot {
     }
 
     pub fn had_conflict_on_last_merge_head_change(&self, repo_path: &RepoPath) -> bool {
-        self.merge.conflicted_paths.contains(&repo_path)
+        self.merge.conflicted_paths.contains(repo_path)
     }
 
     pub fn has_conflict(&self, repo_path: &RepoPath) -> bool {
         let had_conflict_on_last_merge_head_change =
-            self.merge.conflicted_paths.contains(&repo_path);
+            self.merge.conflicted_paths.contains(repo_path);
         let has_conflict_currently = self
-            .status_for_path(&repo_path)
+            .status_for_path(repo_path)
             .map_or(false, |entry| entry.status.is_conflicted());
         had_conflict_on_last_merge_head_change || has_conflict_currently
     }
@@ -4244,6 +4268,7 @@ impl Repository {
             .map(proto_to_commit_details);
 
         self.snapshot.merge.conflicted_paths = conflicted_paths;
+        self.snapshot.merge.message = update.merge_message.map(SharedString::from);
 
         let edits = update
             .removed_statuses
@@ -4320,7 +4345,8 @@ impl Repository {
                     bail!("not a local repository")
                 };
                 let (snapshot, events) = this
-                    .read_with(&mut cx, |this, _| {
+                    .update(&mut cx, |this, _| {
+                        this.paths_needing_status_update.clear();
                         compute_snapshot(
                             this.id,
                             this.work_directory_abs_path.clone(),
@@ -4550,6 +4576,9 @@ impl Repository {
                 };
 
                 let paths = changed_paths.iter().cloned().collect::<Vec<_>>();
+                if paths.is_empty() {
+                    return Ok(());
+                }
                 let statuses = backend.status(&paths).await?;
 
                 let changed_path_statuses = cx

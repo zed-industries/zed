@@ -89,11 +89,13 @@ pub enum Model {
         max_tokens: u64,
         max_output_tokens: Option<u64>,
         max_completion_tokens: Option<u64>,
+        reasoning_effort: Option<ReasoningEffort>,
     },
 }
 
 impl Model {
     pub fn default_fast() -> Self {
+        // TODO: Replace with FiveMini since all other models are deprecated
         Self::FourPointOneMini
     }
 
@@ -206,6 +208,15 @@ impl Model {
         }
     }
 
+    pub fn reasoning_effort(&self) -> Option<ReasoningEffort> {
+        match self {
+            Self::Custom {
+                reasoning_effort, ..
+            } => reasoning_effort.to_owned(),
+            _ => None,
+        }
+    }
+
     /// Returns whether the given model supports the `parallel_tool_calls` parameter.
     ///
     /// If the model does not support the parameter, do not pass it up, or the API will return an error.
@@ -224,6 +235,13 @@ impl Model {
             | Self::FiveNano => true,
             Self::O1 | Self::O3 | Self::O3Mini | Self::O4Mini | Model::Custom { .. } => false,
         }
+    }
+
+    /// Returns whether the given model supports the `prompt_cache_key` parameter.
+    ///
+    /// If the model does not support the parameter, do not pass it up.
+    pub fn supports_prompt_cache_key(&self) -> bool {
+        return true;
     }
 }
 
@@ -246,6 +264,8 @@ pub struct Request {
     pub tools: Vec<ToolDefinition>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prompt_cache_key: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_effort: Option<ReasoningEffort>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -255,6 +275,16 @@ pub enum ToolChoice {
     Required,
     None,
     Other(ToolDefinition),
+}
+
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
+#[serde(rename_all = "lowercase")]
+pub enum ReasoningEffort {
+    Minimal,
+    Low,
+    Medium,
+    High,
 }
 
 #[derive(Clone, Deserialize, Serialize, Debug)]
@@ -403,10 +433,15 @@ pub struct ChoiceDelta {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
+pub struct OpenAiError {
+    message: String,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
 #[serde(untagged)]
 pub enum ResponseStreamResult {
     Ok(ResponseStreamEvent),
-    Err { error: String },
+    Err { error: OpenAiError },
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -445,7 +480,7 @@ pub async fn stream_completion(
                             match serde_json::from_str(line) {
                                 Ok(ResponseStreamResult::Ok(response)) => Some(Ok(response)),
                                 Ok(ResponseStreamResult::Err { error }) => {
-                                    Some(Err(anyhow!(error)))
+                                    Some(Err(anyhow!(error.message)))
                                 }
                                 Err(error) => {
                                     log::error!(
@@ -470,11 +505,6 @@ pub async fn stream_completion(
         #[derive(Deserialize)]
         struct OpenAiResponse {
             error: OpenAiError,
-        }
-
-        #[derive(Deserialize)]
-        struct OpenAiError {
-            message: String,
         }
 
         match serde_json::from_str::<OpenAiResponse>(&body) {

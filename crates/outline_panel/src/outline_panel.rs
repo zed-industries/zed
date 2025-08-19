@@ -4815,51 +4815,45 @@ impl OutlinePanel {
                 .when(show_indent_guides, |list| {
                     list.with_decoration(
                         ui::indent_guides(px(indent_size), IndentGuideColors::panel(cx))
-                            .with_compute_indents_fn(
-                                cx.entity().clone(),
-                                |outline_panel, range, _, _| {
-                                    let entries = outline_panel.cached_entries.get(range);
-                                    if let Some(entries) = entries {
-                                        entries.into_iter().map(|item| item.depth).collect()
-                                    } else {
-                                        smallvec::SmallVec::new()
-                                    }
-                                },
-                            )
-                            .with_render_fn(
-                                cx.entity().clone(),
-                                move |outline_panel, params, _, _| {
-                                    const LEFT_OFFSET: Pixels = px(14.);
+                            .with_compute_indents_fn(cx.entity(), |outline_panel, range, _, _| {
+                                let entries = outline_panel.cached_entries.get(range);
+                                if let Some(entries) = entries {
+                                    entries.into_iter().map(|item| item.depth).collect()
+                                } else {
+                                    smallvec::SmallVec::new()
+                                }
+                            })
+                            .with_render_fn(cx.entity(), move |outline_panel, params, _, _| {
+                                const LEFT_OFFSET: Pixels = px(14.);
 
-                                    let indent_size = params.indent_size;
-                                    let item_height = params.item_height;
-                                    let active_indent_guide_ix = find_active_indent_guide_ix(
-                                        outline_panel,
-                                        &params.indent_guides,
-                                    );
+                                let indent_size = params.indent_size;
+                                let item_height = params.item_height;
+                                let active_indent_guide_ix = find_active_indent_guide_ix(
+                                    outline_panel,
+                                    &params.indent_guides,
+                                );
 
-                                    params
-                                        .indent_guides
-                                        .into_iter()
-                                        .enumerate()
-                                        .map(|(ix, layout)| {
-                                            let bounds = Bounds::new(
-                                                point(
-                                                    layout.offset.x * indent_size + LEFT_OFFSET,
-                                                    layout.offset.y * item_height,
-                                                ),
-                                                size(px(1.), layout.length * item_height),
-                                            );
-                                            ui::RenderedIndentGuide {
-                                                bounds,
-                                                layout,
-                                                is_active: active_indent_guide_ix == Some(ix),
-                                                hitbox: None,
-                                            }
-                                        })
-                                        .collect()
-                                },
-                            ),
+                                params
+                                    .indent_guides
+                                    .into_iter()
+                                    .enumerate()
+                                    .map(|(ix, layout)| {
+                                        let bounds = Bounds::new(
+                                            point(
+                                                layout.offset.x * indent_size + LEFT_OFFSET,
+                                                layout.offset.y * item_height,
+                                            ),
+                                            size(px(1.), layout.length * item_height),
+                                        );
+                                        ui::RenderedIndentGuide {
+                                            bounds,
+                                            layout,
+                                            is_active: active_indent_guide_ix == Some(ix),
+                                            hitbox: None,
+                                        }
+                                    })
+                                    .collect()
+                            }),
                     )
                 })
             };
@@ -5504,7 +5498,7 @@ mod tests {
             assert_eq!(
                 display_entries(
                     &project,
-                    &snapshot(&outline_panel, cx),
+                    &snapshot(outline_panel, cx),
                     &outline_panel.cached_entries,
                     outline_panel.selected_entry(),
                     cx,
@@ -5520,7 +5514,7 @@ mod tests {
             assert_eq!(
                 display_entries(
                     &project,
-                    &snapshot(&outline_panel, cx),
+                    &snapshot(outline_panel, cx),
                     &outline_panel.cached_entries,
                     outline_panel.selected_entry(),
                     cx,
@@ -5538,7 +5532,7 @@ mod tests {
             assert_eq!(
                 display_entries(
                     &project,
-                    &snapshot(&outline_panel, cx),
+                    &snapshot(outline_panel, cx),
                     &outline_panel.cached_entries,
                     outline_panel.selected_entry(),
                     cx,
@@ -5575,7 +5569,7 @@ mod tests {
             assert_eq!(
                 display_entries(
                     &project,
-                    &snapshot(&outline_panel, cx),
+                    &snapshot(outline_panel, cx),
                     &outline_panel.cached_entries,
                     outline_panel.selected_entry(),
                     cx,
@@ -5589,7 +5583,7 @@ mod tests {
             assert_eq!(
                 display_entries(
                     &project,
-                    &snapshot(&outline_panel, cx),
+                    &snapshot(outline_panel, cx),
                     &outline_panel.cached_entries,
                     outline_panel.selected_entry(),
                     cx,
@@ -5608,7 +5602,7 @@ mod tests {
             assert_eq!(
                 display_entries(
                     &project,
-                    &snapshot(&outline_panel, cx),
+                    &snapshot(outline_panel, cx),
                     &outline_panel.cached_entries,
                     outline_panel.selected_entry(),
                     cx,
@@ -5636,7 +5630,7 @@ mod tests {
             assert_eq!(
                 display_entries(
                     &project,
-                    &snapshot(&outline_panel, cx),
+                    &snapshot(outline_panel, cx),
                     &outline_panel.cached_entries,
                     outline_panel.selected_entry(),
                     cx,
@@ -5724,7 +5718,7 @@ mod tests {
             assert_eq!(
                 display_entries(
                     &project,
-                    &snapshot(&outline_panel, cx),
+                    &snapshot(outline_panel, cx),
                     &outline_panel.cached_entries,
                     None,
                     cx,
@@ -5747,7 +5741,7 @@ mod tests {
             assert_eq!(
                 display_entries(
                     &project,
-                    &snapshot(&outline_panel, cx),
+                    &snapshot(outline_panel, cx),
                     &outline_panel.cached_entries,
                     None,
                     cx,
@@ -5773,7 +5767,7 @@ mod tests {
             assert_eq!(
                 display_entries(
                     &project,
-                    &snapshot(&outline_panel, cx),
+                    &snapshot(outline_panel, cx),
                     &outline_panel.cached_entries,
                     None,
                     cx,
@@ -5879,7 +5873,7 @@ mod tests {
             assert_eq!(
                 display_entries(
                     &project,
-                    &snapshot(&outline_panel, cx),
+                    &snapshot(outline_panel, cx),
                     &outline_panel.cached_entries,
                     outline_panel.selected_entry(),
                     cx,
@@ -5902,7 +5896,7 @@ mod tests {
             assert_eq!(
                 display_entries(
                     &project,
-                    &snapshot(&outline_panel, cx),
+                    &snapshot(outline_panel, cx),
                     &outline_panel.cached_entries,
                     outline_panel.selected_entry(),
                     cx,
@@ -5939,7 +5933,7 @@ mod tests {
             assert_eq!(
                 display_entries(
                     &project,
-                    &snapshot(&outline_panel, cx),
+                    &snapshot(outline_panel, cx),
                     &outline_panel.cached_entries,
                     outline_panel.selected_entry(),
                     cx,
@@ -5976,7 +5970,7 @@ mod tests {
             assert_eq!(
                 display_entries(
                     &project,
-                    &snapshot(&outline_panel, cx),
+                    &snapshot(outline_panel, cx),
                     &outline_panel.cached_entries,
                     outline_panel.selected_entry(),
                     cx,
@@ -6079,7 +6073,7 @@ mod tests {
             assert_eq!(
                 display_entries(
                     &project,
-                    &snapshot(&outline_panel, cx),
+                    &snapshot(outline_panel, cx),
                     &outline_panel.cached_entries,
                     outline_panel.selected_entry(),
                     cx,
@@ -6105,7 +6099,7 @@ mod tests {
             assert_eq!(
                 display_entries(
                     &project,
-                    &snapshot(&outline_panel, cx),
+                    &snapshot(outline_panel, cx),
                     &outline_panel.cached_entries,
                     outline_panel.selected_entry(),
                     cx,
@@ -6129,7 +6123,7 @@ mod tests {
             assert_eq!(
                 display_entries(
                     &project,
-                    &snapshot(&outline_panel, cx),
+                    &snapshot(outline_panel, cx),
                     &outline_panel.cached_entries,
                     outline_panel.selected_entry(),
                     cx,
@@ -6150,7 +6144,7 @@ mod tests {
             assert_eq!(
                 display_entries(
                     &project,
-                    &snapshot(&outline_panel, cx),
+                    &snapshot(outline_panel, cx),
                     &outline_panel.cached_entries,
                     outline_panel.selected_entry(),
                     cx,
@@ -6238,7 +6232,7 @@ struct OutlineEntryExcerpt {
             assert_eq!(
                 display_entries(
                     &project,
-                    &snapshot(&outline_panel, cx),
+                    &snapshot(outline_panel, cx),
                     &outline_panel.cached_entries,
                     outline_panel.selected_entry(),
                     cx,
@@ -6265,7 +6259,7 @@ outline: struct OutlineEntryExcerpt
             assert_eq!(
                 display_entries(
                     &project,
-                    &snapshot(&outline_panel, cx),
+                    &snapshot(outline_panel, cx),
                     &outline_panel.cached_entries,
                     outline_panel.selected_entry(),
                     cx,
@@ -6292,7 +6286,7 @@ outline: struct OutlineEntryExcerpt  <==== selected
             assert_eq!(
                 display_entries(
                     &project,
-                    &snapshot(&outline_panel, cx),
+                    &snapshot(outline_panel, cx),
                     &outline_panel.cached_entries,
                     outline_panel.selected_entry(),
                     cx,
@@ -6319,7 +6313,7 @@ outline: struct OutlineEntryExcerpt
             assert_eq!(
                 display_entries(
                     &project,
-                    &snapshot(&outline_panel, cx),
+                    &snapshot(outline_panel, cx),
                     &outline_panel.cached_entries,
                     outline_panel.selected_entry(),
                     cx,
@@ -6346,7 +6340,7 @@ outline: struct OutlineEntryExcerpt
             assert_eq!(
                 display_entries(
                     &project,
-                    &snapshot(&outline_panel, cx),
+                    &snapshot(outline_panel, cx),
                     &outline_panel.cached_entries,
                     outline_panel.selected_entry(),
                     cx,
@@ -6373,7 +6367,7 @@ outline: struct OutlineEntryExcerpt
             assert_eq!(
                 display_entries(
                     &project,
-                    &snapshot(&outline_panel, cx),
+                    &snapshot(outline_panel, cx),
                     &outline_panel.cached_entries,
                     outline_panel.selected_entry(),
                     cx,
@@ -6400,7 +6394,7 @@ outline: struct OutlineEntryExcerpt  <==== selected
             assert_eq!(
                 display_entries(
                     &project,
-                    &snapshot(&outline_panel, cx),
+                    &snapshot(outline_panel, cx),
                     &outline_panel.cached_entries,
                     outline_panel.selected_entry(),
                     cx,
@@ -6427,7 +6421,7 @@ outline: struct OutlineEntryExcerpt
             assert_eq!(
                 display_entries(
                     &project,
-                    &snapshot(&outline_panel, cx),
+                    &snapshot(outline_panel, cx),
                     &outline_panel.cached_entries,
                     outline_panel.selected_entry(),
                     cx,
@@ -6454,7 +6448,7 @@ outline: struct OutlineEntryExcerpt
             assert_eq!(
                 display_entries(
                     &project,
-                    &snapshot(&outline_panel, cx),
+                    &snapshot(outline_panel, cx),
                     &outline_panel.cached_entries,
                     outline_panel.selected_entry(),
                     cx,
@@ -6481,7 +6475,7 @@ outline: struct OutlineEntryExcerpt
             assert_eq!(
                 display_entries(
                     &project,
-                    &snapshot(&outline_panel, cx),
+                    &snapshot(outline_panel, cx),
                     &outline_panel.cached_entries,
                     outline_panel.selected_entry(),
                     cx,
@@ -6508,7 +6502,7 @@ outline: struct OutlineEntryExcerpt  <==== selected
             assert_eq!(
                 display_entries(
                     &project,
-                    &snapshot(&outline_panel, cx),
+                    &snapshot(outline_panel, cx),
                     &outline_panel.cached_entries,
                     outline_panel.selected_entry(),
                     cx,
@@ -6614,7 +6608,7 @@ outline: struct OutlineEntryExcerpt
             assert_eq!(
                 display_entries(
                     &project,
-                    &snapshot(&outline_panel, cx),
+                    &snapshot(outline_panel, cx),
                     &outline_panel.cached_entries,
                     outline_panel.selected_entry(),
                     cx,
@@ -6651,7 +6645,7 @@ outline: struct OutlineEntryExcerpt
             assert_eq!(
                 display_entries(
                     &project,
-                    &snapshot(&outline_panel, cx),
+                    &snapshot(outline_panel, cx),
                     &outline_panel.cached_entries,
                     outline_panel.selected_entry(),
                     cx,
@@ -6679,7 +6673,7 @@ outline: struct OutlineEntryExcerpt
             assert_eq!(
                 display_entries(
                     &project,
-                    &snapshot(&outline_panel, cx),
+                    &snapshot(outline_panel, cx),
                     &outline_panel.cached_entries,
                     outline_panel.selected_entry(),
                     cx,
@@ -6711,7 +6705,7 @@ outline: struct OutlineEntryExcerpt
             assert_eq!(
                 display_entries(
                     &project,
-                    &snapshot(&outline_panel, cx),
+                    &snapshot(outline_panel, cx),
                     &outline_panel.cached_entries,
                     outline_panel.selected_entry(),
                     cx,
@@ -6742,7 +6736,7 @@ outline: struct OutlineEntryExcerpt
             assert_eq!(
                 display_entries(
                     &project,
-                    &snapshot(&outline_panel, cx),
+                    &snapshot(outline_panel, cx),
                     &outline_panel.cached_entries,
                     outline_panel.selected_entry(),
                     cx,
@@ -6870,7 +6864,7 @@ outline: struct OutlineEntryExcerpt
                             .render_data
                             .get_or_init(|| SearchData::new(
                                 &search_entry.match_range,
-                                &multi_buffer_snapshot
+                                multi_buffer_snapshot
                             ))
                             .context_text
                     )
@@ -7261,7 +7255,7 @@ outline: struct OutlineEntryExcerpt
             assert_eq!(
                 display_entries(
                     &project,
-                    &snapshot(&outline_panel, cx),
+                    &snapshot(outline_panel, cx),
                     &outline_panel.cached_entries,
                     outline_panel.selected_entry(),
                     cx,
@@ -7320,7 +7314,7 @@ outline: fn main()"
             assert_eq!(
                 display_entries(
                     &project,
-                    &snapshot(&outline_panel, cx),
+                    &snapshot(outline_panel, cx),
                     &outline_panel.cached_entries,
                     outline_panel.selected_entry(),
                     cx,
@@ -7344,7 +7338,7 @@ outline: fn main()"
             assert_eq!(
                 display_entries(
                     &project,
-                    &snapshot(&outline_panel, cx),
+                    &snapshot(outline_panel, cx),
                     &outline_panel.cached_entries,
                     outline_panel.selected_entry(),
                     cx,
@@ -7409,7 +7403,7 @@ outline: fn main()"
             assert_eq!(
                 display_entries(
                     &project,
-                    &snapshot(&outline_panel, cx),
+                    &snapshot(outline_panel, cx),
                     &outline_panel.cached_entries,
                     outline_panel.selected_entry(),
                     cx,
@@ -7550,7 +7544,7 @@ outline: fn main()"
             assert_eq!(
                 display_entries(
                     &project,
-                    &snapshot(&outline_panel, cx),
+                    &snapshot(outline_panel, cx),
                     &outline_panel.cached_entries,
                     outline_panel.selected_entry(),
                     cx,
@@ -7588,7 +7582,7 @@ outline: fn main()"
             assert_eq!(
                 display_entries(
                     &project,
-                    &snapshot(&outline_panel, cx),
+                    &snapshot(outline_panel, cx),
                     &outline_panel.cached_entries,
                     outline_panel.selected_entry(),
                     cx,
@@ -7622,7 +7616,7 @@ outline: fn main()"
             assert_eq!(
                 display_entries(
                     &project,
-                    &snapshot(&outline_panel, cx),
+                    &snapshot(outline_panel, cx),
                     &outline_panel.cached_entries,
                     outline_panel.selected_entry(),
                     cx,
@@ -7654,7 +7648,7 @@ outline: fn main()"
             assert_eq!(
                 display_entries(
                     &project,
-                    &snapshot(&outline_panel, cx),
+                    &snapshot(outline_panel, cx),
                     &outline_panel.cached_entries,
                     outline_panel.selected_entry(),
                     cx,

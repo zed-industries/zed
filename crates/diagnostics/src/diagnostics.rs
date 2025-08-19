@@ -528,7 +528,7 @@ impl ProjectDiagnosticsEditor {
             lsp::DiagnosticSeverity::ERROR
         };
 
-        cx.spawn_in(window, async move |this, mut cx| {
+        cx.spawn_in(window, async move |this, cx| {
             let diagnostics = buffer_snapshot
                 .diagnostics_in_range::<_, text::Anchor>(
                     Point::zero()..buffer_snapshot.max_point(),
@@ -595,7 +595,7 @@ impl ProjectDiagnosticsEditor {
                     b.initial_range.clone(),
                     DEFAULT_MULTIBUFFER_CONTEXT,
                     buffer_snapshot.clone(),
-                    &mut cx,
+                    cx,
                 )
                 .await;
                 let i = excerpt_ranges

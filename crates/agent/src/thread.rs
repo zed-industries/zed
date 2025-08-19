@@ -16,7 +16,6 @@ use chrono::{DateTime, Utc};
 use client::{ModelRequestUsage, RequestUsage};
 use cloud_llm_client::{CompletionIntent, CompletionRequestStatus, Plan, UsageLimit};
 use collections::HashMap;
-use feature_flags::{self, FeatureFlagAppExt};
 use futures::{FutureExt, StreamExt as _, future::Shared};
 use git::repository::DiffType;
 use gpui::{
@@ -388,7 +387,6 @@ pub struct Thread {
     feedback: Option<ThreadFeedback>,
     retry_state: Option<RetryState>,
     message_feedback: HashMap<MessageId, ThreadFeedback>,
-    last_auto_capture_at: Option<Instant>,
     last_received_chunk_at: Option<Instant>,
     request_callback: Option<
         Box<dyn FnMut(&LanguageModelRequest, &[Result<LanguageModelCompletionEvent, String>])>,
@@ -489,7 +487,6 @@ impl Thread {
             feedback: None,
             retry_state: None,
             message_feedback: HashMap::default(),
-            last_auto_capture_at: None,
             last_error_context: None,
             last_received_chunk_at: None,
             request_callback: None,
@@ -614,7 +611,6 @@ impl Thread {
             tool_use_limit_reached: serialized.tool_use_limit_reached,
             feedback: None,
             message_feedback: HashMap::default(),
-            last_auto_capture_at: None,
             last_error_context: None,
             last_received_chunk_at: None,
             request_callback: None,
@@ -844,11 +840,17 @@ impl Thread {
                     .await
                     .unwrap_or(false);
 
-                if !equal {
-                    this.update(cx, |this, cx| {
-                        this.insert_checkpoint(pending_checkpoint, cx)
-                    })?;
-                }
+                this.update(cx, |this, cx| {
+                    this.pending_checkpoint = if equal {
+                        Some(pending_checkpoint)
+                    } else {
+                        this.insert_checkpoint(pending_checkpoint, cx);
+                        Some(ThreadCheckpoint {
+                            message_id: this.next_message_id,
+                            git_checkpoint: final_checkpoint,
+                        })
+                    }
+                })?;
 
                 Ok(())
             }
@@ -1026,8 +1028,6 @@ impl Thread {
                 git_checkpoint,
             });
         }
-
-        self.auto_capture_telemetry(cx);
 
         message_id
     }
@@ -1686,7 +1686,7 @@ impl Thread {
         self.last_received_chunk_at = Some(Instant::now());
 
         let task = cx.spawn(async move |thread, cx| {
-            let stream_completion_future = model.stream_completion(request, &cx);
+            let stream_completion_future = model.stream_completion(request, cx);
             let initial_token_usage =
                 thread.read_with(cx, |thread, _cx| thread.cumulative_token_usage);
             let stream_completion = async {
@@ -1818,7 +1818,7 @@ impl Thread {
                                 let streamed_input = if tool_use.is_input_complete {
                                     None
                                 } else {
-                                    Some((&tool_use.input).clone())
+                                    Some(tool_use.input.clone())
                                 };
 
                                 let ui_text = thread.tool_use.request_tool_use(
@@ -1900,7 +1900,6 @@ impl Thread {
                         cx.emit(ThreadEvent::StreamedCompletion);
                         cx.notify();
 
-                        thread.auto_capture_telemetry(cx);
                         Ok(())
                     })??;
 
@@ -2045,7 +2044,7 @@ impl Thread {
 
                                             retry_scheduled = thread
                                                 .handle_retryable_error_with_delay(
-                                                    &completion_error,
+                                                    completion_error,
                                                     Some(retry_strategy),
                                                     model.clone(),
                                                     intent,
@@ -2074,8 +2073,6 @@ impl Thread {
                     {
                         request_callback(request, response_events);
                     }
-
-                    thread.auto_capture_telemetry(cx);
 
                     if let Ok(initial_usage) = initial_token_usage {
                         let usage = thread.cumulative_token_usage - initial_usage;
@@ -2124,7 +2121,7 @@ impl Thread {
 
         self.pending_summary = cx.spawn(async move |this, cx| {
             let result = async {
-                let mut messages = model.model.stream_completion(request, &cx).await?;
+                let mut messages = model.model.stream_completion(request, cx).await?;
 
                 let mut new_summary = String::new();
                 while let Some(event) = messages.next().await {
@@ -2267,6 +2264,15 @@ impl Thread {
                     delay: BASE_RETRY_DELAY,
                     max_attempts: 3,
                 })
+            }
+            Other(err)
+                if err.is::<PaymentRequiredError>()
+                    || err.is::<ModelRequestLimitReachedError>() =>
+            {
+                // Retrying won't help for Payment Required or Model Request Limit errors (where
+                // the user must upgrade to usage-based billing to get more requests, or else wait
+                // for a significant amount of time for the request limit to reset).
+                None
             }
             // Conservatively assume that any other errors are non-retryable
             HttpResponseError { .. } | Other(..) => Some(RetryStrategy::Fixed {
@@ -2441,7 +2447,7 @@ impl Thread {
         // which result to prefer (the old task could complete after the new one, resulting in a
         // stale summary).
         self.detailed_summary_task = cx.spawn(async move |thread, cx| {
-            let stream = model.stream_completion_text(request, &cx);
+            let stream = model.stream_completion_text(request, cx);
             let Some(mut messages) = stream.await.log_err() else {
                 thread
                     .update(cx, |thread, _cx| {
@@ -2521,7 +2527,6 @@ impl Thread {
         model: Arc<dyn LanguageModel>,
         cx: &mut Context<Self>,
     ) -> Vec<PendingToolUse> {
-        self.auto_capture_telemetry(cx);
         let request =
             Arc::new(self.to_completion_request(model.clone(), CompletionIntent::ToolResults, cx));
         let pending_tool_uses = self
@@ -2730,7 +2735,6 @@ impl Thread {
                 if !canceled {
                     self.send_to_model(model.clone(), CompletionIntent::ToolResults, window, cx);
                 }
-                self.auto_capture_telemetry(cx);
             }
         }
 
@@ -3130,50 +3134,6 @@ impl Thread {
 
     pub fn project(&self) -> &Entity<Project> {
         &self.project
-    }
-
-    pub fn auto_capture_telemetry(&mut self, cx: &mut Context<Self>) {
-        if !cx.has_flag::<feature_flags::ThreadAutoCaptureFeatureFlag>() {
-            return;
-        }
-
-        let now = Instant::now();
-        if let Some(last) = self.last_auto_capture_at {
-            if now.duration_since(last).as_secs() < 10 {
-                return;
-            }
-        }
-
-        self.last_auto_capture_at = Some(now);
-
-        let thread_id = self.id().clone();
-        let github_login = self
-            .project
-            .read(cx)
-            .user_store()
-            .read(cx)
-            .current_user()
-            .map(|user| user.github_login.clone());
-        let client = self.project.read(cx).client();
-        let serialize_task = self.serialize(cx);
-
-        cx.background_executor()
-            .spawn(async move {
-                if let Ok(serialized_thread) = serialize_task.await {
-                    if let Ok(thread_data) = serde_json::to_value(serialized_thread) {
-                        telemetry::event!(
-                            "Agent Thread Auto-Captured",
-                            thread_id = thread_id.to_string(),
-                            thread_data = thread_data,
-                            auto_capture_reason = "tracked_user",
-                            github_login = github_login
-                        );
-
-                        client.telemetry().flush_events().await;
-                    }
-                }
-            })
-            .detach();
     }
 
     pub fn cumulative_token_usage(&self) -> TokenUsage {
@@ -4028,7 +3988,7 @@ fn main() {{
         });
 
         let fake_model = model.as_fake();
-        simulate_successful_response(&fake_model, cx);
+        simulate_successful_response(fake_model, cx);
 
         // Should start generating summary when there are >= 2 messages
         thread.read_with(cx, |thread, _| {
@@ -4123,7 +4083,7 @@ fn main() {{
         });
 
         let fake_model = model.as_fake();
-        simulate_successful_response(&fake_model, cx);
+        simulate_successful_response(fake_model, cx);
 
         thread.read_with(cx, |thread, _| {
             // State is still Error, not Generating
@@ -5322,7 +5282,7 @@ fn main() {{
     }
 
     #[gpui::test]
-    async fn test_retry_cancelled_on_stop(cx: &mut TestAppContext) {
+    async fn test_retry_canceled_on_stop(cx: &mut TestAppContext) {
         init_test_settings(cx);
 
         let project = create_test_project(cx, json!({})).await;
@@ -5378,7 +5338,7 @@ fn main() {{
             "Should have no pending completions after cancellation"
         );
 
-        // Verify the retry was cancelled by checking retry state
+        // Verify the retry was canceled by checking retry state
         thread.read_with(cx, |thread, _| {
             if let Some(retry_state) = &thread.retry_state {
                 panic!(
@@ -5405,7 +5365,7 @@ fn main() {{
         });
 
         let fake_model = model.as_fake();
-        simulate_successful_response(&fake_model, cx);
+        simulate_successful_response(fake_model, cx);
 
         thread.read_with(cx, |thread, _| {
             assert!(matches!(thread.summary(), ThreadSummary::Generating));

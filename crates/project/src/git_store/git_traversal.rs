@@ -211,7 +211,7 @@ impl Deref for GitEntryRef<'_> {
     type Target = Entry;
 
     fn deref(&self) -> &Self::Target {
-        &self.entry
+        self.entry
     }
 }
 

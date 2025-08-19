@@ -53,7 +53,7 @@ pub fn marked_display_snapshot(
     let (unmarked_text, markers) = marked_text_offsets(text);
 
     let font = Font {
-        family: "Zed Plex Mono".into(),
+        family: ".ZedMono".into(),
         features: FontFeatures::default(),
         fallbacks: None,
         weight: FontWeight::default(),
@@ -189,7 +189,7 @@ pub fn editor_content_with_blocks(editor: &Entity<Editor>, cx: &mut VisualTestCo
                         continue;
                     }
                 };
-                let content = block_content_for_tests(&editor, custom_block.id, cx)
+                let content = block_content_for_tests(editor, custom_block.id, cx)
                     .expect("block content not found");
                 // 2: "related info 1 for diagnostic 0"
                 if let Some(height) = custom_block.height {

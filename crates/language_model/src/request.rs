@@ -220,7 +220,7 @@ impl<'de> Deserialize<'de> for LanguageModelToolResultContent {
 
             // Accept wrapped text format: { "type": "text", "text": "..." }
             if let (Some(type_value), Some(text_value)) =
-                (get_field(&obj, "type"), get_field(&obj, "text"))
+                (get_field(obj, "type"), get_field(obj, "text"))
             {
                 if let Some(type_str) = type_value.as_str() {
                     if type_str.to_lowercase() == "text" {
@@ -255,7 +255,7 @@ impl<'de> Deserialize<'de> for LanguageModelToolResultContent {
             }
 
             // Try as direct Image (object with "source" and "size" fields)
-            if let Some(image) = LanguageModelImage::from_json(&obj) {
+            if let Some(image) = LanguageModelImage::from_json(obj) {
                 return Ok(Self::Image(image));
             }
         }
@@ -272,7 +272,7 @@ impl<'de> Deserialize<'de> for LanguageModelToolResultContent {
 impl LanguageModelToolResultContent {
     pub fn to_str(&self) -> Option<&str> {
         match self {
-            Self::Text(text) => Some(&text),
+            Self::Text(text) => Some(text),
             Self::Image(_) => None,
         }
     }

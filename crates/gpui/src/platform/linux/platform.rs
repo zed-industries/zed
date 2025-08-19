@@ -294,6 +294,7 @@ impl<P: LinuxClient + 'static> Platform for P {
                 let request = match ashpd::desktop::file_chooser::OpenFileRequest::default()
                     .modal(true)
                     .title(title)
+                    .accept_label(options.prompt.as_ref().map(crate::SharedString::as_str))
                     .multiple(options.multiple)
                     .directory(options.directories)
                     .send()
@@ -327,26 +328,35 @@ impl<P: LinuxClient + 'static> Platform for P {
         done_rx
     }
 
-    fn prompt_for_new_path(&self, directory: &Path) -> oneshot::Receiver<Result<Option<PathBuf>>> {
+    fn prompt_for_new_path(
+        &self,
+        directory: &Path,
+        suggested_name: Option<&str>,
+    ) -> oneshot::Receiver<Result<Option<PathBuf>>> {
         let (done_tx, done_rx) = oneshot::channel();
 
         #[cfg(not(any(feature = "wayland", feature = "x11")))]
-        let _ = (done_tx.send(Ok(None)), directory);
+        let _ = (done_tx.send(Ok(None)), directory, suggested_name);
 
         #[cfg(any(feature = "wayland", feature = "x11"))]
         self.foreground_executor()
             .spawn({
                 let directory = directory.to_owned();
+                let suggested_name = suggested_name.map(|s| s.to_owned());
 
                 async move {
-                    let request = match ashpd::desktop::file_chooser::SaveFileRequest::default()
-                        .modal(true)
-                        .title("Save File")
-                        .current_folder(directory)
-                        .expect("pathbuf should not be nul terminated")
-                        .send()
-                        .await
-                    {
+                    let mut request_builder =
+                        ashpd::desktop::file_chooser::SaveFileRequest::default()
+                            .modal(true)
+                            .title("Save File")
+                            .current_folder(directory)
+                            .expect("pathbuf should not be nul terminated");
+
+                    if let Some(suggested_name) = suggested_name {
+                        request_builder = request_builder.current_name(suggested_name.as_str());
+                    }
+
+                    let request = match request_builder.send().await {
                         Ok(request) => request,
                         Err(err) => {
                             let result = match err {
@@ -632,7 +642,7 @@ pub(super) fn get_xkb_compose_state(cx: &xkb::Context) -> Option<xkb::compose::S
     let mut state: Option<xkb::compose::State> = None;
     for locale in locales {
         if let Ok(table) =
-            xkb::compose::Table::new_from_locale(&cx, &locale, xkb::compose::COMPILE_NO_FLAGS)
+            xkb::compose::Table::new_from_locale(cx, &locale, xkb::compose::COMPILE_NO_FLAGS)
         {
             state = Some(xkb::compose::State::new(
                 &table,

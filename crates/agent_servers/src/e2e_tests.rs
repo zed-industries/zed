@@ -134,7 +134,9 @@ pub async fn test_tool_call(server: impl AgentServer + 'static, cx: &mut TestApp
             matches!(
                 entry,
                 AgentThreadEntry::ToolCall(ToolCall {
-                    status: ToolCallStatus::Allowed { .. },
+                    status: ToolCallStatus::Pending
+                        | ToolCallStatus::InProgress
+                        | ToolCallStatus::Completed,
                     ..
                 })
             )
@@ -212,7 +214,9 @@ pub async fn test_tool_call_with_permission(
         assert!(thread.entries().iter().any(|entry| matches!(
             entry,
             AgentThreadEntry::ToolCall(ToolCall {
-                status: ToolCallStatus::Allowed { .. },
+                status: ToolCallStatus::Pending
+                    | ToolCallStatus::InProgress
+                    | ToolCallStatus::Completed,
                 ..
             })
         )));
@@ -223,7 +227,9 @@ pub async fn test_tool_call_with_permission(
     thread.read_with(cx, |thread, cx| {
         let AgentThreadEntry::ToolCall(ToolCall {
             content,
-            status: ToolCallStatus::Allowed { .. },
+            status: ToolCallStatus::Pending
+                | ToolCallStatus::InProgress
+                | ToolCallStatus::Completed,
             ..
         }) = thread
             .entries()
@@ -422,8 +428,8 @@ pub async fn new_test_thread(
         .await
         .unwrap();
 
-    let thread = connection
-        .new_thread(project.clone(), current_dir.as_ref(), &mut cx.to_async())
+    let thread = cx
+        .update(|cx| connection.new_thread(project.clone(), current_dir.as_ref(), cx))
         .await
         .unwrap();
 

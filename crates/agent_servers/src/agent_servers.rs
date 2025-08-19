@@ -18,6 +18,7 @@ use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::{
+    any::Any,
     path::{Path, PathBuf},
     rc::Rc,
     sync::Arc,
@@ -40,6 +41,14 @@ pub trait AgentServer: Send {
         project: &Entity<Project>,
         cx: &mut App,
     ) -> Task<Result<Rc<dyn AgentConnection>>>;
+
+    fn into_any(self: Rc<Self>) -> Rc<dyn Any>;
+}
+
+impl dyn AgentServer {
+    pub fn downcast<T: 'static + AgentServer + Sized>(self: Rc<Self>) -> Option<Rc<T>> {
+        self.into_any().downcast().ok()
+    }
 }
 
 impl std::fmt::Debug for AgentServerCommand {

@@ -231,7 +231,7 @@ fn apply_dirty_filename_style(
     let highlight = vec![(filename_position..text.len(), highlight_style)];
     Some(
         StyledText::new(text)
-            .with_default_highlights(&text_style, highlight)
+            .with_default_highlights(text_style, highlight)
             .into_any(),
     )
 }

@@ -133,6 +133,8 @@ pub struct LanguageSettings {
     /// Whether to use additional LSP queries to format (and amend) the code after
     /// every "trigger" symbol input, defined by LSP server capabilities.
     pub use_on_type_format: bool,
+    /// Whether indentation should be adjusted based on the context whilst typing.
+    pub auto_indent: bool,
     /// Whether indentation of pasted content should be adjusted based on the context.
     pub auto_indent_on_paste: bool,
     /// Controls how the editor handles the autoclosed characters.
@@ -185,8 +187,8 @@ impl LanguageSettings {
         let rest = available_language_servers
             .iter()
             .filter(|&available_language_server| {
-                !disabled_language_servers.contains(&available_language_server)
-                    && !enabled_language_servers.contains(&available_language_server)
+                !disabled_language_servers.contains(available_language_server)
+                    && !enabled_language_servers.contains(available_language_server)
             })
             .cloned()
             .collect::<Vec<_>>();
@@ -561,6 +563,10 @@ pub struct LanguageSettingsContent {
     ///
     /// Default: true
     pub linked_edits: Option<bool>,
+    /// Whether indentation should be adjusted based on the context whilst typing.
+    ///
+    /// Default: true
+    pub auto_indent: Option<bool>,
     /// Whether indentation of pasted content should be adjusted based on the context.
     ///
     /// Default: true
@@ -1517,6 +1523,7 @@ fn merge_settings(settings: &mut LanguageSettings, src: &LanguageSettingsContent
     merge(&mut settings.use_autoclose, src.use_autoclose);
     merge(&mut settings.use_auto_surround, src.use_auto_surround);
     merge(&mut settings.use_on_type_format, src.use_on_type_format);
+    merge(&mut settings.auto_indent, src.auto_indent);
     merge(&mut settings.auto_indent_on_paste, src.auto_indent_on_paste);
     merge(
         &mut settings.always_treat_brackets_as_autoclosed,

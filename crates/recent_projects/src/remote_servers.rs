@@ -1094,11 +1094,10 @@ impl RemoteServerProjects {
                                         .size(LabelSize::Small),
                                     )
                                     .child(
-                                        Button::new("learn-more", "Learn more…")
+                                        Button::new("learn-more", "Learn More")
                                             .label_size(LabelSize::Small)
-                                            .size(ButtonSize::None)
-                                            .color(Color::Accent)
-                                            .style(ButtonStyle::Transparent)
+                                            .icon(IconName::ArrowUpRight)
+                                            .icon_size(IconSize::XSmall)
                                             .on_click(|_, _, cx| {
                                                 cx.open_url(
                                                     "https://zed.dev/docs/remote-development",
@@ -1292,7 +1291,7 @@ impl RemoteServerProjects {
                                     let connection_string = connection_string.clone();
                                     move |_, _: &menu::Confirm, window, cx| {
                                         remove_ssh_server(
-                                            cx.entity().clone(),
+                                            cx.entity(),
                                             server_index,
                                             connection_string.clone(),
                                             window,
@@ -1312,7 +1311,7 @@ impl RemoteServerProjects {
                                         .child(Label::new("Remove Server").color(Color::Error))
                                         .on_click(cx.listener(move |_, _, window, cx| {
                                             remove_ssh_server(
-                                                cx.entity().clone(),
+                                                cx.entity(),
                                                 server_index,
                                                 connection_string.clone(),
                                                 window,
@@ -1491,7 +1490,7 @@ impl RemoteServerProjects {
                 .track_focus(&self.focus_handle(cx))
                 .id("ssh-server-list")
                 .overflow_y_scroll()
-                .track_scroll(&scroll_handle)
+                .track_scroll(scroll_handle)
                 .size_full()
                 .child(connect_button)
                 .child(

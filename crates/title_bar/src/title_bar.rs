@@ -478,7 +478,7 @@ impl TitleBar {
             repo.branch
                 .as_ref()
                 .map(|branch| branch.name())
-                .map(|name| util::truncate_and_trailoff(&name, MAX_BRANCH_NAME_LENGTH))
+                .map(|name| util::truncate_and_trailoff(name, MAX_BRANCH_NAME_LENGTH))
                 .or_else(|| {
                     repo.head_commit.as_ref().map(|commit| {
                         commit
@@ -595,7 +595,7 @@ impl TitleBar {
                         .on_click(|_, window, cx| {
                             if let Some(auto_updater) = auto_update::AutoUpdater::get(cx) {
                                 if auto_updater.read(cx).status().is_updated() {
-                                    workspace::reload(&Default::default(), cx);
+                                    workspace::reload(cx);
                                     return;
                                 }
                             }
@@ -617,7 +617,7 @@ impl TitleBar {
                 window
                     .spawn(cx, async move |cx| {
                         client
-                            .sign_in_with_optional_connect(true, &cx)
+                            .sign_in_with_optional_connect(true, cx)
                             .await
                             .notify_async_err(cx);
                     })

@@ -137,7 +137,11 @@ impl AgentConfiguration {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let configuration_view = provider.configuration_view(window, cx);
+        let configuration_view = provider.configuration_view(
+            language_model::ConfigurationViewTargetAgent::ZedAgent,
+            window,
+            cx,
+        );
         self.configuration_views_by_provider
             .insert(provider.id(), configuration_view);
     }
@@ -300,6 +304,7 @@ impl AgentConfiguration {
             )
             .child(
                 div()
+                    .w_full()
                     .px_2()
                     .when(is_expanded, |parent| match configuration_view {
                         Some(configuration_view) => parent.child(configuration_view),
@@ -465,7 +470,7 @@ impl AgentConfiguration {
             "modifier-send",
             "Use modifier to submit a message",
             Some(
-                "Make a modifier (cmd-enter on macOS, ctrl-enter on Linux) required to send messages.".into(),
+                "Make a modifier (cmd-enter on macOS, ctrl-enter on Linux or Windows) required to send messages.".into(),
             ),
             use_modifier_to_send,
             move |state, _window, cx| {
@@ -1035,7 +1040,6 @@ fn extension_only_provides_context_server(manifest: &ExtensionManifest) -> bool 
         && manifest.grammars.is_empty()
         && manifest.language_servers.is_empty()
         && manifest.slash_commands.is_empty()
-        && manifest.indexed_docs_providers.is_empty()
         && manifest.snippets.is_none()
         && manifest.debug_locators.is_empty()
 }

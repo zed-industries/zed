@@ -220,7 +220,11 @@ pub(crate) trait Platform: 'static {
         &self,
         options: PathPromptOptions,
     ) -> oneshot::Receiver<Result<Option<Vec<PathBuf>>>>;
-    fn prompt_for_new_path(&self, directory: &Path) -> oneshot::Receiver<Result<Option<PathBuf>>>;
+    fn prompt_for_new_path(
+        &self,
+        directory: &Path,
+        suggested_name: Option<&str>,
+    ) -> oneshot::Receiver<Result<Option<PathBuf>>>;
     fn can_select_mixed_files_and_dirs(&self) -> bool;
     fn reveal_path(&self, path: &Path);
     fn open_with_system(&self, path: &Path);
@@ -1274,7 +1278,7 @@ pub enum WindowBackgroundAppearance {
 }
 
 /// The options that can be configured for a file dialog prompt
-#[derive(Copy, Clone, Debug)]
+#[derive(Clone, Debug)]
 pub struct PathPromptOptions {
     /// Should the prompt allow files to be selected?
     pub files: bool,
@@ -1282,6 +1286,8 @@ pub struct PathPromptOptions {
     pub directories: bool,
     /// Should the prompt allow multiple files to be selected?
     pub multiple: bool,
+    /// The prompt to show to a user when selecting a path
+    pub prompt: Option<SharedString>,
 }
 
 /// What kind of prompt styling to show
@@ -1502,7 +1508,7 @@ impl ClipboardItem {
 
         for entry in self.entries.iter() {
             if let ClipboardEntry::String(ClipboardString { text, metadata: _ }) = entry {
-                answer.push_str(&text);
+                answer.push_str(text);
                 any_entries = true;
             }
         }

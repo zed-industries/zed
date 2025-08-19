@@ -103,7 +103,7 @@ impl ContextServerRegistry {
                         self.reload_tools_for_server(server_id.clone(), cx);
                     }
                     ContextServerStatus::Stopped | ContextServerStatus::Error(_) => {
-                        self.registered_servers.remove(&server_id);
+                        self.registered_servers.remove(server_id);
                         cx.notify();
                     }
                 }

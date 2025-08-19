@@ -1,78 +1,354 @@
 use crate::{ContextServerRegistry, SystemPromptTemplate, Template, Templates};
-use acp_thread::MentionUri;
+use acp_thread::{MentionUri, UserMessageId};
 use action_log::ActionLog;
 use agent_client_protocol as acp;
-use agent_settings::{AgentProfileId, AgentSettings};
+use agent_settings::{AgentProfileId, AgentSettings, CompletionMode};
 use anyhow::{Context as _, Result, anyhow};
 use assistant_tool::adapt_schema_to_format;
-use cloud_llm_client::{CompletionIntent, CompletionMode};
-use collections::HashMap;
+use cloud_llm_client::{CompletionIntent, CompletionRequestStatus};
+use collections::IndexMap;
 use fs::Fs;
 use futures::{
     channel::{mpsc, oneshot},
     stream::FuturesUnordered,
 };
-use gpui::{App, Context, Entity, SharedString, Task};
+use gpui::{App, AsyncApp, Context, Entity, SharedString, Task, WeakEntity};
 use language_model::{
     LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelImage,
-    LanguageModelRequest, LanguageModelRequestMessage, LanguageModelRequestTool,
-    LanguageModelToolResult, LanguageModelToolResultContent, LanguageModelToolSchemaFormat,
-    LanguageModelToolUse, LanguageModelToolUseId, Role, StopReason,
+    LanguageModelProviderId, LanguageModelRequest, LanguageModelRequestMessage,
+    LanguageModelRequestTool, LanguageModelToolResult, LanguageModelToolResultContent,
+    LanguageModelToolSchemaFormat, LanguageModelToolUse, LanguageModelToolUseId, Role, StopReason,
 };
-use log;
 use project::Project;
 use prompt_store::ProjectContext;
 use schemars::{JsonSchema, Schema};
 use serde::{Deserialize, Serialize};
 use settings::{Settings, update_settings_file};
 use smol::stream::StreamExt;
-use std::fmt::Write;
-use std::{cell::RefCell, collections::BTreeMap, path::Path, rc::Rc, sync::Arc};
+use std::{
+    collections::BTreeMap,
+    path::Path,
+    sync::Arc,
+    time::{Duration, Instant},
+};
+use std::{fmt::Write, ops::Range};
 use util::{ResultExt, markdown::MarkdownCodeBlock};
+use uuid::Uuid;
+
+#[derive(
+    Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Serialize, Deserialize, JsonSchema,
+)]
+pub struct ThreadId(Arc<str>);
+
+impl ThreadId {
+    pub fn new() -> Self {
+        Self(Uuid::new_v4().to_string().into())
+    }
+}
+
+impl std::fmt::Display for ThreadId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl From<&str> for ThreadId {
+    fn from(value: &str) -> Self {
+        Self(value.into())
+    }
+}
+
+/// The ID of the user prompt that initiated a request.
+///
+/// This equates to the user physically submitting a message to the model (e.g., by pressing the Enter key).
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Serialize, Deserialize)]
+pub struct PromptId(Arc<str>);
+
+impl PromptId {
+    pub fn new() -> Self {
+        Self(Uuid::new_v4().to_string().into())
+    }
+}
+
+impl std::fmt::Display for PromptId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+pub(crate) const MAX_RETRY_ATTEMPTS: u8 = 4;
+pub(crate) const BASE_RETRY_DELAY: Duration = Duration::from_secs(5);
 
 #[derive(Debug, Clone)]
-pub struct AgentMessage {
-    pub role: Role,
-    pub content: Vec<MessageContent>,
+enum RetryStrategy {
+    ExponentialBackoff {
+        initial_delay: Duration,
+        max_attempts: u8,
+    },
+    Fixed {
+        delay: Duration,
+        max_attempts: u8,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum MessageContent {
+pub enum Message {
+    User(UserMessage),
+    Agent(AgentMessage),
+    Resume,
+}
+
+impl Message {
+    pub fn as_agent_message(&self) -> Option<&AgentMessage> {
+        match self {
+            Message::Agent(agent_message) => Some(agent_message),
+            _ => None,
+        }
+    }
+
+    pub fn to_markdown(&self) -> String {
+        match self {
+            Message::User(message) => message.to_markdown(),
+            Message::Agent(message) => message.to_markdown(),
+            Message::Resume => "[resumed after tool use limit was reached]".into(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UserMessage {
+    pub id: UserMessageId,
+    pub content: Vec<UserMessageContent>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum UserMessageContent {
     Text(String),
-    Thinking {
-        text: String,
-        signature: Option<String>,
-    },
-    Mention {
-        uri: MentionUri,
-        content: String,
-    },
-    RedactedThinking(String),
+    Mention { uri: MentionUri, content: String },
     Image(LanguageModelImage),
-    ToolUse(LanguageModelToolUse),
-    ToolResult(LanguageModelToolResult),
+}
+
+impl UserMessage {
+    pub fn to_markdown(&self) -> String {
+        let mut markdown = String::from("## User\n\n");
+
+        for content in &self.content {
+            match content {
+                UserMessageContent::Text(text) => {
+                    markdown.push_str(text);
+                    markdown.push('\n');
+                }
+                UserMessageContent::Image(_) => {
+                    markdown.push_str("<image />\n");
+                }
+                UserMessageContent::Mention { uri, content } => {
+                    if !content.is_empty() {
+                        let _ = write!(&mut markdown, "{}\n\n{}\n", uri.as_link(), content);
+                    } else {
+                        let _ = write!(&mut markdown, "{}\n", uri.as_link());
+                    }
+                }
+            }
+        }
+
+        markdown
+    }
+
+    fn to_request(&self) -> LanguageModelRequestMessage {
+        let mut message = LanguageModelRequestMessage {
+            role: Role::User,
+            content: Vec::with_capacity(self.content.len()),
+            cache: false,
+        };
+
+        const OPEN_CONTEXT: &str = "<context>\n\
+            The following items were attached by the user. \
+            They are up-to-date and don't need to be re-read.\n\n";
+
+        const OPEN_FILES_TAG: &str = "<files>";
+        const OPEN_DIRECTORIES_TAG: &str = "<directories>";
+        const OPEN_SYMBOLS_TAG: &str = "<symbols>";
+        const OPEN_THREADS_TAG: &str = "<threads>";
+        const OPEN_FETCH_TAG: &str = "<fetched_urls>";
+        const OPEN_RULES_TAG: &str =
+            "<rules>\nThe user has specified the following rules that should be applied:\n";
+
+        let mut file_context = OPEN_FILES_TAG.to_string();
+        let mut directory_context = OPEN_DIRECTORIES_TAG.to_string();
+        let mut symbol_context = OPEN_SYMBOLS_TAG.to_string();
+        let mut thread_context = OPEN_THREADS_TAG.to_string();
+        let mut fetch_context = OPEN_FETCH_TAG.to_string();
+        let mut rules_context = OPEN_RULES_TAG.to_string();
+
+        for chunk in &self.content {
+            let chunk = match chunk {
+                UserMessageContent::Text(text) => {
+                    language_model::MessageContent::Text(text.clone())
+                }
+                UserMessageContent::Image(value) => {
+                    language_model::MessageContent::Image(value.clone())
+                }
+                UserMessageContent::Mention { uri, content } => {
+                    match uri {
+                        MentionUri::File { abs_path } => {
+                            write!(
+                                &mut symbol_context,
+                                "\n{}",
+                                MarkdownCodeBlock {
+                                    tag: &codeblock_tag(abs_path, None),
+                                    text: &content.to_string(),
+                                }
+                            )
+                            .ok();
+                        }
+                        MentionUri::Directory { .. } => {
+                            write!(&mut directory_context, "\n{}\n", content).ok();
+                        }
+                        MentionUri::Symbol {
+                            path, line_range, ..
+                        }
+                        | MentionUri::Selection {
+                            path, line_range, ..
+                        } => {
+                            write!(
+                                &mut rules_context,
+                                "\n{}",
+                                MarkdownCodeBlock {
+                                    tag: &codeblock_tag(path, Some(line_range)),
+                                    text: content
+                                }
+                            )
+                            .ok();
+                        }
+                        MentionUri::Thread { .. } => {
+                            write!(&mut thread_context, "\n{}\n", content).ok();
+                        }
+                        MentionUri::TextThread { .. } => {
+                            write!(&mut thread_context, "\n{}\n", content).ok();
+                        }
+                        MentionUri::Rule { .. } => {
+                            write!(
+                                &mut rules_context,
+                                "\n{}",
+                                MarkdownCodeBlock {
+                                    tag: "",
+                                    text: content
+                                }
+                            )
+                            .ok();
+                        }
+                        MentionUri::Fetch { url } => {
+                            write!(&mut fetch_context, "\nFetch: {}\n\n{}", url, content).ok();
+                        }
+                    }
+
+                    language_model::MessageContent::Text(uri.as_link().to_string())
+                }
+            };
+
+            message.content.push(chunk);
+        }
+
+        let len_before_context = message.content.len();
+
+        if file_context.len() > OPEN_FILES_TAG.len() {
+            file_context.push_str("</files>\n");
+            message
+                .content
+                .push(language_model::MessageContent::Text(file_context));
+        }
+
+        if directory_context.len() > OPEN_DIRECTORIES_TAG.len() {
+            directory_context.push_str("</directories>\n");
+            message
+                .content
+                .push(language_model::MessageContent::Text(directory_context));
+        }
+
+        if symbol_context.len() > OPEN_SYMBOLS_TAG.len() {
+            symbol_context.push_str("</symbols>\n");
+            message
+                .content
+                .push(language_model::MessageContent::Text(symbol_context));
+        }
+
+        if thread_context.len() > OPEN_THREADS_TAG.len() {
+            thread_context.push_str("</threads>\n");
+            message
+                .content
+                .push(language_model::MessageContent::Text(thread_context));
+        }
+
+        if fetch_context.len() > OPEN_FETCH_TAG.len() {
+            fetch_context.push_str("</fetched_urls>\n");
+            message
+                .content
+                .push(language_model::MessageContent::Text(fetch_context));
+        }
+
+        if rules_context.len() > OPEN_RULES_TAG.len() {
+            rules_context.push_str("</user_rules>\n");
+            message
+                .content
+                .push(language_model::MessageContent::Text(rules_context));
+        }
+
+        if message.content.len() > len_before_context {
+            message.content.insert(
+                len_before_context,
+                language_model::MessageContent::Text(OPEN_CONTEXT.into()),
+            );
+            message
+                .content
+                .push(language_model::MessageContent::Text("</context>".into()));
+        }
+
+        message
+    }
+}
+
+fn codeblock_tag(full_path: &Path, line_range: Option<&Range<u32>>) -> String {
+    let mut result = String::new();
+
+    if let Some(extension) = full_path.extension().and_then(|ext| ext.to_str()) {
+        let _ = write!(result, "{} ", extension);
+    }
+
+    let _ = write!(result, "{}", full_path.display());
+
+    if let Some(range) = line_range {
+        if range.start == range.end {
+            let _ = write!(result, ":{}", range.start + 1);
+        } else {
+            let _ = write!(result, ":{}-{}", range.start + 1, range.end + 1);
+        }
+    }
+
+    result
 }
 
 impl AgentMessage {
     pub fn to_markdown(&self) -> String {
-        let mut markdown = format!("## {}\n", self.role);
+        let mut markdown = String::from("## Assistant\n\n");
 
         for content in &self.content {
             match content {
-                MessageContent::Text(text) => {
+                AgentMessageContent::Text(text) => {
                     markdown.push_str(text);
                     markdown.push('\n');
                 }
-                MessageContent::Thinking { text, .. } => {
+                AgentMessageContent::Thinking { text, .. } => {
                     markdown.push_str("<think>");
                     markdown.push_str(text);
                     markdown.push_str("</think>\n");
                 }
-                MessageContent::RedactedThinking(_) => markdown.push_str("<redacted_thinking />\n"),
-                MessageContent::Image(_) => {
+                AgentMessageContent::RedactedThinking(_) => {
+                    markdown.push_str("<redacted_thinking />\n")
+                }
+                AgentMessageContent::Image(_) => {
                     markdown.push_str("<image />\n");
                 }
-                MessageContent::ToolUse(tool_use) => {
+                AgentMessageContent::ToolUse(tool_use) => {
                     markdown.push_str(&format!(
                         "**Tool Use**: {} (ID: {})\n",
                         tool_use.name, tool_use.id
@@ -85,41 +361,111 @@ impl AgentMessage {
                         }
                     ));
                 }
-                MessageContent::ToolResult(tool_result) => {
-                    markdown.push_str(&format!(
-                        "**Tool Result**: {} (ID: {})\n\n",
-                        tool_result.tool_name, tool_result.tool_use_id
-                    ));
-                    if tool_result.is_error {
-                        markdown.push_str("**ERROR:**\n");
-                    }
+            }
+        }
 
-                    match &tool_result.content {
-                        LanguageModelToolResultContent::Text(text) => {
-                            writeln!(markdown, "{text}\n").ok();
-                        }
-                        LanguageModelToolResultContent::Image(_) => {
-                            writeln!(markdown, "<image />\n").ok();
-                        }
-                    }
+        for tool_result in self.tool_results.values() {
+            markdown.push_str(&format!(
+                "**Tool Result**: {} (ID: {})\n\n",
+                tool_result.tool_name, tool_result.tool_use_id
+            ));
+            if tool_result.is_error {
+                markdown.push_str("**ERROR:**\n");
+            }
 
-                    if let Some(output) = tool_result.output.as_ref() {
-                        writeln!(
-                            markdown,
-                            "**Debug Output**:\n\n```json\n{}\n```\n",
-                            serde_json::to_string_pretty(output).unwrap()
-                        )
-                        .unwrap();
-                    }
+            match &tool_result.content {
+                LanguageModelToolResultContent::Text(text) => {
+                    writeln!(markdown, "{text}\n").ok();
                 }
-                MessageContent::Mention { uri, .. } => {
-                    write!(markdown, "{}", uri.to_link()).ok();
+                LanguageModelToolResultContent::Image(_) => {
+                    writeln!(markdown, "<image />\n").ok();
                 }
+            }
+
+            if let Some(output) = tool_result.output.as_ref() {
+                writeln!(
+                    markdown,
+                    "**Debug Output**:\n\n```json\n{}\n```\n",
+                    serde_json::to_string_pretty(output).unwrap()
+                )
+                .unwrap();
             }
         }
 
         markdown
     }
+
+    pub fn to_request(&self) -> Vec<LanguageModelRequestMessage> {
+        let mut assistant_message = LanguageModelRequestMessage {
+            role: Role::Assistant,
+            content: Vec::with_capacity(self.content.len()),
+            cache: false,
+        };
+        for chunk in &self.content {
+            let chunk = match chunk {
+                AgentMessageContent::Text(text) => {
+                    language_model::MessageContent::Text(text.clone())
+                }
+                AgentMessageContent::Thinking { text, signature } => {
+                    language_model::MessageContent::Thinking {
+                        text: text.clone(),
+                        signature: signature.clone(),
+                    }
+                }
+                AgentMessageContent::RedactedThinking(value) => {
+                    language_model::MessageContent::RedactedThinking(value.clone())
+                }
+                AgentMessageContent::ToolUse(value) => {
+                    language_model::MessageContent::ToolUse(value.clone())
+                }
+                AgentMessageContent::Image(value) => {
+                    language_model::MessageContent::Image(value.clone())
+                }
+            };
+            assistant_message.content.push(chunk);
+        }
+
+        let mut user_message = LanguageModelRequestMessage {
+            role: Role::User,
+            content: Vec::new(),
+            cache: false,
+        };
+
+        for tool_result in self.tool_results.values() {
+            user_message
+                .content
+                .push(language_model::MessageContent::ToolResult(
+                    tool_result.clone(),
+                ));
+        }
+
+        let mut messages = Vec::new();
+        if !assistant_message.content.is_empty() {
+            messages.push(assistant_message);
+        }
+        if !user_message.content.is_empty() {
+            messages.push(user_message);
+        }
+        messages
+    }
+}
+
+#[derive(Default, Debug, Clone, PartialEq, Eq)]
+pub struct AgentMessage {
+    pub content: Vec<AgentMessageContent>,
+    pub tool_results: IndexMap<LanguageModelToolUseId, LanguageModelToolResult>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AgentMessageContent {
+    Text(String),
+    Thinking {
+        text: String,
+        signature: Option<String>,
+    },
+    RedactedThinking(String),
+    Image(LanguageModelImage),
+    ToolUse(LanguageModelToolUse),
 }
 
 #[derive(Debug)]
@@ -129,30 +475,34 @@ pub enum AgentResponseEvent {
     ToolCall(acp::ToolCall),
     ToolCallUpdate(acp_thread::ToolCallUpdate),
     ToolCallAuthorization(ToolCallAuthorization),
+    Retry(acp_thread::RetryStatus),
     Stop(acp::StopReason),
 }
 
 #[derive(Debug)]
 pub struct ToolCallAuthorization {
-    pub tool_call: acp::ToolCall,
+    pub tool_call: acp::ToolCallUpdate,
     pub options: Vec<acp::PermissionOption>,
     pub response: oneshot::Sender<acp::PermissionOptionId>,
 }
 
 pub struct Thread {
-    messages: Vec<AgentMessage>,
+    id: ThreadId,
+    prompt_id: PromptId,
+    messages: Vec<Message>,
     completion_mode: CompletionMode,
     /// Holds the task that handles agent interaction until the end of the turn.
     /// Survives across multiple requests as the model performs tool calls and
     /// we run tools, report their results.
-    running_turn: Option<Task<()>>,
-    pending_tool_uses: HashMap<LanguageModelToolUseId, LanguageModelToolUse>,
+    running_turn: Option<RunningTurn>,
+    pending_message: Option<AgentMessage>,
     tools: BTreeMap<SharedString, Arc<dyn AnyAgentTool>>,
+    tool_use_limit_reached: bool,
     context_server_registry: Entity<ContextServerRegistry>,
     profile_id: AgentProfileId,
-    project_context: Rc<RefCell<ProjectContext>>,
+    project_context: Entity<ProjectContext>,
     templates: Arc<Templates>,
-    pub selected_model: Arc<dyn LanguageModel>,
+    model: Option<Arc<dyn LanguageModel>>,
     project: Entity<Project>,
     action_log: Entity<ActionLog>,
 }
@@ -160,25 +510,28 @@ pub struct Thread {
 impl Thread {
     pub fn new(
         project: Entity<Project>,
-        project_context: Rc<RefCell<ProjectContext>>,
+        project_context: Entity<ProjectContext>,
         context_server_registry: Entity<ContextServerRegistry>,
         action_log: Entity<ActionLog>,
         templates: Arc<Templates>,
-        default_model: Arc<dyn LanguageModel>,
+        model: Option<Arc<dyn LanguageModel>>,
         cx: &mut Context<Self>,
     ) -> Self {
         let profile_id = AgentSettings::get_global(cx).default_profile.clone();
         Self {
+            id: ThreadId::new(),
+            prompt_id: PromptId::new(),
             messages: Vec::new(),
-            completion_mode: CompletionMode::Normal,
+            completion_mode: AgentSettings::get_global(cx).preferred_completion_mode,
             running_turn: None,
-            pending_tool_uses: HashMap::default(),
+            pending_message: None,
             tools: BTreeMap::default(),
+            tool_use_limit_reached: false,
             context_server_registry,
             profile_id,
             project_context,
             templates,
-            selected_model: default_model,
+            model,
             project,
             action_log,
         }
@@ -188,16 +541,37 @@ impl Thread {
         &self.project
     }
 
+    pub fn project_context(&self) -> &Entity<ProjectContext> {
+        &self.project_context
+    }
+
     pub fn action_log(&self) -> &Entity<ActionLog> {
         &self.action_log
     }
 
-    pub fn set_mode(&mut self, mode: CompletionMode) {
+    pub fn model(&self) -> Option<&Arc<dyn LanguageModel>> {
+        self.model.as_ref()
+    }
+
+    pub fn set_model(&mut self, model: Arc<dyn LanguageModel>) {
+        self.model = Some(model);
+    }
+
+    pub fn completion_mode(&self) -> CompletionMode {
+        self.completion_mode
+    }
+
+    pub fn set_completion_mode(&mut self, mode: CompletionMode) {
         self.completion_mode = mode;
     }
 
-    pub fn messages(&self) -> &[AgentMessage] {
-        &self.messages
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn last_message(&self) -> Option<Message> {
+        if let Some(message) = self.pending_message.clone() {
+            Some(Message::Agent(message))
+        } else {
+            self.messages.last().cloned()
+        }
     }
 
     pub fn add_tool(&mut self, tool: impl AgentTool) {
@@ -208,175 +582,285 @@ impl Thread {
         self.tools.remove(name).is_some()
     }
 
+    pub fn profile(&self) -> &AgentProfileId {
+        &self.profile_id
+    }
+
     pub fn set_profile(&mut self, profile_id: AgentProfileId) {
         self.profile_id = profile_id;
     }
 
     pub fn cancel(&mut self) {
-        self.running_turn.take();
+        if let Some(running_turn) = self.running_turn.take() {
+            running_turn.cancel();
+        }
+        self.flush_pending_message();
+    }
 
-        let tool_results = self
-            .pending_tool_uses
-            .drain()
-            .map(|(tool_use_id, tool_use)| {
-                MessageContent::ToolResult(LanguageModelToolResult {
-                    tool_use_id,
-                    tool_name: tool_use.name.clone(),
-                    is_error: true,
-                    content: LanguageModelToolResultContent::Text("Tool canceled by user".into()),
-                    output: None,
-                })
-            })
-            .collect::<Vec<_>>();
-        self.last_user_message().content.extend(tool_results);
+    pub fn truncate(&mut self, message_id: UserMessageId) -> Result<()> {
+        self.cancel();
+        let Some(position) = self.messages.iter().position(
+            |msg| matches!(msg, Message::User(UserMessage { id, .. }) if id == &message_id),
+        ) else {
+            return Err(anyhow!("Message not found"));
+        };
+        self.messages.truncate(position);
+        Ok(())
+    }
+
+    pub fn resume(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> Result<mpsc::UnboundedReceiver<Result<AgentResponseEvent>>> {
+        anyhow::ensure!(self.model.is_some(), "Model not set");
+        anyhow::ensure!(
+            self.tool_use_limit_reached,
+            "can only resume after tool use limit is reached"
+        );
+
+        self.messages.push(Message::Resume);
+        cx.notify();
+
+        log::info!("Total messages in thread: {}", self.messages.len());
+        self.run_turn(cx)
     }
 
     /// Sending a message results in the model streaming a response, which could include tool calls.
     /// After calling tools, the model will stops and waits for any outstanding tool calls to be completed and their results sent.
     /// The returned channel will report all the occurrences in which the model stops before erroring or ending its turn.
-    pub fn send(
+    pub fn send<T>(
         &mut self,
-        content: impl Into<UserMessage>,
+        id: UserMessageId,
+        content: impl IntoIterator<Item = T>,
         cx: &mut Context<Self>,
-    ) -> mpsc::UnboundedReceiver<Result<AgentResponseEvent, LanguageModelCompletionError>> {
-        let content = content.into().0;
+    ) -> Result<mpsc::UnboundedReceiver<Result<AgentResponseEvent>>>
+    where
+        T: Into<UserMessageContent>,
+    {
+        let model = self.model().context("No language model configured")?;
 
-        let model = self.selected_model.clone();
         log::info!("Thread::send called with model: {:?}", model.name());
+        self.advance_prompt_id();
+
+        let content = content.into_iter().map(Into::into).collect::<Vec<_>>();
         log::debug!("Thread::send content: {:?}", content);
 
+        self.messages
+            .push(Message::User(UserMessage { id, content }));
         cx.notify();
-        let (events_tx, events_rx) =
-            mpsc::unbounded::<Result<AgentResponseEvent, LanguageModelCompletionError>>();
-        let event_stream = AgentResponseEventStream(events_tx);
 
-        let user_message_ix = self.messages.len();
-        self.messages.push(AgentMessage {
-            role: Role::User,
-            content,
-        });
         log::info!("Total messages in thread: {}", self.messages.len());
-        self.running_turn = Some(cx.spawn(async move |thread, cx| {
-            log::info!("Starting agent turn execution");
-            let turn_result = async {
-                // Perform one request, then keep looping if the model makes tool calls.
-                let mut completion_intent = CompletionIntent::UserPrompt;
-                'outer: loop {
-                    log::debug!(
-                        "Building completion request with intent: {:?}",
-                        completion_intent
-                    );
-                    let request = thread.update(cx, |thread, cx| {
-                        thread.build_completion_request(completion_intent, cx)
-                    })?;
-
-                    // println!(
-                    //     "request: {}",
-                    //     serde_json::to_string_pretty(&request).unwrap()
-                    // );
-
-                    // Stream events, appending to messages and collecting up tool uses.
-                    log::info!("Calling model.stream_completion");
-                    let mut events = model.stream_completion(request, cx).await?;
-                    log::debug!("Stream completion started successfully");
-                    let mut tool_uses = FuturesUnordered::new();
-                    while let Some(event) = events.next().await {
-                        match event {
-                            Ok(LanguageModelCompletionEvent::Stop(reason)) => {
-                                event_stream.send_stop(reason);
-                                if reason == StopReason::Refusal {
-                                    thread.update(cx, |thread, _cx| {
-                                        thread.messages.truncate(user_message_ix);
-                                    })?;
-                                    break 'outer;
-                                }
-                            }
-                            Ok(event) => {
-                                log::trace!("Received completion event: {:?}", event);
-                                thread
-                                    .update(cx, |thread, cx| {
-                                        tool_uses.extend(thread.handle_streamed_completion_event(
-                                            event,
-                                            &event_stream,
-                                            cx,
-                                        ));
-                                    })
-                                    .ok();
-                            }
-                            Err(error) => {
-                                log::error!("Error in completion stream: {:?}", error);
-                                event_stream.send_error(error);
-                                break;
-                            }
-                        }
-                    }
-
-                    // If there are no tool uses, the turn is done.
-                    if tool_uses.is_empty() {
-                        log::info!("No tool uses found, completing turn");
-                        break;
-                    }
-                    log::info!("Found {} tool uses to execute", tool_uses.len());
-
-                    // As tool results trickle in, insert them in the last user
-                    // message so that they can be sent on the next tick of the
-                    // agentic loop.
-                    while let Some(tool_result) = tool_uses.next().await {
-                        log::info!("Tool finished {:?}", tool_result);
-
-                        event_stream.update_tool_call_fields(
-                            &tool_result.tool_use_id,
-                            acp::ToolCallUpdateFields {
-                                status: Some(if tool_result.is_error {
-                                    acp::ToolCallStatus::Failed
-                                } else {
-                                    acp::ToolCallStatus::Completed
-                                }),
-                                raw_output: tool_result.output.clone(),
-                                ..Default::default()
-                            },
-                        );
-                        thread
-                            .update(cx, |thread, _cx| {
-                                thread.pending_tool_uses.remove(&tool_result.tool_use_id);
-                                thread
-                                    .last_user_message()
-                                    .content
-                                    .push(MessageContent::ToolResult(tool_result));
-                            })
-                            .ok();
-                    }
-
-                    completion_intent = CompletionIntent::ToolResults;
-                }
-
-                Ok(())
-            }
-            .await;
-
-            if let Err(error) = turn_result {
-                log::error!("Turn execution failed: {:?}", error);
-                event_stream.send_error(error);
-            } else {
-                log::info!("Turn execution completed successfully");
-            }
-        }));
-        events_rx
+        self.run_turn(cx)
     }
 
-    pub fn build_system_message(&self) -> AgentMessage {
+    fn run_turn(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> Result<mpsc::UnboundedReceiver<Result<AgentResponseEvent>>> {
+        self.cancel();
+
+        let model = self
+            .model()
+            .cloned()
+            .context("No language model configured")?;
+        let (events_tx, events_rx) = mpsc::unbounded::<Result<AgentResponseEvent>>();
+        let event_stream = AgentResponseEventStream(events_tx);
+        let message_ix = self.messages.len().saturating_sub(1);
+        self.tool_use_limit_reached = false;
+        self.running_turn = Some(RunningTurn {
+            event_stream: event_stream.clone(),
+            _task: cx.spawn(async move |this, cx| {
+                log::info!("Starting agent turn execution");
+                let turn_result: Result<()> = async {
+                    let mut completion_intent = CompletionIntent::UserPrompt;
+                    loop {
+                        log::debug!(
+                            "Building completion request with intent: {:?}",
+                            completion_intent
+                        );
+                        let request = this.update(cx, |this, cx| {
+                            this.build_completion_request(completion_intent, cx)
+                        })??;
+
+                        log::info!("Calling model.stream_completion");
+
+                        let mut tool_use_limit_reached = false;
+                        let mut tool_uses = Self::stream_completion_with_retries(
+                            this.clone(),
+                            model.clone(),
+                            request,
+                            message_ix,
+                            &event_stream,
+                            &mut tool_use_limit_reached,
+                            cx,
+                        )
+                        .await?;
+
+                        let used_tools = tool_uses.is_empty();
+                        while let Some(tool_result) = tool_uses.next().await {
+                            log::info!("Tool finished {:?}", tool_result);
+
+                            event_stream.update_tool_call_fields(
+                                &tool_result.tool_use_id,
+                                acp::ToolCallUpdateFields {
+                                    status: Some(if tool_result.is_error {
+                                        acp::ToolCallStatus::Failed
+                                    } else {
+                                        acp::ToolCallStatus::Completed
+                                    }),
+                                    raw_output: tool_result.output.clone(),
+                                    ..Default::default()
+                                },
+                            );
+                            this.update(cx, |this, _cx| {
+                                this.pending_message()
+                                    .tool_results
+                                    .insert(tool_result.tool_use_id.clone(), tool_result);
+                            })
+                            .ok();
+                        }
+
+                        if tool_use_limit_reached {
+                            log::info!("Tool use limit reached, completing turn");
+                            this.update(cx, |this, _cx| this.tool_use_limit_reached = true)?;
+                            return Err(language_model::ToolUseLimitReachedError.into());
+                        } else if used_tools {
+                            log::info!("No tool uses found, completing turn");
+                            return Ok(());
+                        } else {
+                            this.update(cx, |this, _| this.flush_pending_message())?;
+                            completion_intent = CompletionIntent::ToolResults;
+                        }
+                    }
+                }
+                .await;
+
+                if let Err(error) = turn_result {
+                    log::error!("Turn execution failed: {:?}", error);
+                    event_stream.send_error(error);
+                } else {
+                    log::info!("Turn execution completed successfully");
+                }
+
+                this.update(cx, |this, _| {
+                    this.flush_pending_message();
+                    this.running_turn.take();
+                })
+                .ok();
+            }),
+        });
+        Ok(events_rx)
+    }
+
+    async fn stream_completion_with_retries(
+        this: WeakEntity<Self>,
+        model: Arc<dyn LanguageModel>,
+        request: LanguageModelRequest,
+        message_ix: usize,
+        event_stream: &AgentResponseEventStream,
+        tool_use_limit_reached: &mut bool,
+        cx: &mut AsyncApp,
+    ) -> Result<FuturesUnordered<Task<LanguageModelToolResult>>> {
+        log::debug!("Stream completion started successfully");
+
+        let mut attempt = None;
+        'retry: loop {
+            let mut events = model.stream_completion(request.clone(), cx).await?;
+            let mut tool_uses = FuturesUnordered::new();
+            while let Some(event) = events.next().await {
+                match event {
+                    Ok(LanguageModelCompletionEvent::StatusUpdate(
+                        CompletionRequestStatus::ToolUseLimitReached,
+                    )) => {
+                        *tool_use_limit_reached = true;
+                    }
+                    Ok(LanguageModelCompletionEvent::Stop(reason)) => {
+                        event_stream.send_stop(reason);
+                        if reason == StopReason::Refusal {
+                            this.update(cx, |this, _cx| {
+                                this.flush_pending_message();
+                                this.messages.truncate(message_ix);
+                            })?;
+                            return Ok(tool_uses);
+                        }
+                    }
+                    Ok(event) => {
+                        log::trace!("Received completion event: {:?}", event);
+                        this.update(cx, |this, cx| {
+                            tool_uses.extend(this.handle_streamed_completion_event(
+                                event,
+                                event_stream,
+                                cx,
+                            ));
+                        })
+                        .ok();
+                    }
+                    Err(error) => {
+                        let completion_mode =
+                            this.read_with(cx, |thread, _cx| thread.completion_mode())?;
+                        if completion_mode == CompletionMode::Normal {
+                            return Err(error.into());
+                        }
+
+                        let Some(strategy) = Self::retry_strategy_for(&error) else {
+                            return Err(error.into());
+                        };
+
+                        let max_attempts = match &strategy {
+                            RetryStrategy::ExponentialBackoff { max_attempts, .. } => *max_attempts,
+                            RetryStrategy::Fixed { max_attempts, .. } => *max_attempts,
+                        };
+
+                        let attempt = attempt.get_or_insert(0u8);
+
+                        *attempt += 1;
+
+                        let attempt = *attempt;
+                        if attempt > max_attempts {
+                            return Err(error.into());
+                        }
+
+                        let delay = match &strategy {
+                            RetryStrategy::ExponentialBackoff { initial_delay, .. } => {
+                                let delay_secs =
+                                    initial_delay.as_secs() * 2u64.pow((attempt - 1) as u32);
+                                Duration::from_secs(delay_secs)
+                            }
+                            RetryStrategy::Fixed { delay, .. } => *delay,
+                        };
+                        log::debug!("Retry attempt {attempt} with delay {delay:?}");
+
+                        event_stream.send_retry(acp_thread::RetryStatus {
+                            last_error: error.to_string().into(),
+                            attempt: attempt as usize,
+                            max_attempts: max_attempts as usize,
+                            started_at: Instant::now(),
+                            duration: delay,
+                        });
+
+                        cx.background_executor().timer(delay).await;
+                        continue 'retry;
+                    }
+                }
+            }
+            return Ok(tool_uses);
+        }
+    }
+
+    pub fn build_system_message(&self, cx: &App) -> LanguageModelRequestMessage {
         log::debug!("Building system message");
         let prompt = SystemPromptTemplate {
-            project: &self.project_context.borrow(),
+            project: self.project_context.read(cx),
             available_tools: self.tools.keys().cloned().collect(),
         }
         .render(&self.templates)
         .context("failed to build system prompt")
         .expect("Invalid template");
         log::debug!("System message built");
-        AgentMessage {
+        LanguageModelRequestMessage {
             role: Role::System,
-            content: vec![prompt.as_str().into()],
+            content: vec![prompt.into()],
+            cache: true,
         }
     }
 
@@ -394,10 +878,8 @@ impl Thread {
 
         match event {
             StartMessage { .. } => {
-                self.messages.push(AgentMessage {
-                    role: Role::Assistant,
-                    content: Vec::new(),
-                });
+                self.flush_pending_message();
+                self.pending_message = Some(AgentMessage::default());
             }
             Text(new_text) => self.handle_text_event(new_text, event_stream, cx),
             Thinking { text, signature } => {
@@ -430,16 +912,18 @@ impl Thread {
     fn handle_text_event(
         &mut self,
         new_text: String,
-        events_stream: &AgentResponseEventStream,
+        event_stream: &AgentResponseEventStream,
         cx: &mut Context<Self>,
     ) {
-        events_stream.send_text(&new_text);
+        event_stream.send_text(&new_text);
 
-        let last_message = self.last_assistant_message();
-        if let Some(MessageContent::Text(text)) = last_message.content.last_mut() {
+        let last_message = self.pending_message();
+        if let Some(AgentMessageContent::Text(text)) = last_message.content.last_mut() {
             text.push_str(&new_text);
         } else {
-            last_message.content.push(MessageContent::Text(new_text));
+            last_message
+                .content
+                .push(AgentMessageContent::Text(new_text));
         }
 
         cx.notify();
@@ -454,13 +938,14 @@ impl Thread {
     ) {
         event_stream.send_thinking(&new_text);
 
-        let last_message = self.last_assistant_message();
-        if let Some(MessageContent::Thinking { text, signature }) = last_message.content.last_mut()
+        let last_message = self.pending_message();
+        if let Some(AgentMessageContent::Thinking { text, signature }) =
+            last_message.content.last_mut()
         {
             text.push_str(&new_text);
             *signature = new_signature.or(signature.take());
         } else {
-            last_message.content.push(MessageContent::Thinking {
+            last_message.content.push(AgentMessageContent::Thinking {
                 text: new_text,
                 signature: new_signature,
             });
@@ -470,10 +955,10 @@ impl Thread {
     }
 
     fn handle_redacted_thinking_event(&mut self, data: String, cx: &mut Context<Self>) {
-        let last_message = self.last_assistant_message();
+        let last_message = self.pending_message();
         last_message
             .content
-            .push(MessageContent::RedactedThinking(data));
+            .push(AgentMessageContent::RedactedThinking(data));
         cx.notify();
     }
 
@@ -486,14 +971,17 @@ impl Thread {
         cx.notify();
 
         let tool = self.tools.get(tool_use.name.as_ref()).cloned();
-
-        self.pending_tool_uses
-            .insert(tool_use.id.clone(), tool_use.clone());
-        let last_message = self.last_assistant_message();
+        let mut title = SharedString::from(&tool_use.name);
+        let mut kind = acp::ToolKind::Other;
+        if let Some(tool) = tool.as_ref() {
+            title = tool.initial_title(tool_use.input.clone());
+            kind = tool.kind();
+        }
 
         // Ensure the last message ends in the current tool use
+        let last_message = self.pending_message();
         let push_new_tool_use = last_message.content.last_mut().map_or(true, |content| {
-            if let MessageContent::ToolUse(last_tool_use) = content {
+            if let AgentMessageContent::ToolUse(last_tool_use) = content {
                 if last_tool_use.id == tool_use.id {
                     *last_tool_use = tool_use.clone();
                     false
@@ -505,18 +993,11 @@ impl Thread {
             }
         });
 
-        let mut title = SharedString::from(&tool_use.name);
-        let mut kind = acp::ToolKind::Other;
-        if let Some(tool) = tool.as_ref() {
-            title = tool.initial_title(tool_use.input.clone());
-            kind = tool.kind();
-        }
-
         if push_new_tool_use {
             event_stream.send_tool_call(&tool_use.id, title, kind, tool_use.input.clone());
             last_message
                 .content
-                .push(MessageContent::ToolUse(tool_use.clone()));
+                .push(AgentMessageContent::ToolUse(tool_use.clone()));
         } else {
             event_stream.update_tool_call_fields(
                 &tool_use.id,
@@ -546,13 +1027,14 @@ impl Thread {
 
         let fs = self.project.read(cx).fs().clone();
         let tool_event_stream =
-            ToolCallEventStream::new(&tool_use, tool.kind(), event_stream.clone(), Some(fs));
+            ToolCallEventStream::new(tool_use.id.clone(), event_stream.clone(), Some(fs));
         tool_event_stream.update_fields(acp::ToolCallUpdateFields {
             status: Some(acp::ToolCallStatus::InProgress),
             ..Default::default()
         });
-        let supports_images = self.selected_model.supports_images();
+        let supports_images = self.model().map_or(false, |model| model.supports_images());
         let tool_result = tool.run(tool_use.input, tool_event_stream, cx);
+        log::info!("Running tool {}", tool_use.name);
         Some(cx.foreground_executor().spawn(async move {
             let tool_result = tool_result.await.and_then(|output| {
                 if let LanguageModelToolResultContent::Image(_) = &output.llm_output {
@@ -601,42 +1083,51 @@ impl Thread {
         }
     }
 
-    /// Guarantees the last message is from the assistant and returns a mutable reference.
-    fn last_assistant_message(&mut self) -> &mut AgentMessage {
-        if self
-            .messages
-            .last()
-            .map_or(true, |m| m.role != Role::Assistant)
-        {
-            self.messages.push(AgentMessage {
-                role: Role::Assistant,
-                content: Vec::new(),
-            });
-        }
-        self.messages.last_mut().unwrap()
+    fn pending_message(&mut self) -> &mut AgentMessage {
+        self.pending_message.get_or_insert_default()
     }
 
-    /// Guarantees the last message is from the user and returns a mutable reference.
-    fn last_user_message(&mut self) -> &mut AgentMessage {
-        if self.messages.last().map_or(true, |m| m.role != Role::User) {
-            self.messages.push(AgentMessage {
-                role: Role::User,
-                content: Vec::new(),
-            });
+    fn flush_pending_message(&mut self) {
+        let Some(mut message) = self.pending_message.take() else {
+            return;
+        };
+
+        for content in &message.content {
+            let AgentMessageContent::ToolUse(tool_use) = content else {
+                continue;
+            };
+
+            if !message.tool_results.contains_key(&tool_use.id) {
+                message.tool_results.insert(
+                    tool_use.id.clone(),
+                    LanguageModelToolResult {
+                        tool_use_id: tool_use.id.clone(),
+                        tool_name: tool_use.name.clone(),
+                        is_error: true,
+                        content: LanguageModelToolResultContent::Text(
+                            "Tool canceled by user".into(),
+                        ),
+                        output: None,
+                    },
+                );
+            }
         }
-        self.messages.last_mut().unwrap()
+
+        self.messages.push(Message::Agent(message));
     }
 
     pub(crate) fn build_completion_request(
         &self,
         completion_intent: CompletionIntent,
         cx: &mut App,
-    ) -> LanguageModelRequest {
+    ) -> Result<LanguageModelRequest> {
+        let model = self.model().context("No language model configured")?;
+
         log::debug!("Building completion request");
         log::debug!("Completion intent: {:?}", completion_intent);
         log::debug!("Completion mode: {:?}", self.completion_mode);
 
-        let messages = self.build_request_messages();
+        let messages = self.build_request_messages(cx);
         log::info!("Request will include {} messages", messages.len());
 
         let tools = if let Some(tools) = self.tools(cx).log_err() {
@@ -647,9 +1138,7 @@ impl Thread {
                     Some(LanguageModelRequestTool {
                         name: tool_name,
                         description: tool.description().to_string(),
-                        input_schema: tool
-                            .input_schema(self.selected_model.tool_input_format())
-                            .log_err()?,
+                        input_schema: tool.input_schema(model.tool_input_format()).log_err()?,
                     })
                 })
                 .collect()
@@ -660,31 +1149,35 @@ impl Thread {
         log::info!("Request includes {} tools", tools.len());
 
         let request = LanguageModelRequest {
-            thread_id: None,
-            prompt_id: None,
+            thread_id: Some(self.id.to_string()),
+            prompt_id: Some(self.prompt_id.to_string()),
             intent: Some(completion_intent),
-            mode: Some(self.completion_mode),
+            mode: Some(self.completion_mode.into()),
             messages,
             tools,
             tool_choice: None,
             stop: Vec::new(),
-            temperature: None,
+            temperature: AgentSettings::temperature_for_model(model, cx),
             thinking_allowed: true,
         };
 
         log::debug!("Completion request built successfully");
-        request
+        Ok(request)
     }
 
     fn tools<'a>(&'a self, cx: &'a App) -> Result<impl Iterator<Item = &'a Arc<dyn AnyAgentTool>>> {
+        let model = self.model().context("No language model configured")?;
+
         let profile = AgentSettings::get_global(cx)
             .profiles
             .get(&self.profile_id)
             .context("profile not found")?;
+        let provider_id = model.provider_id();
 
         Ok(self
             .tools
             .iter()
+            .filter(move |(_, tool)| tool.supported_provider(&provider_id))
             .filter_map(|(tool_name, tool)| {
                 if profile.is_tool_enabled(tool_name) {
                     Some(tool)
@@ -705,51 +1198,182 @@ impl Thread {
             )))
     }
 
-    fn build_request_messages(&self) -> Vec<LanguageModelRequestMessage> {
+    fn build_request_messages(&self, cx: &App) -> Vec<LanguageModelRequestMessage> {
         log::trace!(
             "Building request messages from {} thread messages",
             self.messages.len()
         );
+        let mut messages = vec![self.build_system_message(cx)];
+        for message in &self.messages {
+            match message {
+                Message::User(message) => messages.push(message.to_request()),
+                Message::Agent(message) => messages.extend(message.to_request()),
+                Message::Resume => messages.push(LanguageModelRequestMessage {
+                    role: Role::User,
+                    content: vec!["Continue where you left off".into()],
+                    cache: false,
+                }),
+            }
+        }
 
-        let messages = Some(self.build_system_message())
-            .iter()
-            .chain(self.messages.iter())
-            .map(|message| {
-                log::trace!(
-                    "  - {} message with {} content items",
-                    match message.role {
-                        Role::System => "System",
-                        Role::User => "User",
-                        Role::Assistant => "Assistant",
-                    },
-                    message.content.len()
-                );
-                message.to_request()
-            })
-            .collect();
+        if let Some(message) = self.pending_message.as_ref() {
+            messages.extend(message.to_request());
+        }
+
+        if let Some(last_user_message) = messages
+            .iter_mut()
+            .rev()
+            .find(|message| message.role == Role::User)
+        {
+            last_user_message.cache = true;
+        }
+
         messages
     }
 
     pub fn to_markdown(&self) -> String {
         let mut markdown = String::new();
-        for message in &self.messages {
+        for (ix, message) in self.messages.iter().enumerate() {
+            if ix > 0 {
+                markdown.push('\n');
+            }
             markdown.push_str(&message.to_markdown());
         }
+
+        if let Some(message) = self.pending_message.as_ref() {
+            markdown.push('\n');
+            markdown.push_str(&message.to_markdown());
+        }
+
         markdown
     }
-}
 
-pub struct UserMessage(Vec<MessageContent>);
+    fn advance_prompt_id(&mut self) {
+        self.prompt_id = PromptId::new();
+    }
 
-impl From<Vec<MessageContent>> for UserMessage {
-    fn from(content: Vec<MessageContent>) -> Self {
-        UserMessage(content)
+    fn retry_strategy_for(error: &LanguageModelCompletionError) -> Option<RetryStrategy> {
+        use LanguageModelCompletionError::*;
+        use http_client::StatusCode;
+
+        // General strategy here:
+        // - If retrying won't help (e.g. invalid API key or payload too large), return None so we don't retry at all.
+        // - If it's a time-based issue (e.g. server overloaded, rate limit exceeded), retry up to 4 times with exponential backoff.
+        // - If it's an issue that *might* be fixed by retrying (e.g. internal server error), retry up to 3 times.
+        match error {
+            HttpResponseError {
+                status_code: StatusCode::TOO_MANY_REQUESTS,
+                ..
+            } => Some(RetryStrategy::ExponentialBackoff {
+                initial_delay: BASE_RETRY_DELAY,
+                max_attempts: MAX_RETRY_ATTEMPTS,
+            }),
+            ServerOverloaded { retry_after, .. } | RateLimitExceeded { retry_after, .. } => {
+                Some(RetryStrategy::Fixed {
+                    delay: retry_after.unwrap_or(BASE_RETRY_DELAY),
+                    max_attempts: MAX_RETRY_ATTEMPTS,
+                })
+            }
+            UpstreamProviderError {
+                status,
+                retry_after,
+                ..
+            } => match *status {
+                StatusCode::TOO_MANY_REQUESTS | StatusCode::SERVICE_UNAVAILABLE => {
+                    Some(RetryStrategy::Fixed {
+                        delay: retry_after.unwrap_or(BASE_RETRY_DELAY),
+                        max_attempts: MAX_RETRY_ATTEMPTS,
+                    })
+                }
+                StatusCode::INTERNAL_SERVER_ERROR => Some(RetryStrategy::Fixed {
+                    delay: retry_after.unwrap_or(BASE_RETRY_DELAY),
+                    // Internal Server Error could be anything, retry up to 3 times.
+                    max_attempts: 3,
+                }),
+                status => {
+                    // There is no StatusCode variant for the unofficial HTTP 529 ("The service is overloaded"),
+                    // but we frequently get them in practice. See https://http.dev/529
+                    if status.as_u16() == 529 {
+                        Some(RetryStrategy::Fixed {
+                            delay: retry_after.unwrap_or(BASE_RETRY_DELAY),
+                            max_attempts: MAX_RETRY_ATTEMPTS,
+                        })
+                    } else {
+                        Some(RetryStrategy::Fixed {
+                            delay: retry_after.unwrap_or(BASE_RETRY_DELAY),
+                            max_attempts: 2,
+                        })
+                    }
+                }
+            },
+            ApiInternalServerError { .. } => Some(RetryStrategy::Fixed {
+                delay: BASE_RETRY_DELAY,
+                max_attempts: 3,
+            }),
+            ApiReadResponseError { .. }
+            | HttpSend { .. }
+            | DeserializeResponse { .. }
+            | BadRequestFormat { .. } => Some(RetryStrategy::Fixed {
+                delay: BASE_RETRY_DELAY,
+                max_attempts: 3,
+            }),
+            // Retrying these errors definitely shouldn't help.
+            HttpResponseError {
+                status_code:
+                    StatusCode::PAYLOAD_TOO_LARGE | StatusCode::FORBIDDEN | StatusCode::UNAUTHORIZED,
+                ..
+            }
+            | AuthenticationError { .. }
+            | PermissionError { .. }
+            | NoApiKey { .. }
+            | ApiEndpointNotFound { .. }
+            | PromptTooLarge { .. } => None,
+            // These errors might be transient, so retry them
+            SerializeRequest { .. } | BuildRequestBody { .. } => Some(RetryStrategy::Fixed {
+                delay: BASE_RETRY_DELAY,
+                max_attempts: 1,
+            }),
+            // Retry all other 4xx and 5xx errors once.
+            HttpResponseError { status_code, .. }
+                if status_code.is_client_error() || status_code.is_server_error() =>
+            {
+                Some(RetryStrategy::Fixed {
+                    delay: BASE_RETRY_DELAY,
+                    max_attempts: 3,
+                })
+            }
+            Other(err)
+                if err.is::<language_model::PaymentRequiredError>()
+                    || err.is::<language_model::ModelRequestLimitReachedError>() =>
+            {
+                // Retrying won't help for Payment Required or Model Request Limit errors (where
+                // the user must upgrade to usage-based billing to get more requests, or else wait
+                // for a significant amount of time for the request limit to reset).
+                None
+            }
+            // Conservatively assume that any other errors are non-retryable
+            HttpResponseError { .. } | Other(..) => Some(RetryStrategy::Fixed {
+                delay: BASE_RETRY_DELAY,
+                max_attempts: 2,
+            }),
+        }
     }
 }
 
-impl<T: Into<MessageContent>> From<T> for UserMessage {
-    fn from(content: T) -> Self {
-        UserMessage(vec![content.into()])
+struct RunningTurn {
+    /// Holds the task that handles agent interaction until the end of the turn.
+    /// Survives across multiple requests as the model performs tool calls and
+    /// we run tools, report their results.
+    _task: Task<()>,
+    /// The current event stream for the running turn. Used to report a final
+    /// cancellation event if we cancel the turn.
+    event_stream: AgentResponseEventStream,
+}
+
+impl RunningTurn {
+    fn cancel(self) {
+        log::debug!("Cancelling in progress turn");
+        self.event_stream.send_canceled();
     }
 }
 
@@ -782,6 +1406,12 @@ where
         schemars::schema_for!(Self::Input)
     }
 
+    /// Some tools rely on a provider for the underlying billing or other reasons.
+    /// Allow the tool to check if they are compatible, or should be filtered out.
+    fn supported_provider(&self, _provider: &LanguageModelProviderId) -> bool {
+        true
+    }
+
     /// Runs the tool with the provided input.
     fn run(
         self: Arc<Self>,
@@ -808,6 +1438,9 @@ pub trait AnyAgentTool {
     fn kind(&self) -> acp::ToolKind;
     fn initial_title(&self, input: serde_json::Value) -> SharedString;
     fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> Result<serde_json::Value>;
+    fn supported_provider(&self, _provider: &LanguageModelProviderId) -> bool {
+        true
+    }
     fn run(
         self: Arc<Self>,
         input: serde_json::Value,
@@ -843,6 +1476,10 @@ where
         Ok(json)
     }
 
+    fn supported_provider(&self, provider: &LanguageModelProviderId) -> bool {
+        self.0.supported_provider(provider)
+    }
+
     fn run(
         self: Arc<Self>,
         input: serde_json::Value,
@@ -864,9 +1501,7 @@ where
 }
 
 #[derive(Clone)]
-struct AgentResponseEventStream(
-    mpsc::UnboundedSender<Result<AgentResponseEvent, LanguageModelCompletionError>>,
-);
+struct AgentResponseEventStream(mpsc::UnboundedSender<Result<AgentResponseEvent>>);
 
 impl AgentResponseEventStream {
     fn send_text(&self, text: &str) {
@@ -932,6 +1567,12 @@ impl AgentResponseEventStream {
             .ok();
     }
 
+    fn send_retry(&self, status: acp_thread::RetryStatus) {
+        self.0
+            .unbounded_send(Ok(AgentResponseEvent::Retry(status)))
+            .ok();
+    }
+
     fn send_stop(&self, reason: StopReason) {
         match reason {
             StopReason::EndTurn => {
@@ -953,16 +1594,20 @@ impl AgentResponseEventStream {
         }
     }
 
-    fn send_error(&self, error: LanguageModelCompletionError) {
-        self.0.unbounded_send(Err(error)).ok();
+    fn send_canceled(&self) {
+        self.0
+            .unbounded_send(Ok(AgentResponseEvent::Stop(acp::StopReason::Canceled)))
+            .ok();
+    }
+
+    fn send_error(&self, error: impl Into<anyhow::Error>) {
+        self.0.unbounded_send(Err(error.into())).ok();
     }
 }
 
 #[derive(Clone)]
 pub struct ToolCallEventStream {
     tool_use_id: LanguageModelToolUseId,
-    kind: acp::ToolKind,
-    input: serde_json::Value,
     stream: AgentResponseEventStream,
     fs: Option<Arc<dyn Fs>>,
 }
@@ -970,35 +1615,21 @@ pub struct ToolCallEventStream {
 impl ToolCallEventStream {
     #[cfg(test)]
     pub fn test() -> (Self, ToolCallEventStreamReceiver) {
-        let (events_tx, events_rx) =
-            mpsc::unbounded::<Result<AgentResponseEvent, LanguageModelCompletionError>>();
+        let (events_tx, events_rx) = mpsc::unbounded::<Result<AgentResponseEvent>>();
 
-        let stream = ToolCallEventStream::new(
-            &LanguageModelToolUse {
-                id: "test_id".into(),
-                name: "test_tool".into(),
-                raw_input: String::new(),
-                input: serde_json::Value::Null,
-                is_input_complete: true,
-            },
-            acp::ToolKind::Other,
-            AgentResponseEventStream(events_tx),
-            None,
-        );
+        let stream =
+            ToolCallEventStream::new("test_id".into(), AgentResponseEventStream(events_tx), None);
 
         (stream, ToolCallEventStreamReceiver(events_rx))
     }
 
     fn new(
-        tool_use: &LanguageModelToolUse,
-        kind: acp::ToolKind,
+        tool_use_id: LanguageModelToolUseId,
         stream: AgentResponseEventStream,
         fs: Option<Arc<dyn Fs>>,
     ) -> Self {
         Self {
-            tool_use_id: tool_use.id.clone(),
-            kind,
-            input: tool_use.input.clone(),
+            tool_use_id,
             stream,
             fs,
         }
@@ -1045,12 +1676,13 @@ impl ToolCallEventStream {
             .0
             .unbounded_send(Ok(AgentResponseEvent::ToolCallAuthorization(
                 ToolCallAuthorization {
-                    tool_call: AgentResponseEventStream::initial_tool_call(
-                        &self.tool_use_id,
-                        title.into(),
-                        self.kind.clone(),
-                        self.input.clone(),
-                    ),
+                    tool_call: acp::ToolCallUpdate {
+                        id: acp::ToolCallId(self.tool_use_id.to_string().into()),
+                        fields: acp::ToolCallUpdateFields {
+                            title: Some(title.into()),
+                            ..Default::default()
+                        },
+                    },
                     options: vec![
                         acp::PermissionOption {
                             id: acp::PermissionOptionId("always_allow".into()),
@@ -1092,9 +1724,7 @@ impl ToolCallEventStream {
 }
 
 #[cfg(test)]
-pub struct ToolCallEventStreamReceiver(
-    mpsc::UnboundedReceiver<Result<AgentResponseEvent, LanguageModelCompletionError>>,
-);
+pub struct ToolCallEventStreamReceiver(mpsc::UnboundedReceiver<Result<AgentResponseEvent>>);
 
 #[cfg(test)]
 impl ToolCallEventStreamReceiver {
@@ -1122,7 +1752,7 @@ impl ToolCallEventStreamReceiver {
 
 #[cfg(test)]
 impl std::ops::Deref for ToolCallEventStreamReceiver {
-    type Target = mpsc::UnboundedReceiver<Result<AgentResponseEvent, LanguageModelCompletionError>>;
+    type Target = mpsc::UnboundedReceiver<Result<AgentResponseEvent>>;
 
     fn deref(&self) -> &Self::Target {
         &self.0
@@ -1136,152 +1766,20 @@ impl std::ops::DerefMut for ToolCallEventStreamReceiver {
     }
 }
 
-impl AgentMessage {
-    fn to_request(&self) -> language_model::LanguageModelRequestMessage {
-        let mut message = LanguageModelRequestMessage {
-            role: self.role,
-            content: Vec::with_capacity(self.content.len()),
-            cache: false,
-        };
-
-        const OPEN_CONTEXT: &str = "<context>\n\
-            The following items were attached by the user. \
-            They are up-to-date and don't need to be re-read.\n\n";
-
-        const OPEN_FILES_TAG: &str = "<files>";
-        const OPEN_SYMBOLS_TAG: &str = "<symbols>";
-        const OPEN_THREADS_TAG: &str = "<threads>";
-        const OPEN_RULES_TAG: &str =
-            "<rules>\nThe user has specified the following rules that should be applied:\n";
-
-        let mut file_context = OPEN_FILES_TAG.to_string();
-        let mut symbol_context = OPEN_SYMBOLS_TAG.to_string();
-        let mut thread_context = OPEN_THREADS_TAG.to_string();
-        let mut rules_context = OPEN_RULES_TAG.to_string();
-
-        for chunk in &self.content {
-            let chunk = match chunk {
-                MessageContent::Text(text) => language_model::MessageContent::Text(text.clone()),
-                MessageContent::Thinking { text, signature } => {
-                    language_model::MessageContent::Thinking {
-                        text: text.clone(),
-                        signature: signature.clone(),
-                    }
-                }
-                MessageContent::RedactedThinking(value) => {
-                    language_model::MessageContent::RedactedThinking(value.clone())
-                }
-                MessageContent::ToolUse(value) => {
-                    language_model::MessageContent::ToolUse(value.clone())
-                }
-                MessageContent::ToolResult(value) => {
-                    language_model::MessageContent::ToolResult(value.clone())
-                }
-                MessageContent::Image(value) => {
-                    language_model::MessageContent::Image(value.clone())
-                }
-                MessageContent::Mention { uri, content } => {
-                    match uri {
-                        MentionUri::File(path) | MentionUri::Symbol(path, _) => {
-                            write!(
-                                &mut symbol_context,
-                                "\n{}",
-                                MarkdownCodeBlock {
-                                    tag: &codeblock_tag(&path),
-                                    text: &content.to_string(),
-                                }
-                            )
-                            .ok();
-                        }
-                        MentionUri::Thread(_session_id) => {
-                            write!(&mut thread_context, "\n{}\n", content).ok();
-                        }
-                        MentionUri::Rule(_user_prompt_id) => {
-                            write!(
-                                &mut rules_context,
-                                "\n{}",
-                                MarkdownCodeBlock {
-                                    tag: "",
-                                    text: &content
-                                }
-                            )
-                            .ok();
-                        }
-                    }
-
-                    language_model::MessageContent::Text(uri.to_link())
-                }
-            };
-
-            message.content.push(chunk);
-        }
-
-        let len_before_context = message.content.len();
-
-        if file_context.len() > OPEN_FILES_TAG.len() {
-            file_context.push_str("</files>\n");
-            message
-                .content
-                .push(language_model::MessageContent::Text(file_context));
-        }
-
-        if symbol_context.len() > OPEN_SYMBOLS_TAG.len() {
-            symbol_context.push_str("</symbols>\n");
-            message
-                .content
-                .push(language_model::MessageContent::Text(symbol_context));
-        }
-
-        if thread_context.len() > OPEN_THREADS_TAG.len() {
-            thread_context.push_str("</threads>\n");
-            message
-                .content
-                .push(language_model::MessageContent::Text(thread_context));
-        }
-
-        if rules_context.len() > OPEN_RULES_TAG.len() {
-            rules_context.push_str("</user_rules>\n");
-            message
-                .content
-                .push(language_model::MessageContent::Text(rules_context));
-        }
-
-        if message.content.len() > len_before_context {
-            message.content.insert(
-                len_before_context,
-                language_model::MessageContent::Text(OPEN_CONTEXT.into()),
-            );
-            message
-                .content
-                .push(language_model::MessageContent::Text("</context>".into()));
-        }
-
-        message
+impl From<&str> for UserMessageContent {
+    fn from(text: &str) -> Self {
+        Self::Text(text.into())
     }
 }
 
-fn codeblock_tag(full_path: &Path) -> String {
-    let mut result = String::new();
-
-    if let Some(extension) = full_path.extension().and_then(|ext| ext.to_str()) {
-        let _ = write!(result, "{} ", extension);
-    }
-
-    let _ = write!(result, "{}", full_path.display());
-
-    result
-}
-
-impl From<acp::ContentBlock> for MessageContent {
+impl From<acp::ContentBlock> for UserMessageContent {
     fn from(value: acp::ContentBlock) -> Self {
         match value {
-            acp::ContentBlock::Text(text_content) => MessageContent::Text(text_content.text),
-            acp::ContentBlock::Image(image_content) => {
-                MessageContent::Image(convert_image(image_content))
-            }
+            acp::ContentBlock::Text(text_content) => Self::Text(text_content.text),
+            acp::ContentBlock::Image(image_content) => Self::Image(convert_image(image_content)),
             acp::ContentBlock::Audio(_) => {
                 // TODO
-                MessageContent::Text("[audio]".to_string())
+                Self::Text("[audio]".to_string())
             }
             acp::ContentBlock::ResourceLink(resource_link) => {
                 match MentionUri::parse(&resource_link.uri) {
@@ -1291,10 +1789,7 @@ impl From<acp::ContentBlock> for MessageContent {
                     },
                     Err(err) => {
                         log::error!("Failed to parse mention link: {}", err);
-                        MessageContent::Text(format!(
-                            "[{}]({})",
-                            resource_link.name, resource_link.uri
-                        ))
+                        Self::Text(format!("[{}]({})", resource_link.name, resource_link.uri))
                     }
                 }
             }
@@ -1307,7 +1802,7 @@ impl From<acp::ContentBlock> for MessageContent {
                         },
                         Err(err) => {
                             log::error!("Failed to parse mention link: {}", err);
-                            MessageContent::Text(
+                            Self::Text(
                                 MarkdownCodeBlock {
                                     tag: &resource.uri,
                                     text: &resource.text,
@@ -1319,7 +1814,7 @@ impl From<acp::ContentBlock> for MessageContent {
                 }
                 acp::EmbeddedResourceResource::BlobResourceContents(_) => {
                     // TODO
-                    MessageContent::Text("[blob]".to_string())
+                    Self::Text("[blob]".to_string())
                 }
             },
         }
@@ -1331,11 +1826,5 @@ fn convert_image(image_content: acp::ImageContent) -> LanguageModelImage {
         source: image_content.data.into(),
         // TODO: make this optional?
         size: gpui::Size::new(0.into(), 0.into()),
-    }
-}
-
-impl From<&str> for MessageContent {
-    fn from(text: &str) -> Self {
-        MessageContent::Text(text.into())
     }
 }

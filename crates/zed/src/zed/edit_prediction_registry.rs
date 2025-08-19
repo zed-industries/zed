@@ -147,7 +147,7 @@ fn assign_edit_prediction_providers(
                 assign_edit_prediction_provider(
                     editor,
                     provider,
-                    &client,
+                    client,
                     user_store.clone(),
                     window,
                     cx,
@@ -229,8 +229,7 @@ fn assign_edit_prediction_provider(
                     if let Some(file) = buffer.read(cx).file() {
                         let id = file.worktree_id(cx);
                         if let Some(inner_worktree) = editor
-                            .project
-                            .as_ref()
+                            .project()
                             .and_then(|project| project.read(cx).worktree_for_id(id, cx))
                         {
                             worktree = Some(inner_worktree);
@@ -249,7 +248,7 @@ fn assign_edit_prediction_provider(
                 if let Some(buffer) = &singleton_buffer {
                     if buffer.read(cx).file().is_some() {
                         zeta.update(cx, |zeta, cx| {
-                            zeta.register_buffer(&buffer, cx);
+                            zeta.register_buffer(buffer, cx);
                         });
                     }
                 }

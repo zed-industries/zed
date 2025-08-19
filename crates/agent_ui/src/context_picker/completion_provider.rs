@@ -35,7 +35,7 @@ use super::symbol_context_picker::search_symbols;
 use super::thread_context_picker::{ThreadContextEntry, ThreadMatch, search_threads};
 use super::{
     ContextPickerAction, ContextPickerEntry, ContextPickerMode, MentionLink, RecentEntry,
-    available_context_picker_entries, recent_context_picker_entries, selection_ranges,
+    available_context_picker_entries, recent_context_picker_entries_with_store, selection_ranges,
 };
 use crate::message_editor::ContextCreasesAddon;
 
@@ -728,11 +728,11 @@ fn build_code_label_for_full_path(file_name: &str, directory: Option<&str>, cx: 
     let comment_id = cx.theme().syntax().highlight_id("comment").map(HighlightId);
     let mut label = CodeLabel::default();
 
-    label.push_str(&file_name, None);
+    label.push_str(file_name, None);
     label.push_str(" ", None);
 
     if let Some(directory) = directory {
-        label.push_str(&directory, comment_id);
+        label.push_str(directory, comment_id);
     }
 
     label.filter_range = 0..label.text().len();
@@ -787,7 +787,7 @@ impl CompletionProvider for ContextPickerCompletionProvider {
             .and_then(|b| b.read(cx).file())
             .map(|file| ProjectPath::from_file(file.as_ref(), cx));
 
-        let recent_entries = recent_context_picker_entries(
+        let recent_entries = recent_context_picker_entries_with_store(
             context_store.clone(),
             thread_store.clone(),
             text_thread_store.clone(),

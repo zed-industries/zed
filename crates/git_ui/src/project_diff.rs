@@ -280,7 +280,7 @@ impl ProjectDiff {
     fn button_states(&self, cx: &App) -> ButtonStates {
         let editor = self.editor.read(cx);
         let snapshot = self.multibuffer.read(cx).snapshot(cx);
-        let prev_next = snapshot.diff_hunks().skip(1).next().is_some();
+        let prev_next = snapshot.diff_hunks().nth(1).is_some();
         let mut selection = true;
 
         let mut ranges = editor
@@ -1173,7 +1173,7 @@ impl RenderOnce for ProjectDiffEmptyState {
                             .child(Label::new("No Changes").color(Color::Muted))
                     } else {
                         this.when_some(self.current_branch.as_ref(), |this, branch| {
-                            this.child(has_branch_container(&branch))
+                            this.child(has_branch_container(branch))
                         })
                     }
                 }),
@@ -1332,14 +1332,14 @@ fn merge_anchor_ranges<'a>(
         loop {
             if let Some(left_range) = left
                 .peek()
-                .filter(|range| range.start.cmp(&next_range.end, &snapshot).is_le())
+                .filter(|range| range.start.cmp(&next_range.end, snapshot).is_le())
                 .cloned()
             {
                 left.next();
                 next_range.end = left_range.end;
             } else if let Some(right_range) = right
                 .peek()
-                .filter(|range| range.start.cmp(&next_range.end, &snapshot).is_le())
+                .filter(|range| range.start.cmp(&next_range.end, snapshot).is_le())
                 .cloned()
             {
                 right.next();

@@ -249,7 +249,7 @@ fn collect_diagnostics(
                     let worktree = worktree.read(cx);
                     let worktree_root_path = Path::new(worktree.root_name());
                     let relative_path = path.strip_prefix(worktree_root_path).ok()?;
-                    worktree.absolutize(&relative_path).ok()
+                    worktree.absolutize(relative_path).ok()
                 })
             })
             .is_some()
@@ -365,7 +365,7 @@ pub fn collect_buffer_diagnostics(
 ) {
     for (_, group) in snapshot.diagnostic_groups(None) {
         let entry = &group.entries[group.primary_ix];
-        collect_diagnostic(output, entry, &snapshot, include_warnings)
+        collect_diagnostic(output, entry, snapshot, include_warnings)
     }
 }
 
@@ -396,7 +396,7 @@ fn collect_diagnostic(
     let start_row = range.start.row.saturating_sub(EXCERPT_EXPANSION_SIZE);
     let end_row = (range.end.row + EXCERPT_EXPANSION_SIZE).min(snapshot.max_point().row) + 1;
     let excerpt_range =
-        Point::new(start_row, 0).to_offset(&snapshot)..Point::new(end_row, 0).to_offset(&snapshot);
+        Point::new(start_row, 0).to_offset(snapshot)..Point::new(end_row, 0).to_offset(snapshot);
 
     output.text.push_str("```");
     if let Some(language_name) = snapshot.language().map(|l| l.code_fence_block_name()) {

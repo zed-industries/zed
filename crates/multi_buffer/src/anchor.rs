@@ -145,7 +145,7 @@ impl Anchor {
                             .map(|diff| diff.base_text())
                         {
                             if a.buffer_id == Some(base_text.remote_id()) {
-                                return a.bias_right(&base_text);
+                                return a.bias_right(base_text);
                             }
                         }
                         a
@@ -212,7 +212,7 @@ impl AnchorRangeExt for Range<Anchor> {
     }
 
     fn includes(&self, other: &Range<Anchor>, buffer: &MultiBufferSnapshot) -> bool {
-        self.start.cmp(&other.start, &buffer).is_le() && other.end.cmp(&self.end, &buffer).is_le()
+        self.start.cmp(&other.start, buffer).is_le() && other.end.cmp(&self.end, buffer).is_le()
     }
 
     fn overlaps(&self, other: &Range<Anchor>, buffer: &MultiBufferSnapshot) -> bool {

@@ -1491,7 +1491,7 @@ impl TerminalView {
 impl Render for TerminalView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let terminal_handle = self.terminal.clone();
-        let terminal_view_handle = cx.entity().clone();
+        let terminal_view_handle = cx.entity();
 
         let focused = self.focus_handle.is_focused(window);
 
@@ -1604,15 +1604,15 @@ impl Item for TerminalView {
                 TaskStatus::Running => (
                     IconName::PlayFilled,
                     Color::Disabled,
-                    TerminalView::rerun_button(&terminal_task),
+                    TerminalView::rerun_button(terminal_task),
                 ),
                 TaskStatus::Unknown => (
                     IconName::Warning,
                     Color::Warning,
-                    TerminalView::rerun_button(&terminal_task),
+                    TerminalView::rerun_button(terminal_task),
                 ),
                 TaskStatus::Completed { success } => {
-                    let rerun_button = TerminalView::rerun_button(&terminal_task);
+                    let rerun_button = TerminalView::rerun_button(terminal_task);
 
                     if *success {
                         (IconName::Check, Color::Success, rerun_button)
@@ -1869,7 +1869,7 @@ impl SearchableItem for TerminalView {
 
     /// Clear stored matches
     fn clear_matches(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
-        self.terminal().update(cx, |term, _| term.matches.clear())
+        self.terminal().update(cx, |term, _| term.clear_matches())
     }
 
     /// Store matches returned from find_matches somewhere for rendering

@@ -73,8 +73,8 @@ pub(crate) fn get_valuator_axis_index(
     // valuator present in this event's axisvalues. Axisvalues is ordered from
     // lowest valuator number to highest, so counting bits before the 1 bit for
     // this valuator yields the index in axisvalues.
-    if bit_is_set_in_vec(&valuator_mask, valuator_number) {
-        Some(popcount_upto_bit_index(&valuator_mask, valuator_number) as usize)
+    if bit_is_set_in_vec(valuator_mask, valuator_number) {
+        Some(popcount_upto_bit_index(valuator_mask, valuator_number) as usize)
     } else {
         None
     }

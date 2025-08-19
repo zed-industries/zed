@@ -255,7 +255,12 @@ impl LanguageModelProvider for OllamaLanguageModelProvider {
         self.state.update(cx, |state, cx| state.authenticate(cx))
     }
 
-    fn configuration_view(&self, window: &mut Window, cx: &mut App) -> AnyView {
+    fn configuration_view(
+        &self,
+        _target_agent: language_model::ConfigurationViewTargetAgent,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> AnyView {
         let state = self.state.clone();
         cx.new(|cx| ConfigurationView::new(state, window, cx))
             .into()

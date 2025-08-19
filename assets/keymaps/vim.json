@@ -58,6 +58,8 @@
       "[ space": "vim::InsertEmptyLineAbove",
       "[ e": "editor::MoveLineUp",
       "] e": "editor::MoveLineDown",
+      "[ f": "workspace::FollowNextCollaborator",
+      "] f": "workspace::FollowNextCollaborator",
 
       // Word motions
       "w": "vim::NextWordStart",
@@ -393,7 +395,7 @@
       "right": "vim::WrappingRight",
       "h": "vim::WrappingLeft",
       "l": "vim::WrappingRight",
-      "y": "editor::Copy",
+      "y": "vim::HelixYank",
       "alt-;": "vim::OtherEnd",
       "ctrl-r": "vim::Redo",
       "f": ["vim::PushFindForward", { "before": false, "multiline": true }],
@@ -410,6 +412,7 @@
       "g w": "vim::PushRewrap",
       "insert": "vim::InsertBefore",
       "alt-.": "vim::RepeatFind",
+      "alt-s": ["editor::SplitSelectionIntoLines", { "keep_selections": true }],
       // tree-sitter related commands
       "[ x": "editor::SelectLargerSyntaxNode",
       "] x": "editor::SelectSmallerSyntaxNode",

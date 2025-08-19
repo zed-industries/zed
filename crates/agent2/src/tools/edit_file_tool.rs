@@ -1,12 +1,13 @@
 use crate::{AgentTool, Thread, ToolCallEventStream};
 use acp_thread::Diff;
-use agent_client_protocol as acp;
+use agent_client_protocol::{self as acp, ToolCallLocation, ToolCallUpdateFields};
 use anyhow::{Context as _, Result, anyhow};
 use assistant_tools::edit_agent::{EditAgent, EditAgentOutput, EditAgentOutputEvent, EditFormat};
 use cloud_llm_client::CompletionIntent;
 use collections::HashSet;
 use gpui::{App, AppContext, AsyncApp, Entity, Task};
 use indoc::formatdoc;
+use language::ToPoint;
 use language::language_settings::{self, FormatOnSave};
 use language_model::LanguageModelToolResultContent;
 use paths;
@@ -225,12 +226,28 @@ impl AgentTool for EditFileTool {
             Ok(path) => path,
             Err(err) => return Task::ready(Err(anyhow!(err))),
         };
+        let abs_path = project.read(cx).absolute_path(&project_path, cx);
+        if let Some(abs_path) = abs_path.clone() {
+            event_stream.update_fields(ToolCallUpdateFields {
+                locations: Some(vec![acp::ToolCallLocation {
+                    path: abs_path,
+                    line: None,
+                }]),
+                ..Default::default()
+            });
+        }
 
-        let request = self.thread.update(cx, |thread, cx| {
-            thread.build_completion_request(CompletionIntent::ToolResults, cx)
-        });
+        let Some(request) = self.thread.update(cx, |thread, cx| {
+            thread
+                .build_completion_request(CompletionIntent::ToolResults, cx)
+                .ok()
+        }) else {
+            return Task::ready(Err(anyhow!("Failed to build completion request")));
+        };
         let thread = self.thread.read(cx);
-        let model = thread.selected_model.clone();
+        let Some(model) = thread.model().cloned() else {
+            return Task::ready(Err(anyhow!("No language model configured")));
+        };
         let action_log = thread.action_log().clone();
 
         let authorize = self.authorize(&input, &event_stream, cx);
@@ -283,13 +300,38 @@ impl AgentTool for EditFileTool {
 
             let mut hallucinated_old_text = false;
             let mut ambiguous_ranges = Vec::new();
+            let mut emitted_location = false;
             while let Some(event) = events.next().await {
                 match event {
-                    EditAgentOutputEvent::Edited => {},
+                    EditAgentOutputEvent::Edited(range) => {
+                        if !emitted_location {
+                            let line = buffer.update(cx, |buffer, _cx| {
+                                range.start.to_point(&buffer.snapshot()).row
+                            }).ok();
+                            if let Some(abs_path) = abs_path.clone() {
+                                event_stream.update_fields(ToolCallUpdateFields {
+                                    locations: Some(vec![ToolCallLocation { path: abs_path, line }]),
+                                    ..Default::default()
+                                });
+                            }
+                            emitted_location = true;
+                        }
+                    },
                     EditAgentOutputEvent::UnresolvedEditRange => hallucinated_old_text = true,
                     EditAgentOutputEvent::AmbiguousEditRange(ranges) => ambiguous_ranges = ranges,
                     EditAgentOutputEvent::ResolvingEditRange(range) => {
-                        diff.update(cx, |card, cx| card.reveal_range(range, cx))?;
+                        diff.update(cx, |card, cx| card.reveal_range(range.clone(), cx))?;
+                        // if !emitted_location {
+                        //     let line = buffer.update(cx, |buffer, _cx| {
+                        //         range.start.to_point(&buffer.snapshot()).row
+                        //     }).ok();
+                        //     if let Some(abs_path) = abs_path.clone() {
+                        //         event_stream.update_fields(ToolCallUpdateFields {
+                        //             locations: Some(vec![ToolCallLocation { path: abs_path, line }]),
+                        //             ..Default::default()
+                        //         });
+                        //     }
+                        // }
                     }
                 }
             }
@@ -429,7 +471,7 @@ fn resolve_path(
 
             let parent_entry = parent_project_path
                 .as_ref()
-                .and_then(|path| project.entry_for_path(&path, cx))
+                .and_then(|path| project.entry_for_path(path, cx))
                 .context("Can't create file: parent directory doesn't exist")?;
 
             anyhow::ensure!(
@@ -461,9 +503,9 @@ mod tests {
     use fs::Fs;
     use gpui::{TestAppContext, UpdateGlobal};
     use language_model::fake_provider::FakeLanguageModel;
+    use prompt_store::ProjectContext;
     use serde_json::json;
     use settings::SettingsStore;
-    use std::rc::Rc;
     use util::path;
 
     #[gpui::test]
@@ -480,11 +522,11 @@ mod tests {
         let thread = cx.new(|cx| {
             Thread::new(
                 project,
-                Rc::default(),
+                cx.new(|_cx| ProjectContext::default()),
                 context_server_registry,
                 action_log,
                 Templates::new(),
-                model,
+                Some(model),
                 cx,
             )
         });
@@ -677,11 +719,11 @@ mod tests {
         let thread = cx.new(|cx| {
             Thread::new(
                 project,
-                Rc::default(),
+                cx.new(|_cx| ProjectContext::default()),
                 context_server_registry,
                 action_log.clone(),
                 Templates::new(),
-                model.clone(),
+                Some(model.clone()),
                 cx,
             )
         });
@@ -813,11 +855,11 @@ mod tests {
         let thread = cx.new(|cx| {
             Thread::new(
                 project,
-                Rc::default(),
+                cx.new(|_cx| ProjectContext::default()),
                 context_server_registry,
                 action_log.clone(),
                 Templates::new(),
-                model.clone(),
+                Some(model.clone()),
                 cx,
             )
         });
@@ -939,11 +981,11 @@ mod tests {
         let thread = cx.new(|cx| {
             Thread::new(
                 project,
-                Rc::default(),
+                cx.new(|_cx| ProjectContext::default()),
                 context_server_registry,
                 action_log.clone(),
                 Templates::new(),
-                model.clone(),
+                Some(model.clone()),
                 cx,
             )
         });
@@ -965,7 +1007,10 @@ mod tests {
         });
 
         let event = stream_rx.expect_authorization().await;
-        assert_eq!(event.tool_call.title, "test 1 (local settings)");
+        assert_eq!(
+            event.tool_call.fields.title,
+            Some("test 1 (local settings)".into())
+        );
 
         // Test 2: Path outside project should require confirmation
         let (stream_tx, mut stream_rx) = ToolCallEventStream::test();
@@ -982,7 +1027,7 @@ mod tests {
         });
 
         let event = stream_rx.expect_authorization().await;
-        assert_eq!(event.tool_call.title, "test 2");
+        assert_eq!(event.tool_call.fields.title, Some("test 2".into()));
 
         // Test 3: Relative path without .zed should not require confirmation
         let (stream_tx, mut stream_rx) = ToolCallEventStream::test();
@@ -1015,7 +1060,10 @@ mod tests {
             )
         });
         let event = stream_rx.expect_authorization().await;
-        assert_eq!(event.tool_call.title, "test 4 (local settings)");
+        assert_eq!(
+            event.tool_call.fields.title,
+            Some("test 4 (local settings)".into())
+        );
 
         // Test 5: When always_allow_tool_actions is enabled, no confirmation needed
         cx.update(|cx| {
@@ -1070,11 +1118,11 @@ mod tests {
         let thread = cx.new(|cx| {
             Thread::new(
                 project,
-                Rc::default(),
+                cx.new(|_cx| ProjectContext::default()),
                 context_server_registry,
                 action_log.clone(),
                 Templates::new(),
-                model.clone(),
+                Some(model.clone()),
                 cx,
             )
         });
@@ -1180,11 +1228,11 @@ mod tests {
         let thread = cx.new(|cx| {
             Thread::new(
                 project.clone(),
-                Rc::default(),
+                cx.new(|_cx| ProjectContext::default()),
                 context_server_registry.clone(),
                 action_log.clone(),
                 Templates::new(),
-                model.clone(),
+                Some(model.clone()),
                 cx,
             )
         });
@@ -1261,11 +1309,11 @@ mod tests {
         let thread = cx.new(|cx| {
             Thread::new(
                 project.clone(),
-                Rc::default(),
+                cx.new(|_cx| ProjectContext::default()),
                 context_server_registry.clone(),
                 action_log.clone(),
                 Templates::new(),
-                model.clone(),
+                Some(model.clone()),
                 cx,
             )
         });
@@ -1345,11 +1393,11 @@ mod tests {
         let thread = cx.new(|cx| {
             Thread::new(
                 project.clone(),
-                Rc::default(),
+                cx.new(|_cx| ProjectContext::default()),
                 context_server_registry.clone(),
                 action_log.clone(),
                 Templates::new(),
-                model.clone(),
+                Some(model.clone()),
                 cx,
             )
         });
@@ -1426,11 +1474,11 @@ mod tests {
         let thread = cx.new(|cx| {
             Thread::new(
                 project.clone(),
-                Rc::default(),
+                cx.new(|_cx| ProjectContext::default()),
                 context_server_registry,
                 action_log.clone(),
                 Templates::new(),
-                model.clone(),
+                Some(model.clone()),
                 cx,
             )
         });

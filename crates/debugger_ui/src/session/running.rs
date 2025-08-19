@@ -102,7 +102,7 @@ impl Render for RunningState {
             .find(|pane| pane.read(cx).is_zoomed());
 
         let active = self.panes.panes().into_iter().next();
-        let pane = if let Some(ref zoomed_pane) = zoomed_pane {
+        let pane = if let Some(zoomed_pane) = zoomed_pane {
             zoomed_pane.update(cx, |pane, cx| pane.render(window, cx).into_any_element())
         } else if let Some(active) = active {
             self.panes
@@ -291,7 +291,7 @@ pub(crate) fn new_debugger_pane(
             let Some(project) = project.upgrade() else {
                 return ControlFlow::Break(());
             };
-            let this_pane = cx.entity().clone();
+            let this_pane = cx.entity();
             let item = if tab.pane == this_pane {
                 pane.item_for_index(tab.ix)
             } else {
@@ -502,7 +502,7 @@ pub(crate) fn new_debugger_pane(
                                     .on_drag(
                                         DraggedTab {
                                             item: item.boxed_clone(),
-                                            pane: cx.entity().clone(),
+                                            pane: cx.entity(),
                                             detail: 0,
                                             is_active: selected,
                                             ix,
@@ -627,7 +627,7 @@ impl RunningState {
                 if s.starts_with("\"$ZED_") && s.ends_with('"') {
                     *s = s[1..s.len() - 1].to_string();
                 }
-                if let Some(substituted) = substitute_variables_in_str(&s, context) {
+                if let Some(substituted) = substitute_variables_in_str(s, context) {
                     *s = substituted;
                 }
             }
@@ -657,7 +657,7 @@ impl RunningState {
                 }
                 resolve_path(s);
 
-                if let Some(substituted) = substitute_variables_in_str(&s, context) {
+                if let Some(substituted) = substitute_variables_in_str(s, context) {
                     *s = substituted;
                 }
             }
@@ -954,7 +954,7 @@ impl RunningState {
                                 inventory.read(cx).task_template_by_label(
                                     buffer,
                                     worktree_id,
-                                    &label,
+                                    label,
                                     cx,
                                 )
                             })
@@ -1310,7 +1310,7 @@ impl RunningState {
         let mut pane_item_status = IndexMap::from_iter(
             DebuggerPaneItem::all()
                 .iter()
-                .filter(|kind| kind.is_supported(&caps))
+                .filter(|kind| kind.is_supported(caps))
                 .map(|kind| (*kind, false)),
         );
         self.panes.panes().iter().for_each(|pane| {
@@ -1371,7 +1371,7 @@ impl RunningState {
         this.serialize_layout(window, cx);
         match event {
             Event::Remove { .. } => {
-                let _did_find_pane = this.panes.remove(&source_pane).is_ok();
+                let _did_find_pane = this.panes.remove(source_pane).is_ok();
                 debug_assert!(_did_find_pane);
                 cx.notify();
             }
