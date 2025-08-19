@@ -958,7 +958,7 @@ impl AgentConfiguration {
                 }
 
                 parent.child(v_flex().py_1p5().px_1().gap_1().children(
-                    tools.into_iter().enumerate().map(|(ix, tool)| {
+                    tools.iter().enumerate().map(|(ix, tool)| {
                         h_flex()
                             .id(("tool-item", ix))
                             .px_1()

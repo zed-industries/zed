@@ -385,12 +385,11 @@ impl ContextPicker {
     }
 
     pub fn select_first(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        match &self.mode {
-            ContextPickerState::Default(entity) => entity.update(cx, |entity, cx| {
+        // Other variants already select their first entry on open automatically
+        if let ContextPickerState::Default(entity) = &self.mode {
+            entity.update(cx, |entity, cx| {
                 entity.select_first(&Default::default(), window, cx)
-            }),
-            // Other variants already select their first entry on open automatically
-            _ => {}
+            })
         }
     }
 
