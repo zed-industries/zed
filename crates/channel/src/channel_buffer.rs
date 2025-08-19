@@ -135,7 +135,7 @@ impl ChannelBuffer {
             }
         }
 
-        for (_, old_collaborator) in &self.collaborators {
+        for old_collaborator in self.collaborators.values() {
             if !new_collaborators.contains_key(&old_collaborator.peer_id) {
                 self.buffer.update(cx, |buffer, cx| {
                     buffer.remove_peer(old_collaborator.replica_id, cx)

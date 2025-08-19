@@ -1175,16 +1175,16 @@ impl ExtensionStore {
                 }
             }
 
-            for (server_id, _) in &extension.manifest.context_servers {
+            for server_id in extension.manifest.context_servers.keys() {
                 self.proxy.unregister_context_server(server_id.clone(), cx);
             }
-            for (adapter, _) in &extension.manifest.debug_adapters {
+            for adapter in extension.manifest.debug_adapters.keys() {
                 self.proxy.unregister_debug_adapter(adapter.clone());
             }
-            for (locator, _) in &extension.manifest.debug_locators {
+            for locator in extension.manifest.debug_locators.keys() {
                 self.proxy.unregister_debug_locator(locator.clone());
             }
-            for (command_name, _) in &extension.manifest.slash_commands {
+            for command_name in extension.manifest.slash_commands.keys() {
                 self.proxy.unregister_slash_command(command_name.clone());
             }
         }
@@ -1386,7 +1386,7 @@ impl ExtensionStore {
                         );
                     }
 
-                    for (id, _context_server_entry) in &manifest.context_servers {
+                    for id in manifest.context_servers.keys() {
                         this.proxy
                             .register_context_server(extension.clone(), id.clone(), cx);
                     }
