@@ -95,6 +95,12 @@ impl FeatureFlag for AcpFeatureFlag {
     const NAME: &'static str = "acp";
 }
 
+pub struct ClaudeCodeFeatureFlag;
+
+impl FeatureFlag for ClaudeCodeFeatureFlag {
+    const NAME: &'static str = "claude-code";
+}
+
 pub trait FeatureFlagViewExt<V: 'static> {
     fn observe_flag<T: FeatureFlag, F>(&mut self, window: &Window, callback: F) -> Subscription
     where

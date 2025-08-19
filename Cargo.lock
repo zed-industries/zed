@@ -196,6 +196,7 @@ dependencies = [
  "agent_servers",
  "agent_settings",
  "anyhow",
+ "assistant_context",
  "assistant_tool",
  "assistant_tools",
  "chrono",
@@ -223,6 +224,7 @@ dependencies = [
  "log",
  "lsp",
  "open",
+ "parking_lot",
  "paths",
  "portable-pty",
  "pretty_assertions",
@@ -235,6 +237,7 @@ dependencies = [
  "serde_json",
  "settings",
  "smol",
+ "sqlez",
  "task",
  "tempfile",
  "terminal",
@@ -251,6 +254,7 @@ dependencies = [
  "workspace-hack",
  "worktree",
  "zlog",
+ "zstd",
 ]
 
 [[package]]
