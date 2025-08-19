@@ -1,6 +1,7 @@
 mod mcp_server;
 pub mod tools;
 
+use action_log::ActionLog;
 use collections::HashMap;
 use context_server::listener::McpServerTool;
 use language_models::provider::anthropic::AnthropicLanguageModelProvider;
@@ -215,8 +216,15 @@ impl AgentConnection for ClaudeAgentConnection {
                 }
             });
 
-            let thread = cx.new(|cx| {
-                AcpThread::new("Claude Code", self.clone(), project, session_id.clone(), cx)
+            let action_log = cx.new(|_| ActionLog::new(project.clone()))?;
+            let thread = cx.new(|_cx| {
+                AcpThread::new(
+                    "Claude Code",
+                    self.clone(),
+                    project,
+                    action_log,
+                    session_id.clone(),
+                )
             })?;
 
             thread_tx.send(thread.downgrade())?;

@@ -14,6 +14,7 @@ workspace = true
 [dependencies]
 acp_thread.workspace = true
 action_log.workspace = true
+agent.workspace = true
 agent-client-protocol.workspace = true
 agent_servers.workspace = true
 agent_settings.workspace = true
@@ -26,6 +27,7 @@ collections.workspace = true
 context_server.workspace = true
 fs.workspace = true
 futures.workspace = true
+git.workspace = true
 gpui.workspace = true
 handlebars = { workspace = true, features = ["rust-embed"] }
 html_to_markdown.workspace = true
@@ -59,6 +61,7 @@ which.workspace = true
 workspace-hack.workspace = true
 
 [dev-dependencies]
+agent = { workspace = true, "features" = ["test-support"] }
 ctor.workspace = true
 client = { workspace = true, "features" = ["test-support"] }
 clock = { workspace = true, "features" = ["test-support"] }
@@ -66,6 +69,7 @@ context_server = { workspace = true, "features" = ["test-support"] }
 editor = { workspace = true, "features" = ["test-support"] }
 env_logger.workspace = true
 fs = { workspace = true, "features" = ["test-support"] }
+git = { workspace = true, "features" = ["test-support"] }
 gpui = { workspace = true, "features" = ["test-support"] }
 gpui_tokio.workspace = true
 language = { workspace = true, "features" = ["test-support"] }

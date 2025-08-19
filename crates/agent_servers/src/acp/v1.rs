@@ -1,3 +1,4 @@
+use action_log::ActionLog;
 use agent_client_protocol::{self as acp, Agent as _};
 use anyhow::anyhow;
 use collections::HashMap;
@@ -153,14 +154,14 @@ impl AgentConnection for AcpConnection {
                 })?;
 
             let session_id = response.session_id;
-
-            let thread = cx.new(|cx| {
+            let action_log = cx.new(|_| ActionLog::new(project.clone()))?;
+            let thread = cx.new(|_cx| {
                 AcpThread::new(
                     self.server_name,
                     self.clone(),
                     project,
+                    action_log,
                     session_id.clone(),
-                    cx,
                 )
             })?;
 

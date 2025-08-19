@@ -1,10 +1,11 @@
 use crate::{
-    AgentResponseEvent, ContextServerRegistry, CopyPathTool, CreateDirectoryTool, DeletePathTool,
-    DiagnosticsTool, EditFileTool, FetchTool, FindPathTool, GrepTool, ListDirectoryTool,
-    MovePathTool, NowTool, OpenTool, ReadFileTool, TerminalTool, ThinkingTool, Thread,
-    ToolCallAuthorization, UserMessageContent, WebSearchTool, templates::Templates,
+    ContextServerRegistry, CopyPathTool, CreateDirectoryTool, DeletePathTool, DiagnosticsTool,
+    EditFileTool, FetchTool, FindPathTool, GrepTool, ListDirectoryTool, MovePathTool, NowTool,
+    OpenTool, ReadFileTool, TerminalTool, ThinkingTool, Thread, ThreadEvent, ToolCallAuthorization,
+    UserMessageContent, WebSearchTool, templates::Templates,
 };
 use acp_thread::AgentModelSelector;
+use action_log::ActionLog;
 use agent_client_protocol as acp;
 use agent_settings::AgentSettings;
 use anyhow::{Context as _, Result, anyhow};
@@ -427,18 +428,19 @@ impl NativeAgent {
     ) {
         self.models.refresh_list(cx);
 
-        let default_model = LanguageModelRegistry::read_global(cx)
-            .default_model()
-            .map(|m| m.model.clone());
+        let registry = LanguageModelRegistry::read_global(cx);
+        let default_model = registry.default_model().map(|m| m.model.clone());
+        let summarization_model = registry.thread_summary_model().map(|m| m.model.clone());
 
         for session in self.sessions.values_mut() {
             session.thread.update(cx, |thread, cx| {
                 if thread.model().is_none()
                     && let Some(model) = default_model.clone()
                 {
-                    thread.set_model(model);
+                    thread.set_model(model, cx);
                     cx.notify();
                 }
+                thread.set_summarization_model(summarization_model.clone(), cx);
             });
         }
     }
@@ -462,10 +464,7 @@ impl NativeAgentConnection {
         session_id: acp::SessionId,
         cx: &mut App,
         f: impl 'static
-        + FnOnce(
-            Entity<Thread>,
-            &mut App,
-        ) -> Result<mpsc::UnboundedReceiver<Result<AgentResponseEvent>>>,
+        + FnOnce(Entity<Thread>, &mut App) -> Result<mpsc::UnboundedReceiver<Result<ThreadEvent>>>,
     ) -> Task<Result<acp::PromptResponse>> {
         let Some((thread, acp_thread)) = self.0.update(cx, |agent, _cx| {
             agent
@@ -489,7 +488,18 @@ impl NativeAgentConnection {
                         log::trace!("Received completion event: {:?}", event);
 
                         match event {
-                            AgentResponseEvent::Text(text) => {
+                            ThreadEvent::UserMessage(message) => {
+                                acp_thread.update(cx, |thread, cx| {
+                                    for content in message.content {
+                                        thread.push_user_content_block(
+                                            Some(message.id.clone()),
+                                            content.into(),
+                                            cx,
+                                        );
+                                    }
+                                })?;
+                            }
+                            ThreadEvent::AgentText(text) => {
                                 acp_thread.update(cx, |thread, cx| {
                                     thread.push_assistant_content_block(
                                         acp::ContentBlock::Text(acp::TextContent {
@@ -501,7 +511,7 @@ impl NativeAgentConnection {
                                     )
                                 })?;
                             }
-                            AgentResponseEvent::Thinking(text) => {
+                            ThreadEvent::AgentThinking(text) => {
                                 acp_thread.update(cx, |thread, cx| {
                                     thread.push_assistant_content_block(
                                         acp::ContentBlock::Text(acp::TextContent {
@@ -513,7 +523,7 @@ impl NativeAgentConnection {
                                     )
                                 })?;
                             }
-                            AgentResponseEvent::ToolCallAuthorization(ToolCallAuthorization {
+                            ThreadEvent::ToolCallAuthorization(ToolCallAuthorization {
                                 tool_call,
                                 options,
                                 response,
@@ -536,22 +546,26 @@ impl NativeAgentConnection {
                                 })
                                 .detach();
                             }
-                            AgentResponseEvent::ToolCall(tool_call) => {
+                            ThreadEvent::ToolCall(tool_call) => {
                                 acp_thread.update(cx, |thread, cx| {
                                     thread.upsert_tool_call(tool_call, cx)
                                 })??;
                             }
-                            AgentResponseEvent::ToolCallUpdate(update) => {
+                            ThreadEvent::ToolCallUpdate(update) => {
                                 acp_thread.update(cx, |thread, cx| {
                                     thread.update_tool_call(update, cx)
                                 })??;
                             }
-                            AgentResponseEvent::Retry(status) => {
+                            ThreadEvent::TitleUpdate(title) => {
+                                acp_thread
+                                    .update(cx, |thread, cx| thread.update_title(title, cx))??;
+                            }
+                            ThreadEvent::Retry(status) => {
                                 acp_thread.update(cx, |thread, cx| {
                                     thread.update_retry_status(status, cx)
                                 })?;
                             }
-                            AgentResponseEvent::Stop(stop_reason) => {
+                            ThreadEvent::Stop(stop_reason) => {
                                 log::debug!("Assistant message complete: {:?}", stop_reason);
                                 return Ok(acp::PromptResponse { stop_reason });
                             }
@@ -604,8 +618,8 @@ impl AgentModelSelector for NativeAgentConnection {
             return Task::ready(Err(anyhow!("Invalid model ID {}", model_id)));
         };
 
-        thread.update(cx, |thread, _cx| {
-            thread.set_model(model.clone());
+        thread.update(cx, |thread, cx| {
+            thread.set_model(model.clone(), cx);
         });
 
         update_settings_file::<AgentSettings>(
@@ -665,30 +679,14 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
         cx.spawn(async move |cx| {
             log::debug!("Starting thread creation in async context");
 
-            // Generate session ID
-            let session_id = acp::SessionId(uuid::Uuid::new_v4().to_string().into());
-            log::info!("Created session with ID: {}", session_id);
-
-            // Create AcpThread
-            let acp_thread = cx.update(|cx| {
-                cx.new(|cx| {
-                    acp_thread::AcpThread::new(
-                        "agent2",
-                        self.clone(),
-                        project.clone(),
-                        session_id.clone(),
-                        cx,
-                    )
-                })
-            })?;
-            let action_log = cx.update(|cx| acp_thread.read(cx).action_log().clone())?;
-
+            let action_log = cx.new(|_cx| ActionLog::new(project.clone()))?;
             // Create Thread
             let thread = agent.update(
                 cx,
                 |agent, cx: &mut gpui::Context<NativeAgent>| -> Result<_> {
                     // Fetch default model from registry settings
                     let registry = LanguageModelRegistry::read_global(cx);
+                    let language_registry = project.read(cx).languages().clone();
 
                     // Log available models for debugging
                     let available_count = registry.available_models(cx).count();
@@ -699,6 +697,7 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
                             .models
                             .model_from_id(&LanguageModels::model_id(&default_model.model))
                     });
+                    let summarization_model = registry.thread_summary_model().map(|c| c.model);
 
                     let thread = cx.new(|cx| {
                         let mut thread = Thread::new(
@@ -708,13 +707,14 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
                             action_log.clone(),
                             agent.templates.clone(),
                             default_model,
+                            summarization_model,
                             cx,
                         );
                         thread.add_tool(CopyPathTool::new(project.clone()));
                         thread.add_tool(CreateDirectoryTool::new(project.clone()));
                         thread.add_tool(DeletePathTool::new(project.clone(), action_log.clone()));
                         thread.add_tool(DiagnosticsTool::new(project.clone()));
-                        thread.add_tool(EditFileTool::new(cx.entity()));
+                        thread.add_tool(EditFileTool::new(cx.weak_entity(), language_registry));
                         thread.add_tool(FetchTool::new(project.read(cx).client().http_client()));
                         thread.add_tool(FindPathTool::new(project.clone()));
                         thread.add_tool(GrepTool::new(project.clone()));
@@ -722,7 +722,7 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
                         thread.add_tool(MovePathTool::new(project.clone()));
                         thread.add_tool(NowTool);
                         thread.add_tool(OpenTool::new(project.clone()));
-                        thread.add_tool(ReadFileTool::new(project.clone(), action_log));
+                        thread.add_tool(ReadFileTool::new(project.clone(), action_log.clone()));
                         thread.add_tool(TerminalTool::new(project.clone(), cx));
                         thread.add_tool(ThinkingTool);
                         thread.add_tool(WebSearchTool); // TODO: Enable this only if it's a zed model.
@@ -732,6 +732,21 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
                     Ok(thread)
                 },
             )??;
+
+            let session_id = thread.read_with(cx, |thread, _| thread.id().clone())?;
+            log::info!("Created session with ID: {}", session_id);
+            // Create AcpThread
+            let acp_thread = cx.update(|cx| {
+                cx.new(|_cx| {
+                    acp_thread::AcpThread::new(
+                        "agent2",
+                        self.clone(),
+                        project.clone(),
+                        action_log.clone(),
+                        session_id.clone(),
+                    )
+                })
+            })?;
 
             // Store the session
             agent.update(cx, |agent, cx| {
@@ -803,7 +818,7 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
         log::info!("Cancelling on session: {}", session_id);
         self.0.update(cx, |agent, cx| {
             if let Some(agent) = agent.sessions.get(session_id) {
-                agent.thread.update(cx, |thread, _cx| thread.cancel());
+                agent.thread.update(cx, |thread, cx| thread.cancel(cx));
             }
         });
     }
@@ -830,7 +845,10 @@ struct NativeAgentSessionEditor(Entity<Thread>);
 
 impl acp_thread::AgentSessionEditor for NativeAgentSessionEditor {
     fn truncate(&self, message_id: acp_thread::UserMessageId, cx: &mut App) -> Task<Result<()>> {
-        Task::ready(self.0.update(cx, |thread, _cx| thread.truncate(message_id)))
+        Task::ready(
+            self.0
+                .update(cx, |thread, cx| thread.truncate(message_id, cx)),
+        )
     }
 }
 

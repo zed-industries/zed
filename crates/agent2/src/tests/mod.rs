@@ -345,7 +345,7 @@ async fn test_streaming_tool_calls(cx: &mut TestAppContext) {
 
     let mut saw_partial_tool_use = false;
     while let Some(event) = events.next().await {
-        if let Ok(AgentResponseEvent::ToolCall(tool_call)) = event {
+        if let Ok(ThreadEvent::ToolCall(tool_call)) = event {
             thread.update(cx, |thread, _cx| {
                 // Look for a tool use in the thread's last message
                 let message = thread.last_message().unwrap();
@@ -735,16 +735,14 @@ async fn test_send_after_tool_use_limit(cx: &mut TestAppContext) {
     );
 }
 
-async fn expect_tool_call(
-    events: &mut UnboundedReceiver<Result<AgentResponseEvent>>,
-) -> acp::ToolCall {
+async fn expect_tool_call(events: &mut UnboundedReceiver<Result<ThreadEvent>>) -> acp::ToolCall {
     let event = events
         .next()
         .await
         .expect("no tool call authorization event received")
         .unwrap();
     match event {
-        AgentResponseEvent::ToolCall(tool_call) => return tool_call,
+        ThreadEvent::ToolCall(tool_call) => return tool_call,
         event => {
             panic!("Unexpected event {event:?}");
         }
@@ -752,7 +750,7 @@ async fn expect_tool_call(
 }
 
 async fn expect_tool_call_update_fields(
-    events: &mut UnboundedReceiver<Result<AgentResponseEvent>>,
+    events: &mut UnboundedReceiver<Result<ThreadEvent>>,
 ) -> acp::ToolCallUpdate {
     let event = events
         .next()
@@ -760,7 +758,7 @@ async fn expect_tool_call_update_fields(
         .expect("no tool call authorization event received")
         .unwrap();
     match event {
-        AgentResponseEvent::ToolCallUpdate(acp_thread::ToolCallUpdate::UpdateFields(update)) => {
+        ThreadEvent::ToolCallUpdate(acp_thread::ToolCallUpdate::UpdateFields(update)) => {
             return update;
         }
         event => {
@@ -770,7 +768,7 @@ async fn expect_tool_call_update_fields(
 }
 
 async fn next_tool_call_authorization(
-    events: &mut UnboundedReceiver<Result<AgentResponseEvent>>,
+    events: &mut UnboundedReceiver<Result<ThreadEvent>>,
 ) -> ToolCallAuthorization {
     loop {
         let event = events
@@ -778,7 +776,7 @@ async fn next_tool_call_authorization(
             .await
             .expect("no tool call authorization event received")
             .unwrap();
-        if let AgentResponseEvent::ToolCallAuthorization(tool_call_authorization) = event {
+        if let ThreadEvent::ToolCallAuthorization(tool_call_authorization) = event {
             let permission_kinds = tool_call_authorization
                 .options
                 .iter()
@@ -945,13 +943,13 @@ async fn test_cancellation(cx: &mut TestAppContext) {
     let mut echo_completed = false;
     while let Some(event) = events.next().await {
         match event.unwrap() {
-            AgentResponseEvent::ToolCall(tool_call) => {
+            ThreadEvent::ToolCall(tool_call) => {
                 assert_eq!(tool_call.title, expected_tools.remove(0));
                 if tool_call.title == "Echo" {
                     echo_id = Some(tool_call.id);
                 }
             }
-            AgentResponseEvent::ToolCallUpdate(acp_thread::ToolCallUpdate::UpdateFields(
+            ThreadEvent::ToolCallUpdate(acp_thread::ToolCallUpdate::UpdateFields(
                 acp::ToolCallUpdate {
                     id,
                     fields:
@@ -973,13 +971,13 @@ async fn test_cancellation(cx: &mut TestAppContext) {
 
     // Cancel the current send and ensure that the event stream is closed, even
     // if one of the tools is still running.
-    thread.update(cx, |thread, _cx| thread.cancel());
+    thread.update(cx, |thread, cx| thread.cancel(cx));
     let events = events.collect::<Vec<_>>().await;
     let last_event = events.last();
     assert!(
         matches!(
             last_event,
-            Some(Ok(AgentResponseEvent::Stop(acp::StopReason::Canceled)))
+            Some(Ok(ThreadEvent::Stop(acp::StopReason::Canceled)))
         ),
         "unexpected event {last_event:?}"
     );
@@ -1161,7 +1159,7 @@ async fn test_truncate(cx: &mut TestAppContext) {
     });
 
     thread
-        .update(cx, |thread, _cx| thread.truncate(message_id))
+        .update(cx, |thread, cx| thread.truncate(message_id, cx))
         .unwrap();
     cx.run_until_parked();
     thread.read_with(cx, |thread, _| {
@@ -1201,6 +1199,51 @@ async fn test_truncate(cx: &mut TestAppContext) {
             "}
         );
     });
+}
+
+#[gpui::test]
+async fn test_title_generation(cx: &mut TestAppContext) {
+    let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
+    let fake_model = model.as_fake();
+
+    let summary_model = Arc::new(FakeLanguageModel::default());
+    thread.update(cx, |thread, cx| {
+        thread.set_summarization_model(Some(summary_model.clone()), cx)
+    });
+
+    let send = thread
+        .update(cx, |thread, cx| {
+            thread.send(UserMessageId::new(), ["Hello"], cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+
+    fake_model.send_last_completion_stream_text_chunk("Hey!");
+    fake_model.end_last_completion_stream();
+    cx.run_until_parked();
+    thread.read_with(cx, |thread, _| assert_eq!(thread.title(), "New Thread"));
+
+    // Ensure the summary model has been invoked to generate a title.
+    summary_model.send_last_completion_stream_text_chunk("Hello ");
+    summary_model.send_last_completion_stream_text_chunk("world\nG");
+    summary_model.send_last_completion_stream_text_chunk("oodnight Moon");
+    summary_model.end_last_completion_stream();
+    send.collect::<Vec<_>>().await;
+    thread.read_with(cx, |thread, _| assert_eq!(thread.title(), "Hello world"));
+
+    // Send another message, ensuring no title is generated this time.
+    let send = thread
+        .update(cx, |thread, cx| {
+            thread.send(UserMessageId::new(), ["Hello again"], cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+    fake_model.send_last_completion_stream_text_chunk("Hey again!");
+    fake_model.end_last_completion_stream();
+    cx.run_until_parked();
+    assert_eq!(summary_model.pending_completions(), Vec::new());
+    send.collect::<Vec<_>>().await;
+    thread.read_with(cx, |thread, _| assert_eq!(thread.title(), "Hello world"));
 }
 
 #[gpui::test]
@@ -1442,7 +1485,7 @@ async fn test_send_no_retry_on_success(cx: &mut TestAppContext) {
 
     let mut events = thread
         .update(cx, |thread, cx| {
-            thread.set_completion_mode(agent_settings::CompletionMode::Burn);
+            thread.set_completion_mode(agent_settings::CompletionMode::Burn, cx);
             thread.send(UserMessageId::new(), ["Hello!"], cx)
         })
         .unwrap();
@@ -1454,10 +1497,10 @@ async fn test_send_no_retry_on_success(cx: &mut TestAppContext) {
     let mut retry_events = Vec::new();
     while let Some(Ok(event)) = events.next().await {
         match event {
-            AgentResponseEvent::Retry(retry_status) => {
+            ThreadEvent::Retry(retry_status) => {
                 retry_events.push(retry_status);
             }
-            AgentResponseEvent::Stop(..) => break,
+            ThreadEvent::Stop(..) => break,
             _ => {}
         }
     }
@@ -1486,7 +1529,7 @@ async fn test_send_retry_on_error(cx: &mut TestAppContext) {
 
     let mut events = thread
         .update(cx, |thread, cx| {
-            thread.set_completion_mode(agent_settings::CompletionMode::Burn);
+            thread.set_completion_mode(agent_settings::CompletionMode::Burn, cx);
             thread.send(UserMessageId::new(), ["Hello!"], cx)
         })
         .unwrap();
@@ -1507,10 +1550,10 @@ async fn test_send_retry_on_error(cx: &mut TestAppContext) {
     let mut retry_events = Vec::new();
     while let Some(Ok(event)) = events.next().await {
         match event {
-            AgentResponseEvent::Retry(retry_status) => {
+            ThreadEvent::Retry(retry_status) => {
                 retry_events.push(retry_status);
             }
-            AgentResponseEvent::Stop(..) => break,
+            ThreadEvent::Stop(..) => break,
             _ => {}
         }
     }
@@ -1543,7 +1586,7 @@ async fn test_send_max_retries_exceeded(cx: &mut TestAppContext) {
 
     let mut events = thread
         .update(cx, |thread, cx| {
-            thread.set_completion_mode(agent_settings::CompletionMode::Burn);
+            thread.set_completion_mode(agent_settings::CompletionMode::Burn, cx);
             thread.send(UserMessageId::new(), ["Hello!"], cx)
         })
         .unwrap();
@@ -1565,10 +1608,10 @@ async fn test_send_max_retries_exceeded(cx: &mut TestAppContext) {
     let mut retry_events = Vec::new();
     while let Some(event) = events.next().await {
         match event {
-            Ok(AgentResponseEvent::Retry(retry_status)) => {
+            Ok(ThreadEvent::Retry(retry_status)) => {
                 retry_events.push(retry_status);
             }
-            Ok(AgentResponseEvent::Stop(..)) => break,
+            Ok(ThreadEvent::Stop(..)) => break,
             Err(error) => errors.push(error),
             _ => {}
         }
@@ -1592,11 +1635,11 @@ async fn test_send_max_retries_exceeded(cx: &mut TestAppContext) {
 }
 
 /// Filters out the stop events for asserting against in tests
-fn stop_events(result_events: Vec<Result<AgentResponseEvent>>) -> Vec<acp::StopReason> {
+fn stop_events(result_events: Vec<Result<ThreadEvent>>) -> Vec<acp::StopReason> {
     result_events
         .into_iter()
         .filter_map(|event| match event.unwrap() {
-            AgentResponseEvent::Stop(stop_reason) => Some(stop_reason),
+            ThreadEvent::Stop(stop_reason) => Some(stop_reason),
             _ => None,
         })
         .collect()
@@ -1713,6 +1756,7 @@ async fn setup(cx: &mut TestAppContext, model: TestModel) -> ThreadTest {
             action_log,
             templates,
             Some(model.clone()),
+            None,
             cx,
         )
     });
