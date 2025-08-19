@@ -150,16 +150,17 @@ fn possible_open_target(
             };
 
             if path_to_check.path.is_relative()
-                && let Some(entry) = worktree.read(cx).entry_for_path(&path_to_check.path) {
-                    return Task::ready(Some(OpenTarget::Worktree(
-                        PathWithPosition {
-                            path: worktree_root.join(&entry.path),
-                            row: path_to_check.row,
-                            column: path_to_check.column,
-                        },
-                        entry.clone(),
-                    )));
-                }
+                && let Some(entry) = worktree.read(cx).entry_for_path(&path_to_check.path)
+            {
+                return Task::ready(Some(OpenTarget::Worktree(
+                    PathWithPosition {
+                        path: worktree_root.join(&entry.path),
+                        row: path_to_check.row,
+                        column: path_to_check.column,
+                    },
+                    entry.clone(),
+                )));
+            }
 
             paths_to_check.push(path_to_check);
         }
@@ -256,10 +257,11 @@ fn possible_open_target(
     cx.background_spawn(async move {
         for mut path_to_check in fs_paths_to_check {
             if let Some(fs_path_to_check) = fs.canonicalize(&path_to_check.path).await.ok()
-                && let Some(metadata) = fs.metadata(&fs_path_to_check).await.ok().flatten() {
-                    path_to_check.path = fs_path_to_check;
-                    return Some(OpenTarget::File(path_to_check, metadata));
-                }
+                && let Some(metadata) = fs.metadata(&fs_path_to_check).await.ok().flatten()
+            {
+                path_to_check.path = fs_path_to_check;
+                return Some(OpenTarget::File(path_to_check, metadata));
+            }
         }
 
         worktree_check_task.await
