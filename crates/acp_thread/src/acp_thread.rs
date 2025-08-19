@@ -796,8 +796,8 @@ impl AcpThread {
         }
     }
 
-    pub fn token_usage(&self) -> Option<TokenUsage> {
-        self.token_usage.clone()
+    pub fn token_usage(&self) -> Option<&TokenUsage> {
+        self.token_usage.as_ref()
     }
 
     pub fn has_pending_edit_tool_calls(&self) -> bool {
