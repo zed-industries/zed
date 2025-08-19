@@ -14,7 +14,7 @@ use gpui::{
     Action, AppContext as _, AsyncApp, Axis, ClickEvent, Context, DismissEvent, Entity,
     EventEmitter, FocusHandle, Focusable, Global, IsZero,
     KeyBindingContextPredicate::{And, Descendant, Equal, Identifier, Not, NotEqual, Or},
-    KeyContext, Keystroke, MouseButton, Point, ScrollStrategy, ScrollWheelEvent, Stateful,
+    KeyContext, KeybindingKeystroke,Keystroke, MouseButton, Point, ScrollStrategy, ScrollWheelEvent, Stateful,
     StyledText, Subscription, Task, TextStyleRefinement, WeakEntity, actions, anchored, deferred,
     div,
 };
@@ -174,7 +174,7 @@ impl FilterState {
 
 #[derive(Debug, Default, PartialEq, Eq, Clone, Hash)]
 struct ActionMapping {
-    keystrokes: Vec<Keystroke>,
+    keystrokes: Vec<KeybindingKeystroke>,
     context: Option<SharedString>,
 }
 
@@ -414,12 +414,14 @@ impl Focusable for KeymapEditor {
     }
 }
 /// Helper function to check if two keystroke sequences match exactly
-fn keystrokes_match_exactly(keystrokes1: &[Keystroke], keystrokes2: &[Keystroke]) -> bool {
+fn keystrokes_match_exactly(
+    keystrokes1: &[KeybindingKeystroke],
+    keystrokes2: &[KeybindingKeystroke],
+) -> bool {
     keystrokes1.len() == keystrokes2.len()
-        && keystrokes1
-            .iter()
-            .zip(keystrokes2)
-            .all(|(k1, k2)| k1.key == k2.key && k1.modifiers == k2.modifiers)
+        && keystrokes1.iter().zip(keystrokes2).all(|(k1, k2)| {
+            k1.inner.key == k2.inner.key && k1.inner.modifiers == k2.inner.modifiers
+        })
 }
 
 impl KeymapEditor {
@@ -509,7 +511,7 @@ impl KeymapEditor {
         self.filter_editor.read(cx).text(cx)
     }
 
-    fn current_keystroke_query(&self, cx: &App) -> Vec<Keystroke> {
+    fn current_keystroke_query(&self, cx: &App) -> Vec<KeybindingKeystroke> {
         match self.search_mode {
             SearchMode::KeyStroke { .. } => self.keystroke_editor.read(cx).keystrokes().to_vec(),
             SearchMode::Normal => Default::default(),
@@ -530,7 +532,7 @@ impl KeymapEditor {
 
                 let keystroke_query = keystroke_query
                     .into_iter()
-                    .map(|keystroke| keystroke.unparse())
+                    .map(|keystroke| keystroke.inner.unparse())
                     .collect::<Vec<String>>()
                     .join(" ");
 
@@ -554,7 +556,7 @@ impl KeymapEditor {
     async fn update_matches(
         this: WeakEntity<Self>,
         action_query: String,
-        keystroke_query: Vec<Keystroke>,
+        keystroke_query: Vec<KeybindingKeystroke>,
         cx: &mut AsyncApp,
     ) -> anyhow::Result<()> {
         let action_query = command_palette::normalize_action_query(&action_query);
@@ -604,12 +606,15 @@ impl KeymapEditor {
                                             let query = &keystroke_query[query_cursor];
                                             let keystroke = &keystrokes[keystroke_cursor];
                                             let matches =
-                                                query.modifiers.is_subset_of(&keystroke.modifiers)
-                                                    && ((query.key.is_empty()
-                                                        || query.key == keystroke.key)
-                                                        && query.key_char.as_ref().is_none_or(
-                                                            |q_kc| q_kc == &keystroke.key,
-                                                        ));
+                                                query.inner.modifiers.is_subset_of(&keystroke.inner.modifiers)
+                                                    && ((query.inner.key.is_empty()
+                                                        || query.inner.key == keystroke.inner.key)
+                                                        && query.inner
+                                                            .key_char
+                                                            .as_ref()
+                                                            .is_none_or(|q_kc| {
+                                                                q_kc == &keystroke.inner.key
+                                                            });
                                             if matches {
                                                 found_count += 1;
                                                 query_cursor += 1;
@@ -678,7 +683,7 @@ impl KeymapEditor {
                 .map(KeybindSource::from_meta)
                 .unwrap_or(KeybindSource::Unknown);
 
-            let keystroke_text = ui::text_for_keystrokes(key_binding.keystrokes(), cx);
+            let keystroke_text = ui::text_for_keybinding_keystrokes(key_binding.keystrokes(), cx);
             let ui_key_binding = ui::KeyBinding::new_from_gpui(key_binding.clone(), cx)
                 .vim_mode(source == KeybindSource::Vim);
 
@@ -1422,7 +1427,7 @@ impl ProcessedBinding {
             .map(|keybind| keybind.get_action_mapping())
     }
 
-    fn keystrokes(&self) -> Option<&[Keystroke]> {
+    fn keystrokes(&self) -> Option<&[KeybindingKeystroke]> {
         self.ui_key_binding()
             .map(|binding| binding.keystrokes.as_slice())
     }
@@ -2220,7 +2225,7 @@ impl KeybindingEditorModal {
         Ok(action_arguments)
     }
 
-    fn validate_keystrokes(&self, cx: &App) -> anyhow::Result<Vec<Keystroke>> {
+    fn validate_keystrokes(&self, cx: &App) -> anyhow::Result<Vec<KeybindingKeystroke>> {
         let new_keystrokes = self
             .keybind_editor
             .read_with(cx, |editor, _| editor.keystrokes().to_vec());
@@ -2445,11 +2450,21 @@ impl KeybindingEditorModal {
     }
 }
 
-fn remove_key_char(Keystroke { modifiers, key, .. }: Keystroke) -> Keystroke {
-    Keystroke {
+fn remove_key_char(
+    KeybindingKeystroke {
+        inner,
         modifiers,
         key,
-        ..Default::default()
+    }: KeybindingKeystroke,
+) -> KeybindingKeystroke {
+    KeybindingKeystroke {
+        inner: Keystroke {
+            modifiers: inner.modifiers,
+            key: inner.key,
+            key_char: None,
+        },
+        modifiers,
+        key,
     }
 }
 

@@ -9171,7 +9171,7 @@ impl Editor {
         max_width: Pixels,
         cursor_point: Point,
         style: &EditorStyle,
-        accept_keystroke: Option<&gpui::Keystroke>,
+        accept_keystroke: Option<&gpui::KeybindingKeystroke>,
         _window: &Window,
         cx: &mut Context<Editor>,
     ) -> Option<AnyElement> {

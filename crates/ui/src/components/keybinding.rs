@@ -1,8 +1,8 @@
 use crate::PlatformStyle;
 use crate::{Icon, IconName, IconSize, h_flex, prelude::*};
 use gpui::{
-    Action, AnyElement, App, FocusHandle, Global, IntoElement, KeybindingKeystroke, Modifiers,
-    Window, relative,
+    Action, AnyElement, App, FocusHandle, Global, IntoElement, KeybindingKeystroke, Keystroke,
+    Modifiers, Window, relative,
 };
 use itertools::Itertools;
 
@@ -387,10 +387,26 @@ impl KeyIcon {
 /// Returns a textual representation of the key binding for the given [`Action`].
 pub fn text_for_action(action: &dyn Action, window: &Window, cx: &App) -> Option<String> {
     let key_binding = window.highest_precedence_binding_for_action(action)?;
-    Some(text_for_keystrokes(key_binding.keystrokes(), cx))
+    Some(text_for_keybinding_keystrokes(key_binding.keystrokes(), cx))
 }
 
-pub fn text_for_keystrokes(keystrokes: &[KeybindingKeystroke], cx: &App) -> String {
+pub fn text_for_keystrokes(keystrokes: &[Keystroke], cx: &App) -> String {
+    let platform_style = PlatformStyle::platform();
+    let vim_enabled = cx.try_global::<VimStyle>().is_some();
+    keystrokes
+        .iter()
+        .map(|keystroke| {
+            keystroke_text(
+                &keystroke.modifiers,
+                &keystroke.key,
+                platform_style,
+                vim_enabled,
+            )
+        })
+        .join(" ")
+}
+
+pub fn text_for_keybinding_keystrokes(keystrokes: &[KeybindingKeystroke], cx: &App) -> String {
     let platform_style = PlatformStyle::platform();
     let vim_enabled = cx.try_global::<VimStyle>().is_some();
     keystrokes
