@@ -188,7 +188,7 @@ impl MessageEditor {
                 let project = self.project.clone();
                 let Some(project_path) = project
                     .read(cx)
-                    .project_path_for_absolute_path(&abs_path, cx)
+                    .project_path_for_absolute_path(abs_path, cx)
                 else {
                     return;
                 };
@@ -1043,8 +1043,6 @@ impl Render for ImageHover {
         }
     }
 }
-
-// render for image hover:
 
 #[derive(Debug, Eq, PartialEq)]
 pub enum Mention {
