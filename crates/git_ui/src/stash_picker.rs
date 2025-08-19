@@ -393,7 +393,7 @@ impl PickerDelegate for StashListDelegate {
             normal
         };
 
-        let max_chars = ((max_width * 0.7) / normal_em) as usize;
+        let max_chars = ((max_width * 0.9) / normal_em) as usize;
 
         if stash_message.len() > max_chars && max_chars > 1 {
             let mut index = max_chars - 1;
@@ -408,7 +408,7 @@ impl PickerDelegate for StashListDelegate {
         let stash_name = HighlightedLabel::new(stash_message, positions).into_any_element();
 
         let mut branch_name = entry_match.entry.branch.clone().unwrap_or_default();
-        let max_branch_chars = ((max_width * 0.3) / normal_em) as usize;
+        let max_branch_chars = ((max_width * 0.9) / normal_em) as usize;
         if branch_name.len() > max_branch_chars && max_branch_chars > 1 {
             let mut index = max_branch_chars - 1;
             while !branch_name.is_char_boundary(index) && index != 0 {
@@ -418,9 +418,7 @@ impl PickerDelegate for StashListDelegate {
             branch_name.push_str("…");
         }
 
-        let stash_index_label = Label::new(branch_name)
-            .size(LabelSize::Small)
-            .color(Color::Muted);
+        let stash_index_label = Label::new(branch_name).color(Color::Muted);
 
         let tooltip_text = format!(
             "stash@{{{}}} created {}",
@@ -433,14 +431,9 @@ impl PickerDelegate for StashListDelegate {
                 .spacing(ListItemSpacing::Sparse)
                 .toggle_state(selected)
                 .child(
-                    v_flex().w_full().overflow_hidden().child(
-                        h_flex()
-                            .gap_6()
-                            .justify_between()
-                            .overflow_x_hidden()
-                            .child(stash_name)
-                            .child(stash_index_label.into_element()),
-                    ),
+                    v_flex()
+                        .child(stash_name)
+                        .child(stash_index_label.into_element()),
                 )
                 .tooltip(Tooltip::text(tooltip_text)),
         )
