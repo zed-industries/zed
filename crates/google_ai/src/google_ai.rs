@@ -266,7 +266,7 @@ pub struct CitationMetadata {
 pub struct PromptFeedback {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub block_reason: Option<String>,
-    pub safety_ratings: Vec<SafetyRating>,
+    pub safety_ratings: Option<Vec<SafetyRating>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub block_reason_message: Option<String>,
 }
