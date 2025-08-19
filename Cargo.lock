@@ -3489,6 +3489,7 @@ dependencies = [
  "collections",
  "derive_more 0.99.19",
  "gpui",
+ "workspace",
  "workspace-hack",
 ]
 
