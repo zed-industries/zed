@@ -396,7 +396,9 @@ impl MessageEditor {
             })
             .shared();
 
-        self.mention_set.directories.insert(abs_path, task.clone());
+        self.mention_set
+            .directories
+            .insert(abs_path.clone(), task.clone());
 
         let editor = self.editor.clone();
         cx.spawn_in(window, async move |this, cx| {
@@ -414,6 +416,10 @@ impl MessageEditor {
                         editor.remove_creases([crease_id], cx);
                     })
                     .ok();
+                this.update(cx, |this, _cx| {
+                    this.mention_set.directories.remove(&abs_path);
+                })
+                .ok();
             }
         })
     }
@@ -449,9 +455,9 @@ impl MessageEditor {
         cx.spawn_in(window, async move |this, cx| {
             let fetch = fetch.await.notify_async_err(cx);
             this.update(cx, |this, cx| {
-                let mention_uri = MentionUri::Fetch { url };
                 if fetch.is_some() {
-                    this.mention_set.insert_uri(crease_id, mention_uri.clone());
+                    this.mention_set
+                        .insert_uri(crease_id, MentionUri::Fetch { url });
                 } else {
                     // Remove crease if we failed to fetch
                     this.editor.update(cx, |editor, cx| {
@@ -460,6 +466,7 @@ impl MessageEditor {
                         });
                         editor.remove_creases([crease_id], cx);
                     });
+                    this.mention_set.fetch_results.remove(&url);
                 }
             })
             .ok();
@@ -544,7 +551,7 @@ impl MessageEditor {
             })
             .shared();
 
-        self.mention_set.insert_thread(id, task.clone());
+        self.mention_set.insert_thread(id.clone(), task.clone());
 
         let editor = self.editor.clone();
         cx.spawn_in(window, async move |this, cx| {
@@ -562,6 +569,10 @@ impl MessageEditor {
                         editor.remove_creases([crease_id], cx);
                     })
                     .ok();
+                this.update(cx, |this, _| {
+                    this.mention_set.thread_summaries.remove(&id);
+                })
+                .ok();
             }
         })
     }
@@ -592,7 +603,8 @@ impl MessageEditor {
             })
             .shared();
 
-        self.mention_set.insert_text_thread(path, task.clone());
+        self.mention_set
+            .insert_text_thread(path.clone(), task.clone());
 
         let editor = self.editor.clone();
         cx.spawn_in(window, async move |this, cx| {
@@ -610,6 +622,10 @@ impl MessageEditor {
                         editor.remove_creases([crease_id], cx);
                     })
                     .ok();
+                this.update(cx, |this, _| {
+                    this.mention_set.text_thread_summaries.remove(&path);
+                })
+                .ok();
             }
         })
     }
@@ -896,10 +912,6 @@ impl MessageEditor {
                     .ok();
                 }
             } else {
-                this.update(cx, |this, _cx| {
-                    this.mention_set.images.remove(&crease_id);
-                })
-                .ok();
                 editor
                     .update(cx, |editor, cx| {
                         editor.display_map.update(cx, |display_map, cx| {
@@ -908,6 +920,10 @@ impl MessageEditor {
                         editor.remove_creases([crease_id], cx);
                     })
                     .ok();
+                this.update(cx, |this, _cx| {
+                    this.mention_set.images.remove(&crease_id);
+                })
+                .ok();
             }
         })
     }
