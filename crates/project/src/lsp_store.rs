@@ -74,8 +74,8 @@ use lsp::{
     FileOperationPatternKind, FileOperationRegistrationOptions, FileRename, FileSystemWatcher,
     LanguageServer, LanguageServerBinary, LanguageServerBinaryOptions, LanguageServerId,
     LanguageServerName, LanguageServerSelector, LspRequestFuture, MessageActionItem, MessageType,
-    OneOf, RenameFilesParams, SymbolKind, TextEdit, WillRenameFiles, WorkDoneProgressCancelParams,
-    WorkspaceFolder, notification::DidRenameFiles,
+    OneOf, RenameFilesParams, SymbolKind, TextDocumentSyncSaveOptions, TextEdit, WillRenameFiles,
+    WorkDoneProgressCancelParams, WorkspaceFolder, notification::DidRenameFiles,
 };
 use node_runtime::read_package_installed_version;
 use parking_lot::Mutex;
@@ -11830,16 +11830,28 @@ impl LspStore {
                     }
                 }
                 "textDocument/didSave" => {
-                    if let Some(save_options) = reg
+                    if let Some(include_text) = reg
                         .register_options
-                        .and_then(|opts| opts.get("includeText").cloned())
-                        .map(serde_json::from_value::<lsp::TextDocumentSyncSaveOptions>)
+                        .map(|opts| {
+                            let transpose = opts
+                                .get("includeText")
+                                .cloned()
+                                .map(serde_json::from_value::<Option<bool>>)
+                                .transpose();
+                            match transpose {
+                                Ok(value) => Ok(value.flatten()),
+                                Err(e) => Err(e),
+                            }
+                        })
                         .transpose()?
                     {
                         server.update_capabilities(|capabilities| {
                             let mut sync_options =
                                 Self::take_text_document_sync_options(capabilities);
-                            sync_options.save = Some(save_options);
+                            sync_options.save =
+                                Some(TextDocumentSyncSaveOptions::SaveOptions(lsp::SaveOptions {
+                                    include_text,
+                                }));
                             capabilities.text_document_sync =
                                 Some(lsp::TextDocumentSyncCapability::Options(sync_options));
                         });
