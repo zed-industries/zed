@@ -232,13 +232,12 @@ impl X11ClientStatePtr {
         };
         let mut state = client.0.borrow_mut();
 
-        if let Some(window_ref) = state.windows.remove(&x_window) {
-            if let Some(RefreshState::PeriodicRefresh {
+        if let Some(window_ref) = state.windows.remove(&x_window)
+            && let Some(RefreshState::PeriodicRefresh {
                 event_loop_token, ..
             }) = window_ref.refresh_state
-            {
-                state.loop_handle.remove(event_loop_token);
-            }
+        {
+            state.loop_handle.remove(event_loop_token);
         }
         if state.mouse_focused_window == Some(x_window) {
             state.mouse_focused_window = None;
