@@ -2904,14 +2904,45 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut App,
     ) -> impl IntoElement {
-        match configuration_error {
-            ConfigurationError::ModelNotFound
-            | ConfigurationError::ProviderNotAuthenticated(_)
-            | ConfigurationError::NoProvider => Banner::new()
-                .severity(ui::Severity::Warning)
-                .child(Label::new(configuration_error.to_string()))
-                .action_slot(
-                    Button::new("settings", "Configure Provider")
+        let zed_provider_configured = AgentSettings::get_global(cx)
+            .default_model
+            .as_ref()
+            .map_or(false, |selection| {
+                selection.provider.0.as_str() == "zed.dev"
+            });
+
+        let callout = if zed_provider_configured {
+            Callout::new()
+                .icon(IconName::Warning)
+                .severity(Severity::Warning)
+                .title("Sign in to continue using Zed as your LLM provider.")
+                .actions_slot(
+                    Button::new("sign_in", "Sign In")
+                        .style(ButtonStyle::Tinted(ui::TintColor::Warning))
+                        .label_size(LabelSize::Small)
+                        .on_click({
+                            let workspace = self.workspace.clone();
+                            move |_, _, cx| {
+                                let Ok(client) =
+                                    workspace.update(cx, |workspace, _| workspace.client().clone())
+                                else {
+                                    return;
+                                };
+
+                                cx.spawn(async move |cx| {
+                                    client.sign_in_with_optional_connect(true, cx).await
+                                })
+                                .detach_and_log_err(cx);
+                            }
+                        }),
+                )
+        } else {
+            Callout::new()
+                .icon(IconName::Warning)
+                .severity(Severity::Warning)
+                .title(configuration_error.to_string())
+                .actions_slot(
+                    Button::new("settings", "Configure")
                         .style(ButtonStyle::Tinted(ui::TintColor::Warning))
                         .label_size(LabelSize::Small)
                         .key_binding(
