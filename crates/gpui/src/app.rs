@@ -1516,12 +1516,11 @@ impl App {
     /// the bindings in the element tree, and any global action listeners.
     pub fn is_action_available(&mut self, action: &dyn Action) -> bool {
         let mut action_available = false;
-        if let Some(window) = self.active_window() {
-            if let Ok(window_action_available) =
+        if let Some(window) = self.active_window()
+            && let Ok(window_action_available) =
                 window.update(self, |_, window, cx| window.is_action_available(action, cx))
-            {
-                action_available = window_action_available;
-            }
+        {
+            action_available = window_action_available;
         }
 
         action_available
@@ -1606,27 +1605,26 @@ impl App {
                 .insert(action.as_any().type_id(), global_listeners);
         }
 
-        if self.propagate_event {
-            if let Some(mut global_listeners) = self
+        if self.propagate_event
+            && let Some(mut global_listeners) = self
                 .global_action_listeners
                 .remove(&action.as_any().type_id())
-            {
-                for listener in global_listeners.iter().rev() {
-                    listener(action.as_any(), DispatchPhase::Bubble, self);
-                    if !self.propagate_event {
-                        break;
-                    }
+        {
+            for listener in global_listeners.iter().rev() {
+                listener(action.as_any(), DispatchPhase::Bubble, self);
+                if !self.propagate_event {
+                    break;
                 }
-
-                global_listeners.extend(
-                    self.global_action_listeners
-                        .remove(&action.as_any().type_id())
-                        .unwrap_or_default(),
-                );
-
-                self.global_action_listeners
-                    .insert(action.as_any().type_id(), global_listeners);
             }
+
+            global_listeners.extend(
+                self.global_action_listeners
+                    .remove(&action.as_any().type_id())
+                    .unwrap_or_default(),
+            );
+
+            self.global_action_listeners
+                .insert(action.as_any().type_id(), global_listeners);
         }
     }
 

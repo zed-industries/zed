@@ -926,19 +926,17 @@ impl GitPanel {
             let workspace = self.workspace.upgrade()?;
             let git_repo = self.active_repository.as_ref()?;
 
-            if let Some(project_diff) = workspace.read(cx).active_item_as::<ProjectDiff>(cx) {
-                if let Some(project_path) = project_diff.read(cx).active_path(cx) {
-                    if Some(&entry.repo_path)
-                        == git_repo
-                            .read(cx)
-                            .project_path_to_repo_path(&project_path, cx)
-                            .as_ref()
-                    {
-                        project_diff.focus_handle(cx).focus(window);
-                        project_diff.update(cx, |project_diff, cx| project_diff.autoscroll(cx));
-                        return None;
-                    }
-                }
+            if let Some(project_diff) = workspace.read(cx).active_item_as::<ProjectDiff>(cx)
+                && let Some(project_path) = project_diff.read(cx).active_path(cx)
+                && Some(&entry.repo_path)
+                    == git_repo
+                        .read(cx)
+                        .project_path_to_repo_path(&project_path, cx)
+                        .as_ref()
+            {
+                project_diff.focus_handle(cx).focus(window);
+                project_diff.update(cx, |project_diff, cx| project_diff.autoscroll(cx));
+                return None;
             };
 
             self.workspace
@@ -2514,10 +2512,11 @@ impl GitPanel {
                 new_co_authors.push((name.clone(), email.clone()))
             }
         }
-        if !project.is_local() && !project.is_read_only(cx) {
-            if let Some(local_committer) = self.local_committer(room, cx) {
-                new_co_authors.push(local_committer);
-            }
+        if !project.is_local()
+            && !project.is_read_only(cx)
+            && let Some(local_committer) = self.local_committer(room, cx)
+        {
+            new_co_authors.push(local_committer);
         }
         new_co_authors
     }
@@ -2758,14 +2757,13 @@ impl GitPanel {
                 pending_staged_count += pending.entries.len();
                 last_pending_staged = pending.entries.first().cloned();
             }
-            if let Some(single_staged) = &single_staged_entry {
-                if pending
+            if let Some(single_staged) = &single_staged_entry
+                && pending
                     .entries
                     .iter()
                     .any(|entry| entry.repo_path == single_staged.repo_path)
-                {
-                    pending_status_for_single_staged = Some(pending.target_status);
-                }
+            {
+                pending_status_for_single_staged = Some(pending.target_status);
             }
         }
 

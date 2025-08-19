@@ -249,48 +249,48 @@ impl WrapMap {
             return;
         }
 
-        if let Some(wrap_width) = self.wrap_width {
-            if self.background_task.is_none() {
-                let pending_edits = self.pending_edits.clone();
-                let mut snapshot = self.snapshot.clone();
-                let text_system = cx.text_system().clone();
-                let (font, font_size) = self.font_with_size.clone();
-                let update_task = cx.background_spawn(async move {
-                    let mut edits = Patch::default();
-                    let mut line_wrapper = text_system.line_wrapper(font, font_size);
-                    for (tab_snapshot, tab_edits) in pending_edits {
-                        let wrap_edits = snapshot
-                            .update(tab_snapshot, &tab_edits, wrap_width, &mut line_wrapper)
-                            .await;
-                        edits = edits.compose(&wrap_edits);
-                    }
-                    (snapshot, edits)
-                });
+        if let Some(wrap_width) = self.wrap_width
+            && self.background_task.is_none()
+        {
+            let pending_edits = self.pending_edits.clone();
+            let mut snapshot = self.snapshot.clone();
+            let text_system = cx.text_system().clone();
+            let (font, font_size) = self.font_with_size.clone();
+            let update_task = cx.background_spawn(async move {
+                let mut edits = Patch::default();
+                let mut line_wrapper = text_system.line_wrapper(font, font_size);
+                for (tab_snapshot, tab_edits) in pending_edits {
+                    let wrap_edits = snapshot
+                        .update(tab_snapshot, &tab_edits, wrap_width, &mut line_wrapper)
+                        .await;
+                    edits = edits.compose(&wrap_edits);
+                }
+                (snapshot, edits)
+            });
 
-                match cx
-                    .background_executor()
-                    .block_with_timeout(Duration::from_millis(1), update_task)
-                {
-                    Ok((snapshot, output_edits)) => {
-                        self.snapshot = snapshot;
-                        self.edits_since_sync = self.edits_since_sync.compose(&output_edits);
-                    }
-                    Err(update_task) => {
-                        self.background_task = Some(cx.spawn(async move |this, cx| {
-                            let (snapshot, edits) = update_task.await;
-                            this.update(cx, |this, cx| {
-                                this.snapshot = snapshot;
-                                this.edits_since_sync = this
-                                    .edits_since_sync
-                                    .compose(mem::take(&mut this.interpolated_edits).invert())
-                                    .compose(&edits);
-                                this.background_task = None;
-                                this.flush_edits(cx);
-                                cx.notify();
-                            })
-                            .ok();
-                        }));
-                    }
+            match cx
+                .background_executor()
+                .block_with_timeout(Duration::from_millis(1), update_task)
+            {
+                Ok((snapshot, output_edits)) => {
+                    self.snapshot = snapshot;
+                    self.edits_since_sync = self.edits_since_sync.compose(&output_edits);
+                }
+                Err(update_task) => {
+                    self.background_task = Some(cx.spawn(async move |this, cx| {
+                        let (snapshot, edits) = update_task.await;
+                        this.update(cx, |this, cx| {
+                            this.snapshot = snapshot;
+                            this.edits_since_sync = this
+                                .edits_since_sync
+                                .compose(mem::take(&mut this.interpolated_edits).invert())
+                                .compose(&edits);
+                            this.background_task = None;
+                            this.flush_edits(cx);
+                            cx.notify();
+                        })
+                        .ok();
+                    }));
                 }
             }
         }
@@ -1065,12 +1065,12 @@ impl sum_tree::Item for Transform {
 }
 
 fn push_isomorphic(transforms: &mut Vec<Transform>, summary: TextSummary) {
-    if let Some(last_transform) = transforms.last_mut() {
-        if last_transform.is_isomorphic() {
-            last_transform.summary.input += &summary;
-            last_transform.summary.output += &summary;
-            return;
-        }
+    if let Some(last_transform) = transforms.last_mut()
+        && last_transform.is_isomorphic()
+    {
+        last_transform.summary.input += &summary;
+        last_transform.summary.output += &summary;
+        return;
     }
     transforms.push(Transform::isomorphic(summary));
 }

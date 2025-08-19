@@ -13,13 +13,13 @@ where
         while let Some(entry) = entries.next().await {
             if let Some(entry) = entry.log_err() {
                 let entry_path = entry.path();
-                if predicate(entry_path.as_path()) {
-                    if let Ok(metadata) = fs::metadata(&entry_path).await {
-                        if metadata.is_file() {
-                            fs::remove_file(&entry_path).await.log_err();
-                        } else {
-                            fs::remove_dir_all(&entry_path).await.log_err();
-                        }
+                if predicate(entry_path.as_path())
+                    && let Ok(metadata) = fs::metadata(&entry_path).await
+                {
+                    if metadata.is_file() {
+                        fs::remove_file(&entry_path).await.log_err();
+                    } else {
+                        fs::remove_dir_all(&entry_path).await.log_err();
                     }
                 }
             }
@@ -35,10 +35,10 @@ where
 
     if let Some(mut entries) = fs::read_dir(dir).await.log_err() {
         while let Some(entry) = entries.next().await {
-            if let Some(entry) = entry.log_err() {
-                if predicate(entry.path().as_path()) {
-                    matching.push(entry.path());
-                }
+            if let Some(entry) = entry.log_err()
+                && predicate(entry.path().as_path())
+            {
+                matching.push(entry.path());
             }
         }
     }
@@ -58,10 +58,9 @@ where
                 if let Some(file_name) = entry_path
                     .file_name()
                     .map(|file_name| file_name.to_string_lossy())
+                    && predicate(&file_name)
                 {
-                    if predicate(&file_name) {
-                        return Some(entry_path);
-                    }
+                    return Some(entry_path);
                 }
             }
         }

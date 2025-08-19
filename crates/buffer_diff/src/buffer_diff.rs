@@ -572,14 +572,14 @@ impl BufferDiffInner {
                         pending_range.end.column = 0;
                     }
 
-                    if pending_range == (start_point..end_point) {
-                        if !buffer.has_edits_since_in_range(
+                    if pending_range == (start_point..end_point)
+                        && !buffer.has_edits_since_in_range(
                             &pending_hunk.buffer_version,
                             start_anchor..end_anchor,
-                        ) {
-                            has_pending = true;
-                            secondary_status = pending_hunk.new_status;
-                        }
+                        )
+                    {
+                        has_pending = true;
+                        secondary_status = pending_hunk.new_status;
                     }
                 }
 
@@ -1036,16 +1036,15 @@ impl BufferDiff {
                 _ => (true, Some(text::Anchor::MIN..text::Anchor::MAX)),
             };
 
-        if let Some(secondary_changed_range) = secondary_diff_change {
-            if let Some(secondary_hunk_range) =
+        if let Some(secondary_changed_range) = secondary_diff_change
+            && let Some(secondary_hunk_range) =
                 self.range_to_hunk_range(secondary_changed_range, buffer, cx)
-            {
-                if let Some(range) = &mut changed_range {
-                    range.start = secondary_hunk_range.start.min(&range.start, buffer);
-                    range.end = secondary_hunk_range.end.max(&range.end, buffer);
-                } else {
-                    changed_range = Some(secondary_hunk_range);
-                }
+        {
+            if let Some(range) = &mut changed_range {
+                range.start = secondary_hunk_range.start.min(&range.start, buffer);
+                range.end = secondary_hunk_range.end.max(&range.end, buffer);
+            } else {
+                changed_range = Some(secondary_hunk_range);
             }
         }
 

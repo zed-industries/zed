@@ -194,11 +194,11 @@ impl EmbeddingIndex {
                     project::PathChange::Added
                     | project::PathChange::Updated
                     | project::PathChange::AddedOrUpdated => {
-                        if let Some(entry) = worktree.entry_for_id(*entry_id) {
-                            if entry.is_file() {
-                                let handle = entries_being_indexed.insert(entry.id);
-                                updated_entries_tx.send((entry.clone(), handle)).await?;
-                            }
+                        if let Some(entry) = worktree.entry_for_id(*entry_id)
+                            && entry.is_file()
+                        {
+                            let handle = entries_being_indexed.insert(entry.id);
+                            updated_entries_tx.send((entry.clone(), handle)).await?;
                         }
                     }
                     project::PathChange::Removed => {

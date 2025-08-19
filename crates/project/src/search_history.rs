@@ -45,20 +45,19 @@ impl SearchHistory {
     }
 
     pub fn add(&mut self, cursor: &mut SearchHistoryCursor, search_string: String) {
-        if self.insertion_behavior == QueryInsertionBehavior::ReplacePreviousIfContains {
-            if let Some(previously_searched) = self.history.back_mut() {
-                if search_string.contains(previously_searched.as_str()) {
-                    *previously_searched = search_string;
-                    cursor.selection = Some(self.history.len() - 1);
-                    return;
-                }
-            }
+        if self.insertion_behavior == QueryInsertionBehavior::ReplacePreviousIfContains
+            && let Some(previously_searched) = self.history.back_mut()
+            && search_string.contains(previously_searched.as_str())
+        {
+            *previously_searched = search_string;
+            cursor.selection = Some(self.history.len() - 1);
+            return;
         }
 
-        if let Some(max_history_len) = self.max_history_len {
-            if self.history.len() >= max_history_len {
-                self.history.pop_front();
-            }
+        if let Some(max_history_len) = self.max_history_len
+            && self.history.len() >= max_history_len
+        {
+            self.history.pop_front();
         }
         self.history.push_back(search_string);
 

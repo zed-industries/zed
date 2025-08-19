@@ -174,12 +174,11 @@ impl Vim {
                             if ch.to_string() == pair.start {
                                 let start = offset;
                                 let mut end = start + 1;
-                                if surround {
-                                    if let Some((next_ch, _)) = chars_and_offset.peek() {
-                                        if next_ch.eq(&' ') {
-                                            end += 1;
-                                        }
-                                    }
+                                if surround
+                                    && let Some((next_ch, _)) = chars_and_offset.peek()
+                                    && next_ch.eq(&' ')
+                                {
+                                    end += 1;
                                 }
                                 edits.push((start..end, ""));
                                 anchors.push(start..start);
@@ -193,12 +192,11 @@ impl Vim {
                             if ch.to_string() == pair.end {
                                 let mut start = offset;
                                 let end = start + 1;
-                                if surround {
-                                    if let Some((next_ch, _)) = reverse_chars_and_offsets.peek() {
-                                        if next_ch.eq(&' ') {
-                                            start -= 1;
-                                        }
-                                    }
+                                if surround
+                                    && let Some((next_ch, _)) = reverse_chars_and_offsets.peek()
+                                    && next_ch.eq(&' ')
+                                {
+                                    start -= 1;
                                 }
                                 edits.push((start..end, ""));
                                 break;

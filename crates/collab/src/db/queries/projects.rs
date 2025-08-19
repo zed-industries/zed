@@ -1321,10 +1321,10 @@ impl Database {
             .await?;
 
         let mut connection_ids = HashSet::default();
-        if let Some(host_connection) = project.host_connection().log_err() {
-            if !exclude_dev_server {
-                connection_ids.insert(host_connection);
-            }
+        if let Some(host_connection) = project.host_connection().log_err()
+            && !exclude_dev_server
+        {
+            connection_ids.insert(host_connection);
         }
 
         while let Some(collaborator) = collaborators.next().await {

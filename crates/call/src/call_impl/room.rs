@@ -827,24 +827,23 @@ impl Room {
                             );
 
                             Audio::play_sound(Sound::Joined, cx);
-                            if let Some(livekit_participants) = &livekit_participants {
-                                if let Some(livekit_participant) = livekit_participants
+                            if let Some(livekit_participants) = &livekit_participants
+                                && let Some(livekit_participant) = livekit_participants
                                     .get(&ParticipantIdentity(user.id.to_string()))
+                            {
+                                for publication in
+                                    livekit_participant.track_publications().into_values()
                                 {
-                                    for publication in
-                                        livekit_participant.track_publications().into_values()
-                                    {
-                                        if let Some(track) = publication.track() {
-                                            this.livekit_room_updated(
-                                                RoomEvent::TrackSubscribed {
-                                                    track,
-                                                    publication,
-                                                    participant: livekit_participant.clone(),
-                                                },
-                                                cx,
-                                            )
-                                            .warn_on_err();
-                                        }
+                                    if let Some(track) = publication.track() {
+                                        this.livekit_room_updated(
+                                            RoomEvent::TrackSubscribed {
+                                                track,
+                                                publication,
+                                                participant: livekit_participant.clone(),
+                                            },
+                                            cx,
+                                        )
+                                        .warn_on_err();
                                     }
                                 }
                             }
@@ -940,10 +939,9 @@ impl Room {
                                 self.client.user_id()
                             )
                         })?;
-                if self.live_kit.as_ref().map_or(true, |kit| kit.deafened) {
-                    if publication.is_audio() {
-                        publication.set_enabled(false, cx);
-                    }
+                if self.live_kit.as_ref().map_or(true, |kit| kit.deafened) && publication.is_audio()
+                {
+                    publication.set_enabled(false, cx);
                 }
                 match track {
                     livekit_client::RemoteTrack::Audio(track) => {
@@ -1005,10 +1003,10 @@ impl Room {
                 for (sid, participant) in &mut self.remote_participants {
                     participant.speaking = speaker_ids.binary_search(sid).is_ok();
                 }
-                if let Some(id) = self.client.user_id() {
-                    if let Some(room) = &mut self.live_kit {
-                        room.speaking = speaker_ids.binary_search(&id).is_ok();
-                    }
+                if let Some(id) = self.client.user_id()
+                    && let Some(room) = &mut self.live_kit
+                {
+                    room.speaking = speaker_ids.binary_search(&id).is_ok();
                 }
             }
 
@@ -1042,18 +1040,16 @@ impl Room {
                     if let LocalTrack::Published {
                         track_publication, ..
                     } = &room.microphone_track
+                        && track_publication.sid() == publication.sid()
                     {
-                        if track_publication.sid() == publication.sid() {
-                            room.microphone_track = LocalTrack::None;
-                        }
+                        room.microphone_track = LocalTrack::None;
                     }
                     if let LocalTrack::Published {
                         track_publication, ..
                     } = &room.screen_track
+                        && track_publication.sid() == publication.sid()
                     {
-                        if track_publication.sid() == publication.sid() {
-                            room.screen_track = LocalTrack::None;
-                        }
+                        room.screen_track = LocalTrack::None;
                     }
                 }
             }
@@ -1484,10 +1480,8 @@ impl Room {
 
             self.set_deafened(deafened, cx);
 
-            if should_change_mute {
-                if let Some(task) = self.set_mute(deafened, cx) {
-                    task.detach_and_log_err(cx);
-                }
+            if should_change_mute && let Some(task) = self.set_mute(deafened, cx) {
+                task.detach_and_log_err(cx);
             }
         }
     }

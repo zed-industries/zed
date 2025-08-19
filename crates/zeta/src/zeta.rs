@@ -836,12 +836,11 @@ and then another
                 .headers()
                 .get(MINIMUM_REQUIRED_VERSION_HEADER_NAME)
                 .and_then(|version| SemanticVersion::from_str(version.to_str().ok()?).ok())
+                && app_version < minimum_required_version
             {
-                if app_version < minimum_required_version {
-                    return Err(anyhow!(ZedUpdateRequiredError {
-                        minimum_version: minimum_required_version
-                    }));
-                }
+                return Err(anyhow!(ZedUpdateRequiredError {
+                    minimum_version: minimum_required_version
+                }));
             }
 
             if response.status().is_success() {

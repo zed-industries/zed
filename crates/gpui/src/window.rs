@@ -3401,16 +3401,16 @@ impl Window {
         let focus_id = handle.id;
         let (subscription, activate) =
             self.new_focus_listener(Box::new(move |event, window, cx| {
-                if let Some(blurred_id) = event.previous_focus_path.last().copied() {
-                    if event.is_focus_out(focus_id) {
-                        let event = FocusOutEvent {
-                            blurred: WeakFocusHandle {
-                                id: blurred_id,
-                                handles: Arc::downgrade(&cx.focus_handles),
-                            },
-                        };
-                        listener(event, window, cx)
-                    }
+                if let Some(blurred_id) = event.previous_focus_path.last().copied()
+                    && event.is_focus_out(focus_id)
+                {
+                    let event = FocusOutEvent {
+                        blurred: WeakFocusHandle {
+                            id: blurred_id,
+                            handles: Arc::downgrade(&cx.focus_handles),
+                        },
+                    };
+                    listener(event, window, cx)
                 }
                 true
             }));
@@ -3444,12 +3444,12 @@ impl Window {
             return true;
         }
 
-        if let Some(input) = keystroke.key_char {
-            if let Some(mut input_handler) = self.platform_window.take_input_handler() {
-                input_handler.dispatch_input(&input, self, cx);
-                self.platform_window.set_input_handler(input_handler);
-                return true;
-            }
+        if let Some(input) = keystroke.key_char
+            && let Some(mut input_handler) = self.platform_window.take_input_handler()
+        {
+            input_handler.dispatch_input(&input, self, cx);
+            self.platform_window.set_input_handler(input_handler);
+            return true;
         }
 
         false
@@ -3864,11 +3864,11 @@ impl Window {
             if !cx.propagate_event {
                 continue 'replay;
             }
-            if let Some(input) = replay.keystroke.key_char.as_ref().cloned() {
-                if let Some(mut input_handler) = self.platform_window.take_input_handler() {
-                    input_handler.dispatch_input(&input, self, cx);
-                    self.platform_window.set_input_handler(input_handler)
-                }
+            if let Some(input) = replay.keystroke.key_char.as_ref().cloned()
+                && let Some(mut input_handler) = self.platform_window.take_input_handler()
+            {
+                input_handler.dispatch_input(&input, self, cx);
+                self.platform_window.set_input_handler(input_handler)
             }
         }
     }
@@ -4309,15 +4309,15 @@ impl Window {
         cx: &mut App,
         f: impl FnOnce(&mut Option<T>, &mut Self) -> R,
     ) -> R {
-        if let Some(inspector_id) = _inspector_id {
-            if let Some(inspector) = &self.inspector {
-                let inspector = inspector.clone();
-                let active_element_id = inspector.read(cx).active_element_id();
-                if Some(inspector_id) == active_element_id {
-                    return inspector.update(cx, |inspector, _cx| {
-                        inspector.with_active_element_state(self, f)
-                    });
-                }
+        if let Some(inspector_id) = _inspector_id
+            && let Some(inspector) = &self.inspector
+        {
+            let inspector = inspector.clone();
+            let active_element_id = inspector.read(cx).active_element_id();
+            if Some(inspector_id) == active_element_id {
+                return inspector.update(cx, |inspector, _cx| {
+                    inspector.with_active_element_state(self, f)
+                });
             }
         }
         f(&mut None, self)
@@ -4389,15 +4389,13 @@ impl Window {
         if let Some(inspector) = self.inspector.as_ref() {
             let inspector = inspector.read(cx);
             if let Some((hitbox_id, _)) = self.hovered_inspector_hitbox(inspector, &self.next_frame)
-            {
-                if let Some(hitbox) = self
+                && let Some(hitbox) = self
                     .next_frame
                     .hitboxes
                     .iter()
                     .find(|hitbox| hitbox.id == hitbox_id)
-                {
-                    self.paint_quad(crate::fill(hitbox.bounds, crate::rgba(0x61afef4d)));
-                }
+            {
+                self.paint_quad(crate::fill(hitbox.bounds, crate::rgba(0x61afef4d)));
             }
         }
     }

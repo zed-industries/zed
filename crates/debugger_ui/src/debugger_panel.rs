@@ -530,10 +530,9 @@ impl DebugPanel {
                     .active_session
                     .as_ref()
                     .map(|session| session.entity_id())
+                    && active_session_id == entity_id
                 {
-                    if active_session_id == entity_id {
-                        this.active_session = this.sessions_with_children.keys().next().cloned();
-                    }
+                    this.active_session = this.sessions_with_children.keys().next().cloned();
                 }
                 cx.notify()
             })
@@ -1302,10 +1301,10 @@ impl DebugPanel {
         cx: &mut Context<'_, Self>,
     ) -> Option<SharedString> {
         let adapter = parent_session.read(cx).adapter();
-        if let Some(adapter) = DapRegistry::global(cx).adapter(&adapter) {
-            if let Some(label) = adapter.label_for_child_session(request) {
-                return Some(label.into());
-            }
+        if let Some(adapter) = DapRegistry::global(cx).adapter(&adapter)
+            && let Some(label) = adapter.label_for_child_session(request)
+        {
+            return Some(label.into());
         }
         None
     }

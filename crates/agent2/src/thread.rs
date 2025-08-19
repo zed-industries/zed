@@ -1037,12 +1037,12 @@ impl Thread {
         log::info!("Running tool {}", tool_use.name);
         Some(cx.foreground_executor().spawn(async move {
             let tool_result = tool_result.await.and_then(|output| {
-                if let LanguageModelToolResultContent::Image(_) = &output.llm_output {
-                    if !supports_images {
-                        return Err(anyhow!(
-                            "Attempted to read an image, but this model doesn't support it.",
-                        ));
-                    }
+                if let LanguageModelToolResultContent::Image(_) = &output.llm_output
+                    && !supports_images
+                {
+                    return Err(anyhow!(
+                        "Attempted to read an image, but this model doesn't support it.",
+                    ));
                 }
                 Ok(output)
             });

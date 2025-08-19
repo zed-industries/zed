@@ -418,24 +418,22 @@ pub fn update_inlay_link_and_hover_points(
                                     }
                                     if let Some((language_server_id, location)) =
                                         hovered_hint_part.location
+                                        && secondary_held
+                                        && !editor.has_pending_nonempty_selection()
                                     {
-                                        if secondary_held
-                                            && !editor.has_pending_nonempty_selection()
-                                        {
-                                            go_to_definition_updated = true;
-                                            show_link_definition(
-                                                shift_held,
-                                                editor,
-                                                TriggerPoint::InlayHint(
-                                                    highlight,
-                                                    location,
-                                                    language_server_id,
-                                                ),
-                                                snapshot,
-                                                window,
-                                                cx,
-                                            );
-                                        }
+                                        go_to_definition_updated = true;
+                                        show_link_definition(
+                                            shift_held,
+                                            editor,
+                                            TriggerPoint::InlayHint(
+                                                highlight,
+                                                location,
+                                                language_server_id,
+                                            ),
+                                            snapshot,
+                                            window,
+                                            cx,
+                                        );
                                     }
                                 }
                             }
@@ -766,10 +764,11 @@ pub(crate) fn find_url_from_range(
     let mut finder = LinkFinder::new();
     finder.kinds(&[LinkKind::Url]);
 
-    if let Some(link) = finder.links(&text).next() {
-        if link.start() == 0 && link.end() == text.len() {
-            return Some(link.as_str().to_string());
-        }
+    if let Some(link) = finder.links(&text).next()
+        && link.start() == 0
+        && link.end() == text.len()
+    {
+        return Some(link.as_str().to_string());
     }
 
     None

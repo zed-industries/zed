@@ -297,10 +297,10 @@ impl RetainAllImageCache {
     /// Remove the image from the cache by the given source.
     pub fn remove(&mut self, source: &Resource, window: &mut Window, cx: &mut App) {
         let hash = hash(source);
-        if let Some(mut item) = self.0.remove(&hash) {
-            if let Some(Ok(image)) = item.get() {
-                cx.drop_image(image, Some(window));
-            }
+        if let Some(mut item) = self.0.remove(&hash)
+            && let Some(Ok(image)) = item.get()
+        {
+            cx.drop_image(image, Some(window));
         }
     }
 

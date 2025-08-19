@@ -489,67 +489,63 @@ impl CompletionSource {
             ..
         } = self
         {
-            if apply_defaults {
-                if let Some(lsp_defaults) = lsp_defaults {
-                    let mut completion_with_defaults = *lsp_completion.clone();
-                    let default_commit_characters = lsp_defaults.commit_characters.as_ref();
-                    let default_edit_range = lsp_defaults.edit_range.as_ref();
-                    let default_insert_text_format = lsp_defaults.insert_text_format.as_ref();
-                    let default_insert_text_mode = lsp_defaults.insert_text_mode.as_ref();
+            if apply_defaults && let Some(lsp_defaults) = lsp_defaults {
+                let mut completion_with_defaults = *lsp_completion.clone();
+                let default_commit_characters = lsp_defaults.commit_characters.as_ref();
+                let default_edit_range = lsp_defaults.edit_range.as_ref();
+                let default_insert_text_format = lsp_defaults.insert_text_format.as_ref();
+                let default_insert_text_mode = lsp_defaults.insert_text_mode.as_ref();
 
-                    if default_commit_characters.is_some()
-                        || default_edit_range.is_some()
-                        || default_insert_text_format.is_some()
-                        || default_insert_text_mode.is_some()
+                if default_commit_characters.is_some()
+                    || default_edit_range.is_some()
+                    || default_insert_text_format.is_some()
+                    || default_insert_text_mode.is_some()
+                {
+                    if completion_with_defaults.commit_characters.is_none()
+                        && default_commit_characters.is_some()
                     {
-                        if completion_with_defaults.commit_characters.is_none()
-                            && default_commit_characters.is_some()
-                        {
-                            completion_with_defaults.commit_characters =
-                                default_commit_characters.cloned()
-                        }
-                        if completion_with_defaults.text_edit.is_none() {
-                            match default_edit_range {
-                                Some(lsp::CompletionListItemDefaultsEditRange::Range(range)) => {
-                                    completion_with_defaults.text_edit =
-                                        Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
-                                            range: *range,
-                                            new_text: completion_with_defaults.label.clone(),
-                                        }))
-                                }
-                                Some(
-                                    lsp::CompletionListItemDefaultsEditRange::InsertAndReplace {
-                                        insert,
-                                        replace,
-                                    },
-                                ) => {
-                                    completion_with_defaults.text_edit =
-                                        Some(lsp::CompletionTextEdit::InsertAndReplace(
-                                            lsp::InsertReplaceEdit {
-                                                new_text: completion_with_defaults.label.clone(),
-                                                insert: *insert,
-                                                replace: *replace,
-                                            },
-                                        ))
-                                }
-                                None => {}
+                        completion_with_defaults.commit_characters =
+                            default_commit_characters.cloned()
+                    }
+                    if completion_with_defaults.text_edit.is_none() {
+                        match default_edit_range {
+                            Some(lsp::CompletionListItemDefaultsEditRange::Range(range)) => {
+                                completion_with_defaults.text_edit =
+                                    Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
+                                        range: *range,
+                                        new_text: completion_with_defaults.label.clone(),
+                                    }))
                             }
-                        }
-                        if completion_with_defaults.insert_text_format.is_none()
-                            && default_insert_text_format.is_some()
-                        {
-                            completion_with_defaults.insert_text_format =
-                                default_insert_text_format.cloned()
-                        }
-                        if completion_with_defaults.insert_text_mode.is_none()
-                            && default_insert_text_mode.is_some()
-                        {
-                            completion_with_defaults.insert_text_mode =
-                                default_insert_text_mode.cloned()
+                            Some(lsp::CompletionListItemDefaultsEditRange::InsertAndReplace {
+                                insert,
+                                replace,
+                            }) => {
+                                completion_with_defaults.text_edit =
+                                    Some(lsp::CompletionTextEdit::InsertAndReplace(
+                                        lsp::InsertReplaceEdit {
+                                            new_text: completion_with_defaults.label.clone(),
+                                            insert: *insert,
+                                            replace: *replace,
+                                        },
+                                    ))
+                            }
+                            None => {}
                         }
                     }
-                    return Some(Cow::Owned(completion_with_defaults));
+                    if completion_with_defaults.insert_text_format.is_none()
+                        && default_insert_text_format.is_some()
+                    {
+                        completion_with_defaults.insert_text_format =
+                            default_insert_text_format.cloned()
+                    }
+                    if completion_with_defaults.insert_text_mode.is_none()
+                        && default_insert_text_mode.is_some()
+                    {
+                        completion_with_defaults.insert_text_mode =
+                            default_insert_text_mode.cloned()
+                    }
                 }
+                return Some(Cow::Owned(completion_with_defaults));
             }
             Some(Cow::Borrowed(lsp_completion))
         } else {
@@ -2755,11 +2751,12 @@ impl Project {
                         operations,
                     }))
                 })?;
-                if let Some(request) = request {
-                    if request.await.is_err() && !is_local {
-                        *needs_resync_with_host = true;
-                        break;
-                    }
+                if let Some(request) = request
+                    && request.await.is_err()
+                    && !is_local
+                {
+                    *needs_resync_with_host = true;
+                    break;
                 }
             }
             Ok(())
@@ -3939,10 +3936,10 @@ impl Project {
                     if let Some(entry) = b
                         .entry_id(cx)
                         .and_then(|entry_id| worktree_store.entry_for_id(entry_id, cx))
+                        && entry.is_ignored
+                        && !search_query.include_ignored()
                     {
-                        if entry.is_ignored && !search_query.include_ignored() {
-                            return false;
-                        }
+                        return false;
                     }
                 }
                 true
@@ -4151,11 +4148,11 @@ impl Project {
     ) -> Task<Option<ResolvedPath>> {
         let mut candidates = vec![path.clone()];
 
-        if let Some(file) = buffer.read(cx).file() {
-            if let Some(dir) = file.path().parent() {
-                let joined = dir.to_path_buf().join(path);
-                candidates.push(joined);
-            }
+        if let Some(file) = buffer.read(cx).file()
+            && let Some(dir) = file.path().parent()
+        {
+            let joined = dir.to_path_buf().join(path);
+            candidates.push(joined);
         }
 
         let buffer_worktree_id = buffer.read(cx).file().map(|file| file.worktree_id(cx));
@@ -4168,16 +4165,14 @@ impl Project {
             .collect();
 
         cx.spawn(async move |_, cx| {
-            if let Some(buffer_worktree_id) = buffer_worktree_id {
-                if let Some((worktree, _)) = worktrees_with_ids
+            if let Some(buffer_worktree_id) = buffer_worktree_id
+                && let Some((worktree, _)) = worktrees_with_ids
                     .iter()
                     .find(|(_, id)| *id == buffer_worktree_id)
-                {
-                    for candidate in candidates.iter() {
-                        if let Some(path) = Self::resolve_path_in_worktree(worktree, candidate, cx)
-                        {
-                            return Some(path);
-                        }
+            {
+                for candidate in candidates.iter() {
+                    if let Some(path) = Self::resolve_path_in_worktree(worktree, candidate, cx) {
+                        return Some(path);
                     }
                 }
             }

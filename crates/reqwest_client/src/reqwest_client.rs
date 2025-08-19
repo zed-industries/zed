@@ -201,12 +201,11 @@ pub fn poll_read_buf(
 }
 
 fn redact_error(mut error: reqwest::Error) -> reqwest::Error {
-    if let Some(url) = error.url_mut() {
-        if let Some(query) = url.query() {
-            if let Cow::Owned(redacted) = REDACT_REGEX.replace_all(query, "key=REDACTED") {
-                url.set_query(Some(redacted.as_str()));
-            }
-        }
+    if let Some(url) = error.url_mut()
+        && let Some(query) = url.query()
+        && let Cow::Owned(redacted) = REDACT_REGEX.replace_all(query, "key=REDACTED")
+    {
+        url.set_query(Some(redacted.as_str()));
     }
     error
 }

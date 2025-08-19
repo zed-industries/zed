@@ -280,10 +280,10 @@ fn collect_diagnostics(
 
         let mut project_summary = DiagnosticSummary::default();
         for (project_path, path, summary) in diagnostic_summaries {
-            if let Some(path_matcher) = &options.path_matcher {
-                if !path_matcher.is_match(&path) {
-                    continue;
-                }
+            if let Some(path_matcher) = &options.path_matcher
+                && !path_matcher.is_match(&path)
+            {
+                continue;
             }
 
             project_summary.error_count += summary.error_count;

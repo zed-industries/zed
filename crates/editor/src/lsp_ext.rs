@@ -147,16 +147,15 @@ pub fn lsp_tasks(
                             },
                             cx,
                         )
-                    }) {
-                        if let Some(new_runnables) = runnables_task.await.log_err() {
-                            new_lsp_tasks.extend(new_runnables.runnables.into_iter().filter_map(
-                                |(location, runnable)| {
-                                    let resolved_task =
-                                        runnable.resolve_task(&id_base, &lsp_buffer_context)?;
-                                    Some((location, resolved_task))
-                                },
-                            ));
-                        }
+                    }) && let Some(new_runnables) = runnables_task.await.log_err()
+                    {
+                        new_lsp_tasks.extend(new_runnables.runnables.into_iter().filter_map(
+                            |(location, runnable)| {
+                                let resolved_task =
+                                    runnable.resolve_task(&id_base, &lsp_buffer_context)?;
+                                Some((location, resolved_task))
+                            },
+                        ));
                     }
                     lsp_tasks
                         .entry(source_kind)

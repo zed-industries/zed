@@ -261,13 +261,12 @@ impl PromptBuilder {
                 // Initial scan of the prompt overrides directory
                 if let Ok(mut entries) = params.fs.read_dir(&templates_dir).await {
                     while let Some(Ok(file_path)) = entries.next().await {
-                        if file_path.to_string_lossy().ends_with(".hbs") {
-                            if let Ok(content) = params.fs.load(&file_path).await {
+                        if file_path.to_string_lossy().ends_with(".hbs")
+                            && let Ok(content) = params.fs.load(&file_path).await {
                                 let file_name = file_path.file_stem().unwrap().to_string_lossy();
                                 log::debug!("Registering prompt template override: {}", file_name);
                                 handlebars.lock().register_template_string(&file_name, content).log_err();
                             }
-                        }
                     }
                 }
 
@@ -280,13 +279,12 @@ impl PromptBuilder {
                 let mut combined_changes = futures::stream::select(changes, parent_changes);
 
                 while let Some(changed_paths) = combined_changes.next().await {
-                    if changed_paths.iter().any(|p| &p.path == &templates_dir) {
-                        if !params.fs.is_dir(&templates_dir).await {
+                    if changed_paths.iter().any(|p| &p.path == &templates_dir)
+                        && !params.fs.is_dir(&templates_dir).await {
                             log::info!("Prompt template overrides directory removed. Restoring built-in prompt templates.");
                             Self::register_built_in_templates(&mut handlebars.lock()).log_err();
                             break;
                         }
-                    }
                     for event in changed_paths {
                         if event.path.starts_with(&templates_dir) && event.path.extension().map_or(false, |ext| ext == "hbs") {
                             log::info!("Reloading prompt template override: {}", event.path.display());
@@ -311,12 +309,11 @@ impl PromptBuilder {
                 .split('/')
                 .next_back()
                 .and_then(|s| s.strip_suffix(".hbs"))
+                && let Some(prompt) = Assets.load(path.as_ref()).log_err().flatten()
             {
-                if let Some(prompt) = Assets.load(path.as_ref()).log_err().flatten() {
-                    log::debug!("Registering built-in prompt template: {}", id);
-                    let prompt = String::from_utf8_lossy(prompt.as_ref());
-                    handlebars.register_template_string(id, LineEnding::normalize_cow(prompt))?
-                }
+                log::debug!("Registering built-in prompt template: {}", id);
+                let prompt = String::from_utf8_lossy(prompt.as_ref());
+                handlebars.register_template_string(id, LineEnding::normalize_cow(prompt))?
             }
         }
 

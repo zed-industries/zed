@@ -241,38 +241,36 @@ impl MessageEditor {
     ) -> Task<Result<Vec<CompletionResponse>>> {
         if let Some((start_anchor, query, candidates)) =
             self.collect_mention_candidates(buffer, end_anchor, cx)
+            && !candidates.is_empty()
         {
-            if !candidates.is_empty() {
-                return cx.spawn(async move |_, cx| {
-                    let completion_response = Self::completions_for_candidates(
-                        cx,
-                        query.as_str(),
-                        &candidates,
-                        start_anchor..end_anchor,
-                        Self::completion_for_mention,
-                    )
-                    .await;
-                    Ok(vec![completion_response])
-                });
-            }
+            return cx.spawn(async move |_, cx| {
+                let completion_response = Self::completions_for_candidates(
+                    cx,
+                    query.as_str(),
+                    &candidates,
+                    start_anchor..end_anchor,
+                    Self::completion_for_mention,
+                )
+                .await;
+                Ok(vec![completion_response])
+            });
         }
 
         if let Some((start_anchor, query, candidates)) =
             self.collect_emoji_candidates(buffer, end_anchor, cx)
+            && !candidates.is_empty()
         {
-            if !candidates.is_empty() {
-                return cx.spawn(async move |_, cx| {
-                    let completion_response = Self::completions_for_candidates(
-                        cx,
-                        query.as_str(),
-                        candidates,
-                        start_anchor..end_anchor,
-                        Self::completion_for_emoji,
-                    )
-                    .await;
-                    Ok(vec![completion_response])
-                });
-            }
+            return cx.spawn(async move |_, cx| {
+                let completion_response = Self::completions_for_candidates(
+                    cx,
+                    query.as_str(),
+                    candidates,
+                    start_anchor..end_anchor,
+                    Self::completion_for_emoji,
+                )
+                .await;
+                Ok(vec![completion_response])
+            });
         }
 
         Task::ready(Ok(vec![CompletionResponse {
@@ -474,18 +472,17 @@ impl MessageEditor {
                 for range in ranges {
                     text.clear();
                     text.extend(buffer.text_for_range(range.clone()));
-                    if let Some(username) = text.strip_prefix('@') {
-                        if let Some(user) = this
+                    if let Some(username) = text.strip_prefix('@')
+                        && let Some(user) = this
                             .user_store
                             .read(cx)
                             .cached_user_by_github_login(username)
-                        {
-                            let start = multi_buffer.anchor_after(range.start);
-                            let end = multi_buffer.anchor_after(range.end);
+                    {
+                        let start = multi_buffer.anchor_after(range.start);
+                        let end = multi_buffer.anchor_after(range.end);
 
-                            mentioned_user_ids.push(user.id);
-                            anchor_ranges.push(start..end);
-                        }
+                        mentioned_user_ids.push(user.id);
+                        anchor_ranges.push(start..end);
                     }
                 }
 

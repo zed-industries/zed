@@ -830,6 +830,7 @@ module_inception = { level = "deny" }
 question_mark = { level = "deny" }
 redundant_closure = { level = "deny" }
 declare_interior_mutable_const = { level = "deny" }
+collapsible_if = { level = "warn"}
 needless_borrow = { level = "warn"}
 # Individual rules that have violations in the codebase:
 type_complexity = "allow"
