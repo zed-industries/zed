@@ -178,6 +178,56 @@ impl MessageEditor {
             return;
         };
 
+        if let MentionUri::File { abs_path, .. } = &mention_uri {
+            let extension = abs_path
+                .extension()
+                .and_then(OsStr::to_str)
+                .unwrap_or_default();
+
+            if Img::extensions().contains(&extension) && !extension.contains("svg") {
+                let project = self.project.clone();
+                let Some(project_path) = project
+                    .read(cx)
+                    .project_path_for_absolute_path(abs_path, cx)
+                else {
+                    return;
+                };
+                let image = cx
+                    .spawn(async move |_, cx| {
+                        let image = project
+                            .update(cx, |project, cx| project.open_image(project_path, cx))
+                            .map_err(|e| e.to_string())?
+                            .await
+                            .map_err(|e| e.to_string())?;
+                        image
+                            .read_with(cx, |image, _cx| image.image.clone())
+                            .map_err(|e| e.to_string())
+                    })
+                    .shared();
+                let Some(crease_id) = insert_crease_for_image(
+                    *excerpt_id,
+                    start,
+                    content_len,
+                    Some(abs_path.as_path().into()),
+                    image.clone(),
+                    self.editor.clone(),
+                    window,
+                    cx,
+                ) else {
+                    return;
+                };
+                self.confirm_mention_for_image(
+                    crease_id,
+                    anchor,
+                    Some(abs_path.clone()),
+                    image,
+                    window,
+                    cx,
+                );
+                return;
+            }
+        }
+
         let Some(crease_id) = crate::context_picker::insert_crease_for_mention(
             *excerpt_id,
             start,
@@ -195,68 +245,18 @@ impl MessageEditor {
             MentionUri::Fetch { url } => {
                 self.confirm_mention_for_fetch(crease_id, anchor, url, window, cx);
             }
-            MentionUri::File {
-                abs_path,
-                is_directory,
-            } => {
-                self.confirm_mention_for_file(
-                    crease_id,
-                    anchor,
-                    abs_path,
-                    is_directory,
-                    window,
-                    cx,
-                );
-            }
             MentionUri::Thread { id, name } => {
                 self.confirm_mention_for_thread(crease_id, anchor, id, name, window, cx);
             }
             MentionUri::TextThread { path, name } => {
                 self.confirm_mention_for_text_thread(crease_id, anchor, path, name, window, cx);
             }
-            MentionUri::Symbol { .. } | MentionUri::Rule { .. } | MentionUri::Selection { .. } => {
+            MentionUri::File { .. }
+            | MentionUri::Symbol { .. }
+            | MentionUri::Rule { .. }
+            | MentionUri::Selection { .. } => {
                 self.mention_set.insert_uri(crease_id, mention_uri.clone());
             }
-        }
-    }
-
-    fn confirm_mention_for_file(
-        &mut self,
-        crease_id: CreaseId,
-        anchor: Anchor,
-        abs_path: PathBuf,
-        is_directory: bool,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let extension = abs_path
-            .extension()
-            .and_then(OsStr::to_str)
-            .unwrap_or_default();
-
-        if Img::extensions().contains(&extension) && !extension.contains("svg") {
-            let project = self.project.clone();
-            let Some(project_path) = project
-                .read(cx)
-                .project_path_for_absolute_path(&abs_path, cx)
-            else {
-                return;
-            };
-            let image = cx.spawn(async move |_, cx| {
-                let image = project
-                    .update(cx, |project, cx| project.open_image(project_path, cx))?
-                    .await?;
-                image.read_with(cx, |image, _cx| image.image.clone())
-            });
-            self.confirm_mention_for_image(crease_id, anchor, Some(abs_path), image, window, cx);
-        } else {
-            self.mention_set.insert_uri(
-                crease_id,
-                MentionUri::File {
-                    abs_path,
-                    is_directory,
-                },
-            );
         }
     }
 
@@ -498,25 +498,20 @@ impl MessageEditor {
             let Some(anchor) = multibuffer_anchor else {
                 return;
             };
+            let task = Task::ready(Ok(Arc::new(image))).shared();
             let Some(crease_id) = insert_crease_for_image(
                 excerpt_id,
                 text_anchor,
                 content_len,
                 None.clone(),
+                task.clone(),
                 self.editor.clone(),
                 window,
                 cx,
             ) else {
                 return;
             };
-            self.confirm_mention_for_image(
-                crease_id,
-                anchor,
-                None,
-                Task::ready(Ok(Arc::new(image))),
-                window,
-                cx,
-            );
+            self.confirm_mention_for_image(crease_id, anchor, None, task, window, cx);
         }
     }
 
@@ -584,7 +579,7 @@ impl MessageEditor {
         crease_id: CreaseId,
         anchor: Anchor,
         abs_path: Option<PathBuf>,
-        image: Task<Result<Arc<Image>>>,
+        image: Shared<Task<Result<Arc<Image>, String>>>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -937,6 +932,7 @@ pub(crate) fn insert_crease_for_image(
     anchor: text::Anchor,
     content_len: usize,
     abs_path: Option<Arc<Path>>,
+    image: Shared<Task<Result<Arc<Image>, String>>>,
     editor: Entity<Editor>,
     window: &mut Window,
     cx: &mut App,
@@ -956,7 +952,7 @@ pub(crate) fn insert_crease_for_image(
         let end = snapshot.anchor_before(start.to_offset(&snapshot) + content_len);
 
         let placeholder = FoldPlaceholder {
-            render: render_image_fold_icon_button(crease_label, cx.weak_entity()),
+            render: render_image_fold_icon_button(crease_label, image, cx.weak_entity()),
             merge_adjacent: false,
             ..Default::default()
         };
@@ -978,9 +974,11 @@ pub(crate) fn insert_crease_for_image(
 
 fn render_image_fold_icon_button(
     label: SharedString,
+    image_task: Shared<Task<Result<Arc<Image>, String>>>,
     editor: WeakEntity<Editor>,
 ) -> Arc<dyn Send + Sync + Fn(FoldId, Range<Anchor>, &mut App) -> AnyElement> {
     Arc::new({
+        let image_task = image_task.clone();
         move |fold_id, fold_range, cx| {
             let is_in_text_selection = editor
                 .update(cx, |editor, cx| editor.is_range_selected(&fold_range, cx))
@@ -1005,9 +1003,45 @@ fn render_image_fold_icon_button(
                                 .single_line(),
                         ),
                 )
+                .hoverable_tooltip({
+                    let image_task = image_task.clone();
+                    move |_, cx| {
+                        let image = image_task.peek().cloned().transpose().ok().flatten();
+                        let image_task = image_task.clone();
+                        cx.new::<ImageHover>(|cx| ImageHover {
+                            image,
+                            _task: cx.spawn(async move |this, cx| {
+                                if let Ok(image) = image_task.clone().await {
+                                    this.update(cx, |this, cx| {
+                                        if this.image.replace(image).is_none() {
+                                            cx.notify();
+                                        }
+                                    })
+                                    .ok();
+                                }
+                            }),
+                        })
+                        .into()
+                    }
+                })
                 .into_any_element()
         }
     })
+}
+
+struct ImageHover {
+    image: Option<Arc<Image>>,
+    _task: Task<()>,
+}
+
+impl Render for ImageHover {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        if let Some(image) = self.image.clone() {
+            gpui::img(image).max_w_96().max_h_96().into_any_element()
+        } else {
+            gpui::Empty.into_any_element()
+        }
+    }
 }
 
 #[derive(Debug, Eq, PartialEq)]
