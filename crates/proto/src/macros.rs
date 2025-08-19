@@ -80,8 +80,8 @@ macro_rules! lsp_messages {
                 crate::lsp_query::Request::$request_name(self)
             }
 
-            fn response_to_proto_query(response: Self::Response) -> crate::lsp_response2::Response {
-                crate::lsp_response2::Response::$response_name(response)
+            fn response_to_proto_query(response: Self::Response) -> crate::lsp_response::Response {
+                crate::lsp_response::Response::$response_name(response)
             }
 
             fn buffer_id(&self) -> u64 {

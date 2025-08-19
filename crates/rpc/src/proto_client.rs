@@ -292,7 +292,7 @@ impl AnyProtoClient {
             lsp_request_id: lsp_request_id.to_proto(),
             responses: response
                 .into_iter()
-                .map(|(server_id, response)| proto::LspResponse2 {
+                .map(|(server_id, response)| proto::LspResponse {
                     server_id: server_id.to_proto(),
                     response: Some(T::response_to_proto_query(response)),
                 })
@@ -313,7 +313,7 @@ impl AnyProtoClient {
                 payload: responses
                     .into_iter()
                     .filter_map(|response| {
-                        use proto::lsp_response2::Response;
+                        use proto::lsp_response::Response;
 
                         let server_id = proto::LanguageServerId(response.server_id);
                         let response = match response.response? {
