@@ -1,10 +1,10 @@
 mod registrar;
 
 use crate::{
-    FocusSearch, NextHistoryQuery, PatternItem, PreviousHistoryQuery, ReplaceAll, ReplaceNext,
-    SearchOption, SearchOptions, SearchSource, SelectAllMatches, SelectNextMatch,
-    SelectPreviousMatch, ToggleCaseSensitive, ToggleRegex, ToggleReplace, ToggleSelection,
-    ToggleWholeWord,
+    FocusSearch, NextHistoryQuery, PreviousHistoryQuery, ReplaceAll, ReplaceNext, SearchOption,
+    SearchOptions, SearchSource, SelectAllMatches, SelectNextMatch, SelectPreviousMatch,
+    ToggleCaseSensitive, ToggleRegex, ToggleReplace, ToggleSelection, ToggleWholeWord,
+    pattern_items::PatternItems,
     search_bar::{ActionButtonState, input_base_styles, render_action_button, render_text_input},
 };
 use any_vec::AnyVec;
@@ -14,7 +14,6 @@ use editor::{
     DisplayPoint, Editor, EditorSettings,
     actions::{Backtab, Tab},
 };
-use fancy_regex::Regex;
 use futures::channel::oneshot;
 use gpui::{
     Action, App, ClickEvent, Context, Entity, EventEmitter, Focusable, InteractiveElement as _,
@@ -113,11 +112,10 @@ pub struct BufferSearchBar {
     pending_search: Option<Task<()>>,
     search_options: SearchOptions,
     default_options: SearchOptions,
-    /// List of search options that were enabled or disabled by the pattern
-    /// items in the search query.
-    /// By toggling each search option in reverse order, one can obtain the
-    /// original search options before pattern items were applied.
-    pattern_item_options: Vec<SearchOptions>,
+    /// Pattern items that have been applied from the query to the search
+    /// options. Tracking these allows us to revert the search options to their
+    /// original state as pattern items are removed from the query.
+    pattern_items: PatternItems,
     configured_options: SearchOptions,
     query_error: Option<String>,
     dismissed: bool,
@@ -129,7 +127,6 @@ pub struct BufferSearchBar {
     editor_scroll_handle: ScrollHandle,
     editor_needed_width: Pixels,
     regex_language: Option<Arc<Language>>,
-    pattern_items_regex: Regex,
 }
 
 impl BufferSearchBar {
@@ -651,15 +648,6 @@ impl BufferSearchBar {
             .detach_and_log_err(cx);
         }
 
-        let pattern_items_regex = Regex::new(&format!(
-            r"(?<!\\)(\\[{}])",
-            PatternItem::all_variants()
-                .iter()
-                .map(|item| item.character())
-                .collect::<String>()
-        ))
-        .unwrap();
-
         Self {
             query_editor,
             query_editor_focused: false,
@@ -672,7 +660,7 @@ impl BufferSearchBar {
             default_options: search_options,
             configured_options: search_options,
             search_options,
-            pattern_item_options: Vec::new(),
+            pattern_items: Default::default(),
             pending_search: None,
             query_error: None,
             dismissed: true,
@@ -688,7 +676,6 @@ impl BufferSearchBar {
             editor_scroll_handle: ScrollHandle::new(),
             editor_needed_width: px(0.),
             regex_language: None,
-            pattern_items_regex,
         }
     }
 
@@ -836,9 +823,7 @@ impl BufferSearchBar {
 
     /// Returns the sanitized query string with pattern items removed.
     pub fn query(&self, cx: &App) -> String {
-        self.pattern_items_regex
-            .replace_all(&self.raw_query(cx), "")
-            .into_owned()
+        PatternItems::clean_query(&self.raw_query(cx))
     }
 
     pub fn replacement(&self, cx: &mut App) -> String {
@@ -1489,31 +1474,10 @@ impl BufferSearchBar {
             // were applied, so we can reapply them and determine which ones
             // actually have an effect on the search options, which are the ones
             // we need to keep track of.
-            let mut search_options = self.pattern_item_options.iter().rev().fold(
-                self.search_options,
-                |mut search_options, search_option| {
-                    search_options.toggle(*search_option);
-                    search_options
-                },
-            );
-
             let query = self.raw_query(cx);
-            let mut pattern_item_options = Vec::new();
-
-            self.pattern_items_regex
-                .captures_iter(&query)
-                .filter_map(|capture| capture.ok()?.get(1))
-                .filter_map(|capture| PatternItem::try_from(capture.as_str()).ok())
-                .map(|pattern_item| pattern_item.search_option())
-                .for_each(|(search_option, value)| {
-                    if search_options.contains(search_option) != value {
-                        search_options.toggle(search_option);
-                        pattern_item_options.push(search_option);
-                    }
-                });
-
-            self.pattern_item_options = pattern_item_options;
-            self.set_search_options(search_options, cx);
+            let search_options = self.pattern_items.revert(self.search_options);
+            self.pattern_items = PatternItems::from_search_options(search_options, &query);
+            self.set_search_options(self.pattern_items.apply(search_options), cx);
         }
     }
 
