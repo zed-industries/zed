@@ -1414,7 +1414,7 @@ async fn test_agent_connection(cx: &mut TestAppContext) {
     let project = Project::test(fake_fs.clone(), [Path::new("/test")], cx).await;
     let cwd = Path::new("/test");
     let context_store = cx.new(|cx| assistant_context::ContextStore::fake(project.clone(), cx));
-    let history_store = cx.new(|cx| HistoryStore::new(context_store, [], cx));
+    let history_store = cx.new(|cx| HistoryStore::new(context_store, cx));
 
     // Create agent and connection
     let agent = NativeAgent::new(

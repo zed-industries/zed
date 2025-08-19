@@ -206,6 +206,7 @@ dependencies = [
  "collections",
  "context_server",
  "ctor",
+ "db",
  "editor",
  "env_logger 0.11.8",
  "fs",

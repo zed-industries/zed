@@ -9,7 +9,7 @@ use agent::{TextThreadStore, ThreadStore};
 use agent_client_protocol::{self as acp};
 use agent_servers::{AgentServer, ClaudeCode};
 use agent_settings::{AgentProfileId, AgentSettings, CompletionMode, NotifyWhenAgentWaiting};
-use agent2::DbThreadMetadata;
+use agent2::{DbThreadMetadata, HistoryEntryId, HistoryStore};
 use anyhow::bail;
 use audio::{Audio, Sound};
 use buffer_diff::BufferDiff;
@@ -111,6 +111,7 @@ pub struct AcpThreadView {
     workspace: WeakEntity<Workspace>,
     project: Entity<Project>,
     thread_state: ThreadState,
+    history_store: Entity<HistoryStore>,
     entry_view_state: Entity<EntryViewState>,
     message_editor: Entity<MessageEditor>,
     model_selector: Option<Entity<AcpModelSelectorPopover>>,
@@ -159,6 +160,7 @@ impl AcpThreadView {
         resume_thread: Option<DbThreadMetadata>,
         workspace: WeakEntity<Workspace>,
         project: Entity<Project>,
+        history_store: Entity<HistoryStore>,
         thread_store: Entity<ThreadStore>,
         text_thread_store: Entity<TextThreadStore>,
         window: &mut Window,
@@ -223,6 +225,7 @@ impl AcpThreadView {
             plan_expanded: false,
             editor_expanded: false,
             terminal_expanded: true,
+            history_store,
             _subscriptions: subscriptions,
             _cancel_task: None,
         }
@@ -260,7 +263,7 @@ impl AcpThreadView {
             let result = if let Some(native_agent) = connection
                 .clone()
                 .downcast::<agent2::NativeAgentConnection>()
-                && let Some(resume) = resume_thread
+                && let Some(resume) = resume_thread.clone()
             {
                 cx.update(|_, cx| {
                     native_agent
@@ -312,6 +315,15 @@ impl AcpThreadView {
                                 view_state.sync_entry(ix, &thread, window, cx);
                             }
                         });
+
+                        if let Some(resume) = resume_thread {
+                            this.history_store.update(cx, |history, cx| {
+                                history.push_recently_opened_entry(
+                                    HistoryEntryId::AcpThread(resume.id),
+                                    cx,
+                                );
+                            });
+                        }
 
                         AgentDiff::set_active_thread(&workspace, thread.clone(), window, cx);
 
@@ -555,9 +567,15 @@ impl AcpThreadView {
     }
 
     fn send(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(thread) = self.thread()
-            && thread.read(cx).status() != ThreadStatus::Idle
-        {
+        let Some(thread) = self.thread() else { return };
+        self.history_store.update(cx, |history, cx| {
+            history.push_recently_opened_entry(
+                HistoryEntryId::AcpThread(thread.read(cx).session_id().clone()),
+                cx,
+            );
+        });
+
+        if thread.read(cx).status() != ThreadStatus::Idle {
             self.stop_current_and_send_new_message(window, cx);
             return;
         }
@@ -3942,6 +3960,7 @@ pub(crate) mod tests {
     use acp_thread::StubAgentConnection;
     use agent::{TextThreadStore, ThreadStore};
     use agent_client_protocol::SessionId;
+    use assistant_context::ContextStore;
     use editor::EditorSettings;
     use fs::FakeFs;
     use gpui::{EventEmitter, SemanticVersion, TestAppContext, VisualTestContext};
@@ -4079,6 +4098,10 @@ pub(crate) mod tests {
             cx.update(|_window, cx| cx.new(|cx| ThreadStore::fake(project.clone(), cx)));
         let text_thread_store =
             cx.update(|_window, cx| cx.new(|cx| TextThreadStore::fake(project.clone(), cx)));
+        let context_store =
+            cx.update(|_window, cx| cx.new(|cx| ContextStore::fake(project.clone(), cx)));
+        let history_store =
+            cx.update(|_window, cx| cx.new(|cx| HistoryStore::new(context_store, cx)));
 
         let thread_view = cx.update(|window, cx| {
             cx.new(|cx| {
@@ -4087,6 +4110,7 @@ pub(crate) mod tests {
                     None,
                     workspace.downgrade(),
                     project,
+                    history_store,
                     thread_store.clone(),
                     text_thread_store.clone(),
                     window,
@@ -4283,6 +4307,10 @@ pub(crate) mod tests {
             cx.update(|_window, cx| cx.new(|cx| ThreadStore::fake(project.clone(), cx)));
         let text_thread_store =
             cx.update(|_window, cx| cx.new(|cx| TextThreadStore::fake(project.clone(), cx)));
+        let context_store =
+            cx.update(|_window, cx| cx.new(|cx| ContextStore::fake(project.clone(), cx)));
+        let history_store =
+            cx.update(|_window, cx| cx.new(|cx| HistoryStore::new(context_store, cx)));
 
         let connection = Rc::new(StubAgentConnection::new());
         let thread_view = cx.update(|window, cx| {
@@ -4292,6 +4320,7 @@ pub(crate) mod tests {
                     None,
                     workspace.downgrade(),
                     project.clone(),
+                    history_store.clone(),
                     thread_store.clone(),
                     text_thread_store.clone(),
                     window,
