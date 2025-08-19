@@ -194,15 +194,11 @@ impl HeadlessProject {
             languages.clone(),
         );
 
-        cx.subscribe(
-            &buffer_store,
-            |_this, _buffer_store, event, cx| match event {
-                BufferStoreEvent::BufferAdded(buffer) => {
-                    cx.subscribe(buffer, Self::on_buffer_event).detach();
-                }
-                _ => {}
-            },
-        )
+        cx.subscribe(&buffer_store, |_this, _buffer_store, event, cx| {
+            if let BufferStoreEvent::BufferAdded(buffer) = event {
+                cx.subscribe(buffer, Self::on_buffer_event).detach();
+            }
+        })
         .detach();
 
         let extensions = HeadlessExtensionStore::new(
@@ -285,18 +281,17 @@ impl HeadlessProject {
         event: &BufferEvent,
         cx: &mut Context<Self>,
     ) {
-        match event {
-            BufferEvent::Operation {
-                operation,
-                is_local: true,
-            } => cx
-                .background_spawn(self.session.request(proto::UpdateBuffer {
-                    project_id: SSH_PROJECT_ID,
-                    buffer_id: buffer.read(cx).remote_id().to_proto(),
-                    operations: vec![serialize_operation(operation)],
-                }))
-                .detach(),
-            _ => {}
+        if let BufferEvent::Operation {
+            operation,
+            is_local: true,
+        } = event
+        {
+            cx.background_spawn(self.session.request(proto::UpdateBuffer {
+                project_id: SSH_PROJECT_ID,
+                buffer_id: buffer.read(cx).remote_id().to_proto(),
+                operations: vec![serialize_operation(operation)],
+            }))
+            .detach()
         }
     }
 

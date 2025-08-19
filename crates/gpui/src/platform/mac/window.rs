@@ -2063,8 +2063,8 @@ fn screen_point_to_gpui_point(this: &Object, position: NSPoint) -> Point<Pixels>
     let frame = get_frame(this);
     let window_x = position.x - frame.origin.x;
     let window_y = frame.size.height - (position.y - frame.origin.y);
-    let position = point(px(window_x as f32), px(window_y as f32));
-    position
+
+    point(px(window_x as f32), px(window_y as f32))
 }
 
 extern "C" fn dragging_entered(this: &Object, _: Sel, dragging_info: id) -> NSDragOperation {

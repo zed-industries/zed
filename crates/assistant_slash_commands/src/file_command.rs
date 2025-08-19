@@ -223,7 +223,7 @@ fn collect_files(
     cx: &mut App,
 ) -> impl Stream<Item = Result<SlashCommandEvent>> + use<> {
     let Ok(matchers) = glob_inputs
-        .into_iter()
+        .iter()
         .map(|glob_input| {
             custom_path_matcher::PathMatcher::new(&[glob_input.to_owned()])
                 .with_context(|| format!("invalid path {glob_input}"))
@@ -379,7 +379,7 @@ fn collect_files(
                 }
             }
 
-            while let Some(_) = directory_stack.pop() {
+            while directory_stack.pop().is_some() {
                 events_tx.unbounded_send(Ok(SlashCommandEvent::EndSection))?;
             }
         }
@@ -491,7 +491,7 @@ mod custom_path_matcher {
     impl PathMatcher {
         pub fn new(globs: &[String]) -> Result<Self, globset::Error> {
             let globs = globs
-                .into_iter()
+                .iter()
                 .map(|glob| Glob::new(&SanitizedPath::from(glob).to_glob_string()))
                 .collect::<Result<Vec<_>, _>>()?;
             let sources = globs.iter().map(|glob| glob.glob().to_owned()).collect();

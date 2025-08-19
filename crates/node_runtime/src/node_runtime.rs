@@ -76,9 +76,8 @@ impl NodeRuntime {
         let mut state = self.0.lock().await;
 
         let options = loop {
-            match state.options.borrow().as_ref() {
-                Some(options) => break options.clone(),
-                None => {}
+            if let Some(options) = state.options.borrow().as_ref() {
+                break options.clone();
             }
             match state.options.changed().await {
                 Ok(()) => {}

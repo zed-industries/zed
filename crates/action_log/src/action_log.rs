@@ -264,15 +264,14 @@ impl ActionLog {
             if let Some((git_diff, (buffer_repo, _))) = git_diff.as_ref().zip(buffer_repo) {
                 cx.update(|cx| {
                     let mut old_head = buffer_repo.read(cx).head_commit.clone();
-                    Some(cx.subscribe(git_diff, move |_, event, cx| match event {
-                        buffer_diff::BufferDiffEvent::DiffChanged { .. } => {
+                    Some(cx.subscribe(git_diff, move |_, event, cx| {
+                        if let buffer_diff::BufferDiffEvent::DiffChanged { .. } = event {
                             let new_head = buffer_repo.read(cx).head_commit.clone();
                             if new_head != old_head {
                                 old_head = new_head;
                                 git_diff_updates_tx.send(()).ok();
                             }
                         }
-                        _ => {}
                     }))
                 })?
             } else {

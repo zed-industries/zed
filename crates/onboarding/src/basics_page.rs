@@ -16,8 +16,8 @@ use vim_mode_setting::VimModeSetting;
 
 use crate::theme_preview::{ThemePreviewStyle, ThemePreviewTile};
 
-const LIGHT_THEMES: [&'static str; 3] = ["One Light", "Ayu Light", "Gruvbox Light"];
-const DARK_THEMES: [&'static str; 3] = ["One Dark", "Ayu Dark", "Gruvbox Dark"];
+const LIGHT_THEMES: [&str; 3] = ["One Light", "Ayu Light", "Gruvbox Light"];
+const DARK_THEMES: [&str; 3] = ["One Dark", "Ayu Dark", "Gruvbox Dark"];
 const FAMILY_NAMES: [SharedString; 3] = [
     SharedString::new_static("One"),
     SharedString::new_static("Ayu"),
@@ -114,7 +114,7 @@ fn render_theme_section(tab_index: &mut isize, cx: &mut App) -> impl IntoElement
 
         let themes = theme_names.map(|theme| theme_registry.get(theme).unwrap());
 
-        let theme_previews = [0, 1, 2].map(|index| {
+        [0, 1, 2].map(|index| {
             let theme = &themes[index];
             let is_selected = theme.name == current_theme_name;
             let name = theme.name.clone();
@@ -176,9 +176,7 @@ fn render_theme_section(tab_index: &mut isize, cx: &mut App) -> impl IntoElement
                         .color(Color::Muted)
                         .size(LabelSize::Small),
                 )
-        });
-
-        theme_previews
+        })
     }
 
     fn write_mode_change(mode: ThemeMode, cx: &mut App) {

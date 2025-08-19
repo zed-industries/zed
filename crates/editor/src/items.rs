@@ -1009,16 +1009,12 @@ impl Item for Editor {
     ) {
         self.workspace = Some((workspace.weak_handle(), workspace.database_id()));
         if let Some(workspace) = &workspace.weak_handle().upgrade() {
-            cx.subscribe(
-                workspace,
-                |editor, _, event: &workspace::Event, _cx| match event {
-                    workspace::Event::ModalOpened => {
-                        editor.mouse_context_menu.take();
-                        editor.inline_blame_popover.take();
-                    }
-                    _ => {}
-                },
-            )
+            cx.subscribe(workspace, |editor, _, event: &workspace::Event, _cx| {
+                if let workspace::Event::ModalOpened = event {
+                    editor.mouse_context_menu.take();
+                    editor.inline_blame_popover.take();
+                }
+            })
             .detach();
         }
     }

@@ -621,8 +621,7 @@ impl KeymapEditor {
         let key_bindings_ptr = cx.key_bindings();
         let lock = key_bindings_ptr.borrow();
         let key_bindings = lock.bindings();
-        let mut unmapped_action_names =
-            HashSet::from_iter(cx.all_action_names().into_iter().copied());
+        let mut unmapped_action_names = HashSet::from_iter(cx.all_action_names().iter().copied());
         let action_documentation = cx.action_documentation();
         let mut generator = KeymapFile::action_schema_generator();
         let actions_with_schemas = HashSet::from_iter(
@@ -1289,7 +1288,7 @@ struct HumanizedActionNameCache {
 
 impl HumanizedActionNameCache {
     fn new(cx: &App) -> Self {
-        let cache = HashMap::from_iter(cx.all_action_names().into_iter().map(|&action_name| {
+        let cache = HashMap::from_iter(cx.all_action_names().iter().map(|&action_name| {
             (
                 action_name,
                 command_palette::humanize_action_name(action_name).into(),
@@ -1857,18 +1856,15 @@ impl Render for KeymapEditor {
                                                   mouse_down_event: &gpui::MouseDownEvent,
                                                   window,
                                                   cx| {
-                                                match mouse_down_event.button {
-                                                    MouseButton::Right => {
-                                                        this.select_index(
-                                                            row_index, None, window, cx,
-                                                        );
-                                                        this.create_context_menu(
-                                                            mouse_down_event.position,
-                                                            window,
-                                                            cx,
-                                                        );
-                                                    }
-                                                    _ => {}
+                                                if mouse_down_event.button == MouseButton::Right {
+                                                    this.select_index(
+                                                        row_index, None, window, cx,
+                                                    );
+                                                    this.create_context_menu(
+                                                        mouse_down_event.position,
+                                                        window,
+                                                        cx,
+                                                    );
                                                 }
                                             },
                                         ))

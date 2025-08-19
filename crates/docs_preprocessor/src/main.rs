@@ -21,7 +21,7 @@ static KEYMAP_LINUX: LazyLock<KeymapFile> = LazyLock::new(|| {
 
 static ALL_ACTIONS: LazyLock<Vec<ActionDef>> = LazyLock::new(dump_all_gpui_actions);
 
-const FRONT_MATTER_COMMENT: &'static str = "<!-- ZED_META {} -->";
+const FRONT_MATTER_COMMENT: &str = "<!-- ZED_META {} -->";
 
 fn main() -> Result<()> {
     zlog::init();
@@ -105,8 +105,8 @@ fn handle_preprocessing() -> Result<()> {
     template_and_validate_actions(&mut book, &mut errors);
 
     if !errors.is_empty() {
-        const ANSI_RED: &'static str = "\x1b[31m";
-        const ANSI_RESET: &'static str = "\x1b[0m";
+        const ANSI_RED: &str = "\x1b[31m";
+        const ANSI_RESET: &str = "\x1b[0m";
         for error in &errors {
             eprintln!("{ANSI_RED}ERROR{ANSI_RESET}: {}", error);
         }
@@ -143,11 +143,8 @@ fn handle_frontmatter(book: &mut Book, errors: &mut HashSet<PreprocessorError>) 
                 &serde_json::to_string(&metadata).expect("Failed to serialize metadata"),
             )
         });
-        match new_content {
-            Cow::Owned(content) => {
-                chapter.content = content;
-            }
-            Cow::Borrowed(_) => {}
+        if let Cow::Owned(content) = new_content {
+            chapter.content = content;
         }
     });
 }
@@ -409,13 +406,13 @@ fn handle_postprocessing() -> Result<()> {
             .captures(contents)
             .with_context(|| format!("Failed to find title in {:?}", pretty_path))
             .expect("Page has <title> element")[1];
-        let title = title_tag_contents
+
+        title_tag_contents
             .trim()
             .strip_suffix("- Zed")
             .unwrap_or(title_tag_contents)
             .trim()
-            .to_string();
-        title
+            .to_string()
     }
 }
 

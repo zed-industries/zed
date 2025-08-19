@@ -1620,13 +1620,12 @@ fn open_local_file(
                     .read_with(cx, |tree, _| tree.abs_path().join(settings_relative_path))?;
 
                 let fs = project.read_with(cx, |project, _| project.fs().clone())?;
-                let file_exists = fs
-                    .metadata(&full_path)
+
+                fs.metadata(&full_path)
                     .await
                     .ok()
                     .flatten()
-                    .is_some_and(|metadata| !metadata.is_dir && !metadata.is_fifo);
-                file_exists
+                    .is_some_and(|metadata| !metadata.is_dir && !metadata.is_fifo)
             };
 
             if !file_exists {

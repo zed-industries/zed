@@ -603,18 +603,15 @@ async fn parse_blocks(
         })
         .join("\n\n");
 
-    let rendered_block = cx
-        .new_window_entity(|_window, cx| {
-            Markdown::new(
-                combined_text.into(),
-                language_registry.cloned(),
-                language.map(|language| language.name()),
-                cx,
-            )
-        })
-        .ok();
-
-    rendered_block
+    cx.new_window_entity(|_window, cx| {
+        Markdown::new(
+            combined_text.into(),
+            language_registry.cloned(),
+            language.map(|language| language.name()),
+            cx,
+        )
+    })
+    .ok()
 }
 
 pub fn hover_markdown_style(window: &Window, cx: &App) -> MarkdownStyle {

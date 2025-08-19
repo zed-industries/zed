@@ -2124,7 +2124,7 @@ impl AcpThreadView {
                     .map(|view| div().px_4().w_full().max_w_128().child(view)),
             )
             .child(h_flex().mt_1p5().justify_center().children(
-                connection.auth_methods().into_iter().map(|method| {
+                connection.auth_methods().iter().map(|method| {
                     Button::new(SharedString::from(method.id.0.clone()), method.name.clone())
                         .on_click({
                             let method_id = method.id.clone();
@@ -2574,7 +2574,7 @@ impl AcpThreadView {
     ) -> Div {
         let editor_bg_color = cx.theme().colors().editor_background;
 
-        v_flex().children(changed_buffers.into_iter().enumerate().flat_map(
+        v_flex().children(changed_buffers.iter().enumerate().flat_map(
             |(index, (buffer, _diff))| {
                 let file = buffer.read(cx).file()?;
                 let path = file.path();

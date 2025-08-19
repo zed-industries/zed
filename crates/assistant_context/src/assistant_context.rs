@@ -590,7 +590,7 @@ impl From<&Message> for MessageMetadata {
 
 impl MessageMetadata {
     pub fn is_cache_valid(&self, buffer: &BufferSnapshot, range: &Range<usize>) -> bool {
-        let result = match &self.cache {
+        match &self.cache {
             Some(MessageCacheMetadata { cached_at, .. }) => !buffer.has_edits_since_in_range(
                 cached_at,
                 Range {
@@ -599,8 +599,7 @@ impl MessageMetadata {
                 },
             ),
             _ => false,
-        };
-        result
+        }
     }
 }
 
@@ -2081,15 +2080,12 @@ impl AssistantContext {
 
                                 match event {
                                     LanguageModelCompletionEvent::StatusUpdate(status_update) => {
-                                        match status_update {
-                                            CompletionRequestStatus::UsageUpdated { amount, limit } => {
-                                                this.update_model_request_usage(
-                                                    amount as u32,
-                                                    limit,
-                                                    cx,
-                                                );
-                                            }
-                                            _ => {}
+                                        if let CompletionRequestStatus::UsageUpdated { amount, limit } = status_update {
+                                            this.update_model_request_usage(
+                                                amount as u32,
+                                                limit,
+                                                cx,
+                                            );
                                         }
                                     }
                                     LanguageModelCompletionEvent::StartMessage { .. } => {}

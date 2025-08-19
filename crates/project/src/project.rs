@@ -2885,14 +2885,11 @@ impl Project {
         event: &DapStoreEvent,
         cx: &mut Context<Self>,
     ) {
-        match event {
-            DapStoreEvent::Notification(message) => {
-                cx.emit(Event::Toast {
-                    notification_id: "dap".into(),
-                    message: message.clone(),
-                });
-            }
-            _ => {}
+        if let DapStoreEvent::Notification(message) = event {
+            cx.emit(Event::Toast {
+                notification_id: "dap".into(),
+                message: message.clone(),
+            });
         }
     }
 
@@ -3179,14 +3176,11 @@ impl Project {
         event: &ImageItemEvent,
         cx: &mut Context<Self>,
     ) -> Option<()> {
-        match event {
-            ImageItemEvent::ReloadNeeded => {
-                if !self.is_via_collab() {
-                    self.reload_images([image.clone()].into_iter().collect(), cx)
-                        .detach_and_log_err(cx);
-                }
-            }
-            _ => {}
+        if let ImageItemEvent::ReloadNeeded = event
+            && !self.is_via_collab()
+        {
+            self.reload_images([image.clone()].into_iter().collect(), cx)
+                .detach_and_log_err(cx);
         }
 
         None

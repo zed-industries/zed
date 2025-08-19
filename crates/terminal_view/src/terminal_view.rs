@@ -1937,7 +1937,8 @@ impl SearchableItem for TerminalView {
         // Selection head might have a value if there's a selection that isn't
         // associated with a match. Therefore, if there are no matches, we should
         // report None, no matter the state of the terminal
-        let res = if !matches.is_empty() {
+
+        if !matches.is_empty() {
             if let Some(selection_head) = self.terminal().read(cx).selection_head {
                 // If selection head is contained in a match. Return that match
                 match direction {
@@ -1977,9 +1978,7 @@ impl SearchableItem for TerminalView {
             }
         } else {
             None
-        };
-
-        res
+        }
     }
     fn replace(
         &mut self,

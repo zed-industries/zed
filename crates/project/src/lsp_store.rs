@@ -550,7 +550,7 @@ impl LocalLspStore {
 
             if let Some(settings) = settings.binary.as_ref() {
                 if let Some(arguments) = &settings.arguments {
-                    binary.arguments = arguments.into_iter().map(Into::into).collect();
+                    binary.arguments = arguments.iter().map(Into::into).collect();
                 }
                 if let Some(env) = &settings.env {
                     shell_env.extend(env.iter().map(|(k, v)| (k.clone(), v.clone())));
@@ -1060,8 +1060,8 @@ impl LocalLspStore {
         };
         let delegate: Arc<dyn ManifestDelegate> =
             Arc::new(ManifestQueryDelegate::new(worktree.read(cx).snapshot()));
-        let root = self
-            .lsp_tree
+
+        self.lsp_tree
             .get(
                 project_path,
                 language.name(),
@@ -1069,9 +1069,7 @@ impl LocalLspStore {
                 &delegate,
                 cx,
             )
-            .collect::<Vec<_>>();
-
-        root
+            .collect::<Vec<_>>()
     }
 
     fn language_server_ids_for_buffer(
@@ -2397,7 +2395,8 @@ impl LocalLspStore {
 
                 let server_id = server_node.server_id_or_init(|disposition| {
                     let path = &disposition.path;
-                    let server_id = {
+
+                    {
                         let uri =
                             Url::from_file_path(worktree.read(cx).abs_path().join(&path.path));
 
@@ -2415,9 +2414,7 @@ impl LocalLspStore {
                             state.add_workspace_folder(uri);
                         };
                         server_id
-                    };
-
-                    server_id
+                    }
                 })?;
                 let server_state = self.language_servers.get(&server_id)?;
                 if let LanguageServerState::Running {
@@ -3047,16 +3044,14 @@ impl LocalLspStore {
                             buffer.edit([(range, text)], None, cx);
                         }
 
-                        let transaction = buffer.end_transaction(cx).and_then(|transaction_id| {
+                        buffer.end_transaction(cx).and_then(|transaction_id| {
                             if push_to_history {
                                 buffer.finalize_last_transaction();
                                 buffer.get_transaction(transaction_id).cloned()
                             } else {
                                 buffer.forget_transaction(transaction_id)
                             }
-                        });
-
-                        transaction
+                        })
                     })?;
                     if let Some(transaction) = transaction {
                         project_transaction.0.insert(buffer_to_edit, transaction);
@@ -4370,13 +4365,11 @@ impl LspStore {
         if let Some((client, downstream_project_id)) = self.downstream_client.clone()
             && let Some(diangostic_summaries) = self.diagnostic_summaries.get(&worktree.id())
         {
-            let mut summaries = diangostic_summaries
-                .into_iter()
-                .flat_map(|(path, summaries)| {
-                    summaries
-                        .into_iter()
-                        .map(|(server_id, summary)| summary.to_proto(*server_id, path))
-                });
+            let mut summaries = diangostic_summaries.iter().flat_map(|(path, summaries)| {
+                summaries
+                    .iter()
+                    .map(|(server_id, summary)| summary.to_proto(*server_id, path))
+            });
             if let Some(summary) = summaries.next() {
                 client
                     .send(proto::UpdateDiagnosticSummary {
@@ -4564,7 +4557,7 @@ impl LspStore {
                 anyhow::anyhow!(message)
             })?;
 
-            let response = request
+            request
                 .response_from_lsp(
                     response,
                     this.upgrade().context("no app context")?,
@@ -4572,8 +4565,7 @@ impl LspStore {
                     language_server.server_id(),
                     cx.clone(),
                 )
-                .await;
-            response
+                .await
         })
     }
 
@@ -4853,7 +4845,7 @@ impl LspStore {
         push_to_history: bool,
         cx: &mut Context<Self>,
     ) -> Task<anyhow::Result<ProjectTransaction>> {
-        if let Some(_) = self.as_local() {
+        if self.as_local().is_some() {
             cx.spawn(async move |lsp_store, cx| {
                 let buffers = buffers.into_iter().collect::<Vec<_>>();
                 let result = LocalLspStore::execute_code_action_kind_locally(
@@ -7804,7 +7796,7 @@ impl LspStore {
                             }
                             None => {
                                 diagnostics_summary = Some(proto::UpdateDiagnosticSummary {
-                                    project_id: project_id,
+                                    project_id,
                                     worktree_id: worktree_id.to_proto(),
                                     summary: Some(proto::DiagnosticSummary {
                                         path: project_path.path.as_ref().to_proto(),
@@ -10054,7 +10046,7 @@ impl LspStore {
         cx: &mut Context<Self>,
     ) -> Task<anyhow::Result<ProjectTransaction>> {
         let logger = zlog::scoped!("format");
-        if let Some(_) = self.as_local() {
+        if self.as_local().is_some() {
             zlog::trace!(logger => "Formatting locally");
             let logger = zlog::scoped!(logger => "local");
             let buffers = buffers

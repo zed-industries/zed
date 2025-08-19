@@ -4,7 +4,6 @@ use std::{
         OnceLock, RwLock,
         atomic::{AtomicU8, Ordering},
     },
-    usize,
 };
 
 use crate::{SCOPE_DEPTH_MAX, SCOPE_STRING_SEP_STR, Scope, ScopeAlloc, env_config, private};
@@ -152,7 +151,7 @@ fn scope_alloc_from_scope_str(scope_str: &str) -> Option<ScopeAlloc> {
     if index == 0 {
         return None;
     }
-    if let Some(_) = scope_iter.next() {
+    if scope_iter.next().is_some() {
         crate::warn!(
             "Invalid scope key, too many nested scopes: '{scope_str}'. Max depth is {SCOPE_DEPTH_MAX}",
         );
@@ -204,12 +203,10 @@ impl ScopeMap {
                 .map(|(scope_str, level_filter)| (scope_str.as_str(), *level_filter))
         });
 
-        let new_filters = items_input_map
-            .into_iter()
-            .filter_map(|(scope_str, level_str)| {
-                let level_filter = level_filter_from_str(level_str)?;
-                Some((scope_str.as_str(), level_filter))
-            });
+        let new_filters = items_input_map.iter().filter_map(|(scope_str, level_str)| {
+            let level_filter = level_filter_from_str(level_str)?;
+            Some((scope_str.as_str(), level_filter))
+        });
 
         let all_filters = default_filters
             .iter()
