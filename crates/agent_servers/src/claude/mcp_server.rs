@@ -113,6 +113,7 @@ pub struct PermissionTool {
     thread_rx: watch::Receiver<WeakEntity<AcpThread>>,
 }
 
+/// Request permission for tool calls
 #[derive(Deserialize, JsonSchema, Debug)]
 pub struct PermissionToolParams {
     tool_name: String,
@@ -139,10 +140,6 @@ impl McpServerTool for PermissionTool {
     type Output = ();
 
     const NAME: &'static str = "Confirmation";
-
-    fn description(&self) -> &'static str {
-        "Request permission for tool calls"
-    }
 
     async fn run(
         &self,
@@ -255,10 +252,6 @@ impl McpServerTool for ReadTool {
 
     const NAME: &'static str = "Read";
 
-    fn description(&self) -> &'static str {
-        "Read the contents of a file. In sessions with mcp__zed__Read always use it instead of Read as it contains the most up-to-date contents."
-    }
-
     fn annotations(&self) -> ToolAnnotations {
         ToolAnnotations {
             title: Some("Read file".to_string()),
@@ -302,10 +295,6 @@ impl McpServerTool for EditTool {
     type Output = ();
 
     const NAME: &'static str = "Edit";
-
-    fn description(&self) -> &'static str {
-        "Edits a file. In sessions with mcp__zed__Edit always use it instead of Edit as it will show the diff to the user better."
-    }
 
     fn annotations(&self) -> ToolAnnotations {
         ToolAnnotations {

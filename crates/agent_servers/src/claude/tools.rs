@@ -302,6 +302,20 @@ impl ClaudeTool {
     }
 }
 
+/// Edit a file.
+///
+/// In sessions with mcp__zed__Edit always use it instead of Edit as it will
+/// allow the user to conveniently review changes.
+///
+/// File editing instructions:
+/// - The `old_text` param must match existing file content, including indentation.
+/// - The `old_text` param come from the actual file, not an outline.
+/// - The `old_text` section must not be empty.
+/// - Be minimal with replacements:
+///     - For unique lines, incldue only those lines.
+///     - For non-unique lines, include enough context to indentify them.
+/// - Do not escape quotes, newlines, or other characters.
+/// - Only edit the specified file.
 #[derive(Deserialize, JsonSchema, Debug)]
 pub struct EditToolParams {
     /// The absolute path to the file to read.
@@ -312,6 +326,11 @@ pub struct EditToolParams {
     pub new_text: String,
 }
 
+/// Reads the content of the given file in the project.
+///
+/// Never attempt to read a path that hasn't been previously mentioned.
+///
+/// In sessions with mcp__zed__Read always use it instead of Read as it contains the most up-to-date contents.
 #[derive(Deserialize, JsonSchema, Debug)]
 pub struct ReadToolParams {
     /// The absolute path to the file to read.
