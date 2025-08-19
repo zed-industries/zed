@@ -430,7 +430,7 @@ fn show_hover(
             };
 
             let hovers_response = if let Some(hover_request) = hover_request {
-                hover_request.await
+                hover_request.await.unwrap_or_default()
             } else {
                 Vec::new()
             };

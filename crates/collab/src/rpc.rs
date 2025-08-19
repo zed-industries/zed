@@ -34,7 +34,7 @@ pub use connection_pool::{ConnectionPool, ZedVersion};
 use core::fmt::{self, Debug, Formatter};
 use futures::TryFutureExt as _;
 use reqwest_client::ReqwestClient;
-use rpc::proto::{MultiLspQuery, split_repository_update};
+use rpc::proto::split_repository_update;
 use supermaven_api::{CreateExternalUserRequest, SupermavenAdminApi};
 use tracing::Span;
 
@@ -399,9 +399,7 @@ impl Server {
             .add_request_handler(forward_mutating_project_request::<proto::OnTypeFormatting>)
             .add_request_handler(forward_mutating_project_request::<proto::SaveBuffer>)
             .add_request_handler(forward_mutating_project_request::<proto::BlameBuffer>)
-            // TODO kb remove + remove the span
             // TODO kb add the same for the headless part
-            .add_request_handler(multi_lsp_query)
             .add_request_handler(lsp_query)
             .add_message_handler(broadcast_project_message_from_host::<proto::LspQueryResponse>)
             .add_request_handler(forward_mutating_project_request::<proto::RestartLanguageServers>)
@@ -2361,16 +2359,6 @@ where
     let payload = session.forward_request(host_connection_id, request).await?;
     response.send(payload)?;
     Ok(())
-}
-
-async fn multi_lsp_query(
-    request: MultiLspQuery,
-    response: Response<MultiLspQuery>,
-    session: MessageContext,
-) -> Result<()> {
-    tracing::Span::current().record("multi_lsp_query_request", request.request_str());
-    tracing::info!("multi_lsp_query message received");
-    forward_mutating_project_request(request, response, session).await
 }
 
 async fn lsp_query(

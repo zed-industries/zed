@@ -3005,6 +3005,7 @@ async fn test_definition(cx: &mut gpui::TestAppContext) {
     let mut definitions = project
         .update(cx, |project, cx| project.definitions(&buffer, 22, cx))
         .await
+        .unwrap()
         .unwrap();
 
     // Assert no new language server started
@@ -3519,7 +3520,7 @@ async fn test_apply_code_actions_with_commands(cx: &mut gpui::TestAppContext) {
         .next()
         .await;
 
-    let action = actions.await.unwrap()[0].clone();
+    let action = actions.await.unwrap().unwrap()[0].clone();
     let apply = project.update(cx, |project, cx| {
         project.apply_code_action(buffer.clone(), action, true, cx)
     });
@@ -6110,6 +6111,7 @@ async fn test_multiple_language_server_hovers(cx: &mut gpui::TestAppContext) {
         hover_task
             .await
             .into_iter()
+            .flatten()
             .map(|hover| hover.contents.iter().map(|block| &block.text).join("|"))
             .sorted()
             .collect::<Vec<_>>(),
@@ -6183,6 +6185,7 @@ async fn test_hovers_with_empty_parts(cx: &mut gpui::TestAppContext) {
         hover_task
             .await
             .into_iter()
+            .flatten()
             .map(|hover| hover.contents.iter().map(|block| &block.text).join("|"))
             .sorted()
             .collect::<Vec<_>>(),
@@ -6261,7 +6264,7 @@ async fn test_code_actions_only_kinds(cx: &mut gpui::TestAppContext) {
         .await
         .expect("The code action request should have been triggered");
 
-    let code_actions = code_actions_task.await.unwrap();
+    let code_actions = code_actions_task.await.unwrap().unwrap();
     assert_eq!(code_actions.len(), 1);
     assert_eq!(
         code_actions[0].lsp_action.action_kind(),
@@ -6419,6 +6422,7 @@ async fn test_multiple_language_server_actions(cx: &mut gpui::TestAppContext) {
         vec!["TailwindServer code action", "TypeScriptServer code action"],
         code_actions_task
             .await
+            .unwrap()
             .unwrap()
             .into_iter()
             .map(|code_action| code_action.lsp_action.title().to_owned())

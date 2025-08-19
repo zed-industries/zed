@@ -3500,7 +3500,7 @@ pub struct DocumentColors {
 }
 
 type DocumentColorTask = Shared<Task<std::result::Result<DocumentColors, Arc<anyhow::Error>>>>;
-type CodeLensTask = Shared<Task<std::result::Result<Vec<CodeAction>, Arc<anyhow::Error>>>>;
+type CodeLensTask = Shared<Task<std::result::Result<Option<Vec<CodeAction>>, Arc<anyhow::Error>>>>;
 
 #[derive(Debug, Default)]
 struct DocumentColorData {
@@ -5243,11 +5243,11 @@ impl LspStore {
         buffer_handle: &Entity<Buffer>,
         position: PointUtf16,
         cx: &mut Context<Self>,
-    ) -> Task<Result<Vec<LocationLink>>> {
+    ) -> Task<Result<Option<Vec<LocationLink>>>> {
         if let Some((upstream_client, project_id)) = self.upstream_client() {
             let request = GetDefinitions { position };
             if !self.is_capable_for_proto_request(buffer_handle, &request, cx) {
-                return Task::ready(Ok(Vec::new()));
+                return Task::ready(Ok(None));
             }
             let request_task = upstream_client.request(proto::MultiLspQuery {
                 buffer_id: buffer_handle.read(cx).remote_id().into(),
@@ -5263,7 +5263,7 @@ impl LspStore {
             let buffer = buffer_handle.clone();
             cx.spawn(async move |weak_project, cx| {
                 let Some(project) = weak_project.upgrade() else {
-                    return Ok(Vec::new());
+                    return Ok(None);
                 };
                 let responses = request_task.await?.responses;
                 let actions = join_all(
@@ -5289,13 +5289,15 @@ impl LspStore {
                 )
                 .await;
 
-                Ok(actions
-                    .into_iter()
-                    .collect::<Result<Vec<Vec<_>>>>()?
-                    .into_iter()
-                    .flatten()
-                    .dedup()
-                    .collect())
+                Ok(Some(
+                    actions
+                        .into_iter()
+                        .collect::<Result<Vec<Vec<_>>>>()?
+                        .into_iter()
+                        .flatten()
+                        .dedup()
+                        .collect(),
+                ))
             })
         } else {
             let definitions_task = self.request_multiple_lsp_locally(
@@ -5305,12 +5307,14 @@ impl LspStore {
                 cx,
             );
             cx.background_spawn(async move {
-                Ok(definitions_task
-                    .await
-                    .into_iter()
-                    .flat_map(|(_, definitions)| definitions)
-                    .dedup()
-                    .collect())
+                Ok(Some(
+                    definitions_task
+                        .await
+                        .into_iter()
+                        .flat_map(|(_, definitions)| definitions)
+                        .dedup()
+                        .collect(),
+                ))
             })
         }
     }
@@ -5320,11 +5324,11 @@ impl LspStore {
         buffer_handle: &Entity<Buffer>,
         position: PointUtf16,
         cx: &mut Context<Self>,
-    ) -> Task<Result<Vec<LocationLink>>> {
+    ) -> Task<Result<Option<Vec<LocationLink>>>> {
         if let Some((upstream_client, project_id)) = self.upstream_client() {
             let request = GetDeclarations { position };
             if !self.is_capable_for_proto_request(buffer_handle, &request, cx) {
-                return Task::ready(Ok(Vec::new()));
+                return Task::ready(Ok(None));
             }
             let request_task = upstream_client.request(proto::MultiLspQuery {
                 buffer_id: buffer_handle.read(cx).remote_id().into(),
@@ -5340,7 +5344,7 @@ impl LspStore {
             let buffer = buffer_handle.clone();
             cx.spawn(async move |weak_project, cx| {
                 let Some(project) = weak_project.upgrade() else {
-                    return Ok(Vec::new());
+                    return Ok(None);
                 };
                 let responses = request_task.await?.responses;
                 let actions = join_all(
@@ -5366,13 +5370,15 @@ impl LspStore {
                 )
                 .await;
 
-                Ok(actions
-                    .into_iter()
-                    .collect::<Result<Vec<Vec<_>>>>()?
-                    .into_iter()
-                    .flatten()
-                    .dedup()
-                    .collect())
+                Ok(Some(
+                    actions
+                        .into_iter()
+                        .collect::<Result<Vec<Vec<_>>>>()?
+                        .into_iter()
+                        .flatten()
+                        .dedup()
+                        .collect(),
+                ))
             })
         } else {
             let declarations_task = self.request_multiple_lsp_locally(
@@ -5382,12 +5388,14 @@ impl LspStore {
                 cx,
             );
             cx.background_spawn(async move {
-                Ok(declarations_task
-                    .await
-                    .into_iter()
-                    .flat_map(|(_, declarations)| declarations)
-                    .dedup()
-                    .collect())
+                Ok(Some(
+                    declarations_task
+                        .await
+                        .into_iter()
+                        .flat_map(|(_, declarations)| declarations)
+                        .dedup()
+                        .collect(),
+                ))
             })
         }
     }
@@ -5397,11 +5405,11 @@ impl LspStore {
         buffer: &Entity<Buffer>,
         position: PointUtf16,
         cx: &mut Context<Self>,
-    ) -> Task<Result<Vec<LocationLink>>> {
+    ) -> Task<Result<Option<Vec<LocationLink>>>> {
         if let Some((upstream_client, project_id)) = self.upstream_client() {
             let request = GetTypeDefinitions { position };
             if !self.is_capable_for_proto_request(buffer, &request, cx) {
-                return Task::ready(Ok(Vec::new()));
+                return Task::ready(Ok(None));
             }
             let request_task = upstream_client.request(proto::MultiLspQuery {
                 buffer_id: buffer.read(cx).remote_id().into(),
@@ -5417,7 +5425,7 @@ impl LspStore {
             let buffer = buffer.clone();
             cx.spawn(async move |weak_project, cx| {
                 let Some(project) = weak_project.upgrade() else {
-                    return Ok(Vec::new());
+                    return Ok(None);
                 };
                 let responses = request_task.await?.responses;
                 let actions = join_all(
@@ -5443,13 +5451,15 @@ impl LspStore {
                 )
                 .await;
 
-                Ok(actions
-                    .into_iter()
-                    .collect::<Result<Vec<Vec<_>>>>()?
-                    .into_iter()
-                    .flatten()
-                    .dedup()
-                    .collect())
+                Ok(Some(
+                    actions
+                        .into_iter()
+                        .collect::<Result<Vec<Vec<_>>>>()?
+                        .into_iter()
+                        .flatten()
+                        .dedup()
+                        .collect(),
+                ))
             })
         } else {
             let type_definitions_task = self.request_multiple_lsp_locally(
@@ -5459,12 +5469,14 @@ impl LspStore {
                 cx,
             );
             cx.background_spawn(async move {
-                Ok(type_definitions_task
-                    .await
-                    .into_iter()
-                    .flat_map(|(_, type_definitions)| type_definitions)
-                    .dedup()
-                    .collect())
+                Ok(Some(
+                    type_definitions_task
+                        .await
+                        .into_iter()
+                        .flat_map(|(_, type_definitions)| type_definitions)
+                        .dedup()
+                        .collect(),
+                ))
             })
         }
     }
@@ -5474,11 +5486,11 @@ impl LspStore {
         buffer: &Entity<Buffer>,
         position: PointUtf16,
         cx: &mut Context<Self>,
-    ) -> Task<Result<Vec<LocationLink>>> {
+    ) -> Task<Result<Option<Vec<LocationLink>>>> {
         if let Some((upstream_client, project_id)) = self.upstream_client() {
             let request = GetImplementations { position };
             if !self.is_capable_for_proto_request(buffer, &request, cx) {
-                return Task::ready(Ok(Vec::new()));
+                return Task::ready(Ok(None));
             }
             let request_task = upstream_client.request(proto::MultiLspQuery {
                 buffer_id: buffer.read(cx).remote_id().into(),
@@ -5494,7 +5506,7 @@ impl LspStore {
             let buffer = buffer.clone();
             cx.spawn(async move |weak_project, cx| {
                 let Some(project) = weak_project.upgrade() else {
-                    return Ok(Vec::new());
+                    return Ok(None);
                 };
                 let responses = request_task.await?.responses;
                 let actions = join_all(
@@ -5520,13 +5532,15 @@ impl LspStore {
                 )
                 .await;
 
-                Ok(actions
-                    .into_iter()
-                    .collect::<Result<Vec<Vec<_>>>>()?
-                    .into_iter()
-                    .flatten()
-                    .dedup()
-                    .collect())
+                Ok(Some(
+                    actions
+                        .into_iter()
+                        .collect::<Result<Vec<Vec<_>>>>()?
+                        .into_iter()
+                        .flatten()
+                        .dedup()
+                        .collect(),
+                ))
             })
         } else {
             let implementations_task = self.request_multiple_lsp_locally(
@@ -5536,12 +5550,14 @@ impl LspStore {
                 cx,
             );
             cx.background_spawn(async move {
-                Ok(implementations_task
-                    .await
-                    .into_iter()
-                    .flat_map(|(_, implementations)| implementations)
-                    .dedup()
-                    .collect())
+                Ok(Some(
+                    implementations_task
+                        .await
+                        .into_iter()
+                        .flat_map(|(_, implementations)| implementations)
+                        .dedup()
+                        .collect(),
+                ))
             })
         }
     }
@@ -5616,14 +5632,14 @@ impl LspStore {
         range: Range<Anchor>,
         kinds: Option<Vec<CodeActionKind>>,
         cx: &mut Context<Self>,
-    ) -> Task<Result<Vec<CodeAction>>> {
+    ) -> Task<Result<Option<Vec<CodeAction>>>> {
         if let Some((upstream_client, project_id)) = self.upstream_client() {
             let request = GetCodeActions {
                 range: range.clone(),
                 kinds: kinds.clone(),
             };
             if !self.is_capable_for_proto_request(buffer, &request, cx) {
-                return Task::ready(Ok(Vec::new()));
+                return Task::ready(Ok(None));
             }
             let request_task = upstream_client.request(proto::MultiLspQuery {
                 buffer_id: buffer.read(cx).remote_id().into(),
@@ -5639,7 +5655,7 @@ impl LspStore {
             let buffer = buffer.clone();
             cx.spawn(async move |weak_project, cx| {
                 let Some(project) = weak_project.upgrade() else {
-                    return Ok(Vec::new());
+                    return Ok(None);
                 };
                 let responses = request_task.await?.responses;
                 let actions = join_all(
@@ -5669,12 +5685,14 @@ impl LspStore {
                 )
                 .await;
 
-                Ok(actions
-                    .into_iter()
-                    .collect::<Result<Vec<Vec<_>>>>()?
-                    .into_iter()
-                    .flatten()
-                    .collect())
+                Ok(Some(
+                    actions
+                        .into_iter()
+                        .collect::<Result<Vec<Vec<_>>>>()?
+                        .into_iter()
+                        .flatten()
+                        .collect(),
+                ))
             })
         } else {
             let all_actions_task = self.request_multiple_lsp_locally(
@@ -5687,11 +5705,13 @@ impl LspStore {
                 cx,
             );
             cx.background_spawn(async move {
-                Ok(all_actions_task
-                    .await
-                    .into_iter()
-                    .flat_map(|(_, actions)| actions)
-                    .collect())
+                Ok(Some(
+                    all_actions_task
+                        .await
+                        .into_iter()
+                        .flat_map(|(_, actions)| actions)
+                        .collect(),
+                ))
             })
         }
     }
@@ -5716,7 +5736,9 @@ impl LspStore {
                     != cached_data.lens.keys().copied().collect()
             });
             if !has_different_servers {
-                return Task::ready(Ok(cached_data.lens.values().flatten().cloned().collect()))
+                return Task::ready(Ok(Some(
+                        cached_data.lens.values().flatten().cloned().collect(),
+                    )))
                     .shared();
             }
         }
@@ -5755,17 +5777,19 @@ impl LspStore {
                 lsp_store
                     .update(cx, |lsp_store, _| {
                         let lsp_data = lsp_store.lsp_code_lens.entry(buffer_id).or_default();
-                        if lsp_data.lens_for_version == query_version_queried_for {
-                            lsp_data.lens.extend(fetched_lens.clone());
-                        } else if !lsp_data
-                            .lens_for_version
-                            .changed_since(&query_version_queried_for)
-                        {
-                            lsp_data.lens_for_version = query_version_queried_for;
-                            lsp_data.lens = fetched_lens.clone();
+                        if let Some(fetched_lens) = fetched_lens {
+                            if lsp_data.lens_for_version == query_version_queried_for {
+                                lsp_data.lens.extend(fetched_lens.clone());
+                            } else if !lsp_data
+                                .lens_for_version
+                                .changed_since(&query_version_queried_for)
+                            {
+                                lsp_data.lens_for_version = query_version_queried_for;
+                                lsp_data.lens = fetched_lens.clone();
+                            }
                         }
                         lsp_data.update = None;
-                        lsp_data.lens.values().flatten().cloned().collect()
+                        Some(lsp_data.lens.values().flatten().cloned().collect())
                     })
                     .map_err(Arc::new)
             })
@@ -5778,11 +5802,11 @@ impl LspStore {
         &mut self,
         buffer: &Entity<Buffer>,
         cx: &mut Context<Self>,
-    ) -> Task<Result<HashMap<LanguageServerId, Vec<CodeAction>>>> {
+    ) -> Task<Result<Option<HashMap<LanguageServerId, Vec<CodeAction>>>>> {
         if let Some((upstream_client, project_id)) = self.upstream_client() {
             let request = GetCodeLens;
             if !self.is_capable_for_proto_request(buffer, &request, cx) {
-                return Task::ready(Ok(HashMap::default()));
+                return Task::ready(Ok(None));
             }
             let request_task = upstream_client.request(proto::MultiLspQuery {
                 buffer_id: buffer.read(cx).remote_id().into(),
@@ -5798,7 +5822,7 @@ impl LspStore {
             let buffer = buffer.clone();
             cx.spawn(async move |weak_lsp_store, cx| {
                 let Some(lsp_store) = weak_lsp_store.upgrade() else {
-                    return Ok(HashMap::default());
+                    return Ok(None);
                 };
                 let responses = request_task.await?.responses;
                 let code_lens_actions = join_all(
@@ -5854,14 +5878,14 @@ impl LspStore {
                     !has_errors || !code_lens_actions.is_empty(),
                     "Failed to fetch code lens"
                 );
-                Ok(code_lens_actions)
+                Ok(Some(code_lens_actions))
             })
         } else {
             let code_lens_actions_task =
                 self.request_multiple_lsp_locally(buffer, None::<usize>, GetCodeLens, cx);
-            cx.background_spawn(
-                async move { Ok(code_lens_actions_task.await.into_iter().collect()) },
-            )
+            cx.background_spawn(async move {
+                Ok(Some(code_lens_actions_task.await.into_iter().collect()))
+            })
         }
     }
 
@@ -6803,16 +6827,18 @@ impl LspStore {
                     .update(cx, |lsp_store, _| {
                         let lsp_data = lsp_store.lsp_document_colors.entry(buffer_id).or_default();
 
-                        if lsp_data.colors_for_version == query_version_queried_for {
-                            lsp_data.colors.extend(fetched_colors.clone());
-                            lsp_data.cache_version += 1;
-                        } else if !lsp_data
-                            .colors_for_version
-                            .changed_since(&query_version_queried_for)
-                        {
-                            lsp_data.colors_for_version = query_version_queried_for;
-                            lsp_data.colors = fetched_colors.clone();
-                            lsp_data.cache_version += 1;
+                        if let Some(fetched_colors) = fetched_colors {
+                            if lsp_data.colors_for_version == query_version_queried_for {
+                                lsp_data.colors.extend(fetched_colors.clone());
+                                lsp_data.cache_version += 1;
+                            } else if !lsp_data
+                                .colors_for_version
+                                .changed_since(&query_version_queried_for)
+                            {
+                                lsp_data.colors_for_version = query_version_queried_for;
+                                lsp_data.colors = fetched_colors.clone();
+                                lsp_data.cache_version += 1;
+                            }
                         }
                         lsp_data.colors_update = None;
                         let colors = lsp_data
@@ -6853,7 +6879,7 @@ impl LspStore {
             let buffer = buffer.clone();
             cx.spawn(async move |lsp_store, cx| {
                 let Some(project) = lsp_store.upgrade() else {
-                    return Ok(HashMap::default());
+                    return Ok(None);
                 };
                 let colors = join_all(
                     request_task
@@ -6914,13 +6940,13 @@ impl LspStore {
         buffer: &Entity<Buffer>,
         position: T,
         cx: &mut Context<Self>,
-    ) -> Task<Vec<SignatureHelp>> {
+    ) -> Task<Option<Vec<SignatureHelp>>> {
         let position = position.to_point_utf16(buffer.read(cx));
 
         if let Some((client, upstream_project_id)) = self.upstream_client() {
             let request = GetSignatureHelp { position };
             if !self.is_capable_for_proto_request(buffer, &request, cx) {
-                return Task::ready(Vec::new());
+                return Task::ready(None);
             }
             let request_task = client.request(proto::MultiLspQuery {
                 buffer_id: buffer.read(cx).remote_id().into(),
@@ -6936,9 +6962,9 @@ impl LspStore {
             let buffer = buffer.clone();
             cx.spawn(async move |weak_project, cx| {
                 let Some(project) = weak_project.upgrade() else {
-                    return Vec::new();
+                    return None;
                 };
-                join_all(
+                let signatures = join_all(
                     request_task
                         .await
                         .log_err()
@@ -6967,7 +6993,8 @@ impl LspStore {
                 .await
                 .into_iter()
                 .flatten()
-                .collect()
+                .collect();
+                Some(signatures)
             })
         } else {
             let all_actions_task = self.request_multiple_lsp_locally(
@@ -6977,11 +7004,13 @@ impl LspStore {
                 cx,
             );
             cx.background_spawn(async move {
-                all_actions_task
-                    .await
-                    .into_iter()
-                    .flat_map(|(_, actions)| actions)
-                    .collect::<Vec<_>>()
+                Some(
+                    all_actions_task
+                        .await
+                        .into_iter()
+                        .flat_map(|(_, actions)| actions)
+                        .collect::<Vec<_>>(),
+                )
             })
         }
     }
@@ -8157,6 +8186,123 @@ impl LspStore {
                     lsp_request_id,
                     get_document_color,
                     None,
+                    cx.clone(),
+                )
+                .await?;
+            }
+            Request::GetHover(get_hover) => {
+                let position = get_hover.position.clone().and_then(deserialize_anchor);
+                Self::query_lsp::<GetHover>(
+                    lsp_store,
+                    sender_id,
+                    lsp_request_id,
+                    get_hover,
+                    position,
+                    cx.clone(),
+                )
+                .await?;
+            }
+            Request::GetCodeActions(get_code_actions) => {
+                Self::query_lsp::<GetCodeActions>(
+                    lsp_store,
+                    sender_id,
+                    lsp_request_id,
+                    get_code_actions,
+                    None,
+                    cx.clone(),
+                )
+                .await?;
+            }
+            Request::GetSignatureHelp(get_signature_help) => {
+                let position = get_signature_help
+                    .position
+                    .clone()
+                    .and_then(deserialize_anchor);
+                Self::query_lsp::<GetSignatureHelp>(
+                    lsp_store,
+                    sender_id,
+                    lsp_request_id,
+                    get_signature_help,
+                    position,
+                    cx.clone(),
+                )
+                .await?;
+            }
+            Request::GetCodeLens(get_code_lens) => {
+                Self::query_lsp::<GetCodeLens>(
+                    lsp_store,
+                    sender_id,
+                    lsp_request_id,
+                    get_code_lens,
+                    None,
+                    cx.clone(),
+                )
+                .await?;
+            }
+            Request::GetDocumentDiagnostics(get_document_diagnostics) => {
+                Self::query_lsp::<GetDocumentDiagnostics>(
+                    lsp_store,
+                    sender_id,
+                    lsp_request_id,
+                    get_document_diagnostics,
+                    None,
+                    cx.clone(),
+                )
+                .await?;
+            }
+            Request::GetDefinition(get_definition) => {
+                let position = get_definition.position.clone().and_then(deserialize_anchor);
+                Self::query_lsp::<GetDefinitions>(
+                    lsp_store,
+                    sender_id,
+                    lsp_request_id,
+                    get_definition,
+                    position,
+                    cx.clone(),
+                )
+                .await?;
+            }
+            Request::GetDeclaration(get_declaration) => {
+                let position = get_declaration
+                    .position
+                    .clone()
+                    .and_then(deserialize_anchor);
+                Self::query_lsp::<GetDeclarations>(
+                    lsp_store,
+                    sender_id,
+                    lsp_request_id,
+                    get_declaration,
+                    position,
+                    cx.clone(),
+                )
+                .await?;
+            }
+            Request::GetTypeDefinition(get_type_definition) => {
+                let position = get_type_definition
+                    .position
+                    .clone()
+                    .and_then(deserialize_anchor);
+                Self::query_lsp::<GetTypeDefinitions>(
+                    lsp_store,
+                    sender_id,
+                    lsp_request_id,
+                    get_type_definition,
+                    position,
+                    cx.clone(),
+                )
+                .await?;
+            }
+            Request::GetImplementation(get_implementation) => {
+                let position = get_implementation
+                    .position
+                    .clone()
+                    .and_then(deserialize_anchor);
+                Self::query_lsp::<GetImplementations>(
+                    lsp_store,
+                    sender_id,
+                    lsp_request_id,
+                    get_implementation,
+                    position,
                     cx.clone(),
                 )
                 .await?;

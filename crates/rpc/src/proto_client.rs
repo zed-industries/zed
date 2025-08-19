@@ -326,6 +326,30 @@ impl AnyProtoClient {
                             Response::GetHoverResponse(response) => {
                                 to_any_envelope(&envelope, response)
                             }
+                            Response::GetCodeActionsResponse(response) => {
+                                to_any_envelope(&envelope, response)
+                            }
+                            Response::GetSignatureHelpResponse(response) => {
+                                to_any_envelope(&envelope, response)
+                            }
+                            Response::GetCodeLensResponse(response) => {
+                                to_any_envelope(&envelope, response)
+                            }
+                            Response::GetDocumentDiagnosticsResponse(response) => {
+                                to_any_envelope(&envelope, response)
+                            }
+                            Response::GetDefinitionResponse(response) => {
+                                to_any_envelope(&envelope, response)
+                            }
+                            Response::GetDeclarationResponse(response) => {
+                                to_any_envelope(&envelope, response)
+                            }
+                            Response::GetTypeDefinitionResponse(response) => {
+                                to_any_envelope(&envelope, response)
+                            }
+                            Response::GetImplementationResponse(response) => {
+                                to_any_envelope(&envelope, response)
+                            }
                         };
                         Some(proto::ProtoLspResponse {
                             server_id,

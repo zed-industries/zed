@@ -15721,7 +15721,9 @@ impl Editor {
         };
 
         cx.spawn_in(window, async move |editor, cx| {
-            let definitions = definitions.await?;
+            let Some(definitions) = definitions.await? else {
+                return Ok(Navigated::No);
+            };
             let navigated = editor
                 .update_in(cx, |editor, window, cx| {
                     editor.navigate_to_hover_links(
@@ -21853,7 +21855,7 @@ pub trait SemanticsProvider {
         buffer: &Entity<Buffer>,
         position: text::Anchor,
         cx: &mut App,
-    ) -> Option<Task<Vec<project::Hover>>>;
+    ) -> Option<Task<Option<Vec<project::Hover>>>>;
 
     fn inline_values(
         &self,
@@ -21892,7 +21894,7 @@ pub trait SemanticsProvider {
         position: text::Anchor,
         kind: GotoDefinitionKind,
         cx: &mut App,
-    ) -> Option<Task<Result<Vec<LocationLink>>>>;
+    ) -> Option<Task<Result<Option<Vec<LocationLink>>>>>;
 
     fn range_for_rename(
         &self,
@@ -22005,7 +22007,13 @@ impl CodeActionProvider for Entity<Project> {
                 Ok(code_lens_actions
                     .context("code lens fetch")?
                     .into_iter()
-                    .chain(code_actions.context("code action fetch")?)
+                    .flatten()
+                    .chain(
+                        code_actions
+                            .context("code action fetch")?
+                            .into_iter()
+                            .flatten(),
+                    )
                     .collect())
             })
         })
@@ -22300,7 +22308,7 @@ impl SemanticsProvider for Entity<Project> {
         buffer: &Entity<Buffer>,
         position: text::Anchor,
         cx: &mut App,
-    ) -> Option<Task<Vec<project::Hover>>> {
+    ) -> Option<Task<Option<Vec<project::Hover>>>> {
         Some(self.update(cx, |project, cx| project.hover(buffer, position, cx)))
     }
 
@@ -22321,7 +22329,7 @@ impl SemanticsProvider for Entity<Project> {
         position: text::Anchor,
         kind: GotoDefinitionKind,
         cx: &mut App,
-    ) -> Option<Task<Result<Vec<LocationLink>>>> {
+    ) -> Option<Task<Result<Option<Vec<LocationLink>>>>> {
         Some(self.update(cx, |project, cx| match kind {
             GotoDefinitionKind::Symbol => project.definitions(buffer, position, cx),
             GotoDefinitionKind::Declaration => project.declarations(buffer, position, cx),

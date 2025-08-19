@@ -431,7 +431,7 @@ impl SemanticsProvider for BranchBufferSemanticsProvider {
         buffer: &Entity<Buffer>,
         position: text::Anchor,
         cx: &mut App,
-    ) -> Option<Task<Vec<project::Hover>>> {
+    ) -> Option<Task<Option<Vec<project::Hover>>>> {
         let buffer = self.to_base(buffer, &[position], cx)?;
         self.0.hover(&buffer, position, cx)
     }
@@ -490,7 +490,7 @@ impl SemanticsProvider for BranchBufferSemanticsProvider {
         position: text::Anchor,
         kind: crate::GotoDefinitionKind,
         cx: &mut App,
-    ) -> Option<Task<anyhow::Result<Vec<project::LocationLink>>>> {
+    ) -> Option<Task<anyhow::Result<Option<Vec<project::LocationLink>>>>> {
         let buffer = self.to_base(buffer, &[position], cx)?;
         self.0.definitions(&buffer, position, kind, cx)
     }

@@ -782,6 +782,14 @@ message LspQuery {
         GetReferences get_references = 3;
         GetDocumentColor get_document_color = 4;
         GetHover get_hover = 5;
+        GetCodeActions get_code_actions = 6;
+        GetSignatureHelp get_signature_help = 7;
+        GetCodeLens get_code_lens = 8;
+        GetDocumentDiagnostics get_document_diagnostics = 9;
+        GetDefinition get_definition = 10;
+        GetDeclaration get_declaration = 11;
+        GetTypeDefinition get_type_definition = 12;
+        GetImplementation get_implementation = 13;
     }
 }
 
@@ -797,6 +805,14 @@ message LspResponse2 {
         GetReferencesResponse get_references_response = 2;
         GetDocumentColorResponse get_document_color_response = 3;
         GetHoverResponse get_hover_response = 4;
+        GetCodeActionsResponse get_code_actions_response = 5;
+        GetSignatureHelpResponse get_signature_help_response = 6;
+        GetCodeLensResponse get_code_lens_response = 7;
+        GetDocumentDiagnosticsResponse get_document_diagnostics_response = 8;
+        GetDefinitionResponse get_definition_response = 9;
+        GetDeclarationResponse get_declaration_response = 10;
+        GetTypeDefinitionResponse get_type_definition_response = 11;
+        GetImplementationResponse get_implementation_response = 12;
     }
 }
 
