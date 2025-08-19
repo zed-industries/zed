@@ -193,6 +193,7 @@ version = "0.1.0"
 dependencies = [
  "acp_thread",
  "action_log",
+ "agent",
  "agent-client-protocol",
  "agent_servers",
  "agent_settings",
@@ -210,6 +211,7 @@ dependencies = [
  "env_logger 0.11.8",
  "fs",
  "futures 0.3.31",
+ "git",
  "gpui",
  "gpui_tokio",
  "handlebars 4.5.0",
@@ -258,6 +260,7 @@ name = "agent_servers"
 version = "0.1.0"
 dependencies = [
  "acp_thread",
+ "action_log",
  "agent-client-protocol",
  "agent_settings",
  "agentic-coding-protocol",

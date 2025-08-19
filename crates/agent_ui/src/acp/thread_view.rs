@@ -2813,12 +2813,15 @@ impl AcpThreadView {
             return;
         };
 
-        thread.update(cx, |thread, _cx| {
+        thread.update(cx, |thread, cx| {
             let current_mode = thread.completion_mode();
-            thread.set_completion_mode(match current_mode {
-                CompletionMode::Burn => CompletionMode::Normal,
-                CompletionMode::Normal => CompletionMode::Burn,
-            });
+            thread.set_completion_mode(
+                match current_mode {
+                    CompletionMode::Burn => CompletionMode::Normal,
+                    CompletionMode::Normal => CompletionMode::Burn,
+                },
+                cx,
+            );
         });
     }
 
@@ -3526,8 +3529,9 @@ impl AcpThreadView {
                                     ))
                                     .on_click({
                                         cx.listener(move |this, _, _window, cx| {
-                                            thread.update(cx, |thread, _cx| {
-                                                thread.set_completion_mode(CompletionMode::Burn);
+                                            thread.update(cx, |thread, cx| {
+                                                thread
+                                                    .set_completion_mode(CompletionMode::Burn, cx);
                                             });
                                             this.resume_chat(cx);
                                         })
@@ -4109,12 +4113,13 @@ pub(crate) mod tests {
             cx: &mut gpui::App,
         ) -> Task<gpui::Result<Entity<AcpThread>>> {
             Task::ready(Ok(cx.new(|cx| {
+                let action_log = cx.new(|_| ActionLog::new(project.clone()));
                 AcpThread::new(
                     "SaboteurAgentConnection",
                     self,
                     project,
+                    action_log,
                     SessionId("test".into()),
-                    cx,
                 )
             })))
         }

@@ -738,11 +738,9 @@ impl AcpThread {
         title: impl Into<SharedString>,
         connection: Rc<dyn AgentConnection>,
         project: Entity<Project>,
+        action_log: Entity<ActionLog>,
         session_id: acp::SessionId,
-        cx: &mut Context<Self>,
     ) -> Self {
-        let action_log = cx.new(|_| ActionLog::new(project.clone()));
-
         Self {
             action_log,
             shared_buffers: Default::default(),
@@ -2347,8 +2345,16 @@ mod tests {
                     .collect::<String>()
                     .into(),
             );
-            let thread =
-                cx.new(|cx| AcpThread::new("Test", self.clone(), project, session_id.clone(), cx));
+            let action_log = cx.new(|_| ActionLog::new(project.clone()));
+            let thread = cx.new(|cx| {
+                AcpThread::new(
+                    "Test",
+                    self.clone(),
+                    project,
+                    action_log,
+                    session_id.clone(),
+                )
+            });
             self.sessions.lock().insert(session_id, thread.downgrade());
             Task::ready(Ok(thread))
         }
