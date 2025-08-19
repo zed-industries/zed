@@ -6,11 +6,13 @@ mod terminal;
 pub use connection::*;
 pub use diff::*;
 pub use mention::*;
+use serde::{Deserialize, Serialize};
 pub use terminal::*;
 
 use action_log::ActionLog;
 use agent_client_protocol as acp;
 use anyhow::{Context as _, Result, anyhow};
+use chrono::{DateTime, Utc};
 use editor::Bias;
 use futures::{FutureExt, channel::oneshot, future::BoxFuture};
 use gpui::{AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Task, WeakEntity};
@@ -537,9 +539,15 @@ impl ToolCallContent {
             acp::ToolCallContent::Content { content } => {
                 Self::ContentBlock(ContentBlock::new(content, &language_registry, cx))
             }
-            acp::ToolCallContent::Diff { diff } => {
-                Self::Diff(cx.new(|cx| Diff::from_acp(diff, language_registry, cx)))
-            }
+            acp::ToolCallContent::Diff { diff } => Self::Diff(cx.new(|cx| {
+                Diff::finalized(
+                    diff.path,
+                    diff.old_text,
+                    diff.new_text,
+                    language_registry,
+                    cx,
+                )
+            })),
         }
     }
 
@@ -658,6 +666,17 @@ impl PlanEntry {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+pub struct AgentServerName(pub SharedString);
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AcpThreadMetadata {
+    pub agent: AgentServerName,
+    pub id: acp::SessionId,
+    pub title: SharedString,
+    pub updated_at: DateTime<Utc>,
+}
+
 pub struct AcpThread {
     title: SharedString,
     entries: Vec<AgentThreadEntry>,
@@ -673,6 +692,7 @@ pub struct AcpThread {
 #[derive(Debug)]
 pub enum AcpThreadEvent {
     NewEntry,
+    TitleUpdated,
     EntryUpdated(usize),
     EntriesRemoved(Range<usize>),
     ToolAuthorizationRequired,
@@ -914,6 +934,12 @@ impl AcpThread {
     fn push_entry(&mut self, entry: AgentThreadEntry, cx: &mut Context<Self>) {
         self.entries.push(entry);
         cx.emit(AcpThreadEvent::NewEntry);
+    }
+
+    pub fn update_title(&mut self, title: SharedString, cx: &mut Context<Self>) -> Result<()> {
+        self.title = title;
+        cx.emit(AcpThreadEvent::TitleUpdated);
+        Ok(())
     }
 
     pub fn update_tool_call(
@@ -1416,7 +1442,7 @@ impl AcpThread {
     fn user_message(&self, id: &UserMessageId) -> Option<&UserMessage> {
         self.entries.iter().find_map(|entry| {
             if let AgentThreadEntry::UserMessage(message) = entry {
-                if message.id.as_ref() == Some(id) {
+                if message.id.as_ref() == Some(&id) {
                     Some(message)
                 } else {
                     None
@@ -1430,7 +1456,7 @@ impl AcpThread {
     fn user_message_mut(&mut self, id: &UserMessageId) -> Option<(usize, &mut UserMessage)> {
         self.entries.iter_mut().enumerate().find_map(|(ix, entry)| {
             if let AgentThreadEntry::UserMessage(message) = entry {
-                if message.id.as_ref() == Some(id) {
+                if message.id.as_ref() == Some(&id) {
                     Some((ix, message))
                 } else {
                     None
@@ -1641,7 +1667,7 @@ mod tests {
     use super::*;
     use anyhow::anyhow;
     use futures::{channel::mpsc, future::LocalBoxFuture, select};
-    use gpui::{AsyncApp, TestAppContext, WeakEntity};
+    use gpui::{App, AsyncApp, TestAppContext, WeakEntity};
     use indoc::indoc;
     use project::{FakeFs, Fs};
     use rand::Rng as _;
@@ -2311,7 +2337,7 @@ mod tests {
             self: Rc<Self>,
             project: Entity<Project>,
             _cwd: &Path,
-            cx: &mut gpui::App,
+            cx: &mut App,
         ) -> Task<gpui::Result<Entity<AcpThread>>> {
             let session_id = acp::SessionId(
                 rand::thread_rng()
@@ -2356,7 +2382,7 @@ mod tests {
 
         fn cancel(&self, session_id: &acp::SessionId, cx: &mut App) {
             let sessions = self.sessions.lock();
-            let thread = sessions.get(session_id).unwrap().clone();
+            let thread = sessions.get(&session_id).unwrap().clone();
 
             cx.spawn(async move |cx| {
                 thread

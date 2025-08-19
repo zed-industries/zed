@@ -300,8 +300,13 @@ impl AcpThreadView {
                         let action_log_subscription =
                             cx.observe(&action_log, |_, _, cx| cx.notify());
 
-                        this.list_state
-                            .splice(0..0, thread.read(cx).entries().len());
+                        let count = thread.read(cx).entries().len();
+                        this.list_state.splice(0..0, count);
+                        this.entry_view_state.update(cx, |view_state, cx| {
+                            for ix in 0..count {
+                                view_state.sync_entry(ix, &thread, window, cx);
+                            }
+                        });
 
                         AgentDiff::set_active_thread(&workspace, thread.clone(), window, cx);
 
@@ -799,6 +804,7 @@ impl AcpThreadView {
             AcpThreadEvent::ServerExited(status) => {
                 self.thread_state = ThreadState::ServerExited { status: *status };
             }
+            AcpThreadEvent::TitleUpdated => {}
         }
         cx.notify();
     }

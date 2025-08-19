@@ -1685,7 +1685,13 @@ impl Focusable for AgentPanel {
         match &self.active_view {
             ActiveView::Thread { message_editor, .. } => message_editor.focus_handle(cx),
             ActiveView::ExternalAgentThread { thread_view, .. } => thread_view.focus_handle(cx),
-            ActiveView::History => self.history.focus_handle(cx),
+            ActiveView::History => {
+                if cx.has_flag::<feature_flags::AcpFeatureFlag>() {
+                    todo!()
+                } else {
+                    self.history.focus_handle(cx)
+                }
+            }
             ActiveView::TextThread { context_editor, .. } => context_editor.focus_handle(cx),
             ActiveView::Configuration => {
                 if let Some(configuration) = self.configuration.as_ref() {
@@ -3515,7 +3521,13 @@ impl Render for AgentPanel {
                 ActiveView::ExternalAgentThread { thread_view, .. } => parent
                     .child(thread_view.clone())
                     .child(self.render_drag_target(cx)),
-                ActiveView::History => parent.child(self.history.clone()),
+                ActiveView::History => {
+                    if cx.has_flag::<feature_flags::AcpFeatureFlag>() {
+                        todo!()
+                    } else {
+                        parent.child(self.history.clone())
+                    }
+                }
                 ActiveView::TextThread {
                     context_editor,
                     buffer_search_bar,
