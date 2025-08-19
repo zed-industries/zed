@@ -759,11 +759,11 @@ impl Thread {
         tool_use_limit_reached: &mut bool,
         cx: &mut AsyncApp,
     ) -> Result<FuturesUnordered<Task<LanguageModelToolResult>>> {
-        let mut events = model.stream_completion(request, cx).await?;
         log::debug!("Stream completion started successfully");
 
         let mut attempt = None;
         'retry: loop {
+            let mut events = model.stream_completion(request.clone(), cx).await?;
             let mut tool_uses = FuturesUnordered::new();
             while let Some(event) = events.next().await {
                 match event {

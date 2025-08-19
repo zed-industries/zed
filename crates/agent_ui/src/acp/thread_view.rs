@@ -751,7 +751,7 @@ impl AcpThreadView {
                 self.thread_retry_status = Some(retry.clone());
             }
             AcpThreadEvent::Stopped => {
-                self.thread_retry_status = None;
+                self.thread_retry_status.take();
                 let used_tools = thread.read(cx).used_tools_since_last_user_message();
                 self.notify_with_sound(
                     if used_tools {
@@ -765,6 +765,7 @@ impl AcpThreadView {
                 );
             }
             AcpThreadEvent::Error => {
+                self.thread_retry_status.take();
                 self.notify_with_sound(
                     "Agent stopped due to an error",
                     IconName::Warning,
@@ -773,6 +774,7 @@ impl AcpThreadView {
                 );
             }
             AcpThreadEvent::ServerExited(status) => {
+                self.thread_retry_status.take();
                 self.thread_state = ThreadState::ServerExited { status: *status };
             }
         }
