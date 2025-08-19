@@ -41,8 +41,10 @@
       "ctrl-f11": "debugger::StepInto",
       "shift-f11": "debugger::StepOut",
       "f11": "zed::ToggleFullScreen",
+      // todo(windows)
       "ctrl-alt-z": "edit_prediction::RateCompletions",
       "ctrl-shift-i": "edit_prediction::ToggleMenu",
+      // todo(windows)
       "ctrl-alt-l": "lsp_tool::ToggleMenu"
     }
   },
@@ -144,6 +146,7 @@
       "ctrl-h": "buffer_search::DeployReplace",
       "ctrl-shift-.": "assistant::QuoteSelection",
       "ctrl-shift-,": "assistant::InsertIntoEditor",
+      // todo(windows)
       "ctrl-alt-e": "editor::SelectEnclosingSymbol",
       "ctrl-shift-backspace": "editor::GoToPreviousChange",
       "ctrl-shift-alt-backspace": "editor::GoToNextChange",
@@ -195,6 +198,7 @@
     "use_key_equivalents": true,
     "bindings": {
       "ctrl-k ctrl-r": "git::Restore",
+      // todo(windows)
       "ctrl-alt-y": "git::ToggleStaged",
       "alt-y": "git::StageAndNext",
       "shift-alt-y": "git::UnstageAndNext"
@@ -244,18 +248,24 @@
     "use_key_equivalents": true,
     "bindings": {
       "ctrl-n": "agent::NewThread",
+      // todo(windows)
       "ctrl-alt-n": "agent::NewTextThread",
       "ctrl-shift-h": "agent::OpenHistory",
+      // todo(windows)
       "ctrl-alt-c": "agent::OpenSettings",
+      // todo(windows)
       "ctrl-alt-p": "agent::OpenRulesLibrary",
       "ctrl-i": "agent::ToggleProfileSelector",
+      // todo(windows)
       "ctrl-alt-/": "agent::ToggleModelSelector",
       "ctrl-shift-a": "agent::ToggleContextPicker",
       "ctrl-shift-j": "agent::ToggleNavigationMenu",
       "ctrl-shift-i": "agent::ToggleOptionsMenu",
+      // todo(windows)
       "ctrl-shift-alt-n": "agent::ToggleNewThreadMenu",
       "shift-alt-escape": "agent::ExpandMessageEditor",
       "ctrl-shift-.": "assistant::QuoteSelection",
+      // todo(windows)
       "ctrl-alt-e": "agent::RemoveAllContext",
       "ctrl-shift-e": "project_panel::ToggleFocus",
       "ctrl-shift-enter": "agent::ContinueThread",
@@ -283,6 +293,7 @@
     "use_key_equivalents": true,
     "bindings": {
       "ctrl-n": "agent::NewTextThread",
+      // todo(windows)
       "ctrl-alt-t": "agent::NewThread"
     }
   },
@@ -291,6 +302,7 @@
     "use_key_equivalents": true,
     "bindings": {
       "ctrl-n": "agent::NewExternalAgentThread",
+      // todo(windows)
       "ctrl-alt-t": "agent::NewThread"
     }
   },
@@ -413,7 +425,9 @@
       "shift-find": "search::FocusSearch",
       "ctrl-shift-f": "search::FocusSearch",
       "ctrl-shift-h": "search::ToggleReplace",
+      // todo(windows)
       "ctrl-alt-g": "search::ToggleRegex",
+      // todo(windows)
       "ctrl-alt-x": "search::ToggleRegex"
     }
   },
@@ -439,7 +453,9 @@
     "bindings": {
       "escape": "project_search::ToggleFocus",
       "ctrl-shift-h": "search::ToggleReplace",
+      // todo(windows)
       "ctrl-alt-g": "search::ToggleRegex",
+      // todo(windows)
       "ctrl-alt-x": "search::ToggleRegex"
     }
   },
@@ -463,7 +479,9 @@
       "ctrl-shift-pagedown": "pane::SwapItemRight",
       "ctrl-f4": ["pane::CloseActiveItem", { "close_pinned": false }],
       "ctrl-w": ["pane::CloseActiveItem", { "close_pinned": false }],
+      // todo(windows)
       "ctrl-alt-t": ["pane::CloseOtherItems", { "close_pinned": false }],
+      // todo(windows)
       "ctrl-shift-alt-w": "workspace::CloseInactiveTabsAndPanes",
       "ctrl-k e": ["pane::CloseItemsToTheLeft", { "close_pinned": false }],
       "ctrl-k t": ["pane::CloseItemsToTheRight", { "close_pinned": false }],
@@ -471,23 +489,32 @@
       "ctrl-k w": ["pane::CloseAllItems", { "close_pinned": false }],
       "ctrl-k ctrl-w": "workspace::CloseAllItemsAndPanes",
       "back": "pane::GoBack",
+      // todo(windows)
       "ctrl-alt--": "pane::GoBack",
+      // todo(windows)
       "ctrl-shift-alt--": "pane::GoForward",
       "forward": "pane::GoForward",
+      // todo(windows)
       "ctrl-alt-g": "search::SelectNextMatch",
       "f3": "search::SelectNextMatch",
+      // todo(windows)
       "ctrl-shift-alt-g": "search::SelectPreviousMatch",
       "shift-f3": "search::SelectPreviousMatch",
       "shift-find": "project_search::ToggleFocus",
       "ctrl-shift-f": "project_search::ToggleFocus",
+      // todo(windows)
       "ctrl-shift-alt-h": "search::ToggleReplace",
+      // todo(windows)
       "ctrl-shift-alt-l": "search::ToggleSelection",
       "alt-enter": "search::SelectAllMatches",
       "alt-c": "search::ToggleCaseSensitive",
       "alt-w": "search::ToggleWholeWord",
       "alt-find": "project_search::ToggleFilters",
+      // todo(windows)
       "ctrl-alt-f": "project_search::ToggleFilters",
+      // todo(windows)
       "ctrl-shift-alt-r": "search::ToggleRegex",
+      // todo(windows)
       "ctrl-shift-alt-x": "search::ToggleRegex",
       "alt-r": "search::ToggleRegex",
       "ctrl-k shift-enter": "pane::TogglePinTab"
@@ -553,6 +580,7 @@
       "ctrl-k r": "editor::RevealInFileManager",
       "ctrl-k p": "editor::CopyPath",
       "ctrl-\\": "pane::SplitRight",
+      // todo(windows)
       "ctrl-shift-alt-c": "editor::DisplayCursorNames",
       "alt-.": "editor::GoToHunk",
       "alt-,": "editor::GoToPreviousHunk"
@@ -589,11 +617,14 @@
       "alt-open": ["projects::OpenRecent", { "create_new_window": false }],
       // Change the default action on `menu::Confirm` by setting the parameter
       // "alt-ctrl-o": ["projects::OpenRecent", { "create_new_window": true }],
+      // todo(windows)
       "ctrl-alt-o": ["projects::OpenRecent", { "create_new_window": false }],
       "shift-alt-open": ["projects::OpenRemote", { "from_existing_connection": false, "create_new_window": false }],
       // Change to open path modal for existing remote connection by setting the parameter
       // "ctrl-shift-alt-o": "["projects::OpenRemote", { "from_existing_connection": true }]",
+      // todo(windows)
       "ctrl-shift-alt-o": ["projects::OpenRemote", { "from_existing_connection": false, "create_new_window": false }],
+      // todo(windows)
       "ctrl-shift-alt-b": "branches::OpenRecent",
       "shift-alt-enter": "toast::RunAction",
       "ctrl-shift-`": "workspace::NewTerminal",
@@ -617,16 +648,23 @@
       "alt-7": ["workspace::ActivatePane", 6],
       "alt-8": ["workspace::ActivatePane", 7],
       "alt-9": ["workspace::ActivatePane", 8],
+      // todo(windows)
       "ctrl-alt-b": "workspace::ToggleRightDock",
       "ctrl-b": "workspace::ToggleLeftDock",
       "ctrl-j": "workspace::ToggleBottomDock",
+      // todo(windows)
       "ctrl-alt-y": "workspace::CloseAllDocks",
+      // todo(windows)
       "ctrl-alt-0": "workspace::ResetActiveDockSize",
       // For 0px parameter, uses UI font size value.
+      // todo(windows)
       "ctrl-alt--": ["workspace::DecreaseActiveDockSize", { "px": 0 }],
+      // todo(windows)
       "ctrl-alt-=": ["workspace::IncreaseActiveDockSize", { "px": 0 }],
       "ctrl-shift-alt-0": "workspace::ResetOpenDocksSize",
+      // todo(windows)
       "ctrl-shift-alt--": ["workspace::DecreaseOpenDocksSize", { "px": 0 }],
+      // todo(windows)
       "ctrl-shift-alt-=": ["workspace::IncreaseOpenDocksSize", { "px": 0 }],
       "shift-find": "pane::DeploySearch",
       "ctrl-shift-f": "pane::DeploySearch",
@@ -649,6 +687,7 @@
       "ctrl-shift-d": "debug_panel::ToggleFocus",
       "ctrl-shift-/": "agent::ToggleFocus",
       "alt-save": "workspace::SaveAll",
+      // todo(windows)
       "ctrl-alt-s": "workspace::SaveAll",
       "ctrl-k m": "language_selector::Toggle",
       "escape": "workspace::Unfollow",
@@ -662,6 +701,7 @@
       "ctrl-k shift-down": "workspace::SwapPaneDown",
       "ctrl-shift-x": "zed::Extensions",
       "ctrl-shift-r": "task::Rerun",
+      // todo(windows)
       "ctrl-alt-r": "task::Rerun",
       "alt-t": "task::Rerun",
       "shift-alt-t": "task::Spawn",
@@ -707,14 +747,18 @@
       "ctrl-shift-u": "editor::RedoSelection",
       "ctrl-shift-j": "editor::JoinLines",
       "ctrl-alt-backspace": "editor::DeleteToPreviousSubwordStart",
+      // todo(windows)
       "ctrl-alt-h": "editor::DeleteToPreviousSubwordStart",
       "ctrl-alt-delete": "editor::DeleteToNextSubwordEnd",
+      // todo(windows)
       "ctrl-alt-d": "editor::DeleteToNextSubwordEnd",
       "ctrl-alt-left": "editor::MoveToPreviousSubwordStart",
       "ctrl-alt-right": "editor::MoveToNextSubwordEnd",
       "ctrl-shift-alt-left": "editor::SelectToPreviousSubwordStart",
+      // todo(windows)
       "ctrl-shift-alt-b": "editor::SelectToPreviousSubwordStart",
       "ctrl-shift-alt-right": "editor::SelectToNextSubwordEnd",
+      // todo(windows)
       "ctrl-shift-alt-f": "editor::SelectToNextSubwordEnd"
     }
   },
@@ -800,8 +844,10 @@
   {
     "use_key_equivalents": true,
     "bindings": {
+      // todo(windows)
       "ctrl-shift-alt-f": "workspace::FollowNextCollaborator",
       // Only available in debug builds: opens an element inspector for development.
+      // todo(windows)
       "ctrl-alt-i": "dev::ToggleInspector"
     }
   },
@@ -832,6 +878,7 @@
     "bindings": {
       "ctrl-[": "agent::CyclePreviousInlineAssist",
       "ctrl-]": "agent::CycleNextInlineAssist",
+      // todo(windows)
       "ctrl-alt-e": "agent::RemoveAllContext"
     }
   },
@@ -860,9 +907,12 @@
       "left": "outline_panel::CollapseSelectedEntry",
       "right": "outline_panel::ExpandSelectedEntry",
       "alt-copy": "outline_panel::CopyPath",
+      // todo(windows)
       "ctrl-alt-c": "outline_panel::CopyPath",
       "shift-alt-copy": "workspace::CopyRelativePath",
+      // todo(windows)
       "ctrl-shift-alt-c": "workspace::CopyRelativePath",
+      // todo(windows)
       "ctrl-alt-r": "outline_panel::RevealInFileManager",
       "space": "outline_panel::OpenSelectedEntry",
       "shift-down": "menu::SelectNext",
@@ -880,6 +930,7 @@
       "new": "project_panel::NewFile",
       "ctrl-n": "project_panel::NewFile",
       "alt-new": "project_panel::NewDirectory",
+      // todo(windows)
       "ctrl-alt-n": "project_panel::NewDirectory",
       "cut": "project_panel::Cut",
       "ctrl-x": "project_panel::Cut",
@@ -890,8 +941,10 @@
       "shift-insert": "project_panel::Paste",
       "ctrl-v": "project_panel::Paste",
       "alt-copy": "project_panel::CopyPath",
+      // todo(windows)
       "ctrl-alt-c": "project_panel::CopyPath",
       "shift-alt-copy": "workspace::CopyRelativePath",
+      // todo(windows)
       "ctrl-shift-alt-c": "workspace::CopyRelativePath",
       "enter": "project_panel::Rename",
       "f2": "project_panel::Rename",
@@ -900,10 +953,12 @@
       "shift-delete": ["project_panel::Delete", { "skip_prompt": false }],
       "ctrl-backspace": ["project_panel::Delete", { "skip_prompt": false }],
       "ctrl-delete": ["project_panel::Delete", { "skip_prompt": false }],
+      // todo(windows)
       "ctrl-alt-r": "project_panel::RevealInFileManager",
       "ctrl-shift-enter": "project_panel::OpenWithSystem",
       "alt-d": "project_panel::CompareMarkedFiles",
       "shift-find": "project_panel::NewSearchInDirectory",
+      // todo(windows)
       "ctrl-shift-alt-f": "project_panel::NewSearchInDirectory",
       "shift-down": "menu::SelectNext",
       "shift-up": "menu::SelectPrevious",
@@ -926,6 +981,7 @@
       "enter": "menu::Confirm",
       "alt-y": "git::StageFile",
       "shift-alt-y": "git::UnstageFile",
+      // todo(windows)
       "ctrl-alt-y": "git::ToggleStaged",
       "space": "git::ToggleStaged",
       "shift-space": "git::StageRange",
@@ -1023,6 +1079,7 @@
       "right": "variable_list::ExpandSelectedEntry",
       "enter": "variable_list::EditVariable",
       "ctrl-c": "variable_list::CopyVariableValue",
+      // todo(windows)
       "ctrl-alt-c": "variable_list::CopyVariableName",
       "delete": "variable_list::RemoveWatch",
       "backspace": "variable_list::RemoveWatch",
@@ -1159,6 +1216,7 @@
       "shift-end": "terminal::ScrollToBottom",
       "ctrl-shift-space": "terminal::ToggleViMode",
       "ctrl-shift-r": "terminal::RerunTask",
+      // todo(windows)
       "ctrl-alt-r": "terminal::RerunTask",
       "alt-t": "terminal::RerunTask"
     }
@@ -1223,6 +1281,7 @@
     "bindings": {
       "ctrl-f": "search::FocusSearch",
       "alt-find": "keymap_editor::ToggleKeystrokeSearch",
+      // todo(windows)
       "ctrl-alt-f": "keymap_editor::ToggleKeystrokeSearch",
       "alt-c": "keymap_editor::ToggleConflictFilter",
       "enter": "keymap_editor::EditBinding",
