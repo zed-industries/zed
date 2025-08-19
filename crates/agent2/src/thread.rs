@@ -672,11 +672,11 @@ impl Thread {
                 let buffer_store = project.read(app_cx).buffer_store();
                 for buffer_handle in buffer_store.read(app_cx).buffers() {
                     let buffer = buffer_handle.read(app_cx);
-                    if buffer.is_dirty() {
-                        if let Some(file) = buffer.file() {
-                            let path = file.path().to_string_lossy().to_string();
-                            unsaved_buffers.push(path);
-                        }
+                    if buffer.is_dirty()
+                        && let Some(file) = buffer.file()
+                    {
+                        let path = file.path().to_string_lossy().to_string();
+                        unsaved_buffers.push(path);
                     }
                 }
             })
