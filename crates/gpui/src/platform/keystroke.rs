@@ -301,10 +301,12 @@ impl Keystroke {
 impl KeybindingKeystroke {
     /// Create a new keybinding keystroke from the given keystroke
     pub fn new(inner: Keystroke) -> Self {
+        let key = inner.key.clone();
+        let modifiers = inner.modifiers;
         KeybindingKeystroke {
             inner,
-            modifiers: inner.modifiers,
-            key: inner.key.clone(),
+            modifiers,
+            key,
         }
     }
 }

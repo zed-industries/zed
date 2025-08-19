@@ -13,3 +13,11 @@ pub trait PlatformKeyboardMapper {
     /// Map a key equivalent to its platform-specific representation
     fn map_key_equivalent(&self, keystroke: Keystroke) -> KeybindingKeystroke;
 }
+
+pub(crate) struct DummyKeyboardMapper;
+
+impl PlatformKeyboardMapper for DummyKeyboardMapper {
+    fn map_key_equivalent(&self, keystroke: Keystroke) -> KeybindingKeystroke {
+        KeybindingKeystroke::new(keystroke)
+    }
+}

@@ -1,5 +1,3 @@
-use std::borrow::Cow;
-
 use anyhow::Result;
 use windows::Win32::UI::{
     Input::KeyboardAndMouse::{
@@ -35,30 +33,25 @@ impl PlatformKeyboardLayout for WindowsKeyboardLayout {
 
 impl PlatformKeyboardMapper for WindowsKeyboardMapper {
     fn map_key_equivalent(&self, mut keystroke: Keystroke) -> KeybindingKeystroke {
-        let Some((vkey, shift)) = key_needs_processing(&keystroke.key) else {
+        let Some((vkey, shifted_key)) = key_needs_processing(&keystroke.key) else {
             return KeybindingKeystroke::new(keystroke);
         };
-        if shift && keystroke.modifiers.shift {
+        if shifted_key && keystroke.modifiers.shift {
             log::warn!(
                 "Keystroke '{}' has both shift and a shifted key, this is likely a bug",
                 keystroke.key
             );
-            keystroke.modifiers.shift = false;
         }
-        // translate to unshifted key first
+
+        let shift = shifted_key || keystroke.modifiers.shift;
+        keystroke.modifiers.shift = false;
+
         let Some(key) = get_key_from_vkey(vkey) else {
             log::error!(
                 "Failed to map key equivalent '{:?}' to a valid key",
                 keystroke
             );
             return KeybindingKeystroke::new(keystroke);
-        };
-        let modifiers = Modifiers {
-            control: keystroke.modifiers.control,
-            alt: keystroke.modifiers.alt,
-            shift,
-            platform: keystroke.modifiers.platform,
-            function: keystroke.modifiers.function,
         };
 
         keystroke.key = if shift {
@@ -82,6 +75,11 @@ impl PlatformKeyboardMapper for WindowsKeyboardMapper {
             shifted_key
         } else {
             key.clone()
+        };
+
+        let modifiers = Modifiers {
+            shift,
+            ..keystroke.modifiers
         };
 
         KeybindingKeystroke {
@@ -257,5 +255,60 @@ fn key_needs_processing(key: &str) -> Option<(VIRTUAL_KEY, bool)> {
         "/" => Some((VK_OEM_2, false)),
         "?" => Some((VK_OEM_2, true)),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{Keystroke, Modifiers, PlatformKeyboardMapper, WindowsKeyboardMapper};
+
+    #[test]
+    fn test_keyboard_mapper() {
+        let mapper = WindowsKeyboardMapper::new();
+
+        // Normal case
+        let keystroke = Keystroke {
+            modifiers: Modifiers::control(),
+            key: "a".to_string(),
+            key_char: None,
+        };
+        let mapped = mapper.map_key_equivalent(keystroke.clone());
+        assert_eq!(mapped.inner, keystroke);
+        assert_eq!(mapped.key, "a");
+        assert_eq!(mapped.modifiers, Modifiers::control());
+
+        // Shifted case, ctrl-$
+        let keystroke = Keystroke {
+            modifiers: Modifiers::control(),
+            key: "$".to_string(),
+            key_char: None,
+        };
+        let mapped = mapper.map_key_equivalent(keystroke.clone());
+        assert_eq!(mapped.inner, keystroke);
+        assert_eq!(mapped.key, "4");
+        assert_eq!(mapped.modifiers, Modifiers::control_shift());
+
+        // Shifted case, but shift is true
+        let keystroke = Keystroke {
+            modifiers: Modifiers::control_shift(),
+            key: "$".to_string(),
+            key_char: None,
+        };
+        let mapped = mapper.map_key_equivalent(keystroke.clone());
+        assert_eq!(mapped.inner.modifiers, Modifiers::control());
+        assert_eq!(mapped.key, "4");
+        assert_eq!(mapped.modifiers, Modifiers::control_shift());
+
+        // Windows style
+        let keystroke = Keystroke {
+            modifiers: Modifiers::control_shift(),
+            key: "4".to_string(),
+            key_char: None,
+        };
+        let mapped = mapper.map_key_equivalent(keystroke.clone());
+        assert_eq!(mapped.inner.modifiers, Modifiers::control());
+        assert_eq!(mapped.inner.key, "$");
+        assert_eq!(mapped.key, "4");
+        assert_eq!(mapped.modifiers, Modifiers::control_shift());
     }
 }
