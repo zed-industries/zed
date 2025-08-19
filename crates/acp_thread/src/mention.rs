@@ -70,14 +70,11 @@ impl MentionUri {
                     if let Some(name) = single_query_param(&url, "symbol")? {
                         Ok(Self::Symbol {
                             name,
-                            path: path.into(),
+                            path,
                             line_range,
                         })
                     } else {
-                        Ok(Self::Selection {
-                            path: path.into(),
-                            line_range,
-                        })
+                        Ok(Self::Selection { path, line_range })
                     }
                 } else {
                     // let file_path =
@@ -85,7 +82,7 @@ impl MentionUri {
                     let is_directory = input.ends_with("/");
 
                     Ok(Self::File {
-                        abs_path: path.into(),
+                        abs_path: path,
                         is_directory,
                     })
                 }
