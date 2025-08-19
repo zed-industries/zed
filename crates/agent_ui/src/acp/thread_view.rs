@@ -1399,6 +1399,8 @@ impl AcpThreadView {
                                 .pr_1p5()
                                 .py_1()
                                 .rounded_t_md()
+                                .border_b_1()
+                                .border_color(self.tool_card_border_color(cx))
                                 .bg(self.tool_card_header_bg(cx))
                         } else {
                             this.opacity(0.8).hover(|style| style.opacity(1.))
@@ -1698,8 +1700,6 @@ impl AcpThreadView {
     ) -> AnyElement {
         v_flex()
             .h_full()
-            .border_t_1()
-            .border_color(self.tool_card_border_color(cx))
             .child(
                 if let Some(entry) = self.entry_view_state.read(cx).entry(entry_ix)
                     && let Some(editor) = entry.editor_for_diff(diff)
@@ -2891,7 +2891,7 @@ impl AcpThreadView {
             h_flex()
                 .flex_shrink_0()
                 .gap_0p5()
-                .mr_1()
+                .mr_1p5()
                 .child(
                     Label::new(used)
                         .size(LabelSize::Small)
@@ -2912,7 +2912,11 @@ impl AcpThreadView {
                             }
                         }),
                 )
-                .child(Label::new("/").size(LabelSize::Small).color(Color::Muted))
+                .child(
+                    Label::new("/")
+                        .size(LabelSize::Small)
+                        .color(Color::Custom(cx.theme().colors().text_muted.opacity(0.5))),
+                )
                 .child(Label::new(max).size(LabelSize::Small).color(Color::Muted)),
         )
     }
