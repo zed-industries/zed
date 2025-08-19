@@ -1582,7 +1582,7 @@ mod tests {
             contents,
             [Mention::Text {
                 content: "1".into(),
-                uri: format!("{url_one}").parse().unwrap()
+                uri: url_one.parse().unwrap()
             }]
         );
 
@@ -1639,7 +1639,7 @@ mod tests {
             contents[1],
             Mention::Text {
                 content: "8".to_string(),
-                uri: format!("{url_eight}").parse().unwrap(),
+                uri: url_eight.parse().unwrap(),
             }
         );
 
