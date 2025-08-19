@@ -1520,12 +1520,12 @@ impl AgentDiff {
                     self.update_reviewing_editors(workspace, window, cx);
                 }
             }
+            AcpThreadEvent::Stopped | AcpThreadEvent::Error | AcpThreadEvent::ServerExited(_) => {
+                self.update_reviewing_editors(workspace, window, cx);
+            }
             AcpThreadEvent::EntriesRemoved(_)
-            | AcpThreadEvent::Stopped
             | AcpThreadEvent::ToolAuthorizationRequired
-            | AcpThreadEvent::Retry(_)
-            | AcpThreadEvent::Error
-            | AcpThreadEvent::ServerExited(_) => {}
+            | AcpThreadEvent::Retry(_) => {}
         }
     }
 
