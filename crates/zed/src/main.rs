@@ -807,14 +807,21 @@ pub fn main() {
                     };
 
                     loop {
+                        let cursor_position_arg = format!(
+                            "{}:{}:{}",
+                            cursor.path.display(),
+                            cursor.point.row + 1,
+                            cursor.point.column + 1
+                        );
+                        log::info!(
+                            "Running {} {} {}",
+                            selection_change_command,
+                            cursor.worktree_path.display(),
+                            cursor_position_arg
+                        );
                         let status = smol::process::Command::new(&selection_change_command)
                             .arg(cursor.worktree_path.as_ref())
-                            .arg(format!(
-                                "{}:{}:{}",
-                                cursor.path.display(),
-                                cursor.point.row + 1,
-                                cursor.point.column + 1
-                            ))
+                            .arg(cursor_position_arg)
                             .status()
                             .await;
                         match status {
