@@ -12077,6 +12077,7 @@ impl LspStore {
     where
         T: LspCommand + Clone,
         T::ProtoRequest: proto::LspRequestMessage,
+        // TODO kb tidy up the proto types
         <T::ProtoRequest as proto::RequestMessage>::Response:
             Into<<T::ProtoRequest as proto::LspRequestMessage>::Response>,
     {
@@ -12161,6 +12162,12 @@ impl LspStore {
             }
             None => lsp::TextDocumentSyncOptions::default(),
         }
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn forget_code_lens_task(&mut self, buffer_id: BufferId) -> Option<CodeLensTask> {
+        let data = self.lsp_code_lens.get_mut(&buffer_id)?;
+        Some(data.update.take()?.1)
     }
 }
 
