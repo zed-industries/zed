@@ -532,7 +532,7 @@ impl ChannelChat {
         message: TypedEnvelope<proto::ChannelMessageSent>,
         mut cx: AsyncApp,
     ) -> Result<()> {
-        let user_store = this.read_with(&mut cx, |this, _| this.user_store.clone())?;
+        let user_store = this.read_with(&cx, |this, _| this.user_store.clone())?;
         let message = message.payload.message.context("empty message")?;
         let message_id = message.id;
 
@@ -564,7 +564,7 @@ impl ChannelChat {
         message: TypedEnvelope<proto::ChannelMessageUpdate>,
         mut cx: AsyncApp,
     ) -> Result<()> {
-        let user_store = this.read_with(&mut cx, |this, _| this.user_store.clone())?;
+        let user_store = this.read_with(&cx, |this, _| this.user_store.clone())?;
         let message = message.payload.message.context("empty message")?;
 
         let message = ChannelMessage::from_proto(message, &user_store, &mut cx).await?;

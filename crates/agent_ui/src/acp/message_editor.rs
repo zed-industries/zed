@@ -2173,7 +2173,7 @@ mod tests {
 
         cx.run_until_parked();
 
-        editor.read_with(&mut cx, |editor, cx| {
+        editor.read_with(&cx, |editor, cx| {
                 assert_eq!(
                     editor.text(cx),
                     "Lorem [@one.txt](file:///dir/a/one.txt)  Ipsum [@eight.txt](file:///dir/b/eight.txt) [@MySymbol](file:///dir/a/one.txt?symbol=MySymbol#L1:1) "
