@@ -300,13 +300,11 @@ impl Keystroke {
 
 impl KeybindingKeystroke {
     /// Create a new keybinding keystroke from the given keystroke
-    pub fn new(keystroke: Keystroke) -> Self {
-        let (key, modifiers) = to_unshifted_key(&keystroke.key, &keystroke.modifiers);
-        let inner = keystroke.into_shifted();
+    pub fn new(inner: Keystroke) -> Self {
         KeybindingKeystroke {
             inner,
-            key,
-            modifiers,
+            modifiers: inner.modifiers,
+            key: inner.key.clone(),
         }
     }
 }
