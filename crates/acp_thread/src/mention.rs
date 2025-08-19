@@ -446,7 +446,10 @@ mod tests {
 
         // Too many query parameters
         assert!(
-            MentionUri::parse(uri!("file:///path/to/file.rs#L10:20?symbol=test&another=param")).is_err()
+            MentionUri::parse(uri!(
+                "file:///path/to/file.rs#L10:20?symbol=test&another=param"
+            ))
+            .is_err()
         );
     }
 
