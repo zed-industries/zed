@@ -32,34 +32,6 @@
       "(": "vim::SentenceBackward",
       ")": "vim::SentenceForward",
       "|": "vim::GoToColumn",
-      "] ]": "vim::NextSectionStart",
-      "] [": "vim::NextSectionEnd",
-      "[ [": "vim::PreviousSectionStart",
-      "[ ]": "vim::PreviousSectionEnd",
-      "] m": "vim::NextMethodStart",
-      "] shift-m": "vim::NextMethodEnd",
-      "[ m": "vim::PreviousMethodStart",
-      "[ shift-m": "vim::PreviousMethodEnd",
-      "[ *": "vim::PreviousComment",
-      "[ /": "vim::PreviousComment",
-      "] *": "vim::NextComment",
-      "] /": "vim::NextComment",
-      "[ -": "vim::PreviousLesserIndent",
-      "[ +": "vim::PreviousGreaterIndent",
-      "[ =": "vim::PreviousSameIndent",
-      "] -": "vim::NextLesserIndent",
-      "] +": "vim::NextGreaterIndent",
-      "] =": "vim::NextSameIndent",
-      "] b": "pane::ActivateNextItem",
-      "[ b": "pane::ActivatePreviousItem",
-      "] shift-b": "pane::ActivateLastItem",
-      "[ shift-b": ["pane::ActivateItem", 0],
-      "] space": "vim::InsertEmptyLineBelow",
-      "[ space": "vim::InsertEmptyLineAbove",
-      "[ e": "editor::MoveLineUp",
-      "] e": "editor::MoveLineDown",
-      "[ f": "workspace::FollowNextCollaborator",
-      "] f": "workspace::FollowNextCollaborator",
 
       // Word motions
       "w": "vim::NextWordStart",
@@ -83,10 +55,6 @@
       "n": "vim::MoveToNextMatch",
       "shift-n": "vim::MoveToPreviousMatch",
       "%": "vim::Matching",
-      "] }": ["vim::UnmatchedForward", { "char": "}" }],
-      "[ {": ["vim::UnmatchedBackward", { "char": "{" }],
-      "] )": ["vim::UnmatchedForward", { "char": ")" }],
-      "[ (": ["vim::UnmatchedBackward", { "char": "(" }],
       "f": ["vim::PushFindForward", { "before": false, "multiline": false }],
       "t": ["vim::PushFindForward", { "before": true, "multiline": false }],
       "shift-f": ["vim::PushFindBackward", { "after": false, "multiline": false }],
@@ -217,6 +185,43 @@
       "ctrl-6": "pane::AlternateFile",
       "ctrl-^": "pane::AlternateFile",
       ".": "vim::Repeat"
+    }
+  },
+  {
+    "context": "vim_mode == normal || vim_mode == visual",
+    "bindings": {
+      "] ]": "vim::NextSectionStart",
+      "] [": "vim::NextSectionEnd",
+      "[ [": "vim::PreviousSectionStart",
+      "[ ]": "vim::PreviousSectionEnd",
+      "] m": "vim::NextMethodStart",
+      "] shift-m": "vim::NextMethodEnd",
+      "[ m": "vim::PreviousMethodStart",
+      "[ shift-m": "vim::PreviousMethodEnd",
+      "[ *": "vim::PreviousComment",
+      "[ /": "vim::PreviousComment",
+      "] *": "vim::NextComment",
+      "] /": "vim::NextComment",
+      "[ -": "vim::PreviousLesserIndent",
+      "[ +": "vim::PreviousGreaterIndent",
+      "[ =": "vim::PreviousSameIndent",
+      "] -": "vim::NextLesserIndent",
+      "] +": "vim::NextGreaterIndent",
+      "] =": "vim::NextSameIndent",
+      "] b": "pane::ActivateNextItem",
+      "[ b": "pane::ActivatePreviousItem",
+      "] shift-b": "pane::ActivateLastItem",
+      "[ shift-b": ["pane::ActivateItem", 0],
+      "] space": "vim::InsertEmptyLineBelow",
+      "[ space": "vim::InsertEmptyLineAbove",
+      "[ e": "editor::MoveLineUp",
+      "] e": "editor::MoveLineDown",
+      "[ f": "workspace::FollowNextCollaborator",
+      "] f": "workspace::FollowNextCollaborator",
+      "] }": ["vim::UnmatchedForward", { "char": "}" }],
+      "[ {": ["vim::UnmatchedBackward", { "char": "{" }],
+      "] )": ["vim::UnmatchedForward", { "char": ")" }],
+      "[ (": ["vim::UnmatchedBackward", { "char": "(" }]
     }
   },
   {
@@ -470,12 +475,6 @@
     }
   },
   {
-    "context": "vim_operator == helix_m",
-    "bindings": {
-      "m": "vim::Matching"
-    }
-  },
-  {
     "context": "vim_mode == insert && !(showing_code_actions || showing_completions)",
     "bindings": {
       "ctrl-p": "editor::ShowWordCompletions",
@@ -570,6 +569,42 @@
       "f": "vim::Method",
       "c": "vim::Class",
       "e": "vim::EntireFile"
+    }
+  },
+  {
+    "context": "vim_operator == helix_m",
+    "bindings": {
+      "m": "vim::Matching"
+    }
+  },
+  {
+    "context": "vim_operator == helix_next",
+    "bindings": {
+      "z": "vim::NextSectionStart",
+      "shift-z": "vim::NextSectionEnd",
+      "*": "vim::NextComment",
+      "/": "vim::NextComment",
+      "-": "vim::NextLesserIndent",
+      "+": "vim::NextGreaterIndent",
+      "=": "vim::NextSameIndent",
+      "b": "pane::ActivateNextItem",
+      "shift-b": "pane::ActivateLastItem",
+      "space": "vim::InsertEmptyLineBelow"
+    }
+  },
+  {
+    "context": "vim_operator == helix_previous",
+    "bindings": {
+      "z": "vim::PreviousSectionStart",
+      "shift-z": "vim::PreviousSectionEnd",
+      "*": "vim::PreviousComment",
+      "/": "vim::PreviousComment",
+      "-": "vim::PreviousLesserIndent",
+      "+": "vim::PreviousGreaterIndent",
+      "=": "vim::PreviousSameIndent",
+      "b": "pane::ActivatePreviousItem",
+      "shift-b": ["pane::ActivateItem", 0],
+      "space": "vim::InsertEmptyLineAbove"
     }
   },
   {
