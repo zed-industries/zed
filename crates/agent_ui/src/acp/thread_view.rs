@@ -917,7 +917,8 @@ impl AcpThreadView {
 
                 v_flex()
                     .id(("user_message", entry_ix))
-                    .py_4()
+                    .pt_2()
+                    .pb_4()
                     .px_2()
                     .gap_1p5()
                     .w_full()
@@ -933,6 +934,8 @@ impl AcpThreadView {
                                         .icon_size(IconSize::XSmall)
                                         .icon_position(IconPosition::Start)
                                         .label_size(LabelSize::XSmall)
+                                        .icon_color(Color::Muted)
+                                        .color(Color::Muted)
                                         .on_click(cx.listener(move |this, _, _window, cx| {
                                             this.rewind(&message_id, cx);
                                         }))
@@ -1986,7 +1989,6 @@ impl AcpThreadView {
 
         Some(
             v_flex()
-                .pt_2()
                 .px_2p5()
                 .gap_1()
                 .when_some(user_rules_text, |parent, user_rules_text| {
