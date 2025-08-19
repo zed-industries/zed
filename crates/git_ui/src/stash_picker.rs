@@ -418,7 +418,14 @@ impl PickerDelegate for StashListDelegate {
             branch_name.push_str("…");
         }
 
-        let stash_index_label = Label::new(branch_name).color(Color::Muted);
+        let branch_label = h_flex()
+            .gap_1()
+            .child(
+                Icon::new(IconName::GitBranch)
+                    .color(Color::Muted)
+                    .size(IconSize::Small),
+            )
+            .child(Label::new(branch_name).color(Color::Muted));
 
         let tooltip_text = format!(
             "stash@{{{}}} created {}",
@@ -433,7 +440,7 @@ impl PickerDelegate for StashListDelegate {
                 .child(
                     v_flex()
                         .child(stash_name)
-                        .child(stash_index_label.into_element()),
+                        .child(branch_label.into_element()),
                 )
                 .tooltip(Tooltip::text(tooltip_text)),
         )
