@@ -272,7 +272,7 @@ impl VariableList {
         let mut entries = vec![];
 
         let scopes: Vec<_> = self.session.update(cx, |session, cx| {
-            session.scopes(stack_frame_id, cx).iter().cloned().collect()
+            session.scopes(stack_frame_id, cx).to_vec()
         });
 
         let mut contains_local_scope = false;
@@ -1289,7 +1289,7 @@ impl VariableList {
                             }),
                         )
                         .child(self.render_variable_value(
-                            &entry,
+                            entry,
                             &variable_color,
                             watcher.value.to_string(),
                             cx,
@@ -1494,7 +1494,7 @@ impl VariableList {
                             }),
                         )
                         .child(self.render_variable_value(
-                            &variable,
+                            variable,
                             &variable_color,
                             dap.value.clone(),
                             cx,

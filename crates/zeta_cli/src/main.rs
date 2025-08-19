@@ -131,7 +131,7 @@ async fn get_context(
 
     let (project, _lsp_open_handle, buffer) = if use_language_server {
         let (project, lsp_open_handle, buffer) =
-            open_buffer_with_language_server(&worktree_path, &cursor.path, &app_state, cx).await?;
+            open_buffer_with_language_server(&worktree_path, &cursor.path, app_state, cx).await?;
         (Some(project), Some(lsp_open_handle), buffer)
     } else {
         let abs_path = worktree_path.join(&cursor.path);
@@ -171,21 +171,31 @@ async fn get_context(
         Some(events) => events.read_to_string().await?,
         None => String::new(),
     };
-    let can_collect_data = false;
+    // Enable gathering extra data not currently needed for edit predictions
+    let can_collect_data = true;
     let git_info = None;
-    cx.update(|cx| {
-        gather_context(
-            project.as_ref(),
-            full_path_str,
-            &snapshot,
-            clipped_cursor,
-            move || events,
-            can_collect_data,
-            git_info,
-            cx,
-        )
-    })?
-    .await
+    let mut gather_context_output = cx
+        .update(|cx| {
+            gather_context(
+                project.as_ref(),
+                full_path_str,
+                &snapshot,
+                clipped_cursor,
+                move || events,
+                can_collect_data,
+                git_info,
+                cx,
+            )
+        })?
+        .await;
+
+    // Disable data collection for these requests, as this is currently just used for evals
+    match gather_context_output.as_mut() {
+        Ok(gather_context_output) => gather_context_output.body.can_collect_data = false,
+        Err(_) => {}
+    }
+
+    gather_context_output
 }
 
 pub async fn open_buffer_with_language_server(
@@ -250,7 +260,7 @@ pub fn wait_for_lang_server(
         .update(cx, |buffer, cx| {
             lsp_store.update(cx, |lsp_store, cx| {
                 lsp_store
-                    .language_servers_for_local_buffer(&buffer, cx)
+                    .language_servers_for_local_buffer(buffer, cx)
                     .next()
                     .is_some()
             })
@@ -281,7 +291,7 @@ pub fn wait_for_lang_server(
                 _ => {}
             }
         }),
-        cx.subscribe(&project, {
+        cx.subscribe(project, {
             let buffer = buffer.clone();
             move |project, event, cx| match event {
                 project::Event::LanguageServerAdded(_, _, _) => {

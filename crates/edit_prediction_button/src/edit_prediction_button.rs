@@ -127,7 +127,7 @@ impl Render for EditPredictionButton {
                             }),
                     );
                 }
-                let this = cx.entity().clone();
+                let this = cx.entity();
 
                 div().child(
                     PopoverMenu::new("copilot")
@@ -182,7 +182,7 @@ impl Render for EditPredictionButton {
                 let icon = status.to_icon();
                 let tooltip_text = status.to_tooltip();
                 let has_menu = status.has_menu();
-                let this = cx.entity().clone();
+                let this = cx.entity();
                 let fs = self.fs.clone();
 
                 return div().child(
@@ -331,7 +331,7 @@ impl Render for EditPredictionButton {
                         })
                     });
 
-                let this = cx.entity().clone();
+                let this = cx.entity();
 
                 let mut popover_menu = PopoverMenu::new("zeta")
                     .menu(move |window, cx| {
@@ -491,7 +491,12 @@ impl EditPredictionButton {
         let subtle_mode = matches!(current_mode, EditPredictionsMode::Subtle);
         let eager_mode = matches!(current_mode, EditPredictionsMode::Eager);
 
-        if matches!(provider, EditPredictionProvider::Zed) {
+        if matches!(
+            provider,
+            EditPredictionProvider::Zed
+                | EditPredictionProvider::Copilot
+                | EditPredictionProvider::Supermaven
+        ) {
             menu = menu
                 .separator()
                 .header("Display Modes")

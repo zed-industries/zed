@@ -1,6 +1,7 @@
 use crate::schema::json_schema_for;
+use action_log::ActionLog;
 use anyhow::Result;
-use assistant_tool::{ActionLog, Tool, ToolResult};
+use assistant_tool::{Tool, ToolResult};
 use gpui::{AnyWindowHandle, App, Entity, Task};
 use language_model::{LanguageModel, LanguageModelRequest, LanguageModelToolSchemaFormat};
 use project::Project;
@@ -80,7 +81,7 @@ fn fit_patch_to_size(patch: &str, max_size: usize) -> String {
     // Compression level 1: remove context lines in diff bodies, but
     // leave the counts and positions of inserted/deleted lines
     let mut current_size = patch.len();
-    let mut file_patches = split_patch(&patch);
+    let mut file_patches = split_patch(patch);
     file_patches.sort_by_key(|patch| patch.len());
     let compressed_patches = file_patches
         .iter()

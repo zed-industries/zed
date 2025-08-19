@@ -3,17 +3,19 @@ pub mod tools;
 
 use collections::HashMap;
 use context_server::listener::McpServerTool;
+use language_models::provider::anthropic::AnthropicLanguageModelProvider;
 use project::Project;
 use settings::SettingsStore;
 use smol::process::Child;
-use std::cell::{Cell, RefCell};
+use std::any::Any;
+use std::cell::RefCell;
 use std::fmt::Display;
 use std::path::Path;
 use std::rc::Rc;
 use uuid::Uuid;
 
 use agent_client_protocol as acp;
-use anyhow::{Result, anyhow};
+use anyhow::{Context as _, Result, anyhow};
 use futures::channel::oneshot;
 use futures::{AsyncBufReadExt, AsyncWriteExt};
 use futures::{
@@ -29,7 +31,7 @@ use util::{ResultExt, debug_panic};
 use crate::claude::mcp_server::{ClaudeZedMcpServer, McpConfig};
 use crate::claude::tools::ClaudeTool;
 use crate::{AgentServer, AgentServerCommand, AllAgentServersSettings};
-use acp_thread::{AcpThread, AgentConnection};
+use acp_thread::{AcpThread, AgentConnection, AuthRequired};
 
 #[derive(Clone)]
 pub struct ClaudeCode;
@@ -63,6 +65,10 @@ impl AgentServer for ClaudeCode {
 
         Task::ready(Ok(Rc::new(connection) as _))
     }
+
+    fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
+        self
+    }
 }
 
 struct ClaudeAgentConnection {
@@ -74,29 +80,10 @@ impl AgentConnection for ClaudeAgentConnection {
         self: Rc<Self>,
         project: Entity<Project>,
         cwd: &Path,
-        cx: &mut AsyncApp,
+        cx: &mut App,
     ) -> Task<Result<Entity<AcpThread>>> {
         let cwd = cwd.to_owned();
         cx.spawn(async move |cx| {
-            let (mut thread_tx, thread_rx) = watch::channel(WeakEntity::new_invalid());
-            let permission_mcp_server = ClaudeZedMcpServer::new(thread_rx.clone(), cx).await?;
-
-            let mut mcp_servers = HashMap::default();
-            mcp_servers.insert(
-                mcp_server::SERVER_NAME.to_string(),
-                permission_mcp_server.server_config()?,
-            );
-            let mcp_config = McpConfig { mcp_servers };
-
-            let mcp_config_file = tempfile::NamedTempFile::new()?;
-            let (mcp_config_file, mcp_config_path) = mcp_config_file.into_parts();
-
-            let mut mcp_config_file = smol::fs::File::from(mcp_config_file);
-            mcp_config_file
-                .write_all(serde_json::to_string(&mcp_config)?.as_bytes())
-                .await?;
-            mcp_config_file.flush().await?;
-
             let settings = cx.read_global(|settings: &SettingsStore, _| {
                 settings.get::<AllAgentServersSettings>(None).claude.clone()
             })?;
@@ -114,6 +101,39 @@ impl AgentConnection for ClaudeAgentConnection {
                 anyhow::bail!("Failed to find claude binary");
             };
 
+            let api_key =
+                cx.update(AnthropicLanguageModelProvider::api_key)?
+                    .await
+                    .map_err(|err| {
+                        if err.is::<language_model::AuthenticateError>() {
+                            anyhow!(AuthRequired::new().with_language_model_provider(
+                                language_model::ANTHROPIC_PROVIDER_ID
+                            ))
+                        } else {
+                            anyhow!(err)
+                        }
+                    })?;
+
+            let (mut thread_tx, thread_rx) = watch::channel(WeakEntity::new_invalid());
+            let fs = project.read_with(cx, |project, _cx| project.fs().clone())?;
+            let permission_mcp_server = ClaudeZedMcpServer::new(thread_rx.clone(), fs, cx).await?;
+
+            let mut mcp_servers = HashMap::default();
+            mcp_servers.insert(
+                mcp_server::SERVER_NAME.to_string(),
+                permission_mcp_server.server_config()?,
+            );
+            let mcp_config = McpConfig { mcp_servers };
+
+            let mcp_config_file = tempfile::NamedTempFile::new()?;
+            let (mcp_config_file, mcp_config_path) = mcp_config_file.into_parts();
+
+            let mut mcp_config_file = smol::fs::File::from(mcp_config_file);
+            mcp_config_file
+                .write_all(serde_json::to_string(&mcp_config)?.as_bytes())
+                .await?;
+            mcp_config_file.flush().await?;
+
             let (incoming_message_tx, mut incoming_message_rx) = mpsc::unbounded();
             let (outgoing_tx, outgoing_rx) = mpsc::unbounded();
 
@@ -125,15 +145,29 @@ impl AgentConnection for ClaudeAgentConnection {
                 &command,
                 ClaudeSessionMode::Start,
                 session_id.clone(),
+                api_key,
                 &mcp_config_path,
                 &cwd,
             )?;
 
-            let stdin = child.stdin.take().unwrap();
-            let stdout = child.stdout.take().unwrap();
+            let stdout = child.stdout.take().context("Failed to take stdout")?;
+            let stdin = child.stdin.take().context("Failed to take stdin")?;
+            let stderr = child.stderr.take().context("Failed to take stderr")?;
 
             let pid = child.id();
             log::trace!("Spawned (pid: {})", pid);
+
+            cx.background_spawn(async move {
+                let mut stderr = BufReader::new(stderr);
+                let mut line = String::new();
+                while let Ok(n) = stderr.read_line(&mut line).await
+                    && n > 0
+                {
+                    log::warn!("agent stderr: {}", &line);
+                    line.clear();
+                }
+            })
+            .detach();
 
             cx.background_spawn(async move {
                 let mut outgoing_rx = Some(outgoing_rx);
@@ -153,20 +187,17 @@ impl AgentConnection for ClaudeAgentConnection {
             })
             .detach();
 
-            let pending_cancellation = Rc::new(Cell::new(PendingCancellation::None));
+            let turn_state = Rc::new(RefCell::new(TurnState::None));
 
-            let end_turn_tx = Rc::new(RefCell::new(None));
             let handler_task = cx.spawn({
-                let end_turn_tx = end_turn_tx.clone();
+                let turn_state = turn_state.clone();
                 let mut thread_rx = thread_rx.clone();
-                let cancellation_state = pending_cancellation.clone();
                 async move |cx| {
                     while let Some(message) = incoming_message_rx.next().await {
                         ClaudeAgentSession::handle_message(
                             thread_rx.clone(),
                             message,
-                            end_turn_tx.clone(),
-                            cancellation_state.clone(),
+                            turn_state.clone(),
                             cx,
                         )
                         .await
@@ -192,8 +223,7 @@ impl AgentConnection for ClaudeAgentConnection {
 
             let session = ClaudeAgentSession {
                 outgoing_tx,
-                end_turn_tx,
-                pending_cancellation,
+                turn_state,
                 _handler_task: handler_task,
                 _mcp_server: Some(permission_mcp_server),
             };
@@ -214,6 +244,7 @@ impl AgentConnection for ClaudeAgentConnection {
 
     fn prompt(
         &self,
+        _id: Option<acp_thread::UserMessageId>,
         params: acp::PromptRequest,
         cx: &mut App,
     ) -> Task<Result<acp::PromptResponse>> {
@@ -225,8 +256,8 @@ impl AgentConnection for ClaudeAgentConnection {
             )));
         };
 
-        let (tx, rx) = oneshot::channel();
-        session.end_turn_tx.borrow_mut().replace(tx);
+        let (end_tx, end_rx) = oneshot::channel();
+        session.turn_state.replace(TurnState::InProgress { end_tx });
 
         let mut content = String::new();
         for chunk in params.prompt {
@@ -260,24 +291,27 @@ impl AgentConnection for ClaudeAgentConnection {
             return Task::ready(Err(anyhow!(err)));
         }
 
-        let cancellation_state = session.pending_cancellation.clone();
-        cx.foreground_executor().spawn(async move {
-            let result = rx.await??;
-            cancellation_state.set(PendingCancellation::None);
-            Ok(result)
-        })
+        cx.foreground_executor().spawn(async move { end_rx.await? })
     }
 
     fn cancel(&self, session_id: &acp::SessionId, _cx: &mut App) {
         let sessions = self.sessions.borrow();
-        let Some(session) = sessions.get(&session_id) else {
+        let Some(session) = sessions.get(session_id) else {
             log::warn!("Attempted to cancel nonexistent session {}", session_id);
             return;
         };
 
         let request_id = new_request_id();
 
-        session.pending_cancellation.set(PendingCancellation::Sent {
+        let turn_state = session.turn_state.take();
+        let TurnState::InProgress { end_tx } = turn_state else {
+            // Already canceled or idle, put it back
+            session.turn_state.replace(turn_state);
+            return;
+        };
+
+        session.turn_state.replace(TurnState::CancelRequested {
+            end_tx,
             request_id: request_id.clone(),
         });
 
@@ -288,6 +322,10 @@ impl AgentConnection for ClaudeAgentConnection {
                 request: ControlRequest::Interrupt,
             })
             .log_err();
+    }
+
+    fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
+        self
     }
 }
 
@@ -302,6 +340,7 @@ fn spawn_claude(
     command: &AgentServerCommand,
     mode: ClaudeSessionMode,
     session_id: acp::SessionId,
+    api_key: language_models::provider::anthropic::ApiKey,
     mcp_config_path: &Path,
     root_dir: &Path,
 ) -> Result<Child> {
@@ -337,10 +376,12 @@ fn spawn_claude(
             ClaudeSessionMode::Resume => ["--resume".to_string(), session_id.to_string()],
         })
         .args(command.args.iter().map(|arg| arg.as_str()))
+        .envs(command.env.iter().flatten())
+        .env("ANTHROPIC_API_KEY", api_key.key)
         .current_dir(root_dir)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::inherit())
+        .stderr(std::process::Stdio::piped())
         .kill_on_drop(true)
         .spawn()?;
 
@@ -349,28 +390,56 @@ fn spawn_claude(
 
 struct ClaudeAgentSession {
     outgoing_tx: UnboundedSender<SdkMessage>,
-    end_turn_tx: Rc<RefCell<Option<oneshot::Sender<Result<acp::PromptResponse>>>>>,
-    pending_cancellation: Rc<Cell<PendingCancellation>>,
+    turn_state: Rc<RefCell<TurnState>>,
     _mcp_server: Option<ClaudeZedMcpServer>,
     _handler_task: Task<()>,
 }
 
-#[derive(Debug, Default, PartialEq)]
-enum PendingCancellation {
+#[derive(Debug, Default)]
+enum TurnState {
     #[default]
     None,
-    Sent {
+    InProgress {
+        end_tx: oneshot::Sender<Result<acp::PromptResponse>>,
+    },
+    CancelRequested {
+        end_tx: oneshot::Sender<Result<acp::PromptResponse>>,
         request_id: String,
     },
-    Confirmed,
+    CancelConfirmed {
+        end_tx: oneshot::Sender<Result<acp::PromptResponse>>,
+    },
+}
+
+impl TurnState {
+    fn is_canceled(&self) -> bool {
+        matches!(self, TurnState::CancelConfirmed { .. })
+    }
+
+    fn end_tx(self) -> Option<oneshot::Sender<Result<acp::PromptResponse>>> {
+        match self {
+            TurnState::None => None,
+            TurnState::InProgress { end_tx, .. } => Some(end_tx),
+            TurnState::CancelRequested { end_tx, .. } => Some(end_tx),
+            TurnState::CancelConfirmed { end_tx } => Some(end_tx),
+        }
+    }
+
+    fn confirm_cancellation(self, id: &str) -> Self {
+        match self {
+            TurnState::CancelRequested { request_id, end_tx } if request_id == id => {
+                TurnState::CancelConfirmed { end_tx }
+            }
+            _ => self,
+        }
+    }
 }
 
 impl ClaudeAgentSession {
     async fn handle_message(
         mut thread_rx: watch::Receiver<WeakEntity<AcpThread>>,
         message: SdkMessage,
-        end_turn_tx: Rc<RefCell<Option<oneshot::Sender<Result<acp::PromptResponse>>>>>,
-        pending_cancellation: Rc<Cell<PendingCancellation>>,
+        turn_state: Rc<RefCell<TurnState>>,
         cx: &mut AsyncApp,
     ) {
         match message {
@@ -393,15 +462,13 @@ impl ClaudeAgentSession {
                 for chunk in message.content.chunks() {
                     match chunk {
                         ContentChunk::Text { text } | ContentChunk::UntaggedText(text) => {
-                            let state = pending_cancellation.take();
-                            if state != PendingCancellation::Confirmed {
+                            if !turn_state.borrow().is_canceled() {
                                 thread
                                     .update(cx, |thread, cx| {
-                                        thread.push_user_content_block(text.into(), cx)
+                                        thread.push_user_content_block(None, text.into(), cx)
                                     })
                                     .log_err();
                             }
-                            pending_cancellation.set(state);
                         }
                         ContentChunk::ToolResult {
                             content,
@@ -414,7 +481,12 @@ impl ClaudeAgentSession {
                                         acp::ToolCallUpdate {
                                             id: acp::ToolCallId(tool_use_id.into()),
                                             fields: acp::ToolCallUpdateFields {
-                                                status: Some(acp::ToolCallStatus::Completed),
+                                                status: if turn_state.borrow().is_canceled() {
+                                                    // Do not set to completed if turn was canceled
+                                                    None
+                                                } else {
+                                                    Some(acp::ToolCallStatus::Completed)
+                                                },
                                                 content: (!content.is_empty())
                                                     .then(|| vec![content.into()]),
                                                 ..Default::default()
@@ -511,8 +583,9 @@ impl ClaudeAgentSession {
                                         thread.upsert_tool_call(
                                             claude_tool.as_acp(acp::ToolCallId(id.into())),
                                             cx,
-                                        );
+                                        )?;
                                     }
+                                    anyhow::Ok(())
                                 })
                                 .log_err();
                         }
@@ -541,40 +614,37 @@ impl ClaudeAgentSession {
                 result,
                 ..
             } => {
-                if let Some(end_turn_tx) = end_turn_tx.borrow_mut().take() {
-                    if is_error
-                        || (subtype == ResultErrorType::ErrorDuringExecution
-                            && pending_cancellation.take() != PendingCancellation::Confirmed)
-                    {
-                        end_turn_tx
-                            .send(Err(anyhow!(
-                                "Error: {}",
-                                result.unwrap_or_else(|| subtype.to_string())
-                            )))
-                            .ok();
-                    } else {
-                        let stop_reason = match subtype {
-                            ResultErrorType::Success => acp::StopReason::EndTurn,
-                            ResultErrorType::ErrorMaxTurns => acp::StopReason::MaxTurnRequests,
-                            ResultErrorType::ErrorDuringExecution => acp::StopReason::Cancelled,
-                        };
-                        end_turn_tx
-                            .send(Ok(acp::PromptResponse { stop_reason }))
-                            .ok();
-                    }
+                let turn_state = turn_state.take();
+                let was_canceled = turn_state.is_canceled();
+                let Some(end_turn_tx) = turn_state.end_tx() else {
+                    debug_panic!("Received `SdkMessage::Result` but there wasn't an active turn");
+                    return;
+                };
+
+                if is_error || (!was_canceled && subtype == ResultErrorType::ErrorDuringExecution) {
+                    end_turn_tx
+                        .send(Err(anyhow!(
+                            "Error: {}",
+                            result.unwrap_or_else(|| subtype.to_string())
+                        )))
+                        .ok();
+                } else {
+                    let stop_reason = match subtype {
+                        ResultErrorType::Success => acp::StopReason::EndTurn,
+                        ResultErrorType::ErrorMaxTurns => acp::StopReason::MaxTurnRequests,
+                        ResultErrorType::ErrorDuringExecution => acp::StopReason::Canceled,
+                    };
+                    end_turn_tx
+                        .send(Ok(acp::PromptResponse { stop_reason }))
+                        .ok();
                 }
             }
             SdkMessage::ControlResponse { response } => {
                 if matches!(response.subtype, ResultErrorType::Success) {
-                    let pending_cancellation_value = pending_cancellation.take();
-
-                    if let PendingCancellation::Sent { request_id } = &pending_cancellation_value
-                        && request_id == &response.request_id
-                    {
-                        pending_cancellation.set(PendingCancellation::Confirmed);
-                    } else {
-                        pending_cancellation.set(pending_cancellation_value);
-                    }
+                    let new_state = turn_state.take().confirm_cancellation(&response.request_id);
+                    turn_state.replace(new_state);
+                } else {
+                    log::error!("Control response error: {:?}", response);
                 }
             }
             SdkMessage::System { .. } => {}

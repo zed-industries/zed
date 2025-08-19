@@ -7,7 +7,7 @@ use std::{
 use crate::{
     AbsoluteLength, App, Background, BackgroundTag, BorderStyle, Bounds, ContentMask, Corners,
     CornersRefinement, CursorStyle, DefiniteLength, DevicePixels, Edges, EdgesRefinement, Font,
-    FontFallbacks, FontFeatures, FontStyle, FontWeight, Hsla, Length, Pixels, Point,
+    FontFallbacks, FontFeatures, FontStyle, FontWeight, GridLocation, Hsla, Length, Pixels, Point,
     PointRefinement, Rgba, SharedString, Size, SizeRefinement, Styled, TextRun, Window, black, phi,
     point, quad, rems, size,
 };
@@ -260,6 +260,17 @@ pub struct Style {
     /// The opacity of this element
     pub opacity: Option<f32>,
 
+    /// The grid columns of this element
+    /// Equivalent to the Tailwind `grid-cols-<number>`
+    pub grid_cols: Option<u16>,
+
+    /// The row span of this element
+    /// Equivalent to the Tailwind `grid-rows-<number>`
+    pub grid_rows: Option<u16>,
+
+    /// The grid location of this element
+    pub grid_location: Option<GridLocation>,
+
     /// Whether to draw a red debugging outline around this element
     #[cfg(debug_assertions)]
     pub debug: bool,
@@ -272,6 +283,13 @@ pub struct Style {
 impl Styled for StyleRefinement {
     fn style(&mut self) -> &mut StyleRefinement {
         self
+    }
+}
+
+impl StyleRefinement {
+    /// The grid location of this element
+    pub fn grid_location_mut(&mut self) -> &mut GridLocation {
+        self.grid_location.get_or_insert_default()
     }
 }
 
@@ -757,6 +775,9 @@ impl Default for Style {
             text: TextStyleRefinement::default(),
             mouse_cursor: None,
             opacity: None,
+            grid_rows: None,
+            grid_cols: None,
+            grid_location: None,
 
             #[cfg(debug_assertions)]
             debug: false,

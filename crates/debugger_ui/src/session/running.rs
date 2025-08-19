@@ -48,10 +48,8 @@ use task::{
 };
 use terminal_view::TerminalView;
 use ui::{
-    ActiveTheme, AnyElement, App, ButtonCommon as _, Clickable as _, Context, FluentBuilder,
-    IconButton, IconName, IconSize, InteractiveElement, IntoElement, Label, LabelCommon as _,
-    ParentElement, Render, SharedString, StatefulInteractiveElement, Styled, Tab, Tooltip,
-    VisibleOnHover, VisualContext, Window, div, h_flex, v_flex,
+    FluentBuilder, IntoElement, Render, StatefulInteractiveElement, Tab, Tooltip, VisibleOnHover,
+    VisualContext, prelude::*,
 };
 use util::ResultExt;
 use variable_list::VariableList;
@@ -104,7 +102,7 @@ impl Render for RunningState {
             .find(|pane| pane.read(cx).is_zoomed());
 
         let active = self.panes.panes().into_iter().next();
-        let pane = if let Some(ref zoomed_pane) = zoomed_pane {
+        let pane = if let Some(zoomed_pane) = zoomed_pane {
             zoomed_pane.update(cx, |pane, cx| pane.render(window, cx).into_any_element())
         } else if let Some(active) = active {
             self.panes
@@ -293,7 +291,7 @@ pub(crate) fn new_debugger_pane(
             let Some(project) = project.upgrade() else {
                 return ControlFlow::Break(());
             };
-            let this_pane = cx.entity().clone();
+            let this_pane = cx.entity();
             let item = if tab.pane == this_pane {
                 pane.item_for_index(tab.ix)
             } else {
@@ -419,13 +417,14 @@ pub(crate) fn new_debugger_pane(
                     .map_or(false, |item| item.read(cx).hovered);
 
                 h_flex()
-                    .group(pane_group_id.clone())
-                    .justify_between()
-                    .bg(cx.theme().colors().tab_bar_background)
-                    .border_b_1()
-                    .px_2()
-                    .border_color(cx.theme().colors().border)
                     .track_focus(&focus_handle)
+                    .group(pane_group_id.clone())
+                    .pl_1p5()
+                    .pr_1()
+                    .justify_between()
+                    .border_b_1()
+                    .border_color(cx.theme().colors().border)
+                    .bg(cx.theme().colors().tab_bar_background)
                     .on_action(|_: &menu::Cancel, window, cx| {
                         if cx.stop_active_drag(window) {
                             return;
@@ -503,7 +502,7 @@ pub(crate) fn new_debugger_pane(
                                     .on_drag(
                                         DraggedTab {
                                             item: item.boxed_clone(),
-                                            pane: cx.entity().clone(),
+                                            pane: cx.entity(),
                                             detail: 0,
                                             is_active: selected,
                                             ix,
@@ -514,6 +513,7 @@ pub(crate) fn new_debugger_pane(
                     )
                     .child({
                         let zoomed = pane.is_zoomed();
+
                         h_flex()
                             .visible_on_hover(pane_group_id)
                             .when(is_hovered, |this| this.visible())
@@ -537,7 +537,7 @@ pub(crate) fn new_debugger_pane(
                                         IconName::Maximize
                                     },
                                 )
-                                .icon_size(IconSize::XSmall)
+                                .icon_size(IconSize::Small)
                                 .on_click(cx.listener(move |pane, _, _, cx| {
                                     let is_zoomed = pane.is_zoomed();
                                     pane.set_zoomed(!is_zoomed, cx);
@@ -592,10 +592,11 @@ impl DebugTerminal {
 }
 
 impl gpui::Render for DebugTerminal {
-    fn render(&mut self, _window: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         div()
-            .size_full()
             .track_focus(&self.focus_handle)
+            .size_full()
+            .bg(cx.theme().colors().editor_background)
             .children(self.terminal.clone())
     }
 }
@@ -626,7 +627,7 @@ impl RunningState {
                 if s.starts_with("\"$ZED_") && s.ends_with('"') {
                     *s = s[1..s.len() - 1].to_string();
                 }
-                if let Some(substituted) = substitute_variables_in_str(&s, context) {
+                if let Some(substituted) = substitute_variables_in_str(s, context) {
                     *s = substituted;
                 }
             }
@@ -656,7 +657,7 @@ impl RunningState {
                 }
                 resolve_path(s);
 
-                if let Some(substituted) = substitute_variables_in_str(&s, context) {
+                if let Some(substituted) = substitute_variables_in_str(s, context) {
                     *s = substituted;
                 }
             }
@@ -953,7 +954,7 @@ impl RunningState {
                                 inventory.read(cx).task_template_by_label(
                                     buffer,
                                     worktree_id,
-                                    &label,
+                                    label,
                                     cx,
                                 )
                             })
@@ -1014,10 +1015,9 @@ impl RunningState {
                     ..task.resolved.clone()
                 };
                 let terminal = project
-                    .update_in(cx, |project, window, cx| {
+                    .update(cx, |project, cx| {
                         project.create_terminal(
                             TerminalKind::Task(task_with_shell.clone()),
-                            window.window_handle(),
                             cx,
                         )
                     })?
@@ -1189,9 +1189,7 @@ impl RunningState {
         let workspace = self.workspace.clone();
         let weak_project = project.downgrade();
 
-        let terminal_task = project.update(cx, |project, cx| {
-            project.create_terminal(kind, window.window_handle(), cx)
-        });
+        let terminal_task = project.update(cx, |project, cx| project.create_terminal(kind, cx));
         let terminal_task = cx.spawn_in(window, async move |_, cx| {
             let terminal = terminal_task.await?;
 
@@ -1312,7 +1310,7 @@ impl RunningState {
         let mut pane_item_status = IndexMap::from_iter(
             DebuggerPaneItem::all()
                 .iter()
-                .filter(|kind| kind.is_supported(&caps))
+                .filter(|kind| kind.is_supported(caps))
                 .map(|kind| (*kind, false)),
         );
         self.panes.panes().iter().for_each(|pane| {
@@ -1373,7 +1371,7 @@ impl RunningState {
         this.serialize_layout(window, cx);
         match event {
             Event::Remove { .. } => {
-                let _did_find_pane = this.panes.remove(&source_pane).is_ok();
+                let _did_find_pane = this.panes.remove(source_pane).is_ok();
                 debug_assert!(_did_find_pane);
                 cx.notify();
             }

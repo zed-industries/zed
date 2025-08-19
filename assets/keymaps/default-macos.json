@@ -279,6 +279,7 @@
       "cmd-shift-a": "agent::ToggleContextPicker",
       "cmd-shift-j": "agent::ToggleNavigationMenu",
       "cmd-shift-i": "agent::ToggleOptionsMenu",
+      "cmd-alt-shift-n": "agent::ToggleNewThreadMenu",
       "shift-alt-escape": "agent::ExpandMessageEditor",
       "cmd->": "assistant::QuoteSelection",
       "cmd-alt-e": "agent::RemoveAllContext",
@@ -382,8 +383,6 @@
     "use_key_equivalents": true,
     "bindings": {
       "enter": "agent::Chat",
-      "up": "agent::PreviousHistoryMessage",
-      "down": "agent::NextHistoryMessage",
       "shift-ctrl-r": "agent::OpenAgentDiff",
       "cmd-shift-y": "agent::KeepAll",
       "cmd-shift-n": "agent::RejectAll"
@@ -907,6 +906,7 @@
       "cmd-delete": ["project_panel::Delete", { "skip_prompt": false }],
       "alt-cmd-r": "project_panel::RevealInFileManager",
       "ctrl-shift-enter": "project_panel::OpenWithSystem",
+      "alt-d": "project_panel::CompareMarkedFiles",
       "cmd-alt-backspace": ["project_panel::Delete", { "skip_prompt": false }],
       "cmd-alt-shift-f": "project_panel::NewSearchInDirectory",
       "shift-down": "menu::SelectNext",
@@ -1205,6 +1205,13 @@
     }
   },
   {
+    "context": "OnboardingAiConfigurationModal",
+    "use_key_equivalents": true,
+    "bindings": {
+      "escape": "menu::Cancel"
+    }
+  },
+  {
     "context": "Diagnostics",
     "use_key_equivalents": true,
     "bindings": {
@@ -1280,7 +1287,9 @@
       "cmd-1": "onboarding::ActivateBasicsPage",
       "cmd-2": "onboarding::ActivateEditingPage",
       "cmd-3": "onboarding::ActivateAISetupPage",
-      "cmd-escape": "onboarding::Finish"
+      "cmd-escape": "onboarding::Finish",
+      "alt-tab": "onboarding::SignIn",
+      "alt-shift-a": "onboarding::OpenAccount"
     }
   }
 ]

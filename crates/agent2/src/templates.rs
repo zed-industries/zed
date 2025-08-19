@@ -34,15 +34,6 @@ pub trait Template: Sized {
 }
 
 #[derive(Serialize)]
-pub struct GlobTemplate {
-    pub project_roots: String,
-}
-
-impl Template for GlobTemplate {
-    const TEMPLATE_NAME: &'static str = "glob.hbs";
-}
-
-#[derive(Serialize)]
 pub struct SystemPromptTemplate<'a> {
     #[serde(flatten)]
     pub project: &'a prompt_store::ProjectContext,
@@ -71,7 +62,7 @@ fn contains(
         handlebars::RenderError::new("contains: missing or invalid query parameter")
     })?;
 
-    if list.contains(&query) {
+    if list.contains(query) {
         out.write("true")?;
     }
 

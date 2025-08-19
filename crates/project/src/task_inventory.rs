@@ -333,7 +333,7 @@ impl Inventory {
 
                     for locator in locators.values() {
                         if let Some(scenario) = locator
-                            .create_scenario(&task.original_task(), &task.display_label(), &adapter)
+                            .create_scenario(task.original_task(), task.display_label(), &adapter)
                             .await
                         {
                             scenarios.push((kind, scenario));

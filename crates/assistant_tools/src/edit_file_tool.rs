@@ -4,11 +4,11 @@ use crate::{
     schema::json_schema_for,
     ui::{COLLAPSED_LINES, ToolOutputPreview},
 };
+use action_log::ActionLog;
 use agent_settings;
 use anyhow::{Context as _, Result, anyhow};
 use assistant_tool::{
-    ActionLog, AnyToolCard, Tool, ToolCard, ToolResult, ToolResultContent, ToolResultOutput,
-    ToolUseStatus,
+    AnyToolCard, Tool, ToolCard, ToolResult, ToolResultContent, ToolResultOutput, ToolUseStatus,
 };
 use buffer_diff::{BufferDiff, BufferDiffSnapshot};
 use editor::{Editor, EditorMode, MinimapVisibility, MultiBuffer, PathKey};
@@ -307,7 +307,7 @@ impl Tool for EditFileTool {
             let mut ambiguous_ranges = Vec::new();
             while let Some(event) = events.next().await {
                 match event {
-                    EditAgentOutputEvent::Edited => {
+                    EditAgentOutputEvent::Edited { .. } => {
                         if let Some(card) = card_clone.as_ref() {
                             card.update(cx, |card, cx| card.update_diff(cx))?;
                         }
@@ -536,7 +536,7 @@ fn resolve_path(
 
             let parent_entry = parent_project_path
                 .as_ref()
-                .and_then(|path| project.entry_for_path(&path, cx))
+                .and_then(|path| project.entry_for_path(path, cx))
                 .context("Can't create file: parent directory doesn't exist")?;
 
             anyhow::ensure!(
@@ -723,13 +723,13 @@ impl EditFileToolCard {
         let buffer = buffer.read(cx);
         let diff = diff.read(cx);
         let mut ranges = diff
-            .hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &buffer, cx)
-            .map(|diff_hunk| diff_hunk.buffer_range.to_point(&buffer))
+            .hunks_intersecting_range(Anchor::MIN..Anchor::MAX, buffer, cx)
+            .map(|diff_hunk| diff_hunk.buffer_range.to_point(buffer))
             .collect::<Vec<_>>();
         ranges.extend(
             self.revealed_ranges
                 .iter()
-                .map(|range| range.to_point(&buffer)),
+                .map(|range| range.to_point(buffer)),
         );
         ranges.sort_unstable_by_key(|range| (range.start, Reverse(range.end)));
 
@@ -857,7 +857,7 @@ impl ToolCard for EditFileToolCard {
                     )
                     .child(
                         Icon::new(IconName::ArrowUpRight)
-                            .size(IconSize::XSmall)
+                            .size(IconSize::Small)
                             .color(Color::Ignored),
                     ),
             )

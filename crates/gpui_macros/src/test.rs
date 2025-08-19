@@ -73,7 +73,7 @@ impl Parse for Args {
                 (Meta::NameValue(meta), "seed") => {
                     seeds = vec![parse_usize_from_expr(&meta.value)? as u64]
                 }
-                (Meta::List(list), "seeds") => seeds = parse_u64_array(&list)?,
+                (Meta::List(list), "seeds") => seeds = parse_u64_array(list)?,
                 (Meta::Path(_), _) => {
                     return Err(syn::Error::new(meta.span(), "invalid path argument"));
                 }
@@ -167,6 +167,7 @@ fn generate_test_function(
                             ));
                             cx_teardowns.extend(quote!(
                                 dispatcher.run_until_parked();
+                                #cx_varname.executor().forbid_parking();
                                 #cx_varname.quit();
                                 dispatcher.run_until_parked();
                             ));
@@ -232,7 +233,7 @@ fn generate_test_function(
                                 cx_teardowns.extend(quote!(
                                     drop(#cx_varname_lock);
                                     dispatcher.run_until_parked();
-                                    #cx_varname.update(|cx| { cx.quit() });
+                                    #cx_varname.update(|cx| { cx.background_executor().forbid_parking(); cx.quit(); });
                                     dispatcher.run_until_parked();
                                 ));
                                 continue;
@@ -247,6 +248,7 @@ fn generate_test_function(
                                 ));
                                 cx_teardowns.extend(quote!(
                                     dispatcher.run_until_parked();
+                                    #cx_varname.executor().forbid_parking();
                                     #cx_varname.quit();
                                     dispatcher.run_until_parked();
                                 ));

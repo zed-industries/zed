@@ -1,9 +1,9 @@
 use crate::{Keep, KeepAll, OpenAgentDiff, Reject, RejectAll};
 use acp_thread::{AcpThread, AcpThreadEvent};
+use action_log::ActionLog;
 use agent::{Thread, ThreadEvent, ThreadSummary};
 use agent_settings::AgentSettings;
 use anyhow::Result;
-use assistant_tool::ActionLog;
 use buffer_diff::DiffHunkStatus;
 use collections::{HashMap, HashSet};
 use editor::{
@@ -207,7 +207,7 @@ impl AgentDiffPane {
                 ),
                 match &thread {
                     AgentDiffThread::Native(thread) => {
-                        Some(cx.subscribe(&thread, |this, _thread, event, cx| {
+                        Some(cx.subscribe(thread, |this, _thread, event, cx| {
                             this.handle_thread_event(event, cx)
                         }))
                     }
@@ -398,7 +398,7 @@ fn keep_edits_in_selection(
         .disjoint_anchor_ranges()
         .collect::<Vec<_>>();
 
-    keep_edits_in_ranges(editor, buffer_snapshot, &thread, ranges, window, cx)
+    keep_edits_in_ranges(editor, buffer_snapshot, thread, ranges, window, cx)
 }
 
 fn reject_edits_in_selection(
@@ -412,7 +412,7 @@ fn reject_edits_in_selection(
         .selections
         .disjoint_anchor_ranges()
         .collect::<Vec<_>>();
-    reject_edits_in_ranges(editor, buffer_snapshot, &thread, ranges, window, cx)
+    reject_edits_in_ranges(editor, buffer_snapshot, thread, ranges, window, cx)
 }
 
 fn keep_edits_in_ranges(
@@ -503,8 +503,7 @@ fn update_editor_selection(
                         &[last_kept_hunk_end..editor::Anchor::max()],
                         buffer_snapshot,
                     )
-                    .skip(1)
-                    .next()
+                    .nth(1)
             })
             .or_else(|| {
                 let first_kept_hunk = diff_hunks.first()?;
@@ -1001,7 +1000,7 @@ impl AgentDiffToolbar {
             return;
         };
 
-        *state = agent_diff.read(cx).editor_state(&editor);
+        *state = agent_diff.read(cx).editor_state(editor);
         self.update_location(cx);
         cx.notify();
     }
@@ -1343,13 +1342,13 @@ impl AgentDiff {
         });
 
         let thread_subscription = match &thread {
-            AgentDiffThread::Native(thread) => cx.subscribe_in(&thread, window, {
+            AgentDiffThread::Native(thread) => cx.subscribe_in(thread, window, {
                 let workspace = workspace.clone();
                 move |this, _thread, event, window, cx| {
                     this.handle_native_thread_event(&workspace, event, window, cx)
                 }
             }),
-            AgentDiffThread::AcpThread(thread) => cx.subscribe_in(&thread, window, {
+            AgentDiffThread::AcpThread(thread) => cx.subscribe_in(thread, window, {
                 let workspace = workspace.clone();
                 move |this, thread, event, window, cx| {
                     this.handle_acp_thread_event(&workspace, thread, event, window, cx)
@@ -1357,11 +1356,11 @@ impl AgentDiff {
             }),
         };
 
-        if let Some(workspace_thread) = self.workspace_threads.get_mut(&workspace) {
+        if let Some(workspace_thread) = self.workspace_threads.get_mut(workspace) {
             // replace thread and action log subscription, but keep editors
             workspace_thread.thread = thread.downgrade();
             workspace_thread._thread_subscriptions = (action_log_subscription, thread_subscription);
-            self.update_reviewing_editors(&workspace, window, cx);
+            self.update_reviewing_editors(workspace, window, cx);
             return;
         }
 
@@ -1521,7 +1520,8 @@ impl AgentDiff {
                     self.update_reviewing_editors(workspace, window, cx);
                 }
             }
-            AcpThreadEvent::Stopped
+            AcpThreadEvent::EntriesRemoved(_)
+            | AcpThreadEvent::Stopped
             | AcpThreadEvent::ToolAuthorizationRequired
             | AcpThreadEvent::Error
             | AcpThreadEvent::ServerExited(_) => {}
@@ -1676,7 +1676,7 @@ impl AgentDiff {
                         editor.register_addon(EditorAgentDiffAddon);
                     });
                 } else {
-                    unaffected.remove(&weak_editor);
+                    unaffected.remove(weak_editor);
                 }
 
                 if new_state == EditorState::Reviewing && previous_state != Some(new_state) {
@@ -1729,7 +1729,7 @@ impl AgentDiff {
 
     fn editor_state(&self, editor: &WeakEntity<Editor>) -> EditorState {
         self.reviewing_editors
-            .get(&editor)
+            .get(editor)
             .cloned()
             .unwrap_or(EditorState::Idle)
     }

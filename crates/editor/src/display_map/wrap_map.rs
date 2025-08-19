@@ -1223,7 +1223,7 @@ mod tests {
         let tab_size = NonZeroU32::new(rng.gen_range(1..=4)).unwrap();
 
         let font = test_font();
-        let _font_id = text_system.font_id(&font);
+        let _font_id = text_system.resolve_font(&font);
         let font_size = px(14.0);
 
         log::info!("Tab size: {}", tab_size);
@@ -1461,7 +1461,7 @@ mod tests {
                 }
 
                 let mut prev_ix = 0;
-                for boundary in line_wrapper.wrap_line(&[LineFragment::text(&line)], wrap_width) {
+                for boundary in line_wrapper.wrap_line(&[LineFragment::text(line)], wrap_width) {
                     wrapped_text.push_str(&line[prev_ix..boundary.ix]);
                     wrapped_text.push('\n');
                     wrapped_text.push_str(&" ".repeat(boundary.next_indent as usize));

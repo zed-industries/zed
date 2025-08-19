@@ -193,7 +193,7 @@ impl State {
     fn authenticate(&self, cx: &mut Context<Self>) -> Task<Result<()>> {
         let client = self.client.clone();
         cx.spawn(async move |state, cx| {
-            client.sign_in_with_optional_connect(true, &cx).await?;
+            client.sign_in_with_optional_connect(true, cx).await?;
             state.update(cx, |_, cx| cx.notify())
         })
     }
@@ -391,7 +391,12 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
         Task::ready(Ok(()))
     }
 
-    fn configuration_view(&self, _: &mut Window, cx: &mut App) -> AnyView {
+    fn configuration_view(
+        &self,
+        _target_agent: language_model::ConfigurationViewTargetAgent,
+        _: &mut Window,
+        cx: &mut App,
+    ) -> AnyView {
         cx.new(|_| ConfigurationView::new(self.state.clone()))
             .into()
     }
@@ -437,7 +442,7 @@ fn render_accept_terms(
         .style(ButtonStyle::Subtle)
         .icon(IconName::ArrowUpRight)
         .icon_color(Color::Muted)
-        .icon_size(IconSize::XSmall)
+        .icon_size(IconSize::Small)
         .when(thread_empty_state, |this| this.label_size(LabelSize::Small))
         .on_click(move |_, _window, cx| cx.open_url("https://zed.dev/terms-of-service"));
 
@@ -941,6 +946,8 @@ impl LanguageModel for CloudLanguageModel {
                     request,
                     model.id(),
                     model.supports_parallel_tool_calls(),
+                    model.supports_prompt_cache_key(),
+                    None,
                     None,
                 );
                 let llm_api_token = self.llm_api_token.clone();

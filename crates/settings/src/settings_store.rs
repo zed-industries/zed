@@ -16,6 +16,7 @@ use serde_json::{Value, json};
 use smallvec::SmallVec;
 use std::{
     any::{Any, TypeId, type_name},
+    env,
     fmt::Debug,
     ops::Range,
     path::{Path, PathBuf},
@@ -126,6 +127,8 @@ pub struct SettingsSources<'a, T> {
     pub user: Option<&'a T>,
     /// The user settings for the current release channel.
     pub release_channel: Option<&'a T>,
+    /// The user settings for the current operating system.
+    pub operating_system: Option<&'a T>,
     /// The settings associated with an enabled settings profile
     pub profile: Option<&'a T>,
     /// The server's settings.
@@ -147,6 +150,7 @@ impl<'a, T: Serialize> SettingsSources<'a, T> {
             .chain(self.extensions)
             .chain(self.user)
             .chain(self.release_channel)
+            .chain(self.operating_system)
             .chain(self.profile)
             .chain(self.server)
             .chain(self.project.iter().copied())
@@ -336,6 +340,11 @@ impl SettingsStore {
                     .log_err();
             }
 
+            let mut os_settings_value = None;
+            if let Some(os_settings) = &self.raw_user_settings.get(env::consts::OS) {
+                os_settings_value = setting_value.deserialize_setting(os_settings).log_err();
+            }
+
             let mut profile_value = None;
             if let Some(active_profile) = cx.try_global::<ActiveSettingsProfileName>() {
                 if let Some(profiles) = self.raw_user_settings.get("profiles") {
@@ -366,6 +375,7 @@ impl SettingsStore {
                         extensions: extension_value.as_ref(),
                         user: user_value.as_ref(),
                         release_channel: release_channel_value.as_ref(),
+                        operating_system: os_settings_value.as_ref(),
                         profile: profile_value.as_ref(),
                         server: server_value.as_ref(),
                         project: &[],
@@ -1092,7 +1102,7 @@ impl SettingsStore {
             "$schema": meta_schema,
             "title": "Zed Settings",
             "unevaluatedProperties": false,
-            // ZedSettings + settings overrides for each release stage / profiles
+            // ZedSettings + settings overrides for each release stage / OS / profiles
             "allOf": [
                 zed_settings_ref,
                 {
@@ -1101,6 +1111,9 @@ impl SettingsStore {
                         "nightly": zed_settings_override_ref,
                         "stable": zed_settings_override_ref,
                         "preview": zed_settings_override_ref,
+                        "linux": zed_settings_override_ref,
+                        "macos": zed_settings_override_ref,
+                        "windows": zed_settings_override_ref,
                         "profiles": {
                             "type": "object",
                             "description": "Configures any number of settings profiles.",
@@ -1164,6 +1177,13 @@ impl SettingsStore {
                 }
             }
 
+            let mut os_settings = None;
+            if let Some(settings) = &self.raw_user_settings.get(env::consts::OS) {
+                if let Some(settings) = setting_value.deserialize_setting(settings).log_err() {
+                    os_settings = Some(settings);
+                }
+            }
+
             let mut profile_settings = None;
             if let Some(active_profile) = cx.try_global::<ActiveSettingsProfileName>() {
                 if let Some(profiles) = self.raw_user_settings.get("profiles") {
@@ -1184,6 +1204,7 @@ impl SettingsStore {
                             extensions: extension_settings.as_ref(),
                             user: user_settings.as_ref(),
                             release_channel: release_channel_settings.as_ref(),
+                            operating_system: os_settings.as_ref(),
                             profile: profile_settings.as_ref(),
                             server: server_settings.as_ref(),
                             project: &[],
@@ -1237,6 +1258,7 @@ impl SettingsStore {
                                     extensions: extension_settings.as_ref(),
                                     user: user_settings.as_ref(),
                                     release_channel: release_channel_settings.as_ref(),
+                                    operating_system: os_settings.as_ref(),
                                     profile: profile_settings.as_ref(),
                                     server: server_settings.as_ref(),
                                     project: &project_settings_stack.iter().collect::<Vec<_>>(),
@@ -1362,6 +1384,9 @@ impl<T: Settings> AnySettingValue for SettingValue<T> {
                     .map(|value| value.0.downcast_ref::<T::FileContent>().unwrap()),
                 release_channel: values
                     .release_channel
+                    .map(|value| value.0.downcast_ref::<T::FileContent>().unwrap()),
+                operating_system: values
+                    .operating_system
                     .map(|value| value.0.downcast_ref::<T::FileContent>().unwrap()),
                 profile: values
                     .profile

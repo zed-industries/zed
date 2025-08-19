@@ -242,22 +242,22 @@ static STRING_REPLACE: LazyLock<HashMap<&str, &str>> = LazyLock::new(|| {
             "inline_completion::ToggleMenu",
             "edit_prediction::ToggleMenu",
         ),
-        ("editor::NextEditPrediction", "editor::NextEditPrediction"),
+        ("editor::NextInlineCompletion", "editor::NextEditPrediction"),
         (
+            "editor::PreviousInlineCompletion",
             "editor::PreviousEditPrediction",
-            "editor::PreviousEditPrediction",
         ),
         (
+            "editor::AcceptPartialInlineCompletion",
             "editor::AcceptPartialEditPrediction",
-            "editor::AcceptPartialEditPrediction",
         ),
-        ("editor::ShowEditPrediction", "editor::ShowEditPrediction"),
+        ("editor::ShowInlineCompletion", "editor::ShowEditPrediction"),
         (
-            "editor::AcceptEditPrediction",
+            "editor::AcceptInlineCompletion",
             "editor::AcceptEditPrediction",
         ),
         (
-            "editor::ToggleEditPredictions",
+            "editor::ToggleInlineCompletions",
             "editor::ToggleEditPrediction",
         ),
     ])

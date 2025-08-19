@@ -1,7 +1,7 @@
 use crate::{
     Anchor, Autoscroll, Editor, EditorEvent, EditorSettings, ExcerptId, ExcerptRange, FormatTarget,
-    MultiBuffer, MultiBufferSnapshot, NavigationData, SearchWithinRange, SelectionEffects,
-    ToPoint as _,
+    MultiBuffer, MultiBufferSnapshot, NavigationData, ReportEditorEvent, SearchWithinRange,
+    SelectionEffects, ToPoint as _,
     display_map::HighlightKey,
     editor_settings::SeedQuerySetting,
     persistence::{DB, SerializedEditor},
@@ -524,8 +524,8 @@ fn serialize_selection(
 ) -> proto::Selection {
     proto::Selection {
         id: selection.id as u64,
-        start: Some(serialize_anchor(&selection.start, &buffer)),
-        end: Some(serialize_anchor(&selection.end, &buffer)),
+        start: Some(serialize_anchor(&selection.start, buffer)),
+        end: Some(serialize_anchor(&selection.end, buffer)),
         reversed: selection.reversed,
     }
 }
@@ -654,6 +654,10 @@ impl Item for Editor {
         }
     }
 
+    fn suggested_filename(&self, cx: &App) -> SharedString {
+        self.buffer.read(cx).title(cx).to_string().into()
+    }
+
     fn tab_icon(&self, _: &Window, cx: &App) -> Option<Icon> {
         ItemSettings::get_global(cx)
             .file_icons
@@ -674,7 +678,7 @@ impl Item for Editor {
                     let buffer = buffer.read(cx);
                     let path = buffer.project_path(cx)?;
                     let buffer_id = buffer.remote_id();
-                    let project = self.project.as_ref()?.read(cx);
+                    let project = self.project()?.read(cx);
                     let entry = project.entry_for_path(&path, cx)?;
                     let (repo, repo_path) = project
                         .git_store()
@@ -776,6 +780,10 @@ impl Item for Editor {
         }
     }
 
+    fn on_removed(&self, cx: &App) {
+        self.report_editor_event(ReportEditorEvent::Closed, None, cx);
+    }
+
     fn deactivated(&mut self, _: &mut Window, cx: &mut Context<Self>) {
         let selection = self.selections.newest_anchor();
         self.push_to_nav_history(selection.head(), None, true, false, cx);
@@ -815,9 +823,9 @@ impl Item for Editor {
     ) -> Task<Result<()>> {
         // Add meta data tracking # of auto saves
         if options.autosave {
-            self.report_editor_event("Editor Autosaved", None, cx);
+            self.report_editor_event(ReportEditorEvent::Saved { auto_saved: true }, None, cx);
         } else {
-            self.report_editor_event("Editor Saved", None, cx);
+            self.report_editor_event(ReportEditorEvent::Saved { auto_saved: false }, None, cx);
         }
 
         let buffers = self.buffer().clone().read(cx).all_buffers();
@@ -896,7 +904,11 @@ impl Item for Editor {
             .path
             .extension()
             .map(|a| a.to_string_lossy().to_string());
-        self.report_editor_event("Editor Saved", file_extension, cx);
+        self.report_editor_event(
+            ReportEditorEvent::Saved { auto_saved: false },
+            file_extension,
+            cx,
+        );
 
         project.update(cx, |project, cx| project.save_buffer_as(buffer, path, cx))
     }
@@ -997,12 +1009,16 @@ impl Item for Editor {
     ) {
         self.workspace = Some((workspace.weak_handle(), workspace.database_id()));
         if let Some(workspace) = &workspace.weak_handle().upgrade() {
-            cx.subscribe(&workspace, |editor, _, event: &workspace::Event, _cx| {
-                if matches!(event, workspace::Event::ModalOpened) {
-                    editor.mouse_context_menu.take();
-                    editor.inline_blame_popover.take();
-                }
-            })
+            cx.subscribe(
+                workspace,
+                |editor, _, event: &workspace::Event, _cx| match event {
+                    workspace::Event::ModalOpened => {
+                        editor.mouse_context_menu.take();
+                        editor.inline_blame_popover.take();
+                    }
+                    _ => {}
+                },
+            )
             .detach();
         }
     }
@@ -1021,6 +1037,10 @@ impl Item for Editor {
             }
 
             EditorEvent::SelectionsChanged { local } if *local => {
+                f(ItemEvent::UpdateBreadcrumbs);
+            }
+
+            EditorEvent::BreadcrumbsChanged => {
                 f(ItemEvent::UpdateBreadcrumbs);
             }
 
@@ -1276,7 +1296,7 @@ impl SerializableItem for Editor {
             project
                 .read(cx)
                 .worktree_for_id(worktree_id, cx)
-                .and_then(|worktree| worktree.read(cx).absolutize(&file.path()).ok())
+                .and_then(|worktree| worktree.read(cx).absolutize(file.path()).ok())
                 .or_else(|| {
                     let full_path = file.full_path(cx);
                     let project_path = project.read(cx).find_project_path(&full_path, cx)?;
@@ -1365,14 +1385,14 @@ impl ProjectItem for Editor {
                     })
                 {
                     editor.fold_ranges(
-                        clip_ranges(&restoration_data.folds, &snapshot),
+                        clip_ranges(&restoration_data.folds, snapshot),
                         false,
                         window,
                         cx,
                     );
                     if !restoration_data.selections.is_empty() {
                         editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
-                            s.select_ranges(clip_ranges(&restoration_data.selections, &snapshot));
+                            s.select_ranges(clip_ranges(&restoration_data.selections, snapshot));
                         });
                     }
                     let (top_row, offset) = restoration_data.scroll_position;
@@ -1825,7 +1845,7 @@ pub fn entry_diagnostic_aware_icon_name_and_color(
     diagnostic_severity: Option<DiagnosticSeverity>,
 ) -> Option<(IconName, Color)> {
     match diagnostic_severity {
-        Some(DiagnosticSeverity::ERROR) => Some((IconName::X, Color::Error)),
+        Some(DiagnosticSeverity::ERROR) => Some((IconName::Close, Color::Error)),
         Some(DiagnosticSeverity::WARNING) => Some((IconName::Triangle, Color::Warning)),
         _ => None,
     }

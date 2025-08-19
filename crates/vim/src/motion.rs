@@ -679,7 +679,7 @@ impl Vim {
             match self.mode {
                 Mode::Visual | Mode::VisualLine | Mode::VisualBlock => {
                     if !prior_selections.is_empty() {
-                        self.update_editor(window, cx, |_, editor, window, cx| {
+                        self.update_editor(cx, |_, editor, cx| {
                             editor.change_selections(Default::default(), window, cx, |s| {
                                 s.select_ranges(prior_selections.iter().cloned())
                             })
@@ -2280,8 +2280,8 @@ fn go_to_line(map: &DisplaySnapshot, display_point: DisplayPoint, line: usize) -
     }
     let mut last_position = None;
     for (excerpt, buffer, range) in map.buffer_snapshot.excerpts() {
-        let excerpt_range = language::ToOffset::to_offset(&range.context.start, &buffer)
-            ..language::ToOffset::to_offset(&range.context.end, &buffer);
+        let excerpt_range = language::ToOffset::to_offset(&range.context.start, buffer)
+            ..language::ToOffset::to_offset(&range.context.end, buffer);
         if offset >= excerpt_range.start && offset <= excerpt_range.end {
             let text_anchor = buffer.anchor_after(offset);
             let anchor = Anchor::in_buffer(excerpt, buffer.remote_id(), text_anchor);
@@ -2639,7 +2639,8 @@ fn find_backward(
     }
 }
 
-fn is_character_match(target: char, other: char, smartcase: bool) -> bool {
+/// Returns true if one char is equal to the other or its uppercase variant (if smartcase is true).
+pub fn is_character_match(target: char, other: char, smartcase: bool) -> bool {
     if smartcase {
         if target.is_uppercase() {
             target == other
@@ -2881,7 +2882,7 @@ fn method_motion(
         } else {
             possibilities.min().unwrap_or(offset)
         };
-        let new_point = map.clip_point(dest.to_display_point(&map), Bias::Left);
+        let new_point = map.clip_point(dest.to_display_point(map), Bias::Left);
         if new_point == display_point {
             break;
         }
@@ -2935,7 +2936,7 @@ fn comment_motion(
         } else {
             possibilities.min().unwrap_or(offset)
         };
-        let new_point = map.clip_point(dest.to_display_point(&map), Bias::Left);
+        let new_point = map.clip_point(dest.to_display_point(map), Bias::Left);
         if new_point == display_point {
             break;
         }
@@ -3002,7 +3003,7 @@ fn section_motion(
                 possibilities.min().unwrap_or(map.buffer_snapshot.len())
             };
 
-            let new_point = map.clip_point(offset.to_display_point(&map), Bias::Left);
+            let new_point = map.clip_point(offset.to_display_point(map), Bias::Left);
             if new_point == display_point {
                 break;
             }

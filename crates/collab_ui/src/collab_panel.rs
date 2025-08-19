@@ -95,7 +95,7 @@ pub fn init(cx: &mut App) {
                 .and_then(|room| room.read(cx).channel_id());
 
             if let Some(channel_id) = channel_id {
-                let workspace = cx.entity().clone();
+                let workspace = cx.entity();
                 window.defer(cx, move |window, cx| {
                     ChannelView::open(channel_id, None, workspace, window, cx)
                         .detach_and_log_err(cx)
@@ -1142,7 +1142,7 @@ impl CollabPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let this = cx.entity().clone();
+        let this = cx.entity();
         if !(role == proto::ChannelRole::Guest
             || role == proto::ChannelRole::Talker
             || role == proto::ChannelRole::Member)
@@ -1272,7 +1272,7 @@ impl CollabPanel {
                 .channel_for_id(clipboard.channel_id)
                 .map(|channel| channel.name.clone())
         });
-        let this = cx.entity().clone();
+        let this = cx.entity();
 
         let context_menu = ContextMenu::build(window, cx, |mut context_menu, window, cx| {
             if self.has_subchannels(ix) {
@@ -1439,7 +1439,7 @@ impl CollabPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let this = cx.entity().clone();
+        let this = cx.entity();
         let in_room = ActiveCall::global(cx).read(cx).room().is_some();
 
         let context_menu = ContextMenu::build(window, cx, |mut context_menu, _, _| {
@@ -2317,7 +2317,7 @@ impl CollabPanel {
                                 let client = this.client.clone();
                                 cx.spawn_in(window, async move |_, cx| {
                                     client
-                                        .connect(true, &cx)
+                                        .connect(true, cx)
                                         .await
                                         .into_response()
                                         .notify_async_err(cx);
@@ -2931,7 +2931,7 @@ impl CollabPanel {
                                 .visible_on_hover(""),
                         )
                         .child(
-                            IconButton::new("channel_notes", IconName::FileText)
+                            IconButton::new("channel_notes", IconName::Reader)
                                 .style(ButtonStyle::Filled)
                                 .shape(ui::IconButtonShape::Square)
                                 .icon_size(IconSize::Small)
@@ -3053,7 +3053,7 @@ impl Render for CollabPanel {
             .on_action(cx.listener(CollabPanel::move_channel_down))
             .track_focus(&self.focus_handle)
             .size_full()
-            .child(if self.user_store.read(cx).current_user().is_none() {
+            .child(if !self.client.status().borrow().is_connected() {
                 self.render_signed_out(cx)
             } else {
                 self.render_signed_in(window, cx)

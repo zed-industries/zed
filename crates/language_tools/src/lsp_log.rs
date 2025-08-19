@@ -661,7 +661,7 @@ impl LogStore {
             IoKind::StdOut => true,
             IoKind::StdIn => false,
             IoKind::StdErr => {
-                self.add_language_server_log(language_server_id, MessageType::LOG, &message, cx);
+                self.add_language_server_log(language_server_id, MessageType::LOG, message, cx);
                 return Some(());
             }
         };
@@ -1358,7 +1358,7 @@ impl Render for LspLogToolbarItemView {
             })
             .collect();
 
-        let log_toolbar_view = cx.entity().clone();
+        let log_toolbar_view = cx.entity();
 
         let lsp_menu = PopoverMenu::new("LspLogView")
             .anchor(Corner::TopLeft)

@@ -214,7 +214,7 @@ impl PickerDelegate for SlashCommandDelegate {
                                         let mut label = format!("{}", info.name);
                                         if let Some(args) = info.args.as_ref().filter(|_| selected)
                                         {
-                                            label.push_str(&args);
+                                            label.push_str(args);
                                         }
                                         Label::new(label)
                                             .single_line()
@@ -306,7 +306,7 @@ where
                                 )
                                 .child(
                                     Icon::new(IconName::ArrowUpRight)
-                                        .size(IconSize::XSmall)
+                                        .size(IconSize::Small)
                                         .color(Color::Muted),
                                 ),
                         )

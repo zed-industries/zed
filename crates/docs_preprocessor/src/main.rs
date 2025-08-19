@@ -8,7 +8,7 @@ use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 use std::io::{self, Read};
 use std::process;
-use std::sync::LazyLock;
+use std::sync::{LazyLock, OnceLock};
 use util::paths::PathExt;
 
 static KEYMAP_MACOS: LazyLock<KeymapFile> = LazyLock::new(|| {
@@ -129,7 +129,7 @@ fn handle_frontmatter(book: &mut Book, errors: &mut HashSet<PreprocessorError>) 
                 let Some((name, value)) = line.split_once(':') else {
                     errors.insert(PreprocessorError::InvalidFrontmatterLine(format!(
                         "{}: {}",
-                        chapter_breadcrumbs(&chapter),
+                        chapter_breadcrumbs(chapter),
                         line
                     )));
                     continue;
@@ -388,7 +388,7 @@ fn handle_postprocessing() -> Result<()> {
         let meta_title = format!("{} | {}", page_title, meta_title);
         zlog::trace!(logger => "Updating {:?}", pretty_path(&file, &root_dir));
         let contents = contents.replace("#description#", meta_description);
-        let contents = TITLE_REGEX
+        let contents = title_regex()
             .replace(&contents, |_: &regex::Captures| {
                 format!("<title>{}</title>", meta_title)
             })
@@ -402,13 +402,11 @@ fn handle_postprocessing() -> Result<()> {
         path: &'a std::path::PathBuf,
         root: &'a std::path::PathBuf,
     ) -> &'a std::path::Path {
-        &path.strip_prefix(&root).unwrap_or(&path)
+        path.strip_prefix(&root).unwrap_or(path)
     }
-    const TITLE_REGEX: std::cell::LazyCell<Regex> =
-        std::cell::LazyCell::new(|| Regex::new(r"<title>\s*(.*?)\s*</title>").unwrap());
     fn extract_title_from_page(contents: &str, pretty_path: &std::path::Path) -> String {
-        let title_tag_contents = &TITLE_REGEX
-            .captures(&contents)
+        let title_tag_contents = &title_regex()
+            .captures(contents)
             .with_context(|| format!("Failed to find title in {:?}", pretty_path))
             .expect("Page has <title> element")[1];
         let title = title_tag_contents
@@ -419,4 +417,9 @@ fn handle_postprocessing() -> Result<()> {
             .to_string();
         title
     }
+}
+
+fn title_regex() -> &'static Regex {
+    static TITLE_REGEX: OnceLock<Regex> = OnceLock::new();
+    TITLE_REGEX.get_or_init(|| Regex::new(r"<title>\s*(.*?)\s*</title>").unwrap())
 }

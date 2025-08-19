@@ -82,7 +82,7 @@ pub fn is_scope_enabled(scope: &Scope, module_path: Option<&str>, level: log::Le
         // if no scopes are enabled, return false because it's not <= LEVEL_ENABLED_MAX_STATIC
         return is_enabled_by_default;
     }
-    let enabled_status = map.is_enabled(&scope, module_path, level);
+    let enabled_status = map.is_enabled(scope, module_path, level);
     return match enabled_status {
         EnabledStatus::NotConfigured => is_enabled_by_default,
         EnabledStatus::Enabled => true,

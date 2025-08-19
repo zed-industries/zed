@@ -75,7 +75,7 @@ impl<T: 'static> Render for PromptEditor<T> {
                 let codegen = codegen.read(cx);
 
                 if codegen.alternative_count(cx) > 1 {
-                    buttons.push(self.render_cycle_controls(&codegen, cx));
+                    buttons.push(self.render_cycle_controls(codegen, cx));
                 }
 
                 let editor_margins = editor_margins.lock();
@@ -541,7 +541,7 @@ impl<T: 'static> PromptEditor<T> {
                     match &self.mode {
                         PromptEditorMode::Terminal { .. } => vec![
                             accept,
-                            IconButton::new("confirm", IconName::PlayOutlined)
+                            IconButton::new("confirm", IconName::PlayFilled)
                                 .icon_color(Color::Info)
                                 .shape(IconButtonShape::Square)
                                 .tooltip(|window, cx| {

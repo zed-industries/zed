@@ -16,6 +16,7 @@ use clock::SystemClock;
 use cloud_api_client::CloudApiClient;
 use cloud_api_client::websocket_protocol::MessageToClient;
 use credentials_provider::CredentialsProvider;
+use feature_flags::FeatureFlagAppExt as _;
 use futures::{
     AsyncReadExt, FutureExt, SinkExt, Stream, StreamExt, TryFutureExt as _, TryStreamExt,
     channel::oneshot, future::BoxFuture,
@@ -161,7 +162,7 @@ pub fn init(client: &Arc<Client>, cx: &mut App) {
         let client = client.clone();
         move |_: &SignIn, cx| {
             if let Some(client) = client.upgrade() {
-                cx.spawn(async move |cx| client.sign_in_with_optional_connect(true, &cx).await)
+                cx.spawn(async move |cx| client.sign_in_with_optional_connect(true, cx).await)
                     .detach_and_log_err(cx);
             }
         }
@@ -172,7 +173,7 @@ pub fn init(client: &Arc<Client>, cx: &mut App) {
         move |_: &SignOut, cx| {
             if let Some(client) = client.upgrade() {
                 cx.spawn(async move |cx| {
-                    client.sign_out(&cx).await;
+                    client.sign_out(cx).await;
                 })
                 .detach();
             }
@@ -184,13 +185,15 @@ pub fn init(client: &Arc<Client>, cx: &mut App) {
         move |_: &Reconnect, cx| {
             if let Some(client) = client.upgrade() {
                 cx.spawn(async move |cx| {
-                    client.reconnect(&cx);
+                    client.reconnect(cx);
                 })
                 .detach();
             }
         }
     });
 }
+
+pub type MessageToClientHandler = Box<dyn Fn(&MessageToClient, &mut App) + Send + Sync + 'static>;
 
 struct GlobalClient(Arc<Client>);
 
@@ -205,6 +208,7 @@ pub struct Client {
     credentials_provider: ClientCredentialsProvider,
     state: RwLock<ClientState>,
     handler_set: parking_lot::Mutex<ProtoMessageHandlerSet>,
+    message_to_client_handlers: parking_lot::Mutex<Vec<MessageToClientHandler>>,
 
     #[allow(clippy::type_complexity)]
     #[cfg(any(test, feature = "test-support"))]
@@ -554,6 +558,7 @@ impl Client {
             credentials_provider: ClientCredentialsProvider::new(cx),
             state: Default::default(),
             handler_set: Default::default(),
+            message_to_client_handlers: parking_lot::Mutex::new(Vec::new()),
 
             #[cfg(any(test, feature = "test-support"))]
             authenticate: Default::default(),
@@ -672,7 +677,7 @@ impl Client {
 
                     let mut delay = INITIAL_RECONNECTION_DELAY;
                     loop {
-                        match client.connect(true, &cx).await {
+                        match client.connect(true, cx).await {
                             ConnectionResult::Timeout => {
                                 log::error!("client connect attempt timed out")
                             }
@@ -696,7 +701,7 @@ impl Client {
                                 Status::ReconnectionError {
                                     next_reconnection: Instant::now() + delay,
                                 },
-                                &cx,
+                                cx,
                             );
                             let jitter =
                                 Duration::from_millis(rng.gen_range(0..delay.as_millis() as u64));
@@ -960,25 +965,56 @@ impl Client {
         Ok(())
     }
 
-    /// Performs a sign-in and also connects to Collab.
+    /// Performs a sign-in and also (optionally) connects to Collab.
     ///
-    /// This is called in places where we *don't* need to connect in the future. We will replace these calls with calls
-    /// to `sign_in` when we're ready to remove auto-connection to Collab.
+    /// Only Zed staff automatically connect to Collab.
     pub async fn sign_in_with_optional_connect(
         self: &Arc<Self>,
         try_provider: bool,
         cx: &AsyncApp,
     ) -> Result<()> {
+        // Don't try to sign in again if we're already connected to Collab, as it will temporarily disconnect us.
+        if self.status().borrow().is_connected() {
+            return Ok(());
+        }
+
+        let (is_staff_tx, is_staff_rx) = oneshot::channel::<bool>();
+        let mut is_staff_tx = Some(is_staff_tx);
+        cx.update(|cx| {
+            cx.on_flags_ready(move |state, _cx| {
+                if let Some(is_staff_tx) = is_staff_tx.take() {
+                    is_staff_tx.send(state.is_staff).log_err();
+                }
+            })
+            .detach();
+        })
+        .log_err();
+
         let credentials = self.sign_in(try_provider, cx).await?;
 
         self.connect_to_cloud(cx).await.log_err();
 
-        let connect_result = match self.connect_with_credentials(credentials, cx).await {
-            ConnectionResult::Timeout => Err(anyhow!("connection timed out")),
-            ConnectionResult::ConnectionReset => Err(anyhow!("connection reset")),
-            ConnectionResult::Result(result) => result.context("client auth and connect"),
-        };
-        connect_result.log_err();
+        cx.update(move |cx| {
+            cx.spawn({
+                let client = self.clone();
+                async move |cx| {
+                    let is_staff = is_staff_rx.await?;
+                    if is_staff {
+                        match client.connect_with_credentials(credentials, cx).await {
+                            ConnectionResult::Timeout => Err(anyhow!("connection timed out")),
+                            ConnectionResult::ConnectionReset => Err(anyhow!("connection reset")),
+                            ConnectionResult::Result(result) => {
+                                result.context("client auth and connect")
+                            }
+                        }
+                    } else {
+                        Ok(())
+                    }
+                }
+            })
+            .detach_and_log_err(cx);
+        })
+        .log_err();
 
         Ok(())
     }
@@ -1120,7 +1156,7 @@ impl Client {
             let this = self.clone();
             async move |cx| {
                 while let Some(message) = incoming.next().await {
-                    this.handle_message(message, &cx);
+                    this.handle_message(message, cx);
                     // Don't starve the main thread when receiving lots of messages at once.
                     smol::future::yield_now().await;
                 }
@@ -1138,12 +1174,12 @@ impl Client {
                             peer_id,
                         })
                     {
-                        this.set_status(Status::SignedOut, &cx);
+                        this.set_status(Status::SignedOut, cx);
                     }
                 }
                 Err(err) => {
                     log::error!("connection error: {:?}", err);
-                    this.set_status(Status::ConnectionLost, &cx);
+                    this.set_status(Status::ConnectionLost, cx);
                 }
             }
         })
@@ -1379,6 +1415,12 @@ impl Client {
 
                     open_url_tx.send(url).log_err();
 
+                    #[derive(Deserialize)]
+                    struct CallbackParams {
+                        pub user_id: String,
+                        pub access_token: String,
+                    }
+
                     // Receive the HTTP request from the user's browser. Retrieve the user id and encrypted
                     // access token from the query params.
                     //
@@ -1389,17 +1431,13 @@ impl Client {
                             for _ in 0..100 {
                                 if let Some(req) = server.recv_timeout(Duration::from_secs(1))? {
                                     let path = req.url();
-                                    let mut user_id = None;
-                                    let mut access_token = None;
                                     let url = Url::parse(&format!("http://example.com{}", path))
                                         .context("failed to parse login notification url")?;
-                                    for (key, value) in url.query_pairs() {
-                                        if key == "access_token" {
-                                            access_token = Some(value.to_string());
-                                        } else if key == "user_id" {
-                                            user_id = Some(value.to_string());
-                                        }
-                                    }
+                                    let callback_params: CallbackParams =
+                                        serde_urlencoded::from_str(url.query().unwrap_or_default())
+                                            .context(
+                                                "failed to parse sign-in callback query parameters",
+                                            )?;
 
                                     let post_auth_url =
                                         http.build_url("/native_app_signin_succeeded");
@@ -1414,8 +1452,8 @@ impl Client {
                                     )
                                     .context("failed to respond to login http request")?;
                                     return Ok((
-                                        user_id.context("missing user_id parameter")?,
-                                        access_token.context("missing access_token parameter")?,
+                                        callback_params.user_id,
+                                        callback_params.access_token,
                                     ));
                                 }
                             }
@@ -1651,10 +1689,22 @@ impl Client {
         }
     }
 
-    fn handle_message_to_client(self: &Arc<Client>, message: MessageToClient, _cx: &AsyncApp) {
-        match message {
-            MessageToClient::UserUpdated => {}
-        }
+    pub fn add_message_to_client_handler(
+        self: &Arc<Client>,
+        handler: impl Fn(&MessageToClient, &mut App) + Send + Sync + 'static,
+    ) {
+        self.message_to_client_handlers
+            .lock()
+            .push(Box::new(handler));
+    }
+
+    fn handle_message_to_client(self: &Arc<Client>, message: MessageToClient, cx: &AsyncApp) {
+        cx.update(|cx| {
+            for handler in self.message_to_client_handlers.lock().iter() {
+                handler(&message, cx);
+            }
+        })
+        .ok();
     }
 
     pub fn telemetry(&self) -> &Arc<Telemetry> {

@@ -7,10 +7,10 @@ use gpui::{App, AppContext, AsyncApp, Task};
 use http_client::github::{AssetKind, GitHubLspBinaryVersion, build_asset_url};
 use language::{
     ContextLocation, ContextProvider, File, LanguageName, LanguageToolchainStore, LspAdapter,
-    LspAdapterDelegate,
+    LspAdapterDelegate, Toolchain,
 };
 use lsp::{CodeActionKind, LanguageServerBinary, LanguageServerName};
-use node_runtime::NodeRuntime;
+use node_runtime::{NodeRuntime, VersionStrategy};
 use project::{Fs, lsp_store::language_server_settings};
 use serde_json::{Value, json};
 use smol::{fs, lock::RwLock, stream::StreamExt};
@@ -587,8 +587,8 @@ impl LspAdapter for TypeScriptLspAdapter {
             .should_install_npm_package(
                 Self::PACKAGE_NAME,
                 &server_path,
-                &container_dir,
-                version.typescript_version.as_str(),
+                container_dir,
+                VersionStrategy::Latest(version.typescript_version.as_str()),
             )
             .await;
 
@@ -722,7 +722,7 @@ impl LspAdapter for TypeScriptLspAdapter {
         self: Arc<Self>,
         _: &dyn Fs,
         delegate: &Arc<dyn LspAdapterDelegate>,
-        _: Arc<dyn LanguageToolchainStore>,
+        _: Option<Toolchain>,
         cx: &mut AsyncApp,
     ) -> Result<Value> {
         let override_options = cx.update(|cx| {
@@ -822,7 +822,7 @@ impl LspAdapter for EsLintLspAdapter {
         self: Arc<Self>,
         _: &dyn Fs,
         delegate: &Arc<dyn LspAdapterDelegate>,
-        _: Arc<dyn LanguageToolchainStore>,
+        _: Option<Toolchain>,
         cx: &mut AsyncApp,
     ) -> Result<Value> {
         let workspace_root = delegate.worktree_root_path();
@@ -910,7 +910,7 @@ impl LspAdapter for EsLintLspAdapter {
         let server_path = destination_path.join(Self::SERVER_PATH);
 
         if fs::metadata(&server_path).await.is_err() {
-            remove_matching(&container_dir, |entry| entry != destination_path).await;
+            remove_matching(&container_dir, |_| true).await;
 
             download_server_binary(
                 delegate,

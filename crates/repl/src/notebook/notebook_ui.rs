@@ -295,7 +295,7 @@ impl NotebookEditor {
         _cx: &mut Context<Self>,
     ) -> IconButton {
         let id: ElementId = ElementId::Name(id.into());
-        IconButton::new(id, icon).width(px(CONTROL_SIZE).into())
+        IconButton::new(id, icon).width(px(CONTROL_SIZE))
     }
 
     fn render_notebook_controls(
@@ -321,7 +321,7 @@ impl NotebookEditor {
                             .child(
                                 Self::render_notebook_control(
                                     "run-all-cells",
-                                    IconName::PlayOutlined,
+                                    IconName::PlayFilled,
                                     window,
                                     cx,
                                 )
@@ -575,7 +575,7 @@ impl project::ProjectItem for NotebookItem {
                     .with_context(|| format!("finding the absolute path of {path:?}"))?;
 
                 // todo: watch for changes to the file
-                let file_content = fs.load(&abs_path.as_path()).await?;
+                let file_content = fs.load(abs_path.as_path()).await?;
                 let notebook = nbformat::parse_notebook(&file_content);
 
                 let notebook = match notebook {

@@ -374,7 +374,7 @@ mod windows {
             shader_path,
             "vs_4_1",
         );
-        generate_rust_binding(&const_name, &output_file, &rust_binding_path);
+        generate_rust_binding(&const_name, &output_file, rust_binding_path);
 
         // Compile fragment shader
         let output_file = format!("{}/{}_ps.h", out_dir, module);
@@ -387,7 +387,7 @@ mod windows {
             shader_path,
             "ps_4_1",
         );
-        generate_rust_binding(&const_name, &output_file, &rust_binding_path);
+        generate_rust_binding(&const_name, &output_file, rust_binding_path);
     }
 
     fn compile_shader_impl(

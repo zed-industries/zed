@@ -346,7 +346,7 @@ impl TerminalPanel {
             pane::Event::RemovedItem { .. } => self.serialize(cx),
             pane::Event::Remove { focus_on_pane } => {
                 let pane_count_before_removal = self.center.panes().len();
-                let _removal_result = self.center.remove(&pane);
+                let _removal_result = self.center.remove(pane);
                 if pane_count_before_removal == 1 {
                     self.center.first_pane().update(cx, |pane, cx| {
                         pane.set_zoomed(false, cx);
@@ -432,10 +432,9 @@ impl TerminalPanel {
             })
             .unwrap_or((None, None));
         let kind = TerminalKind::Shell(working_directory);
-        let window_handle = window.window_handle();
         let terminal = project
             .update(cx, |project, cx| {
-                project.create_terminal_with_venv(kind, python_venv_directory, window_handle, cx)
+                project.create_terminal_with_venv(kind, python_venv_directory, cx)
             })
             .ok()?;
 
@@ -666,13 +665,10 @@ impl TerminalPanel {
                 "terminal not yet supported for remote projects"
             )));
         }
-        let window_handle = window.window_handle();
         let project = workspace.project().downgrade();
         cx.spawn_in(window, async move |workspace, cx| {
             let terminal = project
-                .update(cx, |project, cx| {
-                    project.create_terminal(kind, window_handle, cx)
-                })?
+                .update(cx, |project, cx| project.create_terminal(kind, cx))?
                 .await?;
 
             workspace.update_in(cx, |workspace, window, cx| {
@@ -709,11 +705,8 @@ impl TerminalPanel {
                 terminal_panel.active_pane.clone()
             })?;
             let project = workspace.read_with(cx, |workspace, _| workspace.project().clone())?;
-            let window_handle = cx.window_handle();
             let terminal = project
-                .update(cx, |project, cx| {
-                    project.create_terminal(kind, window_handle, cx)
-                })?
+                .update(cx, |project, cx| project.create_terminal(kind, cx))?
                 .await?;
             let result = workspace.update_in(cx, |workspace, window, cx| {
                 let terminal_view = Box::new(cx.new(|cx| {
@@ -814,7 +807,6 @@ impl TerminalPanel {
     ) -> Task<Result<WeakEntity<Terminal>>> {
         let reveal = spawn_task.reveal;
         let reveal_target = spawn_task.reveal_target;
-        let window_handle = window.window_handle();
         let task_workspace = self.workspace.clone();
         cx.spawn_in(window, async move |terminal_panel, cx| {
             let project = terminal_panel.update(cx, |this, cx| {
@@ -823,7 +815,7 @@ impl TerminalPanel {
             })??;
             let new_terminal = project
                 .update(cx, |project, cx| {
-                    project.create_terminal(TerminalKind::Task(spawn_task), window_handle, cx)
+                    project.create_terminal(TerminalKind::Task(spawn_task), cx)
                 })?
                 .await?;
             terminal_to_replace.update_in(cx, |terminal_to_replace, window, cx| {
@@ -955,7 +947,7 @@ pub fn new_terminal_pane(
     cx: &mut Context<TerminalPanel>,
 ) -> Entity<Pane> {
     let is_local = project.read(cx).is_local();
-    let terminal_panel = cx.entity().clone();
+    let terminal_panel = cx.entity();
     let pane = cx.new(|cx| {
         let mut pane = Pane::new(
             workspace.clone(),
@@ -1017,7 +1009,7 @@ pub fn new_terminal_pane(
                 return ControlFlow::Break(());
             };
             if let Some(tab) = dropped_item.downcast_ref::<DraggedTab>() {
-                let this_pane = cx.entity().clone();
+                let this_pane = cx.entity();
                 let item = if tab.pane == this_pane {
                     pane.item_for_index(tab.ix)
                 } else {
@@ -1189,10 +1181,10 @@ impl Render for TerminalPanel {
                 registrar.size_full().child(self.center.render(
                     workspace.zoomed_item(),
                     &workspace::PaneRenderContext {
-                        follower_states: &&HashMap::default(),
+                        follower_states: &HashMap::default(),
                         active_call: workspace.active_call(),
                         active_pane: &self.active_pane,
-                        app_state: &workspace.app_state(),
+                        app_state: workspace.app_state(),
                         project: workspace.project(),
                         workspace: &workspace.weak_handle(),
                     },

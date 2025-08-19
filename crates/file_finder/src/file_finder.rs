@@ -17,7 +17,7 @@ use fuzzy::{CharBag, PathMatch, PathMatchCandidate};
 use gpui::{
     Action, AnyElement, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
     KeyContext, Modifiers, ModifiersChangedEvent, ParentElement, Render, Styled, Task, WeakEntity,
-    Window, actions,
+    Window, actions, rems,
 };
 use open_path_prompt::OpenPathPrompt;
 use picker::{Picker, PickerDelegate};
@@ -210,7 +210,7 @@ impl FileFinder {
             return;
         };
         if self.picker.read(cx).delegate.has_changed_selected_index {
-            if !event.modified() || !init_modifiers.is_subset_of(&event) {
+            if !event.modified() || !init_modifiers.is_subset_of(event) {
                 self.init_modifiers = None;
                 window.dispatch_action(menu::Confirm.boxed_clone(), cx);
             }
@@ -350,7 +350,7 @@ impl FileFinder {
 
     pub fn modal_max_width(width_setting: Option<FileFinderWidth>, window: &mut Window) -> Pixels {
         let window_width = window.viewport_size().width;
-        let small_width = Pixels(545.);
+        let small_width = rems(34.).to_pixels(window.rem_size());
 
         match width_setting {
             None | Some(FileFinderWidth::Small) => small_width,
@@ -497,7 +497,7 @@ impl Match {
     fn panel_match(&self) -> Option<&ProjectPanelOrdMatch> {
         match self {
             Match::History { panel_match, .. } => panel_match.as_ref(),
-            Match::Search(panel_match) => Some(&panel_match),
+            Match::Search(panel_match) => Some(panel_match),
             Match::CreateNew(_) => None,
         }
     }
@@ -537,7 +537,7 @@ impl Matches {
             self.matches.binary_search_by(|m| {
                 // `reverse()` since if cmp_matches(a, b) == Ordering::Greater, then a is better than b.
                 // And we want the better entries go first.
-                Self::cmp_matches(self.separate_history, currently_opened, &m, &entry).reverse()
+                Self::cmp_matches(self.separate_history, currently_opened, m, entry).reverse()
             })
         }
     }
@@ -1082,7 +1082,7 @@ impl FileFinderDelegate {
             if let Some(user_home_path) = std::env::var("HOME").ok() {
                 let user_home_path = user_home_path.trim();
                 if !user_home_path.is_empty() {
-                    if (&full_path).starts_with(user_home_path) {
+                    if full_path.starts_with(user_home_path) {
                         full_path.replace_range(0..user_home_path.len(), "~");
                         full_path_positions.retain_mut(|pos| {
                             if *pos >= user_home_path.len() {
@@ -1402,7 +1402,7 @@ impl PickerDelegate for FileFinderDelegate {
             cx.notify();
             Task::ready(())
         } else {
-            let path_position = PathWithPosition::parse_str(&raw_query);
+            let path_position = PathWithPosition::parse_str(raw_query);
 
             #[cfg(windows)]
             let raw_query = raw_query.trim().to_owned().replace("/", "\\");

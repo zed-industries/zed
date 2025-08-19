@@ -53,7 +53,7 @@ impl Vim {
         cx: &mut Context<Self>,
     ) {
         self.store_visual_marks(window, cx);
-        self.update_editor(window, cx, |vim, editor, window, cx| {
+        self.update_editor(cx, |vim, editor, cx| {
             let mut edits = Vec::new();
             let mut new_anchors = Vec::new();
 
@@ -155,7 +155,7 @@ fn increment_decimal_string(num: &str, delta: i64) -> String {
 }
 
 fn increment_hex_string(num: &str, delta: i64) -> String {
-    let result = if let Ok(val) = u64::from_str_radix(&num, 16) {
+    let result = if let Ok(val) = u64::from_str_radix(num, 16) {
         val.wrapping_add_signed(delta)
     } else {
         u64::MAX
@@ -181,7 +181,7 @@ fn should_use_lowercase(num: &str) -> bool {
 }
 
 fn increment_binary_string(num: &str, delta: i64) -> String {
-    let result = if let Ok(val) = u64::from_str_radix(&num, 2) {
+    let result = if let Ok(val) = u64::from_str_radix(num, 2) {
         val.wrapping_add_signed(delta)
     } else {
         u64::MAX

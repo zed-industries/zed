@@ -650,7 +650,7 @@ impl ComponentPreview {
         _window: &mut Window,
         _cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let component = self.component_map.get(&component_id);
+        let component = self.component_map.get(component_id);
 
         if let Some(component) = component {
             v_flex()
@@ -697,7 +697,7 @@ impl ComponentPreview {
             workspace.update(cx, |workspace, cx| {
                 let status_toast =
                     StatusToast::new("`zed/new-notification-system` created!", cx, |this, _cx| {
-                        this.icon(ToastIcon::new(IconName::GitBranchSmall).color(Color::Muted))
+                        this.icon(ToastIcon::new(IconName::GitBranchAlt).color(Color::Muted))
                             .action("Open Pull Request", |_, cx| {
                                 cx.open_url("https://github.com/")
                             })
@@ -761,7 +761,7 @@ impl Render for ComponentPreview {
                         )
                         .track_scroll(self.nav_scroll_handle.clone())
                         .p_2p5()
-                        .w(px(229.))
+                        .w(px(231.)) // Matches perfectly with the size of the "Component Preview" tab, if that's the first one in the pane
                         .h_full()
                         .flex_1(),
                     )
