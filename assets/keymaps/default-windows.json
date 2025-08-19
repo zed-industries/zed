@@ -20,7 +20,7 @@
       "ctrl-escape": "menu::Cancel",
       "ctrl-c": "menu::Cancel",
       "escape": "menu::Cancel",
-      "alt-shift-enter": "menu::Restart",
+      "shift-alt-enter": "menu::Restart",
       "alt-enter": ["picker::ConfirmInput", { "secondary": false }],
       "ctrl-alt-enter": ["picker::ConfirmInput", { "secondary": true }],
       "ctrl-shift-w": "workspace::CloseWindow",
@@ -112,7 +112,7 @@
       "ctrl-a": "editor::SelectAll",
       "ctrl-l": "editor::SelectLine",
       "shift-alt-f": "editor::Format",
-      "alt-shift-o": "editor::OrganizeImports",
+      "shift-alt-o": "editor::OrganizeImports",
       "shift-home": ["editor::SelectToBeginningOfLine", { "stop_at_soft_wraps": true, "stop_at_indent": true }],
       "shift-end": ["editor::SelectToEndOfLine", { "stop_at_soft_wraps": true }],
       "ctrl-alt-space": "editor::ShowCharacterPalette",
@@ -197,7 +197,7 @@
       "ctrl-k ctrl-r": "git::Restore",
       "ctrl-alt-y": "git::ToggleStaged",
       "alt-y": "git::StageAndNext",
-      "alt-shift-y": "git::UnstageAndNext"
+      "shift-alt-y": "git::UnstageAndNext"
     }
   },
   {
@@ -253,7 +253,7 @@
       "ctrl-shift-a": "agent::ToggleContextPicker",
       "ctrl-shift-j": "agent::ToggleNavigationMenu",
       "ctrl-shift-i": "agent::ToggleOptionsMenu",
-      "ctrl-alt-shift-n": "agent::ToggleNewThreadMenu",
+      "ctrl-shift-alt-n": "agent::ToggleNewThreadMenu",
       "shift-alt-escape": "agent::ExpandMessageEditor",
       "ctrl->": "assistant::QuoteSelection",
       "ctrl-alt-e": "agent::RemoveAllContext",
@@ -414,8 +414,8 @@
       "shift-find": "search::FocusSearch",
       "ctrl-shift-f": "search::FocusSearch",
       "ctrl-shift-h": "search::ToggleReplace",
-      "alt-ctrl-g": "search::ToggleRegex",
-      "alt-ctrl-x": "search::ToggleRegex"
+      "ctrl-alt-g": "search::ToggleRegex",
+      "ctrl-alt-x": "search::ToggleRegex"
     }
   },
   {
@@ -440,8 +440,8 @@
     "bindings": {
       "escape": "project_search::ToggleFocus",
       "ctrl-shift-h": "search::ToggleReplace",
-      "alt-ctrl-g": "search::ToggleRegex",
-      "alt-ctrl-x": "search::ToggleRegex"
+      "ctrl-alt-g": "search::ToggleRegex",
+      "ctrl-alt-x": "search::ToggleRegex"
     }
   },
   {
@@ -464,8 +464,8 @@
       "ctrl-shift-pagedown": "pane::SwapItemRight",
       "ctrl-f4": ["pane::CloseActiveItem", { "close_pinned": false }],
       "ctrl-w": ["pane::CloseActiveItem", { "close_pinned": false }],
-      "alt-ctrl-t": ["pane::CloseOtherItems", { "close_pinned": false }],
-      "alt-ctrl-shift-w": "workspace::CloseInactiveTabsAndPanes",
+      "ctrl-alt-t": ["pane::CloseOtherItems", { "close_pinned": false }],
+      "ctrl-shift-alt-w": "workspace::CloseInactiveTabsAndPanes",
       "ctrl-k e": ["pane::CloseItemsToTheLeft", { "close_pinned": false }],
       "ctrl-k t": ["pane::CloseItemsToTheRight", { "close_pinned": false }],
       "ctrl-k u": ["pane::CloseCleanItems", { "close_pinned": false }],
@@ -477,19 +477,19 @@
       "forward": "pane::GoForward",
       "ctrl-alt-g": "search::SelectNextMatch",
       "f3": "search::SelectNextMatch",
-      "ctrl-alt-shift-g": "search::SelectPreviousMatch",
+      "ctrl-shift-alt-g": "search::SelectPreviousMatch",
       "shift-f3": "search::SelectPreviousMatch",
       "shift-find": "project_search::ToggleFocus",
       "ctrl-shift-f": "project_search::ToggleFocus",
-      "ctrl-alt-shift-h": "search::ToggleReplace",
-      "ctrl-alt-shift-l": "search::ToggleSelection",
+      "ctrl-shift-alt-h": "search::ToggleReplace",
+      "ctrl-shift-alt-l": "search::ToggleSelection",
       "alt-enter": "search::SelectAllMatches",
       "alt-c": "search::ToggleCaseSensitive",
       "alt-w": "search::ToggleWholeWord",
       "alt-find": "project_search::ToggleFilters",
-      "alt-ctrl-f": "project_search::ToggleFilters",
-      "ctrl-alt-shift-r": "search::ToggleRegex",
-      "ctrl-alt-shift-x": "search::ToggleRegex",
+      "ctrl-alt-f": "project_search::ToggleFilters",
+      "ctrl-shift-alt-r": "search::ToggleRegex",
+      "ctrl-shift-alt-x": "search::ToggleRegex",
       "alt-r": "search::ToggleRegex",
       "ctrl-k shift-enter": "pane::TogglePinTab"
     }
@@ -506,10 +506,10 @@
       "ctrl-shift-k": "editor::DeleteLine",
       "alt-up": "editor::MoveLineUp",
       "alt-down": "editor::MoveLineDown",
-      "alt-shift-up": "editor::DuplicateLineUp",
-      "alt-shift-down": "editor::DuplicateLineDown",
-      "alt-shift-right": "editor::SelectLargerSyntaxNode", // Expand Selection
-      "alt-shift-left": "editor::SelectSmallerSyntaxNode", // Shrink Selection
+      "shift-alt-up": "editor::DuplicateLineUp",
+      "shift-alt-down": "editor::DuplicateLineDown",
+      "shift-alt-right": "editor::SelectLargerSyntaxNode", // Expand Selection
+      "shift-alt-left": "editor::SelectSmallerSyntaxNode", // Shrink Selection
       "ctrl-shift-l": "editor::SelectAllMatches", // Select all occurrences of current selection
       "ctrl-f2": "editor::SelectAllMatches", // Select all occurrences of current word
       "ctrl-d": ["editor::SelectNext", { "replace_newest": false }], // editor.action.addSelectionToNextFindMatch  / find_under_expand
@@ -528,8 +528,8 @@
       "ctrl-shift-f10": "editor::GoToDefinitionSplit",
       "ctrl-f12": "editor::GoToImplementation",
       "shift-f12": "editor::GoToTypeDefinition",
-      "alt-ctrl-f12": "editor::GoToTypeDefinitionSplit",
-      "alt-shift-f12": "editor::FindAllReferences",
+      "ctrl-alt-f12": "editor::GoToTypeDefinitionSplit",
+      "shift-alt-f12": "editor::FindAllReferences",
       "ctrl-m": "editor::MoveToEnclosingBracket", // from jetbrains
       "ctrl-|": "editor::MoveToEnclosingBracket",
       "ctrl-{": "editor::Fold",
@@ -554,7 +554,7 @@
       "ctrl-k r": "editor::RevealInFileManager",
       "ctrl-k p": "editor::CopyPath",
       "ctrl-\\": "pane::SplitRight",
-      "ctrl-alt-shift-c": "editor::DisplayCursorNames",
+      "ctrl-shift-alt-c": "editor::DisplayCursorNames",
       "alt-.": "editor::GoToHunk",
       "alt-,": "editor::GoToPreviousHunk"
     }
@@ -590,13 +590,13 @@
       "alt-open": ["projects::OpenRecent", { "create_new_window": false }],
       // Change the default action on `menu::Confirm` by setting the parameter
       // "alt-ctrl-o": ["projects::OpenRecent", { "create_new_window": true }],
-      "alt-ctrl-o": ["projects::OpenRecent", { "create_new_window": false }],
-      "alt-shift-open": ["projects::OpenRemote", { "from_existing_connection": false, "create_new_window": false }],
+      "ctrl-alt-o": ["projects::OpenRecent", { "create_new_window": false }],
+      "shift-alt-open": ["projects::OpenRemote", { "from_existing_connection": false, "create_new_window": false }],
       // Change to open path modal for existing remote connection by setting the parameter
-      // "alt-ctrl-shift-o": "["projects::OpenRemote", { "from_existing_connection": true }]",
-      "alt-ctrl-shift-o": ["projects::OpenRemote", { "from_existing_connection": false, "create_new_window": false }],
-      "alt-ctrl-shift-b": "branches::OpenRecent",
-      "alt-shift-enter": "toast::RunAction",
+      // "ctrl-shift-alt-o": "["projects::OpenRemote", { "from_existing_connection": true }]",
+      "ctrl-shift-alt-o": ["projects::OpenRemote", { "from_existing_connection": false, "create_new_window": false }],
+      "ctrl-shift-alt-b": "branches::OpenRecent",
+      "shift-alt-enter": "toast::RunAction",
       "ctrl-~": "workspace::NewTerminal",
       "save": "workspace::Save",
       "ctrl-s": "workspace::Save",
@@ -665,8 +665,8 @@
       "ctrl-shift-r": "task::Rerun",
       "ctrl-alt-r": "task::Rerun",
       "alt-t": "task::Rerun",
-      "alt-shift-t": "task::Spawn",
-      "alt-shift-r": ["task::Spawn", { "reveal_target": "center" }],
+      "shift-alt-t": "task::Spawn",
+      "shift-alt-r": ["task::Spawn", { "reveal_target": "center" }],
       // also possible to spawn tasks by name:
       // "foo-bar": ["task::Spawn", { "task_name": "MyTask", "reveal_target": "dock" }]
       // or by tag:
@@ -713,10 +713,10 @@
       "ctrl-alt-d": "editor::DeleteToNextSubwordEnd",
       "ctrl-alt-left": "editor::MoveToPreviousSubwordStart",
       "ctrl-alt-right": "editor::MoveToNextSubwordEnd",
-      "ctrl-alt-shift-left": "editor::SelectToPreviousSubwordStart",
-      "ctrl-alt-shift-b": "editor::SelectToPreviousSubwordStart",
-      "ctrl-alt-shift-right": "editor::SelectToNextSubwordEnd",
-      "ctrl-alt-shift-f": "editor::SelectToNextSubwordEnd"
+      "ctrl-shift-alt-left": "editor::SelectToPreviousSubwordStart",
+      "ctrl-shift-alt-b": "editor::SelectToPreviousSubwordStart",
+      "ctrl-shift-alt-right": "editor::SelectToNextSubwordEnd",
+      "ctrl-shift-alt-f": "editor::SelectToNextSubwordEnd"
     }
   },
   // Bindings from Atom
@@ -801,7 +801,7 @@
   {
     "use_key_equivalents": true,
     "bindings": {
-      "ctrl-alt-shift-f": "workspace::FollowNextCollaborator",
+      "ctrl-shift-alt-f": "workspace::FollowNextCollaborator",
       // Only available in debug builds: opens an element inspector for development.
       "ctrl-alt-i": "dev::ToggleInspector"
     }
@@ -862,9 +862,9 @@
       "right": "outline_panel::ExpandSelectedEntry",
       "alt-copy": "outline_panel::CopyPath",
       "ctrl-alt-c": "outline_panel::CopyPath",
-      "alt-shift-copy": "workspace::CopyRelativePath",
-      "alt-ctrl-shift-c": "workspace::CopyRelativePath",
-      "alt-ctrl-r": "outline_panel::RevealInFileManager",
+      "shift-alt-copy": "workspace::CopyRelativePath",
+      "ctrl-shift-alt-c": "workspace::CopyRelativePath",
+      "ctrl-alt-r": "outline_panel::RevealInFileManager",
       "space": "outline_panel::OpenSelectedEntry",
       "shift-down": "menu::SelectNext",
       "shift-up": "menu::SelectPrevious",
@@ -881,7 +881,7 @@
       "new": "project_panel::NewFile",
       "ctrl-n": "project_panel::NewFile",
       "alt-new": "project_panel::NewDirectory",
-      "alt-ctrl-n": "project_panel::NewDirectory",
+      "ctrl-alt-n": "project_panel::NewDirectory",
       "cut": "project_panel::Cut",
       "ctrl-x": "project_panel::Cut",
       "copy": "project_panel::Copy",
@@ -892,8 +892,8 @@
       "ctrl-v": "project_panel::Paste",
       "alt-copy": "project_panel::CopyPath",
       "ctrl-alt-c": "project_panel::CopyPath",
-      "alt-shift-copy": "workspace::CopyRelativePath",
-      "alt-ctrl-shift-c": "workspace::CopyRelativePath",
+      "shift-alt-copy": "workspace::CopyRelativePath",
+      "ctrl-shift-alt-c": "workspace::CopyRelativePath",
       "enter": "project_panel::Rename",
       "f2": "project_panel::Rename",
       "backspace": ["project_panel::Trash", { "skip_prompt": false }],
@@ -901,11 +901,11 @@
       "shift-delete": ["project_panel::Delete", { "skip_prompt": false }],
       "ctrl-backspace": ["project_panel::Delete", { "skip_prompt": false }],
       "ctrl-delete": ["project_panel::Delete", { "skip_prompt": false }],
-      "alt-ctrl-r": "project_panel::RevealInFileManager",
+      "ctrl-alt-r": "project_panel::RevealInFileManager",
       "ctrl-shift-enter": "project_panel::OpenWithSystem",
       "alt-d": "project_panel::CompareMarkedFiles",
       "shift-find": "project_panel::NewSearchInDirectory",
-      "ctrl-alt-shift-f": "project_panel::NewSearchInDirectory",
+      "ctrl-shift-alt-f": "project_panel::NewSearchInDirectory",
       "shift-down": "menu::SelectNext",
       "shift-up": "menu::SelectPrevious",
       "escape": "menu::Cancel"
@@ -926,7 +926,7 @@
       "down": "menu::SelectNext",
       "enter": "menu::Confirm",
       "alt-y": "git::StageFile",
-      "alt-shift-y": "git::UnstageFile",
+      "shift-alt-y": "git::UnstageFile",
       "ctrl-alt-y": "git::ToggleStaged",
       "space": "git::ToggleStaged",
       "shift-space": "git::StageRange",
@@ -1224,7 +1224,7 @@
     "bindings": {
       "ctrl-f": "search::FocusSearch",
       "alt-find": "keymap_editor::ToggleKeystrokeSearch",
-      "alt-ctrl-f": "keymap_editor::ToggleKeystrokeSearch",
+      "ctrl-alt-f": "keymap_editor::ToggleKeystrokeSearch",
       "alt-c": "keymap_editor::ToggleConflictFilter",
       "enter": "keymap_editor::EditBinding",
       "alt-enter": "keymap_editor::CreateBinding",
