@@ -522,7 +522,7 @@ impl Thread {
             id: ThreadId::new(),
             prompt_id: PromptId::new(),
             messages: Vec::new(),
-            completion_mode: CompletionMode::Normal,
+            completion_mode: AgentSettings::get_global(cx).preferred_completion_mode,
             running_turn: None,
             pending_message: None,
             tools: BTreeMap::default(),
