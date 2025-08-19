@@ -6837,11 +6837,11 @@ impl LspStore {
         &mut self,
         buffer: &Entity<Buffer>,
         cx: &mut Context<Self>,
-    ) -> Task<anyhow::Result<HashMap<LanguageServerId, HashSet<DocumentColor>>>> {
+    ) -> Task<anyhow::Result<Option<HashMap<LanguageServerId, HashSet<DocumentColor>>>>> {
         if let Some((client, project_id)) = self.upstream_client() {
             let request = GetDocumentColor {};
             if !self.is_capable_for_proto_request(buffer, &request, cx) {
-                return Task::ready(Ok(HashMap::default()));
+                return Task::ready(Ok(None));
             }
 
             let request_task = client.request_lsp(
@@ -6886,23 +6886,25 @@ impl LspStore {
                         .extend(colors);
                     acc
                 });
-                Ok(colors)
+                Ok(Some(colors))
             })
         } else {
             let document_colors_task =
                 self.request_multiple_lsp_locally(buffer, None::<usize>, GetDocumentColor, cx);
             cx.background_spawn(async move {
-                Ok(document_colors_task
-                    .await
-                    .into_iter()
-                    .fold(HashMap::default(), |mut acc, (server_id, colors)| {
-                        acc.entry(server_id)
-                            .or_insert_with(HashSet::default)
-                            .extend(colors);
-                        acc
-                    })
-                    .into_iter()
-                    .collect())
+                Ok(Some(
+                    document_colors_task
+                        .await
+                        .into_iter()
+                        .fold(HashMap::default(), |mut acc, (server_id, colors)| {
+                            acc.entry(server_id)
+                                .or_insert_with(HashSet::default)
+                                .extend(colors);
+                            acc
+                        })
+                        .into_iter()
+                        .collect(),
+                ))
             })
         }
     }
@@ -6989,11 +6991,11 @@ impl LspStore {
         buffer: &Entity<Buffer>,
         position: PointUtf16,
         cx: &mut Context<Self>,
-    ) -> Task<Vec<Hover>> {
+    ) -> Task<Option<Vec<Hover>>> {
         if let Some((client, upstream_project_id)) = self.upstream_client() {
             let request = GetHover { position };
             if !self.is_capable_for_proto_request(buffer, &request, cx) {
-                return Task::ready(Vec::new());
+                return Task::ready(None);
             }
             let request_task = client.request(proto::MultiLspQuery {
                 buffer_id: buffer.read(cx).remote_id().into(),
@@ -7009,9 +7011,9 @@ impl LspStore {
             let buffer = buffer.clone();
             cx.spawn(async move |weak_project, cx| {
                 let Some(project) = weak_project.upgrade() else {
-                    return Vec::new();
+                    return None;
                 };
-                join_all(
+                let hovers = join_all(
                     request_task
                         .await
                         .log_err()
@@ -7046,7 +7048,8 @@ impl LspStore {
                 .await
                 .into_iter()
                 .flatten()
-                .collect()
+                .collect();
+                Some(hovers)
             })
         } else {
             let all_actions_task = self.request_multiple_lsp_locally(
@@ -7056,11 +7059,13 @@ impl LspStore {
                 cx,
             );
             cx.background_spawn(async move {
-                all_actions_task
-                    .await
-                    .into_iter()
-                    .filter_map(|(_, hover)| remove_empty_hover_blocks(hover?))
-                    .collect::<Vec<Hover>>()
+                Some(
+                    all_actions_task
+                        .await
+                        .into_iter()
+                        .filter_map(|(_, hover)| remove_empty_hover_blocks(hover?))
+                        .collect::<Vec<Hover>>(),
+                )
             })
         }
     }

@@ -2378,7 +2378,7 @@ async fn lsp_query(
     response: Response<proto::LspQuery>,
     session: MessageContext,
 ) -> Result<()> {
-    let (name, should_write) = request.query_name_and_write_capabilities();
+    let (name, should_write) = request.query_name_and_write_permissions();
     tracing::Span::current().record("lsp_query_request", name);
     tracing::info!("lsp_query message received");
     if should_write {

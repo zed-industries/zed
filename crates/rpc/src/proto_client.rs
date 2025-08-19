@@ -300,18 +300,17 @@ impl AnyProtoClient {
         })
     }
 
-    pub fn handle_lsp_response(&self, envelope: TypedEnvelope<proto::LspQueryResponse>) {
+    pub fn handle_lsp_response(&self, mut envelope: TypedEnvelope<proto::LspQueryResponse>) {
         let request_id = LspRequestId(envelope.payload.lsp_request_id);
         let mut a = self.0.request_ids.lock();
         if let Some(tx) = a.remove(&request_id) {
+            let responses = envelope.payload.responses.drain(..).collect::<Vec<_>>();
             tx.send(Ok(Some(proto::TypedEnvelope {
                 sender_id: envelope.sender_id,
                 original_sender_id: envelope.original_sender_id,
                 message_id: envelope.message_id,
                 received_at: envelope.received_at,
-                payload: envelope
-                    .payload
-                    .responses
+                payload: responses
                     .into_iter()
                     .filter_map(|response| {
                         use proto::lsp_response2::Response;
@@ -319,24 +318,13 @@ impl AnyProtoClient {
                         let server_id = proto::LanguageServerId(response.server_id);
                         let response = match response.response? {
                             Response::GetReferencesResponse(response) => {
-                                let response_envelope = proto::TypedEnvelope {
-                                    sender_id: envelope.sender_id,
-                                    original_sender_id: envelope.original_sender_id,
-                                    message_id: envelope.message_id,
-                                    received_at: envelope.received_at,
-                                    payload: response,
-                                };
-                                Box::new(response_envelope) as Box<_>
+                                to_any_envelope(&envelope, response)
                             }
                             Response::GetDocumentColorResponse(response) => {
-                                let response_envelope = proto::TypedEnvelope {
-                                    sender_id: envelope.sender_id,
-                                    original_sender_id: envelope.original_sender_id,
-                                    message_id: envelope.message_id,
-                                    received_at: envelope.received_at,
-                                    payload: response,
-                                };
-                                Box::new(response_envelope) as Box<_>
+                                to_any_envelope(&envelope, response)
+                            }
+                            Response::GetHoverResponse(response) => {
+                                to_any_envelope(&envelope, response)
                             }
                         };
                         Some(proto::ProtoLspResponse {
@@ -482,4 +470,17 @@ impl AnyProtoClient {
             },
         );
     }
+}
+
+fn to_any_envelope<T: EnvelopedMessage>(
+    envelope: &TypedEnvelope<proto::LspQueryResponse>,
+    response: T,
+) -> Box<dyn AnyTypedEnvelope> {
+    Box::new(proto::TypedEnvelope {
+        sender_id: envelope.sender_id,
+        original_sender_id: envelope.original_sender_id,
+        message_id: envelope.message_id,
+        received_at: envelope.received_at,
+        payload: response,
+    }) as Box<_>
 }

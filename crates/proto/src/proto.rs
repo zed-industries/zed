@@ -485,6 +485,7 @@ request_messages!(
 lsp_messages!(
     (GetReferences, GetReferencesResponse, true),
     (GetDocumentColor, GetDocumentColorResponse, true),
+    (GetHover, GetHoverResponse, true),
 );
 
 entity_messages!(
@@ -788,30 +789,10 @@ pub fn split_repository_update(
     }])
 }
 
-impl MultiLspQuery {
-    pub fn request_str(&self) -> &str {
-        match self.request {
-            Some(multi_lsp_query::Request::GetHover(_)) => "GetHover",
-            Some(multi_lsp_query::Request::GetCodeActions(_)) => "GetCodeActions",
-            Some(multi_lsp_query::Request::GetSignatureHelp(_)) => "GetSignatureHelp",
-            Some(multi_lsp_query::Request::GetCodeLens(_)) => "GetCodeLens",
-            Some(multi_lsp_query::Request::GetDocumentDiagnostics(_)) => "GetDocumentDiagnostics",
-            Some(multi_lsp_query::Request::GetDocumentColor(_)) => "GetDocumentColor",
-            Some(multi_lsp_query::Request::GetDefinition(_)) => "GetDefinition",
-            Some(multi_lsp_query::Request::GetDeclaration(_)) => "GetDeclaration",
-            Some(multi_lsp_query::Request::GetTypeDefinition(_)) => "GetTypeDefinition",
-            Some(multi_lsp_query::Request::GetImplementation(_)) => "GetImplementation",
-            Some(multi_lsp_query::Request::GetReferences(_)) => "GetReferences",
-            None => "<unknown>",
-        }
-    }
-}
-
 impl LspQuery {
-    pub fn query_name_and_write_capabilities(&self) -> (&str, bool) {
+    pub fn query_name_and_write_permissions(&self) -> (&str, bool) {
         match self.request {
-            // TODO kb add the rest of the LSP methods in
-            // Some(lsp_query::Request::GetHover(_)) => ("GetHover", false),
+            Some(lsp_query::Request::GetHover(_)) => ("GetHover", false),
             // Some(lsp_query::Request::GetCodeActions(_)) => ("GetCodeActions", true),
             // Some(lsp_query::Request::GetSignatureHelp(_)) => ("GetSignatureHelp", false),
             // Some(lsp_query::Request::GetCodeLens(_)) => ("GetCodeLens", true),

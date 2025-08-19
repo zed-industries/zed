@@ -781,6 +781,7 @@ message LspQuery {
     oneof request {
         GetReferences get_references = 3;
         GetDocumentColor get_document_color = 4;
+        GetHover get_hover = 5;
     }
 }
 
@@ -795,6 +796,7 @@ message LspResponse2 {
     oneof response {
         GetReferencesResponse get_references_response = 2;
         GetDocumentColorResponse get_document_color_response = 3;
+        GetHoverResponse get_hover_response = 4;
     }
 }
 
