@@ -912,19 +912,25 @@ impl AcpThreadView {
                     .px_2()
                     .gap_1p5()
                     .w_full()
+                    .children(rules_item)
                     .children(message.id.clone().and_then(|message_id| {
                         message.checkpoint.as_ref()?.show.then(|| {
-                            Button::new("restore-checkpoint", "Restore Checkpoint")
-                                .icon(IconName::Undo)
-                                .icon_size(IconSize::XSmall)
-                                .icon_position(IconPosition::Start)
-                                .label_size(LabelSize::XSmall)
-                                .on_click(cx.listener(move |this, _, _window, cx| {
-                                    this.rewind(&message_id, cx);
-                                }))
+                            h_flex()
+                                .gap_2()
+                                .child(Divider::horizontal())
+                                .child(
+                                    Button::new("restore-checkpoint", "Restore Checkpoint")
+                                        .icon(IconName::Undo)
+                                        .icon_size(IconSize::XSmall)
+                                        .icon_position(IconPosition::Start)
+                                        .label_size(LabelSize::XSmall)
+                                        .on_click(cx.listener(move |this, _, _window, cx| {
+                                            this.rewind(&message_id, cx);
+                                        }))
+                                )
+                                .child(Divider::horizontal())
                         })
                     }))
-                    .children(rules_item)
                     .child(
                         div()
                             .relative()
