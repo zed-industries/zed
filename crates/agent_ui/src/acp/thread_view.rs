@@ -3275,6 +3275,10 @@ impl AcpThreadView {
         let next_attempt_in = state
             .duration
             .saturating_sub(Instant::now().saturating_duration_since(state.started_at));
+        if next_attempt_in.is_zero() {
+            return None;
+        }
+
         let next_attempt_in_secs = next_attempt_in.as_secs() + 1;
 
         let retry_message = if state.max_attempts == 1 {
