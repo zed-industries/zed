@@ -340,7 +340,7 @@ impl FuzzyBoundary {
                     Self::Paragraph.is_near_potential_end(left, right, classifier)
                 {
                     return Some(find_paragraph_end);
-                } else if !is_sentence_end(left, right, &classifier) {
+                } else if !is_sentence_end(left, right, classifier) {
                     return None;
                 }
                 Some(Box::new(|identifier, _| Some(identifier)))
