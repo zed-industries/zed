@@ -215,7 +215,7 @@ pub fn main(socket: &str) {
     }
 
     #[cfg(target_os = "windows")]
-    while buffer.last().map_or(false, |&b| b == b'\n' || b == b'\r') {
+    while buffer.last().is_some_and(|&b| b == b'\n' || b == b'\r') {
         buffer.pop();
     }
     if buffer.last() != Some(&b'\0') {
