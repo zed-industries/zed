@@ -87,6 +87,7 @@ impl HistoryStore {
         let history = AgentHistory {
             entries: history.clone(),
             _task: cx.spawn(async move |this, cx| {
+                dbg!("loaded", history.borrow().as_ref().map(|b| b.len()));
                 while history.changed().await.is_ok() {
                     this.update(cx, |_, cx| cx.notify()).ok();
                 }

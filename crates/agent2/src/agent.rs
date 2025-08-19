@@ -244,20 +244,28 @@ impl NativeAgent {
         cx: &mut Context<Self>,
     ) {
         let id = thread.read(cx).id().clone();
+        let weak_thread = acp_thread.downgrade();
         self.sessions.insert(
             id,
             Session {
                 thread: thread.clone(),
-                acp_thread: acp_thread.downgrade(),
+                acp_thread: weak_thread.clone(),
                 save_task: Task::ready(Ok(())),
                 _subscriptions: vec![
                     cx.observe_release(&acp_thread, |this, acp_thread, _cx| {
                         this.sessions.remove(acp_thread.session_id());
                     }),
-                    cx.observe(&thread, |this, thread, cx| {
-                        thread.update(cx, |thread, cx| {
-                            thread.generate_title_if_needed(cx);
-                        });
+                    cx.observe(&thread, move |this, thread, cx| {
+                        if let Some(response_stream) =
+                            thread.update(cx, |thread, cx| thread.generate_title_if_needed(cx))
+                        {
+                            NativeAgentConnection::handle_thread_events(
+                                response_stream,
+                                weak_thread.clone(),
+                                cx,
+                            )
+                            .detach_and_log_err(cx);
+                        }
                         this.save_thread(thread.clone(), cx)
                     }),
                 ],
@@ -659,6 +667,7 @@ impl NativeAgentConnection {
                                 })??;
                             }
                             ThreadEvent::TitleUpdate(title) => {
+                                dbg!("updating title");
                                 acp_thread
                                     .update(cx, |thread, cx| thread.update_title(title, cx))??;
                             }

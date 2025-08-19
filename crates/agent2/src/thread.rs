@@ -458,7 +458,7 @@ pub struct ToolCallAuthorization {
 
 enum ThreadTitle {
     None,
-    Pending(Task<()>),
+    Pending(Shared<Task<()>>),
     Done(Result<SharedString>),
 }
 
@@ -1082,24 +1082,33 @@ impl Thread {
         Ok(events_rx)
     }
 
-    pub fn generate_title_if_needed(&mut self, cx: &mut Context<Self>) {
+    pub fn generate_title_if_needed(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> Option<mpsc::UnboundedReceiver<Result<ThreadEvent>>> {
         if !matches!(self.title, ThreadTitle::None) {
-            return;
+            return None;
         }
 
         // todo!() copy logic from agent1 re: tool calls, etc.?
         if self.messages.len() < 2 {
-            return;
+            return None;
         }
+        let Some(model) = self.summarization_model.clone() else {
+            return None;
+        };
+        let (tx, rx) = mpsc::unbounded();
 
-        self.generate_title(cx);
+        self.generate_title(model, ThreadEventStream(tx), cx);
+        Some(rx)
     }
 
-    fn generate_title(&mut self, cx: &mut Context<Self>) {
-        let Some(model) = self.summarization_model.clone() else {
-            println!("No thread summary model");
-            return;
-        };
+    fn generate_title(
+        &mut self,
+        model: Arc<dyn LanguageModel>,
+        event_stream: ThreadEventStream,
+        cx: &mut Context<Self>,
+    ) {
         let mut request = LanguageModelRequest {
             intent: Some(CompletionIntent::ThreadSummarization),
             temperature: AgentSettings::temperature_for_model(&model, cx),
@@ -1116,50 +1125,55 @@ impl Thread {
             cache: false,
         });
 
-        let task = cx.spawn(async move |this, cx| {
-            let result = async {
-                let mut messages = model.stream_completion(request, &cx).await?;
+        let task = cx
+            .spawn(async move |this, cx| {
+                let result: anyhow::Result<SharedString> = async {
+                    let mut messages = model.stream_completion(request, &cx).await?;
 
-                let mut new_summary = String::new();
-                while let Some(event) = messages.next().await {
-                    let Ok(event) = event else {
-                        continue;
-                    };
-                    let text = match event {
-                        LanguageModelCompletionEvent::Text(text) => text,
-                        LanguageModelCompletionEvent::StatusUpdate(
-                            CompletionRequestStatus::UsageUpdated { .. },
-                        ) => {
-                            // this.update(cx, |thread, cx| {
-                            //     thread.update_model_request_usage(amount as u32, limit, cx);
-                            // })?;
-                            // todo!()? not sure if this is the right place to do this.
+                    let mut new_summary = String::new();
+                    while let Some(event) = messages.next().await {
+                        let Ok(event) = event else {
                             continue;
+                        };
+                        let text = match event {
+                            LanguageModelCompletionEvent::Text(text) => text,
+                            LanguageModelCompletionEvent::StatusUpdate(
+                                CompletionRequestStatus::UsageUpdated { .. },
+                            ) => {
+                                // this.update(cx, |thread, cx| {
+                                //     thread.update_model_request_usage(amount as u32, limit, cx);
+                                // })?;
+                                // todo!()? not sure if this is the right place to do this.
+                                continue;
+                            }
+                            _ => continue,
+                        };
+
+                        let mut lines = text.lines();
+                        new_summary.extend(lines.next());
+
+                        // Stop if the LLM generated multiple lines.
+                        if lines.next().is_some() {
+                            break;
                         }
-                        _ => continue,
-                    };
-
-                    let mut lines = text.lines();
-                    new_summary.extend(lines.next());
-
-                    // Stop if the LLM generated multiple lines.
-                    if lines.next().is_some() {
-                        break;
                     }
+
+                    anyhow::Ok(new_summary.into())
                 }
+                .await;
 
-                anyhow::Ok(new_summary.into())
-            }
-            .await;
-
-            this.update(cx, |this, cx| {
-                this.title = ThreadTitle::Done(result);
-                cx.notify();
+                this.update(cx, |this, cx| {
+                    if let Ok(title) = &result {
+                        event_stream.send_title_update(title.clone());
+                    }
+                    this.title = ThreadTitle::Done(result);
+                    cx.notify();
+                })
+                .log_err();
             })
-            .log_err();
-        });
+            .shared();
 
-        self.title = ThreadTitle::Pending(task);
+        self.title = ThreadTitle::Pending(task.clone());
         cx.notify()
     }
 
@@ -1743,6 +1757,12 @@ impl ThreadEventStream {
     fn send_text(&self, text: &str) {
         self.0
             .unbounded_send(Ok(ThreadEvent::AgentText(text.to_string())))
+            .ok();
+    }
+
+    fn send_title_update(&self, text: SharedString) {
+        self.0
+            .unbounded_send(Ok(ThreadEvent::TitleUpdate(text)))
             .ok();
     }
 
