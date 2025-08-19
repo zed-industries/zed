@@ -8,6 +8,7 @@ license = "GPL-3.0-or-later"
 [dependencies]
 crash-handler.workspace = true
 log.workspace = true
+mach2.workspace = true
 minidumper.workspace = true
 paths.workspace = true
 release_channel.workspace = true

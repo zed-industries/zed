@@ -74,6 +74,9 @@ pub async fn init(crash_init: InitCrashHandler) {
                 .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
                 .is_ok()
             {
+                #[cfg(target_os = "macos")]
+                suspend_all_other_threads();
+
                 client.ping().unwrap();
                 client.request_dump(crash_context).is_ok()
             } else {
@@ -95,6 +98,23 @@ pub async fn init(crash_init: InitCrashHandler) {
     loop {
         client.ping().ok();
         smol::Timer::after(Duration::from_secs(10)).await;
+    }
+}
+
+#[cfg(target_os = "macos")]
+unsafe fn suspend_all_other_threads() {
+    let task = unsafe { mach2::traps::current_task() };
+    let mut threads: mach2::mach_types::thread_act_array_t = std::ptr::null_mut();
+    let mut count = 0;
+    unsafe {
+        mach2::task::task_threads(task, &raw mut threads, &raw mut count);
+    }
+    let current = unsafe { mach2::mach_init::mach_thread_self() };
+    for i in 0..count {
+        let t = unsafe { *threads.add(i as usize) };
+        if t != current {
+            unsafe { mach2::thread_act::thread_suspend(t) };
+        }
     }
 }
 
