@@ -3,7 +3,7 @@ use acp_thread::{MentionUri, UserMessageId};
 use action_log::ActionLog;
 use agent::thread::{DetailedSummaryState, GitState, ProjectSnapshot, WorktreeSnapshot};
 use agent_client_protocol as acp;
-use agent_settings::{AgentProfileId, AgentSettings, CompletionMode};
+use agent_settings::{AgentProfileId, AgentSettings, CompletionMode, SUMMARIZE_THREAD_PROMPT};
 use anyhow::{Context as _, Result, anyhow};
 use assistant_tool::adapt_schema_to_format;
 use chrono::{DateTime, Utc};
@@ -466,27 +466,12 @@ pub struct ToolCallAuthorization {
     pub response: oneshot::Sender<acp::PermissionOptionId>,
 }
 
-enum ThreadTitle {
-    None,
-    Pending(Shared<Task<()>>),
-    Done(Result<SharedString>),
-}
-
-impl ThreadTitle {
-    pub fn unwrap_or_default(&self) -> SharedString {
-        if let ThreadTitle::Done(Ok(title)) = self {
-            title.clone()
-        } else {
-            "New Thread".into()
-        }
-    }
-}
-
 pub struct Thread {
     id: acp::SessionId,
     prompt_id: PromptId,
     updated_at: DateTime<Utc>,
-    title: ThreadTitle,
+    title: Option<SharedString>,
+    #[allow(unused)]
     summary: DetailedSummaryState,
     messages: Vec<Message>,
     completion_mode: CompletionMode,
@@ -497,8 +482,11 @@ pub struct Thread {
     pending_message: Option<AgentMessage>,
     tools: BTreeMap<SharedString, Arc<dyn AnyAgentTool>>,
     tool_use_limit_reached: bool,
+    #[allow(unused)]
     request_token_usage: Vec<TokenUsage>,
+    #[allow(unused)]
     cumulative_token_usage: TokenUsage,
+    #[allow(unused)]
     initial_project_snapshot: Shared<Task<Option<Arc<ProjectSnapshot>>>>,
     context_server_registry: Entity<ContextServerRegistry>,
     profile_id: AgentProfileId,
@@ -526,7 +514,7 @@ impl Thread {
             id: acp::SessionId(uuid::Uuid::new_v4().to_string().into()),
             prompt_id: PromptId::new(),
             updated_at: Utc::now(),
-            title: ThreadTitle::None,
+            title: None,
             summary: DetailedSummaryState::default(),
             messages: Vec::new(),
             completion_mode: CompletionMode::Normal,
@@ -900,7 +888,7 @@ impl Thread {
             event_stream: event_stream.clone(),
             _task: cx.spawn(async move |this, cx| {
                 log::info!("Starting agent turn execution");
-                let turn_result: Result<()> = async {
+                let turn_result: Result<StopReason> = async {
                     let mut completion_intent = CompletionIntent::UserPrompt;
                     loop {
                         log::debug!(
@@ -924,16 +912,7 @@ impl Thread {
                                 ) => {
                                     tool_use_limit_reached = true;
                                 }
-                                LanguageModelCompletionEvent::Stop(reason) => {
-                                    event_stream.send_stop(reason);
-                                    if reason == StopReason::Refusal {
-                                        this.update(cx, |this, cx| {
-                                            this.flush_pending_message(cx);
-                                            this.messages.truncate(message_ix);
-                                        })?;
-                                        return Ok(());
-                                    }
-                                }
+                                LanguageModelCompletionEvent::Stop(reason) => return Ok(reason),
                                 event => {
                                     log::trace!("Received completion event: {:?}", event);
                                     this.update(cx, |this, cx| {
@@ -978,7 +957,7 @@ impl Thread {
                             return Err(language_model::ToolUseLimitReachedError.into());
                         } else if used_tools {
                             log::info!("No tool uses found, completing turn");
-                            return Ok(());
+                            return Ok(StopReason::EndTurn);
                         } else {
                             this.update(cx, |this, cx| this.flush_pending_message(cx))?;
                             completion_intent = CompletionIntent::ToolResults;
@@ -986,19 +965,32 @@ impl Thread {
                     }
                 }
                 .await;
+                _ = this.update(cx, |this, cx| this.flush_pending_message(cx));
 
-                if let Err(error) = turn_result {
-                    log::error!("Turn execution failed: {:?}", error);
-                    event_stream.send_error(error);
-                } else {
-                    log::info!("Turn execution completed successfully");
+                match turn_result {
+                    Ok(reason) => {
+                        log::info!("Turn execution completed: {:?}", reason);
+
+                        let update_title = this
+                            .update(cx, |this, cx| this.update_title(&event_stream, cx))
+                            .ok()
+                            .flatten();
+                        if let Some(update_title) = update_title {
+                            update_title.await.context("update title failed").log_err();
+                        }
+
+                        event_stream.send_stop(reason);
+                        if reason == StopReason::Refusal {
+                            _ = this.update(cx, |this, _| this.messages.truncate(message_ix));
+                        }
+                    }
+                    Err(error) => {
+                        log::error!("Turn execution failed: {:?}", error);
+                        event_stream.send_error(error);
+                    }
                 }
 
-                this.update(cx, |this, cx| {
-                    this.flush_pending_message(cx);
-                    this.running_turn.take();
-                })
-                .ok();
+                _ = this.update(cx, |this, _| this.running_turn.take());
             }),
         });
         Ok(events_rx)
@@ -1240,6 +1232,80 @@ impl Thread {
         }
     }
 
+    pub fn title(&self) -> SharedString {
+        self.title.clone().unwrap_or("New Thread".into())
+    }
+
+    fn update_title(
+        &mut self,
+        event_stream: &ThreadEventStream,
+        cx: &mut Context<Self>,
+    ) -> Option<Task<Result<()>>> {
+        if self.title.is_some() {
+            log::debug!("Skipping title generation because we already have one.");
+            return None;
+        }
+
+        log::info!(
+            "Generating title with model: {:?}",
+            self.summarization_model.as_ref().map(|model| model.name())
+        );
+        let model = self.summarization_model.clone()?;
+        let event_stream = event_stream.clone();
+        let mut request = LanguageModelRequest {
+            intent: Some(CompletionIntent::ThreadSummarization),
+            temperature: AgentSettings::temperature_for_model(&model, cx),
+            ..Default::default()
+        };
+
+        for message in &self.messages {
+            request.messages.extend(message.to_request());
+        }
+
+        request.messages.push(LanguageModelRequestMessage {
+            role: Role::User,
+            content: vec![SUMMARIZE_THREAD_PROMPT.into()],
+            cache: false,
+        });
+        Some(cx.spawn(async move |this, cx| {
+            let mut title = String::new();
+            let mut messages = model.stream_completion(request, &cx).await?;
+            while let Some(event) = messages.next().await {
+                let event = event?;
+                let text = match event {
+                    LanguageModelCompletionEvent::Text(text) => text,
+                    LanguageModelCompletionEvent::StatusUpdate(
+                        CompletionRequestStatus::UsageUpdated { .. },
+                    ) => {
+                        // this.update(cx, |thread, cx| {
+                        //     thread.update_model_request_usage(amount as u32, limit, cx);
+                        // })?;
+                        // TODO: handle usage update
+                        continue;
+                    }
+                    _ => continue,
+                };
+
+                let mut lines = text.lines();
+                title.extend(lines.next());
+
+                // Stop if the LLM generated multiple lines.
+                if lines.next().is_some() {
+                    break;
+                }
+            }
+
+            log::info!("Setting title: {}", title);
+
+            this.update(cx, |this, cx| {
+                let title = SharedString::from(title);
+                event_stream.send_title_update(title.clone());
+                this.title = Some(title);
+                cx.notify();
+            })
+        }))
+    }
+
     fn pending_message(&mut self) -> &mut AgentMessage {
         self.pending_message.get_or_insert_default()
     }
@@ -1269,6 +1335,7 @@ impl Thread {
         }
 
         self.messages.push(Message::Agent(message));
+        self.updated_at = Utc::now();
         cx.notify()
     }
 

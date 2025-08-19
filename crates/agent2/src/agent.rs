@@ -428,9 +428,9 @@ impl NativeAgent {
     ) {
         self.models.refresh_list(cx);
 
-        let default_model = LanguageModelRegistry::read_global(cx)
-            .default_model()
-            .map(|m| m.model.clone());
+        let registry = LanguageModelRegistry::read_global(cx);
+        let default_model = registry.default_model().map(|m| m.model.clone());
+        let summarization_model = registry.thread_summary_model().map(|m| m.model.clone());
 
         for session in self.sessions.values_mut() {
             session.thread.update(cx, |thread, cx| {
@@ -440,6 +440,7 @@ impl NativeAgent {
                     thread.set_model(model, cx);
                     cx.notify();
                 }
+                thread.set_summarization_model(summarization_model.clone(), cx);
             });
         }
     }

@@ -2346,7 +2346,7 @@ mod tests {
                     .into(),
             );
             let action_log = cx.new(|_| ActionLog::new(project.clone()));
-            let thread = cx.new(|cx| {
+            let thread = cx.new(|_cx| {
                 AcpThread::new(
                     "Test",
                     self.clone(),

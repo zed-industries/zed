@@ -1202,6 +1202,51 @@ async fn test_truncate(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_title_generation(cx: &mut TestAppContext) {
+    let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
+    let fake_model = model.as_fake();
+
+    let summary_model = Arc::new(FakeLanguageModel::default());
+    thread.update(cx, |thread, cx| {
+        thread.set_summarization_model(Some(summary_model.clone()), cx)
+    });
+
+    let send = thread
+        .update(cx, |thread, cx| {
+            thread.send(UserMessageId::new(), ["Hello"], cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+
+    fake_model.send_last_completion_stream_text_chunk("Hey!");
+    fake_model.end_last_completion_stream();
+    cx.run_until_parked();
+    thread.read_with(cx, |thread, _| assert_eq!(thread.title(), "New Thread"));
+
+    // Ensure the summary model has been invoked to generate a title.
+    summary_model.send_last_completion_stream_text_chunk("Hello ");
+    summary_model.send_last_completion_stream_text_chunk("world\nG");
+    summary_model.send_last_completion_stream_text_chunk("oodnight Moon");
+    summary_model.end_last_completion_stream();
+    send.collect::<Vec<_>>().await;
+    thread.read_with(cx, |thread, _| assert_eq!(thread.title(), "Hello world"));
+
+    // Send another message, ensuring no title is generated this time.
+    let send = thread
+        .update(cx, |thread, cx| {
+            thread.send(UserMessageId::new(), ["Hello again"], cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+    fake_model.send_last_completion_stream_text_chunk("Hey again!");
+    fake_model.end_last_completion_stream();
+    cx.run_until_parked();
+    assert_eq!(summary_model.pending_completions(), Vec::new());
+    send.collect::<Vec<_>>().await;
+    thread.read_with(cx, |thread, _| assert_eq!(thread.title(), "Hello world"));
+}
+
+#[gpui::test]
 async fn test_agent_connection(cx: &mut TestAppContext) {
     cx.update(settings::init);
     let templates = Templates::new();
