@@ -2143,12 +2143,53 @@ impl AcpThreadView {
                             let cwd = project.first_project_directory(cx);
                             let shell = project.terminal_settings(&cwd, cx).shell.clone();
                             let spawn_in_terminal = task::SpawnInTerminal {
-                                id: task::TaskId("install".to_string()),
+                                id: task::TaskId("upgrade".to_string()),
                                 full_label: upgrade_command.clone(),
                                 label: upgrade_command.clone(),
                                 command: Some(upgrade_command.clone()),
                                 args: Vec::new(),
                                 command_label: upgrade_command.clone(),
+                                cwd,
+                                env: Default::default(),
+                                use_new_terminal: true,
+                                allow_concurrent_runs: true,
+                                reveal: Default::default(),
+                                reveal_target: Default::default(),
+                                hide: Default::default(),
+                                shell,
+                                show_summary: true,
+                                show_command: true,
+                                show_rerun: false,
+                            };
+                            workspace
+                                .spawn_in_terminal(spawn_in_terminal, window, cx)
+                                .detach();
+                        })
+                        .ok();
+                }),
+            ));
+        } else if let LoadError::NotInstalled {
+            install_message,
+            install_command,
+            ..
+        } = e
+        {
+            let install_message = install_message.clone();
+            let install_command = install_command.clone();
+            container = container.child(Button::new("install", install_message).on_click(
+                cx.listener(move |this, _, window, cx| {
+                    this.workspace
+                        .update(cx, |workspace, cx| {
+                            let project = workspace.project().read(cx);
+                            let cwd = project.first_project_directory(cx);
+                            let shell = project.terminal_settings(&cwd, cx).shell.clone();
+                            let spawn_in_terminal = task::SpawnInTerminal {
+                                id: task::TaskId("install".to_string()),
+                                full_label: install_command.clone(),
+                                label: install_command.clone(),
+                                command: Some(install_command.clone()),
+                                args: Vec::new(),
+                                command_label: install_command.clone(),
                                 cwd,
                                 env: Default::default(),
                                 use_new_terminal: true,

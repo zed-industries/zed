@@ -99,7 +99,11 @@ impl AgentConnection for ClaudeAgentConnection {
             )
             .await
             else {
-                anyhow::bail!("Failed to find claude binary");
+                return Err(LoadError::NotInstalled {
+                    error_message: "Failed to find claude binary".into(),
+                    install_message: "Install claude".into(),
+                    install_command: "npm install -g @anthropic-ai/claude-code@latest".into(),
+                }.into());
             };
 
             let api_key =

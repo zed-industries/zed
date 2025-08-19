@@ -50,7 +50,11 @@ impl AgentServer for Gemini {
             let Some(command) =
                 AgentServerCommand::resolve("gemini", &[ACP_ARG], None, settings, &project, cx).await
             else {
-                anyhow::bail!("Failed to find gemini binary");
+                return Err(LoadError::NotInstalled {
+                    error_message: "Failed to find gemini binary".into(),
+                    install_message: "Install gemini".into(),
+                    install_command: "npm install -g @google/gemini-cli@latest".into()
+                }.into());
             };
 
             let result = crate::acp::connect(server_name, command.clone(), &root_dir, cx).await;
