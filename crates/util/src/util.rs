@@ -128,11 +128,9 @@ pub fn truncate_lines_to_byte_limit(s: &str, max_bytes: usize) -> &str {
     }
 
     for i in (0..max_bytes).rev() {
-        if s.is_char_boundary(i) {
-            if s.as_bytes()[i] == b'\n' {
-                // Since the i-th character is \n, valid to slice at i + 1.
-                return &s[..i + 1];
-            }
+        if s.is_char_boundary(i) && s.as_bytes()[i] == b'\n' {
+            // Since the i-th character is \n, valid to slice at i + 1.
+            return &s[..i + 1];
         }
     }
 

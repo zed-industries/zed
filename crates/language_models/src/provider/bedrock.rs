@@ -412,10 +412,10 @@ impl BedrockModel {
                     .region(Region::new(region))
                     .timeout_config(TimeoutConfig::disabled());
 
-                if let Some(endpoint_url) = endpoint {
-                    if !endpoint_url.is_empty() {
-                        config_builder = config_builder.endpoint_url(endpoint_url);
-                    }
+                if let Some(endpoint_url) = endpoint
+                    && !endpoint_url.is_empty()
+                {
+                    config_builder = config_builder.endpoint_url(endpoint_url);
                 }
 
                 match auth_method {
@@ -728,11 +728,11 @@ pub fn into_bedrock(
                     Role::Assistant => bedrock::BedrockRole::Assistant,
                     Role::System => unreachable!("System role should never occur here"),
                 };
-                if let Some(last_message) = new_messages.last_mut() {
-                    if last_message.role == bedrock_role {
-                        last_message.content.extend(bedrock_message_content);
-                        continue;
-                    }
+                if let Some(last_message) = new_messages.last_mut()
+                    && last_message.role == bedrock_role
+                {
+                    last_message.content.extend(bedrock_message_content);
+                    continue;
                 }
                 new_messages.push(
                     BedrockMessage::builder()

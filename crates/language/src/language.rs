@@ -329,8 +329,8 @@ pub trait LspAdapter: 'static + Send + Sync {
             // We only want to cache when we fall back to the global one,
             // because we don't want to download and overwrite our global one
             // for each worktree we might have open.
-            if binary_options.allow_path_lookup {
-                if let Some(binary) = self.check_if_user_installed(delegate.as_ref(), toolchains, cx).await {
+            if binary_options.allow_path_lookup
+                && let Some(binary) = self.check_if_user_installed(delegate.as_ref(), toolchains, cx).await {
                     log::info!(
                         "found user-installed language server for {}. path: {:?}, arguments: {:?}",
                         self.name().0,
@@ -339,7 +339,6 @@ pub trait LspAdapter: 'static + Send + Sync {
                     );
                     return Ok(binary);
                 }
-            }
 
             anyhow::ensure!(binary_options.allow_binary_download, "downloading language servers disabled");
 
@@ -1776,10 +1775,10 @@ impl Language {
                 BufferChunks::new(text, range, Some((captures, highlight_maps)), false, None)
             {
                 let end_offset = offset + chunk.text.len();
-                if let Some(highlight_id) = chunk.syntax_highlight_id {
-                    if !highlight_id.is_default() {
-                        result.push((offset..end_offset, highlight_id));
-                    }
+                if let Some(highlight_id) = chunk.syntax_highlight_id
+                    && !highlight_id.is_default()
+                {
+                    result.push((offset..end_offset, highlight_id));
                 }
                 offset = end_offset;
             }
@@ -1796,11 +1795,11 @@ impl Language {
     }
 
     pub fn set_theme(&self, theme: &SyntaxTheme) {
-        if let Some(grammar) = self.grammar.as_ref() {
-            if let Some(highlights_query) = &grammar.highlights_query {
-                *grammar.highlight_map.lock() =
-                    HighlightMap::new(highlights_query.capture_names(), theme);
-            }
+        if let Some(grammar) = self.grammar.as_ref()
+            && let Some(highlights_query) = &grammar.highlights_query
+        {
+            *grammar.highlight_map.lock() =
+                HighlightMap::new(highlights_query.capture_names(), theme);
         }
     }
 
@@ -1920,11 +1919,11 @@ impl LanguageScope {
             .enumerate()
             .map(move |(ix, bracket)| {
                 let mut is_enabled = true;
-                if let Some(next_disabled_ix) = disabled_ids.first() {
-                    if ix == *next_disabled_ix as usize {
-                        disabled_ids = &disabled_ids[1..];
-                        is_enabled = false;
-                    }
+                if let Some(next_disabled_ix) = disabled_ids.first()
+                    && ix == *next_disabled_ix as usize
+                {
+                    disabled_ids = &disabled_ids[1..];
+                    is_enabled = false;
                 }
                 (bracket, is_enabled)
             })

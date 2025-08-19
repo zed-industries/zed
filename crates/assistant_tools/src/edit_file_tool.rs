@@ -155,10 +155,10 @@ impl Tool for EditFileTool {
 
         // It's also possible that the global config dir is configured to be inside the project,
         // so check for that edge case too.
-        if let Ok(canonical_path) = std::fs::canonicalize(&input.path) {
-            if canonical_path.starts_with(paths::config_dir()) {
-                return true;
-            }
+        if let Ok(canonical_path) = std::fs::canonicalize(&input.path)
+            && canonical_path.starts_with(paths::config_dir())
+        {
+            return true;
         }
 
         // Check if path is inside the global config directory
@@ -199,10 +199,10 @@ impl Tool for EditFileTool {
                     .any(|c| c.as_os_str() == local_settings_folder.as_os_str())
                 {
                     description.push_str(" (local settings)");
-                } else if let Ok(canonical_path) = std::fs::canonicalize(&input.path) {
-                    if canonical_path.starts_with(paths::config_dir()) {
-                        description.push_str(" (global settings)");
-                    }
+                } else if let Ok(canonical_path) = std::fs::canonicalize(&input.path)
+                    && canonical_path.starts_with(paths::config_dir())
+                {
+                    description.push_str(" (global settings)");
                 }
 
                 description

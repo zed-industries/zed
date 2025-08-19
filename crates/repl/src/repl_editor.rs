@@ -417,10 +417,10 @@ fn runnable_ranges(
     range: Range<Point>,
     cx: &mut App,
 ) -> (Vec<Range<Point>>, Option<Point>) {
-    if let Some(language) = buffer.language() {
-        if language.name() == "Markdown".into() {
-            return (markdown_code_blocks(buffer, range.clone(), cx), None);
-        }
+    if let Some(language) = buffer.language()
+        && language.name() == "Markdown".into()
+    {
+        return (markdown_code_blocks(buffer, range.clone(), cx), None);
     }
 
     let (jupytext_snippets, next_cursor) = jupytext_cells(buffer, range.clone());

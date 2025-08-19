@@ -356,12 +356,11 @@ impl TextLayout {
                         (None, "".into())
                     };
 
-                if let Some(text_layout) = element_state.0.borrow().as_ref() {
-                    if text_layout.size.is_some()
-                        && (wrap_width.is_none() || wrap_width == text_layout.wrap_width)
-                    {
-                        return text_layout.size.unwrap();
-                    }
+                if let Some(text_layout) = element_state.0.borrow().as_ref()
+                    && text_layout.size.is_some()
+                    && (wrap_width.is_none() || wrap_width == text_layout.wrap_width)
+                {
+                    return text_layout.size.unwrap();
                 }
 
                 let mut line_wrapper = cx.text_system().line_wrapper(text_style.font(), font_size);
@@ -763,14 +762,13 @@ impl Element for InteractiveText {
                 let mut interactive_state = interactive_state.unwrap_or_default();
                 if let Some(click_listener) = self.click_listener.take() {
                     let mouse_position = window.mouse_position();
-                    if let Ok(ix) = text_layout.index_for_position(mouse_position) {
-                        if self
+                    if let Ok(ix) = text_layout.index_for_position(mouse_position)
+                        && self
                             .clickable_ranges
                             .iter()
                             .any(|range| range.contains(&ix))
-                        {
-                            window.set_cursor_style(crate::CursorStyle::PointingHand, hitbox)
-                        }
+                    {
+                        window.set_cursor_style(crate::CursorStyle::PointingHand, hitbox)
                     }
 
                     let text_layout = text_layout.clone();
@@ -803,13 +801,13 @@ impl Element for InteractiveText {
                     } else {
                         let hitbox = hitbox.clone();
                         window.on_mouse_event(move |event: &MouseDownEvent, phase, window, _| {
-                            if phase == DispatchPhase::Bubble && hitbox.is_hovered(window) {
-                                if let Ok(mouse_down_index) =
+                            if phase == DispatchPhase::Bubble
+                                && hitbox.is_hovered(window)
+                                && let Ok(mouse_down_index) =
                                     text_layout.index_for_position(event.position)
-                                {
-                                    mouse_down.set(Some(mouse_down_index));
-                                    window.refresh();
-                                }
+                            {
+                                mouse_down.set(Some(mouse_down_index));
+                                window.refresh();
                             }
                         });
                     }

@@ -300,13 +300,12 @@ impl<'a> MarkdownParser<'a> {
 
                     if style != MarkdownHighlightStyle::default() && last_run_len < text.len() {
                         let mut new_highlight = true;
-                        if let Some((last_range, last_style)) = highlights.last_mut() {
-                            if last_range.end == last_run_len
-                                && last_style == &MarkdownHighlight::Style(style.clone())
-                            {
-                                last_range.end = text.len();
-                                new_highlight = false;
-                            }
+                        if let Some((last_range, last_style)) = highlights.last_mut()
+                            && last_range.end == last_run_len
+                            && last_style == &MarkdownHighlight::Style(style.clone())
+                        {
+                            last_range.end = text.len();
+                            new_highlight = false;
                         }
                         if new_highlight {
                             highlights.push((
@@ -579,10 +578,10 @@ impl<'a> MarkdownParser<'a> {
                             }
                         } else {
                             let block = self.parse_block().await;
-                            if let Some(block) = block {
-                                if let Some(list_item) = items_stack.last_mut() {
-                                    list_item.content.extend(block);
-                                }
+                            if let Some(block) = block
+                                && let Some(list_item) = items_stack.last_mut()
+                            {
+                                list_item.content.extend(block);
                             }
                         }
                     }

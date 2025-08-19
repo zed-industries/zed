@@ -811,7 +811,7 @@ mod tests {
         pub fn expect_keystrokes(&mut self, expected: &[&str]) -> &mut Self {
             let actual = self
                 .input
-                .read_with(&mut self.cx, |input, _| input.keystrokes.clone());
+                .read_with(&self.cx, |input, _| input.keystrokes.clone());
             Self::expect_keystrokes_equal(&actual, expected);
             self
         }
@@ -820,7 +820,7 @@ mod tests {
         pub fn expect_close_keystrokes(&mut self, expected: &[&str]) -> &mut Self {
             let actual = self
                 .input
-                .read_with(&mut self.cx, |input, _| input.close_keystrokes.clone())
+                .read_with(&self.cx, |input, _| input.close_keystrokes.clone())
                 .unwrap_or_default();
             Self::expect_keystrokes_equal(&actual, expected);
             self

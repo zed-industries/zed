@@ -146,19 +146,17 @@ pub fn init_panic_hook(
         }
         zlog::flush();
 
-        if !is_pty {
-            if let Some(panic_data_json) = serde_json::to_string(&panic_data).log_err() {
-                let timestamp = chrono::Utc::now().format("%Y_%m_%d %H_%M_%S").to_string();
-                let panic_file_path = paths::logs_dir().join(format!("zed-{timestamp}.panic"));
-                let panic_file = fs::OpenOptions::new()
-                    .write(true)
-                    .create_new(true)
-                    .open(&panic_file_path)
-                    .log_err();
-                if let Some(mut panic_file) = panic_file {
-                    writeln!(&mut panic_file, "{panic_data_json}").log_err();
-                    panic_file.flush().log_err();
-                }
+        if !is_pty && let Some(panic_data_json) = serde_json::to_string(&panic_data).log_err() {
+            let timestamp = chrono::Utc::now().format("%Y_%m_%d %H_%M_%S").to_string();
+            let panic_file_path = paths::logs_dir().join(format!("zed-{timestamp}.panic"));
+            let panic_file = fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&panic_file_path)
+                .log_err();
+            if let Some(mut panic_file) = panic_file {
+                writeln!(&mut panic_file, "{panic_data_json}").log_err();
+                panic_file.flush().log_err();
             }
         }
 
@@ -459,10 +457,10 @@ pub fn monitor_main_thread_hangs(
                         continue;
                     };
 
-                    if let Some(response) = http_client.send(request).await.log_err() {
-                        if response.status() != 200 {
-                            log::error!("Failed to send hang report: HTTP {:?}", response.status());
-                        }
+                    if let Some(response) = http_client.send(request).await.log_err()
+                        && response.status() != 200
+                    {
+                        log::error!("Failed to send hang report: HTTP {:?}", response.status());
                     }
                 }
             }
@@ -563,8 +561,8 @@ pub async fn upload_previous_minidumps(http: Arc<HttpClientWithUrl>) -> anyhow::
         }
         let mut json_path = child_path.clone();
         json_path.set_extension("json");
-        if let Ok(metadata) = serde_json::from_slice(&smol::fs::read(&json_path).await?) {
-            if upload_minidump(
+        if let Ok(metadata) = serde_json::from_slice(&smol::fs::read(&json_path).await?)
+            && upload_minidump(
                 http.clone(),
                 minidump_endpoint,
                 smol::fs::read(&child_path)
@@ -575,10 +573,9 @@ pub async fn upload_previous_minidumps(http: Arc<HttpClientWithUrl>) -> anyhow::
             .await
             .log_err()
             .is_some()
-            {
-                fs::remove_file(child_path).ok();
-                fs::remove_file(json_path).ok();
-            }
+        {
+            fs::remove_file(child_path).ok();
+            fs::remove_file(json_path).ok();
         }
     }
     Ok(())

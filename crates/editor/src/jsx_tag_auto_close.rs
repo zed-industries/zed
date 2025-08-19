@@ -51,12 +51,11 @@ pub(crate) fn should_auto_close(
             continue;
         };
         let mut jsx_open_tag_node = node;
-        if node.grammar_name() != config.open_tag_node_name {
-            if let Some(parent) = node.parent() {
-                if parent.grammar_name() == config.open_tag_node_name {
-                    jsx_open_tag_node = parent;
-                }
-            }
+        if node.grammar_name() != config.open_tag_node_name
+            && let Some(parent) = node.parent()
+            && parent.grammar_name() == config.open_tag_node_name
+        {
+            jsx_open_tag_node = parent;
         }
         if jsx_open_tag_node.grammar_name() != config.open_tag_node_name {
             continue;
@@ -284,10 +283,8 @@ pub(crate) fn generate_auto_close_edits(
                         unclosed_open_tag_count -= 1;
                     }
                 } else if has_erroneous_close_tag && kind == erroneous_close_tag_node_name {
-                    if tag_node_name_equals(&node, &tag_name) {
-                        if !is_after_open_tag(&node) {
-                            unclosed_open_tag_count -= 1;
-                        }
+                    if tag_node_name_equals(&node, &tag_name) && !is_after_open_tag(&node) {
+                        unclosed_open_tag_count -= 1;
                     }
                 } else if kind == config.jsx_element_node_name {
                     // perf: filter only open,close,element,erroneous nodes

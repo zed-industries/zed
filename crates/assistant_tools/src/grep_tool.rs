@@ -188,15 +188,14 @@ impl Tool for GrepTool {
                 // Check if this file should be excluded based on its worktree settings
                 if let Ok(Some(project_path)) = project.read_with(cx, |project, cx| {
                     project.find_project_path(&path, cx)
-                }) {
-                    if cx.update(|cx| {
+                })
+                    && cx.update(|cx| {
                         let worktree_settings = WorktreeSettings::get(Some((&project_path).into()), cx);
                         worktree_settings.is_path_excluded(&project_path.path)
                             || worktree_settings.is_path_private(&project_path.path)
                     }).unwrap_or(false) {
                         continue;
                     }
-                }
 
                 while *parse_status.borrow() != ParseStatus::Idle {
                     parse_status.changed().await?;
@@ -284,12 +283,11 @@ impl Tool for GrepTool {
                     output.extend(snapshot.text_for_range(range));
                     output.push_str("\n```\n");
 
-                    if let Some(ancestor_range) = ancestor_range {
-                        if end_row < ancestor_range.end.row {
+                    if let Some(ancestor_range) = ancestor_range
+                        && end_row < ancestor_range.end.row {
                             let remaining_lines = ancestor_range.end.row - end_row;
                             writeln!(output, "\n{} lines remaining in ancestor node. Read the file to see all.", remaining_lines)?;
                         }
-                    }
 
                     matches_found += 1;
                 }

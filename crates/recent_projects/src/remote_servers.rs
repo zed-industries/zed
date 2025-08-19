@@ -664,10 +664,10 @@ impl RemoteServerProjects {
                 let text = Some(state.editor.read(cx).text(cx)).filter(|text| !text.is_empty());
                 let index = state.index;
                 self.update_settings_file(cx, move |setting, _| {
-                    if let Some(connections) = setting.ssh_connections.as_mut() {
-                        if let Some(connection) = connections.get_mut(index) {
-                            connection.nickname = text;
-                        }
+                    if let Some(connections) = setting.ssh_connections.as_mut()
+                        && let Some(connection) = connections.get_mut(index)
+                    {
+                        connection.nickname = text;
                     }
                 });
                 self.mode = Mode::default_mode(&self.ssh_config_servers, cx);

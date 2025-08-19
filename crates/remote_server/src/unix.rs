@@ -622,7 +622,7 @@ pub fn execute_proxy(identifier: String, is_reconnecting: bool) -> Result<()> {
                     Err(anyhow!(error))?;
                 }
                 n => {
-                    stderr.write_all(&mut stderr_buffer[..n]).await?;
+                    stderr.write_all(&stderr_buffer[..n]).await?;
                     stderr.flush().await?;
                 }
             }
@@ -951,13 +951,13 @@ fn cleanup_old_binaries() -> Result<()> {
     for entry in std::fs::read_dir(server_dir)? {
         let path = entry?.path();
 
-        if let Some(file_name) = path.file_name() {
-            if let Some(version) = file_name.to_string_lossy().strip_prefix(&prefix) {
-                if !is_new_version(version) && !is_file_in_use(file_name) {
-                    log::info!("removing old remote server binary: {:?}", path);
-                    std::fs::remove_file(&path)?;
-                }
-            }
+        if let Some(file_name) = path.file_name()
+            && let Some(version) = file_name.to_string_lossy().strip_prefix(&prefix)
+            && !is_new_version(version)
+            && !is_file_in_use(file_name)
+        {
+            log::info!("removing old remote server binary: {:?}", path);
+            std::fs::remove_file(&path)?;
         }
     }
 

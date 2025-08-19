@@ -282,19 +282,17 @@ impl Settings for WorkspaceSettings {
         if vscode
             .read_bool("accessibility.dimUnfocused.enabled")
             .unwrap_or_default()
-        {
-            if let Some(opacity) = vscode
+            && let Some(opacity) = vscode
                 .read_value("accessibility.dimUnfocused.opacity")
                 .and_then(|v| v.as_f64())
-            {
-                if let Some(settings) = current.active_pane_modifiers.as_mut() {
-                    settings.inactive_opacity = Some(opacity as f32)
-                } else {
-                    current.active_pane_modifiers = Some(ActivePanelModifiers {
-                        inactive_opacity: Some(opacity as f32),
-                        ..Default::default()
-                    })
-                }
+        {
+            if let Some(settings) = current.active_pane_modifiers.as_mut() {
+                settings.inactive_opacity = Some(opacity as f32)
+            } else {
+                current.active_pane_modifiers = Some(ActivePanelModifiers {
+                    inactive_opacity: Some(opacity as f32),
+                    ..Default::default()
+                })
             }
         }
 
@@ -345,13 +343,11 @@ impl Settings for WorkspaceSettings {
             .read_value("workbench.editor.limit.value")
             .and_then(|v| v.as_u64())
             .and_then(|n| NonZeroUsize::new(n as usize))
-        {
-            if vscode
+            && vscode
                 .read_bool("workbench.editor.limit.enabled")
                 .unwrap_or_default()
-            {
-                current.max_tabs = Some(n)
-            }
+        {
+            current.max_tabs = Some(n)
         }
 
         // some combination of "window.restoreWindows" and "workbench.startupEditor" might

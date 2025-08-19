@@ -82,7 +82,7 @@ impl ChannelBuffer {
                 collaborators: Default::default(),
                 acknowledge_task: None,
                 channel_id: channel.id,
-                subscription: Some(subscription.set_entity(&cx.entity(), &mut cx.to_async())),
+                subscription: Some(subscription.set_entity(&cx.entity(), &cx.to_async())),
                 user_store,
                 channel_store,
             };
@@ -110,7 +110,7 @@ impl ChannelBuffer {
             let Ok(subscription) = self.client.subscribe_to_entity(self.channel_id.0) else {
                 return;
             };
-            self.subscription = Some(subscription.set_entity(&cx.entity(), &mut cx.to_async()));
+            self.subscription = Some(subscription.set_entity(&cx.entity(), &cx.to_async()));
             cx.emit(ChannelBufferEvent::Connected);
         }
     }
@@ -191,12 +191,11 @@ impl ChannelBuffer {
                 operation,
                 is_local: true,
             } => {
-                if *ZED_ALWAYS_ACTIVE {
-                    if let language::Operation::UpdateSelections { selections, .. } = operation {
-                        if selections.is_empty() {
-                            return;
-                        }
-                    }
+                if *ZED_ALWAYS_ACTIVE
+                    && let language::Operation::UpdateSelections { selections, .. } = operation
+                    && selections.is_empty()
+                {
+                    return;
                 }
                 let operation = language::proto::serialize_operation(operation);
                 self.client

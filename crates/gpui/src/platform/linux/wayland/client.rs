@@ -359,13 +359,13 @@ impl WaylandClientStatePtr {
             }
             changed
         };
-        if changed {
-            if let Some(mut callback) = state.common.callbacks.keyboard_layout_change.take() {
-                drop(state);
-                callback();
-                state = client.borrow_mut();
-                state.common.callbacks.keyboard_layout_change = Some(callback);
-            }
+
+        if changed && let Some(mut callback) = state.common.callbacks.keyboard_layout_change.take()
+        {
+            drop(state);
+            callback();
+            state = client.borrow_mut();
+            state.common.callbacks.keyboard_layout_change = Some(callback);
         }
     }
 
@@ -373,15 +373,15 @@ impl WaylandClientStatePtr {
         let mut client = self.get_client();
         let mut state = client.borrow_mut();
         let closed_window = state.windows.remove(surface_id).unwrap();
-        if let Some(window) = state.mouse_focused_window.take() {
-            if !window.ptr_eq(&closed_window) {
-                state.mouse_focused_window = Some(window);
-            }
+        if let Some(window) = state.mouse_focused_window.take()
+            && !window.ptr_eq(&closed_window)
+        {
+            state.mouse_focused_window = Some(window);
         }
-        if let Some(window) = state.keyboard_focused_window.take() {
-            if !window.ptr_eq(&closed_window) {
-                state.keyboard_focused_window = Some(window);
-            }
+        if let Some(window) = state.keyboard_focused_window.take()
+            && !window.ptr_eq(&closed_window)
+        {
+            state.keyboard_focused_window = Some(window);
         }
         if state.windows.is_empty() {
             state.common.signal.stop();
@@ -1784,17 +1784,17 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                             drop(state);
                             window.handle_input(input);
                         }
-                    } else if let Some(discrete) = discrete {
-                        if let Some(window) = state.mouse_focused_window.clone() {
-                            let input = PlatformInput::ScrollWheel(ScrollWheelEvent {
-                                position: state.mouse_location.unwrap(),
-                                delta: ScrollDelta::Lines(discrete),
-                                modifiers: state.modifiers,
-                                touch_phase: TouchPhase::Moved,
-                            });
-                            drop(state);
-                            window.handle_input(input);
-                        }
+                    } else if let Some(discrete) = discrete
+                        && let Some(window) = state.mouse_focused_window.clone()
+                    {
+                        let input = PlatformInput::ScrollWheel(ScrollWheelEvent {
+                            position: state.mouse_location.unwrap(),
+                            delta: ScrollDelta::Lines(discrete),
+                            modifiers: state.modifiers,
+                            touch_phase: TouchPhase::Moved,
+                        });
+                        drop(state);
+                        window.handle_input(input);
                     }
                 }
             }

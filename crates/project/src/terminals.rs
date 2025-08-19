@@ -119,13 +119,13 @@ impl Project {
         };
 
         let mut settings_location = None;
-        if let Some(path) = path.as_ref() {
-            if let Some((worktree, _)) = self.find_worktree(path, cx) {
-                settings_location = Some(SettingsLocation {
-                    worktree_id: worktree.read(cx).id(),
-                    path,
-                });
-            }
+        if let Some(path) = path.as_ref()
+            && let Some((worktree, _)) = self.find_worktree(path, cx)
+        {
+            settings_location = Some(SettingsLocation {
+                worktree_id: worktree.read(cx).id(),
+                path,
+            });
         }
         let venv = TerminalSettings::get(settings_location, cx)
             .detect_venv
@@ -151,13 +151,13 @@ impl Project {
         cx: &'a App,
     ) -> &'a TerminalSettings {
         let mut settings_location = None;
-        if let Some(path) = path.as_ref() {
-            if let Some((worktree, _)) = self.find_worktree(path, cx) {
-                settings_location = Some(SettingsLocation {
-                    worktree_id: worktree.read(cx).id(),
-                    path,
-                });
-            }
+        if let Some(path) = path.as_ref()
+            && let Some((worktree, _)) = self.find_worktree(path, cx)
+        {
+            settings_location = Some(SettingsLocation {
+                worktree_id: worktree.read(cx).id(),
+                path,
+            });
         }
         TerminalSettings::get(settings_location, cx)
     }
@@ -239,13 +239,13 @@ impl Project {
         let is_ssh_terminal = ssh_details.is_some();
 
         let mut settings_location = None;
-        if let Some(path) = path.as_ref() {
-            if let Some((worktree, _)) = this.find_worktree(path, cx) {
-                settings_location = Some(SettingsLocation {
-                    worktree_id: worktree.read(cx).id(),
-                    path,
-                });
-            }
+        if let Some(path) = path.as_ref()
+            && let Some((worktree, _)) = this.find_worktree(path, cx)
+        {
+            settings_location = Some(SettingsLocation {
+                worktree_id: worktree.read(cx).id(),
+                path,
+            });
         }
         let settings = TerminalSettings::get(settings_location, cx).clone();
 
@@ -665,11 +665,11 @@ pub fn wrap_for_ssh(
             env_changes.push_str(&format!("{}={} ", k, v));
         }
     }
-    if let Some(venv_directory) = venv_directory {
-        if let Ok(str) = shlex::try_quote(venv_directory.to_string_lossy().as_ref()) {
-            let path = RemotePathBuf::new(PathBuf::from(str.to_string()), path_style).to_string();
-            env_changes.push_str(&format!("PATH={}:$PATH ", path));
-        }
+    if let Some(venv_directory) = venv_directory
+        && let Ok(str) = shlex::try_quote(venv_directory.to_string_lossy().as_ref())
+    {
+        let path = RemotePathBuf::new(PathBuf::from(str.to_string()), path_style).to_string();
+        env_changes.push_str(&format!("PATH={}:$PATH ", path));
     }
 
     let commands = if let Some(path) = path {

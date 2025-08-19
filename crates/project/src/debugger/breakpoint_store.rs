@@ -267,7 +267,7 @@ impl BreakpointStore {
         message: TypedEnvelope<proto::ToggleBreakpoint>,
         mut cx: AsyncApp,
     ) -> Result<proto::Ack> {
-        let breakpoints = this.read_with(&mut cx, |this, _| this.breakpoint_store())?;
+        let breakpoints = this.read_with(&cx, |this, _| this.breakpoint_store())?;
         let path = this
             .update(&mut cx, |this, cx| {
                 this.project_path_for_absolute_path(message.payload.path.as_ref(), cx)
@@ -623,12 +623,11 @@ impl BreakpointStore {
                 file_breakpoints.breakpoints.iter().filter_map({
                     let range = range.clone();
                     move |bp| {
-                        if let Some(range) = &range {
-                            if bp.position().cmp(&range.start, buffer_snapshot).is_lt()
-                                || bp.position().cmp(&range.end, buffer_snapshot).is_gt()
-                            {
-                                return None;
-                            }
+                        if let Some(range) = &range
+                            && (bp.position().cmp(&range.start, buffer_snapshot).is_lt()
+                                || bp.position().cmp(&range.end, buffer_snapshot).is_gt())
+                        {
+                            return None;
                         }
                         let session_state = active_session_id
                             .and_then(|id| bp.session_state.get(&id))
