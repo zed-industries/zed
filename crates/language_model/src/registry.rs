@@ -21,7 +21,7 @@ impl Global for GlobalLanguageModelRegistry {}
 pub enum ConfigurationError {
     #[error("Configure at least one LLM provider to start using the panel.")]
     NoProvider,
-    #[error("LLM Provider is not configured or does not support the configured model.")]
+    #[error("LLM provider is not configured or does not support the configured model.")]
     ModelNotFound,
     #[error("{} LLM provider is not configured.", .0.name().0)]
     ProviderNotAuthenticated(Arc<dyn LanguageModelProvider>),
