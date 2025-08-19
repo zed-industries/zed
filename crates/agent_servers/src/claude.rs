@@ -65,6 +65,10 @@ impl AgentServer for ClaudeCode {
 
         Task::ready(Ok(Rc::new(connection) as _))
     }
+
+    fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
+        self
+    }
 }
 
 struct ClaudeAgentConnection {
