@@ -894,7 +894,7 @@ mod tests {
             })
             .await;
         let results = result.unwrap();
-        let paths = extract_paths_from_results(&results.content.as_str().unwrap());
+        let paths = extract_paths_from_results(results.content.as_str().unwrap());
         assert!(
             paths.is_empty(),
             "grep_tool should not find files outside the project worktree"
@@ -920,7 +920,7 @@ mod tests {
             })
             .await;
         let results = result.unwrap();
-        let paths = extract_paths_from_results(&results.content.as_str().unwrap());
+        let paths = extract_paths_from_results(results.content.as_str().unwrap());
         assert!(
             paths.iter().any(|p| p.contains("allowed_file.rs")),
             "grep_tool should be able to search files inside worktrees"
@@ -946,7 +946,7 @@ mod tests {
             })
             .await;
         let results = result.unwrap();
-        let paths = extract_paths_from_results(&results.content.as_str().unwrap());
+        let paths = extract_paths_from_results(results.content.as_str().unwrap());
         assert!(
             paths.is_empty(),
             "grep_tool should not search files in .secretdir (file_scan_exclusions)"
@@ -971,7 +971,7 @@ mod tests {
             })
             .await;
         let results = result.unwrap();
-        let paths = extract_paths_from_results(&results.content.as_str().unwrap());
+        let paths = extract_paths_from_results(results.content.as_str().unwrap());
         assert!(
             paths.is_empty(),
             "grep_tool should not search .mymetadata files (file_scan_exclusions)"
@@ -997,7 +997,7 @@ mod tests {
             })
             .await;
         let results = result.unwrap();
-        let paths = extract_paths_from_results(&results.content.as_str().unwrap());
+        let paths = extract_paths_from_results(results.content.as_str().unwrap());
         assert!(
             paths.is_empty(),
             "grep_tool should not search .mysecrets (private_files)"
@@ -1022,7 +1022,7 @@ mod tests {
             })
             .await;
         let results = result.unwrap();
-        let paths = extract_paths_from_results(&results.content.as_str().unwrap());
+        let paths = extract_paths_from_results(results.content.as_str().unwrap());
         assert!(
             paths.is_empty(),
             "grep_tool should not search .privatekey files (private_files)"
@@ -1047,7 +1047,7 @@ mod tests {
             })
             .await;
         let results = result.unwrap();
-        let paths = extract_paths_from_results(&results.content.as_str().unwrap());
+        let paths = extract_paths_from_results(results.content.as_str().unwrap());
         assert!(
             paths.is_empty(),
             "grep_tool should not search .mysensitive files (private_files)"
@@ -1073,7 +1073,7 @@ mod tests {
             })
             .await;
         let results = result.unwrap();
-        let paths = extract_paths_from_results(&results.content.as_str().unwrap());
+        let paths = extract_paths_from_results(results.content.as_str().unwrap());
         assert!(
             paths.iter().any(|p| p.contains("normal_file.rs")),
             "Should be able to search normal files"
@@ -1100,7 +1100,7 @@ mod tests {
             })
             .await;
         let results = result.unwrap();
-        let paths = extract_paths_from_results(&results.content.as_str().unwrap());
+        let paths = extract_paths_from_results(results.content.as_str().unwrap());
         assert!(
             paths.is_empty(),
             "grep_tool should not allow escaping project boundaries with relative paths"
@@ -1206,7 +1206,7 @@ mod tests {
             .unwrap();
 
         let content = result.content.as_str().unwrap();
-        let paths = extract_paths_from_results(&content);
+        let paths = extract_paths_from_results(content);
 
         // Should find matches in non-private files
         assert!(
@@ -1271,7 +1271,7 @@ mod tests {
             .unwrap();
 
         let content = result.content.as_str().unwrap();
-        let paths = extract_paths_from_results(&content);
+        let paths = extract_paths_from_results(content);
 
         // Should only find matches in worktree1 *.rs files (excluding private ones)
         assert!(

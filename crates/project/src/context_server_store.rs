@@ -368,7 +368,7 @@ impl ContextServerStore {
     }
 
     pub fn restart_server(&mut self, id: &ContextServerId, cx: &mut Context<Self>) -> Result<()> {
-        if let Some(state) = self.servers.get(&id) {
+        if let Some(state) = self.servers.get(id) {
             let configuration = state.configuration();
 
             self.stop_server(&state.server().id(), cx)?;
@@ -397,7 +397,7 @@ impl ContextServerStore {
             let server = server.clone();
             let configuration = configuration.clone();
             async move |this, cx| {
-                match server.clone().start(&cx).await {
+                match server.clone().start(cx).await {
                     Ok(_) => {
                         log::info!("Started {} context server", id);
                         debug_assert!(server.client().is_some());
@@ -588,7 +588,7 @@ impl ContextServerStore {
             for server_id in this.servers.keys() {
                 // All servers that are not in desired_servers should be removed from the store.
                 // This can happen if the user removed a server from the context server settings.
-                if !configured_servers.contains_key(&server_id) {
+                if !configured_servers.contains_key(server_id) {
                     if disabled_servers.contains_key(&server_id.0) {
                         servers_to_stop.insert(server_id.clone());
                     } else {

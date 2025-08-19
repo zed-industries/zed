@@ -1341,7 +1341,7 @@ impl ExtensionStore {
                     &extension_path,
                     &extension.manifest,
                     wasm_host.clone(),
-                    &cx,
+                    cx,
                 )
                 .await
                 .with_context(|| format!("Loading extension from {extension_path:?}"));
@@ -1776,7 +1776,7 @@ impl ExtensionStore {
         })?;
 
         for client in clients {
-            Self::sync_extensions_over_ssh(&this, client, cx)
+            Self::sync_extensions_over_ssh(this, client, cx)
                 .await
                 .log_err();
         }

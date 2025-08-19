@@ -445,14 +445,14 @@ impl MetalRenderer {
                     instance_buffer,
                     &mut instance_offset,
                     viewport_size,
-                    &command_encoder,
+                    command_encoder,
                 ),
                 PrimitiveBatch::Quads(quads) => self.draw_quads(
                     quads,
                     instance_buffer,
                     &mut instance_offset,
                     viewport_size,
-                    &command_encoder,
+                    command_encoder,
                 ),
                 PrimitiveBatch::Paths(paths) => {
                     command_encoder.end_encoding();
@@ -480,7 +480,7 @@ impl MetalRenderer {
                             instance_buffer,
                             &mut instance_offset,
                             viewport_size,
-                            &command_encoder,
+                            command_encoder,
                         )
                     } else {
                         false
@@ -491,7 +491,7 @@ impl MetalRenderer {
                     instance_buffer,
                     &mut instance_offset,
                     viewport_size,
-                    &command_encoder,
+                    command_encoder,
                 ),
                 PrimitiveBatch::MonochromeSprites {
                     texture_id,
@@ -502,7 +502,7 @@ impl MetalRenderer {
                     instance_buffer,
                     &mut instance_offset,
                     viewport_size,
-                    &command_encoder,
+                    command_encoder,
                 ),
                 PrimitiveBatch::PolychromeSprites {
                     texture_id,
@@ -513,14 +513,14 @@ impl MetalRenderer {
                     instance_buffer,
                     &mut instance_offset,
                     viewport_size,
-                    &command_encoder,
+                    command_encoder,
                 ),
                 PrimitiveBatch::Surfaces(surfaces) => self.draw_surfaces(
                     surfaces,
                     instance_buffer,
                     &mut instance_offset,
                     viewport_size,
-                    &command_encoder,
+                    command_encoder,
                 ),
             };
             if !ok {
@@ -763,7 +763,7 @@ impl MetalRenderer {
         viewport_size: Size<DevicePixels>,
         command_encoder: &metal::RenderCommandEncoderRef,
     ) -> bool {
-        let Some(ref first_path) = paths.first() else {
+        let Some(first_path) = paths.first() else {
             return true;
         };
 

@@ -71,8 +71,8 @@ impl Diff {
                         let hunk_ranges = {
                             let buffer = new_buffer.read(cx);
                             let diff = buffer_diff.read(cx);
-                            diff.hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &buffer, cx)
-                                .map(|diff_hunk| diff_hunk.buffer_range.to_point(&buffer))
+                            diff.hunks_intersecting_range(Anchor::MIN..Anchor::MAX, buffer, cx)
+                                .map(|diff_hunk| diff_hunk.buffer_range.to_point(buffer))
                                 .collect::<Vec<_>>()
                         };
 
@@ -306,13 +306,13 @@ impl PendingDiff {
         let buffer = self.buffer.read(cx);
         let diff = self.diff.read(cx);
         let mut ranges = diff
-            .hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &buffer, cx)
-            .map(|diff_hunk| diff_hunk.buffer_range.to_point(&buffer))
+            .hunks_intersecting_range(Anchor::MIN..Anchor::MAX, buffer, cx)
+            .map(|diff_hunk| diff_hunk.buffer_range.to_point(buffer))
             .collect::<Vec<_>>();
         ranges.extend(
             self.revealed_ranges
                 .iter()
-                .map(|range| range.to_point(&buffer)),
+                .map(|range| range.to_point(buffer)),
         );
         ranges.sort_unstable_by_key(|range| (range.start, Reverse(range.end)));
 

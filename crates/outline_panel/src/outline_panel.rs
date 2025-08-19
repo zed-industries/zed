@@ -5498,7 +5498,7 @@ mod tests {
             assert_eq!(
                 display_entries(
                     &project,
-                    &snapshot(&outline_panel, cx),
+                    &snapshot(outline_panel, cx),
                     &outline_panel.cached_entries,
                     outline_panel.selected_entry(),
                     cx,
@@ -5514,7 +5514,7 @@ mod tests {
             assert_eq!(
                 display_entries(
                     &project,
-                    &snapshot(&outline_panel, cx),
+                    &snapshot(outline_panel, cx),
                     &outline_panel.cached_entries,
                     outline_panel.selected_entry(),
                     cx,
@@ -5532,7 +5532,7 @@ mod tests {
             assert_eq!(
                 display_entries(
                     &project,
-                    &snapshot(&outline_panel, cx),
+                    &snapshot(outline_panel, cx),
                     &outline_panel.cached_entries,
                     outline_panel.selected_entry(),
                     cx,
@@ -5569,7 +5569,7 @@ mod tests {
             assert_eq!(
                 display_entries(
                     &project,
-                    &snapshot(&outline_panel, cx),
+                    &snapshot(outline_panel, cx),
                     &outline_panel.cached_entries,
                     outline_panel.selected_entry(),
                     cx,
@@ -5583,7 +5583,7 @@ mod tests {
             assert_eq!(
                 display_entries(
                     &project,
-                    &snapshot(&outline_panel, cx),
+                    &snapshot(outline_panel, cx),
                     &outline_panel.cached_entries,
                     outline_panel.selected_entry(),
                     cx,
@@ -5602,7 +5602,7 @@ mod tests {
             assert_eq!(
                 display_entries(
                     &project,
-                    &snapshot(&outline_panel, cx),
+                    &snapshot(outline_panel, cx),
                     &outline_panel.cached_entries,
                     outline_panel.selected_entry(),
                     cx,
@@ -5630,7 +5630,7 @@ mod tests {
             assert_eq!(
                 display_entries(
                     &project,
-                    &snapshot(&outline_panel, cx),
+                    &snapshot(outline_panel, cx),
                     &outline_panel.cached_entries,
                     outline_panel.selected_entry(),
                     cx,
@@ -5718,7 +5718,7 @@ mod tests {
             assert_eq!(
                 display_entries(
                     &project,
-                    &snapshot(&outline_panel, cx),
+                    &snapshot(outline_panel, cx),
                     &outline_panel.cached_entries,
                     None,
                     cx,
@@ -5741,7 +5741,7 @@ mod tests {
             assert_eq!(
                 display_entries(
                     &project,
-                    &snapshot(&outline_panel, cx),
+                    &snapshot(outline_panel, cx),
                     &outline_panel.cached_entries,
                     None,
                     cx,
@@ -5767,7 +5767,7 @@ mod tests {
             assert_eq!(
                 display_entries(
                     &project,
-                    &snapshot(&outline_panel, cx),
+                    &snapshot(outline_panel, cx),
                     &outline_panel.cached_entries,
                     None,
                     cx,
@@ -5873,7 +5873,7 @@ mod tests {
             assert_eq!(
                 display_entries(
                     &project,
-                    &snapshot(&outline_panel, cx),
+                    &snapshot(outline_panel, cx),
                     &outline_panel.cached_entries,
                     outline_panel.selected_entry(),
                     cx,
@@ -5896,7 +5896,7 @@ mod tests {
             assert_eq!(
                 display_entries(
                     &project,
-                    &snapshot(&outline_panel, cx),
+                    &snapshot(outline_panel, cx),
                     &outline_panel.cached_entries,
                     outline_panel.selected_entry(),
                     cx,
@@ -5933,7 +5933,7 @@ mod tests {
             assert_eq!(
                 display_entries(
                     &project,
-                    &snapshot(&outline_panel, cx),
+                    &snapshot(outline_panel, cx),
                     &outline_panel.cached_entries,
                     outline_panel.selected_entry(),
                     cx,
@@ -5970,7 +5970,7 @@ mod tests {
             assert_eq!(
                 display_entries(
                     &project,
-                    &snapshot(&outline_panel, cx),
+                    &snapshot(outline_panel, cx),
                     &outline_panel.cached_entries,
                     outline_panel.selected_entry(),
                     cx,
@@ -6073,7 +6073,7 @@ mod tests {
             assert_eq!(
                 display_entries(
                     &project,
-                    &snapshot(&outline_panel, cx),
+                    &snapshot(outline_panel, cx),
                     &outline_panel.cached_entries,
                     outline_panel.selected_entry(),
                     cx,
@@ -6099,7 +6099,7 @@ mod tests {
             assert_eq!(
                 display_entries(
                     &project,
-                    &snapshot(&outline_panel, cx),
+                    &snapshot(outline_panel, cx),
                     &outline_panel.cached_entries,
                     outline_panel.selected_entry(),
                     cx,
@@ -6123,7 +6123,7 @@ mod tests {
             assert_eq!(
                 display_entries(
                     &project,
-                    &snapshot(&outline_panel, cx),
+                    &snapshot(outline_panel, cx),
                     &outline_panel.cached_entries,
                     outline_panel.selected_entry(),
                     cx,
@@ -6144,7 +6144,7 @@ mod tests {
             assert_eq!(
                 display_entries(
                     &project,
-                    &snapshot(&outline_panel, cx),
+                    &snapshot(outline_panel, cx),
                     &outline_panel.cached_entries,
                     outline_panel.selected_entry(),
                     cx,
@@ -6232,7 +6232,7 @@ struct OutlineEntryExcerpt {
             assert_eq!(
                 display_entries(
                     &project,
-                    &snapshot(&outline_panel, cx),
+                    &snapshot(outline_panel, cx),
                     &outline_panel.cached_entries,
                     outline_panel.selected_entry(),
                     cx,
@@ -6259,7 +6259,7 @@ outline: struct OutlineEntryExcerpt
             assert_eq!(
                 display_entries(
                     &project,
-                    &snapshot(&outline_panel, cx),
+                    &snapshot(outline_panel, cx),
                     &outline_panel.cached_entries,
                     outline_panel.selected_entry(),
                     cx,
@@ -6286,7 +6286,7 @@ outline: struct OutlineEntryExcerpt  <==== selected
             assert_eq!(
                 display_entries(
                     &project,
-                    &snapshot(&outline_panel, cx),
+                    &snapshot(outline_panel, cx),
                     &outline_panel.cached_entries,
                     outline_panel.selected_entry(),
                     cx,
@@ -6313,7 +6313,7 @@ outline: struct OutlineEntryExcerpt
             assert_eq!(
                 display_entries(
                     &project,
-                    &snapshot(&outline_panel, cx),
+                    &snapshot(outline_panel, cx),
                     &outline_panel.cached_entries,
                     outline_panel.selected_entry(),
                     cx,
@@ -6340,7 +6340,7 @@ outline: struct OutlineEntryExcerpt
             assert_eq!(
                 display_entries(
                     &project,
-                    &snapshot(&outline_panel, cx),
+                    &snapshot(outline_panel, cx),
                     &outline_panel.cached_entries,
                     outline_panel.selected_entry(),
                     cx,
@@ -6367,7 +6367,7 @@ outline: struct OutlineEntryExcerpt
             assert_eq!(
                 display_entries(
                     &project,
-                    &snapshot(&outline_panel, cx),
+                    &snapshot(outline_panel, cx),
                     &outline_panel.cached_entries,
                     outline_panel.selected_entry(),
                     cx,
@@ -6394,7 +6394,7 @@ outline: struct OutlineEntryExcerpt  <==== selected
             assert_eq!(
                 display_entries(
                     &project,
-                    &snapshot(&outline_panel, cx),
+                    &snapshot(outline_panel, cx),
                     &outline_panel.cached_entries,
                     outline_panel.selected_entry(),
                     cx,
@@ -6421,7 +6421,7 @@ outline: struct OutlineEntryExcerpt
             assert_eq!(
                 display_entries(
                     &project,
-                    &snapshot(&outline_panel, cx),
+                    &snapshot(outline_panel, cx),
                     &outline_panel.cached_entries,
                     outline_panel.selected_entry(),
                     cx,
@@ -6448,7 +6448,7 @@ outline: struct OutlineEntryExcerpt
             assert_eq!(
                 display_entries(
                     &project,
-                    &snapshot(&outline_panel, cx),
+                    &snapshot(outline_panel, cx),
                     &outline_panel.cached_entries,
                     outline_panel.selected_entry(),
                     cx,
@@ -6475,7 +6475,7 @@ outline: struct OutlineEntryExcerpt
             assert_eq!(
                 display_entries(
                     &project,
-                    &snapshot(&outline_panel, cx),
+                    &snapshot(outline_panel, cx),
                     &outline_panel.cached_entries,
                     outline_panel.selected_entry(),
                     cx,
@@ -6502,7 +6502,7 @@ outline: struct OutlineEntryExcerpt  <==== selected
             assert_eq!(
                 display_entries(
                     &project,
-                    &snapshot(&outline_panel, cx),
+                    &snapshot(outline_panel, cx),
                     &outline_panel.cached_entries,
                     outline_panel.selected_entry(),
                     cx,
@@ -6608,7 +6608,7 @@ outline: struct OutlineEntryExcerpt
             assert_eq!(
                 display_entries(
                     &project,
-                    &snapshot(&outline_panel, cx),
+                    &snapshot(outline_panel, cx),
                     &outline_panel.cached_entries,
                     outline_panel.selected_entry(),
                     cx,
@@ -6645,7 +6645,7 @@ outline: struct OutlineEntryExcerpt
             assert_eq!(
                 display_entries(
                     &project,
-                    &snapshot(&outline_panel, cx),
+                    &snapshot(outline_panel, cx),
                     &outline_panel.cached_entries,
                     outline_panel.selected_entry(),
                     cx,
@@ -6673,7 +6673,7 @@ outline: struct OutlineEntryExcerpt
             assert_eq!(
                 display_entries(
                     &project,
-                    &snapshot(&outline_panel, cx),
+                    &snapshot(outline_panel, cx),
                     &outline_panel.cached_entries,
                     outline_panel.selected_entry(),
                     cx,
@@ -6705,7 +6705,7 @@ outline: struct OutlineEntryExcerpt
             assert_eq!(
                 display_entries(
                     &project,
-                    &snapshot(&outline_panel, cx),
+                    &snapshot(outline_panel, cx),
                     &outline_panel.cached_entries,
                     outline_panel.selected_entry(),
                     cx,
@@ -6736,7 +6736,7 @@ outline: struct OutlineEntryExcerpt
             assert_eq!(
                 display_entries(
                     &project,
-                    &snapshot(&outline_panel, cx),
+                    &snapshot(outline_panel, cx),
                     &outline_panel.cached_entries,
                     outline_panel.selected_entry(),
                     cx,
@@ -6864,7 +6864,7 @@ outline: struct OutlineEntryExcerpt
                             .render_data
                             .get_or_init(|| SearchData::new(
                                 &search_entry.match_range,
-                                &multi_buffer_snapshot
+                                multi_buffer_snapshot
                             ))
                             .context_text
                     )
@@ -7255,7 +7255,7 @@ outline: struct OutlineEntryExcerpt
             assert_eq!(
                 display_entries(
                     &project,
-                    &snapshot(&outline_panel, cx),
+                    &snapshot(outline_panel, cx),
                     &outline_panel.cached_entries,
                     outline_panel.selected_entry(),
                     cx,
@@ -7314,7 +7314,7 @@ outline: fn main()"
             assert_eq!(
                 display_entries(
                     &project,
-                    &snapshot(&outline_panel, cx),
+                    &snapshot(outline_panel, cx),
                     &outline_panel.cached_entries,
                     outline_panel.selected_entry(),
                     cx,
@@ -7338,7 +7338,7 @@ outline: fn main()"
             assert_eq!(
                 display_entries(
                     &project,
-                    &snapshot(&outline_panel, cx),
+                    &snapshot(outline_panel, cx),
                     &outline_panel.cached_entries,
                     outline_panel.selected_entry(),
                     cx,
@@ -7403,7 +7403,7 @@ outline: fn main()"
             assert_eq!(
                 display_entries(
                     &project,
-                    &snapshot(&outline_panel, cx),
+                    &snapshot(outline_panel, cx),
                     &outline_panel.cached_entries,
                     outline_panel.selected_entry(),
                     cx,
@@ -7544,7 +7544,7 @@ outline: fn main()"
             assert_eq!(
                 display_entries(
                     &project,
-                    &snapshot(&outline_panel, cx),
+                    &snapshot(outline_panel, cx),
                     &outline_panel.cached_entries,
                     outline_panel.selected_entry(),
                     cx,
@@ -7582,7 +7582,7 @@ outline: fn main()"
             assert_eq!(
                 display_entries(
                     &project,
-                    &snapshot(&outline_panel, cx),
+                    &snapshot(outline_panel, cx),
                     &outline_panel.cached_entries,
                     outline_panel.selected_entry(),
                     cx,
@@ -7616,7 +7616,7 @@ outline: fn main()"
             assert_eq!(
                 display_entries(
                     &project,
-                    &snapshot(&outline_panel, cx),
+                    &snapshot(outline_panel, cx),
                     &outline_panel.cached_entries,
                     outline_panel.selected_entry(),
                     cx,
@@ -7648,7 +7648,7 @@ outline: fn main()"
             assert_eq!(
                 display_entries(
                     &project,
-                    &snapshot(&outline_panel, cx),
+                    &snapshot(outline_panel, cx),
                     &outline_panel.cached_entries,
                     outline_panel.selected_entry(),
                     cx,

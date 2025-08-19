@@ -187,8 +187,8 @@ impl LanguageSettings {
         let rest = available_language_servers
             .iter()
             .filter(|&available_language_server| {
-                !disabled_language_servers.contains(&available_language_server)
-                    && !enabled_language_servers.contains(&available_language_server)
+                !disabled_language_servers.contains(available_language_server)
+                    && !enabled_language_servers.contains(available_language_server)
             })
             .cloned()
             .collect::<Vec<_>>();

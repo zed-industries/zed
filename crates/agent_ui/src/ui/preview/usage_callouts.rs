@@ -80,14 +80,10 @@ impl RenderOnce for UsageCallout {
             }
         };
 
-        let icon = if is_limit_reached {
-            Icon::new(IconName::Close)
-                .color(Color::Error)
-                .size(IconSize::XSmall)
+        let (icon, severity) = if is_limit_reached {
+            (IconName::Close, Severity::Error)
         } else {
-            Icon::new(IconName::Warning)
-                .color(Color::Warning)
-                .size(IconSize::XSmall)
+            (IconName::Warning, Severity::Warning)
         };
 
         div()
@@ -96,9 +92,11 @@ impl RenderOnce for UsageCallout {
             .child(
                 Callout::new()
                     .icon(icon)
+                    .severity(severity)
+                    .icon(icon)
                     .title(title)
                     .description(message)
-                    .primary_action(
+                    .actions_slot(
                         Button::new("upgrade", button_text)
                             .label_size(LabelSize::Small)
                             .on_click(move |_, _, cx| {

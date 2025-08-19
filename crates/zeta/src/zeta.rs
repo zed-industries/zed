@@ -505,7 +505,7 @@ impl Zeta {
                 input_events,
                 input_excerpt,
                 buffer_snapshotted_at,
-                &cx,
+                cx,
             )
             .await;
 
@@ -981,7 +981,7 @@ and then another
             old_text,
             new_text,
             editable_range.start,
-            &snapshot,
+            snapshot,
         ))
     }
 
@@ -991,7 +991,7 @@ and then another
         offset: usize,
         snapshot: &BufferSnapshot,
     ) -> Vec<(Range<Anchor>, String)> {
-        text_diff(&old_text, &new_text)
+        text_diff(&old_text, new_text)
             .into_iter()
             .map(|(mut old_range, new_text)| {
                 old_range.start += offset;
@@ -1182,7 +1182,7 @@ pub fn gather_context(
                 .filter_map(|(language_server_id, diagnostic_group)| {
                     let language_server =
                         local_lsp_store.running_language_server_for_id(language_server_id)?;
-                    let diagnostic_group = diagnostic_group.resolve::<usize>(&snapshot);
+                    let diagnostic_group = diagnostic_group.resolve::<usize>(snapshot);
                     let language_server_name = language_server.name().to_string();
                     let serialized = serde_json::to_value(diagnostic_group).unwrap();
                     Some((language_server_name, serialized))
@@ -1313,10 +1313,10 @@ impl CurrentEditPrediction {
             return true;
         }
 
-        let Some(old_edits) = old_completion.completion.interpolate(&snapshot) else {
+        let Some(old_edits) = old_completion.completion.interpolate(snapshot) else {
             return true;
         };
-        let Some(new_edits) = self.completion.interpolate(&snapshot) else {
+        let Some(new_edits) = self.completion.interpolate(snapshot) else {
             return false;
         };
 
@@ -1664,7 +1664,7 @@ impl edit_prediction::EditPredictionProvider for ZetaEditPredictionProvider {
 
                 if let Some(old_completion) = this.current_completion.as_ref() {
                     let snapshot = buffer.read(cx).snapshot();
-                    if new_completion.should_replace_completion(&old_completion, &snapshot) {
+                    if new_completion.should_replace_completion(old_completion, &snapshot) {
                         this.zeta.update(cx, |zeta, cx| {
                             zeta.completion_shown(&new_completion.completion, cx);
                         });

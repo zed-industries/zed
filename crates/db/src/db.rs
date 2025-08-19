@@ -238,7 +238,7 @@ mod tests {
             .unwrap();
         let _bad_db = open_db::<BadDB>(
             tempdir.path(),
-            &release_channel::ReleaseChannel::Dev.dev_name(),
+            release_channel::ReleaseChannel::Dev.dev_name(),
         )
         .await;
     }
@@ -279,7 +279,7 @@ mod tests {
         {
             let corrupt_db = open_db::<CorruptedDB>(
                 tempdir.path(),
-                &release_channel::ReleaseChannel::Dev.dev_name(),
+                release_channel::ReleaseChannel::Dev.dev_name(),
             )
             .await;
             assert!(corrupt_db.persistent());
@@ -287,7 +287,7 @@ mod tests {
 
         let good_db = open_db::<GoodDB>(
             tempdir.path(),
-            &release_channel::ReleaseChannel::Dev.dev_name(),
+            release_channel::ReleaseChannel::Dev.dev_name(),
         )
         .await;
         assert!(
@@ -334,7 +334,7 @@ mod tests {
             // Setup the bad database
             let corrupt_db = open_db::<CorruptedDB>(
                 tempdir.path(),
-                &release_channel::ReleaseChannel::Dev.dev_name(),
+                release_channel::ReleaseChannel::Dev.dev_name(),
             )
             .await;
             assert!(corrupt_db.persistent());
@@ -347,7 +347,7 @@ mod tests {
             let guard = thread::spawn(move || {
                 let good_db = smol::block_on(open_db::<GoodDB>(
                     tmp_path.as_path(),
-                    &release_channel::ReleaseChannel::Dev.dev_name(),
+                    release_channel::ReleaseChannel::Dev.dev_name(),
                 ));
                 assert!(
                     good_db.select_row::<usize>("SELECT * FROM test2").unwrap()()

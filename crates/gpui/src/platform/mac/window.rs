@@ -1480,9 +1480,9 @@ extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: 
 
             if key_down_event.is_held {
                 if let Some(key_char) = key_down_event.keystroke.key_char.as_ref() {
-                    let handled = with_input_handler(&this, |input_handler| {
+                    let handled = with_input_handler(this, |input_handler| {
                         if !input_handler.apple_press_and_hold_enabled() {
-                            input_handler.replace_text_in_range(None, &key_char);
+                            input_handler.replace_text_in_range(None, key_char);
                             return YES;
                         }
                         NO
@@ -1949,7 +1949,7 @@ extern "C" fn insert_text(this: &Object, _: Sel, text: id, replacement_range: NS
         let text = text.to_str();
         let replacement_range = replacement_range.to_range();
         with_input_handler(this, |input_handler| {
-            input_handler.replace_text_in_range(replacement_range, &text)
+            input_handler.replace_text_in_range(replacement_range, text)
         });
     }
 }
@@ -1973,7 +1973,7 @@ extern "C" fn set_marked_text(
         let replacement_range = replacement_range.to_range();
         let text = text.to_str();
         with_input_handler(this, |input_handler| {
-            input_handler.replace_and_mark_text_in_range(replacement_range, &text, selected_range)
+            input_handler.replace_and_mark_text_in_range(replacement_range, text, selected_range)
         });
     }
 }

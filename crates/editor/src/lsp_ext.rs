@@ -76,7 +76,7 @@ async fn lsp_task_context(
 
     let project_env = project
         .update(cx, |project, cx| {
-            project.buffer_environment(&buffer, &worktree_store, cx)
+            project.buffer_environment(buffer, &worktree_store, cx)
         })
         .ok()?
         .await;

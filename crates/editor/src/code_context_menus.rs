@@ -321,7 +321,7 @@ impl CompletionsMenu {
         let match_candidates = choices
             .iter()
             .enumerate()
-            .map(|(id, completion)| StringMatchCandidate::new(id, &completion))
+            .map(|(id, completion)| StringMatchCandidate::new(id, completion))
             .collect();
         let entries = choices
             .iter()

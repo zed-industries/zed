@@ -67,7 +67,7 @@ impl NeovimConnection {
             // Ensure we don't create neovim connections in parallel
             let _lock = NEOVIM_LOCK.lock();
             let (nvim, join_handle, child) = new_child_cmd(
-                &mut Command::new("nvim")
+                Command::new("nvim")
                     .arg("--embed")
                     .arg("--clean")
                     // disable swap (otherwise after about 1000 test runs you run out of swap file names)
@@ -161,7 +161,7 @@ impl NeovimConnection {
 
     #[cfg(feature = "neovim")]
     pub async fn set_state(&mut self, marked_text: &str) {
-        let (text, selections) = parse_state(&marked_text);
+        let (text, selections) = parse_state(marked_text);
 
         let nvim_buffer = self
             .nvim

@@ -1227,7 +1227,7 @@ impl MentionSet {
                         })
                     }
                     MentionUri::Fetch { url } => {
-                        let Some(content) = self.fetch_results.get(&url).cloned() else {
+                        let Some(content) = self.fetch_results.get(url).cloned() else {
                             return Task::ready(Err(anyhow!("missing fetch result")));
                         };
                         let uri = uri.clone();

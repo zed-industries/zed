@@ -1,6 +1,7 @@
 use acp_thread::{
     AcpThread, AcpThreadEvent, AgentThreadEntry, AssistantMessage, AssistantMessageChunk,
-    LoadError, MentionUri, ThreadStatus, ToolCall, ToolCallContent, ToolCallStatus, UserMessageId,
+    AuthRequired, LoadError, MentionUri, ThreadStatus, ToolCall, ToolCallContent, ToolCallStatus,
+    UserMessageId,
 };
 use acp_thread::{AgentConnection, Plan};
 use action_log::ActionLog;
@@ -18,13 +19,16 @@ use editor::{Editor, EditorMode, MultiBuffer, PathKey, SelectionEffects};
 use file_icons::FileIcons;
 use fs::Fs;
 use gpui::{
-    Action, Animation, AnimationExt, App, BorderStyle, ClickEvent, ClipboardItem, EdgesRefinement,
-    Empty, Entity, FocusHandle, Focusable, Hsla, Length, ListOffset, ListState, MouseButton,
-    PlatformDisplay, SharedString, Stateful, StyleRefinement, Subscription, Task, TextStyle,
-    TextStyleRefinement, Transformation, UnderlineStyle, WeakEntity, Window, WindowHandle, div,
-    linear_color_stop, linear_gradient, list, percentage, point, prelude::*, pulsating_between,
+    Action, Animation, AnimationExt, AnyView, App, BorderStyle, ClickEvent, ClipboardItem,
+    EdgesRefinement, Empty, Entity, FocusHandle, Focusable, Hsla, Length, ListOffset, ListState,
+    MouseButton, PlatformDisplay, SharedString, Stateful, StyleRefinement, Subscription, Task,
+    TextStyle, TextStyleRefinement, Transformation, UnderlineStyle, WeakEntity, Window,
+    WindowHandle, div, linear_color_stop, linear_gradient, list, percentage, point, prelude::*,
+    pulsating_between,
 };
 use language::Buffer;
+
+use language_model::LanguageModelRegistry;
 use markdown::{HeadingLevelStyles, Markdown, MarkdownElement, MarkdownStyle};
 use project::Project;
 use prompt_store::PromptId;
@@ -137,6 +141,9 @@ enum ThreadState {
     LoadError(LoadError),
     Unauthenticated {
         connection: Rc<dyn AgentConnection>,
+        description: Option<Entity<Markdown>>,
+        configuration_view: Option<AnyView>,
+        _subscription: Option<Subscription>,
     },
     ServerExited {
         status: ExitStatus,
@@ -267,19 +274,16 @@ impl AcpThreadView {
             };
 
             let result = match result.await {
-                Err(e) => {
-                    let mut cx = cx.clone();
-                    if e.is::<acp_thread::AuthRequired>() {
-                        this.update(&mut cx, |this, cx| {
-                            this.thread_state = ThreadState::Unauthenticated { connection };
-                            cx.notify();
+                Err(e) => match e.downcast::<acp_thread::AuthRequired>() {
+                    Ok(err) => {
+                        cx.update(|window, cx| {
+                            Self::handle_auth_required(this, err, agent, connection, window, cx)
                         })
-                        .ok();
+                        .log_err();
                         return;
-                    } else {
-                        Err(e)
                     }
-                }
+                    Err(err) => Err(err),
+                },
                 Ok(thread) => Ok(thread),
             };
 
@@ -345,6 +349,68 @@ impl AcpThreadView {
         ThreadState::Loading { _task: load_task }
     }
 
+    fn handle_auth_required(
+        this: WeakEntity<Self>,
+        err: AuthRequired,
+        agent: Rc<dyn AgentServer>,
+        connection: Rc<dyn AgentConnection>,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        let agent_name = agent.name();
+        let (configuration_view, subscription) = if let Some(provider_id) = err.provider_id {
+            let registry = LanguageModelRegistry::global(cx);
+
+            let sub = window.subscribe(&registry, cx, {
+                let provider_id = provider_id.clone();
+                let this = this.clone();
+                move |_, ev, window, cx| {
+                    if let language_model::Event::ProviderStateChanged(updated_provider_id) = &ev {
+                        if &provider_id == updated_provider_id {
+                            this.update(cx, |this, cx| {
+                                this.thread_state = Self::initial_state(
+                                    agent.clone(),
+                                    this.workspace.clone(),
+                                    this.project.clone(),
+                                    window,
+                                    cx,
+                                );
+                                cx.notify();
+                            })
+                            .ok();
+                        }
+                    }
+                }
+            });
+
+            let view = registry.read(cx).provider(&provider_id).map(|provider| {
+                provider.configuration_view(
+                    language_model::ConfigurationViewTargetAgent::Other(agent_name),
+                    window,
+                    cx,
+                )
+            });
+
+            (view, Some(sub))
+        } else {
+            (None, None)
+        };
+
+        this.update(cx, |this, cx| {
+            this.thread_state = ThreadState::Unauthenticated {
+                connection,
+                configuration_view,
+                description: err
+                    .description
+                    .clone()
+                    .map(|desc| cx.new(|cx| Markdown::new(desc.into(), None, None, cx))),
+                _subscription: subscription,
+            };
+            cx.notify();
+        })
+        .ok();
+    }
+
     fn handle_load_error(&mut self, err: anyhow::Error, cx: &mut Context<Self>) {
         if let Some(load_err) = err.downcast_ref::<LoadError>() {
             self.thread_state = ThreadState::LoadError(load_err.clone());
@@ -369,7 +435,7 @@ impl AcpThreadView {
             ThreadState::Ready { thread, .. } => thread.read(cx).title(),
             ThreadState::Loading { .. } => "Loading…".into(),
             ThreadState::LoadError(_) => "Failed to load".into(),
-            ThreadState::Unauthenticated { .. } => "Not authenticated".into(),
+            ThreadState::Unauthenticated { .. } => "Authentication Required".into(),
             ThreadState::ServerExited { .. } => "Server exited unexpectedly".into(),
         }
     }
@@ -630,7 +696,7 @@ impl AcpThreadView {
         };
 
         diff.update(cx, |diff, cx| {
-            diff.move_to_path(PathKey::for_buffer(&buffer, cx), window, cx)
+            diff.move_to_path(PathKey::for_buffer(buffer, cx), window, cx)
         })
     }
 
@@ -656,13 +722,13 @@ impl AcpThreadView {
                 let len = thread.read(cx).entries().len();
                 let index = len - 1;
                 self.entry_view_state.update(cx, |view_state, cx| {
-                    view_state.sync_entry(index, &thread, window, cx)
+                    view_state.sync_entry(index, thread, window, cx)
                 });
                 self.list_state.splice(index..index, 1);
             }
             AcpThreadEvent::EntryUpdated(index) => {
                 self.entry_view_state.update(cx, |view_state, cx| {
-                    view_state.sync_entry(*index, &thread, window, cx)
+                    view_state.sync_entry(*index, thread, window, cx)
                 });
                 self.list_state.splice(*index..index + 1, 1);
             }
@@ -708,7 +774,7 @@ impl AcpThreadView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let ThreadState::Unauthenticated { ref connection } = self.thread_state else {
+        let ThreadState::Unauthenticated { ref connection, .. } = self.thread_state else {
             return;
         };
 
@@ -1361,7 +1427,7 @@ impl AcpThreadView {
                     Empty.into_any_element()
                 }
             }
-            ToolCallContent::Diff(diff) => self.render_diff_editor(entry_ix, &diff, cx),
+            ToolCallContent::Diff(diff) => self.render_diff_editor(entry_ix, diff, cx),
             ToolCallContent::Terminal(terminal) => {
                 self.render_terminal_tool_call(entry_ix, terminal, tool_call, window, cx)
             }
@@ -1517,7 +1583,7 @@ impl AcpThreadView {
             .border_color(self.tool_card_border_color(cx))
             .child(
                 if let Some(entry) = self.entry_view_state.read(cx).entry(entry_ix)
-                    && let Some(editor) = entry.editor_for_diff(&diff)
+                    && let Some(editor) = entry.editor_for_diff(diff)
                 {
                     editor.clone().into_any_element()
                 } else {
@@ -1717,7 +1783,7 @@ impl AcpThreadView {
             .entry_view_state
             .read(cx)
             .entry(entry_ix)
-            .and_then(|entry| entry.terminal(&terminal));
+            .and_then(|entry| entry.terminal(terminal));
         let show_output = self.terminal_expanded && terminal_view.is_some();
 
         v_flex()
@@ -1841,19 +1907,53 @@ impl AcpThreadView {
             .into_any()
     }
 
-    fn render_pending_auth_state(&self) -> AnyElement {
+    fn render_auth_required_state(
+        &self,
+        connection: &Rc<dyn AgentConnection>,
+        description: Option<&Entity<Markdown>>,
+        configuration_view: Option<&AnyView>,
+        window: &mut Window,
+        cx: &Context<Self>,
+    ) -> Div {
         v_flex()
+            .p_2()
+            .gap_2()
+            .flex_1()
             .items_center()
             .justify_center()
-            .child(self.render_error_agent_logo())
             .child(
-                h_flex()
-                    .mt_4()
-                    .mb_1()
+                v_flex()
+                    .items_center()
                     .justify_center()
-                    .child(Headline::new("Not Authenticated").size(HeadlineSize::Medium)),
+                    .child(self.render_error_agent_logo())
+                    .child(
+                        h_flex().mt_4().mb_1().justify_center().child(
+                            Headline::new("Authentication Required").size(HeadlineSize::Medium),
+                        ),
+                    )
+                    .into_any(),
             )
-            .into_any()
+            .children(description.map(|desc| {
+                div().text_ui(cx).text_center().child(
+                    self.render_markdown(desc.clone(), default_markdown_style(false, window, cx)),
+                )
+            }))
+            .children(
+                configuration_view
+                    .cloned()
+                    .map(|view| div().px_4().w_full().max_w_128().child(view)),
+            )
+            .child(h_flex().mt_1p5().justify_center().children(
+                connection.auth_methods().into_iter().map(|method| {
+                    Button::new(SharedString::from(method.id.0.clone()), method.name.clone())
+                        .on_click({
+                            let method_id = method.id.clone();
+                            cx.listener(move |this, _, window, cx| {
+                                this.authenticate(method_id.clone(), window, cx)
+                            })
+                        })
+                }),
+            ))
     }
 
     fn render_server_exited(&self, status: ExitStatus, _cx: &Context<Self>) -> AnyElement {
@@ -2320,7 +2420,7 @@ impl AcpThreadView {
                         .buffer_font(cx)
                 });
 
-                let file_icon = FileIcons::get_icon(&path, cx)
+                let file_icon = FileIcons::get_icon(path, cx)
                     .map(Icon::from_path)
                     .map(|icon| icon.color(Color::Muted).size(IconSize::Small))
                     .unwrap_or_else(|| {
@@ -3159,44 +3259,33 @@ impl AcpThreadView {
             }
         };
 
-        Some(
-            div()
-                .border_t_1()
-                .border_color(cx.theme().colors().border)
-                .child(content),
-        )
+        Some(div().child(content))
     }
 
     fn render_any_thread_error(&self, error: SharedString, cx: &mut Context<'_, Self>) -> Callout {
-        let icon = Icon::new(IconName::XCircle)
-            .size(IconSize::Small)
-            .color(Color::Error);
-
         Callout::new()
-            .icon(icon)
+            .severity(Severity::Error)
             .title("Error")
             .description(error.clone())
-            .secondary_action(self.create_copy_button(error.to_string()))
-            .primary_action(self.dismiss_error_button(cx))
-            .bg_color(self.error_callout_bg(cx))
+            .actions_slot(self.create_copy_button(error.to_string()))
+            .dismiss_action(self.dismiss_error_button(cx))
     }
 
     fn render_payment_required_error(&self, cx: &mut Context<Self>) -> Callout {
         const ERROR_MESSAGE: &str =
             "You reached your free usage limit. Upgrade to Zed Pro for more prompts.";
 
-        let icon = Icon::new(IconName::XCircle)
-            .size(IconSize::Small)
-            .color(Color::Error);
-
         Callout::new()
-            .icon(icon)
+            .severity(Severity::Error)
             .title("Free Usage Exceeded")
             .description(ERROR_MESSAGE)
-            .tertiary_action(self.upgrade_button(cx))
-            .secondary_action(self.create_copy_button(ERROR_MESSAGE))
-            .primary_action(self.dismiss_error_button(cx))
-            .bg_color(self.error_callout_bg(cx))
+            .actions_slot(
+                h_flex()
+                    .gap_0p5()
+                    .child(self.upgrade_button(cx))
+                    .child(self.create_copy_button(ERROR_MESSAGE)),
+            )
+            .dismiss_action(self.dismiss_error_button(cx))
     }
 
     fn render_model_request_limit_reached_error(
@@ -3211,18 +3300,17 @@ impl AcpThreadView {
             }
         };
 
-        let icon = Icon::new(IconName::XCircle)
-            .size(IconSize::Small)
-            .color(Color::Error);
-
         Callout::new()
-            .icon(icon)
+            .severity(Severity::Error)
             .title("Model Prompt Limit Reached")
             .description(error_message)
-            .tertiary_action(self.upgrade_button(cx))
-            .secondary_action(self.create_copy_button(error_message))
-            .primary_action(self.dismiss_error_button(cx))
-            .bg_color(self.error_callout_bg(cx))
+            .actions_slot(
+                h_flex()
+                    .gap_0p5()
+                    .child(self.upgrade_button(cx))
+                    .child(self.create_copy_button(error_message)),
+            )
+            .dismiss_action(self.dismiss_error_button(cx))
     }
 
     fn render_tool_use_limit_reached_error(
@@ -3238,52 +3326,59 @@ impl AcpThreadView {
 
         let focus_handle = self.focus_handle(cx);
 
-        let icon = Icon::new(IconName::Info)
-            .size(IconSize::Small)
-            .color(Color::Info);
-
         Some(
             Callout::new()
-                .icon(icon)
+                .icon(IconName::Info)
                 .title("Consecutive tool use limit reached.")
-                .when(supports_burn_mode, |this| {
-                    this.secondary_action(
-                        Button::new("continue-burn-mode", "Continue with Burn Mode")
-                            .style(ButtonStyle::Filled)
-                            .style(ButtonStyle::Tinted(ui::TintColor::Accent))
-                            .layer(ElevationIndex::ModalSurface)
-                            .label_size(LabelSize::Small)
-                            .key_binding(
-                                KeyBinding::for_action_in(
-                                    &ContinueWithBurnMode,
-                                    &focus_handle,
-                                    window,
-                                    cx,
-                                )
-                                .map(|kb| kb.size(rems_from_px(10.))),
+                .actions_slot(
+                    h_flex()
+                        .gap_0p5()
+                        .when(supports_burn_mode, |this| {
+                            this.child(
+                                Button::new("continue-burn-mode", "Continue with Burn Mode")
+                                    .style(ButtonStyle::Filled)
+                                    .style(ButtonStyle::Tinted(ui::TintColor::Accent))
+                                    .layer(ElevationIndex::ModalSurface)
+                                    .label_size(LabelSize::Small)
+                                    .key_binding(
+                                        KeyBinding::for_action_in(
+                                            &ContinueWithBurnMode,
+                                            &focus_handle,
+                                            window,
+                                            cx,
+                                        )
+                                        .map(|kb| kb.size(rems_from_px(10.))),
+                                    )
+                                    .tooltip(Tooltip::text(
+                                        "Enable Burn Mode for unlimited tool use.",
+                                    ))
+                                    .on_click({
+                                        cx.listener(move |this, _, _window, cx| {
+                                            thread.update(cx, |thread, _cx| {
+                                                thread.set_completion_mode(CompletionMode::Burn);
+                                            });
+                                            this.resume_chat(cx);
+                                        })
+                                    }),
                             )
-                            .tooltip(Tooltip::text("Enable Burn Mode for unlimited tool use."))
-                            .on_click({
-                                cx.listener(move |this, _, _window, cx| {
-                                    thread.update(cx, |thread, _cx| {
-                                        thread.set_completion_mode(CompletionMode::Burn);
-                                    });
+                        })
+                        .child(
+                            Button::new("continue-conversation", "Continue")
+                                .layer(ElevationIndex::ModalSurface)
+                                .label_size(LabelSize::Small)
+                                .key_binding(
+                                    KeyBinding::for_action_in(
+                                        &ContinueThread,
+                                        &focus_handle,
+                                        window,
+                                        cx,
+                                    )
+                                    .map(|kb| kb.size(rems_from_px(10.))),
+                                )
+                                .on_click(cx.listener(|this, _, _window, cx| {
                                     this.resume_chat(cx);
-                                })
-                            }),
-                    )
-                })
-                .primary_action(
-                    Button::new("continue-conversation", "Continue")
-                        .layer(ElevationIndex::ModalSurface)
-                        .label_size(LabelSize::Small)
-                        .key_binding(
-                            KeyBinding::for_action_in(&ContinueThread, &focus_handle, window, cx)
-                                .map(|kb| kb.size(rems_from_px(10.))),
-                        )
-                        .on_click(cx.listener(|this, _, _window, cx| {
-                            this.resume_chat(cx);
-                        })),
+                                })),
+                        ),
                 ),
         )
     }
@@ -3324,10 +3419,6 @@ impl AcpThreadView {
                 }
             }))
     }
-
-    fn error_callout_bg(&self, cx: &Context<Self>) -> Hsla {
-        cx.theme().status().error.opacity(0.08)
-    }
 }
 
 impl Focusable for AcpThreadView {
@@ -3347,26 +3438,18 @@ impl Render for AcpThreadView {
             .on_action(cx.listener(Self::toggle_burn_mode))
             .bg(cx.theme().colors().panel_background)
             .child(match &self.thread_state {
-                ThreadState::Unauthenticated { connection } => v_flex()
-                    .p_2()
-                    .flex_1()
-                    .items_center()
-                    .justify_center()
-                    .child(self.render_pending_auth_state())
-                    .child(h_flex().mt_1p5().justify_center().children(
-                        connection.auth_methods().into_iter().map(|method| {
-                            Button::new(
-                                SharedString::from(method.id.0.clone()),
-                                method.name.clone(),
-                            )
-                            .on_click({
-                                let method_id = method.id.clone();
-                                cx.listener(move |this, _, window, cx| {
-                                    this.authenticate(method_id.clone(), window, cx)
-                                })
-                            })
-                        }),
-                    )),
+                ThreadState::Unauthenticated {
+                    connection,
+                    description,
+                    configuration_view,
+                    ..
+                } => self.render_auth_required_state(
+                    connection,
+                    description.as_ref(),
+                    configuration_view.as_ref(),
+                    window,
+                    cx,
+                ),
                 ThreadState::Loading { .. } => v_flex().flex_1().child(self.render_empty_state(cx)),
                 ThreadState::LoadError(e) => v_flex()
                     .p_2()
@@ -4283,7 +4366,7 @@ pub(crate) mod tests {
                 },
                 cx,
             );
-            connection.end_turn(session_id);
+            connection.end_turn(session_id, acp::StopReason::EndTurn);
         });
 
         thread_view.read_with(cx, |view, _cx| {
@@ -4300,6 +4383,139 @@ pub(crate) mod tests {
                 user_message_editor.read(cx).text(cx),
                 "Edited message content"
             );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_interrupt(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let connection = StubAgentConnection::new();
+
+        let (thread_view, cx) =
+            setup_thread_view(StubAgentServer::new(connection.clone()), cx).await;
+        add_to_workspace(thread_view.clone(), cx);
+
+        let message_editor = cx.read(|cx| thread_view.read(cx).message_editor.clone());
+        message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("Message 1", window, cx);
+        });
+        thread_view.update_in(cx, |thread_view, window, cx| {
+            thread_view.send(window, cx);
+        });
+
+        let (thread, session_id) = thread_view.read_with(cx, |view, cx| {
+            let thread = view.thread().unwrap();
+
+            (thread.clone(), thread.read(cx).session_id().clone())
+        });
+
+        cx.run_until_parked();
+
+        cx.update(|_, cx| {
+            connection.send_update(
+                session_id.clone(),
+                acp::SessionUpdate::AgentMessageChunk {
+                    content: "Message 1 resp".into(),
+                },
+                cx,
+            );
+        });
+
+        cx.run_until_parked();
+
+        thread.read_with(cx, |thread, cx| {
+            assert_eq!(
+                thread.to_markdown(cx),
+                indoc::indoc! {"
+                    ## User
+
+                    Message 1
+
+                    ## Assistant
+
+                    Message 1 resp
+
+                "}
+            )
+        });
+
+        message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("Message 2", window, cx);
+        });
+        thread_view.update_in(cx, |thread_view, window, cx| {
+            thread_view.send(window, cx);
+        });
+
+        cx.update(|_, cx| {
+            // Simulate a response sent after beginning to cancel
+            connection.send_update(
+                session_id.clone(),
+                acp::SessionUpdate::AgentMessageChunk {
+                    content: "onse".into(),
+                },
+                cx,
+            );
+        });
+
+        cx.run_until_parked();
+
+        // Last Message 1 response should appear before Message 2
+        thread.read_with(cx, |thread, cx| {
+            assert_eq!(
+                thread.to_markdown(cx),
+                indoc::indoc! {"
+                    ## User
+
+                    Message 1
+
+                    ## Assistant
+
+                    Message 1 response
+
+                    ## User
+
+                    Message 2
+
+                "}
+            )
+        });
+
+        cx.update(|_, cx| {
+            connection.send_update(
+                session_id.clone(),
+                acp::SessionUpdate::AgentMessageChunk {
+                    content: "Message 2 response".into(),
+                },
+                cx,
+            );
+            connection.end_turn(session_id.clone(), acp::StopReason::EndTurn);
+        });
+
+        cx.run_until_parked();
+
+        thread.read_with(cx, |thread, cx| {
+            assert_eq!(
+                thread.to_markdown(cx),
+                indoc::indoc! {"
+                    ## User
+
+                    Message 1
+
+                    ## Assistant
+
+                    Message 1 response
+
+                    ## User
+
+                    Message 2
+
+                    ## Assistant
+
+                    Message 2 response
+
+                "}
+            )
         });
     }
 }

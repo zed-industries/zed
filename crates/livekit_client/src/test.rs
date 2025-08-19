@@ -421,7 +421,7 @@ impl TestServer {
         track_sid: &TrackSid,
         muted: bool,
     ) -> Result<()> {
-        let claims = livekit_api::token::validate(&token, &self.secret_key)?;
+        let claims = livekit_api::token::validate(token, &self.secret_key)?;
         let room_name = claims.video.room.unwrap();
         let identity = ParticipantIdentity(claims.sub.unwrap().to_string());
         let mut server_rooms = self.rooms.lock();
@@ -475,7 +475,7 @@ impl TestServer {
     }
 
     pub(crate) fn is_track_muted(&self, token: &str, track_sid: &TrackSid) -> Option<bool> {
-        let claims = livekit_api::token::validate(&token, &self.secret_key).ok()?;
+        let claims = livekit_api::token::validate(token, &self.secret_key).ok()?;
         let room_name = claims.video.room.unwrap();
 
         let mut server_rooms = self.rooms.lock();

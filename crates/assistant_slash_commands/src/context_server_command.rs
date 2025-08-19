@@ -44,7 +44,7 @@ impl SlashCommand for ContextServerSlashCommand {
                 parts.push(arg.name.as_str());
             }
         }
-        create_label_for_command(&parts[0], &parts[1..], cx)
+        create_label_for_command(parts[0], &parts[1..], cx)
     }
 
     fn description(&self) -> String {

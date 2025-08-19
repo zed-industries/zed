@@ -146,7 +146,7 @@ impl MentionUri {
                     FileIcons::get_folder_icon(false, cx)
                         .unwrap_or_else(|| IconName::Folder.path().into())
                 } else {
-                    FileIcons::get_icon(&abs_path, cx)
+                    FileIcons::get_icon(abs_path, cx)
                         .unwrap_or_else(|| IconName::File.path().into())
                 }
             }

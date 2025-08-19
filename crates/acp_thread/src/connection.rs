@@ -3,6 +3,7 @@ use agent_client_protocol::{self as acp};
 use anyhow::Result;
 use collections::IndexMap;
 use gpui::{Entity, SharedString, Task};
+use language_model::LanguageModelProviderId;
 use project::Project;
 use std::{any::Any, error::Error, fmt, path::Path, rc::Rc, sync::Arc};
 use ui::{App, IconName};
@@ -80,12 +81,34 @@ pub trait AgentSessionResume {
 }
 
 #[derive(Debug)]
-pub struct AuthRequired;
+pub struct AuthRequired {
+    pub description: Option<String>,
+    pub provider_id: Option<LanguageModelProviderId>,
+}
+
+impl AuthRequired {
+    pub fn new() -> Self {
+        Self {
+            description: None,
+            provider_id: None,
+        }
+    }
+
+    pub fn with_description(mut self, description: String) -> Self {
+        self.description = Some(description);
+        self
+    }
+
+    pub fn with_language_model_provider(mut self, provider_id: LanguageModelProviderId) -> Self {
+        self.provider_id = Some(provider_id);
+        self
+    }
+}
 
 impl Error for AuthRequired {}
 impl fmt::Display for AuthRequired {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "AuthRequired")
+        write!(f, "Authentication required")
     }
 }
 
@@ -201,7 +224,7 @@ mod test_support {
 
     struct Session {
         thread: WeakEntity<AcpThread>,
-        response_tx: Option<oneshot::Sender<()>>,
+        response_tx: Option<oneshot::Sender<acp::StopReason>>,
     }
 
     impl StubAgentConnection {
@@ -242,12 +265,12 @@ mod test_support {
                 .unwrap()
                 .thread
                 .update(cx, |thread, cx| {
-                    thread.handle_session_update(update.clone(), cx).unwrap();
+                    thread.handle_session_update(update, cx).unwrap();
                 })
                 .unwrap();
         }
 
-        pub fn end_turn(&self, session_id: acp::SessionId) {
+        pub fn end_turn(&self, session_id: acp::SessionId, stop_reason: acp::StopReason) {
             self.sessions
                 .lock()
                 .get_mut(&session_id)
@@ -255,7 +278,7 @@ mod test_support {
                 .response_tx
                 .take()
                 .expect("No pending turn")
-                .send(())
+                .send(stop_reason)
                 .unwrap();
         }
     }
@@ -308,10 +331,8 @@ mod test_support {
                 let (tx, rx) = oneshot::channel();
                 response_tx.replace(tx);
                 cx.spawn(async move |_| {
-                    rx.await?;
-                    Ok(acp::PromptResponse {
-                        stop_reason: acp::StopReason::EndTurn,
-                    })
+                    let stop_reason = rx.await?;
+                    Ok(acp::PromptResponse { stop_reason })
                 })
             } else {
                 for update in self.next_prompt_updates.lock().drain(..) {
@@ -353,8 +374,17 @@ mod test_support {
             }
         }
 
-        fn cancel(&self, _session_id: &acp::SessionId, _cx: &mut App) {
-            unimplemented!()
+        fn cancel(&self, session_id: &acp::SessionId, _cx: &mut App) {
+            if let Some(end_turn_tx) = self
+                .sessions
+                .lock()
+                .get_mut(session_id)
+                .unwrap()
+                .response_tx
+                .take()
+            {
+                end_turn_tx.send(acp::StopReason::Canceled).unwrap();
+            }
         }
 
         fn session_editor(

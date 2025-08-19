@@ -329,7 +329,11 @@ impl AiConfigurationModal {
         cx: &mut Context<Self>,
     ) -> Self {
         let focus_handle = cx.focus_handle();
-        let configuration_view = selected_provider.configuration_view(window, cx);
+        let configuration_view = selected_provider.configuration_view(
+            language_model::ConfigurationViewTargetAgent::ZedAgent,
+            window,
+            cx,
+        );
 
         Self {
             focus_handle,
