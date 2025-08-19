@@ -930,7 +930,8 @@ impl AcpThreadView {
                             .relative()
                             .child(
                                 div()
-                                    .p_3()
+                                    .py_3()
+                                    .px_2()
                                     .rounded_lg()
                                     .shadow_md()
                                     .bg(cx.theme().colors().editor_background)
