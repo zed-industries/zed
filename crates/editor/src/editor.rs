@@ -7764,6 +7764,14 @@ impl Editor {
         self.edit_prediction_settings =
             self.edit_prediction_settings_at_position(&buffer, cursor_buffer_position, cx);
 
+        match self.edit_prediction_settings {
+            EditPredictionSettings::Disabled => {
+                self.discard_edit_prediction(false, cx);
+                return None;
+            }
+            _ => {}
+        };
+
         self.edit_prediction_indent_conflict = multibuffer.is_line_whitespace_upto(cursor);
 
         if self.edit_prediction_indent_conflict {
