@@ -4,7 +4,6 @@ use std::{
         OnceLock, RwLock,
         atomic::{AtomicU8, Ordering},
     },
-    usize,
 };
 
 use crate::{SCOPE_DEPTH_MAX, SCOPE_STRING_SEP_STR, Scope, ScopeAlloc, env_config, private};
