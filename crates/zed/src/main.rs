@@ -38,7 +38,7 @@ use std::{
     env,
     io::{self, IsTerminal},
     path::{Path, PathBuf},
-    process,
+    process::{self, Stdio},
     sync::Arc,
 };
 use theme::{
@@ -822,6 +822,10 @@ pub fn main() {
                         let status = smol::process::Command::new(&selection_change_command)
                             .arg(cursor.worktree_path.as_ref())
                             .arg(cursor_position_arg)
+                            .stdin(Stdio::null())
+                            // todo! It'd be better to distinguish the output in logs.
+                            .stdout(Stdio::inherit())
+                            .stderr(Stdio::inherit())
                             .status()
                             .await;
                         match status {
