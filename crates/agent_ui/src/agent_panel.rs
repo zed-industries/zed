@@ -881,6 +881,9 @@ impl AgentPanel {
     }
 
     fn new_thread(&mut self, action: &NewThread, window: &mut Window, cx: &mut Context<Self>) {
+        if cx.has_flag::<AcpFeatureFlag>() {
+            return self.new_agent_thread(AgentType::NativeAgent, window, cx);
+        }
         // Preserve chat box text when using creating new thread
         let preserved_text = self
             .active_message_editor()
@@ -2386,9 +2389,9 @@ impl AgentPanel {
                             })
                             .item(
                                 ContextMenuEntry::new("New Thread")
-                                    .icon(IconName::Thread)
-                                    .icon_color(Color::Muted)
                                     .action(NewThread::default().boxed_clone())
+                                    .icon(IconName::ZedAssistant)
+                                    .icon_color(Color::Muted)
                                     .handler({
                                         let workspace = workspace.clone();
                                         move |window, cx| {
@@ -2399,7 +2402,7 @@ impl AgentPanel {
                                                     {
                                                         panel.update(cx, |panel, cx| {
                                                             panel.set_selected_agent(
-                                                                AgentType::Zed,
+                                                                AgentType::NativeAgent,
                                                                 window,
                                                                 cx,
                                                             );
@@ -2426,31 +2429,6 @@ impl AgentPanel {
                                                         panel.update(cx, |panel, cx| {
                                                             panel.set_selected_agent(
                                                                 AgentType::TextThread,
-                                                                window,
-                                                                cx,
-                                                            );
-                                                        });
-                                                    }
-                                                });
-                                            }
-                                        }
-                                    }),
-                            )
-                            .item(
-                                ContextMenuEntry::new("New Native Agent Thread")
-                                    .icon(IconName::ZedAssistant)
-                                    .icon_color(Color::Muted)
-                                    .handler({
-                                        let workspace = workspace.clone();
-                                        move |window, cx| {
-                                            if let Some(workspace) = workspace.upgrade() {
-                                                workspace.update(cx, |workspace, cx| {
-                                                    if let Some(panel) =
-                                                        workspace.panel::<AgentPanel>(cx)
-                                                    {
-                                                        panel.update(cx, |panel, cx| {
-                                                            panel.set_selected_agent(
-                                                                AgentType::NativeAgent,
                                                                 window,
                                                                 cx,
                                                             );
