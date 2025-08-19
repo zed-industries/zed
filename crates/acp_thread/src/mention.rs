@@ -2,6 +2,7 @@ use agent::ThreadId;
 use anyhow::{Context as _, Result, bail};
 use file_icons::FileIcons;
 use prompt_store::{PromptId, UserPromptId};
+use serde::{Deserialize, Serialize};
 use std::{
     fmt,
     ops::Range,
@@ -11,7 +12,7 @@ use std::{
 use ui::{App, IconName, SharedString};
 use url::Url;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum MentionUri {
     File {
         abs_path: PathBuf,
