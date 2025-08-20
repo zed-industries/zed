@@ -210,10 +210,10 @@ impl AgentConnection for AcpConnection {
         cx.foreground_executor().spawn(async move {
             let result = conn.prompt(params).await;
 
-            let mut supress_abort_err = false;
+            let mut suppress_abort_err = false;
 
             if let Some(session) = sessions.borrow_mut().get_mut(&session_id) {
-                supress_abort_err = session.suppress_abort_err;
+                suppress_abort_err = session.suppress_abort_err;
                 session.suppress_abort_err = false;
             }
 
@@ -239,7 +239,8 @@ impl AgentConnection for AcpConnection {
 
                     match serde_json::from_value(data.clone()) {
                         Ok(ErrorDetails { details }) => {
-                            if supress_abort_err && details.contains("This operation was aborted") {
+                            if suppress_abort_err && details.contains("This operation was aborted")
+                            {
                                 Ok(acp::PromptResponse {
                                     stop_reason: acp::StopReason::Canceled,
                                 })
