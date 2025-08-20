@@ -391,15 +391,9 @@ impl CommitModal {
             });
         let focus_handle = self.focus_handle(cx);
 
-        let close_kb_hint =
-            if let Some(close_kb) = ui::KeyBinding::for_action(&menu::Cancel, window, cx) {
-                Some(
-                    KeybindingHint::new(close_kb, cx.theme().colors().editor_background)
-                        .suffix("Cancel"),
-                )
-            } else {
-                None
-            };
+        let close_kb_hint = ui::KeyBinding::for_action(&menu::Cancel, window, cx).map(|close_kb| {
+            KeybindingHint::new(close_kb, cx.theme().colors().editor_background).suffix("Cancel")
+        });
 
         h_flex()
             .group("commit_editor_footer")

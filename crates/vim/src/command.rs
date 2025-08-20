@@ -1408,11 +1408,7 @@ pub fn command_interceptor(mut input: &str, cx: &App) -> Vec<CommandInterceptRes
             start: Position::Line { row: 0, offset: 0 },
             end: Some(Position::LastLine { offset: 0 }),
         });
-        if let Some(action) = OnMatchingLines::parse(query, invert, range, cx) {
-            Some(action.boxed_clone())
-        } else {
-            None
-        }
+        OnMatchingLines::parse(query, invert, range, cx).map(|action| action.boxed_clone())
     } else if query.contains('!') {
         ShellExec::parse(query, range.clone())
     } else {
