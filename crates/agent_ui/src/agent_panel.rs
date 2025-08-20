@@ -4,6 +4,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
 
+use acp_thread::AcpThread;
 use agent2::{DbThreadMetadata, HistoryEntry};
 use db::kvp::{Dismissable, KEY_VALUE_STORE};
 use serde::{Deserialize, Serialize};
@@ -999,7 +1000,7 @@ impl AgentPanel {
         context_editor.focus_handle(cx).focus(window);
     }
 
-    pub fn external_thread(
+    fn external_thread(
         &mut self,
         agent_choice: Option<crate::ExternalAgent>,
         resume_thread: Option<DbThreadMetadata>,
@@ -1017,8 +1018,6 @@ impl AgentPanel {
             agent: crate::ExternalAgent,
         }
 
-        let thread_store = self.thread_store.clone();
-        let text_thread_store = self.context_store.clone();
         let history = self.acp_history_store.clone();
 
         cx.spawn_in(window, async move |this, cx| {
@@ -1076,8 +1075,7 @@ impl AgentPanel {
                         workspace.clone(),
                         project,
                         this.acp_history_store.clone(),
-                        thread_store.clone(),
-                        text_thread_store.clone(),
+                        this.prompt_store.clone(),
                         window,
                         cx,
                     )
@@ -1497,6 +1495,14 @@ impl AgentPanel {
     pub(crate) fn active_thread(&self, cx: &App) -> Option<Entity<Thread>> {
         match &self.active_view {
             ActiveView::Thread { thread, .. } => Some(thread.read(cx).thread().clone()),
+            _ => None,
+        }
+    }
+    pub(crate) fn active_agent_thread(&self, cx: &App) -> Option<Entity<AcpThread>> {
+        match &self.active_view {
+            ActiveView::ExternalAgentThread { thread_view, .. } => {
+                thread_view.read(cx).thread().cloned()
+            }
             _ => None,
         }
     }

@@ -1,7 +1,6 @@
 use std::ops::Range;
 
 use acp_thread::{AcpThread, AgentThreadEntry};
-use agent::{TextThreadStore, ThreadStore};
 use agent2::HistoryStore;
 use collections::HashMap;
 use editor::{Editor, EditorMode, MinimapVisibility};
@@ -11,6 +10,7 @@ use gpui::{
 };
 use language::language_settings::SoftWrap;
 use project::Project;
+use prompt_store::PromptStore;
 use settings::Settings as _;
 use terminal_view::TerminalView;
 use theme::ThemeSettings;
@@ -22,9 +22,8 @@ use crate::acp::message_editor::{MessageEditor, MessageEditorEvent};
 pub struct EntryViewState {
     workspace: WeakEntity<Workspace>,
     project: Entity<Project>,
-    thread_store: Entity<ThreadStore>,
-    text_thread_store: Entity<TextThreadStore>,
     history_store: Entity<HistoryStore>,
+    prompt_store: Option<Entity<PromptStore>>,
     entries: Vec<Entry>,
     prevent_slash_commands: bool,
 }
@@ -33,17 +32,15 @@ impl EntryViewState {
     pub fn new(
         workspace: WeakEntity<Workspace>,
         project: Entity<Project>,
-        thread_store: Entity<ThreadStore>,
-        text_thread_store: Entity<TextThreadStore>,
         history_store: Entity<HistoryStore>,
+        prompt_store: Option<Entity<PromptStore>>,
         prevent_slash_commands: bool,
     ) -> Self {
         Self {
             workspace,
             project,
-            thread_store,
-            text_thread_store,
             history_store,
+            prompt_store,
             entries: Vec::new(),
             prevent_slash_commands,
         }
@@ -81,9 +78,8 @@ impl EntryViewState {
                         let mut editor = MessageEditor::new(
                             self.workspace.clone(),
                             self.project.clone(),
-                            self.thread_store.clone(),
-                            self.text_thread_store.clone(),
                             self.history_store.clone(),
+                            self.prompt_store.clone(),
                             "Edit message － @ to include context",
                             self.prevent_slash_commands,
                             editor::EditorMode::AutoHeight {
@@ -317,7 +313,6 @@ mod tests {
     use std::{path::Path, rc::Rc};
 
     use acp_thread::{AgentConnection, StubAgentConnection};
-    use agent::{TextThreadStore, ThreadStore};
     use agent_client_protocol as acp;
     use agent_settings::AgentSettings;
     use agent2::HistoryStore;
@@ -384,8 +379,6 @@ mod tests {
             connection.send_update(session_id, acp::SessionUpdate::ToolCall(tool_call), cx)
         });
 
-        let thread_store = cx.new(|cx| ThreadStore::fake(project.clone(), cx));
-        let text_thread_store = cx.new(|cx| TextThreadStore::fake(project.clone(), cx));
         let context_store = cx.new(|cx| ContextStore::fake(project.clone(), cx));
         let history_store = cx.new(|cx| HistoryStore::new(context_store, cx));
 
@@ -393,9 +386,8 @@ mod tests {
             EntryViewState::new(
                 workspace.downgrade(),
                 project.clone(),
-                thread_store,
-                text_thread_store,
                 history_store,
+                None,
                 false,
             )
         });

@@ -5,7 +5,6 @@ use acp_thread::{
 };
 use acp_thread::{AgentConnection, Plan};
 use action_log::ActionLog;
-use agent::{TextThreadStore, ThreadStore};
 use agent_client_protocol::{self as acp};
 use agent_servers::{AgentServer, ClaudeCode};
 use agent_settings::{AgentProfileId, AgentSettings, CompletionMode, NotifyWhenAgentWaiting};
@@ -32,7 +31,7 @@ use language::Buffer;
 use language_model::LanguageModelRegistry;
 use markdown::{HeadingLevelStyles, Markdown, MarkdownElement, MarkdownStyle};
 use project::{Project, ProjectEntryId};
-use prompt_store::PromptId;
+use prompt_store::{PromptId, PromptStore};
 use rope::Point;
 use settings::{Settings as _, SettingsStore};
 use std::sync::Arc;
@@ -158,8 +157,7 @@ impl AcpThreadView {
         workspace: WeakEntity<Workspace>,
         project: Entity<Project>,
         history_store: Entity<HistoryStore>,
-        thread_store: Entity<ThreadStore>,
-        text_thread_store: Entity<TextThreadStore>,
+        prompt_store: Option<Entity<PromptStore>>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -168,9 +166,8 @@ impl AcpThreadView {
             MessageEditor::new(
                 workspace.clone(),
                 project.clone(),
-                thread_store.clone(),
-                text_thread_store.clone(),
                 history_store.clone(),
+                prompt_store.clone(),
                 "Message the agent － @ to include context",
                 prevent_slash_commands,
                 editor::EditorMode::AutoHeight {
@@ -188,9 +185,8 @@ impl AcpThreadView {
             EntryViewState::new(
                 workspace.clone(),
                 project.clone(),
-                thread_store.clone(),
-                text_thread_store.clone(),
                 history_store.clone(),
+                prompt_store.clone(),
                 prevent_slash_commands,
             )
         });
@@ -4008,7 +4004,6 @@ fn terminal_command_markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
 #[cfg(test)]
 pub(crate) mod tests {
     use acp_thread::StubAgentConnection;
-    use agent::{TextThreadStore, ThreadStore};
     use agent_client_protocol::SessionId;
     use assistant_context::ContextStore;
     use editor::EditorSettings;
@@ -4144,10 +4139,6 @@ pub(crate) mod tests {
         let (workspace, cx) =
             cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
-        let thread_store =
-            cx.update(|_window, cx| cx.new(|cx| ThreadStore::fake(project.clone(), cx)));
-        let text_thread_store =
-            cx.update(|_window, cx| cx.new(|cx| TextThreadStore::fake(project.clone(), cx)));
         let context_store =
             cx.update(|_window, cx| cx.new(|cx| ContextStore::fake(project.clone(), cx)));
         let history_store =
@@ -4161,8 +4152,7 @@ pub(crate) mod tests {
                     workspace.downgrade(),
                     project,
                     history_store,
-                    thread_store.clone(),
-                    text_thread_store.clone(),
+                    None,
                     window,
                     cx,
                 )
@@ -4333,6 +4323,7 @@ pub(crate) mod tests {
             ThemeSettings::register(cx);
             release_channel::init(SemanticVersion::default(), cx);
             EditorSettings::register(cx);
+            prompt_store::init(cx)
         });
     }
 
@@ -4353,10 +4344,6 @@ pub(crate) mod tests {
         let (workspace, cx) =
             cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
-        let thread_store =
-            cx.update(|_window, cx| cx.new(|cx| ThreadStore::fake(project.clone(), cx)));
-        let text_thread_store =
-            cx.update(|_window, cx| cx.new(|cx| TextThreadStore::fake(project.clone(), cx)));
         let context_store =
             cx.update(|_window, cx| cx.new(|cx| ContextStore::fake(project.clone(), cx)));
         let history_store =
@@ -4371,8 +4358,7 @@ pub(crate) mod tests {
                     workspace.downgrade(),
                     project.clone(),
                     history_store.clone(),
-                    thread_store.clone(),
-                    text_thread_store.clone(),
+                    None,
                     window,
                     cx,
                 )

@@ -5,7 +5,6 @@ use std::sync::atomic::AtomicBool;
 use acp_thread::MentionUri;
 use agent2::{HistoryEntry, HistoryStore};
 use anyhow::Result;
-use collections::HashSet;
 use editor::{CompletionProvider, Editor, ExcerptId};
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{App, Entity, Task, WeakEntity};
@@ -20,6 +19,7 @@ use text::{Anchor, ToPoint as _};
 use ui::prelude::*;
 use workspace::Workspace;
 
+use crate::AgentPanel;
 use crate::acp::message_editor::MessageEditor;
 use crate::context_picker::file_context_picker::{FileMatch, search_files};
 use crate::context_picker::rules_context_picker::{RulesContextEntry, search_rules};
@@ -62,6 +62,7 @@ pub struct ContextPickerCompletionProvider {
     message_editor: WeakEntity<MessageEditor>,
     workspace: WeakEntity<Workspace>,
     history_store: Entity<HistoryStore>,
+    prompt_store: Option<Entity<PromptStore>>,
 }
 
 impl ContextPickerCompletionProvider {
@@ -69,11 +70,13 @@ impl ContextPickerCompletionProvider {
         message_editor: WeakEntity<MessageEditor>,
         workspace: WeakEntity<Workspace>,
         history_store: Entity<HistoryStore>,
+        prompt_store: Option<Entity<PromptStore>>,
     ) -> Self {
         Self {
             message_editor,
             workspace,
             history_store,
+            prompt_store,
         }
     }
 
@@ -355,7 +358,6 @@ impl ContextPickerCompletionProvider {
         mode: Option<ContextPickerMode>,
         query: String,
         cancellation_flag: Arc<AtomicBool>,
-        prompt_store: Option<Entity<PromptStore>>,
         cx: &mut App,
     ) -> Task<Vec<Match>> {
         let Some(workspace) = self.workspace.upgrade() else {
@@ -411,7 +413,7 @@ impl ContextPickerCompletionProvider {
             }
 
             Some(ContextPickerMode::Rules) => {
-                if let Some(prompt_store) = prompt_store.as_ref() {
+                if let Some(prompt_store) = self.prompt_store.as_ref() {
                     let search_rules_task =
                         search_rules(query.clone(), cancellation_flag.clone(), prompt_store, cx);
                     cx.background_spawn(async move {
@@ -427,19 +429,10 @@ impl ContextPickerCompletionProvider {
             }
 
             None if query.is_empty() => {
-                let mentions = self
-                    .message_editor
-                    .update(cx, |message_editor, _cx| message_editor.mentions())
-                    .unwrap_or_default();
-                let mut matches = recent_context_picker_entries(
-                    self.history_store.clone(),
-                    workspace.clone(),
-                    &mentions,
-                    cx,
-                );
+                let mut matches = self.recent_context_picker_entries(&workspace, cx);
 
                 matches.extend(
-                    available_context_picker_entries(&prompt_store, &workspace, cx)
+                    self.available_context_picker_entries(&workspace, cx)
                         .into_iter()
                         .map(|mode| {
                             Match::Entry(EntryMatch {
@@ -457,7 +450,7 @@ impl ContextPickerCompletionProvider {
                 let search_files_task =
                     search_files(query.clone(), cancellation_flag.clone(), &workspace, cx);
 
-                let entries = available_context_picker_entries(&prompt_store, &workspace, cx);
+                let entries = self.available_context_picker_entries(&workspace, cx);
                 let entry_candidates = entries
                     .iter()
                     .enumerate()
@@ -499,6 +492,114 @@ impl ContextPickerCompletionProvider {
                 })
             }
         }
+    }
+
+    fn recent_context_picker_entries(
+        &self,
+        workspace: &Entity<Workspace>,
+        cx: &mut App,
+    ) -> Vec<Match> {
+        let mut recent = Vec::with_capacity(6);
+
+        let mut mentions = self
+            .message_editor
+            .read_with(cx, |message_editor, _cx| message_editor.mentions())
+            .unwrap_or_default();
+        let workspace = workspace.read(cx);
+        let project = workspace.project().read(cx);
+
+        if let Some(agent_panel) = workspace.panel::<AgentPanel>(cx)
+            && let Some(thread) = agent_panel.read(cx).active_agent_thread(cx)
+        {
+            let thread = thread.read(cx);
+            mentions.insert(MentionUri::Thread {
+                id: thread.session_id().clone(),
+                name: thread.title().into(),
+            });
+        }
+
+        recent.extend(
+            workspace
+                .recent_navigation_history_iter(cx)
+                .filter(|(_, abs_path)| {
+                    abs_path.as_ref().is_none_or(|path| {
+                        !mentions.contains(&MentionUri::File {
+                            abs_path: path.clone(),
+                        })
+                    })
+                })
+                .take(4)
+                .filter_map(|(project_path, _)| {
+                    project
+                        .worktree_for_id(project_path.worktree_id, cx)
+                        .map(|worktree| {
+                            let path_prefix = worktree.read(cx).root_name().into();
+                            Match::File(FileMatch {
+                                mat: fuzzy::PathMatch {
+                                    score: 1.,
+                                    positions: Vec::new(),
+                                    worktree_id: project_path.worktree_id.to_usize(),
+                                    path: project_path.path,
+                                    path_prefix,
+                                    is_dir: false,
+                                    distance_to_relative_ancestor: 0,
+                                },
+                                is_recent: true,
+                            })
+                        })
+                }),
+        );
+
+        const RECENT_COUNT: usize = 2;
+        let threads = self
+            .history_store
+            .read(cx)
+            .recently_opened_entries(cx)
+            .into_iter()
+            .filter(|thread| !mentions.contains(&thread.mention_uri()))
+            .take(RECENT_COUNT)
+            .collect::<Vec<_>>();
+
+        recent.extend(
+            threads
+                .into_iter()
+                .map(|thread| Match::RecentThread(thread)),
+        );
+
+        recent
+    }
+
+    fn available_context_picker_entries(
+        &self,
+        workspace: &Entity<Workspace>,
+        cx: &mut App,
+    ) -> Vec<ContextPickerEntry> {
+        let mut entries = vec![
+            ContextPickerEntry::Mode(ContextPickerMode::File),
+            ContextPickerEntry::Mode(ContextPickerMode::Symbol),
+            ContextPickerEntry::Mode(ContextPickerMode::Thread),
+        ];
+
+        let has_selection = workspace
+            .read(cx)
+            .active_item(cx)
+            .and_then(|item| item.downcast::<Editor>())
+            .is_some_and(|editor| {
+                editor.update(cx, |editor, cx| editor.has_non_empty_selection(cx))
+            });
+        if has_selection {
+            entries.push(ContextPickerEntry::Action(
+                ContextPickerAction::AddSelections,
+            ));
+        }
+
+        if self.prompt_store.is_some() {
+            entries.push(ContextPickerEntry::Mode(ContextPickerMode::Rules));
+        }
+
+        entries.push(ContextPickerEntry::Mode(ContextPickerMode::Fetch));
+
+        entries
     }
 }
 
@@ -554,13 +655,7 @@ impl CompletionProvider for ContextPickerCompletionProvider {
         let MentionCompletion { mode, argument, .. } = state;
         let query = argument.unwrap_or_else(|| "".to_string());
 
-        let search_task = self.search(
-            mode,
-            query,
-            Arc::<AtomicBool>::default(),
-            None, // todo!() prompt_store
-            cx,
-        );
+        let search_task = self.search(mode, query, Arc::<AtomicBool>::default(), cx);
 
         cx.spawn(async move |_, cx| {
             let matches = search_task.await;
@@ -714,97 +809,6 @@ pub(crate) fn search_threads(
             .map(|mat| threads[mat.candidate_id].clone())
             .collect()
     })
-}
-
-fn available_context_picker_entries(
-    prompt_store: &Option<Entity<PromptStore>>,
-    workspace: &Entity<Workspace>,
-    cx: &mut App,
-) -> Vec<ContextPickerEntry> {
-    let mut entries = vec![
-        ContextPickerEntry::Mode(ContextPickerMode::File),
-        ContextPickerEntry::Mode(ContextPickerMode::Symbol),
-        ContextPickerEntry::Mode(ContextPickerMode::Thread),
-    ];
-
-    let has_selection = workspace
-        .read(cx)
-        .active_item(cx)
-        .and_then(|item| item.downcast::<Editor>())
-        .is_some_and(|editor| editor.update(cx, |editor, cx| editor.has_non_empty_selection(cx)));
-    if has_selection {
-        entries.push(ContextPickerEntry::Action(
-            ContextPickerAction::AddSelections,
-        ));
-    }
-
-    if prompt_store.is_some() {
-        entries.push(ContextPickerEntry::Mode(ContextPickerMode::Rules));
-    }
-
-    entries.push(ContextPickerEntry::Mode(ContextPickerMode::Fetch));
-
-    entries
-}
-
-fn recent_context_picker_entries(
-    history_store: Entity<HistoryStore>,
-    workspace: Entity<Workspace>,
-    mentions: &HashSet<MentionUri>,
-    cx: &App,
-) -> Vec<Match> {
-    let mut recent = Vec::with_capacity(6);
-    let workspace = workspace.read(cx);
-    let project = workspace.project().read(cx);
-
-    recent.extend(
-        workspace
-            .recent_navigation_history_iter(cx)
-            .filter(|(_, abs_path)| {
-                abs_path.as_ref().is_none_or(|path| {
-                    !mentions.contains(&MentionUri::File {
-                        abs_path: path.clone(),
-                    })
-                })
-            })
-            .take(4)
-            .filter_map(|(project_path, _)| {
-                project
-                    .worktree_for_id(project_path.worktree_id, cx)
-                    .map(|worktree| {
-                        let path_prefix = worktree.read(cx).root_name().into();
-                        Match::File(FileMatch {
-                            mat: fuzzy::PathMatch {
-                                score: 1.,
-                                positions: Vec::new(),
-                                worktree_id: project_path.worktree_id.to_usize(),
-                                path: project_path.path,
-                                path_prefix,
-                                is_dir: false,
-                                distance_to_relative_ancestor: 0,
-                            },
-                            is_recent: true,
-                        })
-                    })
-            }),
-    );
-
-    const RECENT_COUNT: usize = 2;
-    let threads = history_store
-        .read(cx)
-        .recently_opened_entries(cx)
-        .into_iter()
-        .filter(|thread| !mentions.contains(&thread.mention_uri()))
-        .take(RECENT_COUNT)
-        .collect::<Vec<_>>();
-
-    recent.extend(
-        threads
-            .into_iter()
-            .map(|thread| Match::RecentThread(thread)),
-    );
-
-    recent
 }
 
 fn confirm_completion_callback(

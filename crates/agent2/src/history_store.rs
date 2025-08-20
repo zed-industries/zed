@@ -2,7 +2,7 @@ use crate::{DbThreadMetadata, ThreadsDatabase};
 use acp_thread::MentionUri;
 use agent_client_protocol as acp;
 use anyhow::{Context as _, Result, anyhow};
-use assistant_context::SavedContextMetadata;
+use assistant_context::{AssistantContext, SavedContextMetadata};
 use chrono::{DateTime, Utc};
 use db::kvp::KEY_VALUE_STORE;
 use gpui::{App, AsyncApp, Entity, SharedString, Task, prelude::*};
@@ -131,6 +131,16 @@ impl HistoryStore {
     ) -> Task<Result<()>> {
         self.context_store.update(cx, |context_store, cx| {
             context_store.delete_local_context(path, cx)
+        })
+    }
+
+    pub fn load_text_thread(
+        &self,
+        path: Arc<Path>,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Entity<AssistantContext>>> {
+        self.context_store.update(cx, |context_store, cx| {
+            context_store.open_local_context(path, cx)
         })
     }
 
