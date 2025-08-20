@@ -1054,6 +1054,22 @@ impl AcpThread {
             })
     }
 
+    pub fn tool_call(&mut self, id: &acp::ToolCallId) -> Option<(usize, &ToolCall)> {
+        self.entries
+            .iter()
+            .enumerate()
+            .rev()
+            .find_map(|(index, tool_call)| {
+                if let AgentThreadEntry::ToolCall(tool_call) = tool_call
+                    && &tool_call.id == id
+                {
+                    Some((index, tool_call))
+                } else {
+                    None
+                }
+            })
+    }
+
     pub fn resolve_locations(&mut self, id: acp::ToolCallId, cx: &mut Context<Self>) {
         let project = self.project.clone();
         let Some((_, tool_call)) = self.tool_call_mut(&id) else {

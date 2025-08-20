@@ -425,6 +425,7 @@ pub trait McpServerTool {
     ) -> impl Future<Output = Result<ToolResponse<Self::Output>>>;
 }
 
+#[derive(Debug)]
 pub struct ToolResponse<T> {
     pub content: Vec<ToolResponseContent>,
     pub structured_content: T,
