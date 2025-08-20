@@ -2396,7 +2396,7 @@ impl AgentPanel {
                             .item(
                                 ContextMenuEntry::new("New Thread")
                                     .action(NewThread::default().boxed_clone())
-                                    .icon(IconName::ZedAssistant)
+                                    .icon(IconName::Thread)
                                     .icon_color(Color::Muted)
                                     .handler({
                                         let workspace = workspace.clone();
