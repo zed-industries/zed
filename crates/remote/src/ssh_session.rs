@@ -234,7 +234,7 @@ impl SshConnectionOptions {
 
         Ok(Self {
             host: hostname,
-            username: username,
+            username,
             port,
             port_forwards,
             args: Some(args),

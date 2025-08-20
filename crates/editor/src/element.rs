@@ -9009,7 +9009,7 @@ impl Element for EditorElement {
                             .as_ref()
                             .map(|layout| (layout.bounds, layout.entry.clone())),
                         display_hunks: display_hunks.clone(),
-                        diff_hunk_control_bounds: diff_hunk_control_bounds,
+                        diff_hunk_control_bounds,
                     });
 
                     self.editor.update(cx, |editor, _| {

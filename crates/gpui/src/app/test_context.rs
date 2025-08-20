@@ -134,7 +134,7 @@ impl TestAppContext {
             app: App::new_app(platform.clone(), asset_source, http_client),
             background_executor,
             foreground_executor,
-            dispatcher: dispatcher,
+            dispatcher,
             test_platform: platform,
             text_system,
             fn_name,

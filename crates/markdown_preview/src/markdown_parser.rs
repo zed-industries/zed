@@ -400,7 +400,7 @@ impl<'a> MarkdownParser<'a> {
         }
         if !text.is_empty() {
             markdown_text_like.push(MarkdownParagraphChunk::Text(ParsedMarkdownText {
-                source_range: source_range,
+                source_range,
                 contents: text,
                 highlights,
                 regions,
@@ -419,7 +419,7 @@ impl<'a> MarkdownParser<'a> {
         self.cursor += 1;
 
         ParsedMarkdownHeading {
-            source_range: source_range,
+            source_range,
             level: match level {
                 pulldown_cmark::HeadingLevel::H1 => HeadingLevel::H1,
                 pulldown_cmark::HeadingLevel::H2 => HeadingLevel::H2,

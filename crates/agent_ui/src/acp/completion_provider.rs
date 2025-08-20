@@ -366,7 +366,7 @@ impl ContextPickerCompletionProvider {
         match mode {
             Some(ContextPickerMode::File) => {
                 let search_files_task =
-                    search_files(query.clone(), cancellation_flag.clone(), &workspace, cx);
+                    search_files(query, cancellation_flag, &workspace, cx);
                 cx.background_spawn(async move {
                     search_files_task
                         .await
@@ -378,7 +378,7 @@ impl ContextPickerCompletionProvider {
 
             Some(ContextPickerMode::Symbol) => {
                 let search_symbols_task =
-                    search_symbols(query.clone(), cancellation_flag.clone(), &workspace, cx);
+                    search_symbols(query, cancellation_flag, &workspace, cx);
                 cx.background_spawn(async move {
                     search_symbols_task
                         .await
@@ -390,8 +390,8 @@ impl ContextPickerCompletionProvider {
 
             Some(ContextPickerMode::Thread) => {
                 let search_threads_task = search_threads(
-                    query.clone(),
-                    cancellation_flag.clone(),
+                    query,
+                    cancellation_flag,
                     &self.history_store,
                     cx,
                 );
@@ -415,7 +415,7 @@ impl ContextPickerCompletionProvider {
             Some(ContextPickerMode::Rules) => {
                 if let Some(prompt_store) = self.prompt_store.as_ref() {
                     let search_rules_task =
-                        search_rules(query.clone(), cancellation_flag.clone(), prompt_store, cx);
+                        search_rules(query, cancellation_flag, prompt_store, cx);
                     cx.background_spawn(async move {
                         search_rules_task
                             .await
@@ -448,7 +448,7 @@ impl ContextPickerCompletionProvider {
                 let executor = cx.background_executor().clone();
 
                 let search_files_task =
-                    search_files(query.clone(), cancellation_flag.clone(), &workspace, cx);
+                    search_files(query.clone(), cancellation_flag, &workspace, cx);
 
                 let entries = self.available_context_picker_entries(&workspace, cx);
                 let entry_candidates = entries

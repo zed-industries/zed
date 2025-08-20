@@ -2554,7 +2554,7 @@ impl Session {
         cx: &mut Context<Self>,
     ) -> Task<Option<dap::DataBreakpointInfoResponse>> {
         let command = DataBreakpointInfoCommand {
-            context: context,
+            context,
             mode,
         };
 

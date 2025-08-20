@@ -187,7 +187,7 @@ impl TestPlatform {
             .push_back(TestPrompt {
                 msg: msg.to_string(),
                 detail: detail.map(|s| s.to_string()),
-                answers: answers,
+                answers,
                 tx,
             });
         rx

@@ -2201,7 +2201,7 @@ impl Buffer {
         self.remote_selections.insert(
             AGENT_REPLICA_ID,
             SelectionSet {
-                selections: selections,
+                selections,
                 lamport_timestamp,
                 line_mode,
                 cursor_shape,
