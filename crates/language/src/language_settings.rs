@@ -4,16 +4,16 @@ use crate::{File, Language, LanguageName, LanguageServerName};
 use anyhow::Result;
 use collections::{FxHashMap, HashMap, HashSet};
 use ec4rs::{
-    property::{FinalNewline, IndentSize, IndentStyle, TabWidth, TrimTrailingWs},
     Properties as EditorconfigProperties,
+    property::{FinalNewline, IndentSize, IndentStyle, TabWidth, TrimTrailingWs},
 };
 use globset::{Glob, GlobMatcher, GlobSet, GlobSetBuilder};
 use gpui::{App, Modifiers};
 use itertools::{Either, Itertools};
-use schemars::{json_schema, JsonSchema};
+use schemars::{JsonSchema, json_schema};
 use serde::{
-    de::{self, IntoDeserializer, MapAccess, SeqAccess, Visitor},
     Deserialize, Deserializer, Serialize,
+    de::{self, IntoDeserializer, MapAccess, SeqAccess, Visitor},
 };
 
 use settings::{

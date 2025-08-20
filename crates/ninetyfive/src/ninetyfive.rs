@@ -13,7 +13,7 @@ pub fn init(client: Arc<Client>, cx: &mut App) {
     let ninetyfive = cx.new(|_| NinetyFive::Starting);
     NinetyFive::set_global(ninetyfive.clone(), cx);
 
-    let mut provider = all_language_settings(None, cx).edit_predictions.provider;
+    let provider = all_language_settings(None, cx).edit_predictions.provider;
     if provider == EditPredictionProvider::NinetyFive {
         log::info!("NinetyFive: Provider selected, starting...");
         ninetyfive.update(cx, |ninetyfive, cx| ninetyfive.start(client.clone(), cx));

@@ -3,12 +3,9 @@ use anyhow::Result;
 use async_tungstenite::{
     tokio::client_async_tls_with_connector_and_config, tungstenite::Message, WebSocketStream,
 };
-use chrono::{DateTime, Duration, Utc};
+use chrono::Utc;
 use edit_prediction::{Direction, EditPrediction, EditPredictionProvider};
-use futures::{
-    stream::{SplitSink, SplitStream},
-    SinkExt, StreamExt,
-};
+use futures::{SinkExt, StreamExt};
 use gpui::{App, Context, Entity, Task};
 use gpui_tokio::Tokio;
 use http_client_tls;
@@ -423,7 +420,7 @@ impl EditPredictionProvider for NinetyFiveCompletionProvider {
             (None, None)
         };
 
-        let cursor_offset = cursor_position.to_offset(&buffer);
+        let cursor_offset = cursor_position.to_offset(buffer);
         let client = WebSocketClient::get_singleton(cx);
         let client_clone = client.clone();
 
@@ -452,24 +449,23 @@ impl EditPredictionProvider for NinetyFiveCompletionProvider {
 
         // Now set the pending refresh task to wait for completion
         self.pending_refresh = Some(cx.spawn(async move |this, cx| {
-            // Use Tokio::spawn for the polling loop that needs sleep
             let polling_task = Tokio::spawn(cx, async move {
                 // Wait for completion to be ready by polling the client
                 let mut attempts = 0;
-                let max_attempts = 100; // 5 seconds max wait time
+                let max_attempts = 100;
 
                 loop {
                     let completion_text = client.get_current_completion().await;
 
                     if !completion_text.is_empty() {
                         log::info!("NinetyFive: Completion ready: '{}'", completion_text);
-                        return true; // Completion found
+                        return true;
                     }
 
                     attempts += 1;
                     if attempts >= max_attempts {
                         log::warn!("NinetyFive: Timeout waiting for completion");
-                        return false; // Timeout
+                        return false;
                     }
 
                     sleep(std::time::Duration::from_millis(10)).await;
@@ -543,7 +539,7 @@ impl EditPredictionProvider for NinetyFiveCompletionProvider {
         // Get current buffer snapshot
         let buffer_snapshot = buffer.read(cx);
         let snapshot = buffer_snapshot.snapshot();
-        let cursor_offset = cursor_position.to_offset(&buffer_snapshot);
+        let cursor_offset = cursor_position.to_offset(buffer_snapshot);
 
         // Check if we have a current completion and if it's still valid
         if let Some(current_completion) = &self.current_completion {
@@ -594,7 +590,7 @@ impl EditPredictionProvider for NinetyFiveCompletionProvider {
                     completion_text
                 );
 
-                let position = cursor_position.bias_right(&buffer_snapshot);
+                let position = cursor_position.bias_right(buffer_snapshot);
                 let edits: Arc<[(Range<Anchor>, String)]> =
                     Arc::from([(position..position, completion_text.clone())]);
 
