@@ -23,7 +23,7 @@ use settings::{BaseKeymap, KeybindSource, KeymapFile, Settings as _, SettingsAss
 use ui::{
     ActiveTheme as _, App, Banner, BorrowAppContext, ContextMenu, IconButtonShape, Indicator,
     Modal, ModalFooter, ModalHeader, ParentElement as _, Render, Section, SharedString,
-    Styled as _, Tooltip, Window, prelude::*,
+    Styled as _, Tooltip, Window, prelude::*, right_click_menu,
 };
 use ui_input::SingleLineInput;
 use util::ResultExt;
@@ -270,7 +270,7 @@ impl ConflictState {
 
             for origin in indices.iter() {
                 conflicts[origin.index] =
-                    origin.get_conflict_with(if origin == fst { &snd } else { &fst })
+                    origin.get_conflict_with(if origin == fst { snd } else { fst })
             }
 
             has_user_conflicts |= fst.override_source == KeybindSource::User
@@ -374,6 +374,14 @@ impl Focusable for KeymapEditor {
         }
     }
 }
+/// Helper function to check if two keystroke sequences match exactly
+fn keystrokes_match_exactly(keystrokes1: &[Keystroke], keystrokes2: &[Keystroke]) -> bool {
+    keystrokes1.len() == keystrokes2.len()
+        && keystrokes1
+            .iter()
+            .zip(keystrokes2)
+            .all(|(k1, k2)| k1.key == k2.key && k1.modifiers == k2.modifiers)
+}
 
 impl KeymapEditor {
     fn new(workspace: WeakEntity<Workspace>, window: &mut Window, cx: &mut Context<Self>) -> Self {
@@ -464,13 +472,7 @@ impl KeymapEditor {
 
     fn current_keystroke_query(&self, cx: &App) -> Vec<Keystroke> {
         match self.search_mode {
-            SearchMode::KeyStroke { .. } => self
-                .keystroke_editor
-                .read(cx)
-                .keystrokes()
-                .iter()
-                .cloned()
-                .collect(),
+            SearchMode::KeyStroke { .. } => self.keystroke_editor.read(cx).keystrokes().to_vec(),
             SearchMode::Normal => Default::default(),
         }
     }
@@ -549,15 +551,9 @@ impl KeymapEditor {
                             .keystrokes()
                             .is_some_and(|keystrokes| {
                                 if exact_match {
-                                    keystroke_query.len() == keystrokes.len()
-                                        && keystroke_query.iter().zip(keystrokes).all(
-                                            |(query, keystroke)| {
-                                                query.key == keystroke.key
-                                                    && query.modifiers == keystroke.modifiers
-                                            },
-                                        )
+                                    keystrokes_match_exactly(&keystroke_query, keystrokes)
                                 } else if keystroke_query.len() > keystrokes.len() {
-                                    return false;
+                                    false
                                 } else {
                                     for keystroke_offset in 0..keystrokes.len() {
                                         let mut found_count = 0;
@@ -572,12 +568,9 @@ impl KeymapEditor {
                                                 query.modifiers.is_subset_of(&keystroke.modifiers)
                                                     && ((query.key.is_empty()
                                                         || query.key == keystroke.key)
-                                                        && query
-                                                            .key_char
-                                                            .as_ref()
-                                                            .map_or(true, |q_kc| {
-                                                                q_kc == &keystroke.key
-                                                            }));
+                                                        && query.key_char.as_ref().is_none_or(
+                                                            |q_kc| q_kc == &keystroke.key,
+                                                        ));
                                             if matches {
                                                 found_count += 1;
                                                 query_cursor += 1;
@@ -589,7 +582,7 @@ impl KeymapEditor {
                                             return true;
                                         }
                                     }
-                                    return false;
+                                    false
                                 }
                             })
                     });
@@ -628,8 +621,7 @@ impl KeymapEditor {
         let key_bindings_ptr = cx.key_bindings();
         let lock = key_bindings_ptr.borrow();
         let key_bindings = lock.bindings();
-        let mut unmapped_action_names =
-            HashSet::from_iter(cx.all_action_names().into_iter().copied());
+        let mut unmapped_action_names = HashSet::from_iter(cx.all_action_names().iter().copied());
         let action_documentation = cx.action_documentation();
         let mut generator = KeymapFile::action_schema_generator();
         let actions_with_schemas = HashSet::from_iter(
@@ -671,8 +663,8 @@ impl KeymapEditor {
                 action_name,
                 action_arguments,
                 &actions_with_schemas,
-                &action_documentation,
-                &humanized_action_names,
+                action_documentation,
+                humanized_action_names,
             );
 
             let index = processed_bindings.len();
@@ -694,8 +686,8 @@ impl KeymapEditor {
                 action_name,
                 None,
                 &actions_with_schemas,
-                &action_documentation,
-                &humanized_action_names,
+                action_documentation,
+                humanized_action_names,
             );
             let string_match_candidate =
                 StringMatchCandidate::new(index, &action_information.humanized_name);
@@ -1190,8 +1182,8 @@ impl KeymapEditor {
             return;
         };
 
-        telemetry::event!("Keybinding Context Copied", context = context.clone());
-        cx.write_to_clipboard(gpui::ClipboardItem::new_string(context.clone()));
+        telemetry::event!("Keybinding Context Copied", context = context);
+        cx.write_to_clipboard(gpui::ClipboardItem::new_string(context));
     }
 
     fn copy_action_to_clipboard(
@@ -1207,8 +1199,8 @@ impl KeymapEditor {
             return;
         };
 
-        telemetry::event!("Keybinding Action Copied", action = action.clone());
-        cx.write_to_clipboard(gpui::ClipboardItem::new_string(action.clone()));
+        telemetry::event!("Keybinding Action Copied", action = action);
+        cx.write_to_clipboard(gpui::ClipboardItem::new_string(action));
     }
 
     fn toggle_conflict_filter(
@@ -1296,7 +1288,7 @@ struct HumanizedActionNameCache {
 
 impl HumanizedActionNameCache {
     fn new(cx: &App) -> Self {
-        let cache = HashMap::from_iter(cx.all_action_names().into_iter().map(|&action_name| {
+        let cache = HashMap::from_iter(cx.all_action_names().iter().map(|&action_name| {
             (
                 action_name,
                 command_palette::humanize_action_name(action_name).into(),
@@ -1472,7 +1464,7 @@ impl RenderOnce for KeybindContextString {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         match self {
             KeybindContextString::Global => {
-                muted_styled_text(KeybindContextString::GLOBAL.clone(), cx).into_any_element()
+                muted_styled_text(KeybindContextString::GLOBAL, cx).into_any_element()
             }
             KeybindContextString::Local(name, language) => {
                 SyntaxHighlightedText::new(name, language).into_any_element()
@@ -1534,6 +1526,33 @@ impl Render for KeymapEditor {
                     .child(
                         h_flex()
                             .gap_2()
+                            .child(
+                                right_click_menu("open-keymap-menu")
+                                    .menu(|window, cx| {
+                                        ContextMenu::build(window, cx, |menu, _, _| {
+                                            menu.header("Open Keymap JSON")
+                                                .action("User", zed_actions::OpenKeymap.boxed_clone())
+                                                .action("Zed Default", zed_actions::OpenDefaultKeymap.boxed_clone())
+                                                .action("Vim Default", vim::OpenDefaultKeymap.boxed_clone())
+                                        })
+                                    })
+                                    .anchor(gpui::Corner::TopLeft)
+                                    .trigger(|open, _, _|
+                                        IconButton::new(
+                                            "OpenKeymapJsonButton",
+                                            IconName::Json
+                                        )
+                                        .shape(ui::IconButtonShape::Square)
+                                        .when(!open, |this|
+                                            this.tooltip(move |window, cx| {
+                                                Tooltip::with_meta("Open Keymap JSON", Some(&zed_actions::OpenKeymap),"Right click to view more options", window, cx)
+                                            })
+                                        )
+                                        .on_click(|_, window, cx| {
+                                            window.dispatch_action(zed_actions::OpenKeymap.boxed_clone(), cx);
+                                        })
+                                    )
+                            )
                             .child(
                                 div()
                                     .key_context({
@@ -1729,7 +1748,7 @@ impl Render for KeymapEditor {
                                             } else {
                                                 const NULL: SharedString =
                                                     SharedString::new_static("<null>");
-                                                muted_styled_text(NULL.clone(), cx)
+                                                muted_styled_text(NULL, cx)
                                                     .into_any_element()
                                             }
                                         })
@@ -1837,18 +1856,15 @@ impl Render for KeymapEditor {
                                                   mouse_down_event: &gpui::MouseDownEvent,
                                                   window,
                                                   cx| {
-                                                match mouse_down_event.button {
-                                                    MouseButton::Right => {
-                                                        this.select_index(
-                                                            row_index, None, window, cx,
-                                                        );
-                                                        this.create_context_menu(
-                                                            mouse_down_event.position,
-                                                            window,
-                                                            cx,
-                                                        );
-                                                    }
-                                                    _ => {}
+                                                if mouse_down_event.button == MouseButton::Right {
+                                                    this.select_index(
+                                                        row_index, None, window, cx,
+                                                    );
+                                                    this.create_context_menu(
+                                                        mouse_down_event.position,
+                                                        window,
+                                                        cx,
+                                                    );
                                                 }
                                             },
                                         ))
@@ -1992,21 +2008,21 @@ impl RenderOnce for SyntaxHighlightedText {
 
 #[derive(PartialEq)]
 struct InputError {
-    severity: ui::Severity,
+    severity: Severity,
     content: SharedString,
 }
 
 impl InputError {
     fn warning(message: impl Into<SharedString>) -> Self {
         Self {
-            severity: ui::Severity::Warning,
+            severity: Severity::Warning,
             content: message.into(),
         }
     }
 
     fn error(message: anyhow::Error) -> Self {
         Self {
-            severity: ui::Severity::Error,
+            severity: Severity::Error,
             content: message.to_string().into(),
         }
     }
@@ -2133,9 +2149,11 @@ impl KeybindingEditorModal {
     }
 
     fn set_error(&mut self, error: InputError, cx: &mut Context<Self>) -> bool {
-        if self.error.as_ref().is_some_and(|old_error| {
-            old_error.severity == ui::Severity::Warning && *old_error == error
-        }) {
+        if self
+            .error
+            .as_ref()
+            .is_some_and(|old_error| old_error.severity == Severity::Warning && *old_error == error)
+        {
             false
         } else {
             self.error = Some(error);
@@ -2148,7 +2166,8 @@ impl KeybindingEditorModal {
         let action_arguments = self
             .action_arguments_editor
             .as_ref()
-            .map(|editor| editor.read(cx).editor.read(cx).text(cx));
+            .map(|arguments_editor| arguments_editor.read(cx).editor.read(cx).text(cx))
+            .filter(|args| !args.is_empty());
 
         let value = action_arguments
             .as_ref()
@@ -2157,7 +2176,7 @@ impl KeybindingEditorModal {
             })
             .transpose()?;
 
-        cx.build_action(&self.editing_keybind.action().name, value)
+        cx.build_action(self.editing_keybind.action().name, value)
             .context("Failed to validate action arguments")?;
         Ok(action_arguments)
     }
@@ -2259,29 +2278,11 @@ impl KeybindingEditorModal {
 
         let create = self.creating;
 
-        let status_toast = StatusToast::new(
-            format!(
-                "Saved edits to the {} action.",
-                &self.editing_keybind.action().humanized_name
-            ),
-            cx,
-            move |this, _cx| {
-                this.icon(ToastIcon::new(IconName::Check).color(Color::Success))
-                    .dismiss_button(true)
-                // .action("Undo", f) todo: wire the undo functionality
-            },
-        );
-
-        self.workspace
-            .update(cx, |workspace, cx| {
-                workspace.toggle_status_toast(status_toast, cx);
-            })
-            .log_err();
-
         cx.spawn(async move |this, cx| {
             let action_name = existing_keybind.action().name;
+            let humanized_action_name = existing_keybind.action().humanized_name.clone();
 
-            if let Err(err) = save_keybinding_update(
+            match save_keybinding_update(
                 create,
                 existing_keybind,
                 &action_mapping,
@@ -2291,25 +2292,43 @@ impl KeybindingEditorModal {
             )
             .await
             {
-                this.update(cx, |this, cx| {
-                    this.set_error(InputError::error(err), cx);
-                })
-                .log_err();
-            } else {
-                this.update(cx, |this, cx| {
-                    this.keymap_editor.update(cx, |keymap, cx| {
-                        keymap.previous_edit = Some(PreviousEdit::Keybinding {
-                            action_mapping,
-                            action_name,
-                            fallback: keymap
-                                .table_interaction_state
-                                .read(cx)
-                                .get_scrollbar_offset(Axis::Vertical),
-                        })
-                    });
-                    cx.emit(DismissEvent);
-                })
-                .ok();
+                Ok(_) => {
+                    this.update(cx, |this, cx| {
+                        this.keymap_editor.update(cx, |keymap, cx| {
+                            keymap.previous_edit = Some(PreviousEdit::Keybinding {
+                                action_mapping,
+                                action_name,
+                                fallback: keymap
+                                    .table_interaction_state
+                                    .read(cx)
+                                    .get_scrollbar_offset(Axis::Vertical),
+                            });
+                            let status_toast = StatusToast::new(
+                                format!("Saved edits to the {} action.", humanized_action_name),
+                                cx,
+                                move |this, _cx| {
+                                    this.icon(ToastIcon::new(IconName::Check).color(Color::Success))
+                                        .dismiss_button(true)
+                                    // .action("Undo", f) todo: wire the undo functionality
+                                },
+                            );
+
+                            this.workspace
+                                .update(cx, |workspace, cx| {
+                                    workspace.toggle_status_toast(status_toast, cx);
+                                })
+                                .log_err();
+                        });
+                        cx.emit(DismissEvent);
+                    })
+                    .ok();
+                }
+                Err(err) => {
+                    this.update(cx, |this, cx| {
+                        this.set_error(InputError::error(err), cx);
+                    })
+                    .log_err();
+                }
             }
         })
         .detach();
@@ -2340,8 +2359,50 @@ impl KeybindingEditorModal {
         self.save_or_display_error(cx);
     }
 
-    fn cancel(&mut self, _: &menu::Cancel, _window: &mut Window, cx: &mut Context<Self>) {
-        cx.emit(DismissEvent)
+    fn cancel(&mut self, _: &menu::Cancel, _: &mut Window, cx: &mut Context<Self>) {
+        cx.emit(DismissEvent);
+    }
+
+    fn get_matching_bindings_count(&self, cx: &Context<Self>) -> usize {
+        let current_keystrokes = self.keybind_editor.read(cx).keystrokes().to_vec();
+
+        if current_keystrokes.is_empty() {
+            return 0;
+        }
+
+        self.keymap_editor
+            .read(cx)
+            .keybindings
+            .iter()
+            .enumerate()
+            .filter(|(idx, binding)| {
+                // Don't count the binding we're currently editing
+                if !self.creating && *idx == self.editing_keybind_idx {
+                    return false;
+                }
+
+                binding
+                    .keystrokes()
+                    .map(|keystrokes| keystrokes_match_exactly(keystrokes, &current_keystrokes))
+                    .unwrap_or(false)
+            })
+            .count()
+    }
+
+    fn show_matching_bindings(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        let keystrokes = self.keybind_editor.read(cx).keystrokes().to_vec();
+
+        // Dismiss the modal
+        cx.emit(DismissEvent);
+
+        // Update the keymap editor to show matching keystrokes
+        self.keymap_editor.update(cx, |editor, cx| {
+            editor.filter_state = FilterState::All;
+            editor.search_mode = SearchMode::KeyStroke { exact_match: true };
+            editor.keystroke_editor.update(cx, |keystroke_editor, cx| {
+                keystroke_editor.set_keystrokes(keystrokes, cx);
+            });
+        });
     }
 }
 
@@ -2356,6 +2417,7 @@ fn remove_key_char(Keystroke { modifiers, key, .. }: Keystroke) -> Keystroke {
 impl Render for KeybindingEditorModal {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme().colors();
+        let matching_bindings_count = self.get_matching_bindings_count(cx);
 
         v_flex()
             .w(rems(34.))
@@ -2370,6 +2432,7 @@ impl Render for KeybindingEditorModal {
                     .header(
                         ModalHeader::new().child(
                             v_flex()
+                                .w_full()
                                 .pb_1p5()
                                 .mb_1()
                                 .gap_0p5()
@@ -2393,17 +2456,55 @@ impl Render for KeybindingEditorModal {
                     .section(
                         Section::new().child(
                             v_flex()
-                                .gap_2()
+                                .gap_2p5()
                                 .child(
                                     v_flex()
-                                        .child(Label::new("Edit Keystroke"))
                                         .gap_1()
-                                        .child(self.keybind_editor.clone()),
+                                        .child(Label::new("Edit Keystroke"))
+                                        .child(self.keybind_editor.clone())
+                                        .child(h_flex().gap_px().when(
+                                            matching_bindings_count > 0,
+                                            |this| {
+                                                let label = format!(
+                                                    "There {} {} {} with the same keystrokes.",
+                                                    if matching_bindings_count == 1 {
+                                                        "is"
+                                                    } else {
+                                                        "are"
+                                                    },
+                                                    matching_bindings_count,
+                                                    if matching_bindings_count == 1 {
+                                                        "binding"
+                                                    } else {
+                                                        "bindings"
+                                                    }
+                                                );
+
+                                                this.child(
+                                                    Label::new(label)
+                                                        .size(LabelSize::Small)
+                                                        .color(Color::Muted),
+                                                )
+                                                .child(
+                                                    Button::new("show_matching", "View")
+                                                        .label_size(LabelSize::Small)
+                                                        .icon(IconName::ArrowUpRight)
+                                                        .icon_color(Color::Muted)
+                                                        .icon_size(IconSize::Small)
+                                                        .on_click(cx.listener(
+                                                            |this, _, window, cx| {
+                                                                this.show_matching_bindings(
+                                                                    window, cx,
+                                                                );
+                                                            },
+                                                        )),
+                                                )
+                                            },
+                                        )),
                                 )
                                 .when_some(self.action_arguments_editor.clone(), |this, editor| {
                                     this.child(
                                         v_flex()
-                                            .mt_1p5()
                                             .gap_1()
                                             .child(Label::new("Edit Arguments"))
                                             .child(editor),
@@ -2414,14 +2515,7 @@ impl Render for KeybindingEditorModal {
                                     this.child(
                                         Banner::new()
                                             .severity(error.severity)
-                                            // For some reason, the div overflows its container to the
-                                            //right. The padding accounts for that.
-                                            .child(
-                                                div()
-                                                    .size_full()
-                                                    .pr_2()
-                                                    .child(Label::new(error.content.clone())),
-                                            ),
+                                            .child(Label::new(error.content.clone())),
                                     )
                                 }),
                         ),
@@ -2614,7 +2708,7 @@ impl ActionArgumentsEditor {
                 })
                 .ok();
             }
-            return result;
+            result
         })
         .detach_and_log_err(cx);
         Self {
@@ -2717,7 +2811,7 @@ impl Render for ActionArgumentsEditor {
         self.editor
             .update(cx, |editor, _| editor.set_text_style_refinement(text_style));
 
-        return v_flex().w_full().child(
+        v_flex().w_full().child(
             h_flex()
                 .min_h_8()
                 .min_w_48()
@@ -2730,7 +2824,7 @@ impl Render for ActionArgumentsEditor {
                 .border_color(border_color)
                 .track_focus(&self.focus_handle)
                 .child(self.editor.clone()),
-        );
+        )
     }
 }
 
@@ -2757,11 +2851,8 @@ impl CompletionProvider for KeyContextCompletionProvider {
                 break;
             }
         }
-        let start_anchor = buffer.anchor_before(
-            buffer_position
-                .to_offset(&buffer)
-                .saturating_sub(count_back),
-        );
+        let start_anchor =
+            buffer.anchor_before(buffer_position.to_offset(buffer).saturating_sub(count_back));
         let replace_range = start_anchor..buffer_position;
         gpui::Task::ready(Ok(vec![project::CompletionResponse {
             completions: self
@@ -2791,9 +2882,9 @@ impl CompletionProvider for KeyContextCompletionProvider {
         _menu_is_open: bool,
         _cx: &mut Context<Editor>,
     ) -> bool {
-        text.chars().last().map_or(false, |last_char| {
-            last_char.is_ascii_alphanumeric() || last_char == '_'
-        })
+        text.chars()
+            .last()
+            .is_some_and(|last_char| last_char.is_ascii_alphanumeric() || last_char == '_')
     }
 }
 
@@ -2812,7 +2903,7 @@ async fn load_json_language(workspace: WeakEntity<Workspace>, cx: &mut AsyncApp)
         Some(task) => task.await.context("Failed to load JSON language").log_err(),
         None => None,
     };
-    return json_language.unwrap_or_else(|| {
+    json_language.unwrap_or_else(|| {
         Arc::new(Language::new(
             LanguageConfig {
                 name: "JSON".into(),
@@ -2820,7 +2911,7 @@ async fn load_json_language(workspace: WeakEntity<Workspace>, cx: &mut AsyncApp)
             },
             Some(tree_sitter_json::LANGUAGE.into()),
         ))
-    });
+    })
 }
 
 async fn load_keybind_context_language(
@@ -2844,7 +2935,7 @@ async fn load_keybind_context_language(
             .log_err(),
         None => None,
     };
-    return language.unwrap_or_else(|| {
+    language.unwrap_or_else(|| {
         Arc::new(Language::new(
             LanguageConfig {
                 name: "Zed Keybind Context".into(),
@@ -2852,7 +2943,7 @@ async fn load_keybind_context_language(
             },
             Some(tree_sitter_rust::LANGUAGE.into()),
         ))
-    });
+    })
 }
 
 async fn save_keybinding_update(
@@ -2878,14 +2969,14 @@ async fn save_keybinding_update(
     let target = settings::KeybindUpdateTarget {
         context: existing_context,
         keystrokes: existing_keystrokes,
-        action_name: &existing.action().name,
+        action_name: existing.action().name,
         action_arguments: existing_args,
     };
 
     let source = settings::KeybindUpdateTarget {
         context: action_mapping.context.as_ref().map(|a| &***a),
         keystrokes: &action_mapping.keystrokes,
-        action_name: &existing.action().name,
+        action_name: existing.action().name,
         action_arguments: new_args,
     };
 
@@ -2906,7 +2997,7 @@ async fn save_keybinding_update(
 
     let updated_keymap_contents =
         settings::KeymapFile::update_keybinding(operation, keymap_contents, tab_size)
-            .context("Failed to update keybinding")?;
+            .map_err(|err| anyhow::anyhow!("Could not save updated keybinding: {}", err))?;
     fs.write(
         paths::keymap_file().as_path(),
         updated_keymap_contents.as_bytes(),
@@ -2939,7 +3030,7 @@ async fn remove_keybinding(
         target: settings::KeybindUpdateTarget {
             context: existing.context().and_then(KeybindContextString::local_str),
             keystrokes,
-            action_name: &existing.action().name,
+            action_name: existing.action().name,
             action_arguments: existing
                 .action()
                 .arguments
@@ -3032,7 +3123,7 @@ fn collect_contexts_from_assets() -> Vec<SharedString> {
     let mut contexts = contexts.into_iter().collect::<Vec<_>>();
     contexts.sort();
 
-    return contexts;
+    contexts
 }
 
 impl SerializableItem for KeymapEditor {

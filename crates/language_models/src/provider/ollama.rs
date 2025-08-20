@@ -316,7 +316,7 @@ impl LanguageModelProvider for OllamaLanguageModelProvider {
             .map(|model| {
                 Arc::new(OllamaLanguageModel {
                     id: LanguageModelId::from(model.name.clone()),
-                    model: model.clone(),
+                    model,
                     http_client: self.http_client.clone(),
                     request_limiter: RateLimiter::new(4),
                     state: self.state.clone(),
@@ -335,7 +335,12 @@ impl LanguageModelProvider for OllamaLanguageModelProvider {
         self.state.update(cx, |state, cx| state.authenticate(cx))
     }
 
-    fn configuration_view(&self, window: &mut Window, cx: &mut App) -> AnyView {
+    fn configuration_view(
+        &self,
+        _target_agent: language_model::ConfigurationViewTargetAgent,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> AnyView {
         let state = self.state.clone();
         cx.new(|cx| ConfigurationView::new(state, window, cx))
             .into()

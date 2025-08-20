@@ -1,6 +1,7 @@
 use super::{Client, Status, TypedEnvelope, proto};
 use anyhow::{Context as _, Result, anyhow};
 use chrono::{DateTime, Utc};
+use cloud_api_client::websocket_protocol::MessageToClient;
 use cloud_api_client::{GetAuthenticatedUserResponse, PlanInfo};
 use cloud_llm_client::{
     EDIT_PREDICTIONS_USAGE_AMOUNT_HEADER_NAME, EDIT_PREDICTIONS_USAGE_LIMIT_HEADER_NAME,
@@ -40,7 +41,7 @@ impl std::fmt::Display for ChannelId {
 pub struct ProjectId(pub u64);
 
 impl ProjectId {
-    pub fn to_proto(&self) -> u64 {
+    pub fn to_proto(self) -> u64 {
         self.0
     }
 }
@@ -176,11 +177,16 @@ impl UserStore {
         let (mut current_user_tx, current_user_rx) = watch::channel();
         let (update_contacts_tx, mut update_contacts_rx) = mpsc::unbounded();
         let rpc_subscriptions = vec![
-            client.add_message_handler(cx.weak_entity(), Self::handle_update_plan),
             client.add_message_handler(cx.weak_entity(), Self::handle_update_contacts),
             client.add_message_handler(cx.weak_entity(), Self::handle_update_invite_info),
             client.add_message_handler(cx.weak_entity(), Self::handle_show_contacts),
         ];
+
+        client.add_message_to_client_handler({
+            let this = cx.weak_entity();
+            move |message, cx| Self::handle_message_to_client(this.clone(), message, cx)
+        });
+
         Self {
             users: Default::default(),
             by_github_login: Default::default(),
@@ -219,17 +225,35 @@ impl UserStore {
                     match status {
                         Status::Authenticated | Status::Connected { .. } => {
                             if let Some(user_id) = client.user_id() {
-                                let response = client.cloud_client().get_authenticated_user().await;
-                                let mut current_user = None;
+                                let response = client
+                                    .cloud_client()
+                                    .get_authenticated_user()
+                                    .await
+                                    .log_err();
+
+                                let current_user_and_response = if let Some(response) = response {
+                                    let user = Arc::new(User {
+                                        id: user_id,
+                                        github_login: response.user.github_login.clone().into(),
+                                        avatar_uri: response.user.avatar_url.clone().into(),
+                                        name: response.user.name.clone(),
+                                    });
+
+                                    Some((user, response))
+                                } else {
+                                    None
+                                };
+                                current_user_tx
+                                    .send(
+                                        current_user_and_response
+                                            .as_ref()
+                                            .map(|(user, _)| user.clone()),
+                                    )
+                                    .await
+                                    .ok();
+
                                 cx.update(|cx| {
-                                    if let Some(response) = response.log_err() {
-                                        let user = Arc::new(User {
-                                            id: user_id,
-                                            github_login: response.user.github_login.clone().into(),
-                                            avatar_uri: response.user.avatar_url.clone().into(),
-                                            name: response.user.name.clone(),
-                                        });
-                                        current_user = Some(user.clone());
+                                    if let Some((user, response)) = current_user_and_response {
                                         this.update(cx, |this, cx| {
                                             this.by_github_login
                                                 .insert(user.github_login.clone(), user_id);
@@ -240,7 +264,6 @@ impl UserStore {
                                         anyhow::Ok(())
                                     }
                                 })??;
-                                current_user_tx.send(current_user).await.ok();
 
                                 this.update(cx, |_, cx| cx.notify())?;
                             }
@@ -309,34 +332,14 @@ impl UserStore {
     async fn handle_update_contacts(
         this: Entity<Self>,
         message: TypedEnvelope<proto::UpdateContacts>,
-        mut cx: AsyncApp,
+        cx: AsyncApp,
     ) -> Result<()> {
-        this.read_with(&mut cx, |this, _| {
+        this.read_with(&cx, |this, _| {
             this.update_contacts_tx
                 .unbounded_send(UpdateContacts::Update(message.payload))
                 .unwrap();
         })?;
         Ok(())
-    }
-
-    async fn handle_update_plan(
-        this: Entity<Self>,
-        _message: TypedEnvelope<proto::UpdateUserPlan>,
-        mut cx: AsyncApp,
-    ) -> Result<()> {
-        let client = this
-            .read_with(&cx, |this, _| this.client.upgrade())?
-            .context("client was dropped")?;
-
-        let response = client
-            .cloud_client()
-            .get_authenticated_user()
-            .await
-            .context("failed to fetch authenticated user")?;
-
-        this.update(&mut cx, |this, cx| {
-            this.update_authenticated_user(response, cx);
-        })
     }
 
     fn update_contacts(&mut self, message: UpdateContacts, cx: &Context<Self>) -> Task<Result<()>> {
@@ -813,13 +816,39 @@ impl UserStore {
         cx.emit(Event::PrivateUserInfoUpdated);
     }
 
+    fn handle_message_to_client(this: WeakEntity<Self>, message: &MessageToClient, cx: &App) {
+        cx.spawn(async move |cx| {
+            match message {
+                MessageToClient::UserUpdated => {
+                    let cloud_client = cx
+                        .update(|cx| {
+                            this.read_with(cx, |this, _cx| {
+                                this.client.upgrade().map(|client| client.cloud_client())
+                            })
+                        })??
+                        .ok_or(anyhow::anyhow!("Failed to get Cloud client"))?;
+
+                    let response = cloud_client.get_authenticated_user().await?;
+                    cx.update(|cx| {
+                        this.update(cx, |this, cx| {
+                            this.update_authenticated_user(response, cx);
+                        })
+                    })??;
+                }
+            }
+
+            anyhow::Ok(())
+        })
+        .detach_and_log_err(cx);
+    }
+
     pub fn watch_current_user(&self) -> watch::Receiver<Option<Arc<User>>> {
         self.current_user.clone()
     }
 
     pub fn has_accepted_terms_of_service(&self) -> bool {
         self.accepted_tos_at
-            .map_or(false, |accepted_tos_at| accepted_tos_at.is_some())
+            .is_some_and(|accepted_tos_at| accepted_tos_at.is_some())
     }
 
     pub fn accept_terms_of_service(&self, cx: &Context<Self>) -> Task<Result<()>> {
@@ -865,10 +894,10 @@ impl UserStore {
         let mut ret = Vec::with_capacity(users.len());
         for user in users {
             let user = User::new(user);
-            if let Some(old) = self.users.insert(user.id, user.clone()) {
-                if old.github_login != user.github_login {
-                    self.by_github_login.remove(&old.github_login);
-                }
+            if let Some(old) = self.users.insert(user.id, user.clone())
+                && old.github_login != user.github_login
+            {
+                self.by_github_login.remove(&old.github_login);
             }
             self.by_github_login
                 .insert(user.github_login.clone(), user.id);
@@ -967,19 +996,6 @@ impl RequestUsage {
             UsageLimit::Limited(limit) => self.amount >= limit,
             UsageLimit::Unlimited => false,
         }
-    }
-
-    pub fn from_proto(amount: u32, limit: proto::UsageLimit) -> Option<Self> {
-        let limit = match limit.variant? {
-            proto::usage_limit::Variant::Limited(limited) => {
-                UsageLimit::Limited(limited.limit as i32)
-            }
-            proto::usage_limit::Variant::Unlimited(_) => UsageLimit::Unlimited,
-        };
-        Some(RequestUsage {
-            limit,
-            amount: amount as i32,
-        })
     }
 
     fn from_headers(

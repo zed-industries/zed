@@ -110,11 +110,7 @@ impl<'a> GitTraversal<'a> {
     }
 
     pub fn advance(&mut self) -> bool {
-        self.advance_by(1)
-    }
-
-    pub fn advance_by(&mut self, count: usize) -> bool {
-        let found = self.traversal.advance_by(count);
+        let found = self.traversal.advance_by(1);
         self.synchronize_statuses(false);
         found
     }
@@ -186,11 +182,11 @@ impl<'a> Iterator for ChildEntriesGitIter<'a> {
     type Item = GitEntryRef<'a>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if let Some(item) = self.traversal.entry() {
-            if item.path.starts_with(self.parent_path) {
-                self.traversal.advance_to_sibling();
-                return Some(item);
-            }
+        if let Some(item) = self.traversal.entry()
+            && item.path.starts_with(self.parent_path)
+        {
+            self.traversal.advance_to_sibling();
+            return Some(item);
         }
         None
     }
@@ -203,7 +199,7 @@ pub struct GitEntryRef<'a> {
 }
 
 impl GitEntryRef<'_> {
-    pub fn to_owned(&self) -> GitEntry {
+    pub fn to_owned(self) -> GitEntry {
         GitEntry {
             entry: self.entry.clone(),
             git_summary: self.git_summary,
@@ -215,7 +211,7 @@ impl Deref for GitEntryRef<'_> {
     type Target = Entry;
 
     fn deref(&self) -> &Self::Target {
-        &self.entry
+        self.entry
     }
 }
 

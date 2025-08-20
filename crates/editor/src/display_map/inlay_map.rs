@@ -48,16 +48,16 @@ pub struct Inlay {
 impl Inlay {
     pub fn hint(id: usize, position: Anchor, hint: &project::InlayHint) -> Self {
         let mut text = hint.text();
-        if hint.padding_right && !text.ends_with(' ') {
-            text.push(' ');
+        if hint.padding_right && text.reversed_chars_at(text.len()).next() != Some(' ') {
+            text.push(" ");
         }
-        if hint.padding_left && !text.starts_with(' ') {
-            text.insert(0, ' ');
+        if hint.padding_left && text.chars_at(0).next() != Some(' ') {
+            text.push_front(" ");
         }
         Self {
             id: InlayId::Hint(id),
             position,
-            text: text.into(),
+            text,
             color: None,
         }
     }
@@ -557,11 +557,11 @@ impl InlayMap {
             let mut buffer_edits_iter = buffer_edits.iter().peekable();
             while let Some(buffer_edit) = buffer_edits_iter.next() {
                 new_transforms.append(cursor.slice(&buffer_edit.old.start, Bias::Left), &());
-                if let Some(Transform::Isomorphic(transform)) = cursor.item() {
-                    if cursor.end().0 == buffer_edit.old.start {
-                        push_isomorphic(&mut new_transforms, *transform);
-                        cursor.next();
-                    }
+                if let Some(Transform::Isomorphic(transform)) = cursor.item()
+                    && cursor.end().0 == buffer_edit.old.start
+                {
+                    push_isomorphic(&mut new_transforms, *transform);
+                    cursor.next();
                 }
 
                 // Remove all the inlays and transforms contained by the edit.
@@ -625,7 +625,7 @@ impl InlayMap {
                 // we can push its remainder.
                 if buffer_edits_iter
                     .peek()
-                    .map_or(true, |edit| edit.old.start >= cursor.end().0)
+                    .is_none_or(|edit| edit.old.start >= cursor.end().0)
                 {
                     let transform_start = new_transforms.summary().input.len;
                     let transform_end =
@@ -737,13 +737,13 @@ impl InlayMap {
                     Inlay::mock_hint(
                         post_inc(next_inlay_id),
                         snapshot.buffer.anchor_at(position, bias),
-                        text.clone(),
+                        &text,
                     )
                 } else {
                     Inlay::edit_prediction(
                         post_inc(next_inlay_id),
                         snapshot.buffer.anchor_at(position, bias),
-                        text.clone(),
+                        &text,
                     )
                 };
                 let inlay_id = next_inlay.id;
@@ -1306,6 +1306,29 @@ mod tests {
     }
 
     #[gpui::test]
+    fn test_inlay_hint_padding_with_multibyte_chars() {
+        assert_eq!(
+            Inlay::hint(
+                0,
+                Anchor::min(),
+                &InlayHint {
+                    label: InlayHintLabel::String("🎨".to_string()),
+                    position: text::Anchor::default(),
+                    padding_left: true,
+                    padding_right: true,
+                    tooltip: None,
+                    kind: None,
+                    resolve_state: ResolveState::Resolved,
+                },
+            )
+            .text
+            .to_string(),
+            " 🎨 ",
+            "Should pad single emoji correctly"
+        );
+    }
+
+    #[gpui::test]
     fn test_basic_inlays(cx: &mut App) {
         let buffer = MultiBuffer::build_simple("abcdefghi", cx);
         let buffer_edits = buffer.update(cx, |buffer, _| buffer.subscribe());
@@ -1694,7 +1717,7 @@ mod tests {
                     (offset, inlay.clone())
                 })
                 .collect::<Vec<_>>();
-            let mut expected_text = Rope::from(buffer_snapshot.text());
+            let mut expected_text = Rope::from(&buffer_snapshot.text());
             for (offset, inlay) in inlays.iter().rev() {
                 expected_text.replace(*offset..*offset, &inlay.text.to_string());
             }

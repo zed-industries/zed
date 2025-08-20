@@ -134,7 +134,9 @@ pub async fn test_tool_call(server: impl AgentServer + 'static, cx: &mut TestApp
             matches!(
                 entry,
                 AgentThreadEntry::ToolCall(ToolCall {
-                    status: ToolCallStatus::Allowed { .. },
+                    status: ToolCallStatus::Pending
+                        | ToolCallStatus::InProgress
+                        | ToolCallStatus::Completed,
                     ..
                 })
             )
@@ -212,7 +214,9 @@ pub async fn test_tool_call_with_permission(
         assert!(thread.entries().iter().any(|entry| matches!(
             entry,
             AgentThreadEntry::ToolCall(ToolCall {
-                status: ToolCallStatus::Allowed { .. },
+                status: ToolCallStatus::Pending
+                    | ToolCallStatus::InProgress
+                    | ToolCallStatus::Completed,
                 ..
             })
         )));
@@ -223,7 +227,9 @@ pub async fn test_tool_call_with_permission(
     thread.read_with(cx, |thread, cx| {
         let AgentThreadEntry::ToolCall(ToolCall {
             content,
-            status: ToolCallStatus::Allowed { .. },
+            status: ToolCallStatus::Pending
+                | ToolCallStatus::InProgress
+                | ToolCallStatus::Completed,
             ..
         }) = thread
             .entries()
@@ -246,7 +252,7 @@ pub async fn test_cancel(server: impl AgentServer + 'static, cx: &mut TestAppCon
 
     let project = Project::test(fs, [path!("/private/tmp").as_ref()], cx).await;
     let thread = new_test_thread(server, project.clone(), "/private/tmp", cx).await;
-    let full_turn = thread.update(cx, |thread, cx| {
+    let _ = thread.update(cx, |thread, cx| {
         thread.send_raw(
             r#"Run exactly `touch hello.txt && echo "Hello, world!" | tee hello.txt` in the terminal."#,
             cx,
@@ -285,9 +291,8 @@ pub async fn test_cancel(server: impl AgentServer + 'static, cx: &mut TestAppCon
         id.clone()
     });
 
-    let _ = thread.update(cx, |thread, cx| thread.cancel(cx));
-    full_turn.await.unwrap();
-    thread.read_with(cx, |thread, _| {
+    thread.update(cx, |thread, cx| thread.cancel(cx)).await;
+    thread.read_with(cx, |thread, _cx| {
         let AgentThreadEntry::ToolCall(ToolCall {
             status: ToolCallStatus::Canceled,
             ..
@@ -423,12 +428,9 @@ pub async fn new_test_thread(
         .await
         .unwrap();
 
-    let thread = connection
-        .new_thread(project.clone(), current_dir.as_ref(), &mut cx.to_async())
+    cx.update(|cx| connection.new_thread(project.clone(), current_dir.as_ref(), cx))
         .await
-        .unwrap();
-
-    thread
+        .unwrap()
 }
 
 pub async fn run_until_first_tool_call(
@@ -466,7 +468,7 @@ pub fn get_zed_path() -> PathBuf {
 
     while zed_path
         .file_name()
-        .map_or(true, |name| name.to_string_lossy() != "debug")
+        .is_none_or(|name| name.to_string_lossy() != "debug")
     {
         if !zed_path.pop() {
             panic!("Could not find target directory");

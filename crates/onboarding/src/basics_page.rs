@@ -16,6 +16,23 @@ use vim_mode_setting::VimModeSetting;
 
 use crate::theme_preview::{ThemePreviewStyle, ThemePreviewTile};
 
+const LIGHT_THEMES: [&str; 3] = ["One Light", "Ayu Light", "Gruvbox Light"];
+const DARK_THEMES: [&str; 3] = ["One Dark", "Ayu Dark", "Gruvbox Dark"];
+const FAMILY_NAMES: [SharedString; 3] = [
+    SharedString::new_static("One"),
+    SharedString::new_static("Ayu"),
+    SharedString::new_static("Gruvbox"),
+];
+
+fn get_theme_family_themes(theme_name: &str) -> Option<(&'static str, &'static str)> {
+    for i in 0..LIGHT_THEMES.len() {
+        if LIGHT_THEMES[i] == theme_name || DARK_THEMES[i] == theme_name {
+            return Some((LIGHT_THEMES[i], DARK_THEMES[i]));
+        }
+    }
+    None
+}
+
 fn render_theme_section(tab_index: &mut isize, cx: &mut App) -> impl IntoElement {
     let theme_selection = ThemeSettings::get_global(cx).theme_selection.clone();
     let system_appearance = theme::SystemAppearance::global(cx);
@@ -58,7 +75,7 @@ fn render_theme_section(tab_index: &mut isize, cx: &mut App) -> impl IntoElement
                 .tab_index(tab_index)
                 .selected_index(theme_mode as usize)
                 .style(ui::ToggleButtonGroupStyle::Outlined)
-                .button_width(rems_from_px(64.)),
+                .width(rems_from_px(3. * 64.)),
             ),
         )
         .child(
@@ -90,14 +107,6 @@ fn render_theme_section(tab_index: &mut isize, cx: &mut App) -> impl IntoElement
         };
         let current_theme_name = theme_selection.theme(appearance);
 
-        const LIGHT_THEMES: [&'static str; 3] = ["One Light", "Ayu Light", "Gruvbox Light"];
-        const DARK_THEMES: [&'static str; 3] = ["One Dark", "Ayu Dark", "Gruvbox Dark"];
-        const FAMILY_NAMES: [SharedString; 3] = [
-            SharedString::new_static("One"),
-            SharedString::new_static("Ayu"),
-            SharedString::new_static("Gruvbox"),
-        ];
-
         let theme_names = match appearance {
             Appearance::Light => LIGHT_THEMES,
             Appearance::Dark => DARK_THEMES,
@@ -105,7 +114,7 @@ fn render_theme_section(tab_index: &mut isize, cx: &mut App) -> impl IntoElement
 
         let themes = theme_names.map(|theme| theme_registry.get(theme).unwrap());
 
-        let theme_previews = [0, 1, 2].map(|index| {
+        [0, 1, 2].map(|index| {
             let theme = &themes[index];
             let is_selected = theme.name == current_theme_name;
             let name = theme.name.clone();
@@ -117,7 +126,7 @@ fn render_theme_section(tab_index: &mut isize, cx: &mut App) -> impl IntoElement
                 .gap_1()
                 .child(
                     h_flex()
-                        .id(name.clone())
+                        .id(name)
                         .relative()
                         .w_full()
                         .border_2()
@@ -167,9 +176,7 @@ fn render_theme_section(tab_index: &mut isize, cx: &mut App) -> impl IntoElement
                         .color(Color::Muted)
                         .size(LabelSize::Small),
                 )
-        });
-
-        theme_previews
+        })
     }
 
     fn write_mode_change(mode: ThemeMode, cx: &mut App) {
@@ -184,14 +191,17 @@ fn render_theme_section(tab_index: &mut isize, cx: &mut App) -> impl IntoElement
         let theme = theme.into();
         update_settings_file::<ThemeSettings>(fs, cx, move |settings, cx| {
             if theme_mode == ThemeMode::System {
+                let (light_theme, dark_theme) =
+                    get_theme_family_themes(&theme).unwrap_or((theme.as_ref(), theme.as_ref()));
+
                 settings.theme = Some(ThemeSelection::Dynamic {
                     mode: ThemeMode::System,
-                    light: ThemeName(theme.clone()),
-                    dark: ThemeName(theme.clone()),
+                    light: ThemeName(light_theme.into()),
+                    dark: ThemeName(dark_theme.into()),
                 });
             } else {
                 let appearance = *SystemAppearance::global(cx);
-                settings.set_theme(theme.clone(), appearance);
+                settings.set_theme(theme, appearance);
             }
         });
     }
@@ -201,12 +211,15 @@ fn render_telemetry_section(tab_index: &mut isize, cx: &App) -> impl IntoElement
     let fs = <dyn Fs>::global(cx);
 
     v_flex()
+        .pt_6()
         .gap_4()
+        .border_t_1()
+        .border_color(cx.theme().colors().border_variant.opacity(0.5))
         .child(Label::new("Telemetry").size(LabelSize::Large))
         .child(SwitchField::new(
             "onboarding-telemetry-metrics",
             "Help Improve Zed",
-            Some("Sending anonymous usage data helps us build the right features and create the best experience.".into()),
+            Some("Anonymous usage data helps us build the right features and improve your experience.".into()),
             if TelemetrySettings::get_global(cx).metrics {
                 ui::ToggleState::Selected
             } else {
@@ -294,7 +307,7 @@ fn render_base_keymap_section(tab_index: &mut isize, cx: &mut App) -> impl IntoE
                 ToggleButtonWithIcon::new("Emacs", IconName::EditorEmacs, |_, _, cx| {
                     write_keymap_base(BaseKeymap::Emacs, cx);
                 }),
-                ToggleButtonWithIcon::new("Cursor (Beta)", IconName::EditorCursor, |_, _, cx| {
+                ToggleButtonWithIcon::new("Cursor", IconName::EditorCursor, |_, _, cx| {
                     write_keymap_base(BaseKeymap::Cursor, cx);
                 }),
             ],
@@ -302,8 +315,8 @@ fn render_base_keymap_section(tab_index: &mut isize, cx: &mut App) -> impl IntoE
         .when_some(base_keymap, |this, base_keymap| {
             this.selected_index(base_keymap)
         })
+        .full_width()
         .tab_index(tab_index)
-        .button_width(rems_from_px(216.))
         .size(ui::ToggleButtonGroupSize::Medium)
         .style(ui::ToggleButtonGroupStyle::Outlined),
     );
@@ -326,10 +339,7 @@ fn render_vim_mode_switch(tab_index: &mut isize, cx: &mut App) -> impl IntoEleme
     SwitchField::new(
         "onboarding-vim-mode",
         "Vim Mode",
-        Some(
-            "Coming from Neovim? Zed's first-class implementation of Vim Mode has got your back."
-                .into(),
-        ),
+        Some("Coming from Neovim? Use our first-class implementation of Vim Mode.".into()),
         toggle_state,
         {
             let fs = <dyn Fs>::global(cx);

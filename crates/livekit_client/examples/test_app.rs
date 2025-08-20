@@ -159,14 +159,14 @@ impl LivekitWindow {
                 if output
                     .audio_output_stream
                     .as_ref()
-                    .map_or(false, |(track, _)| track.sid() == unpublish_sid)
+                    .is_some_and(|(track, _)| track.sid() == unpublish_sid)
                 {
                     output.audio_output_stream.take();
                 }
                 if output
                     .screen_share_output_view
                     .as_ref()
-                    .map_or(false, |(track, _)| track.sid() == unpublish_sid)
+                    .is_some_and(|(track, _)| track.sid() == unpublish_sid)
                 {
                     output.screen_share_output_view.take();
                 }
@@ -183,7 +183,7 @@ impl LivekitWindow {
                 match track {
                     livekit_client::RemoteTrack::Audio(track) => {
                         output.audio_output_stream = Some((
-                            publication.clone(),
+                            publication,
                             room.play_remote_audio_track(&track, cx).unwrap(),
                         ));
                     }

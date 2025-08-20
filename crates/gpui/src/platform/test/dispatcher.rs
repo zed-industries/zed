@@ -78,11 +78,11 @@ impl TestDispatcher {
             let state = self.state.lock();
             let next_due_time = state.delayed.first().map(|(time, _)| *time);
             drop(state);
-            if let Some(due_time) = next_due_time {
-                if due_time <= new_now {
-                    self.state.lock().time = due_time;
-                    continue;
-                }
+            if let Some(due_time) = next_due_time
+                && due_time <= new_now
+            {
+                self.state.lock().time = due_time;
+                continue;
             }
             break;
         }
@@ -270,9 +270,7 @@ impl PlatformDispatcher for TestDispatcher {
     fn dispatch(&self, runnable: Runnable, label: Option<TaskLabel>) {
         {
             let mut state = self.state.lock();
-            if label.map_or(false, |label| {
-                state.deprioritized_task_labels.contains(&label)
-            }) {
+            if label.is_some_and(|label| state.deprioritized_task_labels.contains(&label)) {
                 state.deprioritized_background.push(runnable);
             } else {
                 state.background.push(runnable);

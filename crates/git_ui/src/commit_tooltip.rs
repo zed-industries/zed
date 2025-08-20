@@ -181,7 +181,7 @@ impl Render for CommitTooltip {
             .get(0..8)
             .map(|sha| sha.to_string().into())
             .unwrap_or_else(|| self.commit.sha.clone());
-        let full_sha = self.commit.sha.to_string().clone();
+        let full_sha = self.commit.sha.to_string();
         let absolute_timestamp = format_local_timestamp(
             self.commit.commit_time,
             OffsetDateTime::now_utc(),

@@ -87,7 +87,7 @@ impl DebugSession {
         self.stack_trace_view.get_or_init(|| {
             let stackframe_list = running_state.read(cx).stack_frame_list().clone();
 
-            let stack_frame_view = cx.new(|cx| {
+            cx.new(|cx| {
                 StackTraceView::new(
                     workspace.clone(),
                     project.clone(),
@@ -95,9 +95,7 @@ impl DebugSession {
                     window,
                     cx,
                 )
-            });
-
-            stack_frame_view
+            })
         })
     }
 

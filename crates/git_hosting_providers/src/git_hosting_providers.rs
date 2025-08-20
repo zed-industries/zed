@@ -49,13 +49,13 @@ pub fn register_additional_providers(
 
 pub fn get_host_from_git_remote_url(remote_url: &str) -> Result<String> {
     maybe!({
-        if let Some(remote_url) = remote_url.strip_prefix("git@") {
-            if let Some((host, _)) = remote_url.trim_start_matches("git@").split_once(':') {
-                return Some(host.to_string());
-            }
+        if let Some(remote_url) = remote_url.strip_prefix("git@")
+            && let Some((host, _)) = remote_url.trim_start_matches("git@").split_once(':')
+        {
+            return Some(host.to_string());
         }
 
-        Url::parse(&remote_url)
+        Url::parse(remote_url)
             .ok()
             .and_then(|remote_url| remote_url.host_str().map(|host| host.to_string()))
     })

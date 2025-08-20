@@ -64,8 +64,8 @@ use std::{
 };
 
 const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(500);
-
 const GIT_DIFF_PATH_PREFIXES: &[&str] = &["a", "b"];
+const TERMINAL_SCROLLBAR_WIDTH: Pixels = px(12.);
 
 /// Event to transmit the scroll from the element to the view
 #[derive(Clone, Debug, PartialEq)]
@@ -308,10 +308,10 @@ impl TerminalView {
                 } else {
                     let mut displayed_lines = total_lines;
 
-                    if !self.focus_handle.is_focused(window) {
-                        if let Some(max_lines) = max_lines_when_unfocused {
-                            displayed_lines = displayed_lines.min(*max_lines)
-                        }
+                    if !self.focus_handle.is_focused(window)
+                        && let Some(max_lines) = max_lines_when_unfocused
+                    {
+                        displayed_lines = displayed_lines.min(*max_lines)
                     }
 
                     ContentMode::Inline {
@@ -385,9 +385,7 @@ impl TerminalView {
             .workspace
             .upgrade()
             .and_then(|workspace| workspace.read(cx).panel::<TerminalPanel>(cx))
-            .map_or(false, |terminal_panel| {
-                terminal_panel.read(cx).assistant_enabled()
-            });
+            .is_some_and(|terminal_panel| terminal_panel.read(cx).assistant_enabled());
         let context_menu = ContextMenu::build(window, cx, |menu, _, _| {
             menu.context(self.focus_handle.clone())
                 .action("New Terminal", Box::new(NewTerminal))
@@ -956,13 +954,12 @@ impl TerminalView {
                 .on_scroll_wheel(cx.listener(|_, _, _window, cx| {
                     cx.notify();
                 }))
-                .h_full()
                 .absolute()
-                .right_1()
-                .top_1()
+                .top_0()
                 .bottom_0()
-                .w(px(12.))
-                .cursor_default()
+                .right_0()
+                .h_full()
+                .w(TERMINAL_SCROLLBAR_WIDTH)
                 .children(Scrollbar::vertical(self.scrollbar_state.clone())),
         )
     }
@@ -1157,26 +1154,26 @@ fn subscribe_for_terminal_events(
 
                                 if let Some(opened_item) = opened_items.first() {
                                     if open_target.is_file() {
-                                        if let Some(Ok(opened_item)) = opened_item {
-                                            if let Some(row) = path_to_open.row {
-                                                let col = path_to_open.column.unwrap_or(0);
-                                                if let Some(active_editor) =
-                                                    opened_item.downcast::<Editor>()
-                                                {
-                                                    active_editor
-                                                        .downgrade()
-                                                        .update_in(cx, |editor, window, cx| {
-                                                            editor.go_to_singleton_buffer_point(
-                                                                language::Point::new(
-                                                                    row.saturating_sub(1),
-                                                                    col.saturating_sub(1),
-                                                                ),
-                                                                window,
-                                                                cx,
-                                                            )
-                                                        })
-                                                        .log_err();
-                                                }
+                                        if let Some(Ok(opened_item)) = opened_item
+                                            && let Some(row) = path_to_open.row
+                                        {
+                                            let col = path_to_open.column.unwrap_or(0);
+                                            if let Some(active_editor) =
+                                                opened_item.downcast::<Editor>()
+                                            {
+                                                active_editor
+                                                    .downgrade()
+                                                    .update_in(cx, |editor, window, cx| {
+                                                        editor.go_to_singleton_buffer_point(
+                                                            language::Point::new(
+                                                                row.saturating_sub(1),
+                                                                col.saturating_sub(1),
+                                                            ),
+                                                            window,
+                                                            cx,
+                                                        )
+                                                    })
+                                                    .log_err();
                                             }
                                         }
                                     } else if open_target.is_dir() {
@@ -1322,17 +1319,17 @@ fn possible_open_target(
                 }
             };
 
-            if path_to_check.path.is_relative() {
-                if let Some(entry) = worktree.read(cx).entry_for_path(&path_to_check.path) {
-                    return Task::ready(Some(OpenTarget::Worktree(
-                        PathWithPosition {
-                            path: worktree_root.join(&entry.path),
-                            row: path_to_check.row,
-                            column: path_to_check.column,
-                        },
-                        entry.clone(),
-                    )));
-                }
+            if path_to_check.path.is_relative()
+                && let Some(entry) = worktree.read(cx).entry_for_path(&path_to_check.path)
+            {
+                return Task::ready(Some(OpenTarget::Worktree(
+                    PathWithPosition {
+                        path: worktree_root.join(&entry.path),
+                        row: path_to_check.row,
+                        column: path_to_check.column,
+                    },
+                    entry.clone(),
+                )));
             }
 
             paths_to_check.push(path_to_check);
@@ -1429,11 +1426,11 @@ fn possible_open_target(
     let fs = workspace.read(cx).project().read(cx).fs().clone();
     cx.background_spawn(async move {
         for mut path_to_check in fs_paths_to_check {
-            if let Some(fs_path_to_check) = fs.canonicalize(&path_to_check.path).await.ok() {
-                if let Some(metadata) = fs.metadata(&fs_path_to_check).await.ok().flatten() {
-                    path_to_check.path = fs_path_to_check;
-                    return Some(OpenTarget::File(path_to_check, metadata));
-                }
+            if let Some(fs_path_to_check) = fs.canonicalize(&path_to_check.path).await.ok()
+                && let Some(metadata) = fs.metadata(&fs_path_to_check).await.ok().flatten()
+            {
+                path_to_check.path = fs_path_to_check;
+                return Some(OpenTarget::File(path_to_check, metadata));
             }
         }
 
@@ -1492,9 +1489,19 @@ impl TerminalView {
 impl Render for TerminalView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let terminal_handle = self.terminal.clone();
-        let terminal_view_handle = cx.entity().clone();
+        let terminal_view_handle = cx.entity();
 
         let focused = self.focus_handle.is_focused(window);
+
+        // Always calculate scrollbar width to prevent layout shift
+        let scrollbar_width = if Self::should_show_scrollbar(cx)
+            && self.content_mode(window, cx).is_scrollable()
+            && self.terminal.read(cx).total_lines() > self.terminal.read(cx).viewport_lines()
+        {
+            TERMINAL_SCROLLBAR_WIDTH
+        } else {
+            px(0.)
+        };
 
         div()
             .id("terminal-view")
@@ -1545,6 +1552,8 @@ impl Render for TerminalView {
                 // TODO: Oddly this wrapper div is needed for TerminalElement to not steal events from the context menu
                 div()
                     .size_full()
+                    .bg(cx.theme().colors().editor_background)
+                    .when(scrollbar_width > px(0.), |div| div.pr(scrollbar_width))
                     .child(TerminalElement::new(
                         terminal_handle,
                         terminal_view_handle,
@@ -1591,17 +1600,17 @@ impl Item for TerminalView {
         let (icon, icon_color, rerun_button) = match terminal.task() {
             Some(terminal_task) => match &terminal_task.status {
                 TaskStatus::Running => (
-                    IconName::PlayOutlined,
+                    IconName::PlayFilled,
                     Color::Disabled,
-                    TerminalView::rerun_button(&terminal_task),
+                    TerminalView::rerun_button(terminal_task),
                 ),
                 TaskStatus::Unknown => (
                     IconName::Warning,
                     Color::Warning,
-                    TerminalView::rerun_button(&terminal_task),
+                    TerminalView::rerun_button(terminal_task),
                 ),
                 TaskStatus::Completed { success } => {
-                    let rerun_button = TerminalView::rerun_button(&terminal_task);
+                    let rerun_button = TerminalView::rerun_button(terminal_task);
 
                     if *success {
                         (IconName::Check, Color::Success, rerun_button)
@@ -1654,7 +1663,6 @@ impl Item for TerminalView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<Entity<Self>> {
-        let window_handle = window.window_handle();
         let terminal = self
             .project
             .update(cx, |project, cx| {
@@ -1666,7 +1674,6 @@ impl Item for TerminalView {
                 project.create_terminal_with_venv(
                     TerminalKind::Shell(working_directory),
                     python_venv_directory,
-                    window_handle,
                     cx,
                 )
             })
@@ -1802,7 +1809,6 @@ impl SerializableItem for TerminalView {
         window: &mut Window,
         cx: &mut App,
     ) -> Task<anyhow::Result<Entity<Self>>> {
-        let window_handle = window.window_handle();
         window.spawn(cx, async move |cx| {
             let cwd = cx
                 .update(|_window, cx| {
@@ -1826,7 +1832,7 @@ impl SerializableItem for TerminalView {
 
             let terminal = project
                 .update(cx, |project, cx| {
-                    project.create_terminal(TerminalKind::Shell(cwd), window_handle, cx)
+                    project.create_terminal(TerminalKind::Shell(cwd), cx)
                 })?
                 .await?;
             cx.update(|window, cx| {
@@ -1861,7 +1867,7 @@ impl SearchableItem for TerminalView {
 
     /// Clear stored matches
     fn clear_matches(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
-        self.terminal().update(cx, |term, _| term.matches.clear())
+        self.terminal().update(cx, |term, _| term.clear_matches())
     }
 
     /// Store matches returned from find_matches somewhere for rendering
@@ -1931,7 +1937,8 @@ impl SearchableItem for TerminalView {
         // Selection head might have a value if there's a selection that isn't
         // associated with a match. Therefore, if there are no matches, we should
         // report None, no matter the state of the terminal
-        let res = if !matches.is_empty() {
+
+        if !matches.is_empty() {
             if let Some(selection_head) = self.terminal().read(cx).selection_head {
                 // If selection head is contained in a match. Return that match
                 match direction {
@@ -1971,9 +1978,7 @@ impl SearchableItem for TerminalView {
             }
         } else {
             None
-        };
-
-        res
+        }
     }
     fn replace(
         &mut self,
@@ -2187,7 +2192,7 @@ mod tests {
             })
             .await
             .unwrap()
-            .to_included()
+            .into_included()
             .unwrap();
 
         (wt, entry)

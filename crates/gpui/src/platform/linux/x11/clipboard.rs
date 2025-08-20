@@ -1078,11 +1078,11 @@ impl Clipboard {
         } else {
             String::from_utf8(result.bytes).map_err(|_| Error::ConversionFailure)?
         };
-        return Ok(ClipboardItem::new_string(text));
+        Ok(ClipboardItem::new_string(text))
     }
 
     pub fn is_owner(&self, selection: ClipboardKind) -> bool {
-        return self.inner.is_owner(selection).unwrap_or(false);
+        self.inner.is_owner(selection).unwrap_or(false)
     }
 }
 
@@ -1120,25 +1120,25 @@ impl Drop for Clipboard {
                 log::error!("Failed to flush the clipboard window. Error: {}", e);
                 return;
             }
-            if let Some(global_cb) = global_cb {
-                if let Err(e) = global_cb.server_handle.join() {
-                    // Let's try extracting the error message
-                    let message;
-                    if let Some(msg) = e.downcast_ref::<&'static str>() {
-                        message = Some((*msg).to_string());
-                    } else if let Some(msg) = e.downcast_ref::<String>() {
-                        message = Some(msg.clone());
-                    } else {
-                        message = None;
-                    }
-                    if let Some(message) = message {
-                        log::error!(
-                            "The clipboard server thread panicked. Panic message: '{}'",
-                            message,
-                        );
-                    } else {
-                        log::error!("The clipboard server thread panicked.");
-                    }
+            if let Some(global_cb) = global_cb
+                && let Err(e) = global_cb.server_handle.join()
+            {
+                // Let's try extracting the error message
+                let message;
+                if let Some(msg) = e.downcast_ref::<&'static str>() {
+                    message = Some((*msg).to_string());
+                } else if let Some(msg) = e.downcast_ref::<String>() {
+                    message = Some(msg.clone());
+                } else {
+                    message = None;
+                }
+                if let Some(message) = message {
+                    log::error!(
+                        "The clipboard server thread panicked. Panic message: '{}'",
+                        message,
+                    );
+                } else {
+                    log::error!("The clipboard server thread panicked.");
                 }
             }
         }

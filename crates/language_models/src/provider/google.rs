@@ -110,7 +110,7 @@ impl State {
             .clone();
         cx.spawn(async move |this, cx| {
             credentials_provider
-                .delete_credentials(&api_url, &cx)
+                .delete_credentials(&api_url, cx)
                 .await
                 .log_err();
             this.update(cx, |this, cx| {
@@ -129,7 +129,7 @@ impl State {
             .clone();
         cx.spawn(async move |this, cx| {
             credentials_provider
-                .write_credentials(&api_url, "Bearer", api_key.as_bytes(), &cx)
+                .write_credentials(&api_url, "Bearer", api_key.as_bytes(), cx)
                 .await?;
             this.update(cx, |this, cx| {
                 this.api_key = Some(api_key);
@@ -156,7 +156,7 @@ impl State {
                 (api_key, true)
             } else {
                 let (_, api_key) = credentials_provider
-                    .read_credentials(&api_url, &cx)
+                    .read_credentials(&api_url, cx)
                     .await?
                     .ok_or(AuthenticateError::CredentialsNotFound)?;
                 (
@@ -277,7 +277,12 @@ impl LanguageModelProvider for GoogleLanguageModelProvider {
         self.state.update(cx, |state, cx| state.authenticate(cx))
     }
 
-    fn configuration_view(&self, window: &mut Window, cx: &mut App) -> AnyView {
+    fn configuration_view(
+        &self,
+        _target_agent: language_model::ConfigurationViewTargetAgent,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> AnyView {
         cx.new(|cx| ConfigurationView::new(self.state.clone(), window, cx))
             .into()
     }
@@ -382,7 +387,7 @@ impl LanguageModel for GoogleLanguageModel {
         cx: &App,
     ) -> BoxFuture<'static, Result<u64>> {
         let model_id = self.model.request_id().to_string();
-        let request = into_google(request, model_id.clone(), self.model.mode());
+        let request = into_google(request, model_id, self.model.mode());
         let http_client = self.http_client.clone();
         let api_key = self.state.read(cx).api_key.clone();
 
@@ -525,7 +530,7 @@ pub fn into_google(
     let system_instructions = if request
         .messages
         .first()
-        .map_or(false, |msg| matches!(msg.role, Role::System))
+        .is_some_and(|msg| matches!(msg.role, Role::System))
     {
         let message = request.messages.remove(0);
         Some(SystemInstruction {
@@ -572,7 +577,7 @@ pub fn into_google(
             top_k: None,
         }),
         safety_settings: None,
-        tools: (request.tools.len() > 0).then(|| {
+        tools: (!request.tools.is_empty()).then(|| {
             vec![google_ai::Tool {
                 function_declarations: request
                     .tools

@@ -7,7 +7,9 @@ use std::ops::Range;
 use text::{Point, ToOffset};
 
 use crate::{
-    EditPrediction, editor_tests::init_test, test::editor_test_context::EditorTestContext,
+    EditPrediction,
+    editor_tests::{init_test, update_test_language_settings},
+    test::editor_test_context::EditorTestContext,
 };
 
 #[gpui::test]
@@ -228,6 +230,87 @@ async fn test_edit_prediction_invalidation_range(cx: &mut gpui::TestAppContext) 
     });
 }
 
+#[gpui::test]
+async fn test_edit_prediction_jump_disabled_for_non_zed_providers(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+    let provider = cx.new(|_| FakeNonZedEditPredictionProvider::default());
+    assign_editor_completion_provider_non_zed(provider.clone(), &mut cx);
+
+    // Cursor is 2+ lines above the proposed edit
+    cx.set_state(indoc! {"
+        line 0
+        line ˇ1
+        line 2
+        line 3
+        line
+    "});
+
+    propose_edits_non_zed(
+        &provider,
+        vec![(Point::new(4, 3)..Point::new(4, 3), " 4")],
+        &mut cx,
+    );
+
+    cx.update_editor(|editor, window, cx| editor.update_visible_edit_prediction(window, cx));
+
+    // For non-Zed providers, there should be no move completion (jump functionality disabled)
+    cx.editor(|editor, _, _| {
+        if let Some(completion_state) = &editor.active_edit_prediction {
+            // Should be an Edit prediction, not a Move prediction
+            match &completion_state.completion {
+                EditPrediction::Edit { .. } => {
+                    // This is expected for non-Zed providers
+                }
+                EditPrediction::Move { .. } => {
+                    panic!(
+                        "Non-Zed providers should not show Move predictions (jump functionality)"
+                    );
+                }
+            }
+        }
+    });
+}
+
+#[gpui::test]
+async fn test_edit_predictions_disabled_in_scope(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+
+    update_test_language_settings(cx, |settings| {
+        settings.defaults.edit_predictions_disabled_in = Some(vec!["string".to_string()]);
+    });
+
+    let mut cx = EditorTestContext::new(cx).await;
+    let provider = cx.new(|_| FakeEditPredictionProvider::default());
+    assign_editor_completion_provider(provider.clone(), &mut cx);
+
+    let language = languages::language("javascript", tree_sitter_typescript::LANGUAGE_TSX.into());
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
+
+    // Test disabled inside of string
+    cx.set_state("const x = \"hello ˇworld\";");
+    propose_edits(&provider, vec![(17..17, "beautiful ")], &mut cx);
+    cx.update_editor(|editor, window, cx| editor.update_visible_edit_prediction(window, cx));
+    cx.editor(|editor, _, _| {
+        assert!(
+            editor.active_edit_prediction.is_none(),
+            "Edit predictions should be disabled in string scopes when configured in edit_predictions_disabled_in"
+        );
+    });
+
+    // Test enabled outside of string
+    cx.set_state("const x = \"hello world\"; ˇ");
+    propose_edits(&provider, vec![(24..24, "// comment")], &mut cx);
+    cx.update_editor(|editor, window, cx| editor.update_visible_edit_prediction(window, cx));
+    cx.editor(|editor, _, _| {
+        assert!(
+            editor.active_edit_prediction.is_some(),
+            "Edit predictions should work outside of disabled scopes"
+        );
+    });
+}
+
 fn assert_editor_active_edit_completion(
     cx: &mut EditorTestContext,
     assert: impl FnOnce(MultiBufferSnapshot, &Vec<(Range<Anchor>, String)>),
@@ -301,6 +384,37 @@ fn assign_editor_completion_provider(
     })
 }
 
+fn propose_edits_non_zed<T: ToOffset>(
+    provider: &Entity<FakeNonZedEditPredictionProvider>,
+    edits: Vec<(Range<T>, &str)>,
+    cx: &mut EditorTestContext,
+) {
+    let snapshot = cx.buffer_snapshot();
+    let edits = edits.into_iter().map(|(range, text)| {
+        let range = snapshot.anchor_after(range.start)..snapshot.anchor_before(range.end);
+        (range, text.into())
+    });
+
+    cx.update(|_, cx| {
+        provider.update(cx, |provider, _| {
+            provider.set_edit_prediction(Some(edit_prediction::EditPrediction {
+                id: None,
+                edits: edits.collect(),
+                edit_preview: None,
+            }))
+        })
+    });
+}
+
+fn assign_editor_completion_provider_non_zed(
+    provider: Entity<FakeNonZedEditPredictionProvider>,
+    cx: &mut EditorTestContext,
+) {
+    cx.update_editor(|editor, window, cx| {
+        editor.set_edit_prediction_provider(Some(provider), window, cx);
+    })
+}
+
 #[derive(Default, Clone)]
 pub struct FakeEditPredictionProvider {
     pub completion: Option<edit_prediction::EditPrediction>,
@@ -322,6 +436,84 @@ impl EditPredictionProvider for FakeEditPredictionProvider {
     }
 
     fn show_completions_in_menu() -> bool {
+        false
+    }
+
+    fn supports_jump_to_edit() -> bool {
+        true
+    }
+
+    fn is_enabled(
+        &self,
+        _buffer: &gpui::Entity<language::Buffer>,
+        _cursor_position: language::Anchor,
+        _cx: &gpui::App,
+    ) -> bool {
+        true
+    }
+
+    fn is_refreshing(&self) -> bool {
+        false
+    }
+
+    fn refresh(
+        &mut self,
+        _project: Option<Entity<Project>>,
+        _buffer: gpui::Entity<language::Buffer>,
+        _cursor_position: language::Anchor,
+        _debounce: bool,
+        _cx: &mut gpui::Context<Self>,
+    ) {
+    }
+
+    fn cycle(
+        &mut self,
+        _buffer: gpui::Entity<language::Buffer>,
+        _cursor_position: language::Anchor,
+        _direction: edit_prediction::Direction,
+        _cx: &mut gpui::Context<Self>,
+    ) {
+    }
+
+    fn accept(&mut self, _cx: &mut gpui::Context<Self>) {}
+
+    fn discard(&mut self, _cx: &mut gpui::Context<Self>) {}
+
+    fn suggest<'a>(
+        &mut self,
+        _buffer: &gpui::Entity<language::Buffer>,
+        _cursor_position: language::Anchor,
+        _cx: &mut gpui::Context<Self>,
+    ) -> Option<edit_prediction::EditPrediction> {
+        self.completion.clone()
+    }
+}
+
+#[derive(Default, Clone)]
+pub struct FakeNonZedEditPredictionProvider {
+    pub completion: Option<edit_prediction::EditPrediction>,
+}
+
+impl FakeNonZedEditPredictionProvider {
+    pub fn set_edit_prediction(&mut self, completion: Option<edit_prediction::EditPrediction>) {
+        self.completion = completion;
+    }
+}
+
+impl EditPredictionProvider for FakeNonZedEditPredictionProvider {
+    fn name() -> &'static str {
+        "fake-non-zed-provider"
+    }
+
+    fn display_name() -> &'static str {
+        "Fake Non-Zed Provider"
+    }
+
+    fn show_completions_in_menu() -> bool {
+        false
+    }
+
+    fn supports_jump_to_edit() -> bool {
         false
     }
 

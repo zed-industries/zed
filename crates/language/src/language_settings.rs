@@ -133,6 +133,8 @@ pub struct LanguageSettings {
     /// Whether to use additional LSP queries to format (and amend) the code after
     /// every "trigger" symbol input, defined by LSP server capabilities.
     pub use_on_type_format: bool,
+    /// Whether indentation should be adjusted based on the context whilst typing.
+    pub auto_indent: bool,
     /// Whether indentation of pasted content should be adjusted based on the context.
     pub auto_indent_on_paste: bool,
     /// Controls how the editor handles the autoclosed characters.
@@ -185,8 +187,8 @@ impl LanguageSettings {
         let rest = available_language_servers
             .iter()
             .filter(|&available_language_server| {
-                !disabled_language_servers.contains(&available_language_server)
-                    && !enabled_language_servers.contains(&available_language_server)
+                !disabled_language_servers.contains(available_language_server)
+                    && !enabled_language_servers.contains(available_language_server)
             })
             .cloned()
             .collect::<Vec<_>>();
@@ -197,7 +199,7 @@ impl LanguageSettings {
                 if language_server.0.as_ref() == Self::REST_OF_LANGUAGE_SERVERS {
                     rest.clone()
                 } else {
-                    vec![language_server.clone()]
+                    vec![language_server]
                 }
             })
             .collect::<Vec<_>>()
@@ -251,7 +253,7 @@ impl EditPredictionSettings {
         !self.disabled_globs.iter().any(|glob| {
             if glob.is_absolute {
                 file.as_local()
-                    .map_or(false, |local| glob.matcher.is_match(local.abs_path(cx)))
+                    .is_some_and(|local| glob.matcher.is_match(local.abs_path(cx)))
             } else {
                 glob.matcher.is_match(file.path())
             }
@@ -561,6 +563,10 @@ pub struct LanguageSettingsContent {
     ///
     /// Default: true
     pub linked_edits: Option<bool>,
+    /// Whether indentation should be adjusted based on the context whilst typing.
+    ///
+    /// Default: true
+    pub auto_indent: Option<bool>,
     /// Whether indentation of pasted content should be adjusted based on the context.
     ///
     /// Default: true
@@ -987,7 +993,7 @@ pub struct InlayHintSettings {
     /// Default: false
     #[serde(default)]
     pub enabled: bool,
-    /// Global switch to toggle inline values on and off.
+    /// Global switch to toggle inline values on and off when debugging.
     ///
     /// Default: true
     #[serde(default = "default_true")]
@@ -1517,6 +1523,7 @@ fn merge_settings(settings: &mut LanguageSettings, src: &LanguageSettingsContent
     merge(&mut settings.use_autoclose, src.use_autoclose);
     merge(&mut settings.use_auto_surround, src.use_auto_surround);
     merge(&mut settings.use_on_type_format, src.use_on_type_format);
+    merge(&mut settings.auto_indent, src.auto_indent);
     merge(&mut settings.auto_indent_on_paste, src.auto_indent_on_paste);
     merge(
         &mut settings.always_treat_brackets_as_autoclosed,
@@ -1786,7 +1793,7 @@ mod tests {
         assert!(!settings.enabled_for_file(&dot_env_file, &cx));
 
         // Test tilde expansion
-        let home = shellexpand::tilde("~").into_owned().to_string();
+        let home = shellexpand::tilde("~").into_owned();
         let home_file = make_test_file(&[&home, "test.rs"]);
         let settings = build_settings(&["~/test.rs"]);
         assert!(!settings.enabled_for_file(&home_file, &cx));

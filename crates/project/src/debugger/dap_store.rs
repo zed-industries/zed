@@ -215,7 +215,7 @@ impl DapStore {
                     dap_settings.and_then(|s| s.binary.as_ref().map(PathBuf::from));
                 let user_args = dap_settings.map(|s| s.args.clone());
 
-                let delegate = self.delegate(&worktree, console, cx);
+                let delegate = self.delegate(worktree, console, cx);
                 let cwd: Arc<Path> = worktree.read(cx).abs_path().as_ref().into();
 
                 cx.spawn(async move |this, cx| {
@@ -470,9 +470,8 @@ impl DapStore {
         session_id: impl Borrow<SessionId>,
     ) -> Option<Entity<session::Session>> {
         let session_id = session_id.borrow();
-        let client = self.sessions.get(session_id).cloned();
 
-        client
+        self.sessions.get(session_id).cloned()
     }
     pub fn sessions(&self) -> impl Iterator<Item = &Entity<Session>> {
         self.sessions.values()
@@ -685,7 +684,7 @@ impl DapStore {
             let shutdown_id = parent_session.update(cx, |parent_session, _| {
                 parent_session.remove_child_session_id(session_id);
 
-                if parent_session.child_session_ids().len() == 0 {
+                if parent_session.child_session_ids().is_empty() {
                     Some(parent_session.session_id())
                 } else {
                     None
@@ -702,7 +701,7 @@ impl DapStore {
         cx.emit(DapStoreEvent::DebugClientShutdown(session_id));
 
         cx.background_spawn(async move {
-            if shutdown_children.len() > 0 {
+            if !shutdown_children.is_empty() {
                 let _ = join_all(shutdown_children).await;
             }
 
@@ -722,7 +721,7 @@ impl DapStore {
         downstream_client: AnyProtoClient,
         _: &mut Context<Self>,
     ) {
-        self.downstream_client = Some((downstream_client.clone(), project_id));
+        self.downstream_client = Some((downstream_client, project_id));
     }
 
     pub fn unshared(&mut self, cx: &mut Context<Self>) {
@@ -902,7 +901,7 @@ impl dap::adapters::DapDelegate for DapAdapterDelegate {
     }
 
     fn worktree_root_path(&self) -> &Path {
-        &self.worktree.abs_path()
+        self.worktree.abs_path()
     }
     fn http_client(&self) -> Arc<dyn HttpClient> {
         self.http_client.clone()

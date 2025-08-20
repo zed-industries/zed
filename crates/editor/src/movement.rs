@@ -230,7 +230,7 @@ pub fn indented_line_beginning(
     if stop_at_soft_boundaries && soft_line_start > indent_start && display_point != soft_line_start
     {
         soft_line_start
-    } else if stop_at_indent && display_point != indent_start {
+    } else if stop_at_indent && (display_point > indent_start || display_point == line_start) {
         indent_start
     } else {
         line_start
@@ -439,17 +439,17 @@ pub fn start_of_excerpt(
     };
     match direction {
         Direction::Prev => {
-            let mut start = excerpt.start_anchor().to_display_point(&map);
+            let mut start = excerpt.start_anchor().to_display_point(map);
             if start >= display_point && start.row() > DisplayRow(0) {
                 let Some(excerpt) = map.buffer_snapshot.excerpt_before(excerpt.id()) else {
                     return display_point;
                 };
-                start = excerpt.start_anchor().to_display_point(&map);
+                start = excerpt.start_anchor().to_display_point(map);
             }
             start
         }
         Direction::Next => {
-            let mut end = excerpt.end_anchor().to_display_point(&map);
+            let mut end = excerpt.end_anchor().to_display_point(map);
             *end.row_mut() += 1;
             map.clip_point(end, Bias::Right)
         }
@@ -467,7 +467,7 @@ pub fn end_of_excerpt(
     };
     match direction {
         Direction::Prev => {
-            let mut start = excerpt.start_anchor().to_display_point(&map);
+            let mut start = excerpt.start_anchor().to_display_point(map);
             if start.row() > DisplayRow(0) {
                 *start.row_mut() -= 1;
             }
@@ -476,7 +476,7 @@ pub fn end_of_excerpt(
             start
         }
         Direction::Next => {
-            let mut end = excerpt.end_anchor().to_display_point(&map);
+            let mut end = excerpt.end_anchor().to_display_point(map);
             *end.column_mut() = 0;
             if end <= display_point {
                 *end.row_mut() += 1;
@@ -485,7 +485,7 @@ pub fn end_of_excerpt(
                 else {
                     return display_point;
                 };
-                end = excerpt.end_anchor().to_display_point(&map);
+                end = excerpt.end_anchor().to_display_point(map);
                 *end.column_mut() = 0;
             }
             end
@@ -510,10 +510,10 @@ pub fn find_preceding_boundary_point(
         if find_range == FindRange::SingleLine && ch == '\n' {
             break;
         }
-        if let Some(prev_ch) = prev_ch {
-            if is_boundary(ch, prev_ch) {
-                break;
-            }
+        if let Some(prev_ch) = prev_ch
+            && is_boundary(ch, prev_ch)
+        {
+            break;
         }
 
         offset -= ch.len_utf8();
@@ -562,13 +562,13 @@ pub fn find_boundary_point(
         if find_range == FindRange::SingleLine && ch == '\n' {
             break;
         }
-        if let Some(prev_ch) = prev_ch {
-            if is_boundary(prev_ch, ch) {
-                if return_point_before_boundary {
-                    return map.clip_point(prev_offset.to_display_point(map), Bias::Right);
-                } else {
-                    break;
-                }
+        if let Some(prev_ch) = prev_ch
+            && is_boundary(prev_ch, ch)
+        {
+            if return_point_before_boundary {
+                return map.clip_point(prev_offset.to_display_point(map), Bias::Right);
+            } else {
+                break;
             }
         }
         prev_offset = offset;
@@ -603,13 +603,13 @@ pub fn find_preceding_boundary_trail(
     // Find the boundary
     let start_offset = offset;
     for ch in forward {
-        if let Some(prev_ch) = prev_ch {
-            if is_boundary(prev_ch, ch) {
-                if start_offset == offset {
-                    trail_offset = Some(offset);
-                } else {
-                    break;
-                }
+        if let Some(prev_ch) = prev_ch
+            && is_boundary(prev_ch, ch)
+        {
+            if start_offset == offset {
+                trail_offset = Some(offset);
+            } else {
+                break;
             }
         }
         offset -= ch.len_utf8();
@@ -651,13 +651,13 @@ pub fn find_boundary_trail(
     // Find the boundary
     let start_offset = offset;
     for ch in forward {
-        if let Some(prev_ch) = prev_ch {
-            if is_boundary(prev_ch, ch) {
-                if start_offset == offset {
-                    trail_offset = Some(offset);
-                } else {
-                    break;
-                }
+        if let Some(prev_ch) = prev_ch
+            && is_boundary(prev_ch, ch)
+        {
+            if start_offset == offset {
+                trail_offset = Some(offset);
+            } else {
+                break;
             }
         }
         offset += ch.len_utf8();

@@ -1,17 +1,20 @@
+use action_log::ActionLog;
 use agent_client_protocol::{self as acp, Agent as _};
 use anyhow::anyhow;
 use collections::HashMap;
+use futures::AsyncBufReadExt as _;
 use futures::channel::oneshot;
+use futures::io::BufReader;
 use project::Project;
-use std::cell::RefCell;
 use std::path::Path;
 use std::rc::Rc;
+use std::{any::Any, cell::RefCell};
 
 use anyhow::{Context as _, Result};
 use gpui::{App, AppContext as _, AsyncApp, Entity, Task, WeakEntity};
 
 use crate::{AgentServerCommand, acp::UnsupportedVersion};
-use acp_thread::{AcpThread, AgentConnection, AuthRequired};
+use acp_thread::{AcpThread, AgentConnection, AuthRequired, LoadError};
 
 pub struct AcpConnection {
     server_name: &'static str,
@@ -40,12 +43,13 @@ impl AcpConnection {
             .current_dir(root_dir)
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::inherit())
+            .stderr(std::process::Stdio::piped())
             .kill_on_drop(true)
             .spawn()?;
 
-        let stdout = child.stdout.take().expect("Failed to take stdout");
-        let stdin = child.stdin.take().expect("Failed to take stdin");
+        let stdout = child.stdout.take().context("Failed to take stdout")?;
+        let stdin = child.stdin.take().context("Failed to take stdin")?;
+        let stderr = child.stderr.take().context("Failed to take stderr")?;
         log::trace!("Spawned (pid: {})", child.id());
 
         let sessions = Rc::new(RefCell::new(HashMap::default()));
@@ -63,6 +67,18 @@ impl AcpConnection {
 
         let io_task = cx.background_spawn(io_task);
 
+        cx.background_spawn(async move {
+            let mut stderr = BufReader::new(stderr);
+            let mut line = String::new();
+            while let Ok(n) = stderr.read_line(&mut line).await
+                && n > 0
+            {
+                log::warn!("agent stderr: {}", &line);
+                line.clear();
+            }
+        })
+        .detach();
+
         cx.spawn({
             let sessions = sessions.clone();
             async move |cx| {
@@ -71,7 +87,9 @@ impl AcpConnection {
                 for session in sessions.borrow().values() {
                     session
                         .thread
-                        .update(cx, |thread, cx| thread.emit_server_exited(status, cx))
+                        .update(cx, |thread, cx| {
+                            thread.emit_load_error(LoadError::Exited { status }, cx)
+                        })
                         .ok();
                 }
 
@@ -111,7 +129,7 @@ impl AgentConnection for AcpConnection {
         self: Rc<Self>,
         project: Entity<Project>,
         cwd: &Path,
-        cx: &mut AsyncApp,
+        cx: &mut App,
     ) -> Task<Result<Entity<AcpThread>>> {
         let conn = self.connection.clone();
         let sessions = self.sessions.clone();
@@ -125,21 +143,27 @@ impl AgentConnection for AcpConnection {
                 .await
                 .map_err(|err| {
                     if err.code == acp::ErrorCode::AUTH_REQUIRED.code {
-                        anyhow!(AuthRequired)
+                        let mut error = AuthRequired::new();
+
+                        if err.message != acp::ErrorCode::AUTH_REQUIRED.message {
+                            error = error.with_description(err.message);
+                        }
+
+                        anyhow!(error)
                     } else {
                         anyhow!(err)
                     }
                 })?;
 
             let session_id = response.session_id;
-
-            let thread = cx.new(|cx| {
+            let action_log = cx.new(|_| ActionLog::new(project.clone()))?;
+            let thread = cx.new(|_cx| {
                 AcpThread::new(
                     self.server_name,
                     self.clone(),
                     project,
+                    action_log,
                     session_id.clone(),
-                    cx,
                 )
             })?;
 
@@ -171,6 +195,7 @@ impl AgentConnection for AcpConnection {
 
     fn prompt(
         &self,
+        _id: Option<acp_thread::UserMessageId>,
         params: acp::PromptRequest,
         cx: &mut App,
     ) -> Task<Result<acp::PromptResponse>> {
@@ -189,6 +214,10 @@ impl AgentConnection for AcpConnection {
         cx.foreground_executor()
             .spawn(async move { conn.cancel(params).await })
             .detach();
+    }
+
+    fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
+        self
     }
 }
 
@@ -210,14 +239,14 @@ impl acp::Client for ClientDelegate {
             .context("Failed to get session")?
             .thread
             .update(cx, |thread, cx| {
-                thread.request_tool_call_permission(arguments.tool_call, arguments.options, cx)
+                thread.request_tool_call_authorization(arguments.tool_call, arguments.options, cx)
             })?;
 
-        let result = rx.await;
+        let result = rx?.await;
 
         let outcome = match result {
             Ok(option) => acp::RequestPermissionOutcome::Selected { option_id: option },
-            Err(oneshot::Canceled) => acp::RequestPermissionOutcome::Cancelled,
+            Err(oneshot::Canceled) => acp::RequestPermissionOutcome::Canceled,
         };
 
         Ok(acp::RequestPermissionResponse { outcome })

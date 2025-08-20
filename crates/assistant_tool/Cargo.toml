@@ -12,12 +12,10 @@ workspace = true
 path = "src/assistant_tool.rs"
 
 [dependencies]
+action_log.workspace = true
 anyhow.workspace = true
-buffer_diff.workspace = true
-clock.workspace = true
 collections.workspace = true
 derive_more.workspace = true
-futures.workspace = true
 gpui.workspace = true
 icons.workspace = true
 language.workspace = true
@@ -30,7 +28,6 @@ serde.workspace = true
 serde_json.workspace = true
 text.workspace = true
 util.workspace = true
-watch.workspace = true
 workspace.workspace = true
 workspace-hack.workspace = true
 

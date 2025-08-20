@@ -315,4 +315,23 @@ impl AnyProtoClient {
                 }),
             );
     }
+
+    pub fn subscribe_to_entity<E: 'static>(&self, remote_id: u64, entity: &Entity<E>) {
+        let id = (TypeId::of::<E>(), remote_id);
+
+        let mut message_handlers = self.0.message_handler_set().lock();
+        if message_handlers
+            .entities_by_type_and_remote_id
+            .contains_key(&id)
+        {
+            panic!("already subscribed to entity");
+        }
+
+        message_handlers.entities_by_type_and_remote_id.insert(
+            id,
+            EntityMessageSubscriber::Entity {
+                handle: entity.downgrade().into(),
+            },
+        );
+    }
 }
