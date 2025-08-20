@@ -365,8 +365,7 @@ impl ContextPickerCompletionProvider {
         };
         match mode {
             Some(ContextPickerMode::File) => {
-                let search_files_task =
-                    search_files(query, cancellation_flag, &workspace, cx);
+                let search_files_task = search_files(query, cancellation_flag, &workspace, cx);
                 cx.background_spawn(async move {
                     search_files_task
                         .await
@@ -377,8 +376,7 @@ impl ContextPickerCompletionProvider {
             }
 
             Some(ContextPickerMode::Symbol) => {
-                let search_symbols_task =
-                    search_symbols(query, cancellation_flag, &workspace, cx);
+                let search_symbols_task = search_symbols(query, cancellation_flag, &workspace, cx);
                 cx.background_spawn(async move {
                     search_symbols_task
                         .await
@@ -389,12 +387,8 @@ impl ContextPickerCompletionProvider {
             }
 
             Some(ContextPickerMode::Thread) => {
-                let search_threads_task = search_threads(
-                    query,
-                    cancellation_flag,
-                    &self.history_store,
-                    cx,
-                );
+                let search_threads_task =
+                    search_threads(query, cancellation_flag, &self.history_store, cx);
                 cx.background_spawn(async move {
                     search_threads_task
                         .await

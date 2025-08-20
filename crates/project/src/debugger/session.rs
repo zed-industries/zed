@@ -2553,10 +2553,7 @@ impl Session {
         mode: Option<String>,
         cx: &mut Context<Self>,
     ) -> Task<Option<dap::DataBreakpointInfoResponse>> {
-        let command = DataBreakpointInfoCommand {
-            context,
-            mode,
-        };
+        let command = DataBreakpointInfoCommand { context, mode };
 
         self.request(command, |_, response, _| response.ok(), cx)
     }

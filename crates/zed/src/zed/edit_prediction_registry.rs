@@ -63,13 +63,7 @@ pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
 
         move |user_store, event, cx| {
             if let client::user::Event::PrivateUserInfoUpdated = event {
-                assign_edit_prediction_providers(
-                    &editors,
-                    provider,
-                    &client,
-                    user_store,
-                    cx,
-                );
+                assign_edit_prediction_providers(&editors, provider, &client, user_store, cx);
             }
         }
     })
