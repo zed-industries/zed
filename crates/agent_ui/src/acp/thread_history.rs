@@ -673,18 +673,9 @@ impl AcpHistoryEntryElement {
 
 impl RenderOnce for AcpHistoryEntryElement {
     fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
-        let (id, title, timestamp) = match &self.entry {
-            HistoryEntry::AcpThread(thread) => (
-                thread.id.to_string(),
-                thread.title.clone(),
-                thread.updated_at,
-            ),
-            HistoryEntry::TextThread(context) => (
-                context.path.to_string_lossy().to_string(),
-                context.title.clone(),
-                context.mtime.to_utc(),
-            ),
-        };
+        let id = self.entry.id();
+        let title = self.entry.title();
+        let timestamp = self.entry.updated_at();
 
         let formatted_time = {
             let now = chrono::Utc::now();
@@ -701,7 +692,7 @@ impl RenderOnce for AcpHistoryEntryElement {
             }
         };
 
-        ListItem::new(SharedString::from(id))
+        ListItem::new(id)
             .rounded()
             .toggle_state(self.selected)
             .spacing(ListItemSpacing::Sparse)

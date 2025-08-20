@@ -10,6 +10,7 @@ use itertools::Itertools;
 use paths::contexts_dir;
 use serde::{Deserialize, Serialize};
 use std::{collections::VecDeque, path::Path, sync::Arc, time::Duration};
+use ui::ElementId;
 use util::ResultExt as _;
 
 const MAX_RECENTLY_OPENED_ENTRIES: usize = 6;
@@ -66,6 +67,15 @@ impl HistoryEntry {
 pub enum HistoryEntryId {
     AcpThread(acp::SessionId),
     TextThread(Arc<Path>),
+}
+
+impl Into<ElementId> for HistoryEntryId {
+    fn into(self) -> ElementId {
+        match self {
+            HistoryEntryId::AcpThread(session_id) => ElementId::Name(session_id.0.into()),
+            HistoryEntryId::TextThread(path) => ElementId::Path(path),
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug)]
