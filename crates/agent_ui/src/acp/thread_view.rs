@@ -54,6 +54,7 @@ use crate::acp::entry_view_state::{EntryViewEvent, ViewEvent};
 use crate::acp::message_editor::{MessageEditor, MessageEditorEvent};
 use crate::agent_diff::AgentDiff;
 use crate::profile_selector::{ProfileProvider, ProfileSelector};
+use crate::ui::preview::UsageCallout;
 use crate::ui::{AgentNotification, AgentNotificationEvent, BurnModeTooltip};
 use crate::{
     AgentDiffPane, AgentPanel, ContinueThread, ContinueWithBurnMode, ExpandMessageEditor, Follow,
@@ -2940,6 +2941,12 @@ impl AcpThreadView {
             .thread(acp_thread.session_id(), cx)
     }
 
+    fn is_using_zed_ai_models(&self, cx: &App) -> bool {
+        self.as_native_thread(cx)
+            .and_then(|thread| thread.read(cx).model())
+            .is_some_and(|model| model.provider_id() == language_model::ZED_CLOUD_PROVIDER_ID)
+    }
+
     fn render_token_usage(&self, cx: &mut Context<Self>) -> Option<Div> {
         let thread = self.thread()?.read(cx);
         let usage = thread.token_usage()?;
@@ -3587,6 +3594,88 @@ impl AcpThreadView {
             .children(Scrollbar::vertical(self.scrollbar_state.clone()).map(|s| s.auto_hide(cx)))
     }
 
+    fn render_token_limit_callout(
+        &self,
+        line_height: Pixels,
+        cx: &mut Context<Self>,
+    ) -> Option<Callout> {
+        let token_usage = self.thread()?.read(cx).token_usage()?;
+        let ratio = token_usage.ratio();
+
+        let (severity, title) = match ratio {
+            acp_thread::TokenUsageRatio::Normal => return None,
+            acp_thread::TokenUsageRatio::Warning => {
+                (Severity::Warning, "Thread reaching the token limit soon")
+            }
+            acp_thread::TokenUsageRatio::Exceeded => {
+                (Severity::Error, "Thread reached the token limit")
+            }
+        };
+
+        let burn_mode_available = self.as_native_thread(cx).is_some_and(|thread| {
+            thread.read(cx).completion_mode() == CompletionMode::Normal
+                && thread
+                    .read(cx)
+                    .model()
+                    .is_some_and(|model| model.supports_burn_mode())
+        });
+
+        let description = if burn_mode_available {
+            "To continue, start a new thread from a summary or turn Burn Mode on."
+        } else {
+            "To continue, start a new thread from a summary."
+        };
+
+        Some(
+            Callout::new()
+                .severity(severity)
+                .line_height(line_height)
+                .title(title)
+                .description(description)
+                .actions_slot(
+                    h_flex()
+                        .gap_0p5()
+                        .child(
+                            Button::new("start-new-thread", "Start New Thread")
+                                .label_size(LabelSize::Small)
+                                .on_click(cx.listener(|_this, _, _window, _cx| {
+                                    // todo: Once thread summarization is implemented, start a new thread from a summary.
+                                })),
+                        )
+                        .when(burn_mode_available, |this| {
+                            this.child(
+                                IconButton::new("burn-mode-callout", IconName::ZedBurnMode)
+                                    .icon_size(IconSize::XSmall)
+                                    .on_click(cx.listener(|this, _event, window, cx| {
+                                        this.toggle_burn_mode(&ToggleBurnMode, window, cx);
+                                    })),
+                            )
+                        }),
+                ),
+        )
+    }
+
+    fn render_usage_callout(&self, line_height: Pixels, cx: &mut Context<Self>) -> Option<Div> {
+        if !self.is_using_zed_ai_models(cx) {
+            return None;
+        }
+
+        let user_store = self.project.read(cx).user_store().read(cx);
+        if user_store.is_usage_based_billing_enabled() {
+            return None;
+        }
+
+        let plan = user_store.plan().unwrap_or(cloud_llm_client::Plan::ZedFree);
+
+        let usage = user_store.model_request_usage()?;
+
+        Some(
+            div()
+                .child(UsageCallout::new(plan, usage))
+                .line_height(line_height),
+        )
+    }
+
     fn settings_changed(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         self.entry_view_state.update(cx, |entry_view_state, cx| {
             entry_view_state.settings_changed(cx);
@@ -3843,6 +3932,7 @@ impl Focusable for AcpThreadView {
 impl Render for AcpThreadView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let has_messages = self.list_state.item_count() > 0;
+        let line_height = TextSize::Small.rems(cx).to_pixels(window.rem_size()) * 1.5;
 
         v_flex()
             .size_full()
@@ -3921,6 +4011,17 @@ impl Render for AcpThreadView {
             })
             .children(self.render_thread_retry_status_callout(window, cx))
             .children(self.render_thread_error(window, cx))
+            .children(
+                if let Some(usage_callout) = self.render_usage_callout(line_height, cx) {
+                    Some(usage_callout.into_any_element())
+                } else if let Some(token_limit_callout) =
+                    self.render_token_limit_callout(line_height, cx)
+                {
+                    Some(token_limit_callout.into_any_element())
+                } else {
+                    None
+                },
+            )
             .child(self.render_message_editor(window, cx))
     }
 }
