@@ -5545,10 +5545,7 @@ mod disable_ai_settings_tests {
                 project: &[&local_true],
             };
             let settings = DisableAiSettings::load(sources, cx).unwrap();
-            assert!(
-                settings.disable_ai,
-                "Local true can override global false"
-            );
+            assert!(settings.disable_ai, "Local true can override global false");
 
             // Test 4: Server can only make more restrictive (set to true)
             let user_false = Some(false);
@@ -5607,10 +5604,7 @@ mod disable_ai_settings_tests {
                 project: &[&local_false3, &local_true2, &local_false4],
             };
             let settings = DisableAiSettings::load(sources, cx).unwrap();
-            assert!(
-                settings.disable_ai,
-                "Any local true should disable AI"
-            );
+            assert!(settings.disable_ai, "Any local true should disable AI");
 
             // Test 7: All three sources can independently disable AI
             let user_false2 = Some(false);
