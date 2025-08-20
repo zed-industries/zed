@@ -1570,7 +1570,7 @@ mod tests {
         });
         let search_bar = window.root(cx).unwrap();
 
-        let cx = VisualTestContext::from_window(*window, cx).as_mut();
+        let cx = VisualTestContext::from_window(*window, cx).into_mut();
 
         (editor.unwrap(), search_bar, cx)
     }
@@ -2957,7 +2957,7 @@ mod tests {
             assert_eq!(
                 search_bar.search_options,
                 SearchOptions::REGEX | SearchOptions::CASE_SENSITIVE,
-                "Should have case sensitivity enabled when \\C pattern item is present, even if preceeded by \\c"
+                "Should have case sensitivity enabled when \\C pattern item is present, even if preceded by \\c"
             );
         });
 
@@ -2968,7 +2968,7 @@ mod tests {
             assert_eq!(
                 search_bar.search_options,
                 SearchOptions::REGEX,
-                "Should have no case sensitivity enabled when \\c pattern item is present, even if preceeded by \\C"
+                "Should have no case sensitivity enabled when \\c pattern item is present, even if preceded by \\C"
             );
         });
 

@@ -3,6 +3,7 @@ use crate::{
     SearchOption, SearchOptions, SearchSource, SelectNextMatch, SelectPreviousMatch,
     ToggleCaseSensitive, ToggleIncludeIgnored, ToggleRegex, ToggleReplace, ToggleWholeWord,
     buffer_search::Deploy,
+    pattern_items::PatternItems,
     search_bar::{ActionButtonState, input_base_styles, render_action_button, render_text_input},
 };
 use anyhow::Context as _;
@@ -210,6 +211,7 @@ pub struct ProjectSearchView {
     replacement_editor: Entity<Editor>,
     results_editor: Entity<Editor>,
     search_options: SearchOptions,
+    pattern_items: PatternItems,
     panels_with_errors: HashMap<InputPanel, String>,
     active_match_index: Option<usize>,
     search_id: usize,
@@ -775,15 +777,17 @@ impl ProjectSearchView {
         // Subscribe to query_editor in order to reraise editor events for workspace item activation purposes
         subscriptions.push(
             cx.subscribe(&query_editor, |this, _, event: &EditorEvent, cx| {
-                if let EditorEvent::Edited { .. } = event
-                    && EditorSettings::get_global(cx).use_smartcase_search
-                {
-                    let query = this.search_query_text(cx);
-                    if !query.is_empty()
-                        && this.search_options.contains(SearchOptions::CASE_SENSITIVE)
-                            != contains_uppercase(&query)
-                    {
-                        this.toggle_search_option(SearchOptions::CASE_SENSITIVE, cx);
+                if let EditorEvent::Edited { .. } = event {
+                    this.apply_pattern_items(&this.search_query_text_raw(cx));
+
+                    if EditorSettings::get_global(cx).use_smartcase_search {
+                        let query = this.search_query_text(cx);
+                        if !query.is_empty()
+                            && this.search_options.contains(SearchOptions::CASE_SENSITIVE)
+                                != contains_uppercase(&query)
+                        {
+                            this.toggle_search_option(SearchOptions::CASE_SENSITIVE, cx);
+                        }
                     }
                 }
                 cx.emit(ViewEvent::EditorEvent(event.clone()))
@@ -880,6 +884,7 @@ impl ProjectSearchView {
             query_editor,
             results_editor,
             search_options: options,
+            pattern_items: Default::default(),
             panels_with_errors: HashMap::default(),
             active_match_index: None,
             included_files_editor,
@@ -1133,13 +1138,19 @@ impl ProjectSearchView {
         }
     }
 
-    pub fn search_query_text(&self, cx: &App) -> String {
+    /// Returns the search query text with pattern items.
+    fn search_query_text_raw(&self, cx: &App) -> String {
         self.query_editor.read(cx).text(cx)
+    }
+
+    /// Returns the search query text without pattern items.
+    pub fn search_query_text(&self, cx: &App) -> String {
+        PatternItems::clean_query(&self.search_query_text_raw(cx))
     }
 
     fn build_search_query(&mut self, cx: &mut Context<Self>) -> Option<SearchQuery> {
         // Do not bail early in this function, as we want to fill out `self.panels_with_errors`.
-        let text = self.query_editor.read(cx).text(cx);
+        let text = self.search_query_text(cx);
         let open_buffers = if self.included_opened_only {
             Some(self.open_buffers(cx))
         } else {
@@ -1558,6 +1569,21 @@ impl ProjectSearchView {
             query_buffer.update(cx, |query_buffer, cx| {
                 query_buffer.set_language(None, cx);
             })
+        }
+    }
+
+    // Determines which pattern items are present in the search query and
+    // updates the search options accordingly, only if the regex search option
+    // is enabled.
+    fn apply_pattern_items(&mut self, query: &str) {
+        if self.search_options.contains(SearchOptions::REGEX) {
+            // Determine what the search options were before the pattern items
+            // were applied, so we can reapply them and determine which ones
+            // actually have an effect on the search options, which are the ones
+            // we need to keep track of.
+            let search_options = self.pattern_items.revert(self.search_options);
+            self.pattern_items = PatternItems::from_search_options(search_options, &query);
+            self.search_options = self.pattern_items.apply(search_options);
         }
     }
 }
@@ -4124,6 +4150,121 @@ pub mod tests {
                 "Project search should take the query from the buffer search bar since it got focused and had a query inside"
             );
         });
+    }
+
+    #[gpui::test]
+    async fn test_pattern_items(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/dir"),
+            json!({
+                "one.rs": "const ONE: usize = 1;",
+                "two.rs": "const TWO: usize = one::ONE + one::ONE;",
+                "three.rs": "const THREE: usize = one::ONE + two::TWO;",
+                "four.rs": "const FOUR: usize = one::ONE + three::THREE;",
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+        let window = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let workspace = window.root(cx).unwrap();
+
+        let project_search = cx.new(|cx| ProjectSearch::new(project.clone(), cx));
+        let project_search_settings = ProjectSearchSettings {
+            filters_enabled: false,
+            search_options: SearchOptions::REGEX,
+        };
+        let project_search_view = cx.add_window(|window, cx| {
+            ProjectSearchView::new(
+                workspace.downgrade(),
+                project_search.clone(),
+                window,
+                cx,
+                Some(project_search_settings),
+            )
+        });
+
+        project_search_view
+            .update(cx, |view, window, cx| {
+                // Verify that `test\\c` does not change search options, as
+                // `SearchOptions::CASE_SENSITIVE` is disabled.
+                view.query_editor.update(cx, |editor, cx| {
+                    editor.set_text("test\\c", window, cx);
+                });
+
+                assert_eq!(view.search_query_text_raw(cx), "test\\c");
+                assert_eq!(view.search_query_text(cx), "test");
+
+                view.apply_pattern_items(&view.search_query_text_raw(cx));
+
+                assert_eq!(
+                    view.search_options,
+                    SearchOptions::REGEX,
+                    "Case sensitivity should remain disabled if only pattern item is '\\c'"
+                );
+
+                // Verify that `test\\c\\C\\c` does not change search options,
+                // as even though `\\C` should enabled
+                // `SearchOptions::CASE_SENSITIVE`, the last `\\c` should
+                // disable it.
+                view.query_editor.update(cx, |editor, cx| {
+                    editor.set_text("test\\c\\C\\c", window, cx);
+                });
+
+                assert_eq!(view.search_query_text_raw(cx), "test\\c\\C\\c");
+                assert_eq!(view.search_query_text(cx), "test");
+
+                view.apply_pattern_items(&view.search_query_text_raw(cx));
+
+                assert_eq!(
+                    view.search_options,
+                    SearchOptions::REGEX,
+                    "Case sensitivity should be disabled if '\\c' follows '\\C'"
+                );
+
+                // Verify that a single `\\C` pattern item in the search query
+                // enables the `SearchOptions::CASE_SENSITIVE` option.
+                view.query_editor.update(cx, |editor, cx| {
+                    editor.set_text("test\\C", window, cx);
+                });
+
+                assert_eq!(view.search_query_text_raw(cx), "test\\C");
+                assert_eq!(view.search_query_text(cx), "test");
+
+                view.apply_pattern_items(&view.search_query_text_raw(cx));
+
+                assert_eq!(
+                    view.search_options,
+                    SearchOptions::REGEX | SearchOptions::CASE_SENSITIVE,
+                    "Case sensitivity should be enabled when '\\C' is used"
+                );
+
+                // Since `SearchOptions::CASE_SENSITIVE` is now enabled, we can
+                // check that a pattern item preceded by a backslash, for
+                // example, `\\\\c`, does not affect the search option and is
+                // not even recognized as a valid pattern item.
+                // We need to clear the `pattern_items` before testing this, as
+                // calling `apply_pattern_items` will revert it, so the
+                // `CASE_SENSITIVE` option would be turned off.
+                view.pattern_items = PatternItems::default();
+                view.query_editor.update(cx, |editor, cx| {
+                    editor.set_text("test\\\\c", window, cx);
+                });
+
+                assert_eq!(view.search_query_text_raw(cx), "test\\\\c");
+                assert_eq!(view.search_query_text(cx), "test\\\\c");
+
+                view.apply_pattern_items(&view.search_query_text_raw(cx));
+
+                assert_eq!(
+                    view.search_options,
+                    SearchOptions::REGEX | SearchOptions::CASE_SENSITIVE,
+                    "Case sensitivity should remain enabled when pattern item is preceded by a backslash"
+                );
+            })
+            .unwrap();
     }
 
     fn init_test(cx: &mut TestAppContext) {
