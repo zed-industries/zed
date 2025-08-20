@@ -26,7 +26,7 @@ impl AgentServer for Gemini {
     }
 
     fn empty_state_message(&self) -> &'static str {
-        "Ask questions, edit files, run commands.\nBe specific for the best results."
+        "Ask questions, edit files, run commands"
     }
 
     fn logo(&self) -> ui::IconName {

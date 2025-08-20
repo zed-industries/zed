@@ -189,6 +189,7 @@ pub enum ViewEvent {
     MessageEditorEvent(Entity<MessageEditor>, MessageEditorEvent),
 }
 
+#[derive(Debug)]
 pub enum Entry {
     UserMessage(Entity<MessageEditor>),
     Content(HashMap<EntityId, AnyEntity>),

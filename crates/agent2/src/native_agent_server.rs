@@ -27,16 +27,15 @@ impl AgentServer for NativeAgentServer {
     }
 
     fn empty_state_headline(&self) -> &'static str {
-        "Native Agent"
+        ""
     }
 
     fn empty_state_message(&self) -> &'static str {
-        "How can I help you today?"
+        ""
     }
 
     fn logo(&self) -> ui::IconName {
-        // Using the ZedAssistant icon as it's the native built-in agent
-        ui::IconName::ZedAssistant
+        ui::IconName::ZedAgent
     }
 
     fn connect(
