@@ -6,7 +6,6 @@ use futures::AsyncBufReadExt as _;
 use futures::channel::oneshot;
 use futures::io::BufReader;
 use project::Project;
-use project::debugger::session;
 use serde::Deserialize;
 use std::path::Path;
 use std::rc::Rc;
