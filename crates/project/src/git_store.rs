@@ -769,7 +769,7 @@ impl GitStore {
                 .as_ref()
                 .and_then(|weak| weak.upgrade())
         {
-            let conflict_set = conflict_set.clone();
+            let conflict_set = conflict_set;
             let buffer_snapshot = buffer.read(cx).text_snapshot();
 
             git_state.update(cx, |state, cx| {
@@ -781,9 +781,7 @@ impl GitStore {
 
         let is_unmerged = self
             .repository_and_path_for_buffer_id(buffer_id, cx)
-            .map_or(false, |(repo, path)| {
-                repo.read(cx).snapshot.has_conflict(&path)
-            });
+            .is_some_and(|(repo, path)| repo.read(cx).snapshot.has_conflict(&path));
         let git_store = cx.weak_entity();
         let buffer_git_state = self
             .diffs
@@ -914,7 +912,7 @@ impl GitStore {
             return Task::ready(Err(anyhow!("failed to find a git repository for buffer")));
         };
         let content = match &version {
-            Some(version) => buffer.rope_for_version(version).clone(),
+            Some(version) => buffer.rope_for_version(version),
             None => buffer.as_rope().clone(),
         };
         let version = version.unwrap_or(buffer.version());
@@ -1508,10 +1506,7 @@ impl GitStore {
             let mut update = envelope.payload;
 
             let id = RepositoryId::from_proto(update.id);
-            let client = this
-                .upstream_client()
-                .context("no upstream client")?
-                .clone();
+            let client = this.upstream_client().context("no upstream client")?;
 
             let mut is_new = false;
             let repo = this.repositories.entry(id).or_insert_with(|| {
@@ -2501,14 +2496,14 @@ impl BufferGitState {
     pub fn wait_for_recalculation(&mut self) -> Option<impl Future<Output = ()> + use<>> {
         if *self.recalculating_tx.borrow() {
             let mut rx = self.recalculating_tx.subscribe();
-            return Some(async move {
+            Some(async move {
                 loop {
                     let is_recalculating = rx.recv().await;
                     if is_recalculating != Some(true) {
                         break;
                     }
                 }
-            });
+            })
         } else {
             None
         }
@@ -2879,7 +2874,7 @@ impl RepositorySnapshot {
             self.merge.conflicted_paths.contains(repo_path);
         let has_conflict_currently = self
             .status_for_path(repo_path)
-            .map_or(false, |entry| entry.status.is_conflicted());
+            .is_some_and(|entry| entry.status.is_conflicted());
         had_conflict_on_last_merge_head_change || has_conflict_currently
     }
 
@@ -3420,7 +3415,6 @@ impl Repository {
         reset_mode: ResetMode,
         _cx: &mut App,
     ) -> oneshot::Receiver<Result<()>> {
-        let commit = commit.to_string();
         let id = self.id;
 
         self.send_job(None, move |git_repo, _| async move {
@@ -3531,7 +3525,7 @@ impl Repository {
                         && buffer
                             .read(cx)
                             .file()
-                            .map_or(false, |file| file.disk_state().exists())
+                            .is_some_and(|file| file.disk_state().exists())
                     {
                         save_futures.push(buffer_store.save_buffer(buffer, cx));
                     }
@@ -3597,7 +3591,7 @@ impl Repository {
                         && buffer
                             .read(cx)
                             .file()
-                            .map_or(false, |file| file.disk_state().exists())
+                            .is_some_and(|file| file.disk_state().exists())
                     {
                         save_futures.push(buffer_store.save_buffer(buffer, cx));
                     }
@@ -3646,7 +3640,7 @@ impl Repository {
         let to_stage = self
             .cached_status()
             .filter(|entry| !entry.status.staging().is_fully_staged())
-            .map(|entry| entry.repo_path.clone())
+            .map(|entry| entry.repo_path)
             .collect();
         self.stage_entries(to_stage, cx)
     }
@@ -3655,16 +3649,13 @@ impl Repository {
         let to_unstage = self
             .cached_status()
             .filter(|entry| entry.status.staging().has_staged())
-            .map(|entry| entry.repo_path.clone())
+            .map(|entry| entry.repo_path)
             .collect();
         self.unstage_entries(to_unstage, cx)
     }
 
     pub fn stash_all(&mut self, cx: &mut Context<Self>) -> Task<anyhow::Result<()>> {
-        let to_stash = self
-            .cached_status()
-            .map(|entry| entry.repo_path.clone())
-            .collect();
+        let to_stash = self.cached_status().map(|entry| entry.repo_path).collect();
 
         self.stash_entries(to_stash, cx)
     }

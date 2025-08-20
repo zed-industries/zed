@@ -739,7 +739,7 @@ mod tests {
         );
 
         // Third scan of worktree does not double report, as we already reported
-        test_project_discovery_helper(telemetry.clone(), vec!["package.json"], None, worktree_id);
+        test_project_discovery_helper(telemetry, vec!["package.json"], None, worktree_id);
     }
 
     #[gpui::test]
@@ -751,7 +751,7 @@ mod tests {
         let telemetry = cx.update(|cx| Telemetry::new(clock.clone(), http, cx));
 
         test_project_discovery_helper(
-            telemetry.clone(),
+            telemetry,
             vec!["package.json", "pnpm-lock.yaml"],
             Some(vec!["node", "pnpm"]),
             1,
@@ -767,7 +767,7 @@ mod tests {
         let telemetry = cx.update(|cx| Telemetry::new(clock.clone(), http, cx));
 
         test_project_discovery_helper(
-            telemetry.clone(),
+            telemetry,
             vec!["package.json", "yarn.lock"],
             Some(vec!["node", "yarn"]),
             1,
@@ -786,7 +786,7 @@ mod tests {
         // project type for the same worktree multiple times
 
         test_project_discovery_helper(
-            telemetry.clone().clone(),
+            telemetry.clone(),
             vec!["global.json"],
             Some(vec!["dotnet"]),
             1,

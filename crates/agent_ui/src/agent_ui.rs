@@ -146,6 +146,13 @@ pub struct NewExternalAgentThread {
     agent: Option<ExternalAgent>,
 }
 
+#[derive(Clone, PartialEq, Deserialize, JsonSchema, Action)]
+#[action(namespace = agent)]
+#[serde(deny_unknown_fields)]
+pub struct NewNativeAgentThreadFromSummary {
+    from_session_id: agent_client_protocol::SessionId,
+}
+
 #[derive(Default, Debug, Clone, Copy, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 enum ExternalAgent {
@@ -240,12 +247,7 @@ pub fn init(
         client.telemetry().clone(),
         cx,
     );
-    terminal_inline_assistant::init(
-        fs.clone(),
-        prompt_builder.clone(),
-        client.telemetry().clone(),
-        cx,
-    );
+    terminal_inline_assistant::init(fs.clone(), prompt_builder, client.telemetry().clone(), cx);
     cx.observe_new(move |workspace, window, cx| {
         ConfigureContextServerModal::register(workspace, language_registry.clone(), window, cx)
     })
@@ -391,7 +393,6 @@ fn register_slash_commands(cx: &mut App) {
     slash_command_registry.register_command(assistant_slash_commands::FetchSlashCommand, true);
 
     cx.observe_flag::<assistant_slash_commands::StreamingExampleSlashCommandFeatureFlag, _>({
-        let slash_command_registry = slash_command_registry.clone();
         move |is_enabled, _cx| {
             if is_enabled {
                 slash_command_registry.register_command(

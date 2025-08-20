@@ -116,7 +116,7 @@ impl ActionLog {
             } else if buffer
                 .read(cx)
                 .file()
-                .map_or(false, |file| file.disk_state().exists())
+                .is_some_and(|file| file.disk_state().exists())
             {
                 TrackedBufferStatus::Created {
                     existing_file_content: Some(buffer.read(cx).as_rope().clone()),
@@ -161,7 +161,7 @@ impl ActionLog {
                     diff_base,
                     last_seen_base,
                     unreviewed_edits,
-                    snapshot: text_snapshot.clone(),
+                    snapshot: text_snapshot,
                     status,
                     version: buffer.read(cx).version(),
                     diff,
@@ -190,7 +190,7 @@ impl ActionLog {
         cx: &mut Context<Self>,
     ) {
         match event {
-            BufferEvent::Edited { .. } => self.handle_buffer_edited(buffer, cx),
+            BufferEvent::Edited => self.handle_buffer_edited(buffer, cx),
             BufferEvent::FileHandleChanged => {
                 self.handle_buffer_file_changed(buffer, cx);
             }
@@ -215,7 +215,7 @@ impl ActionLog {
                 if buffer
                     .read(cx)
                     .file()
-                    .map_or(false, |file| file.disk_state() == DiskState::Deleted)
+                    .is_some_and(|file| file.disk_state() == DiskState::Deleted)
                 {
                     // If the buffer had been edited by a tool, but it got
                     // deleted externally, we want to stop tracking it.
@@ -227,7 +227,7 @@ impl ActionLog {
                 if buffer
                     .read(cx)
                     .file()
-                    .map_or(false, |file| file.disk_state() != DiskState::Deleted)
+                    .is_some_and(|file| file.disk_state() != DiskState::Deleted)
                 {
                     // If the buffer had been deleted by a tool, but it got
                     // resurrected externally, we want to clear the edits we
@@ -264,15 +264,14 @@ impl ActionLog {
             if let Some((git_diff, (buffer_repo, _))) = git_diff.as_ref().zip(buffer_repo) {
                 cx.update(|cx| {
                     let mut old_head = buffer_repo.read(cx).head_commit.clone();
-                    Some(cx.subscribe(git_diff, move |_, event, cx| match event {
-                        buffer_diff::BufferDiffEvent::DiffChanged { .. } => {
+                    Some(cx.subscribe(git_diff, move |_, event, cx| {
+                        if let buffer_diff::BufferDiffEvent::DiffChanged { .. } = event {
                             let new_head = buffer_repo.read(cx).head_commit.clone();
                             if new_head != old_head {
                                 old_head = new_head;
                                 git_diff_updates_tx.send(()).ok();
                             }
                         }
-                        _ => {}
                     }))
                 })?
             } else {
@@ -462,7 +461,7 @@ impl ActionLog {
             anyhow::Ok((
                 tracked_buffer.diff.clone(),
                 buffer.read(cx).language().cloned(),
-                buffer.read(cx).language_registry().clone(),
+                buffer.read(cx).language_registry(),
             ))
         })??;
         let diff_snapshot = BufferDiff::update_diff(
@@ -530,12 +529,12 @@ impl ActionLog {
 
     /// Mark a buffer as created by agent, so we can refresh it in the context
     pub fn buffer_created(&mut self, buffer: Entity<Buffer>, cx: &mut Context<Self>) {
-        self.track_buffer_internal(buffer.clone(), true, cx);
+        self.track_buffer_internal(buffer, true, cx);
     }
 
     /// Mark a buffer as edited by agent, so we can refresh it in the context
     pub fn buffer_edited(&mut self, buffer: Entity<Buffer>, cx: &mut Context<Self>) {
-        let tracked_buffer = self.track_buffer_internal(buffer.clone(), false, cx);
+        let tracked_buffer = self.track_buffer_internal(buffer, false, cx);
         if let TrackedBufferStatus::Deleted = tracked_buffer.status {
             tracked_buffer.status = TrackedBufferStatus::Modified;
         }
@@ -811,7 +810,7 @@ impl ActionLog {
                 tracked.version != buffer.version
                     && buffer
                         .file()
-                        .map_or(false, |file| file.disk_state() != DiskState::Deleted)
+                        .is_some_and(|file| file.disk_state() != DiskState::Deleted)
             })
             .map(|(buffer, _)| buffer)
     }
@@ -847,7 +846,7 @@ fn apply_non_conflicting_edits(
                 conflict = true;
                 if new_edits
                     .peek()
-                    .map_or(false, |next_edit| next_edit.old.overlaps(&old_edit.new))
+                    .is_some_and(|next_edit| next_edit.old.overlaps(&old_edit.new))
                 {
                     new_edit = new_edits.next().unwrap();
                 } else {
@@ -2426,7 +2425,7 @@ mod tests {
         assert_eq!(
             unreviewed_hunks(&action_log, cx),
             vec![(
-                buffer.clone(),
+                buffer,
                 vec![
                     HunkStatus {
                         range: Point::new(6, 0)..Point::new(7, 0),

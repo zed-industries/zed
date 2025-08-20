@@ -956,7 +956,7 @@ impl WindowsWindowInner {
                 click_count,
                 first_mouse: false,
             });
-            let result = func(input.clone());
+            let result = func(input);
             let handled = !result.propagate || result.default_prevented;
             self.state.borrow_mut().callbacks.input = Some(func);
 
@@ -1128,22 +1128,19 @@ impl WindowsWindowInner {
             && let Some(parameter_string) = unsafe { parameter.to_string() }.log_err()
         {
             log::info!("System settings changed: {}", parameter_string);
-            match parameter_string.as_str() {
-                "ImmersiveColorSet" => {
-                    let new_appearance = system_appearance()
-                        .context("unable to get system appearance when handling ImmersiveColorSet")
-                        .log_err()?;
-                    let mut lock = self.state.borrow_mut();
-                    if new_appearance != lock.appearance {
-                        lock.appearance = new_appearance;
-                        let mut callback = lock.callbacks.appearance_changed.take()?;
-                        drop(lock);
-                        callback();
-                        self.state.borrow_mut().callbacks.appearance_changed = Some(callback);
-                        configure_dwm_dark_mode(handle, new_appearance);
-                    }
+            if parameter_string.as_str() == "ImmersiveColorSet" {
+                let new_appearance = system_appearance()
+                    .context("unable to get system appearance when handling ImmersiveColorSet")
+                    .log_err()?;
+                let mut lock = self.state.borrow_mut();
+                if new_appearance != lock.appearance {
+                    lock.appearance = new_appearance;
+                    let mut callback = lock.callbacks.appearance_changed.take()?;
+                    drop(lock);
+                    callback();
+                    self.state.borrow_mut().callbacks.appearance_changed = Some(callback);
+                    configure_dwm_dark_mode(handle, new_appearance);
                 }
-                _ => {}
             }
         }
         Some(0)
@@ -1469,7 +1466,7 @@ pub(crate) fn current_modifiers() -> Modifiers {
 #[inline]
 pub(crate) fn current_capslock() -> Capslock {
     let on = unsafe { GetKeyState(VK_CAPITAL.0 as i32) & 1 } > 0;
-    Capslock { on: on }
+    Capslock { on }
 }
 
 fn get_client_area_insets(

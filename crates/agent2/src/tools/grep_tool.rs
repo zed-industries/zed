@@ -318,7 +318,7 @@ mod tests {
         init_test(cx);
         cx.executor().allow_parking();
 
-        let fs = FakeFs::new(cx.executor().clone());
+        let fs = FakeFs::new(cx.executor());
         fs.insert_tree(
             path!("/root"),
             serde_json::json!({
@@ -403,7 +403,7 @@ mod tests {
         init_test(cx);
         cx.executor().allow_parking();
 
-        let fs = FakeFs::new(cx.executor().clone());
+        let fs = FakeFs::new(cx.executor());
         fs.insert_tree(
             path!("/root"),
             serde_json::json!({
@@ -478,7 +478,7 @@ mod tests {
         init_test(cx);
         cx.executor().allow_parking();
 
-        let fs = FakeFs::new(cx.executor().clone());
+        let fs = FakeFs::new(cx.executor());
 
         // Create test file with syntax structures
         fs.insert_tree(
@@ -763,7 +763,7 @@ mod tests {
                 if cfg!(windows) {
                     result.replace("root\\", "root/")
                 } else {
-                    result.to_string()
+                    result
                 }
             }
             Err(e) => panic!("Failed to run grep tool: {}", e),

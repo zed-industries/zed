@@ -205,12 +205,12 @@ impl CloudApiClient {
             let mut body = String::new();
             response.body_mut().read_to_string(&mut body).await?;
             if response.status() == StatusCode::UNAUTHORIZED {
-                return Ok(false);
+                Ok(false)
             } else {
-                return Err(anyhow!(
+                Err(anyhow!(
                     "Failed to get authenticated user.\nStatus: {:?}\nBody: {body}",
                     response.status()
-                ));
+                ))
             }
         }
     }

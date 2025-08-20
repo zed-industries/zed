@@ -9,7 +9,10 @@ use crate::{
     tool_use::{PendingToolUse, ToolUse, ToolUseMetadata, ToolUseState},
 };
 use action_log::ActionLog;
-use agent_settings::{AgentProfileId, AgentSettings, CompletionMode, SUMMARIZE_THREAD_PROMPT};
+use agent_settings::{
+    AgentProfileId, AgentSettings, CompletionMode, SUMMARIZE_THREAD_DETAILED_PROMPT,
+    SUMMARIZE_THREAD_PROMPT,
+};
 use anyhow::{Result, anyhow};
 use assistant_tool::{AnyToolCard, Tool, ToolWorkingSet};
 use chrono::{DateTime, Utc};
@@ -107,7 +110,7 @@ impl std::fmt::Display for PromptId {
 }
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, Serialize, Deserialize)]
-pub struct MessageId(pub(crate) usize);
+pub struct MessageId(pub usize);
 
 impl MessageId {
     fn post_inc(&mut self) -> Self {
@@ -178,7 +181,7 @@ impl Message {
         }
     }
 
-    pub fn to_string(&self) -> String {
+    pub fn to_message_content(&self) -> String {
         let mut result = String::new();
 
         if !self.loaded_context.text.is_empty() {
@@ -384,7 +387,6 @@ pub struct Thread {
     cumulative_token_usage: TokenUsage,
     exceeded_window_error: Option<ExceededWindowError>,
     tool_use_limit_reached: bool,
-    feedback: Option<ThreadFeedback>,
     retry_state: Option<RetryState>,
     message_feedback: HashMap<MessageId, ThreadFeedback>,
     last_received_chunk_at: Option<Instant>,
@@ -484,14 +486,13 @@ impl Thread {
             cumulative_token_usage: TokenUsage::default(),
             exceeded_window_error: None,
             tool_use_limit_reached: false,
-            feedback: None,
             retry_state: None,
             message_feedback: HashMap::default(),
             last_error_context: None,
             last_received_chunk_at: None,
             request_callback: None,
             remaining_turns: u32::MAX,
-            configured_model: configured_model.clone(),
+            configured_model,
             profile: AgentProfile::new(profile_id, tools),
         }
     }
@@ -529,7 +530,7 @@ impl Thread {
                 .and_then(|model| {
                     let model = SelectedModel {
                         provider: model.provider.clone().into(),
-                        model: model.model.clone().into(),
+                        model: model.model.into(),
                     };
                     registry.select_model(&model, cx)
                 })
@@ -609,7 +610,6 @@ impl Thread {
             cumulative_token_usage: serialized.cumulative_token_usage,
             exceeded_window_error: None,
             tool_use_limit_reached: serialized.tool_use_limit_reached,
-            feedback: None,
             message_feedback: HashMap::default(),
             last_error_context: None,
             last_received_chunk_at: None,
@@ -1643,17 +1643,15 @@ impl Thread {
         };
 
         self.tool_use
-            .request_tool_use(tool_message_id, tool_use, tool_use_metadata.clone(), cx);
+            .request_tool_use(tool_message_id, tool_use, tool_use_metadata, cx);
 
-        let pending_tool_use = self.tool_use.insert_tool_output(
-            tool_use_id.clone(),
+        self.tool_use.insert_tool_output(
+            tool_use_id,
             tool_name,
             tool_output,
             self.configured_model.as_ref(),
             self.completion_mode,
-        );
-
-        pending_tool_use
+        )
     }
 
     pub fn stream_completion(
@@ -2427,12 +2425,10 @@ impl Thread {
             return;
         }
 
-        let added_user_message = include_str!("./prompts/summarize_thread_detailed_prompt.txt");
-
         let request = self.to_summarize_request(
             &model,
             CompletionIntent::ThreadContextSummarization,
-            added_user_message.into(),
+            SUMMARIZE_THREAD_DETAILED_PROMPT.into(),
             cx,
         );
 
@@ -2788,10 +2784,6 @@ impl Thread {
         cx.emit(ThreadEvent::CancelEditing);
     }
 
-    pub fn feedback(&self) -> Option<ThreadFeedback> {
-        self.feedback
-    }
-
     pub fn message_feedback(&self, message_id: MessageId) -> Option<ThreadFeedback> {
         self.message_feedback.get(&message_id).copied()
     }
@@ -2824,7 +2816,7 @@ impl Thread {
 
         let message_content = self
             .message(message_id)
-            .map(|msg| msg.to_string())
+            .map(|msg| msg.to_message_content())
             .unwrap_or_default();
 
         cx.background_spawn(async move {
@@ -2851,52 +2843,6 @@ impl Thread {
 
             Ok(())
         })
-    }
-
-    pub fn report_feedback(
-        &mut self,
-        feedback: ThreadFeedback,
-        cx: &mut Context<Self>,
-    ) -> Task<Result<()>> {
-        let last_assistant_message_id = self
-            .messages
-            .iter()
-            .rev()
-            .find(|msg| msg.role == Role::Assistant)
-            .map(|msg| msg.id);
-
-        if let Some(message_id) = last_assistant_message_id {
-            self.report_message_feedback(message_id, feedback, cx)
-        } else {
-            let final_project_snapshot = Self::project_snapshot(self.project.clone(), cx);
-            let serialized_thread = self.serialize(cx);
-            let thread_id = self.id().clone();
-            let client = self.project.read(cx).client();
-            self.feedback = Some(feedback);
-            cx.notify();
-
-            cx.background_spawn(async move {
-                let final_project_snapshot = final_project_snapshot.await;
-                let serialized_thread = serialized_thread.await?;
-                let thread_data = serde_json::to_value(serialized_thread)
-                    .unwrap_or_else(|_| serde_json::Value::Null);
-
-                let rating = match feedback {
-                    ThreadFeedback::Positive => "positive",
-                    ThreadFeedback::Negative => "negative",
-                };
-                telemetry::event!(
-                    "Assistant Thread Rated",
-                    rating,
-                    thread_id,
-                    thread_data,
-                    final_project_snapshot
-                );
-                client.telemetry().flush_events().await;
-
-                Ok(())
-            })
-        }
     }
 
     /// Create a snapshot of the current project state including git information and unsaved buffers.
@@ -3242,7 +3188,7 @@ impl Thread {
             self.configured_model.as_ref(),
             self.completion_mode,
         );
-        self.tool_finished(tool_use_id.clone(), None, true, window, cx);
+        self.tool_finished(tool_use_id, None, true, window, cx);
     }
 }
 
@@ -3874,7 +3820,7 @@ fn main() {{
                 AgentSettings {
                     model_parameters: vec![LanguageModelParameters {
                         provider: Some(model.provider_id().0.to_string().into()),
-                        model: Some(model.id().0.clone()),
+                        model: Some(model.id().0),
                         temperature: Some(0.66),
                     }],
                     ..AgentSettings::get_global(cx).clone()
@@ -3894,7 +3840,7 @@ fn main() {{
                 AgentSettings {
                     model_parameters: vec![LanguageModelParameters {
                         provider: None,
-                        model: Some(model.id().0.clone()),
+                        model: Some(model.id().0),
                         temperature: Some(0.66),
                     }],
                     ..AgentSettings::get_global(cx).clone()
@@ -3934,7 +3880,7 @@ fn main() {{
                 AgentSettings {
                     model_parameters: vec![LanguageModelParameters {
                         provider: Some("anthropic".into()),
-                        model: Some(model.id().0.clone()),
+                        model: Some(model.id().0),
                         temperature: Some(0.66),
                     }],
                     ..AgentSettings::get_global(cx).clone()

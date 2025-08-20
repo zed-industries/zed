@@ -526,8 +526,6 @@ fn initialize_panels(
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
-    let prompt_builder = prompt_builder.clone();
-
     cx.spawn_in(window, async move |workspace_handle, cx| {
         let project_panel = ProjectPanel::load(workspace_handle.clone(), cx.clone());
         let outline_panel = OutlinePanel::load(workspace_handle.clone(), cx.clone());
@@ -1394,7 +1392,7 @@ fn show_keymap_file_load_error(
     cx: &mut App,
 ) {
     show_markdown_app_notification(
-        notification_id.clone(),
+        notification_id,
         error_message,
         "Open Keymap File".into(),
         |window, cx| {
@@ -1620,13 +1618,12 @@ fn open_local_file(
                     .read_with(cx, |tree, _| tree.abs_path().join(settings_relative_path))?;
 
                 let fs = project.read_with(cx, |project, _| project.fs().clone())?;
-                let file_exists = fs
-                    .metadata(&full_path)
+
+                fs.metadata(&full_path)
                     .await
                     .ok()
                     .flatten()
-                    .map_or(false, |metadata| !metadata.is_dir && !metadata.is_fifo);
-                file_exists
+                    .is_some_and(|metadata| !metadata.is_dir && !metadata.is_fifo)
             };
 
             if !file_exists {
@@ -4365,6 +4362,7 @@ mod tests {
                     | "workspace::MoveItemToPaneInDirection"
                     | "workspace::OpenTerminal"
                     | "workspace::SendKeystrokes"
+                    | "agent::NewNativeAgentThreadFromSummary"
                     | "zed::OpenBrowser"
                     | "zed::OpenZedUrl" => {}
                     _ => {
@@ -4379,7 +4377,7 @@ mod tests {
                     }
                 }
             }
-            if errors.len() > 0 {
+            if !errors.is_empty() {
                 panic!(
                     "Failed to build actions using {{}} as input: {:?}. Errors:\n{}",
                     failing_names,
@@ -4787,7 +4785,7 @@ mod tests {
         cx.background_executor.run_until_parked();
 
         // 5. Critical: Verify .zed is actually excluded from worktree
-        let worktree = cx.update(|cx| project.read(cx).worktrees(cx).next().unwrap().clone());
+        let worktree = cx.update(|cx| project.read(cx).worktrees(cx).next().unwrap());
 
         let has_zed_entry = cx.update(|cx| worktree.read(cx).entry_for_path(".zed").is_some());
 
@@ -4823,7 +4821,7 @@ mod tests {
             .await
             .unwrap();
 
-        let new_content_str = new_content.clone();
+        let new_content_str = new_content;
         eprintln!("New settings content: {}", new_content_str);
 
         // The bug causes the settings to be overwritten with empty settings

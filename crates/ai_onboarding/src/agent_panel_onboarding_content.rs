@@ -50,7 +50,7 @@ impl AgentPanelOnboarding {
             .filter(|provider| {
                 provider.is_authenticated(cx) && provider.id() != ZED_CLOUD_PROVIDER_ID
             })
-            .map(|provider| (provider.icon(), provider.name().0.clone()))
+            .map(|provider| (provider.icon(), provider.name().0))
             .collect()
     }
 }
@@ -74,7 +74,7 @@ impl Render for AgentPanelOnboarding {
                 }),
             )
             .map(|this| {
-                if enrolled_in_trial || is_pro_user || self.configured_providers.len() >= 1 {
+                if enrolled_in_trial || is_pro_user || !self.configured_providers.is_empty() {
                     this
                 } else {
                     this.child(ApiKeysWithoutProviders::new())

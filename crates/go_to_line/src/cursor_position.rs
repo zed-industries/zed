@@ -106,7 +106,7 @@ impl CursorPosition {
                         cursor_position.selected_count.selections = editor.selections.count();
                         match editor.mode() {
                             editor::EditorMode::AutoHeight { .. }
-                            | editor::EditorMode::SingleLine { .. }
+                            | editor::EditorMode::SingleLine
                             | editor::EditorMode::Minimap { .. } => {
                                 cursor_position.position = None;
                                 cursor_position.context = None;
@@ -129,7 +129,7 @@ impl CursorPosition {
                                                 cursor_position.selected_count.lines += 1;
                                             }
                                         }
-                                        if last_selection.as_ref().map_or(true, |last_selection| {
+                                        if last_selection.as_ref().is_none_or(|last_selection| {
                                             selection.id > last_selection.id
                                         }) {
                                             last_selection = Some(selection);

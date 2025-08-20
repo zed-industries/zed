@@ -385,9 +385,7 @@ impl TerminalView {
             .workspace
             .upgrade()
             .and_then(|workspace| workspace.read(cx).panel::<TerminalPanel>(cx))
-            .map_or(false, |terminal_panel| {
-                terminal_panel.read(cx).assistant_enabled()
-            });
+            .is_some_and(|terminal_panel| terminal_panel.read(cx).assistant_enabled());
         let context_menu = ContextMenu::build(window, cx, |menu, _, _| {
             menu.context(self.focus_handle.clone())
                 .action("New Terminal", Box::new(NewTerminal))
@@ -1399,8 +1397,8 @@ fn possible_open_target(
             let found_entry = worktree
                 .update(cx, |worktree, _| {
                     let worktree_root = worktree.abs_path();
-                    let mut traversal = worktree.traverse_from_path(true, true, false, "".as_ref());
-                    while let Some(entry) = traversal.next() {
+                    let traversal = worktree.traverse_from_path(true, true, false, "".as_ref());
+                    for entry in traversal {
                         if let Some(path_in_worktree) = worktree_paths_to_check
                             .iter()
                             .find(|path_to_check| entry.path.ends_with(&path_to_check.path))
@@ -1939,7 +1937,8 @@ impl SearchableItem for TerminalView {
         // Selection head might have a value if there's a selection that isn't
         // associated with a match. Therefore, if there are no matches, we should
         // report None, no matter the state of the terminal
-        let res = if !matches.is_empty() {
+
+        if !matches.is_empty() {
             if let Some(selection_head) = self.terminal().read(cx).selection_head {
                 // If selection head is contained in a match. Return that match
                 match direction {
@@ -1979,9 +1978,7 @@ impl SearchableItem for TerminalView {
             }
         } else {
             None
-        };
-
-        res
+        }
     }
     fn replace(
         &mut self,
@@ -2195,7 +2192,7 @@ mod tests {
             })
             .await
             .unwrap()
-            .to_included()
+            .into_included()
             .unwrap();
 
         (wt, entry)

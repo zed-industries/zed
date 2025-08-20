@@ -156,7 +156,7 @@ impl SyntaxTreeView {
                 .buffer_snapshot
                 .range_to_buffer_ranges(selection_range)
                 .pop()?;
-            let buffer = multi_buffer.buffer(buffer.remote_id()).unwrap().clone();
+            let buffer = multi_buffer.buffer(buffer.remote_id()).unwrap();
             Some((buffer, range, excerpt_id))
         })?;
 

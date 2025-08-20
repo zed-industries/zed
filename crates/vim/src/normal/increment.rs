@@ -274,9 +274,9 @@ fn find_boolean(snapshot: &MultiBufferSnapshot, start: Point) -> Option<(Range<P
     let mut end = None;
     let mut word = String::new();
 
-    let mut chars = snapshot.chars_at(offset);
+    let chars = snapshot.chars_at(offset);
 
-    while let Some(ch) = chars.next() {
+    for ch in chars {
         if ch.is_ascii_alphabetic() {
             if begin.is_none() {
                 begin = Some(offset);

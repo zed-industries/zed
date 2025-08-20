@@ -399,7 +399,6 @@ impl ContextServerStore {
             async move |this, cx| {
                 match server.clone().start(cx).await {
                     Ok(_) => {
-                        log::info!("Started {} context server", id);
                         debug_assert!(server.client().is_some());
 
                         this.update(cx, |this, cx| {
@@ -642,8 +641,8 @@ mod tests {
 
     #[gpui::test]
     async fn test_context_server_status(cx: &mut TestAppContext) {
-        const SERVER_1_ID: &'static str = "mcp-1";
-        const SERVER_2_ID: &'static str = "mcp-2";
+        const SERVER_1_ID: &str = "mcp-1";
+        const SERVER_2_ID: &str = "mcp-2";
 
         let (_fs, project) = setup_context_server_test(
             cx,
@@ -722,8 +721,8 @@ mod tests {
 
     #[gpui::test]
     async fn test_context_server_status_events(cx: &mut TestAppContext) {
-        const SERVER_1_ID: &'static str = "mcp-1";
-        const SERVER_2_ID: &'static str = "mcp-2";
+        const SERVER_1_ID: &str = "mcp-1";
+        const SERVER_2_ID: &str = "mcp-2";
 
         let (_fs, project) = setup_context_server_test(
             cx,
@@ -761,7 +760,7 @@ mod tests {
             &store,
             vec![
                 (server_1_id.clone(), ContextServerStatus::Starting),
-                (server_1_id.clone(), ContextServerStatus::Running),
+                (server_1_id, ContextServerStatus::Running),
                 (server_2_id.clone(), ContextServerStatus::Starting),
                 (server_2_id.clone(), ContextServerStatus::Running),
                 (server_2_id.clone(), ContextServerStatus::Stopped),
@@ -784,7 +783,7 @@ mod tests {
 
     #[gpui::test(iterations = 25)]
     async fn test_context_server_concurrent_starts(cx: &mut TestAppContext) {
-        const SERVER_1_ID: &'static str = "mcp-1";
+        const SERVER_1_ID: &str = "mcp-1";
 
         let (_fs, project) = setup_context_server_test(
             cx,
@@ -845,8 +844,8 @@ mod tests {
 
     #[gpui::test]
     async fn test_context_server_maintain_servers_loop(cx: &mut TestAppContext) {
-        const SERVER_1_ID: &'static str = "mcp-1";
-        const SERVER_2_ID: &'static str = "mcp-2";
+        const SERVER_1_ID: &str = "mcp-1";
+        const SERVER_2_ID: &str = "mcp-2";
 
         let server_1_id = ContextServerId(SERVER_1_ID.into());
         let server_2_id = ContextServerId(SERVER_2_ID.into());
@@ -1084,7 +1083,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_context_server_enabled_disabled(cx: &mut TestAppContext) {
-        const SERVER_1_ID: &'static str = "mcp-1";
+        const SERVER_1_ID: &str = "mcp-1";
 
         let server_1_id = ContextServerId(SERVER_1_ID.into());
 

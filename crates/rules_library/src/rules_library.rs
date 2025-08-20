@@ -49,7 +49,7 @@ actions!(
     ]
 );
 
-const BUILT_IN_TOOLTIP_TEXT: &'static str = concat!(
+const BUILT_IN_TOOLTIP_TEXT: &str = concat!(
     "This rule supports special functionality.\n",
     "It's read-only, but you can remove it from your default rules."
 );
@@ -418,7 +418,7 @@ impl RulesLibrary {
             } else {
                 None
             },
-            store: store.clone(),
+            store,
             language_registry,
             rule_editors: HashMap::default(),
             active_rule_id: None,
@@ -703,9 +703,7 @@ impl RulesLibrary {
                     .delegate
                     .matches
                     .get(picker.delegate.selected_index())
-                    .map_or(true, |old_selected_prompt| {
-                        old_selected_prompt.id != prompt_id
-                    })
+                    .is_none_or(|old_selected_prompt| old_selected_prompt.id != prompt_id)
                     && let Some(ix) = picker
                         .delegate
                         .matches
@@ -1138,7 +1136,7 @@ impl RulesLibrary {
                                                 .child(
                                                     Label::new(format!(
                                                         "{} tokens",
-                                                        label_token_count.clone()
+                                                        label_token_count
                                                     ))
                                                     .color(Color::Muted),
                                                 )

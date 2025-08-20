@@ -100,7 +100,7 @@ impl SpawnInTerminal {
             command: proto.command.clone(),
             args: proto.args.clone(),
             env: proto.env.into_iter().collect(),
-            cwd: proto.cwd.map(PathBuf::from).clone(),
+            cwd: proto.cwd.map(PathBuf::from),
             ..Default::default()
         }
     }

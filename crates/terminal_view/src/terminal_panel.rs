@@ -181,7 +181,6 @@ impl TerminalPanel {
                             .anchor(Corner::TopRight)
                             .with_handle(pane.split_item_context_menu_handle.clone())
                             .menu({
-                                let split_context = split_context.clone();
                                 move |window, cx| {
                                     ContextMenu::build(window, cx, |menu, _, _| {
                                         menu.when_some(
@@ -236,7 +235,7 @@ impl TerminalPanel {
     ) -> Result<Entity<Self>> {
         let mut terminal_panel = None;
 
-        match workspace
+        if let Some((database_id, serialization_key)) = workspace
             .read_with(&cx, |workspace, _| {
                 workspace
                     .database_id()
@@ -244,34 +243,29 @@ impl TerminalPanel {
             })
             .ok()
             .flatten()
+            && let Some(serialized_panel) = cx
+                .background_spawn(async move { KEY_VALUE_STORE.read_kvp(&serialization_key) })
+                .await
+                .log_err()
+                .flatten()
+                .map(|panel| serde_json::from_str::<SerializedTerminalPanel>(&panel))
+                .transpose()
+                .log_err()
+                .flatten()
+            && let Ok(serialized) = workspace
+                .update_in(&mut cx, |workspace, window, cx| {
+                    deserialize_terminal_panel(
+                        workspace.weak_handle(),
+                        workspace.project().clone(),
+                        database_id,
+                        serialized_panel,
+                        window,
+                        cx,
+                    )
+                })?
+                .await
         {
-            Some((database_id, serialization_key)) => {
-                if let Some(serialized_panel) = cx
-                    .background_spawn(async move { KEY_VALUE_STORE.read_kvp(&serialization_key) })
-                    .await
-                    .log_err()
-                    .flatten()
-                    .map(|panel| serde_json::from_str::<SerializedTerminalPanel>(&panel))
-                    .transpose()
-                    .log_err()
-                    .flatten()
-                    && let Ok(serialized) = workspace
-                        .update_in(&mut cx, |workspace, window, cx| {
-                            deserialize_terminal_panel(
-                                workspace.weak_handle(),
-                                workspace.project().clone(),
-                                database_id,
-                                serialized_panel,
-                                window,
-                                cx,
-                            )
-                        })?
-                        .await
-                {
-                    terminal_panel = Some(serialized);
-                }
-            }
-            _ => {}
+            terminal_panel = Some(serialized);
         }
 
         let terminal_panel = if let Some(panel) = terminal_panel {
@@ -350,12 +344,10 @@ impl TerminalPanel {
                         pane.set_zoomed(false, cx);
                     });
                     cx.emit(PanelEvent::Close);
-                } else {
-                    if let Some(focus_on_pane) =
-                        focus_on_pane.as_ref().or_else(|| self.center.panes().pop())
-                    {
-                        focus_on_pane.focus_handle(cx).focus(window);
-                    }
+                } else if let Some(focus_on_pane) =
+                    focus_on_pane.as_ref().or_else(|| self.center.panes().pop())
+                {
+                    focus_on_pane.focus_handle(cx).focus(window);
                 }
             }
             pane::Event::ZoomIn => {
@@ -631,7 +623,7 @@ impl TerminalPanel {
                 workspace
                     .read(cx)
                     .panes()
-                    .into_iter()
+                    .iter()
                     .cloned()
                     .flat_map(pane_terminal_views),
             )
@@ -896,9 +888,9 @@ impl TerminalPanel {
     }
 
     fn is_enabled(&self, cx: &App) -> bool {
-        self.workspace.upgrade().map_or(false, |workspace| {
-            is_enabled_in_workspace(workspace.read(cx), cx)
-        })
+        self.workspace
+            .upgrade()
+            .is_some_and(|workspace| is_enabled_in_workspace(workspace.read(cx), cx))
     }
 
     fn activate_pane_in_direction(
@@ -1242,20 +1234,18 @@ impl Render for TerminalPanel {
                         let panes = terminal_panel.center.panes();
                         if let Some(&pane) = panes.get(action.0) {
                             window.focus(&pane.read(cx).focus_handle(cx));
-                        } else {
-                            if let Some(new_pane) =
-                                terminal_panel.new_pane_with_cloned_active_terminal(window, cx)
-                            {
-                                terminal_panel
-                                    .center
-                                    .split(
-                                        &terminal_panel.active_pane,
-                                        &new_pane,
-                                        SplitDirection::Right,
-                                    )
-                                    .log_err();
-                                window.focus(&new_pane.focus_handle(cx));
-                            }
+                        } else if let Some(new_pane) =
+                            terminal_panel.new_pane_with_cloned_active_terminal(window, cx)
+                        {
+                            terminal_panel
+                                .center
+                                .split(
+                                    &terminal_panel.active_pane,
+                                    &new_pane,
+                                    SplitDirection::Right,
+                                )
+                                .log_err();
+                            window.focus(&new_pane.focus_handle(cx));
                         }
                     }),
                 )

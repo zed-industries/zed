@@ -832,7 +832,7 @@ impl SyntaxSnapshot {
         query: fn(&Grammar) -> Option<&Query>,
     ) -> SyntaxMapCaptures<'a> {
         SyntaxMapCaptures::new(
-            range.clone(),
+            range,
             text,
             [SyntaxLayer {
                 language,
@@ -1630,10 +1630,8 @@ impl<'a> SyntaxLayer<'a> {
                     if offset < range.start || offset > range.end {
                         continue;
                     }
-                } else {
-                    if offset <= range.start || offset >= range.end {
-                        continue;
-                    }
+                } else if offset <= range.start || offset >= range.end {
+                    continue;
                 }
 
                 if let Some((_, smallest_range)) = &smallest_match {

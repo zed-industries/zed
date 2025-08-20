@@ -255,16 +255,11 @@ impl MarksState {
     pub fn new(workspace: &Workspace, cx: &mut App) -> Entity<MarksState> {
         cx.new(|cx| {
             let buffer_store = workspace.project().read(cx).buffer_store().clone();
-            let subscription =
-                cx.subscribe(
-                    &buffer_store,
-                    move |this: &mut Self, _, event, cx| match event {
-                        project::buffer_store::BufferStoreEvent::BufferAdded(buffer) => {
-                            this.on_buffer_loaded(buffer, cx);
-                        }
-                        _ => {}
-                    },
-                );
+            let subscription = cx.subscribe(&buffer_store, move |this: &mut Self, _, event, cx| {
+                if let project::buffer_store::BufferStoreEvent::BufferAdded(buffer) = event {
+                    this.on_buffer_loaded(buffer, cx);
+                }
+            });
 
             let mut this = Self {
                 workspace: workspace.weak_handle(),
@@ -405,7 +400,7 @@ impl MarksState {
             } else {
                 HashMap::default()
             };
-        let old_points = self.serialized_marks.get(&path.clone());
+        let old_points = self.serialized_marks.get(&path);
         if old_points == Some(&new_points) {
             return;
         }
@@ -548,7 +543,7 @@ impl MarksState {
                 .insert(name.clone(), anchors);
             if self.is_global_mark(&name) {
                 self.global_marks
-                    .insert(name.clone(), MarkLocation::Buffer(multibuffer.entity_id()));
+                    .insert(name, MarkLocation::Buffer(multibuffer.entity_id()));
             }
             if let Some(buffer) = buffer {
                 let buffer_id = buffer.read(cx).remote_id();
@@ -564,7 +559,7 @@ impl MarksState {
 
         let buffer_id = buffer.read(cx).remote_id();
         self.buffer_marks.entry(buffer_id).or_default().insert(
-            name.clone(),
+            name,
             anchors
                 .into_iter()
                 .map(|anchor| anchor.text_anchor)
@@ -596,7 +591,7 @@ impl MarksState {
             if let Some(anchors) = self.buffer_marks.get(&buffer_id) {
                 let text_anchors = anchors.get(name)?;
                 let anchors = text_anchors
-                    .into_iter()
+                    .iter()
                     .map(|anchor| Anchor::in_buffer(excerpt_id, buffer_id, *anchor))
                     .collect();
                 return Some(Mark::Local(anchors));
@@ -606,11 +601,11 @@ impl MarksState {
         match target? {
             MarkLocation::Buffer(entity_id) => {
                 let anchors = self.multibuffer_marks.get(entity_id)?;
-                return Some(Mark::Buffer(*entity_id, anchors.get(name)?.clone()));
+                Some(Mark::Buffer(*entity_id, anchors.get(name)?.clone()))
             }
             MarkLocation::Path(path) => {
                 let points = self.serialized_marks.get(path)?;
-                return Some(Mark::Path(path.clone(), points.get(name)?.clone()));
+                Some(Mark::Path(path.clone(), points.get(name)?.clone()))
             }
         }
     }
@@ -659,9 +654,9 @@ impl MarksState {
                 return;
             }
         };
-        self.global_marks.remove(&mark_name.clone());
+        self.global_marks.remove(&mark_name);
         self.serialized_marks
-            .get_mut(&path.clone())
+            .get_mut(&path)
             .map(|m| m.remove(&mark_name.clone()));
         if let Some(workspace_id) = self.workspace_id(cx) {
             cx.background_spawn(async move { DB.delete_mark(workspace_id, path, mark_name).await })
@@ -1287,7 +1282,7 @@ impl RegistersView {
                 if let Some(register) = register {
                     matches.push(RegisterMatch {
                         name: '%',
-                        contents: register.text.clone(),
+                        contents: register.text,
                     })
                 }
             }
@@ -1379,7 +1374,7 @@ impl PickerDelegate for MarksViewDelegate {
         _: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> gpui::Task<()> {
-        let Some(workspace) = self.workspace.upgrade().clone() else {
+        let Some(workspace) = self.workspace.upgrade() else {
             return Task::ready(());
         };
         cx.spawn(async move |picker, cx| {
@@ -1710,26 +1705,25 @@ impl VimDb {
         marks: HashMap<String, Vec<Point>>,
     ) -> Result<()> {
         log::debug!("Setting path {path:?} for {} marks", marks.len());
-        let result = self
-            .write(move |conn| {
-                let mut query = conn.exec_bound(sql!(
-                    INSERT OR REPLACE INTO vim_marks
-                        (workspace_id, mark_name, path, value)
-                    VALUES
-                        (?, ?, ?, ?)
-                ))?;
-                for (mark_name, value) in marks {
-                    let pairs: Vec<(u32, u32)> = value
-                        .into_iter()
-                        .map(|point| (point.row, point.column))
-                        .collect();
-                    let serialized = serde_json::to_string(&pairs)?;
-                    query((workspace_id, mark_name, path.clone(), serialized))?;
-                }
-                Ok(())
-            })
-            .await;
-        result
+
+        self.write(move |conn| {
+            let mut query = conn.exec_bound(sql!(
+                INSERT OR REPLACE INTO vim_marks
+                    (workspace_id, mark_name, path, value)
+                VALUES
+                    (?, ?, ?, ?)
+            ))?;
+            for (mark_name, value) in marks {
+                let pairs: Vec<(u32, u32)> = value
+                    .into_iter()
+                    .map(|point| (point.row, point.column))
+                    .collect();
+                let serialized = serde_json::to_string(&pairs)?;
+                query((workspace_id, mark_name, path.clone(), serialized))?;
+            }
+            Ok(())
+        })
+        .await
     }
 
     fn get_marks(&self, workspace_id: WorkspaceId) -> Result<Vec<SerializedMark>> {

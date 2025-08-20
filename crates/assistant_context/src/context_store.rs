@@ -789,7 +789,7 @@ impl ContextStore {
         let fs = self.fs.clone();
         cx.spawn(async move |this, cx| {
             pub static ZED_STATELESS: LazyLock<bool> =
-                LazyLock::new(|| std::env::var("ZED_STATELESS").map_or(false, |v| !v.is_empty()));
+                LazyLock::new(|| std::env::var("ZED_STATELESS").is_ok_and(|v| !v.is_empty()));
             if *ZED_STATELESS {
                 return Ok(());
             }
@@ -862,7 +862,7 @@ impl ContextStore {
                     ContextServerStatus::Running => {
                         self.load_context_server_slash_commands(
                             server_id.clone(),
-                            context_server_store.clone(),
+                            context_server_store,
                             cx,
                         );
                     }

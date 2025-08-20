@@ -1693,7 +1693,7 @@ impl Vim {
                         }) {
                             editor.do_paste(
                                 &register.text.to_string(),
-                                register.clipboard_selections.clone(),
+                                register.clipboard_selections,
                                 false,
                                 window,
                                 cx,
@@ -1734,10 +1734,7 @@ impl Vim {
             editor.set_autoindent(vim.should_autoindent());
             editor.selections.line_mode = matches!(vim.mode, Mode::VisualLine);
 
-            let hide_edit_predictions = match vim.mode {
-                Mode::Insert | Mode::Replace => false,
-                _ => true,
-            };
+            let hide_edit_predictions = !matches!(vim.mode, Mode::Insert | Mode::Replace);
             editor.set_edit_predictions_hidden_for_vim_mode(hide_edit_predictions, window, cx);
         });
         cx.notify()

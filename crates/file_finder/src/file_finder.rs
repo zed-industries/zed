@@ -267,10 +267,9 @@ impl FileFinder {
     ) {
         self.picker.update(cx, |picker, cx| {
             picker.delegate.include_ignored = match picker.delegate.include_ignored {
-                Some(true) => match FileFinderSettings::get_global(cx).include_ignored {
-                    Some(_) => Some(false),
-                    None => None,
-                },
+                Some(true) => FileFinderSettings::get_global(cx)
+                    .include_ignored
+                    .map(|_| false),
                 Some(false) => Some(true),
                 None => Some(true),
             };
@@ -878,9 +877,7 @@ impl FileFinderDelegate {
                 PathMatchCandidateSet {
                     snapshot: worktree.snapshot(),
                     include_ignored: self.include_ignored.unwrap_or_else(|| {
-                        worktree
-                            .root_entry()
-                            .map_or(false, |entry| entry.is_ignored)
+                        worktree.root_entry().is_some_and(|entry| entry.is_ignored)
                     }),
                     include_root_name,
                     candidates: project::Candidates::Files,
@@ -1752,7 +1749,7 @@ impl PickerDelegate for FileFinderDelegate {
                                         Some(ContextMenu::build(window, cx, {
                                             let focus_handle = focus_handle.clone();
                                             move |menu, _, _| {
-                                                menu.context(focus_handle.clone())
+                                                menu.context(focus_handle)
                                                     .action(
                                                         "Split Left",
                                                         pane::SplitLeft.boxed_clone(),

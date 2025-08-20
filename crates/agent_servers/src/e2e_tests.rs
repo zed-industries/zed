@@ -428,12 +428,9 @@ pub async fn new_test_thread(
         .await
         .unwrap();
 
-    let thread = cx
-        .update(|cx| connection.new_thread(project.clone(), current_dir.as_ref(), cx))
+    cx.update(|cx| connection.new_thread(project.clone(), current_dir.as_ref(), cx))
         .await
-        .unwrap();
-
-    thread
+        .unwrap()
 }
 
 pub async fn run_until_first_tool_call(
@@ -471,7 +468,7 @@ pub fn get_zed_path() -> PathBuf {
 
     while zed_path
         .file_name()
-        .map_or(true, |name| name.to_string_lossy() != "debug")
+        .is_none_or(|name| name.to_string_lossy() != "debug")
     {
         if !zed_path.pop() {
             panic!("Could not find target directory");

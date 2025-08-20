@@ -96,7 +96,7 @@ impl RenderOnce for DropdownMenu {
                     .style(self.style),
             )
             .attach(Corner::BottomLeft)
-            .when_some(self.handle.clone(), |el, handle| el.with_handle(handle))
+            .when_some(self.handle, |el, handle| el.with_handle(handle))
     }
 }
 
@@ -169,7 +169,7 @@ impl Component for DropdownMenu {
                         "States",
                         vec![single_example(
                             "Disabled",
-                            DropdownMenu::new("disabled", "Disabled Dropdown", menu.clone())
+                            DropdownMenu::new("disabled", "Disabled Dropdown", menu)
                                 .disabled(true)
                                 .into_any_element(),
                         )],

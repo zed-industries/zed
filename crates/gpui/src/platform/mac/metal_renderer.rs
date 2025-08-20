@@ -332,7 +332,7 @@ impl MetalRenderer {
         self.path_intermediate_texture = Some(self.device.new_texture(&texture_descriptor));
 
         if self.path_sample_count > 1 {
-            let mut msaa_descriptor = texture_descriptor.clone();
+            let mut msaa_descriptor = texture_descriptor;
             msaa_descriptor.set_texture_type(metal::MTLTextureType::D2Multisample);
             msaa_descriptor.set_storage_mode(metal::MTLStorageMode::Private);
             msaa_descriptor.set_sample_count(self.path_sample_count as _);

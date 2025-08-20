@@ -74,10 +74,10 @@ impl WrapRows<'_> {
         self.transforms
             .seek(&WrapPoint::new(start_row, 0), Bias::Left);
         let mut input_row = self.transforms.start().1.row();
-        if self.transforms.item().map_or(false, |t| t.is_isomorphic()) {
+        if self.transforms.item().is_some_and(|t| t.is_isomorphic()) {
             input_row += start_row - self.transforms.start().0.row();
         }
-        self.soft_wrapped = self.transforms.item().map_or(false, |t| !t.is_isomorphic());
+        self.soft_wrapped = self.transforms.item().is_some_and(|t| !t.is_isomorphic());
         self.input_buffer_rows.seek(input_row);
         self.input_buffer_row = self.input_buffer_rows.next().unwrap();
         self.output_row = start_row;
@@ -603,7 +603,7 @@ impl WrapSnapshot {
             .cursor::<Dimensions<WrapPoint, TabPoint>>(&());
         transforms.seek(&output_start, Bias::Right);
         let mut input_start = TabPoint(transforms.start().1.0);
-        if transforms.item().map_or(false, |t| t.is_isomorphic()) {
+        if transforms.item().is_some_and(|t| t.is_isomorphic()) {
             input_start.0 += output_start.0 - transforms.start().0.0;
         }
         let input_end = self
@@ -634,7 +634,7 @@ impl WrapSnapshot {
         cursor.seek(&WrapPoint::new(row + 1, 0), Bias::Left);
         if cursor
             .item()
-            .map_or(false, |transform| transform.is_isomorphic())
+            .is_some_and(|transform| transform.is_isomorphic())
         {
             let overshoot = row - cursor.start().0.row();
             let tab_row = cursor.start().1.row() + overshoot;
@@ -732,10 +732,10 @@ impl WrapSnapshot {
             .cursor::<Dimensions<WrapPoint, TabPoint>>(&());
         transforms.seek(&WrapPoint::new(start_row, 0), Bias::Left);
         let mut input_row = transforms.start().1.row();
-        if transforms.item().map_or(false, |t| t.is_isomorphic()) {
+        if transforms.item().is_some_and(|t| t.is_isomorphic()) {
             input_row += start_row - transforms.start().0.row();
         }
-        let soft_wrapped = transforms.item().map_or(false, |t| !t.is_isomorphic());
+        let soft_wrapped = transforms.item().is_some_and(|t| !t.is_isomorphic());
         let mut input_buffer_rows = self.tab_snapshot.rows(input_row);
         let input_buffer_row = input_buffer_rows.next().unwrap();
         WrapRows {
@@ -754,7 +754,7 @@ impl WrapSnapshot {
             .cursor::<Dimensions<WrapPoint, TabPoint>>(&());
         cursor.seek(&point, Bias::Right);
         let mut tab_point = cursor.start().1.0;
-        if cursor.item().map_or(false, |t| t.is_isomorphic()) {
+        if cursor.item().is_some_and(|t| t.is_isomorphic()) {
             tab_point += point.0 - cursor.start().0.0;
         }
         TabPoint(tab_point)
@@ -780,7 +780,7 @@ impl WrapSnapshot {
         if bias == Bias::Left {
             let mut cursor = self.transforms.cursor::<WrapPoint>(&());
             cursor.seek(&point, Bias::Right);
-            if cursor.item().map_or(false, |t| !t.is_isomorphic()) {
+            if cursor.item().is_some_and(|t| !t.is_isomorphic()) {
                 point = *cursor.start();
                 *point.column_mut() -= 1;
             }
@@ -901,7 +901,7 @@ impl WrapChunks<'_> {
         let output_end = WrapPoint::new(rows.end, 0);
         self.transforms.seek(&output_start, Bias::Right);
         let mut input_start = TabPoint(self.transforms.start().1.0);
-        if self.transforms.item().map_or(false, |t| t.is_isomorphic()) {
+        if self.transforms.item().is_some_and(|t| t.is_isomorphic()) {
             input_start.0 += output_start.0 - self.transforms.start().0.0;
         }
         let input_end = self
@@ -993,7 +993,7 @@ impl Iterator for WrapRows<'_> {
         self.output_row += 1;
         self.transforms
             .seek_forward(&WrapPoint::new(self.output_row, 0), Bias::Left);
-        if self.transforms.item().map_or(false, |t| t.is_isomorphic()) {
+        if self.transforms.item().is_some_and(|t| t.is_isomorphic()) {
             self.input_buffer_row = self.input_buffer_rows.next().unwrap();
             self.soft_wrapped = false;
         } else {
