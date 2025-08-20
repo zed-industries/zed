@@ -221,7 +221,10 @@
       "] }": ["vim::UnmatchedForward", { "char": "}" }],
       "[ {": ["vim::UnmatchedBackward", { "char": "{" }],
       "] )": ["vim::UnmatchedForward", { "char": ")" }],
-      "[ (": ["vim::UnmatchedBackward", { "char": "(" }]
+      "[ (": ["vim::UnmatchedBackward", { "char": "(" }],
+      // tree-sitter related commands
+      "[ x": "vim::SelectLargerSyntaxNode",
+      "] x": "vim::SelectSmallerSyntaxNode"
     }
   },
   {
@@ -254,9 +257,6 @@
       "g w": "vim::PushRewrap",
       "g q": "vim::PushRewrap",
       "insert": "vim::InsertBefore",
-      // tree-sitter related commands
-      "[ x": "vim::SelectLargerSyntaxNode",
-      "] x": "vim::SelectSmallerSyntaxNode",
       "] d": "editor::GoToDiagnostic",
       "[ d": "editor::GoToPreviousDiagnostic",
       "] c": "editor::GoToHunk",
@@ -322,10 +322,7 @@
       "g w": "vim::Rewrap",
       "g ?": "vim::ConvertToRot13",
       // "g ?": "vim::ConvertToRot47",
-      "\"": "vim::PushRegister",
-      // tree-sitter related commands
-      "[ x": "editor::SelectLargerSyntaxNode",
-      "] x": "editor::SelectSmallerSyntaxNode"
+      "\"": "vim::PushRegister"
     }
   },
   {
@@ -418,13 +415,6 @@
       "insert": "vim::InsertBefore",
       "alt-.": "vim::RepeatFind",
       "alt-s": ["editor::SplitSelectionIntoLines", { "keep_selections": true }],
-      // tree-sitter related commands
-      "[ x": "editor::SelectLargerSyntaxNode",
-      "] x": "editor::SelectSmallerSyntaxNode",
-      "] d": "editor::GoToDiagnostic",
-      "[ d": "editor::GoToPreviousDiagnostic",
-      "] c": "editor::GoToHunk",
-      "[ c": "editor::GoToPreviousHunk",
       // Goto mode
       "g n": "pane::ActivateNextItem",
       "g p": "pane::ActivatePreviousItem",
@@ -589,6 +579,9 @@
       "=": "vim::NextSameIndent",
       "b": "pane::ActivateNextItem",
       "shift-b": "pane::ActivateLastItem",
+      "x": "editor::SelectSmallerSyntaxNode",
+      "d": "editor::GoToDiagnostic",
+      "c": "editor::GoToHunk",
       "space": "vim::InsertEmptyLineBelow"
     }
   },
@@ -604,6 +597,9 @@
       "=": "vim::PreviousSameIndent",
       "b": "pane::ActivatePreviousItem",
       "shift-b": ["pane::ActivateItem", 0],
+      "x": "editor::SelectLargerSyntaxNode",
+      "d": "editor::GoToPreviousDiagnostic",
+      "c": "editor::GoToPreviousHunk",
       "space": "vim::InsertEmptyLineAbove"
     }
   },
