@@ -2196,6 +2196,15 @@ impl MultiBuffer {
             })
     }
 
+    pub fn buffer_for_anchor(&self, anchor: Anchor, cx: &App) -> Option<Entity<Buffer>> {
+        if let Some(buffer_id) = anchor.buffer_id {
+            self.buffer(buffer_id)
+        } else {
+            let (_, buffer, _) = self.excerpt_containing(anchor, cx)?;
+            Some(buffer)
+        }
+    }
+
     // If point is at the end of the buffer, the last excerpt is returned
     pub fn point_to_buffer_offset<T: ToOffset>(
         &self,
