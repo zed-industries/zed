@@ -318,19 +318,18 @@ impl Iterator for MemoryIterator {
             return None;
         }
         if let Some((current_page_address, current_memory_chunk)) = self.current_known_page.as_mut()
+            && current_page_address.0 <= self.start
         {
-            if current_page_address.0 <= self.start {
-                if let Some(next_cell) = current_memory_chunk.next() {
-                    self.start += 1;
-                    return Some(next_cell);
-                } else {
-                    self.current_known_page.take();
-                }
+            if let Some(next_cell) = current_memory_chunk.next() {
+                self.start += 1;
+                return Some(next_cell);
+            } else {
+                self.current_known_page.take();
             }
         }
         if !self.fetch_next_page() {
             self.start += 1;
-            return Some(MemoryCell(None));
+            Some(MemoryCell(None))
         } else {
             self.next()
         }

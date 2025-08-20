@@ -94,7 +94,7 @@ impl AgentConfiguration {
         let mut expanded_provider_configurations = HashMap::default();
         if LanguageModelRegistry::read_global(cx)
             .provider(&ZED_CLOUD_PROVIDER_ID)
-            .map_or(false, |cloud_provider| cloud_provider.must_accept_terms(cx))
+            .is_some_and(|cloud_provider| cloud_provider.must_accept_terms(cx))
         {
             expanded_provider_configurations.insert(ZED_CLOUD_PROVIDER_ID, true);
         }
@@ -134,7 +134,11 @@ impl AgentConfiguration {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let configuration_view = provider.configuration_view(window, cx);
+        let configuration_view = provider.configuration_view(
+            language_model::ConfigurationViewTargetAgent::ZedAgent,
+            window,
+            cx,
+        );
         self.configuration_views_by_provider
             .insert(provider.id(), configuration_view);
     }
@@ -951,7 +955,7 @@ impl AgentConfiguration {
                 }
 
                 parent.child(v_flex().py_1p5().px_1().gap_1().children(
-                    tools.into_iter().enumerate().map(|(ix, tool)| {
+                    tools.iter().enumerate().map(|(ix, tool)| {
                         h_flex()
                             .id(("tool-item", ix))
                             .px_1()

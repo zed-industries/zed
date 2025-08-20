@@ -161,7 +161,7 @@ impl Client {
         working_directory: &Option<PathBuf>,
         cx: AsyncApp,
     ) -> Result<Self> {
-        log::info!(
+        log::debug!(
             "starting context server (executable={:?}, args={:?})",
             binary.executable,
             &binary.args
@@ -271,10 +271,10 @@ impl Client {
                     );
                 }
             } else if let Ok(response) = serde_json::from_str::<AnyResponse>(&message) {
-                if let Some(handlers) = response_handlers.lock().as_mut() {
-                    if let Some(handler) = handlers.remove(&response.id) {
-                        handler(Ok(message.to_string()));
-                    }
+                if let Some(handlers) = response_handlers.lock().as_mut()
+                    && let Some(handler) = handlers.remove(&response.id)
+                {
+                    handler(Ok(message.to_string()));
                 }
             } else if let Ok(notification) = serde_json::from_str::<AnyNotification>(&message) {
                 let mut notification_handlers = notification_handlers.lock();
@@ -295,7 +295,7 @@ impl Client {
     /// Continuously reads and logs any error messages from the server.
     async fn handle_err(transport: Arc<dyn Transport>) -> anyhow::Result<()> {
         while let Some(err) = transport.receive_err().next().await {
-            log::warn!("context server stderr: {}", err.trim());
+            log::debug!("context server stderr: {}", err.trim());
         }
 
         Ok(())

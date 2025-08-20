@@ -773,7 +773,7 @@ impl LanguageRegistry {
             };
 
             let content_matches = || {
-                config.first_line_pattern.as_ref().map_or(false, |pattern| {
+                config.first_line_pattern.as_ref().is_some_and(|pattern| {
                     content
                         .as_ref()
                         .is_some_and(|content| pattern.is_match(content))
@@ -1102,7 +1102,7 @@ impl LanguageRegistry {
         use gpui::AppContext as _;
 
         let mut state = self.state.write();
-        let fake_entry = state.fake_server_entries.get_mut(&name)?;
+        let fake_entry = state.fake_server_entries.get_mut(name)?;
         let (server, mut fake_server) = lsp::FakeLanguageServer::new(
             server_id,
             binary,

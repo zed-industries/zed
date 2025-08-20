@@ -236,11 +236,9 @@ impl BreakpointList {
     }
 
     fn select_next(&mut self, _: &menu::SelectNext, window: &mut Window, cx: &mut Context<Self>) {
-        if self.strip_mode.is_some() {
-            if self.input.focus_handle(cx).contains_focused(window, cx) {
-                cx.propagate();
-                return;
-            }
+        if self.strip_mode.is_some() && self.input.focus_handle(cx).contains_focused(window, cx) {
+            cx.propagate();
+            return;
         }
         let ix = match self.selected_ix {
             _ if self.breakpoints.len() == 0 => None,
@@ -262,11 +260,9 @@ impl BreakpointList {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.strip_mode.is_some() {
-            if self.input.focus_handle(cx).contains_focused(window, cx) {
-                cx.propagate();
-                return;
-            }
+        if self.strip_mode.is_some() && self.input.focus_handle(cx).contains_focused(window, cx) {
+            cx.propagate();
+            return;
         }
         let ix = match self.selected_ix {
             _ if self.breakpoints.len() == 0 => None,
@@ -283,11 +279,9 @@ impl BreakpointList {
     }
 
     fn select_first(&mut self, _: &menu::SelectFirst, window: &mut Window, cx: &mut Context<Self>) {
-        if self.strip_mode.is_some() {
-            if self.input.focus_handle(cx).contains_focused(window, cx) {
-                cx.propagate();
-                return;
-            }
+        if self.strip_mode.is_some() && self.input.focus_handle(cx).contains_focused(window, cx) {
+            cx.propagate();
+            return;
         }
         let ix = if self.breakpoints.len() > 0 {
             Some(0)
@@ -298,11 +292,9 @@ impl BreakpointList {
     }
 
     fn select_last(&mut self, _: &menu::SelectLast, window: &mut Window, cx: &mut Context<Self>) {
-        if self.strip_mode.is_some() {
-            if self.input.focus_handle(cx).contains_focused(window, cx) {
-                cx.propagate();
-                return;
-            }
+        if self.strip_mode.is_some() && self.input.focus_handle(cx).contains_focused(window, cx) {
+            cx.propagate();
+            return;
         }
         let ix = if self.breakpoints.len() > 0 {
             Some(self.breakpoints.len() - 1)
@@ -334,8 +326,8 @@ impl BreakpointList {
                 let text = self.input.read(cx).text(cx);
 
                 match mode {
-                    ActiveBreakpointStripMode::Log => match &entry.kind {
-                        BreakpointEntryKind::LineBreakpoint(line_breakpoint) => {
+                    ActiveBreakpointStripMode::Log => {
+                        if let BreakpointEntryKind::LineBreakpoint(line_breakpoint) = &entry.kind {
                             Self::edit_line_breakpoint_inner(
                                 &self.breakpoint_store,
                                 line_breakpoint.breakpoint.path.clone(),
@@ -344,10 +336,9 @@ impl BreakpointList {
                                 cx,
                             );
                         }
-                        _ => {}
-                    },
-                    ActiveBreakpointStripMode::Condition => match &entry.kind {
-                        BreakpointEntryKind::LineBreakpoint(line_breakpoint) => {
+                    }
+                    ActiveBreakpointStripMode::Condition => {
+                        if let BreakpointEntryKind::LineBreakpoint(line_breakpoint) = &entry.kind {
                             Self::edit_line_breakpoint_inner(
                                 &self.breakpoint_store,
                                 line_breakpoint.breakpoint.path.clone(),
@@ -356,10 +347,9 @@ impl BreakpointList {
                                 cx,
                             );
                         }
-                        _ => {}
-                    },
-                    ActiveBreakpointStripMode::HitCondition => match &entry.kind {
-                        BreakpointEntryKind::LineBreakpoint(line_breakpoint) => {
+                    }
+                    ActiveBreakpointStripMode::HitCondition => {
+                        if let BreakpointEntryKind::LineBreakpoint(line_breakpoint) = &entry.kind {
                             Self::edit_line_breakpoint_inner(
                                 &self.breakpoint_store,
                                 line_breakpoint.breakpoint.path.clone(),
@@ -368,8 +358,7 @@ impl BreakpointList {
                                 cx,
                             );
                         }
-                        _ => {}
-                    },
+                    }
                 }
                 self.focus_handle.focus(window);
             } else {
@@ -398,11 +387,9 @@ impl BreakpointList {
         let Some(entry) = self.selected_ix.and_then(|ix| self.breakpoints.get_mut(ix)) else {
             return;
         };
-        if self.strip_mode.is_some() {
-            if self.input.focus_handle(cx).contains_focused(window, cx) {
-                cx.propagate();
-                return;
-            }
+        if self.strip_mode.is_some() && self.input.focus_handle(cx).contains_focused(window, cx) {
+            cx.propagate();
+            return;
         }
 
         match &mut entry.kind {
@@ -433,13 +420,10 @@ impl BreakpointList {
             return;
         };
 
-        match &mut entry.kind {
-            BreakpointEntryKind::LineBreakpoint(line_breakpoint) => {
-                let path = line_breakpoint.breakpoint.path.clone();
-                let row = line_breakpoint.breakpoint.row;
-                self.edit_line_breakpoint(path, row, BreakpointEditAction::Toggle, cx);
-            }
-            _ => {}
+        if let BreakpointEntryKind::LineBreakpoint(line_breakpoint) = &mut entry.kind {
+            let path = line_breakpoint.breakpoint.path.clone();
+            let row = line_breakpoint.breakpoint.row;
+            self.edit_line_breakpoint(path, row, BreakpointEditAction::Toggle, cx);
         }
         cx.notify();
     }
@@ -491,7 +475,7 @@ impl BreakpointList {
     fn toggle_data_breakpoint(&mut self, id: &str, cx: &mut Context<Self>) {
         if let Some(session) = &self.session {
             session.update(cx, |this, cx| {
-                this.toggle_data_breakpoint(&id, cx);
+                this.toggle_data_breakpoint(id, cx);
             });
         }
     }
@@ -499,7 +483,7 @@ impl BreakpointList {
     fn toggle_exception_breakpoint(&mut self, id: &str, cx: &mut Context<Self>) {
         if let Some(session) = &self.session {
             session.update(cx, |this, cx| {
-                this.toggle_exception_breakpoint(&id, cx);
+                this.toggle_exception_breakpoint(id, cx);
             });
             cx.notify();
             const EXCEPTION_SERIALIZATION_INTERVAL: Duration = Duration::from_secs(1);
@@ -535,7 +519,7 @@ impl BreakpointList {
             cx.background_executor()
                 .spawn(async move { KEY_VALUE_STORE.write_kvp(key, value?).await })
         } else {
-            return Task::ready(Result::Ok(()));
+            Task::ready(Result::Ok(()))
         }
     }
 
@@ -941,7 +925,7 @@ impl LineBreakpoint {
                     props,
                     breakpoint: BreakpointEntry {
                         kind: BreakpointEntryKind::LineBreakpoint(self.clone()),
-                        weak: weak,
+                        weak,
                     },
                     is_selected,
                     focus_handle,
@@ -1153,7 +1137,7 @@ impl ExceptionBreakpoint {
                     props,
                     breakpoint: BreakpointEntry {
                         kind: BreakpointEntryKind::ExceptionBreakpoint(self.clone()),
-                        weak: weak,
+                        weak,
                     },
                     is_selected,
                     focus_handle,

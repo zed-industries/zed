@@ -383,12 +383,10 @@ impl ProjectDiagnosticsEditor {
             } else {
                 self.update_all_diagnostics(false, window, cx);
             }
+        } else if self.update_excerpts_task.is_some() {
+            self.update_excerpts_task = None;
         } else {
-            if self.update_excerpts_task.is_some() {
-                self.update_excerpts_task = None;
-            } else {
-                self.update_all_diagnostics(false, window, cx);
-            }
+            self.update_all_diagnostics(false, window, cx);
         }
         cx.notify();
     }
@@ -528,7 +526,7 @@ impl ProjectDiagnosticsEditor {
             lsp::DiagnosticSeverity::ERROR
         };
 
-        cx.spawn_in(window, async move |this, mut cx| {
+        cx.spawn_in(window, async move |this, cx| {
             let diagnostics = buffer_snapshot
                 .diagnostics_in_range::<_, text::Anchor>(
                     Point::zero()..buffer_snapshot.max_point(),
@@ -542,7 +540,7 @@ impl ProjectDiagnosticsEditor {
                     return true;
                 }
                 this.diagnostics.insert(buffer_id, diagnostics.clone());
-                return false;
+                false
             })?;
             if unchanged {
                 return Ok(());
@@ -595,7 +593,7 @@ impl ProjectDiagnosticsEditor {
                     b.initial_range.clone(),
                     DEFAULT_MULTIBUFFER_CONTEXT,
                     buffer_snapshot.clone(),
-                    &mut cx,
+                    cx,
                 )
                 .await;
                 let i = excerpt_ranges
@@ -639,17 +637,15 @@ impl ProjectDiagnosticsEditor {
                 #[cfg(test)]
                 let cloned_blocks = blocks.clone();
 
-                if was_empty {
-                    if let Some(anchor_range) = anchor_ranges.first() {
-                        let range_to_select = anchor_range.start..anchor_range.start;
-                        this.editor.update(cx, |editor, cx| {
-                            editor.change_selections(Default::default(), window, cx, |s| {
-                                s.select_anchor_ranges([range_to_select]);
-                            })
-                        });
-                        if this.focus_handle.is_focused(window) {
-                            this.editor.read(cx).focus_handle(cx).focus(window);
-                        }
+                if was_empty && let Some(anchor_range) = anchor_ranges.first() {
+                    let range_to_select = anchor_range.start..anchor_range.start;
+                    this.editor.update(cx, |editor, cx| {
+                        editor.change_selections(Default::default(), window, cx, |s| {
+                            s.select_anchor_ranges([range_to_select]);
+                        })
+                    });
+                    if this.focus_handle.is_focused(window) {
+                        this.editor.read(cx).focus_handle(cx).focus(window);
                     }
                 }
 
@@ -980,18 +976,16 @@ async fn heuristic_syntactic_expand(
         // Remove blank lines from start and end
         if let Some(start_row) = (outline_range.start.row..outline_range.end.row)
             .find(|row| !snapshot.line_indent_for_row(*row).is_line_blank())
-        {
-            if let Some(end_row) = (outline_range.start.row..outline_range.end.row + 1)
+            && let Some(end_row) = (outline_range.start.row..outline_range.end.row + 1)
                 .rev()
                 .find(|row| !snapshot.line_indent_for_row(*row).is_line_blank())
-            {
-                let row_count = end_row.saturating_sub(start_row);
-                if row_count <= max_row_count {
-                    return Some(RangeInclusive::new(
-                        outline_range.start.row,
-                        outline_range.end.row,
-                    ));
-                }
+        {
+            let row_count = end_row.saturating_sub(start_row);
+            if row_count <= max_row_count {
+                return Some(RangeInclusive::new(
+                    outline_range.start.row,
+                    outline_range.end.row,
+                ));
             }
         }
     }

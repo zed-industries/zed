@@ -15,11 +15,11 @@ use gpui::{
 };
 use http_client::HttpClient;
 use language_model::{
-    AuthenticateError, LanguageModel, LanguageModelCacheConfiguration,
-    LanguageModelCompletionError, LanguageModelId, LanguageModelName, LanguageModelProvider,
-    LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
-    LanguageModelRequest, LanguageModelToolChoice, LanguageModelToolResultContent, MessageContent,
-    RateLimiter, Role,
+    AuthenticateError, ConfigurationViewTargetAgent, LanguageModel,
+    LanguageModelCacheConfiguration, LanguageModelCompletionError, LanguageModelId,
+    LanguageModelName, LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
+    LanguageModelProviderState, LanguageModelRequest, LanguageModelToolChoice,
+    LanguageModelToolResultContent, MessageContent, RateLimiter, Role,
 };
 use language_model::{LanguageModelCompletionEvent, LanguageModelToolUse, StopReason};
 use schemars::JsonSchema;
@@ -114,7 +114,7 @@ impl State {
             .clone();
         cx.spawn(async move |this, cx| {
             credentials_provider
-                .delete_credentials(&api_url, &cx)
+                .delete_credentials(&api_url, cx)
                 .await
                 .ok();
             this.update(cx, |this, cx| {
@@ -133,7 +133,7 @@ impl State {
             .clone();
         cx.spawn(async move |this, cx| {
             credentials_provider
-                .write_credentials(&api_url, "Bearer", api_key.as_bytes(), &cx)
+                .write_credentials(&api_url, "Bearer", api_key.as_bytes(), cx)
                 .await
                 .ok();
 
@@ -153,35 +153,25 @@ impl State {
             return Task::ready(Ok(()));
         }
 
-        let credentials_provider = <dyn CredentialsProvider>::global(cx);
-        let api_url = AllLanguageModelSettings::get_global(cx)
-            .anthropic
-            .api_url
-            .clone();
+        let key = AnthropicLanguageModelProvider::api_key(cx);
 
         cx.spawn(async move |this, cx| {
-            let (api_key, from_env) = if let Ok(api_key) = std::env::var(ANTHROPIC_API_KEY_VAR) {
-                (api_key, true)
-            } else {
-                let (_, api_key) = credentials_provider
-                    .read_credentials(&api_url, &cx)
-                    .await?
-                    .ok_or(AuthenticateError::CredentialsNotFound)?;
-                (
-                    String::from_utf8(api_key).context("invalid {PROVIDER_NAME} API key")?,
-                    false,
-                )
-            };
+            let key = key.await?;
 
             this.update(cx, |this, cx| {
-                this.api_key = Some(api_key);
-                this.api_key_from_env = from_env;
+                this.api_key = Some(key.key);
+                this.api_key_from_env = key.from_env;
                 cx.notify();
             })?;
 
             Ok(())
         })
     }
+}
+
+pub struct ApiKey {
+    pub key: String,
+    pub from_env: bool,
 }
 
 impl AnthropicLanguageModelProvider {
@@ -205,6 +195,33 @@ impl AnthropicLanguageModelProvider {
             http_client: self.http_client.clone(),
             request_limiter: RateLimiter::new(4),
         })
+    }
+
+    pub fn api_key(cx: &mut App) -> Task<Result<ApiKey>> {
+        let credentials_provider = <dyn CredentialsProvider>::global(cx);
+        let api_url = AllLanguageModelSettings::get_global(cx)
+            .anthropic
+            .api_url
+            .clone();
+
+        if let Ok(key) = std::env::var(ANTHROPIC_API_KEY_VAR) {
+            Task::ready(Ok(ApiKey {
+                key,
+                from_env: true,
+            }))
+        } else {
+            cx.spawn(async move |cx| {
+                let (_, api_key) = credentials_provider
+                    .read_credentials(&api_url, cx)
+                    .await?
+                    .ok_or(AuthenticateError::CredentialsNotFound)?;
+
+                Ok(ApiKey {
+                    key: String::from_utf8(api_key).context("invalid {PROVIDER_NAME} API key")?,
+                    from_env: false,
+                })
+            })
+        }
     }
 }
 
@@ -299,8 +316,13 @@ impl LanguageModelProvider for AnthropicLanguageModelProvider {
         self.state.update(cx, |state, cx| state.authenticate(cx))
     }
 
-    fn configuration_view(&self, window: &mut Window, cx: &mut App) -> AnyView {
-        cx.new(|cx| ConfigurationView::new(self.state.clone(), window, cx))
+    fn configuration_view(
+        &self,
+        target_agent: ConfigurationViewTargetAgent,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> AnyView {
+        cx.new(|cx| ConfigurationView::new(self.state.clone(), target_agent, window, cx))
             .into()
     }
 
@@ -532,7 +554,7 @@ pub fn into_anthropic(
                     .into_iter()
                     .filter_map(|content| match content {
                         MessageContent::Text(text) => {
-                            let text = if text.chars().last().map_or(false, |c| c.is_whitespace()) {
+                            let text = if text.chars().last().is_some_and(|c| c.is_whitespace()) {
                                 text.trim_end().to_string()
                             } else {
                                 text
@@ -611,11 +633,11 @@ pub fn into_anthropic(
                     Role::Assistant => anthropic::Role::Assistant,
                     Role::System => unreachable!("System role should never occur here"),
                 };
-                if let Some(last_message) = new_messages.last_mut() {
-                    if last_message.role == anthropic_role {
-                        last_message.content.extend(anthropic_message_content);
-                        continue;
-                    }
+                if let Some(last_message) = new_messages.last_mut()
+                    && last_message.role == anthropic_role
+                {
+                    last_message.content.extend(anthropic_message_content);
+                    continue;
                 }
 
                 // Mark the last segment of the message as cached
@@ -791,7 +813,7 @@ impl AnthropicEventMapper {
                             ))];
                         }
                     }
-                    return vec![];
+                    vec![]
                 }
             },
             Event::ContentBlockStop { index } => {
@@ -902,12 +924,18 @@ struct ConfigurationView {
     api_key_editor: Entity<Editor>,
     state: gpui::Entity<State>,
     load_credentials_task: Option<Task<()>>,
+    target_agent: ConfigurationViewTargetAgent,
 }
 
 impl ConfigurationView {
     const PLACEHOLDER_TEXT: &'static str = "sk-ant-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx";
 
-    fn new(state: gpui::Entity<State>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    fn new(
+        state: gpui::Entity<State>,
+        target_agent: ConfigurationViewTargetAgent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         cx.observe(&state, |_, _, cx| {
             cx.notify();
         })
@@ -939,6 +967,7 @@ impl ConfigurationView {
             }),
             state,
             load_credentials_task,
+            target_agent,
         }
     }
 
@@ -1012,7 +1041,10 @@ impl Render for ConfigurationView {
             v_flex()
                 .size_full()
                 .on_action(cx.listener(Self::save_api_key))
-                .child(Label::new("To use Zed's agent with Anthropic, you need to add an API key. Follow these steps:"))
+                .child(Label::new(format!("To use {}, you need to add an API key. Follow these steps:", match self.target_agent {
+                    ConfigurationViewTargetAgent::ZedAgent => "Zed's agent with Anthropic",
+                    ConfigurationViewTargetAgent::Other(agent) => agent,
+                })))
                 .child(
                     List::new()
                         .child(
@@ -1023,7 +1055,7 @@ impl Render for ConfigurationView {
                             )
                         )
                         .child(
-                            InstructionListItem::text_only("Paste your API key below and hit enter to start using the assistant")
+                            InstructionListItem::text_only("Paste your API key below and hit enter to start using the agent")
                         )
                 )
                 .child(

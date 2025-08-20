@@ -234,7 +234,7 @@ impl JsonLspAdapter {
         schemas
             .as_array_mut()
             .unwrap()
-            .extend(cx.all_action_names().into_iter().map(|&name| {
+            .extend(cx.all_action_names().iter().map(|&name| {
                 project::lsp_store::json_language_server_ext::url_schema_for_action(name)
             }));
 
@@ -280,7 +280,7 @@ impl JsonLspAdapter {
             )
         })?;
         writer.replace(config.clone());
-        return Ok(config);
+        Ok(config)
     }
 }
 
@@ -343,7 +343,7 @@ impl LspAdapter for JsonLspAdapter {
             .should_install_npm_package(
                 Self::PACKAGE_NAME,
                 &server_path,
-                &container_dir,
+                container_dir,
                 VersionStrategy::Latest(version),
             )
             .await;

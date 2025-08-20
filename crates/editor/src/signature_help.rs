@@ -196,7 +196,7 @@ impl Editor {
                                     .highlight_text(&text, 0..signature.label.len())
                                     .into_iter()
                                     .flat_map(|(range, highlight_id)| {
-                                        Some((range, highlight_id.style(&cx.theme().syntax())?))
+                                        Some((range, highlight_id.style(cx.theme().syntax())?))
                                     });
                                 signature.highlights =
                                     combine_highlights(signature.highlights.clone(), highlights)

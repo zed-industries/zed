@@ -131,19 +131,19 @@ impl super::LspAdapter for GoLspAdapter {
 
         if let Some(version) = *version {
             let binary_path = container_dir.join(format!("gopls_{version}_go_{go_version}"));
-            if let Ok(metadata) = fs::metadata(&binary_path).await {
-                if metadata.is_file() {
-                    remove_matching(&container_dir, |entry| {
-                        entry != binary_path && entry.file_name() != Some(OsStr::new("gobin"))
-                    })
-                    .await;
+            if let Ok(metadata) = fs::metadata(&binary_path).await
+                && metadata.is_file()
+            {
+                remove_matching(&container_dir, |entry| {
+                    entry != binary_path && entry.file_name() != Some(OsStr::new("gobin"))
+                })
+                .await;
 
-                    return Ok(LanguageServerBinary {
-                        path: binary_path.to_path_buf(),
-                        arguments: server_binary_arguments(),
-                        env: None,
-                    });
-                }
+                return Ok(LanguageServerBinary {
+                    path: binary_path.to_path_buf(),
+                    arguments: server_binary_arguments(),
+                    env: None,
+                });
             }
         } else if let Some(path) = this
             .cached_server_binary(container_dir.clone(), delegate)
@@ -452,7 +452,7 @@ async fn get_cached_server_binary(container_dir: PathBuf) -> Option<LanguageServ
                 && entry
                     .file_name()
                     .to_str()
-                    .map_or(false, |name| name.starts_with("gopls_"))
+                    .is_some_and(|name| name.starts_with("gopls_"))
             {
                 last_binary_path = Some(entry.path());
             }

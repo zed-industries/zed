@@ -103,7 +103,7 @@ impl ContextServerRegistry {
                         self.reload_tools_for_server(server_id.clone(), cx);
                     }
                     ContextServerStatus::Stopped | ContextServerStatus::Error(_) => {
-                        self.registered_servers.remove(&server_id);
+                        self.registered_servers.remove(server_id);
                         cx.notify();
                     }
                 }
@@ -227,5 +227,15 @@ impl AnyAgentTool for ContextServerTool {
                 llm_output: result.into(),
             })
         })
+    }
+
+    fn replay(
+        &self,
+        _input: serde_json::Value,
+        _output: serde_json::Value,
+        _event_stream: ToolCallEventStream,
+        _cx: &mut App,
+    ) -> Result<()> {
+        Ok(())
     }
 }

@@ -19,7 +19,7 @@ actions!(
     ]
 );
 
-const KEY_CONTEXT_VALUE: &'static str = "KeystrokeInput";
+const KEY_CONTEXT_VALUE: &str = "KeystrokeInput";
 
 const CLOSE_KEYSTROKE_CAPTURE_END_TIMEOUT: std::time::Duration =
     std::time::Duration::from_millis(300);
@@ -116,19 +116,19 @@ impl KeystrokeInput {
             && self
                 .keystrokes
                 .last()
-                .map_or(false, |last| last.key.is_empty())
+                .is_some_and(|last| last.key.is_empty())
         {
             return &self.keystrokes[..self.keystrokes.len() - 1];
         }
-        return &self.keystrokes;
+        &self.keystrokes
     }
 
     fn dummy(modifiers: Modifiers) -> Keystroke {
-        return Keystroke {
+        Keystroke {
             modifiers,
             key: "".to_string(),
             key_char: None,
-        };
+        }
     }
 
     fn keystrokes_changed(&self, cx: &mut Context<Self>) {
@@ -182,7 +182,7 @@ impl KeystrokeInput {
     fn end_close_keystrokes_capture(&mut self) -> Option<usize> {
         self.close_keystrokes.take();
         self.clear_close_keystrokes_timer.take();
-        return self.close_keystrokes_start.take();
+        self.close_keystrokes_start.take()
     }
 
     fn handle_possible_close_keystroke(
@@ -233,7 +233,7 @@ impl KeystrokeInput {
             return CloseKeystrokeResult::Partial;
         }
         self.end_close_keystrokes_capture();
-        return CloseKeystrokeResult::None;
+        CloseKeystrokeResult::None
     }
 
     fn on_modifiers_changed(
@@ -437,7 +437,7 @@ impl KeystrokeInput {
         // is a much more reliable check, as the intercept keystroke handlers are installed
         // on focus of the inner focus handle, thereby ensuring our recording state does
         // not get de-synced
-        return self.inner_focus_handle.is_focused(window);
+        self.inner_focus_handle.is_focused(window)
     }
 }
 
@@ -811,7 +811,7 @@ mod tests {
         pub fn expect_keystrokes(&mut self, expected: &[&str]) -> &mut Self {
             let actual = self
                 .input
-                .read_with(&mut self.cx, |input, _| input.keystrokes.clone());
+                .read_with(&self.cx, |input, _| input.keystrokes.clone());
             Self::expect_keystrokes_equal(&actual, expected);
             self
         }
@@ -820,7 +820,7 @@ mod tests {
         pub fn expect_close_keystrokes(&mut self, expected: &[&str]) -> &mut Self {
             let actual = self
                 .input
-                .read_with(&mut self.cx, |input, _| input.close_keystrokes.clone())
+                .read_with(&self.cx, |input, _| input.close_keystrokes.clone())
                 .unwrap_or_default();
             Self::expect_keystrokes_equal(&actual, expected);
             self
@@ -934,7 +934,7 @@ mod tests {
             let change_tracker = KeystrokeUpdateTracker::new(self.input.clone(), &mut self.cx);
             let result = self.input.update_in(&mut self.cx, cb);
             KeystrokeUpdateTracker::finish(change_tracker, &self.cx);
-            return result;
+            result
         }
     }
 

@@ -1215,11 +1215,11 @@ mod tests {
 
             // Verify iterators advanced correctly
             assert!(
-                !a_iter.next().map_or(false, |c| c.is_ascii_digit()),
+                !a_iter.next().is_some_and(|c| c.is_ascii_digit()),
                 "Iterator a should have consumed all digits"
             );
             assert!(
-                !b_iter.next().map_or(false, |c| c.is_ascii_digit()),
+                !b_iter.next().is_some_and(|c| c.is_ascii_digit()),
                 "Iterator b should have consumed all digits"
             );
 

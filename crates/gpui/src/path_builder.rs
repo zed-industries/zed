@@ -278,7 +278,7 @@ impl PathBuilder {
         options: &StrokeOptions,
     ) -> Result<Path<Pixels>, Error> {
         let path = if let Some(dash_array) = dash_array {
-            let measurements = lyon::algorithms::measure::PathMeasurements::from_path(&path, 0.01);
+            let measurements = lyon::algorithms::measure::PathMeasurements::from_path(path, 0.01);
             let mut sampler = measurements
                 .create_sampler(path, lyon::algorithms::measure::SampleType::Normalized);
             let mut builder = lyon::path::Path::builder();

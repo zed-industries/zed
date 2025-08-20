@@ -4970,7 +4970,7 @@ async fn test_references(
         "Rust",
         FakeLspAdapter {
             name: "my-fake-lsp-adapter",
-            capabilities: capabilities,
+            capabilities,
             ..FakeLspAdapter::default()
         },
     );

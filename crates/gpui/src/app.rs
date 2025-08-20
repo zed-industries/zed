@@ -368,7 +368,7 @@ impl App {
             }),
         });
 
-        init_app_menus(platform.as_ref(), &mut app.borrow_mut());
+        init_app_menus(platform.as_ref(), &app.borrow());
 
         platform.on_keyboard_layout_change(Box::new({
             let app = Rc::downgrade(&app);
@@ -1310,7 +1310,7 @@ impl App {
         T: 'static,
     {
         let window_handle = window.handle;
-        self.observe_release(&handle, move |entity, cx| {
+        self.observe_release(handle, move |entity, cx| {
             let _ = window_handle.update(cx, |_, window, cx| on_release(entity, window, cx));
         })
     }
@@ -1332,7 +1332,7 @@ impl App {
         }
 
         inner(
-            &mut self.keystroke_observers,
+            &self.keystroke_observers,
             Box::new(move |event, window, cx| {
                 f(event, window, cx);
                 true
@@ -1358,7 +1358,7 @@ impl App {
         }
 
         inner(
-            &mut self.keystroke_interceptors,
+            &self.keystroke_interceptors,
             Box::new(move |event, window, cx| {
                 f(event, window, cx);
                 true
@@ -1516,12 +1516,11 @@ impl App {
     /// the bindings in the element tree, and any global action listeners.
     pub fn is_action_available(&mut self, action: &dyn Action) -> bool {
         let mut action_available = false;
-        if let Some(window) = self.active_window() {
-            if let Ok(window_action_available) =
+        if let Some(window) = self.active_window()
+            && let Ok(window_action_available) =
                 window.update(self, |_, window, cx| window.is_action_available(action, cx))
-            {
-                action_available = window_action_available;
-            }
+        {
+            action_available = window_action_available;
         }
 
         action_available
@@ -1606,27 +1605,26 @@ impl App {
                 .insert(action.as_any().type_id(), global_listeners);
         }
 
-        if self.propagate_event {
-            if let Some(mut global_listeners) = self
+        if self.propagate_event
+            && let Some(mut global_listeners) = self
                 .global_action_listeners
                 .remove(&action.as_any().type_id())
-            {
-                for listener in global_listeners.iter().rev() {
-                    listener(action.as_any(), DispatchPhase::Bubble, self);
-                    if !self.propagate_event {
-                        break;
-                    }
+        {
+            for listener in global_listeners.iter().rev() {
+                listener(action.as_any(), DispatchPhase::Bubble, self);
+                if !self.propagate_event {
+                    break;
                 }
-
-                global_listeners.extend(
-                    self.global_action_listeners
-                        .remove(&action.as_any().type_id())
-                        .unwrap_or_default(),
-                );
-
-                self.global_action_listeners
-                    .insert(action.as_any().type_id(), global_listeners);
             }
+
+            global_listeners.extend(
+                self.global_action_listeners
+                    .remove(&action.as_any().type_id())
+                    .unwrap_or_default(),
+            );
+
+            self.global_action_listeners
+                .insert(action.as_any().type_id(), global_listeners);
         }
     }
 
@@ -1709,8 +1707,8 @@ impl App {
             .unwrap_or_else(|| {
                 is_first = true;
                 let future = A::load(source.clone(), self);
-                let task = self.background_executor().spawn(future).shared();
-                task
+
+                self.background_executor().spawn(future).shared()
             });
 
         self.loading_assets.insert(asset_id, Box::new(task.clone()));
@@ -1917,7 +1915,7 @@ impl AppContext for App {
         G: Global,
     {
         let mut g = self.global::<G>();
-        callback(&g, self)
+        callback(g, self)
     }
 }
 

@@ -8015,7 +8015,7 @@ async fn test_select_larger_smaller_syntax_node_for_string(cx: &mut TestAppConte
 }
 
 #[gpui::test]
-async fn test_unwrap_syntax_node(cx: &mut gpui::TestAppContext) {
+async fn test_unwrap_syntax_nodes(cx: &mut gpui::TestAppContext) {
     init_test(cx, |_| {});
 
     let mut cx = EditorTestContext::new(cx).await;
@@ -8029,21 +8029,12 @@ async fn test_unwrap_syntax_node(cx: &mut gpui::TestAppContext) {
         buffer.set_language(Some(language), cx);
     });
 
-    cx.set_state(
-        &r#"
-            use mod1::mod2::{«mod3ˇ», mod4};
-        "#
-        .unindent(),
-    );
+    cx.set_state(indoc! { r#"use mod1::{mod2::{«mod3ˇ», mod4}, mod5::{mod6, «mod7ˇ»}};"# });
     cx.update_editor(|editor, window, cx| {
         editor.unwrap_syntax_node(&UnwrapSyntaxNode, window, cx);
     });
-    cx.assert_editor_state(
-        &r#"
-            use mod1::mod2::«mod3ˇ»;
-        "#
-        .unindent(),
-    );
+
+    cx.assert_editor_state(indoc! { r#"use mod1::{mod2::«mod3ˇ», mod5::«mod7ˇ»};"# });
 }
 
 #[gpui::test]
@@ -8393,7 +8384,7 @@ async fn test_autoindent_disabled_with_nested_language(cx: &mut TestAppContext) 
         buffer.set_language(Some(language), cx);
     });
 
-    cx.set_state(&r#"struct A {ˇ}"#);
+    cx.set_state(r#"struct A {ˇ}"#);
 
     cx.update_editor(|editor, window, cx| {
         editor.newline(&Default::default(), window, cx);
@@ -8405,7 +8396,7 @@ async fn test_autoindent_disabled_with_nested_language(cx: &mut TestAppContext) 
         }"
     ));
 
-    cx.set_state(&r#"select_biased!(ˇ)"#);
+    cx.set_state(r#"select_biased!(ˇ)"#);
 
     cx.update_editor(|editor, window, cx| {
         editor.newline(&Default::default(), window, cx);
@@ -12319,7 +12310,7 @@ async fn test_completion_with_mode_specified_by_action(cx: &mut TestAppContext) 
     let counter = Arc::new(AtomicUsize::new(0));
     handle_completion_request_with_insert_and_replace(
         &mut cx,
-        &buffer_marked_text,
+        buffer_marked_text,
         vec![(completion_text, completion_text)],
         counter.clone(),
     )
@@ -12333,7 +12324,7 @@ async fn test_completion_with_mode_specified_by_action(cx: &mut TestAppContext) 
             .confirm_completion_replace(&ConfirmCompletionReplace, window, cx)
             .unwrap()
     });
-    cx.assert_editor_state(&expected_with_replace_mode);
+    cx.assert_editor_state(expected_with_replace_mode);
     handle_resolve_completion_request(&mut cx, None).await;
     apply_additional_edits.await.unwrap();
 
@@ -12353,7 +12344,7 @@ async fn test_completion_with_mode_specified_by_action(cx: &mut TestAppContext) 
     });
     handle_completion_request_with_insert_and_replace(
         &mut cx,
-        &buffer_marked_text,
+        buffer_marked_text,
         vec![(completion_text, completion_text)],
         counter.clone(),
     )
@@ -12367,7 +12358,7 @@ async fn test_completion_with_mode_specified_by_action(cx: &mut TestAppContext) 
             .confirm_completion_insert(&ConfirmCompletionInsert, window, cx)
             .unwrap()
     });
-    cx.assert_editor_state(&expected_with_insert_mode);
+    cx.assert_editor_state(expected_with_insert_mode);
     handle_resolve_completion_request(&mut cx, None).await;
     apply_additional_edits.await.unwrap();
 }
@@ -13141,7 +13132,7 @@ async fn test_word_completion(cx: &mut TestAppContext) {
         if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu.borrow_mut().as_ref()
         {
             assert_eq!(
-                completion_menu_entries(&menu),
+                completion_menu_entries(menu),
                 &["first", "last"],
                 "When LSP server is fast to reply, no fallback word completions are used"
             );
@@ -13164,7 +13155,7 @@ async fn test_word_completion(cx: &mut TestAppContext) {
     cx.update_editor(|editor, _, _| {
         if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu.borrow_mut().as_ref()
         {
-            assert_eq!(completion_menu_entries(&menu), &["one", "three", "two"],
+            assert_eq!(completion_menu_entries(menu), &["one", "three", "two"],
                 "When LSP server is slow, document words can be shown instead, if configured accordingly");
         } else {
             panic!("expected completion menu to be open");
@@ -13225,7 +13216,7 @@ async fn test_word_completions_do_not_duplicate_lsp_ones(cx: &mut TestAppContext
         if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu.borrow_mut().as_ref()
         {
             assert_eq!(
-                completion_menu_entries(&menu),
+                completion_menu_entries(menu),
                 &["first", "last", "second"],
                 "Word completions that has the same edit as the any of the LSP ones, should not be proposed"
             );
@@ -13281,7 +13272,7 @@ async fn test_word_completions_continue_on_typing(cx: &mut TestAppContext) {
         if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu.borrow_mut().as_ref()
         {
             assert_eq!(
-                completion_menu_entries(&menu),
+                completion_menu_entries(menu),
                 &["first", "last", "second"],
                 "`ShowWordCompletions` action should show word completions"
             );
@@ -13298,7 +13289,7 @@ async fn test_word_completions_continue_on_typing(cx: &mut TestAppContext) {
         if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu.borrow_mut().as_ref()
         {
             assert_eq!(
-                completion_menu_entries(&menu),
+                completion_menu_entries(menu),
                 &["last"],
                 "After showing word completions, further editing should filter them and not query the LSP"
             );
@@ -13337,7 +13328,7 @@ async fn test_word_completions_usually_skip_digits(cx: &mut TestAppContext) {
         if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu.borrow_mut().as_ref()
         {
             assert_eq!(
-                completion_menu_entries(&menu),
+                completion_menu_entries(menu),
                 &["let"],
                 "With no digits in the completion query, no digits should be in the word completions"
             );
@@ -13362,7 +13353,7 @@ async fn test_word_completions_usually_skip_digits(cx: &mut TestAppContext) {
     cx.update_editor(|editor, _, _| {
         if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu.borrow_mut().as_ref()
         {
-            assert_eq!(completion_menu_entries(&menu), &["33", "35f32"], "The digit is in the completion query, \
+            assert_eq!(completion_menu_entries(menu), &["33", "35f32"], "The digit is in the completion query, \
                 return matching words with digits (`33`, `35f32`) but exclude query duplicates (`3`)");
         } else {
             panic!("expected completion menu to be open");
@@ -13599,7 +13590,7 @@ async fn test_completion_page_up_down_keys(cx: &mut TestAppContext) {
     cx.update_editor(|editor, _, _| {
         if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu.borrow_mut().as_ref()
         {
-            assert_eq!(completion_menu_entries(&menu), &["first", "last"]);
+            assert_eq!(completion_menu_entries(menu), &["first", "last"]);
         } else {
             panic!("expected completion menu to be open");
         }
@@ -16702,7 +16693,7 @@ async fn test_completions_in_languages_with_extra_word_characters(cx: &mut TestA
         if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu.borrow_mut().as_ref()
         {
             assert_eq!(
-                completion_menu_entries(&menu),
+                completion_menu_entries(menu),
                 &["bg-blue", "bg-red", "bg-yellow"]
             );
         } else {
@@ -16715,7 +16706,7 @@ async fn test_completions_in_languages_with_extra_word_characters(cx: &mut TestA
     cx.update_editor(|editor, _, _| {
         if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu.borrow_mut().as_ref()
         {
-            assert_eq!(completion_menu_entries(&menu), &["bg-blue", "bg-yellow"]);
+            assert_eq!(completion_menu_entries(menu), &["bg-blue", "bg-yellow"]);
         } else {
             panic!("expected completion menu to be open");
         }
@@ -16729,7 +16720,7 @@ async fn test_completions_in_languages_with_extra_word_characters(cx: &mut TestA
     cx.update_editor(|editor, _, _| {
         if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu.borrow_mut().as_ref()
         {
-            assert_eq!(completion_menu_entries(&menu), &["bg-yellow"]);
+            assert_eq!(completion_menu_entries(menu), &["bg-yellow"]);
         } else {
             panic!("expected completion menu to be open");
         }
@@ -17298,7 +17289,7 @@ async fn test_multibuffer_reverts(cx: &mut TestAppContext) {
             (buffer_2.clone(), base_text_2),
             (buffer_3.clone(), base_text_3),
         ] {
-            let diff = cx.new(|cx| BufferDiff::new_with_base_text(&diff_base, &buffer, cx));
+            let diff = cx.new(|cx| BufferDiff::new_with_base_text(diff_base, &buffer, cx));
             editor
                 .buffer
                 .update(cx, |buffer, cx| buffer.add_diff(diff, cx));
@@ -17919,7 +17910,7 @@ async fn test_toggle_diff_expand_in_multi_buffer(cx: &mut TestAppContext) {
                 (buffer_2.clone(), file_2_old),
                 (buffer_3.clone(), file_3_old),
             ] {
-                let diff = cx.new(|cx| BufferDiff::new_with_base_text(&diff_base, &buffer, cx));
+                let diff = cx.new(|cx| BufferDiff::new_with_base_text(diff_base, &buffer, cx));
                 editor
                     .buffer
                     .update(cx, |buffer, cx| buffer.add_diff(diff, cx));
@@ -21024,7 +21015,7 @@ async fn assert_highlighted_edits(
 
     cx.update(|_window, cx| {
         let highlighted_edits = edit_prediction_edit_text(
-            &snapshot.as_singleton().unwrap().2,
+            snapshot.as_singleton().unwrap().2,
             &edits,
             &edit_preview,
             include_deletions,
@@ -21046,7 +21037,7 @@ fn assert_breakpoint(
         let mut breakpoint = breakpoints
             .get(path)
             .unwrap()
-            .into_iter()
+            .iter()
             .map(|breakpoint| {
                 (
                     breakpoint.row,
@@ -21091,7 +21082,7 @@ fn add_log_breakpoint_at_cursor(
                 .buffer_snapshot
                 .anchor_before(Point::new(cursor_position.row, 0));
 
-            (breakpoint_position, Breakpoint::new_log(&log_message))
+            (breakpoint_position, Breakpoint::new_log(log_message))
         });
 
     editor.edit_breakpoint_at_anchor(
@@ -23631,7 +23622,7 @@ pub fn handle_completion_request(
                     complete_from_position
                 );
                 Ok(Some(lsp::CompletionResponse::List(lsp::CompletionList {
-                    is_incomplete: is_incomplete,
+                    is_incomplete,
                     item_defaults: None,
                     items: completions
                         .iter()

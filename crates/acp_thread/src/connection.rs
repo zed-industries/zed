@@ -3,12 +3,14 @@ use agent_client_protocol::{self as acp};
 use anyhow::Result;
 use collections::IndexMap;
 use gpui::{Entity, SharedString, Task};
+use language_model::LanguageModelProviderId;
 use project::Project;
+use serde::{Deserialize, Serialize};
 use std::{any::Any, error::Error, fmt, path::Path, rc::Rc, sync::Arc};
 use ui::{App, IconName};
 use uuid::Uuid;
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Hash)]
 pub struct UserMessageId(Arc<str>);
 
 impl UserMessageId {
@@ -80,12 +82,34 @@ pub trait AgentSessionResume {
 }
 
 #[derive(Debug)]
-pub struct AuthRequired;
+pub struct AuthRequired {
+    pub description: Option<String>,
+    pub provider_id: Option<LanguageModelProviderId>,
+}
+
+impl AuthRequired {
+    pub fn new() -> Self {
+        Self {
+            description: None,
+            provider_id: None,
+        }
+    }
+
+    pub fn with_description(mut self, description: String) -> Self {
+        self.description = Some(description);
+        self
+    }
+
+    pub fn with_language_model_provider(mut self, provider_id: LanguageModelProviderId) -> Self {
+        self.provider_id = Some(provider_id);
+        self
+    }
+}
 
 impl Error for AuthRequired {}
 impl fmt::Display for AuthRequired {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "AuthRequired")
+        write!(f, "Authentication required")
     }
 }
 
@@ -185,8 +209,9 @@ impl AgentModelList {
 mod test_support {
     use std::sync::Arc;
 
+    use action_log::ActionLog;
     use collections::HashMap;
-    use futures::future::try_join_all;
+    use futures::{channel::oneshot, future::try_join_all};
     use gpui::{AppContext as _, WeakEntity};
     use parking_lot::Mutex;
 
@@ -194,9 +219,14 @@ mod test_support {
 
     #[derive(Clone, Default)]
     pub struct StubAgentConnection {
-        sessions: Arc<Mutex<HashMap<acp::SessionId, WeakEntity<AcpThread>>>>,
+        sessions: Arc<Mutex<HashMap<acp::SessionId, Session>>>,
         permission_requests: HashMap<acp::ToolCallId, Vec<acp::PermissionOption>>,
         next_prompt_updates: Arc<Mutex<Vec<acp::SessionUpdate>>>,
+    }
+
+    struct Session {
+        thread: WeakEntity<AcpThread>,
+        response_tx: Option<oneshot::Sender<acp::StopReason>>,
     }
 
     impl StubAgentConnection {
@@ -226,13 +256,31 @@ mod test_support {
             update: acp::SessionUpdate,
             cx: &mut App,
         ) {
+            assert!(
+                self.next_prompt_updates.lock().is_empty(),
+                "Use either send_update or set_next_prompt_updates"
+            );
+
             self.sessions
                 .lock()
                 .get(&session_id)
                 .unwrap()
+                .thread
                 .update(cx, |thread, cx| {
-                    thread.handle_session_update(update.clone(), cx).unwrap();
+                    thread.handle_session_update(update, cx).unwrap();
                 })
+                .unwrap();
+        }
+
+        pub fn end_turn(&self, session_id: acp::SessionId, stop_reason: acp::StopReason) {
+            self.sessions
+                .lock()
+                .get_mut(&session_id)
+                .unwrap()
+                .response_tx
+                .take()
+                .expect("No pending turn")
+                .send(stop_reason)
                 .unwrap();
         }
     }
@@ -249,9 +297,23 @@ mod test_support {
             cx: &mut gpui::App,
         ) -> Task<gpui::Result<Entity<AcpThread>>> {
             let session_id = acp::SessionId(self.sessions.lock().len().to_string().into());
-            let thread =
-                cx.new(|cx| AcpThread::new("Test", self.clone(), project, session_id.clone(), cx));
-            self.sessions.lock().insert(session_id, thread.downgrade());
+            let action_log = cx.new(|_| ActionLog::new(project.clone()));
+            let thread = cx.new(|_cx| {
+                AcpThread::new(
+                    "Test",
+                    self.clone(),
+                    project,
+                    action_log,
+                    session_id.clone(),
+                )
+            });
+            self.sessions.lock().insert(
+                session_id,
+                Session {
+                    thread: thread.downgrade(),
+                    response_tx: None,
+                },
+            );
             Task::ready(Ok(thread))
         }
 
@@ -269,47 +331,70 @@ mod test_support {
             params: acp::PromptRequest,
             cx: &mut App,
         ) -> Task<gpui::Result<acp::PromptResponse>> {
-            let sessions = self.sessions.lock();
-            let thread = sessions.get(&params.session_id).unwrap();
+            let mut sessions = self.sessions.lock();
+            let Session {
+                thread,
+                response_tx,
+            } = sessions.get_mut(&params.session_id).unwrap();
             let mut tasks = vec![];
-            for update in self.next_prompt_updates.lock().drain(..) {
-                let thread = thread.clone();
-                let update = update.clone();
-                let permission_request = if let acp::SessionUpdate::ToolCall(tool_call) = &update
-                    && let Some(options) = self.permission_requests.get(&tool_call.id)
-                {
-                    Some((tool_call.clone(), options.clone()))
-                } else {
-                    None
-                };
-                let task = cx.spawn(async move |cx| {
-                    if let Some((tool_call, options)) = permission_request {
-                        let permission = thread.update(cx, |thread, cx| {
-                            thread.request_tool_call_authorization(
-                                tool_call.clone().into(),
-                                options.clone(),
-                                cx,
-                            )
-                        })?;
-                        permission?.await?;
-                    }
-                    thread.update(cx, |thread, cx| {
-                        thread.handle_session_update(update.clone(), cx).unwrap();
-                    })?;
-                    anyhow::Ok(())
-                });
-                tasks.push(task);
-            }
-            cx.spawn(async move |_| {
-                try_join_all(tasks).await?;
-                Ok(acp::PromptResponse {
-                    stop_reason: acp::StopReason::EndTurn,
+            if self.next_prompt_updates.lock().is_empty() {
+                let (tx, rx) = oneshot::channel();
+                response_tx.replace(tx);
+                cx.spawn(async move |_| {
+                    let stop_reason = rx.await?;
+                    Ok(acp::PromptResponse { stop_reason })
                 })
-            })
+            } else {
+                for update in self.next_prompt_updates.lock().drain(..) {
+                    let thread = thread.clone();
+                    let update = update.clone();
+                    let permission_request = if let acp::SessionUpdate::ToolCall(tool_call) =
+                        &update
+                        && let Some(options) = self.permission_requests.get(&tool_call.id)
+                    {
+                        Some((tool_call.clone(), options.clone()))
+                    } else {
+                        None
+                    };
+                    let task = cx.spawn(async move |cx| {
+                        if let Some((tool_call, options)) = permission_request {
+                            let permission = thread.update(cx, |thread, cx| {
+                                thread.request_tool_call_authorization(
+                                    tool_call.clone().into(),
+                                    options.clone(),
+                                    cx,
+                                )
+                            })?;
+                            permission?.await?;
+                        }
+                        thread.update(cx, |thread, cx| {
+                            thread.handle_session_update(update.clone(), cx).unwrap();
+                        })?;
+                        anyhow::Ok(())
+                    });
+                    tasks.push(task);
+                }
+
+                cx.spawn(async move |_| {
+                    try_join_all(tasks).await?;
+                    Ok(acp::PromptResponse {
+                        stop_reason: acp::StopReason::EndTurn,
+                    })
+                })
+            }
         }
 
-        fn cancel(&self, _session_id: &acp::SessionId, _cx: &mut App) {
-            unimplemented!()
+        fn cancel(&self, session_id: &acp::SessionId, _cx: &mut App) {
+            if let Some(end_turn_tx) = self
+                .sessions
+                .lock()
+                .get_mut(session_id)
+                .unwrap()
+                .response_tx
+                .take()
+            {
+                end_turn_tx.send(acp::StopReason::Canceled).unwrap();
+            }
         }
 
         fn session_editor(
