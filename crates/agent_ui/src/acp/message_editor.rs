@@ -51,7 +51,10 @@ use ui::{
 };
 use url::Url;
 use util::ResultExt;
-use workspace::{Workspace, notifications::NotifyResultExt as _};
+use workspace::{
+    Toast, Workspace,
+    notifications::{NotificationId, NotifyResultExt as _},
+};
 use zed_actions::agent::Chat;
 
 const PARSE_SLASH_COMMAND_DEBOUNCE: Duration = Duration::from_millis(50);
@@ -64,6 +67,7 @@ pub struct MessageEditor {
     history_store: Entity<HistoryStore>,
     prompt_store: Option<Entity<PromptStore>>,
     prevent_slash_commands: bool,
+    prompt_capabilities: Rc<Cell<acp::PromptCapabilities>>,
     _subscriptions: Vec<Subscription>,
     _parse_slash_command_task: Task<()>,
 }
@@ -96,11 +100,13 @@ impl MessageEditor {
             },
             None,
         );
+        let prompt_capabilities = Rc::new(Cell::new(acp::PromptCapabilities::default()));
         let completion_provider = ContextPickerCompletionProvider::new(
             cx.weak_entity(),
             workspace.clone(),
             history_store.clone(),
             prompt_store.clone(),
+            prompt_capabilities.clone(),
         );
         let semantics_provider = Rc::new(SlashCommandSemanticsProvider {
             range: Cell::new(None),
@@ -158,6 +164,7 @@ impl MessageEditor {
             history_store,
             prompt_store,
             prevent_slash_commands,
+            prompt_capabilities,
             _subscriptions: subscriptions,
             _parse_slash_command_task: Task::ready(()),
         }
@@ -191,6 +198,10 @@ impl MessageEditor {
             cx,
         )
         .detach();
+    }
+
+    pub fn set_prompt_capabilities(&mut self, capabilities: acp::PromptCapabilities) {
+        self.prompt_capabilities.set(capabilities);
     }
 
     #[cfg(test)]
@@ -230,7 +241,7 @@ impl MessageEditor {
         let Some((excerpt_id, _, _)) = snapshot.buffer_snapshot.as_singleton() else {
             return Task::ready(());
         };
-        let Some(anchor) = snapshot
+        let Some(start_anchor) = snapshot
             .buffer_snapshot
             .anchor_in_excerpt(*excerpt_id, start)
         else {
@@ -244,6 +255,33 @@ impl MessageEditor {
                 .unwrap_or_default();
 
             if Img::extensions().contains(&extension) && !extension.contains("svg") {
+                if !self.prompt_capabilities.get().image {
+                    struct ImagesNotAllowed;
+
+                    let end_anchor = snapshot.buffer_snapshot.anchor_before(
+                        start_anchor.to_offset(&snapshot.buffer_snapshot) + content_len + 1,
+                    );
+
+                    self.editor.update(cx, |editor, cx| {
+                        // Remove mention
+                        editor.edit([((start_anchor..end_anchor), "")], cx);
+                    });
+
+                    self.workspace
+                        .update(cx, |workspace, cx| {
+                            workspace.show_toast(
+                                Toast::new(
+                                    NotificationId::unique::<ImagesNotAllowed>(),
+                                    "This agent does not support images yet",
+                                )
+                                .autohide(),
+                                cx,
+                            );
+                        })
+                        .ok();
+                    return Task::ready(());
+                }
+
                 let project = self.project.clone();
                 let Some(project_path) = project
                     .read(cx)
@@ -277,7 +315,7 @@ impl MessageEditor {
                 };
                 return self.confirm_mention_for_image(
                     crease_id,
-                    anchor,
+                    start_anchor,
                     Some(abs_path.clone()),
                     image,
                     window,
@@ -301,17 +339,22 @@ impl MessageEditor {
 
         match mention_uri {
             MentionUri::Fetch { url } => {
-                self.confirm_mention_for_fetch(crease_id, anchor, url, window, cx)
+                self.confirm_mention_for_fetch(crease_id, start_anchor, url, window, cx)
             }
             MentionUri::Directory { abs_path } => {
-                self.confirm_mention_for_directory(crease_id, anchor, abs_path, window, cx)
+                self.confirm_mention_for_directory(crease_id, start_anchor, abs_path, window, cx)
             }
             MentionUri::Thread { id, name } => {
-                self.confirm_mention_for_thread(crease_id, anchor, id, name, window, cx)
+                self.confirm_mention_for_thread(crease_id, start_anchor, id, name, window, cx)
             }
-            MentionUri::TextThread { path, name } => {
-                self.confirm_mention_for_text_thread(crease_id, anchor, path, name, window, cx)
-            }
+            MentionUri::TextThread { path, name } => self.confirm_mention_for_text_thread(
+                crease_id,
+                start_anchor,
+                path,
+                name,
+                window,
+                cx,
+            ),
             MentionUri::File { .. }
             | MentionUri::Symbol { .. }
             | MentionUri::Rule { .. }
@@ -778,6 +821,10 @@ impl MessageEditor {
     }
 
     fn paste(&mut self, _: &Paste, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.prompt_capabilities.get().image {
+            return;
+        }
+
         let images = cx
             .read_from_clipboard()
             .map(|item| {
@@ -2007,6 +2054,34 @@ mod tests {
             message_editor.read(cx).focus_handle(cx).focus(window);
             let editor = message_editor.read(cx).editor().clone();
             (message_editor, editor)
+        });
+
+        cx.simulate_input("Lorem @");
+
+        editor.update_in(&mut cx, |editor, window, cx| {
+            assert_eq!(editor.text(cx), "Lorem @");
+            assert!(editor.has_visible_completions_menu());
+
+            // Only files since we have default capabilities
+            assert_eq!(
+                current_completion_labels(editor),
+                &[
+                    "eight.txt dir/b/",
+                    "seven.txt dir/b/",
+                    "six.txt dir/b/",
+                    "five.txt dir/b/",
+                ]
+            );
+            editor.set_text("", window, cx);
+        });
+
+        message_editor.update(&mut cx, |editor, _cx| {
+            // Enable all prompt capabilities
+            editor.set_prompt_capabilities(acp::PromptCapabilities {
+                image: true,
+                audio: true,
+                embedded_context: true,
+            });
         });
 
         cx.simulate_input("Lorem ");

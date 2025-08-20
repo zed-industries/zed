@@ -21,6 +21,7 @@ pub struct AcpConnection {
     connection: Rc<acp::ClientSideConnection>,
     sessions: Rc<RefCell<HashMap<acp::SessionId, AcpSession>>>,
     auth_methods: Vec<acp::AuthMethod>,
+    prompt_capabilities: acp::PromptCapabilities,
     _io_task: Task<Result<()>>,
 }
 
@@ -119,6 +120,7 @@ impl AcpConnection {
             connection: connection.into(),
             server_name,
             sessions,
+            prompt_capabilities: response.agent_capabilities.prompt_capabilities,
             _io_task: io_task,
         })
     }
@@ -204,6 +206,10 @@ impl AgentConnection for AcpConnection {
             let response = conn.prompt(params).await?;
             Ok(response)
         })
+    }
+
+    fn prompt_capabilities(&self) -> acp::PromptCapabilities {
+        self.prompt_capabilities
     }
 
     fn cancel(&self, session_id: &acp::SessionId, cx: &mut App) {
