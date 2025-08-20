@@ -239,6 +239,7 @@ dependencies = [
  "smol",
  "sqlez",
  "task",
+ "telemetry",
  "tempfile",
  "terminal",
  "text",

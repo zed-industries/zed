@@ -1195,6 +1195,15 @@ impl Thread {
 
         let mut attempt = None;
         'retry: loop {
+            telemetry::event!(
+                "Agent Thread Completion",
+                thread_id = this.read_with(cx, |this, _| this.id.to_string())?,
+                prompt_id = this.read_with(cx, |this, _| this.prompt_id.to_string())?,
+                model = model.telemetry_id(),
+                model_provider = model.provider_id().to_string(),
+                attempt
+            );
+
             let mut events = model.stream_completion(request.clone(), cx).await?;
             let mut tool_uses = FuturesUnordered::new();
             while let Some(event) = events.next().await {
@@ -1211,8 +1220,21 @@ impl Thread {
                             this.update_model_request_usage(amount, limit, cx)
                         })?;
                     }
-                    Ok(LanguageModelCompletionEvent::UsageUpdate(token_usage)) => {
-                        this.update(cx, |this, cx| this.update_token_usage(token_usage, cx))?;
+                    Ok(LanguageModelCompletionEvent::UsageUpdate(usage)) => {
+                        telemetry::event!(
+                            "Agent Thread Completion Usage Updated",
+                            thread_id = this.read_with(cx, |this, _| this.id.to_string())?,
+                            prompt_id = this.read_with(cx, |this, _| this.prompt_id.to_string())?,
+                            model = model.telemetry_id(),
+                            model_provider = model.provider_id().to_string(),
+                            attempt,
+                            input_tokens = usage.input_tokens,
+                            output_tokens = usage.output_tokens,
+                            cache_creation_input_tokens = usage.cache_creation_input_tokens,
+                            cache_read_input_tokens = usage.cache_read_input_tokens,
+                        );
+
+                        this.update(cx, |this, cx| this.update_token_usage(usage, cx))?;
                     }
                     Ok(LanguageModelCompletionEvent::Stop(StopReason::Refusal)) => {
                         *refusal = true;
