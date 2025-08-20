@@ -269,7 +269,7 @@ impl ThreadsDatabase {
         .map_err(|e| anyhow!("Failed to create threads table: {}", e))?;
 
         let db = Self {
-            executor: executor.clone(),
+            executor,
             connection: Arc::new(Mutex::new(connection)),
         };
 
@@ -307,7 +307,7 @@ impl ThreadsDatabase {
             INSERT OR REPLACE INTO threads (id, summary, updated_at, data_type, data) VALUES (?, ?, ?, ?, ?)
         "})?;
 
-        insert((id.0.clone(), title, updated_at, data_type, data))?;
+        insert((id.0, title, updated_at, data_type, data))?;
 
         Ok(())
     }
@@ -416,7 +416,7 @@ mod tests {
             let client = Client::new(clock, http_client, cx);
             agent::init(cx);
             agent_settings::init(cx);
-            language_model::init(client.clone(), cx);
+            language_model::init(client, cx);
         });
     }
 

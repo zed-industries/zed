@@ -370,8 +370,8 @@ impl TestServer {
         let client = TestClient {
             app_state,
             username: name.to_string(),
-            channel_store: cx.read(ChannelStore::global).clone(),
-            notification_store: cx.read(NotificationStore::global).clone(),
+            channel_store: cx.read(ChannelStore::global),
+            notification_store: cx.read(NotificationStore::global),
             state: Default::default(),
         };
         client.wait_for_current_user(cx).await;

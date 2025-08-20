@@ -620,7 +620,7 @@ mod tests {
         ]);
         let order = vec![2, 0, 1];
         let serialized =
-            SerializedWorkspaceLocation::Local(LocalPaths(paths.clone()), LocalPathsOrder(order));
+            SerializedWorkspaceLocation::Local(LocalPaths(paths), LocalPathsOrder(order));
         assert_eq!(
             serialized.sorted_paths(),
             Arc::new(vec![

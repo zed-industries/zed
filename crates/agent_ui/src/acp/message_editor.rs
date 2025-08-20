@@ -269,7 +269,7 @@ impl MessageEditor {
             *excerpt_id,
             start,
             content_len,
-            crease_text.clone(),
+            crease_text,
             mention_uri.icon_path(cx),
             self.editor.clone(),
             window,
@@ -881,7 +881,7 @@ impl MessageEditor {
             .spawn_in(window, {
                 let abs_path = abs_path.clone();
                 async move |_, cx| {
-                    let image = image.await.map_err(|e| e.to_string())?;
+                    let image = image.await?;
                     let format = image.format;
                     let image = cx
                         .update(|_, cx| LanguageModelImage::from_image(image, cx))
@@ -1229,7 +1229,6 @@ fn render_image_fold_icon_button(
     editor: WeakEntity<Editor>,
 ) -> Arc<dyn Send + Sync + Fn(FoldId, Range<Anchor>, &mut App) -> AnyElement> {
     Arc::new({
-        let image_task = image_task.clone();
         move |fold_id, fold_range, cx| {
             let is_in_text_selection = editor
                 .update(cx, |editor, cx| editor.is_range_selected(&fold_range, cx))
@@ -1402,10 +1401,7 @@ impl MentionSet {
                                 crease_id,
                                 Mention::Text {
                                     uri,
-                                    content: content
-                                        .await
-                                        .map_err(|e| anyhow::anyhow!("{e}"))?
-                                        .to_string(),
+                                    content: content.await.map_err(|e| anyhow::anyhow!("{e}"))?,
                                 },
                             ))
                         })
@@ -1472,10 +1468,7 @@ impl MentionSet {
                                 crease_id,
                                 Mention::Text {
                                     uri,
-                                    content: content
-                                        .await
-                                        .map_err(|e| anyhow::anyhow!("{e}"))?
-                                        .to_string(),
+                                    content: content.await.map_err(|e| anyhow::anyhow!("{e}"))?,
                                 },
                             ))
                         })
@@ -1790,7 +1783,7 @@ mod tests {
 
     impl Focusable for MessageEditorItem {
         fn focus_handle(&self, cx: &App) -> FocusHandle {
-            self.0.read(cx).focus_handle(cx).clone()
+            self.0.read(cx).focus_handle(cx)
         }
     }
 
@@ -2194,7 +2187,7 @@ mod tests {
         let completions = editor.current_completions().expect("Missing completions");
         completions
             .into_iter()
-            .map(|completion| completion.label.text.to_string())
+            .map(|completion| completion.label.text)
             .collect::<Vec<_>>()
     }
 }

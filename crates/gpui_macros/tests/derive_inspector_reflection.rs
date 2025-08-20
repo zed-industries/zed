@@ -106,9 +106,7 @@ fn test_derive_inspector_reflection() {
         .invoke(num.clone());
     assert_eq!(incremented, Number(6));
 
-    let quadrupled = find_method::<Number>("quadruple")
-        .unwrap()
-        .invoke(num.clone());
+    let quadrupled = find_method::<Number>("quadruple").unwrap().invoke(num);
     assert_eq!(quadrupled, Number(20));
 
     // Try to invoke a non-existent method

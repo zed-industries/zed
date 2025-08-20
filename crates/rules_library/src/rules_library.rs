@@ -418,7 +418,7 @@ impl RulesLibrary {
             } else {
                 None
             },
-            store: store.clone(),
+            store,
             language_registry,
             rule_editors: HashMap::default(),
             active_rule_id: None,
@@ -1136,7 +1136,7 @@ impl RulesLibrary {
                                                 .child(
                                                     Label::new(format!(
                                                         "{} tokens",
-                                                        label_token_count.clone()
+                                                        label_token_count
                                                     ))
                                                     .color(Color::Muted),
                                                 )

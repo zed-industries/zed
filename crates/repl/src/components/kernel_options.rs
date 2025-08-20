@@ -187,7 +187,7 @@ impl PickerDelegate for KernelPickerDelegate {
                                                     .size(LabelSize::Default),
                                             ),
                                         )
-                                        .when_some(path_or_url.clone(), |flex, path| {
+                                        .when_some(path_or_url, |flex, path| {
                                             flex.text_ellipsis().child(
                                                 Label::new(path)
                                                     .size(LabelSize::Small)

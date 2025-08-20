@@ -829,6 +829,7 @@ iter_nth_zero = "warn"
 iter_skip_next = "warn"
 module_inception = { level = "deny" }
 question_mark = { level = "deny" }
+redundant_clone = "warn"
 redundant_closure = { level = "deny" }
 declare_interior_mutable_const = { level = "deny" }
 collapsible_if = { level = "warn"}

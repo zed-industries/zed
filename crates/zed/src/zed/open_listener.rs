@@ -102,11 +102,8 @@ impl OpenRequest {
             self.open_paths.is_empty(),
             "cannot open both local and ssh paths"
         );
-        let mut connection_options = SshSettings::get_global(cx).connection_options_for(
-            host.clone(),
-            port,
-            username.clone(),
-        );
+        let mut connection_options =
+            SshSettings::get_global(cx).connection_options_for(host, port, username);
         if let Some(password) = url.password() {
             connection_options.password = Some(password.to_string());
         }

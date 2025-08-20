@@ -2739,7 +2739,7 @@ impl GetCodeActions {
             Some(lsp::CodeActionProviderCapability::Options(CodeActionOptions {
                 code_action_kinds: Some(supported_action_kinds),
                 ..
-            })) => Some(supported_action_kinds.clone()),
+            })) => Some(supported_action_kinds),
             _ => capabilities.code_action_kinds,
         }
     }
@@ -3793,7 +3793,7 @@ impl GetDocumentDiagnostics {
                         },
                         uri: lsp::Url::parse(&info.location_url.unwrap()).unwrap(),
                     },
-                    message: info.message.clone(),
+                    message: info.message,
                 }
             })
             .collect::<Vec<_>>();
@@ -4491,9 +4491,8 @@ mod tests {
             data: Some(json!({"detail": "test detail"})),
         };
 
-        let proto_diagnostic =
-            GetDocumentDiagnostics::serialize_lsp_diagnostic(lsp_diagnostic.clone())
-                .expect("Failed to serialize diagnostic");
+        let proto_diagnostic = GetDocumentDiagnostics::serialize_lsp_diagnostic(lsp_diagnostic)
+            .expect("Failed to serialize diagnostic");
 
         let start = proto_diagnostic.start.unwrap();
         let end = proto_diagnostic.end.unwrap();

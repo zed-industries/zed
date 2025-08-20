@@ -167,7 +167,6 @@ impl ToolchainSelectorDelegate {
         cx: &mut Context<Picker<Self>>,
     ) -> Self {
         let _fetch_candidates_task = cx.spawn_in(window, {
-            let project = project.clone();
             async move |this, cx| {
                 let term = project
                     .read_with(cx, |this, _| {

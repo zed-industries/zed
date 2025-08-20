@@ -299,10 +299,10 @@ impl NeovimConnection {
         if let Some(NeovimData::Get { .. }) = self.data.front() {
             self.data.pop_front();
         };
-        if let Some(NeovimData::ReadRegister { name, value }) = self.data.pop_front() {
-            if name == register {
-                return value;
-            }
+        if let Some(NeovimData::ReadRegister { name, value }) = self.data.pop_front()
+            && name == register
+        {
+            return value;
         }
 
         panic!("operation does not match recorded script. re-record with --features=neovim")

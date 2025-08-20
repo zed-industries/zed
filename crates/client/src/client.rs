@@ -181,7 +181,7 @@ pub fn init(client: &Arc<Client>, cx: &mut App) {
     });
 
     cx.on_action({
-        let client = client.clone();
+        let client = client;
         move |_: &Reconnect, cx| {
             if let Some(client) = client.upgrade() {
                 cx.spawn(async move |cx| {
@@ -791,7 +791,7 @@ impl Client {
             Arc::new(move |subscriber, envelope, client, cx| {
                 let subscriber = subscriber.downcast::<E>().unwrap();
                 let envelope = envelope.into_any().downcast::<TypedEnvelope<M>>().unwrap();
-                handler(subscriber, *envelope, client.clone(), cx).boxed_local()
+                handler(subscriber, *envelope, client, cx).boxed_local()
             }),
         );
         if prev_handler.is_some() {
@@ -2048,10 +2048,7 @@ mod tests {
         assert_eq!(*auth_count.lock(), 1);
         assert_eq!(*dropped_auth_count.lock(), 0);
 
-        let _authenticate = cx.spawn({
-            let client = client.clone();
-            |cx| async move { client.connect(false, &cx).await }
-        });
+        let _authenticate = cx.spawn(|cx| async move { client.connect(false, &cx).await });
         executor.run_until_parked();
         assert_eq!(*auth_count.lock(), 2);
         assert_eq!(*dropped_auth_count.lock(), 1);

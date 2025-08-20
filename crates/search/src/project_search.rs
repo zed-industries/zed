@@ -3716,7 +3716,7 @@ pub mod tests {
                 window
                     .update(cx, |_, _, cx| {
                         search_view.update(cx, |search_view, cx| {
-                            search_view.query_editor.read(cx).text(cx).to_string()
+                            search_view.query_editor.read(cx).text(cx)
                         })
                     })
                     .unwrap()
@@ -3883,7 +3883,6 @@ pub mod tests {
         // Add a project search item to the second pane
         window
             .update(cx, {
-                let search_bar = search_bar.clone();
                 |workspace, window, cx| {
                     assert_eq!(workspace.panes().len(), 2);
                     second_pane.update(cx, |pane, cx| {

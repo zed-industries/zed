@@ -155,7 +155,7 @@ impl TitleBar {
             .gap_1()
             .overflow_x_scroll()
             .when_some(
-                current_user.clone().zip(client.peer_id()).zip(room.clone()),
+                current_user.zip(client.peer_id()).zip(room),
                 |this, ((current_user, peer_id), room)| {
                     let player_colors = cx.theme().players();
                     let room = room.read(cx);

@@ -254,7 +254,7 @@ impl NativeAgent {
                 this.sessions.remove(acp_thread.session_id());
             }),
             cx.observe(&thread_handle, move |this, thread, cx| {
-                this.save_thread(thread.clone(), cx)
+                this.save_thread(thread, cx)
             }),
         ];
 
@@ -481,8 +481,8 @@ impl NativeAgent {
         self.models.refresh_list(cx);
 
         let registry = LanguageModelRegistry::read_global(cx);
-        let default_model = registry.default_model().map(|m| m.model.clone());
-        let summarization_model = registry.thread_summary_model().map(|m| m.model.clone());
+        let default_model = registry.default_model().map(|m| m.model);
+        let summarization_model = registry.thread_summary_model().map(|m| m.model);
 
         for session in self.sessions.values_mut() {
             session.thread.update(cx, |thread, cx| {

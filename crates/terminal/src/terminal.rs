@@ -486,7 +486,7 @@ impl TerminalBuilder {
         //And connect them together
         let event_loop = EventLoop::new(
             term.clone(),
-            ZedListener(events_tx.clone()),
+            ZedListener(events_tx),
             pty,
             pty_options.drain_on_exit,
             false,

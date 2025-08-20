@@ -187,9 +187,7 @@ fn find_mini_delimiters(
     };
 
     // Try to find delimiters in visible range first
-    let ranges = map
-        .buffer_snapshot
-        .bracket_ranges(visible_line_range.clone());
+    let ranges = map.buffer_snapshot.bracket_ranges(visible_line_range);
     if let Some(candidate) = cover_or_next(ranges, display_point, map, Some(&bracket_filter)) {
         return Some(
             DelimiterRange {

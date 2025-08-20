@@ -237,7 +237,7 @@ fn process_content(
             if is_empty {
                 "Command executed successfully.".to_string()
             } else {
-                content.to_string()
+                content
             }
         }
         Some(exit_status) => {

@@ -119,13 +119,7 @@ impl EditorTestContext {
             for excerpt in excerpts.into_iter() {
                 let (text, ranges) = marked_text_ranges(excerpt, false);
                 let buffer = cx.new(|cx| Buffer::local(text, cx));
-                multibuffer.push_excerpts(
-                    buffer,
-                    ranges
-                        .into_iter()
-                        .map(|range| ExcerptRange::new(range.clone())),
-                    cx,
-                );
+                multibuffer.push_excerpts(buffer, ranges.into_iter().map(ExcerptRange::new), cx);
             }
             multibuffer
         });

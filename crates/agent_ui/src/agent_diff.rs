@@ -185,7 +185,7 @@ impl AgentDiffPane {
         let focus_handle = cx.focus_handle();
         let multibuffer = cx.new(|_| MultiBuffer::new(Capability::ReadWrite));
 
-        let project = thread.project(cx).clone();
+        let project = thread.project(cx);
         let editor = cx.new(|cx| {
             let mut editor =
                 Editor::for_multibuffer(multibuffer.clone(), Some(project.clone()), window, cx);
@@ -196,7 +196,7 @@ impl AgentDiffPane {
             editor
         });
 
-        let action_log = thread.action_log(cx).clone();
+        let action_log = thread.action_log(cx);
 
         let mut this = Self {
             _subscriptions: vec![
@@ -1314,7 +1314,7 @@ impl AgentDiff {
                 let entity = cx.new(|_cx| Self::default());
                 let global = AgentDiffGlobal(entity.clone());
                 cx.set_global(global);
-                entity.clone()
+                entity
             })
     }
 
@@ -1336,7 +1336,7 @@ impl AgentDiff {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let action_log = thread.action_log(cx).clone();
+        let action_log = thread.action_log(cx);
 
         let action_log_subscription = cx.observe_in(&action_log, window, {
             let workspace = workspace.clone();
@@ -1546,7 +1546,7 @@ impl AgentDiff {
                 if let Some(editor) = item.downcast::<Editor>()
                     && let Some(buffer) = Self::full_editor_buffer(editor.read(cx), cx)
                 {
-                    self.register_editor(workspace.downgrade(), buffer.clone(), editor, window, cx);
+                    self.register_editor(workspace.downgrade(), buffer, editor, window, cx);
                 }
             }
             _ => {}

@@ -480,7 +480,7 @@ impl Pane {
                 forward_stack: Default::default(),
                 closed_stack: Default::default(),
                 paths_by_item: Default::default(),
-                pane: handle.clone(),
+                pane: handle,
                 next_timestamp,
             }))),
             toolbar: cx.new(|_| Toolbar::new()),
@@ -2516,7 +2516,7 @@ impl Pane {
                 this.handle_external_paths_drop(paths, window, cx)
             }))
             .when_some(item.tab_tooltip_content(cx), |tab, content| match content {
-                TabTooltipContent::Text(text) => tab.tooltip(Tooltip::text(text.clone())),
+                TabTooltipContent::Text(text) => tab.tooltip(Tooltip::text(text)),
                 TabTooltipContent::Custom(element_fn) => {
                     tab.tooltip(move |window, cx| element_fn(window, cx))
                 }

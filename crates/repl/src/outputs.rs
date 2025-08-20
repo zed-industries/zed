@@ -228,26 +228,23 @@ impl Output {
             .child(div().flex_1().children(content))
             .children(match self {
                 Self::Plain { content, .. } => {
-                    Self::render_output_controls(content.clone(), workspace.clone(), window, cx)
+                    Self::render_output_controls(content.clone(), workspace, window, cx)
                 }
                 Self::Markdown { content, .. } => {
-                    Self::render_output_controls(content.clone(), workspace.clone(), window, cx)
+                    Self::render_output_controls(content.clone(), workspace, window, cx)
                 }
                 Self::Stream { content, .. } => {
-                    Self::render_output_controls(content.clone(), workspace.clone(), window, cx)
+                    Self::render_output_controls(content.clone(), workspace, window, cx)
                 }
                 Self::Image { content, .. } => {
-                    Self::render_output_controls(content.clone(), workspace.clone(), window, cx)
+                    Self::render_output_controls(content.clone(), workspace, window, cx)
                 }
-                Self::ErrorOutput(err) => Self::render_output_controls(
-                    err.traceback.clone(),
-                    workspace.clone(),
-                    window,
-                    cx,
-                ),
+                Self::ErrorOutput(err) => {
+                    Self::render_output_controls(err.traceback.clone(), workspace, window, cx)
+                }
                 Self::Message(_) => None,
                 Self::Table { content, .. } => {
-                    Self::render_output_controls(content.clone(), workspace.clone(), window, cx)
+                    Self::render_output_controls(content.clone(), workspace, window, cx)
                 }
                 Self::ClearOutputWaitMarker => None,
             })

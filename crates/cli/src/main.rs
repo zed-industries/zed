@@ -926,7 +926,7 @@ mod mac_os {
 
         fn path(&self) -> PathBuf {
             match self {
-                Bundle::App { app_bundle, .. } => app_bundle.join("Contents/MacOS/zed").clone(),
+                Bundle::App { app_bundle, .. } => app_bundle.join("Contents/MacOS/zed"),
                 Bundle::LocalPath { executable, .. } => executable.clone(),
             }
         }

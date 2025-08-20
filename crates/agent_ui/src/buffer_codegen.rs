@@ -1129,7 +1129,7 @@ mod tests {
             )
         });
 
-        let chunks_tx = simulate_response_stream(codegen.clone(), cx);
+        let chunks_tx = simulate_response_stream(codegen, cx);
 
         let mut new_text = concat!(
             "       let mut x = 0;\n",
@@ -1196,7 +1196,7 @@ mod tests {
             )
         });
 
-        let chunks_tx = simulate_response_stream(codegen.clone(), cx);
+        let chunks_tx = simulate_response_stream(codegen, cx);
 
         cx.background_executor.run_until_parked();
 
@@ -1265,7 +1265,7 @@ mod tests {
             )
         });
 
-        let chunks_tx = simulate_response_stream(codegen.clone(), cx);
+        let chunks_tx = simulate_response_stream(codegen, cx);
 
         cx.background_executor.run_until_parked();
 
@@ -1334,7 +1334,7 @@ mod tests {
             )
         });
 
-        let chunks_tx = simulate_response_stream(codegen.clone(), cx);
+        let chunks_tx = simulate_response_stream(codegen, cx);
         let new_text = concat!(
             "func main() {\n",
             "\tx := 0\n",

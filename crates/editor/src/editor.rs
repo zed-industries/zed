@@ -4537,7 +4537,7 @@ impl Editor {
                                     let mut char_position = 0u32;
                                     let mut end_tag_offset = None;
 
-                                    'outer: for chunk in snapshot.text_for_range(range.clone()) {
+                                    'outer: for chunk in snapshot.text_for_range(range) {
                                         if let Some(byte_pos) = chunk.find(&**end_tag) {
                                             let chars_before_match =
                                                 chunk[..byte_pos].chars().count() as u32;
@@ -4890,7 +4890,7 @@ impl Editor {
         let multibuffer = self.buffer.read(cx);
         let Some(buffer) = position
             .buffer_id
-            .and_then(|buffer_id| multibuffer.buffer(buffer_id).clone())
+            .and_then(|buffer_id| multibuffer.buffer(buffer_id))
         else {
             return false;
         };
@@ -6282,7 +6282,7 @@ impl Editor {
                 }))
             }
             CodeActionsItem::DebugScenario(scenario) => {
-                let context = actions_menu.actions.context.clone();
+                let context = actions_menu.actions.context;
 
                 workspace.update(cx, |workspace, cx| {
                     dap::send_telemetry(&scenario, TelemetrySpawnLocation::Gutter, cx);
@@ -6482,7 +6482,7 @@ impl Editor {
 
     fn refresh_code_actions(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Option<()> {
         let newest_selection = self.selections.newest_anchor().clone();
-        let newest_selection_adjusted = self.selections.newest_adjusted(cx).clone();
+        let newest_selection_adjusted = self.selections.newest_adjusted(cx);
         let buffer = self.buffer.read(cx);
         if newest_selection.head().diff_base_anchor.is_some() {
             return None;
@@ -8204,8 +8204,6 @@ impl Editor {
             .icon_color(color)
             .style(ButtonStyle::Transparent)
             .on_click(cx.listener({
-                let breakpoint = breakpoint.clone();
-
                 move |editor, event: &ClickEvent, window, cx| {
                     let edit_action = if event.modifiers().platform || breakpoint.is_disabled() {
                         BreakpointEditAction::InvertState
@@ -14855,7 +14853,7 @@ impl Editor {
                 if parent == child {
                     return None;
                 }
-                let text = buffer.text_for_range(child.clone()).collect::<String>();
+                let text = buffer.text_for_range(child).collect::<String>();
                 Some((selection.id, parent, text))
             })
             .collect::<Vec<_>>();
@@ -15961,7 +15959,7 @@ impl Editor {
                     if !split
                         && Some(&target.buffer) == editor.buffer.read(cx).as_singleton().as_ref()
                     {
-                        editor.go_to_singleton_buffer_range(range.clone(), window, cx);
+                        editor.go_to_singleton_buffer_range(range, window, cx);
                     } else {
                         window.defer(cx, move |window, cx| {
                             let target_editor: Entity<Self> =
@@ -16219,14 +16217,14 @@ impl Editor {
         let item_id = item.item_id();
 
         if split {
-            workspace.split_item(SplitDirection::Right, item.clone(), window, cx);
+            workspace.split_item(SplitDirection::Right, item, window, cx);
         } else if PreviewTabsSettings::get_global(cx).enable_preview_from_code_navigation {
             let (preview_item_id, preview_item_idx) =
                 workspace.active_pane().read_with(cx, |pane, _| {
                     (pane.preview_item_id(), pane.preview_item_idx())
                 });
 
-            workspace.add_item_to_active_pane(item.clone(), preview_item_idx, true, window, cx);
+            workspace.add_item_to_active_pane(item, preview_item_idx, true, window, cx);
 
             if let Some(preview_item_id) = preview_item_id {
                 workspace.active_pane().update(cx, |pane, cx| {
@@ -16234,7 +16232,7 @@ impl Editor {
                 });
             }
         } else {
-            workspace.add_item_to_active_pane(item.clone(), None, true, window, cx);
+            workspace.add_item_to_active_pane(item, None, true, window, cx);
         }
         workspace.active_pane().update(cx, |pane, cx| {
             pane.set_preview_item_id(Some(item_id), cx);
@@ -19028,10 +19026,7 @@ impl Editor {
 
             let selection = text::ToPoint::to_point(&range.start, buffer).row
                 ..text::ToPoint::to_point(&range.end, buffer).row;
-            Some((
-                multi_buffer.buffer(buffer.remote_id()).unwrap().clone(),
-                selection,
-            ))
+            Some((multi_buffer.buffer(buffer.remote_id()).unwrap(), selection))
         });
 
         let Some((buffer, selection)) = buffer_and_selection else {
@@ -19273,7 +19268,7 @@ impl Editor {
                 row_highlights.insert(
                     ix,
                     RowHighlight {
-                        range: range.clone(),
+                        range,
                         index,
                         color,
                         options,
@@ -21703,7 +21698,7 @@ fn wrap_with_prefix(
     let subsequent_lines_prefix_len =
         char_len_with_expanded_tabs(0, &subsequent_lines_prefix, tab_size);
     let mut wrapped_text = String::new();
-    let mut current_line = first_line_prefix.clone();
+    let mut current_line = first_line_prefix;
     let mut is_first_line = true;
 
     let tokenizer = WordBreakingTokenizer::new(&unwrapped_text);

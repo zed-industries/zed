@@ -1183,8 +1183,8 @@ impl KeymapEditor {
             return;
         };
 
-        telemetry::event!("Keybinding Context Copied", context = context.clone());
-        cx.write_to_clipboard(gpui::ClipboardItem::new_string(context.clone()));
+        telemetry::event!("Keybinding Context Copied", context = context);
+        cx.write_to_clipboard(gpui::ClipboardItem::new_string(context));
     }
 
     fn copy_action_to_clipboard(
@@ -1200,8 +1200,8 @@ impl KeymapEditor {
             return;
         };
 
-        telemetry::event!("Keybinding Action Copied", action = action.clone());
-        cx.write_to_clipboard(gpui::ClipboardItem::new_string(action.clone()));
+        telemetry::event!("Keybinding Action Copied", action = action);
+        cx.write_to_clipboard(gpui::ClipboardItem::new_string(action));
     }
 
     fn toggle_conflict_filter(
@@ -1465,7 +1465,7 @@ impl RenderOnce for KeybindContextString {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         match self {
             KeybindContextString::Global => {
-                muted_styled_text(KeybindContextString::GLOBAL.clone(), cx).into_any_element()
+                muted_styled_text(KeybindContextString::GLOBAL, cx).into_any_element()
             }
             KeybindContextString::Local(name, language) => {
                 SyntaxHighlightedText::new(name, language).into_any_element()
@@ -1749,7 +1749,7 @@ impl Render for KeymapEditor {
                                             } else {
                                                 const NULL: SharedString =
                                                     SharedString::new_static("<null>");
-                                                muted_styled_text(NULL.clone(), cx)
+                                                muted_styled_text(NULL, cx)
                                                     .into_any_element()
                                             }
                                         })

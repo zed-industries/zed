@@ -168,7 +168,7 @@ impl Render for EditPredictionButton {
                         let account_status = agent.account_status.clone();
                         match account_status {
                             AccountStatus::NeedsActivation { activate_url } => {
-                                SupermavenButtonStatus::NeedsActivation(activate_url.clone())
+                                SupermavenButtonStatus::NeedsActivation(activate_url)
                             }
                             AccountStatus::Unknown => SupermavenButtonStatus::Initializing,
                             AccountStatus::Ready => SupermavenButtonStatus::Ready,

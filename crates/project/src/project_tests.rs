@@ -1818,7 +1818,7 @@ async fn test_restarting_server_with_diagnostics_published(cx: &mut gpui::TestAp
             buffer
                 .snapshot()
                 .diagnostics_in_range::<_, usize>(0..1, false)
-                .map(|entry| entry.diagnostic.message.clone())
+                .map(|entry| entry.diagnostic.message)
                 .collect::<Vec<_>>(),
             ["the message".to_string()]
         );
@@ -1844,7 +1844,7 @@ async fn test_restarting_server_with_diagnostics_published(cx: &mut gpui::TestAp
             buffer
                 .snapshot()
                 .diagnostics_in_range::<_, usize>(0..1, false)
-                .map(|entry| entry.diagnostic.message.clone())
+                .map(|entry| entry.diagnostic.message)
                 .collect::<Vec<_>>(),
             Vec::<String>::new(),
         );
@@ -3712,7 +3712,7 @@ async fn test_save_file_spawns_language_server(cx: &mut gpui::TestAppContext) {
 async fn test_file_changes_multiple_times_on_disk(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
-    let fs = FakeFs::new(cx.executor().clone());
+    let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         path!("/dir"),
         json!({
@@ -3767,7 +3767,7 @@ async fn test_file_changes_multiple_times_on_disk(cx: &mut gpui::TestAppContext)
 async fn test_edit_buffer_while_it_reloads(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
-    let fs = FakeFs::new(cx.executor().clone());
+    let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         path!("/dir"),
         json!({
@@ -5897,7 +5897,7 @@ async fn test_search_with_unicode(cx: &mut gpui::TestAppContext) {
 async fn test_create_entry(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
-    let fs = FakeFs::new(cx.executor().clone());
+    let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         "/one/two",
         json!({

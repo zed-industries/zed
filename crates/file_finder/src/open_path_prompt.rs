@@ -653,7 +653,7 @@ impl PickerDelegate for OpenPathDelegate {
                         if parent_path == &self.prompt_root {
                             format!("{}{}", self.prompt_root, candidate.path.string)
                         } else {
-                            candidate.path.string.clone()
+                            candidate.path.string
                         },
                         match_positions,
                     )),
@@ -684,7 +684,7 @@ impl PickerDelegate for OpenPathDelegate {
                                 };
                                 StyledText::new(label)
                                     .with_default_highlights(
-                                        &window.text_style().clone(),
+                                        &window.text_style(),
                                         vec![(
                                             delta..delta + label_len,
                                             HighlightStyle::color(Color::Conflict.color(cx)),
@@ -694,7 +694,7 @@ impl PickerDelegate for OpenPathDelegate {
                             } else {
                                 StyledText::new(format!("{label} (create)"))
                                     .with_default_highlights(
-                                        &window.text_style().clone(),
+                                        &window.text_style(),
                                         vec![(
                                             delta..delta + label_len,
                                             HighlightStyle::color(Color::Created.color(cx)),

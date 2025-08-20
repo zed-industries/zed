@@ -80,7 +80,6 @@ impl Connection {
             });
 
             let rx = rx.then({
-                let executor = executor.clone();
                 move |msg| {
                     let killed = killed.clone();
                     let executor = executor.clone();

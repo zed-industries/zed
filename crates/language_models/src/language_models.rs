@@ -104,7 +104,7 @@ fn register_language_model_providers(
     cx: &mut Context<LanguageModelRegistry>,
 ) {
     registry.register_provider(
-        CloudLanguageModelProvider::new(user_store.clone(), client.clone(), cx),
+        CloudLanguageModelProvider::new(user_store, client.clone(), cx),
         cx,
     );
 

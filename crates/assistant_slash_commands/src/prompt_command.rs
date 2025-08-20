@@ -80,7 +80,7 @@ impl SlashCommand for PromptSlashCommand {
         };
 
         let store = PromptStore::global(cx);
-        let title = SharedString::from(title.clone());
+        let title = SharedString::from(title);
         let prompt = cx.spawn({
             let title = title.clone();
             async move |cx| {

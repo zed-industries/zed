@@ -643,7 +643,7 @@ impl RandomizedTest for ProjectCollaborationTest {
                 );
 
                 let project = project.await?;
-                client.dev_server_projects_mut().push(project.clone());
+                client.dev_server_projects_mut().push(project);
             }
 
             ClientOperation::CreateWorktreeEntry {

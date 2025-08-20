@@ -1254,7 +1254,7 @@ async fn test_create_directory_during_initial_scan(cx: &mut TestAppContext) {
         let snapshot = Arc::new(Mutex::new(tree.snapshot()));
         tree.observe_updates(0, cx, {
             let snapshot = snapshot.clone();
-            let settings = tree.settings().clone();
+            let settings = tree.settings();
             move |update| {
                 snapshot
                     .lock()

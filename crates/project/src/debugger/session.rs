@@ -1397,7 +1397,7 @@ impl Session {
         let breakpoint_store = self.breakpoint_store.clone();
         if let Some((local, path)) = self.as_running_mut().and_then(|local| {
             let breakpoint = local.tmp_breakpoint.take()?;
-            let path = breakpoint.path.clone();
+            let path = breakpoint.path;
             Some((local, path))
         }) {
             local
@@ -1713,7 +1713,7 @@ impl Session {
 
                 this.threads = result
                     .into_iter()
-                    .map(|thread| (ThreadId(thread.id), Thread::from(thread.clone())))
+                    .map(|thread| (ThreadId(thread.id), Thread::from(thread)))
                     .collect();
 
                 this.invalidate_command_type::<StackTraceCommand>();
@@ -2557,7 +2557,7 @@ impl Session {
         cx: &mut Context<Self>,
     ) -> Task<Option<dap::DataBreakpointInfoResponse>> {
         let command = DataBreakpointInfoCommand {
-            context: context.clone(),
+            context: context,
             mode,
         };
 

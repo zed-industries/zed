@@ -119,7 +119,7 @@ impl zed::Extension for GlslExtension {
     ) -> Result<Option<serde_json::Value>> {
         let settings = LspSettings::for_worktree("glsl_analyzer", worktree)
             .ok()
-            .and_then(|lsp_settings| lsp_settings.settings.clone())
+            .and_then(|lsp_settings| lsp_settings.settings)
             .unwrap_or_default();
 
         Ok(Some(serde_json::json!({

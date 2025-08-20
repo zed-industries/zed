@@ -313,7 +313,7 @@ impl VariableList {
                         watcher.variables_reference,
                         watcher.variables_reference,
                         EntryPath::for_watcher(watcher.expression.clone()),
-                        DapEntry::Watcher(watcher.clone()),
+                        DapEntry::Watcher(watcher),
                     )
                 })
                 .collect::<Vec<_>>(),
@@ -1301,8 +1301,6 @@ impl VariableList {
                         IconName::Close,
                     )
                     .on_click({
-                        let weak = weak.clone();
-                        let path = path.clone();
                         move |_, window, cx| {
                             weak.update(cx, |variable_list, cx| {
                                 variable_list.selection = Some(path.clone());
@@ -1470,7 +1468,6 @@ impl VariableList {
                     }))
                 })
                 .on_secondary_mouse_down(cx.listener({
-                    let path = path.clone();
                     let entry = variable.clone();
                     move |this, event: &MouseDownEvent, window, cx| {
                         this.selection = Some(path.clone());

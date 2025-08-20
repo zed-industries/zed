@@ -5093,7 +5093,7 @@ impl Panel for OutlinePanel {
 
 impl Focusable for OutlinePanel {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
-        self.filter_editor.focus_handle(cx).clone()
+        self.filter_editor.focus_handle(cx)
     }
 }
 
