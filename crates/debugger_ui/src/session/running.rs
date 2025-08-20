@@ -1113,9 +1113,8 @@ impl RunningState {
         };
         let session = self.session.read(cx);
 
-        let cwd = Some(&request.cwd)
-            .filter(|cwd| cwd.len() > 0)
-            .map(PathBuf::from)
+        let cwd = (!request.cwd.is_empty())
+            .then(|| PathBuf::from(&request.cwd))
             .or_else(|| session.binary().unwrap().cwd.clone());
 
         let mut envs: HashMap<String, String> =
@@ -1150,7 +1149,7 @@ impl RunningState {
             } else {
                 None
             }
-        } else if args.len() > 0 {
+        } else if !args.is_empty() {
             Some(args.remove(0))
         } else {
             None

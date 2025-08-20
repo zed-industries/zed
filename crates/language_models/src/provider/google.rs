@@ -577,7 +577,7 @@ pub fn into_google(
             top_k: None,
         }),
         safety_settings: None,
-        tools: (request.tools.len() > 0).then(|| {
+        tools: (!request.tools.is_empty()).then(|| {
             vec![google_ai::Tool {
                 function_declarations: request
                     .tools
