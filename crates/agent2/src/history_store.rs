@@ -345,4 +345,8 @@ impl HistoryStore {
             .retain(|old_entry| old_entry != entry);
         self.save_recently_opened_entries(cx);
     }
+
+    pub fn recent_entries(&self, limit: usize, cx: &mut Context<Self>) -> Vec<HistoryEntry> {
+        self.entries(cx).into_iter().take(limit).collect()
+    }
 }
