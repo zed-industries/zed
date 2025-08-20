@@ -4565,6 +4565,32 @@ pub(crate) mod tests {
     }
 
     #[gpui::test]
+    async fn test_message_doesnt_send_if_empty(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let connection = StubAgentConnection::new();
+
+        let (thread_view, cx) = setup_thread_view(StubAgentServer::new(connection), cx).await;
+        add_to_workspace(thread_view.clone(), cx);
+
+        let message_editor = cx.read(|cx| thread_view.read(cx).message_editor.clone());
+        let mut events = cx.events(&message_editor);
+        message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("", window, cx);
+        });
+
+        message_editor.update_in(cx, |_editor, window, cx| {
+            window.dispatch_action(Box::new(Chat), cx);
+        });
+        cx.run_until_parked();
+        // We shouldn't have received any messages
+        assert!(matches!(
+            events.try_next(),
+            Err(futures::channel::mpsc::TryRecvError { .. })
+        ));
+    }
+
+    #[gpui::test]
     async fn test_message_editing_regenerate(cx: &mut TestAppContext) {
         init_test(cx);
 
