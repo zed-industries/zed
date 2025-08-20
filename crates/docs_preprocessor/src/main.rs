@@ -459,18 +459,28 @@ fn generate_big_table_of_actions() -> String {
 
         // Add the definition with keymap name and description
         output.push_str("<dd style=\"margin-left: 2em; margin-bottom: 1em;\">\n");
+
+        // Add the description, escaping HTML if needed
+        if let Some(description) = action.docs {
+            output.push_str(
+                &description
+                    .replace("&", "&amp;")
+                    .replace("<", "&lt;")
+                    .replace(">", "&gt;"),
+            );
+            output.push_str("<br>\n");
+        }
         output.push_str("Keymap Name: <code>");
         output.push_str(action.name);
         output.push_str("</code><br>\n");
-
-        // Add the description, escaping HTML if needed
-        let description = action.docs.unwrap_or("<no documentation>");
-        output.push_str(
-            &description
-                .replace("&", "&amp;")
-                .replace("<", "&lt;")
-                .replace(">", "&gt;"),
-        );
+        if !action.deprecated_aliases.is_empty() {
+            output.push_str("Deprecated Aliases:");
+            for alias in action.deprecated_aliases.iter() {
+                output.push_str("<code>");
+                output.push_str(alias);
+                output.push_str("</code>, ");
+            }
+        }
         output.push_str("\n</dd>\n");
     }
 
