@@ -783,6 +783,9 @@ fn open_target_in_explorer(target: &Path) -> Result<()> {
     let highlight = [file_item as *const _];
     unsafe { SHOpenFolderAndSelectItems(dir_item as _, Some(&highlight), 0) }.or_else(|err| {
         if err.code().0 == ERROR_FILE_NOT_FOUND.0 as i32 {
+            // On some systems, the above call mysteriously fails with "file not
+            // found" even though the file is there.  In these cases, ShellExecute()
+            // seems to work as a fallback (although it won't select the file).
             open_target(dir).context("Opening target parent folder")
         } else {
             Err(anyhow::anyhow!("Can not open target path: {}", err))
