@@ -25,7 +25,9 @@ use futures::{
     stream::FuturesUnordered,
 };
 use git::repository::DiffType;
-use gpui::{App, AppContext, AsyncApp, Context, Entity, SharedString, Task, WeakEntity};
+use gpui::{
+    App, AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Task, WeakEntity,
+};
 use language_model::{
     LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelExt,
     LanguageModelImage, LanguageModelProviderId, LanguageModelRegistry, LanguageModelRequest,
@@ -484,7 +486,6 @@ pub enum ThreadEvent {
     ToolCall(acp::ToolCall),
     ToolCallUpdate(acp_thread::ToolCallUpdate),
     ToolCallAuthorization(ToolCallAuthorization),
-    TokenUsageUpdate(acp_thread::TokenUsage),
     TitleUpdate(SharedString),
     Retry(acp_thread::RetryStatus),
     Stop(acp::StopReason),
@@ -873,7 +874,12 @@ impl Thread {
     }
 
     pub fn set_model(&mut self, model: Arc<dyn LanguageModel>, cx: &mut Context<Self>) {
+        let old_usage = self.latest_token_usage();
         self.model = Some(model);
+        let new_usage = self.latest_token_usage();
+        if old_usage != new_usage {
+            cx.emit(TokenUsageUpdated(new_usage));
+        }
         cx.notify()
     }
 
@@ -891,7 +897,12 @@ impl Thread {
     }
 
     pub fn set_completion_mode(&mut self, mode: CompletionMode, cx: &mut Context<Self>) {
+        let old_usage = self.latest_token_usage();
         self.completion_mode = mode;
+        let new_usage = self.latest_token_usage();
+        if old_usage != new_usage {
+            cx.emit(TokenUsageUpdated(new_usage));
+        }
         cx.notify()
     }
 
@@ -953,13 +964,15 @@ impl Thread {
         self.flush_pending_message(cx);
     }
 
-    fn update_token_usage(&mut self, update: language_model::TokenUsage) {
+    fn update_token_usage(&mut self, update: language_model::TokenUsage, cx: &mut Context<Self>) {
         let Some(last_user_message) = self.last_user_message() else {
             return;
         };
 
         self.request_token_usage
             .insert(last_user_message.id.clone(), update);
+        cx.emit(TokenUsageUpdated(self.latest_token_usage()));
+        cx.notify();
     }
 
     pub fn truncate(&mut self, message_id: UserMessageId, cx: &mut Context<Self>) -> Result<()> {
@@ -1181,19 +1194,7 @@ impl Thread {
                         *tool_use_limit_reached = true;
                     }
                     Ok(LanguageModelCompletionEvent::UsageUpdate(token_usage)) => {
-                        let usage = acp_thread::TokenUsage {
-                            max_tokens: model.max_token_count_for_mode(
-                                request
-                                    .mode
-                                    .unwrap_or(cloud_llm_client::CompletionMode::Normal),
-                            ),
-                            used_tokens: token_usage.total_tokens(),
-                        };
-
-                        this.update(cx, |this, _cx| this.update_token_usage(token_usage))
-                            .ok();
-
-                        event_stream.send_token_usage_update(usage);
+                        _ = this.update(cx, |this, cx| this.update_token_usage(token_usage, cx));
                     }
                     Ok(LanguageModelCompletionEvent::Stop(StopReason::Refusal)) => {
                         *refusal = true;
@@ -1636,6 +1637,7 @@ impl Thread {
             })
         }))
     }
+
     fn last_user_message(&self) -> Option<&UserMessage> {
         self.messages
             .iter()
@@ -1934,6 +1936,10 @@ impl RunningTurn {
     }
 }
 
+pub struct TokenUsageUpdated(pub Option<acp_thread::TokenUsage>);
+
+impl EventEmitter<TokenUsageUpdated> for Thread {}
+
 pub trait AgentTool
 where
     Self: 'static + Sized,
@@ -2163,12 +2169,6 @@ impl ThreadEventStream {
                 }
                 .into(),
             )))
-            .ok();
-    }
-
-    fn send_token_usage_update(&self, usage: acp_thread::TokenUsage) {
-        self.0
-            .unbounded_send(Ok(ThreadEvent::TokenUsageUpdate(usage)))
             .ok();
     }
 
