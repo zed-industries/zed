@@ -1335,7 +1335,7 @@ impl GitPanel {
                         section.contains(status_entry, repository)
                             && status_entry.staging.as_bool() != Some(goal_staged_state)
                     })
-                    .map(|status_entry| status_entry.clone())
+                    .cloned()
                     .collect::<Vec<_>>();
 
                 (goal_staged_state, entries)
