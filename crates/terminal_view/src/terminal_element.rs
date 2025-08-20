@@ -653,7 +653,7 @@ impl TerminalElement {
             let terminal = self.terminal.clone();
             let hitbox = hitbox.clone();
             let focus = focus.clone();
-            let terminal_view = terminal_view.clone();
+            let terminal_view = terminal_view;
             move |e: &MouseMoveEvent, phase, window, cx| {
                 if phase != DispatchPhase::Bubble {
                     return;
@@ -1838,8 +1838,7 @@ mod tests {
         };
 
         let font_size = AbsoluteLength::Pixels(px(12.0));
-        let batch =
-            BatchedTextRun::new_from_char(AlacPoint::new(0, 0), 'a', style1.clone(), font_size);
+        let batch = BatchedTextRun::new_from_char(AlacPoint::new(0, 0), 'a', style1, font_size);
 
         // Should be able to append same style
         assert!(batch.can_append(&style2));

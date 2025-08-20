@@ -54,7 +54,7 @@ pub const ZED_CLOUD_PROVIDER_NAME: LanguageModelProviderName =
 
 pub fn init(client: Arc<Client>, cx: &mut App) {
     init_settings(cx);
-    RefreshLlmTokenListener::register(client.clone(), cx);
+    RefreshLlmTokenListener::register(client, cx);
 }
 
 pub fn init_settings(cx: &mut App) {
@@ -538,7 +538,7 @@ pub trait LanguageModel: Send + Sync {
             if let Some(first_event) = events.next().await {
                 match first_event {
                     Ok(LanguageModelCompletionEvent::StartMessage { message_id: id }) => {
-                        message_id = Some(id.clone());
+                        message_id = Some(id);
                     }
                     Ok(LanguageModelCompletionEvent::Text(text)) => {
                         first_item_text = Some(text);

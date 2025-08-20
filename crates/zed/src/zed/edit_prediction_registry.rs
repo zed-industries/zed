@@ -60,23 +60,16 @@ pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
     cx.subscribe(&user_store, {
         let editors = editors.clone();
         let client = client.clone();
+
         move |user_store, event, cx| {
             if let client::user::Event::PrivateUserInfoUpdated = event {
-                assign_edit_prediction_providers(
-                    &editors,
-                    provider,
-                    &client,
-                    user_store.clone(),
-                    cx,
-                );
+                assign_edit_prediction_providers(&editors, provider, &client, user_store, cx);
             }
         }
     })
     .detach();
 
     cx.observe_global::<SettingsStore>({
-        let editors = editors.clone();
-        let client = client.clone();
         let user_store = user_store.clone();
         move |cx| {
             let new_provider = all_language_settings(None, cx).edit_predictions.provider;

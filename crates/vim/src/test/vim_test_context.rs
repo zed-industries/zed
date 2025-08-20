@@ -225,7 +225,7 @@ impl VimTestContext {
         VimClipboard {
             editor: self
                 .read_from_clipboard()
-                .map(|item| item.text().unwrap().to_string())
+                .map(|item| item.text().unwrap())
                 .unwrap_or_default(),
         }
     }

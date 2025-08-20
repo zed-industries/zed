@@ -180,7 +180,7 @@ impl SubView {
         let weak_list = list.downgrade();
         let focus_handle = list.focus_handle(cx);
         let this = Self::new(
-            focus_handle.clone(),
+            focus_handle,
             list.into(),
             DebuggerPaneItem::BreakpointList,
             cx,
@@ -1167,9 +1167,9 @@ impl RunningState {
             id: task::TaskId("debug".to_string()),
             full_label: title.clone(),
             label: title.clone(),
-            command: command.clone(),
+            command,
             args,
-            command_label: title.clone(),
+            command_label: title,
             cwd,
             env: envs,
             use_new_terminal: true,
@@ -1756,7 +1756,7 @@ impl RunningState {
             this.activate_item(0, false, false, window, cx);
         });
 
-        let rightmost_pane = new_debugger_pane(workspace.clone(), project.clone(), window, cx);
+        let rightmost_pane = new_debugger_pane(workspace.clone(), project, window, cx);
         rightmost_pane.update(cx, |this, cx| {
             this.add_item(
                 Box::new(SubView::new(

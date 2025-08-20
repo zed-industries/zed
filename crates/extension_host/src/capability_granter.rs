@@ -145,7 +145,7 @@ mod tests {
                 command: "*".to_string(),
                 args: vec!["**".to_string()],
             })],
-            manifest.clone(),
+            manifest,
         );
         assert!(granter.grant_exec("ls", &["-la"]).is_ok());
     }

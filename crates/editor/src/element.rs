@@ -7209,7 +7209,7 @@ fn render_blame_entry_popover(
 ) -> Option<AnyElement> {
     let renderer = cx.global::<GlobalBlameRenderer>().0.clone();
     let blame = blame.read(cx);
-    let repository = blame.repository(cx)?.clone();
+    let repository = blame.repository(cx)?;
     renderer.render_blame_entry_popover(
         blame_entry,
         scroll_handle,
@@ -9009,7 +9009,7 @@ impl Element for EditorElement {
                             .as_ref()
                             .map(|layout| (layout.bounds, layout.entry.clone())),
                         display_hunks: display_hunks.clone(),
-                        diff_hunk_control_bounds: diff_hunk_control_bounds.clone(),
+                        diff_hunk_control_bounds,
                     });
 
                     self.editor.update(cx, |editor, _| {
@@ -9894,7 +9894,7 @@ impl CursorLayout {
                 .px_0p5()
                 .line_height(text_size + px(2.))
                 .text_color(cursor_name.color)
-                .child(cursor_name.string.clone())
+                .child(cursor_name.string)
                 .into_any_element();
 
             name_element.prepaint_as_root(name_origin, AvailableSpace::min_size(), window, cx);

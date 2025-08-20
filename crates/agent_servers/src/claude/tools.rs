@@ -58,7 +58,7 @@ impl ClaudeTool {
                     Self::Terminal(None)
                 } else {
                     Self::Other {
-                        name: tool_name.to_string(),
+                        name: tool_name,
                         input,
                     }
                 }

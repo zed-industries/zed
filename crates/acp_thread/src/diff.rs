@@ -222,7 +222,7 @@ impl PendingDiff {
     fn finalize(&self, cx: &mut Context<Diff>) -> FinalizedDiff {
         let ranges = self.excerpt_ranges(cx);
         let base_text = self.base_text.clone();
-        let language_registry = self.buffer.read(cx).language_registry().clone();
+        let language_registry = self.buffer.read(cx).language_registry();
 
         let path = self
             .buffer
@@ -248,7 +248,6 @@ impl PendingDiff {
 
         let buffer_diff = cx.spawn({
             let buffer = buffer.clone();
-            let language_registry = language_registry.clone();
             async move |_this, cx| {
                 build_buffer_diff(base_text, &buffer, language_registry, cx).await
             }

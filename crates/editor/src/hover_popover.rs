@@ -623,7 +623,7 @@ pub fn hover_markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
 
     let mut base_text_style = window.text_style();
     base_text_style.refine(&TextStyleRefinement {
-        font_family: Some(ui_font_family.clone()),
+        font_family: Some(ui_font_family),
         font_fallbacks: ui_font_fallbacks,
         color: Some(cx.theme().colors().editor_foreground),
         ..Default::default()
@@ -672,7 +672,7 @@ pub fn diagnostics_markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
 
     let mut base_text_style = window.text_style();
     base_text_style.refine(&TextStyleRefinement {
-        font_family: Some(ui_font_family.clone()),
+        font_family: Some(ui_font_family),
         font_fallbacks: ui_font_fallbacks,
         color: Some(cx.theme().colors().editor_foreground),
         ..Default::default()

@@ -181,7 +181,6 @@ impl TerminalPanel {
                             .anchor(Corner::TopRight)
                             .with_handle(pane.split_item_context_menu_handle.clone())
                             .menu({
-                                let split_context = split_context.clone();
                                 move |window, cx| {
                                     ContextMenu::build(window, cx, |menu, _, _| {
                                         menu.when_some(

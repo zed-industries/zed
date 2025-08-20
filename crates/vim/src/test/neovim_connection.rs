@@ -453,7 +453,7 @@ impl NeovimConnection {
         };
 
         if self.data.back() != Some(&state) {
-            self.data.push_back(state.clone());
+            self.data.push_back(state);
         }
 
         (mode, ranges)

@@ -84,7 +84,7 @@ fn init_logging_server(log_file_path: PathBuf) -> Result<Receiver<Vec<u8>>> {
         fn flush(&mut self) -> std::io::Result<()> {
             self.channel
                 .send_blocking(self.buffer.clone())
-                .map_err(|error| std::io::Error::new(std::io::ErrorKind::Other, error))?;
+                .map_err(std::io::Error::other)?;
             self.buffer.clear();
             self.file.flush()
         }
@@ -160,7 +160,7 @@ fn init_panic_hook(session_id: String) {
 
         let panic_data = telemetry_events::Panic {
             thread: thread_name.into(),
-            payload: payload.clone(),
+            payload,
             location_data: info.location().map(|location| LocationData {
                 file: location.file().into(),
                 line: location.line(),
@@ -799,7 +799,6 @@ fn initialize_settings(
         watch_config_file(cx.background_executor(), fs, paths::settings_file().clone());
 
     handle_settings_file_changes(user_settings_file_rx, cx, {
-        let session = session.clone();
         move |err, _cx| {
             if let Some(e) = err {
                 log::info!("Server settings failed to change: {}", e);

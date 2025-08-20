@@ -293,7 +293,7 @@ impl ScopeMap {
                         sub_items_start + 1,
                         sub_items_end,
                         "Expected one item: got: {:?}",
-                        &items[items_range.clone()]
+                        &items[items_range]
                     );
                     enabled = Some(items[sub_items_start].1);
                 } else {

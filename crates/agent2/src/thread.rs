@@ -679,7 +679,7 @@ impl Thread {
                 .and_then(|model| {
                     let model = SelectedModel {
                         provider: model.provider.clone().into(),
-                        model: model.model.clone().into(),
+                        model: model.model.into(),
                     };
                     registry.select_model(&model, cx)
                 })
@@ -1549,7 +1549,7 @@ impl Thread {
             return Task::ready(Err(anyhow!("No summarization model available")));
         };
         let mut request = LanguageModelRequest {
-            intent: Some(CompletionIntent::ThreadSummarization),
+            intent: Some(CompletionIntent::ThreadContextSummarization),
             temperature: AgentSettings::temperature_for_model(&model, cx),
             ..Default::default()
         };
@@ -1571,12 +1571,11 @@ impl Thread {
                 let text = match event {
                     LanguageModelCompletionEvent::Text(text) => text,
                     LanguageModelCompletionEvent::StatusUpdate(
-                        CompletionRequestStatus::UsageUpdated { .. },
+                        CompletionRequestStatus::UsageUpdated { amount, limit },
                     ) => {
-                        // this.update(cx, |thread, cx| {
-                        //     thread.update_model_request_usage(amount as u32, limit, cx);
-                        // })?;
-                        // TODO: handle usage update
+                        this.update(cx, |thread, cx| {
+                            thread.update_model_request_usage(amount, limit, cx);
+                        })?;
                         continue;
                     }
                     _ => continue,
@@ -1637,12 +1636,11 @@ impl Thread {
                 let text = match event {
                     LanguageModelCompletionEvent::Text(text) => text,
                     LanguageModelCompletionEvent::StatusUpdate(
-                        CompletionRequestStatus::UsageUpdated { .. },
+                        CompletionRequestStatus::UsageUpdated { amount, limit },
                     ) => {
-                        // this.update(cx, |thread, cx| {
-                        //     thread.update_model_request_usage(amount as u32, limit, cx);
-                        // })?;
-                        // TODO: handle usage update
+                        this.update(cx, |thread, cx| {
+                            thread.update_model_request_usage(amount, limit, cx);
+                        })?;
                         continue;
                     }
                     _ => continue,

@@ -1329,7 +1329,7 @@ impl X11Client {
         state.composing = false;
         drop(state);
         if let Some(mut keystroke) = keystroke {
-            keystroke.key_char = Some(text.clone());
+            keystroke.key_char = Some(text);
             window.handle_input(PlatformInput::KeyDown(crate::KeyDownEvent {
                 keystroke,
                 is_held: false,

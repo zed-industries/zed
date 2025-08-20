@@ -90,11 +90,7 @@ pub(crate) const JOBS: [Job; 2] = [
         std::thread::sleep(Duration::from_millis(1000));
         if let Ok(config) = std::env::var("ZED_AUTO_UPDATE") {
             match config.as_str() {
-                "err" => Err(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    "Simulated error",
-                ))
-                .context("Anyhow!"),
+                "err" => Err(std::io::Error::other("Simulated error")).context("Anyhow!"),
                 _ => panic!("Unknown ZED_AUTO_UPDATE value: {}", config),
             }
         } else {
@@ -105,11 +101,7 @@ pub(crate) const JOBS: [Job; 2] = [
         std::thread::sleep(Duration::from_millis(1000));
         if let Ok(config) = std::env::var("ZED_AUTO_UPDATE") {
             match config.as_str() {
-                "err" => Err(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    "Simulated error",
-                ))
-                .context("Anyhow!"),
+                "err" => Err(std::io::Error::other("Simulated error")).context("Anyhow!"),
                 _ => panic!("Unknown ZED_AUTO_UPDATE value: {}", config),
             }
         } else {

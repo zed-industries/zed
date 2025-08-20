@@ -50,7 +50,7 @@ impl AgentPanelOnboarding {
             .filter(|provider| {
                 provider.is_authenticated(cx) && provider.id() != ZED_CLOUD_PROVIDER_ID
             })
-            .map(|provider| (provider.icon(), provider.name().0.clone()))
+            .map(|provider| (provider.icon(), provider.name().0))
             .collect()
     }
 }

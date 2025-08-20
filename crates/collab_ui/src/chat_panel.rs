@@ -1038,7 +1038,7 @@ impl Render for ChatPanel {
                     .cloned();
 
                 el.when_some(reply_message, |el, reply_message| {
-                    let user_being_replied_to = reply_message.sender.clone();
+                    let user_being_replied_to = reply_message.sender;
 
                     el.child(
                         h_flex()

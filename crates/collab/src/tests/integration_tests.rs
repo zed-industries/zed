@@ -3208,7 +3208,7 @@ async fn test_fs_operations(
         })
         .await
         .unwrap()
-        .to_included()
+        .into_included()
         .unwrap();
 
     worktree_a.read_with(cx_a, |worktree, _| {
@@ -3237,7 +3237,7 @@ async fn test_fs_operations(
         })
         .await
         .unwrap()
-        .to_included()
+        .into_included()
         .unwrap();
 
     worktree_a.read_with(cx_a, |worktree, _| {
@@ -3266,7 +3266,7 @@ async fn test_fs_operations(
         })
         .await
         .unwrap()
-        .to_included()
+        .into_included()
         .unwrap();
 
     worktree_a.read_with(cx_a, |worktree, _| {
@@ -3295,7 +3295,7 @@ async fn test_fs_operations(
         })
         .await
         .unwrap()
-        .to_included()
+        .into_included()
         .unwrap();
 
     project_b
@@ -3304,7 +3304,7 @@ async fn test_fs_operations(
         })
         .await
         .unwrap()
-        .to_included()
+        .into_included()
         .unwrap();
 
     project_b
@@ -3313,7 +3313,7 @@ async fn test_fs_operations(
         })
         .await
         .unwrap()
-        .to_included()
+        .into_included()
         .unwrap();
 
     worktree_a.read_with(cx_a, |worktree, _| {

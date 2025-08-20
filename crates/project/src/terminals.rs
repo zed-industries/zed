@@ -89,7 +89,7 @@ impl Project {
             let ssh_client = ssh_client.read(cx);
             if let Some((SshArgs { arguments, envs }, path_style)) = ssh_client.ssh_info() {
                 return Some(SshDetails {
-                    host: ssh_client.connection_options().host.clone(),
+                    host: ssh_client.connection_options().host,
                     ssh_command: SshCommand { arguments },
                     envs,
                     path_style,

@@ -5,7 +5,7 @@
 //! This module is split up into three distinct parts:
 //! - [`LocalLspStore`], which is ran on the host machine (either project host or SSH host), that manages the lifecycle of language servers.
 //! - [`RemoteLspStore`], which is ran on the remote machine (project guests) which is mostly about passing through the requests via RPC.
-//!     The remote stores don't really care about which language server they're running against - they don't usually get to decide which language server is going to responsible for handling their request.
+//!   The remote stores don't really care about which language server they're running against - they don't usually get to decide which language server is going to responsible for handling their request.
 //! - [`LspStore`], which unifies the two under one consistent interface for interacting with language servers.
 //!
 //! Most of the interesting work happens at the local layer, as bulk of the complexity is with managing the lifecycle of language servers. The actual implementation of the LSP protocol is handled by [`lsp`] crate.
@@ -917,7 +917,7 @@ impl LocalLspStore {
                         message: params.message,
                         actions: vec![],
                         response_channel: tx,
-                        lsp_name: name.clone(),
+                        lsp_name: name,
                     };
 
                     let _ = this.update(&mut cx, |_, cx| {
@@ -2954,7 +2954,7 @@ impl LocalLspStore {
                         .update(cx, |this, cx| {
                             let path = buffer_to_edit.read(cx).project_path(cx);
                             let active_entry = this.active_entry;
-                            let is_active_entry = path.clone().is_some_and(|project_path| {
+                            let is_active_entry = path.is_some_and(|project_path| {
                                 this.worktree_store
                                     .read(cx)
                                     .entry_for_path(&project_path, cx)
@@ -5688,10 +5688,7 @@ impl LspStore {
             let all_actions_task = self.request_multiple_lsp_locally(
                 buffer,
                 Some(range.start),
-                GetCodeActions {
-                    range: range.clone(),
-                    kinds: kinds.clone(),
-                },
+                GetCodeActions { range, kinds },
                 cx,
             );
             cx.background_spawn(async move {
@@ -7221,7 +7218,7 @@ impl LspStore {
                                     worktree = tree;
                                     path = rel_path;
                                 } else {
-                                    worktree = source_worktree.clone();
+                                    worktree = source_worktree;
                                     path = relativize_path(&result.worktree_abs_path, &abs_path);
                                 }
 
@@ -10338,7 +10335,7 @@ impl LspStore {
         let name = self
             .language_server_statuses
             .remove(&server_id)
-            .map(|status| status.name.clone())
+            .map(|status| status.name)
             .or_else(|| {
                 if let Some(LanguageServerState::Running { adapter, .. }) = server_state.as_ref() {
                     Some(adapter.name())
@@ -12691,7 +12688,7 @@ impl DiagnosticSummary {
     }
 
     pub fn to_proto(
-        &self,
+        self,
         language_server_id: LanguageServerId,
         path: &Path,
     ) -> proto::DiagnosticSummary {

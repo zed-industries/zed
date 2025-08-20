@@ -159,7 +159,7 @@ impl GlobalWatcher {
             path: path.clone(),
         };
         state.watchers.insert(id, registration_state);
-        *state.path_registrations.entry(path.clone()).or_insert(0) += 1;
+        *state.path_registrations.entry(path).or_insert(0) += 1;
 
         Ok(id)
     }

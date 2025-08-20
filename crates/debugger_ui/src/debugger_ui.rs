@@ -272,7 +272,6 @@ pub fn init(cx: &mut App) {
                     }
                 })
                 .on_action({
-                    let active_item = active_item.clone();
                     move |_: &ToggleIgnoreBreakpoints, _, cx| {
                         active_item
                             .update(cx, |item, cx| item.toggle_ignore_breakpoints(cx))
@@ -293,9 +292,8 @@ pub fn init(cx: &mut App) {
                     let Some(debug_panel) = workspace.read(cx).panel::<DebugPanel>(cx) else {
                         return;
                     };
-                    let Some(active_session) = debug_panel
-                        .clone()
-                        .update(cx, |panel, _| panel.active_session())
+                    let Some(active_session) =
+                        debug_panel.update(cx, |panel, _| panel.active_session())
                     else {
                         return;
                     };

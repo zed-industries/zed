@@ -237,11 +237,11 @@ impl HeadlessProject {
         session.add_entity_message_handler(BufferStore::handle_close_buffer);
 
         session.add_request_handler(
-            extensions.clone().downgrade(),
+            extensions.downgrade(),
             HeadlessExtensionStore::handle_sync_extensions,
         );
         session.add_request_handler(
-            extensions.clone().downgrade(),
+            extensions.downgrade(),
             HeadlessExtensionStore::handle_install_extension,
         );
 

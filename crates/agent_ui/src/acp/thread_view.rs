@@ -1534,7 +1534,7 @@ impl AcpThreadView {
         window: &Window,
         cx: &Context<Self>,
     ) -> AnyElement {
-        let button_id = SharedString::from(format!("tool_output-{:?}", tool_call_id.clone()));
+        let button_id = SharedString::from(format!("tool_output-{:?}", tool_call_id));
 
         v_flex()
             .mt_1p5()
@@ -1555,9 +1555,8 @@ impl AcpThreadView {
                     .icon_color(Color::Muted)
                     .icon_position(IconPosition::Start)
                     .on_click(cx.listener({
-                        let id = tool_call_id.clone();
                         move |this: &mut Self, _, _, cx: &mut Context<Self>| {
-                            this.expanded_tool_calls.remove(&id);
+                            this.expanded_tool_calls.remove(&tool_call_id);
                             cx.notify();
                         }
                     })),
@@ -1578,7 +1577,7 @@ impl AcpThreadView {
             uri.clone()
         };
 
-        let button_id = SharedString::from(format!("item-{}", uri.clone()));
+        let button_id = SharedString::from(format!("item-{}", uri));
 
         div()
             .ml(px(7.))
@@ -1724,7 +1723,7 @@ impl AcpThreadView {
                     && let Some(editor) = entry.editor_for_diff(diff)
                     && diff.read(cx).has_revealed_range(cx)
                 {
-                    editor.clone().into_any_element()
+                    editor.into_any_element()
                 } else if tool_progress {
                     self.render_diff_loading(cx)
                 } else {
@@ -2888,7 +2887,6 @@ impl AcpThreadView {
                                     .icon_size(IconSize::Small)
                                     .icon_color(Color::Muted)
                                     .tooltip({
-                                        let focus_handle = focus_handle.clone();
                                         move |window, cx| {
                                             Tooltip::for_action_in(
                                                 expand_tooltip,
@@ -4372,7 +4370,7 @@ pub(crate) mod tests {
 
     impl Focusable for ThreadViewItem {
         fn focus_handle(&self, cx: &App) -> FocusHandle {
-            self.0.read(cx).focus_handle(cx).clone()
+            self.0.read(cx).focus_handle(cx)
         }
     }
 

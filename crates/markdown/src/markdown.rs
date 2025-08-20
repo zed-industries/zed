@@ -1323,8 +1323,7 @@ fn render_copy_code_block_button(
     .shape(ui::IconButtonShape::Square)
     .tooltip(Tooltip::text("Copy Code"))
     .on_click({
-        let id = id.clone();
-        let markdown = markdown.clone();
+        let markdown = markdown;
         move |_event, _window, cx| {
             let id = id.clone();
             markdown.update(cx, |this, cx| {

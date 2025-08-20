@@ -1321,7 +1321,7 @@ fn test_summarize_error(
 fn setup_context_editor_with_fake_model(
     cx: &mut TestAppContext,
 ) -> (Entity<AssistantContext>, Arc<FakeLanguageModel>) {
-    let registry = Arc::new(LanguageRegistry::test(cx.executor().clone()));
+    let registry = Arc::new(LanguageRegistry::test(cx.executor()));
 
     let fake_provider = Arc::new(FakeLanguageModelProvider::default());
     let fake_model = Arc::new(fake_provider.test_model());
@@ -1376,7 +1376,7 @@ fn messages_cache(
     context
         .read(cx)
         .messages(cx)
-        .map(|message| (message.id, message.cache.clone()))
+        .map(|message| (message.id, message.cache))
         .collect()
 }
 
@@ -1436,6 +1436,6 @@ impl SlashCommand for FakeSlashCommand {
             sections: vec![],
             run_commands_in_text: false,
         }
-        .to_event_stream()))
+        .into_event_stream()))
     }
 }
