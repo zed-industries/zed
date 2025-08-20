@@ -2,7 +2,7 @@ use anyhow::{Context as _, Result};
 use async_trait::async_trait;
 use futures::StreamExt;
 use gpui::AsyncApp;
-use language::{LanguageToolchainStore, LspAdapter, LspAdapterDelegate};
+use language::{LspAdapter, LspAdapterDelegate, Toolchain};
 use lsp::{LanguageServerBinary, LanguageServerName};
 use node_runtime::{NodeRuntime, VersionStrategy};
 use project::{Fs, lsp_store::language_server_settings};
@@ -43,7 +43,7 @@ impl LspAdapter for CssLspAdapter {
     async fn check_if_user_installed(
         &self,
         delegate: &dyn LspAdapterDelegate,
-        _: Arc<dyn LanguageToolchainStore>,
+        _: Option<Toolchain>,
         _: &AsyncApp,
     ) -> Option<LanguageServerBinary> {
         let path = delegate
@@ -106,7 +106,7 @@ impl LspAdapter for CssLspAdapter {
             .should_install_npm_package(
                 Self::PACKAGE_NAME,
                 &server_path,
-                &container_dir,
+                container_dir,
                 VersionStrategy::Latest(version),
             )
             .await;
@@ -144,7 +144,7 @@ impl LspAdapter for CssLspAdapter {
         self: Arc<Self>,
         _: &dyn Fs,
         delegate: &Arc<dyn LspAdapterDelegate>,
-        _: Arc<dyn LanguageToolchainStore>,
+        _: Option<Toolchain>,
         cx: &mut AsyncApp,
     ) -> Result<serde_json::Value> {
         let mut default_config = json!({

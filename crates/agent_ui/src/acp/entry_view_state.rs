@@ -1,15 +1,16 @@
 use std::ops::Range;
 
 use acp_thread::{AcpThread, AgentThreadEntry};
-use agent::{TextThreadStore, ThreadStore};
+use agent2::HistoryStore;
 use collections::HashMap;
 use editor::{Editor, EditorMode, MinimapVisibility};
 use gpui::{
-    AnyEntity, App, AppContext as _, Entity, EntityId, EventEmitter, TextStyleRefinement,
-    WeakEntity, Window,
+    AnyEntity, App, AppContext as _, Entity, EntityId, EventEmitter, Focusable,
+    TextStyleRefinement, WeakEntity, Window,
 };
 use language::language_settings::SoftWrap;
 use project::Project;
+use prompt_store::PromptStore;
 use settings::Settings as _;
 use terminal_view::TerminalView;
 use theme::ThemeSettings;
@@ -21,24 +22,27 @@ use crate::acp::message_editor::{MessageEditor, MessageEditorEvent};
 pub struct EntryViewState {
     workspace: WeakEntity<Workspace>,
     project: Entity<Project>,
-    thread_store: Entity<ThreadStore>,
-    text_thread_store: Entity<TextThreadStore>,
+    history_store: Entity<HistoryStore>,
+    prompt_store: Option<Entity<PromptStore>>,
     entries: Vec<Entry>,
+    prevent_slash_commands: bool,
 }
 
 impl EntryViewState {
     pub fn new(
         workspace: WeakEntity<Workspace>,
         project: Entity<Project>,
-        thread_store: Entity<ThreadStore>,
-        text_thread_store: Entity<TextThreadStore>,
+        history_store: Entity<HistoryStore>,
+        prompt_store: Option<Entity<PromptStore>>,
+        prevent_slash_commands: bool,
     ) -> Self {
         Self {
             workspace,
             project,
-            thread_store,
-            text_thread_store,
+            history_store,
+            prompt_store,
             entries: Vec::new(),
+            prevent_slash_commands,
         }
     }
 
@@ -61,33 +65,45 @@ impl EntryViewState {
             AgentThreadEntry::UserMessage(message) => {
                 let has_id = message.id.is_some();
                 let chunks = message.chunks.clone();
-                let message_editor = cx.new(|cx| {
-                    let mut editor = MessageEditor::new(
-                        self.workspace.clone(),
-                        self.project.clone(),
-                        self.thread_store.clone(),
-                        self.text_thread_store.clone(),
-                        editor::EditorMode::AutoHeight {
-                            min_lines: 1,
-                            max_lines: None,
-                        },
-                        window,
-                        cx,
-                    );
-                    if !has_id {
-                        editor.set_read_only(true, cx);
+                if let Some(Entry::UserMessage(editor)) = self.entries.get_mut(index) {
+                    if !editor.focus_handle(cx).is_focused(window) {
+                        // Only update if we are not editing.
+                        // If we are, cancelling the edit will set the message to the newest content.
+                        editor.update(cx, |editor, cx| {
+                            editor.set_message(chunks, window, cx);
+                        });
                     }
-                    editor.set_message(chunks, window, cx);
-                    editor
-                });
-                cx.subscribe(&message_editor, move |_, editor, event, cx| {
-                    cx.emit(EntryViewEvent {
-                        entry_index: index,
-                        view_event: ViewEvent::MessageEditorEvent(editor, *event),
+                } else {
+                    let message_editor = cx.new(|cx| {
+                        let mut editor = MessageEditor::new(
+                            self.workspace.clone(),
+                            self.project.clone(),
+                            self.history_store.clone(),
+                            self.prompt_store.clone(),
+                            "Edit message － @ to include context",
+                            self.prevent_slash_commands,
+                            editor::EditorMode::AutoHeight {
+                                min_lines: 1,
+                                max_lines: None,
+                            },
+                            window,
+                            cx,
+                        );
+                        if !has_id {
+                            editor.set_read_only(true, cx);
+                        }
+                        editor.set_message(chunks, window, cx);
+                        editor
+                    });
+                    cx.subscribe(&message_editor, move |_, editor, event, cx| {
+                        cx.emit(EntryViewEvent {
+                            entry_index: index,
+                            view_event: ViewEvent::MessageEditorEvent(editor, *event),
+                        })
                     })
-                })
-                .detach();
-                self.set_entry(index, Entry::UserMessage(message_editor));
+                    .detach();
+                    self.set_entry(index, Entry::UserMessage(message_editor));
+                }
             }
             AgentThreadEntry::ToolCall(tool_call) => {
                 let terminals = tool_call.terminals().cloned().collect::<Vec<_>>();
@@ -174,6 +190,7 @@ pub enum ViewEvent {
     MessageEditorEvent(Entity<MessageEditor>, MessageEditorEvent),
 }
 
+#[derive(Debug)]
 pub enum Entry {
     UserMessage(Entity<MessageEditor>),
     Content(HashMap<EntityId, AnyEntity>),
@@ -297,9 +314,10 @@ mod tests {
     use std::{path::Path, rc::Rc};
 
     use acp_thread::{AgentConnection, StubAgentConnection};
-    use agent::{TextThreadStore, ThreadStore};
     use agent_client_protocol as acp;
     use agent_settings::AgentSettings;
+    use agent2::HistoryStore;
+    use assistant_context::ContextStore;
     use buffer_diff::{DiffHunkStatus, DiffHunkStatusKind};
     use editor::{EditorSettings, RowInfo};
     use fs::FakeFs;
@@ -362,15 +380,16 @@ mod tests {
             connection.send_update(session_id, acp::SessionUpdate::ToolCall(tool_call), cx)
         });
 
-        let thread_store = cx.new(|cx| ThreadStore::fake(project.clone(), cx));
-        let text_thread_store = cx.new(|cx| TextThreadStore::fake(project.clone(), cx));
+        let context_store = cx.new(|cx| ContextStore::fake(project.clone(), cx));
+        let history_store = cx.new(|cx| HistoryStore::new(context_store, cx));
 
         let view_state = cx.new(|_cx| {
             EntryViewState::new(
                 workspace.downgrade(),
                 project.clone(),
-                thread_store,
-                text_thread_store,
+                history_store,
+                None,
+                false,
             )
         });
 

@@ -108,7 +108,7 @@ impl Anchor {
             fragment_cursor.seek(&Some(fragment_id), Bias::Left);
             fragment_cursor
                 .item()
-                .map_or(false, |fragment| fragment.visible)
+                .is_some_and(|fragment| fragment.visible)
         }
     }
 }

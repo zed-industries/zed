@@ -371,7 +371,7 @@ impl MacPlatform {
 
                             item = NSMenuItem::alloc(nil)
                                 .initWithTitle_action_keyEquivalent_(
-                                    ns_string(&name),
+                                    ns_string(name),
                                     selector,
                                     ns_string(key_to_native(&keystroke.key).as_ref()),
                                 )
@@ -383,7 +383,7 @@ impl MacPlatform {
                         } else {
                             item = NSMenuItem::alloc(nil)
                                 .initWithTitle_action_keyEquivalent_(
-                                    ns_string(&name),
+                                    ns_string(name),
                                     selector,
                                     ns_string(""),
                                 )
@@ -392,7 +392,7 @@ impl MacPlatform {
                     } else {
                         item = NSMenuItem::alloc(nil)
                             .initWithTitle_action_keyEquivalent_(
-                                ns_string(&name),
+                                ns_string(name),
                                 selector,
                                 ns_string(""),
                             )
@@ -412,7 +412,7 @@ impl MacPlatform {
                         submenu.addItem_(Self::create_menu_item(item, delegate, actions, keymap));
                     }
                     item.setSubmenu_(submenu);
-                    item.setTitle_(ns_string(&name));
+                    item.setTitle_(ns_string(name));
                     item
                 }
                 MenuItem::SystemMenu(OsMenu { name, menu_type }) => {
@@ -420,7 +420,7 @@ impl MacPlatform {
                     let submenu = NSMenu::new(nil).autorelease();
                     submenu.setDelegate_(delegate);
                     item.setSubmenu_(submenu);
-                    item.setTitle_(ns_string(&name));
+                    item.setTitle_(ns_string(name));
 
                     match menu_type {
                         SystemMenuType::Services => {
@@ -705,6 +705,7 @@ impl Platform for MacPlatform {
                     panel.setCanChooseDirectories_(options.directories.to_objc());
                     panel.setCanChooseFiles_(options.files.to_objc());
                     panel.setAllowsMultipleSelection_(options.multiple.to_objc());
+
                     panel.setCanCreateDirectories(true.to_objc());
                     panel.setResolvesAliases_(false.to_objc());
                     let done_tx = Cell::new(Some(done_tx));
@@ -714,10 +715,10 @@ impl Platform for MacPlatform {
                             let urls = panel.URLs();
                             for i in 0..urls.count() {
                                 let url = urls.objectAtIndex(i);
-                                if url.isFileURL() == YES {
-                                    if let Ok(path) = ns_url_to_path(url) {
-                                        result.push(path)
-                                    }
+                                if url.isFileURL() == YES
+                                    && let Ok(path) = ns_url_to_path(url)
+                                {
+                                    result.push(path)
                                 }
                             }
                             Some(result)
@@ -730,6 +731,11 @@ impl Platform for MacPlatform {
                         }
                     });
                     let block = block.copy();
+
+                    if let Some(prompt) = options.prompt {
+                        let _: () = msg_send![panel, setPrompt: ns_string(&prompt)];
+                    }
+
                     let _: () = msg_send![panel, beginWithCompletionHandler: block];
                 }
             })
@@ -780,17 +786,18 @@ impl Platform for MacPlatform {
                                     // This is conditional on OS version because I'd like to get rid of it, so that
                                     // you can manually create a file called `a.sql.s`. That said it seems better
                                     // to break that use-case than breaking `a.sql`.
-                                    if chunks.len() == 3 && chunks[1].starts_with(chunks[2]) {
-                                        if Self::os_version() >= SemanticVersion::new(15, 0, 0) {
-                                            let new_filename = OsStr::from_bytes(
-                                                &filename.as_bytes()
-                                                    [..chunks[0].len() + 1 + chunks[1].len()],
-                                            )
-                                            .to_owned();
-                                            result.set_file_name(&new_filename);
-                                        }
+                                    if chunks.len() == 3
+                                        && chunks[1].starts_with(chunks[2])
+                                        && Self::os_version() >= SemanticVersion::new(15, 0, 0)
+                                    {
+                                        let new_filename = OsStr::from_bytes(
+                                            &filename.as_bytes()
+                                                [..chunks[0].len() + 1 + chunks[1].len()],
+                                        )
+                                        .to_owned();
+                                        result.set_file_name(&new_filename);
                                     }
-                                    return result;
+                                    result
                                 })
                             }
                         }

@@ -75,7 +75,7 @@ impl<T: 'static> Render for PromptEditor<T> {
                 let codegen = codegen.read(cx);
 
                 if codegen.alternative_count(cx) > 1 {
-                    buttons.push(self.render_cycle_controls(&codegen, cx));
+                    buttons.push(self.render_cycle_controls(codegen, cx));
                 }
 
                 let editor_margins = editor_margins.lock();
@@ -345,7 +345,7 @@ impl<T: 'static> PromptEditor<T> {
                 let prompt = self.editor.read(cx).text(cx);
                 if self
                     .prompt_history_ix
-                    .map_or(true, |ix| self.prompt_history[ix] != prompt)
+                    .is_none_or(|ix| self.prompt_history[ix] != prompt)
                 {
                     self.prompt_history_ix.take();
                     self.pending_prompt = prompt;
@@ -1229,27 +1229,27 @@ pub enum GenerationMode {
 impl GenerationMode {
     fn start_label(self) -> &'static str {
         match self {
-            GenerationMode::Generate { .. } => "Generate",
+            GenerationMode::Generate => "Generate",
             GenerationMode::Transform => "Transform",
         }
     }
     fn tooltip_interrupt(self) -> &'static str {
         match self {
-            GenerationMode::Generate { .. } => "Interrupt Generation",
+            GenerationMode::Generate => "Interrupt Generation",
             GenerationMode::Transform => "Interrupt Transform",
         }
     }
 
     fn tooltip_restart(self) -> &'static str {
         match self {
-            GenerationMode::Generate { .. } => "Restart Generation",
+            GenerationMode::Generate => "Restart Generation",
             GenerationMode::Transform => "Restart Transform",
         }
     }
 
     fn tooltip_accept(self) -> &'static str {
         match self {
-            GenerationMode::Generate { .. } => "Accept Generation",
+            GenerationMode::Generate => "Accept Generation",
             GenerationMode::Transform => "Accept Transform",
         }
     }

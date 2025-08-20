@@ -102,7 +102,7 @@ impl Render for RunningState {
             .find(|pane| pane.read(cx).is_zoomed());
 
         let active = self.panes.panes().into_iter().next();
-        let pane = if let Some(ref zoomed_pane) = zoomed_pane {
+        let pane = if let Some(zoomed_pane) = zoomed_pane {
             zoomed_pane.update(cx, |pane, cx| pane.render(window, cx).into_any_element())
         } else if let Some(active) = active {
             self.panes
@@ -180,7 +180,7 @@ impl SubView {
         let weak_list = list.downgrade();
         let focus_handle = list.focus_handle(cx);
         let this = Self::new(
-            focus_handle.clone(),
+            focus_handle,
             list.into(),
             DebuggerPaneItem::BreakpointList,
             cx,
@@ -358,7 +358,7 @@ pub(crate) fn new_debugger_pane(
         }
     };
 
-    let ret = cx.new(move |cx| {
+    cx.new(move |cx| {
         let mut pane = Pane::new(
             workspace.clone(),
             project.clone(),
@@ -414,7 +414,7 @@ pub(crate) fn new_debugger_pane(
                     .and_then(|item| item.downcast::<SubView>());
                 let is_hovered = as_subview
                     .as_ref()
-                    .map_or(false, |item| item.read(cx).hovered);
+                    .is_some_and(|item| item.read(cx).hovered);
 
                 h_flex()
                     .track_focus(&focus_handle)
@@ -427,7 +427,6 @@ pub(crate) fn new_debugger_pane(
                     .bg(cx.theme().colors().tab_bar_background)
                     .on_action(|_: &menu::Cancel, window, cx| {
                         if cx.stop_active_drag(window) {
-                            return;
                         } else {
                             cx.propagate();
                         }
@@ -449,7 +448,7 @@ pub(crate) fn new_debugger_pane(
                             .children(pane.items().enumerate().map(|(ix, item)| {
                                 let selected = active_pane_item
                                     .as_ref()
-                                    .map_or(false, |active| active.item_id() == item.item_id());
+                                    .is_some_and(|active| active.item_id() == item.item_id());
                                 let deemphasized = !pane.has_focus(window, cx);
                                 let item_ = item.boxed_clone();
                                 div()
@@ -563,9 +562,7 @@ pub(crate) fn new_debugger_pane(
             }
         });
         pane
-    });
-
-    ret
+    })
 }
 
 pub struct DebugTerminal {
@@ -627,7 +624,7 @@ impl RunningState {
                 if s.starts_with("\"$ZED_") && s.ends_with('"') {
                     *s = s[1..s.len() - 1].to_string();
                 }
-                if let Some(substituted) = substitute_variables_in_str(&s, context) {
+                if let Some(substituted) = substitute_variables_in_str(s, context) {
                     *s = substituted;
                 }
             }
@@ -657,7 +654,7 @@ impl RunningState {
                 }
                 resolve_path(s);
 
-                if let Some(substituted) = substitute_variables_in_str(&s, context) {
+                if let Some(substituted) = substitute_variables_in_str(s, context) {
                     *s = substituted;
                 }
             }
@@ -954,7 +951,7 @@ impl RunningState {
                                 inventory.read(cx).task_template_by_label(
                                     buffer,
                                     worktree_id,
-                                    &label,
+                                    label,
                                     cx,
                                 )
                             })
@@ -1116,9 +1113,8 @@ impl RunningState {
         };
         let session = self.session.read(cx);
 
-        let cwd = Some(&request.cwd)
-            .filter(|cwd| cwd.len() > 0)
-            .map(PathBuf::from)
+        let cwd = (!request.cwd.is_empty())
+            .then(|| PathBuf::from(&request.cwd))
             .or_else(|| session.binary().unwrap().cwd.clone());
 
         let mut envs: HashMap<String, String> =
@@ -1153,7 +1149,7 @@ impl RunningState {
             } else {
                 None
             }
-        } else if args.len() > 0 {
+        } else if !args.is_empty() {
             Some(args.remove(0))
         } else {
             None
@@ -1170,9 +1166,9 @@ impl RunningState {
             id: task::TaskId("debug".to_string()),
             full_label: title.clone(),
             label: title.clone(),
-            command: command.clone(),
+            command,
             args,
-            command_label: title.clone(),
+            command_label: title,
             cwd,
             env: envs,
             use_new_terminal: true,
@@ -1310,7 +1306,7 @@ impl RunningState {
         let mut pane_item_status = IndexMap::from_iter(
             DebuggerPaneItem::all()
                 .iter()
-                .filter(|kind| kind.is_supported(&caps))
+                .filter(|kind| kind.is_supported(caps))
                 .map(|kind| (*kind, false)),
         );
         self.panes.panes().iter().for_each(|pane| {
@@ -1371,7 +1367,7 @@ impl RunningState {
         this.serialize_layout(window, cx);
         match event {
             Event::Remove { .. } => {
-                let _did_find_pane = this.panes.remove(&source_pane).is_ok();
+                let _did_find_pane = this.panes.remove(source_pane).is_ok();
                 debug_assert!(_did_find_pane);
                 cx.notify();
             }
@@ -1759,7 +1755,7 @@ impl RunningState {
             this.activate_item(0, false, false, window, cx);
         });
 
-        let rightmost_pane = new_debugger_pane(workspace.clone(), project.clone(), window, cx);
+        let rightmost_pane = new_debugger_pane(workspace.clone(), project, window, cx);
         rightmost_pane.update(cx, |this, cx| {
             this.add_item(
                 Box::new(SubView::new(

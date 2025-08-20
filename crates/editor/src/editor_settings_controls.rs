@@ -88,7 +88,7 @@ impl RenderOnce for BufferFontFamilyControl {
             .child(Icon::new(IconName::Font))
             .child(DropdownMenu::new(
                 "buffer-font-family",
-                value.clone(),
+                value,
                 ContextMenu::build(window, cx, |mut menu, _, cx| {
                     let font_family_cache = FontFamilyCache::global(cx);
 

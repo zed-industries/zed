@@ -58,8 +58,7 @@ fn test_splice_included_ranges() {
     assert_eq!(change, 0..1);
 
     // does not create overlapping ranges
-    let (new_ranges, change) =
-        splice_included_ranges(ranges.clone(), &[0..18], &[ts_range(20..32)]);
+    let (new_ranges, change) = splice_included_ranges(ranges, &[0..18], &[ts_range(20..32)]);
     assert_eq!(
         new_ranges,
         &[ts_range(20..32), ts_range(50..60), ts_range(80..90)]
@@ -104,7 +103,7 @@ fn test_syntax_map_layers_for_range(cx: &mut App) {
     );
 
     let mut syntax_map = SyntaxMap::new(&buffer);
-    syntax_map.set_language_registry(registry.clone());
+    syntax_map.set_language_registry(registry);
     syntax_map.reparse(language.clone(), &buffer);
 
     assert_layers_for_range(
@@ -165,7 +164,7 @@ fn test_syntax_map_layers_for_range(cx: &mut App) {
     // Put the vec! macro back, adding back the syntactic layer.
     buffer.undo();
     syntax_map.interpolate(&buffer);
-    syntax_map.reparse(language.clone(), &buffer);
+    syntax_map.reparse(language, &buffer);
 
     assert_layers_for_range(
         &syntax_map,
@@ -252,8 +251,8 @@ fn test_dynamic_language_injection(cx: &mut App) {
     assert!(syntax_map.contains_unknown_injections());
 
     registry.add(Arc::new(html_lang()));
-    syntax_map.reparse(markdown.clone(), &buffer);
-    syntax_map.reparse(markdown_inline.clone(), &buffer);
+    syntax_map.reparse(markdown, &buffer);
+    syntax_map.reparse(markdown_inline, &buffer);
     assert_layers_for_range(
         &syntax_map,
         &buffer,
@@ -862,7 +861,7 @@ fn test_syntax_map_languages_loading_with_erb(cx: &mut App) {
     log::info!("editing");
     buffer.edit_via_marked_text(&text);
     syntax_map.interpolate(&buffer);
-    syntax_map.reparse(language.clone(), &buffer);
+    syntax_map.reparse(language, &buffer);
 
     assert_capture_ranges(
         &syntax_map,
@@ -986,7 +985,7 @@ fn test_random_edits(
     syntax_map.reparse(language.clone(), &buffer);
 
     let mut reference_syntax_map = SyntaxMap::new(&buffer);
-    reference_syntax_map.set_language_registry(registry.clone());
+    reference_syntax_map.set_language_registry(registry);
 
     log::info!("initial text:\n{}", buffer.text());
 

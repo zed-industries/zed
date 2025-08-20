@@ -55,10 +55,10 @@ use workspace::Workspace;
 use workspace::notifications::{ErrorMessagePrompt, NotificationId};
 use worktree::Worktree;
 
-const CURSOR_MARKER: &'static str = "<|user_cursor_is_here|>";
-const START_OF_FILE_MARKER: &'static str = "<|start_of_file|>";
-const EDITABLE_REGION_START_MARKER: &'static str = "<|editable_region_start|>";
-const EDITABLE_REGION_END_MARKER: &'static str = "<|editable_region_end|>";
+const CURSOR_MARKER: &str = "<|user_cursor_is_here|>";
+const START_OF_FILE_MARKER: &str = "<|start_of_file|>";
+const EDITABLE_REGION_START_MARKER: &str = "<|editable_region_start|>";
+const EDITABLE_REGION_END_MARKER: &str = "<|editable_region_end|>";
 const BUFFER_CHANGE_GROUPING_INTERVAL: Duration = Duration::from_secs(1);
 const ZED_PREDICT_DATA_COLLECTION_CHOICE: &str = "zed_predict_data_collection_choice";
 
@@ -106,7 +106,7 @@ impl Dismissable for ZedPredictUpsell {
         if KEY_VALUE_STORE
             .read_kvp(ZED_PREDICT_DATA_COLLECTION_CHOICE)
             .log_err()
-            .map_or(false, |s| s.is_some())
+            .is_some_and(|s| s.is_some())
         {
             return true;
         }
@@ -114,7 +114,7 @@ impl Dismissable for ZedPredictUpsell {
         KEY_VALUE_STORE
             .read_kvp(Self::KEY)
             .log_err()
-            .map_or(false, |s| s.is_some())
+            .is_some_and(|s| s.is_some())
     }
 }
 
@@ -166,7 +166,7 @@ fn interpolate(
 ) -> Option<Vec<(Range<Anchor>, String)>> {
     let mut edits = Vec::new();
 
-    let mut model_edits = current_edits.into_iter().peekable();
+    let mut model_edits = current_edits.iter().peekable();
     for user_edit in new_snapshot.edits_since::<usize>(&old_snapshot.version) {
         while let Some((model_old_range, _)) = model_edits.peek() {
             let model_old_range = model_old_range.to_offset(old_snapshot);
@@ -505,7 +505,7 @@ impl Zeta {
                 input_events,
                 input_excerpt,
                 buffer_snapshotted_at,
-                &cx,
+                cx,
             )
             .await;
 
@@ -836,12 +836,11 @@ and then another
                 .headers()
                 .get(MINIMUM_REQUIRED_VERSION_HEADER_NAME)
                 .and_then(|version| SemanticVersion::from_str(version.to_str().ok()?).ok())
+                && app_version < minimum_required_version
             {
-                if app_version < minimum_required_version {
-                    return Err(anyhow!(ZedUpdateRequiredError {
-                        minimum_version: minimum_required_version
-                    }));
-                }
+                return Err(anyhow!(ZedUpdateRequiredError {
+                    minimum_version: minimum_required_version
+                }));
             }
 
             if response.status().is_success() {
@@ -981,7 +980,7 @@ and then another
             old_text,
             new_text,
             editable_range.start,
-            &snapshot,
+            snapshot,
         ))
     }
 
@@ -991,7 +990,7 @@ and then another
         offset: usize,
         snapshot: &BufferSnapshot,
     ) -> Vec<(Range<Anchor>, String)> {
-        text_diff(&old_text, &new_text)
+        text_diff(&old_text, new_text)
             .into_iter()
             .map(|(mut old_range, new_text)| {
                 old_range.start += offset;
@@ -1182,7 +1181,7 @@ pub fn gather_context(
                 .filter_map(|(language_server_id, diagnostic_group)| {
                     let language_server =
                         local_lsp_store.running_language_server_for_id(language_server_id)?;
-                    let diagnostic_group = diagnostic_group.resolve::<usize>(&snapshot);
+                    let diagnostic_group = diagnostic_group.resolve::<usize>(snapshot);
                     let language_server_name = language_server.name().to_string();
                     let serialized = serde_json::to_value(diagnostic_group).unwrap();
                     Some((language_server_name, serialized))
@@ -1313,10 +1312,10 @@ impl CurrentEditPrediction {
             return true;
         }
 
-        let Some(old_edits) = old_completion.completion.interpolate(&snapshot) else {
+        let Some(old_edits) = old_completion.completion.interpolate(snapshot) else {
             return true;
         };
-        let Some(new_edits) = self.completion.interpolate(&snapshot) else {
+        let Some(new_edits) = self.completion.interpolate(snapshot) else {
             return false;
         };
 
@@ -1664,7 +1663,7 @@ impl edit_prediction::EditPredictionProvider for ZetaEditPredictionProvider {
 
                 if let Some(old_completion) = this.current_completion.as_ref() {
                     let snapshot = buffer.read(cx).snapshot();
-                    if new_completion.should_replace_completion(&old_completion, &snapshot) {
+                    if new_completion.should_replace_completion(old_completion, &snapshot) {
                         this.zeta.update(cx, |zeta, cx| {
                             zeta.completion_shown(&new_completion.completion, cx);
                         });
@@ -2124,7 +2123,7 @@ mod tests {
         let completion = completion_task.await.unwrap().unwrap();
         completion
             .edits
-            .into_iter()
+            .iter()
             .map(|(old_range, new_text)| (old_range.to_point(&snapshot), new_text.clone()))
             .collect::<Vec<_>>()
     }

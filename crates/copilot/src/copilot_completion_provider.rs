@@ -1083,7 +1083,7 @@ mod tests {
         let replace_range_marker: TextRangeMarker = ('<', '>').into();
         let (_, mut marked_ranges) = marked_text_ranges_by(
             marked_string,
-            vec![complete_from_marker.clone(), replace_range_marker.clone()],
+            vec![complete_from_marker, replace_range_marker.clone()],
         );
 
         let replace_range =

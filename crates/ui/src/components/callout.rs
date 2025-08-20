@@ -1,6 +1,12 @@
-use gpui::{AnyElement, Hsla};
+use gpui::AnyElement;
 
 use crate::prelude::*;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BorderPosition {
+    Top,
+    Bottom,
+}
 
 /// A callout component for displaying important information that requires user attention.
 ///
@@ -10,42 +16,48 @@ use crate::prelude::*;
 /// use ui::{Callout};
 ///
 /// Callout::new()
-///     .icon(Icon::new(IconName::Warning).color(Color::Warning))
+///     .severity(Severity::Warning)
+///     .icon(IconName::Warning)
 ///     .title(Label::new("Be aware of your subscription!"))
 ///     .description(Label::new("Your subscription is about to expire. Renew now!"))
-///     .primary_action(Button::new("renew", "Renew Now"))
-///     .secondary_action(Button::new("remind", "Remind Me Later"))
+///     .actions_slot(Button::new("renew", "Renew Now"))
 /// ```
 ///
 #[derive(IntoElement, RegisterComponent)]
 pub struct Callout {
-    icon: Option<Icon>,
+    severity: Severity,
+    icon: Option<IconName>,
     title: Option<SharedString>,
     description: Option<SharedString>,
-    primary_action: Option<AnyElement>,
-    secondary_action: Option<AnyElement>,
-    tertiary_action: Option<AnyElement>,
+    actions_slot: Option<AnyElement>,
+    dismiss_action: Option<AnyElement>,
     line_height: Option<Pixels>,
-    bg_color: Option<Hsla>,
+    border_position: BorderPosition,
 }
 
 impl Callout {
     /// Creates a new `Callout` component with default styling.
     pub fn new() -> Self {
         Self {
+            severity: Severity::Info,
             icon: None,
             title: None,
             description: None,
-            primary_action: None,
-            secondary_action: None,
-            tertiary_action: None,
+            actions_slot: None,
+            dismiss_action: None,
             line_height: None,
-            bg_color: None,
+            border_position: BorderPosition::Top,
         }
     }
 
+    /// Sets the severity of the callout.
+    pub fn severity(mut self, severity: Severity) -> Self {
+        self.severity = severity;
+        self
+    }
+
     /// Sets the icon to display in the callout.
-    pub fn icon(mut self, icon: Icon) -> Self {
+    pub fn icon(mut self, icon: IconName) -> Self {
         self.icon = Some(icon);
         self
     }
@@ -64,20 +76,15 @@ impl Callout {
     }
 
     /// Sets the primary call-to-action button.
-    pub fn primary_action(mut self, action: impl IntoElement) -> Self {
-        self.primary_action = Some(action.into_any_element());
+    pub fn actions_slot(mut self, action: impl IntoElement) -> Self {
+        self.actions_slot = Some(action.into_any_element());
         self
     }
 
-    /// Sets an optional secondary call-to-action button.
-    pub fn secondary_action(mut self, action: impl IntoElement) -> Self {
-        self.secondary_action = Some(action.into_any_element());
-        self
-    }
-
-    /// Sets an optional tertiary call-to-action button.
-    pub fn tertiary_action(mut self, action: impl IntoElement) -> Self {
-        self.tertiary_action = Some(action.into_any_element());
+    /// Sets an optional dismiss button, which is usually an icon button with a close icon.
+    /// This button is always rendered as the last one to the far right.
+    pub fn dismiss_action(mut self, action: impl IntoElement) -> Self {
+        self.dismiss_action = Some(action.into_any_element());
         self
     }
 
@@ -87,9 +94,9 @@ impl Callout {
         self
     }
 
-    /// Sets a custom background color for the callout content.
-    pub fn bg_color(mut self, color: Hsla) -> Self {
-        self.bg_color = Some(color);
+    /// Sets the border position in the callout.
+    pub fn border_position(mut self, border_position: BorderPosition) -> Self {
+        self.border_position = border_position;
         self
     }
 }
@@ -97,21 +104,51 @@ impl Callout {
 impl RenderOnce for Callout {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let line_height = self.line_height.unwrap_or(window.line_height());
-        let bg_color = self
-            .bg_color
-            .unwrap_or(cx.theme().colors().panel_background);
-        let has_actions = self.primary_action.is_some()
-            || self.secondary_action.is_some()
-            || self.tertiary_action.is_some();
+
+        let has_actions = self.actions_slot.is_some() || self.dismiss_action.is_some();
+
+        let (icon, icon_color, bg_color) = match self.severity {
+            Severity::Info => (
+                IconName::Info,
+                Color::Muted,
+                cx.theme().colors().panel_background.opacity(0.),
+            ),
+            Severity::Success => (
+                IconName::Check,
+                Color::Success,
+                cx.theme().status().success.opacity(0.1),
+            ),
+            Severity::Warning => (
+                IconName::Warning,
+                Color::Warning,
+                cx.theme().status().warning_background.opacity(0.2),
+            ),
+            Severity::Error => (
+                IconName::XCircle,
+                Color::Error,
+                cx.theme().status().error.opacity(0.08),
+            ),
+        };
 
         h_flex()
+            .min_w_0()
             .p_2()
             .gap_2()
             .items_start()
+            .map(|this| match self.border_position {
+                BorderPosition::Top => this.border_t_1(),
+                BorderPosition::Bottom => this.border_b_1(),
+            })
+            .border_color(cx.theme().colors().border)
             .bg(bg_color)
             .overflow_x_hidden()
-            .when_some(self.icon, |this, icon| {
-                this.child(h_flex().h(line_height).justify_center().child(icon))
+            .when(self.icon.is_some(), |this| {
+                this.child(
+                    h_flex()
+                        .h(line_height)
+                        .justify_center()
+                        .child(Icon::new(icon).size(IconSize::Small).color(icon_color)),
+                )
             })
             .child(
                 v_flex()
@@ -119,10 +156,11 @@ impl RenderOnce for Callout {
                     .w_full()
                     .child(
                         h_flex()
-                            .h(line_height)
+                            .min_h(line_height)
                             .w_full()
                             .gap_1()
                             .justify_between()
+                            .flex_wrap()
                             .when_some(self.title, |this, title| {
                                 this.child(h_flex().child(Label::new(title).size(LabelSize::Small)))
                             })
@@ -130,13 +168,10 @@ impl RenderOnce for Callout {
                                 this.child(
                                     h_flex()
                                         .gap_0p5()
-                                        .when_some(self.tertiary_action, |this, action| {
+                                        .when_some(self.actions_slot, |this, action| {
                                             this.child(action)
                                         })
-                                        .when_some(self.secondary_action, |this, action| {
-                                            this.child(action)
-                                        })
-                                        .when_some(self.primary_action, |this, action| {
+                                        .when_some(self.dismiss_action, |this, action| {
                                             this.child(action)
                                         }),
                                 )
@@ -168,84 +203,101 @@ impl Component for Callout {
     }
 
     fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
-        let callout_examples = vec![
+        let single_action = || Button::new("got-it", "Got it").label_size(LabelSize::Small);
+        let multiple_actions = || {
+            h_flex()
+                .gap_0p5()
+                .child(Button::new("update", "Backup & Update").label_size(LabelSize::Small))
+                .child(Button::new("dismiss", "Dismiss").label_size(LabelSize::Small))
+        };
+
+        let basic_examples = vec![
             single_example(
                 "Simple with Title Only",
                 Callout::new()
-                    .icon(
-                        Icon::new(IconName::Info)
-                            .color(Color::Accent)
-                            .size(IconSize::Small),
-                    )
+                    .icon(IconName::Info)
                     .title("System maintenance scheduled for tonight")
-                    .primary_action(Button::new("got-it", "Got it").label_size(LabelSize::Small))
+                    .actions_slot(single_action())
                     .into_any_element(),
             )
             .width(px(580.)),
             single_example(
                 "With Title and Description",
                 Callout::new()
-                    .icon(
-                        Icon::new(IconName::Warning)
-                            .color(Color::Warning)
-                            .size(IconSize::Small),
-                    )
+                    .icon(IconName::Warning)
                     .title("Your settings contain deprecated values")
                     .description(
                         "We'll backup your current settings and update them to the new format.",
                     )
-                    .primary_action(
-                        Button::new("update", "Backup & Update").label_size(LabelSize::Small),
-                    )
-                    .secondary_action(
-                        Button::new("dismiss", "Dismiss").label_size(LabelSize::Small),
-                    )
+                    .actions_slot(single_action())
                     .into_any_element(),
             )
             .width(px(580.)),
             single_example(
                 "Error with Multiple Actions",
                 Callout::new()
-                    .icon(
-                        Icon::new(IconName::Close)
-                            .color(Color::Error)
-                            .size(IconSize::Small),
-                    )
+                    .icon(IconName::Close)
                     .title("Thread reached the token limit")
                     .description("Start a new thread from a summary to continue the conversation.")
-                    .primary_action(
-                        Button::new("new-thread", "Start New Thread").label_size(LabelSize::Small),
-                    )
-                    .secondary_action(
-                        Button::new("view-summary", "View Summary").label_size(LabelSize::Small),
-                    )
+                    .actions_slot(multiple_actions())
                     .into_any_element(),
             )
             .width(px(580.)),
             single_example(
                 "Multi-line Description",
                 Callout::new()
-                    .icon(
-                        Icon::new(IconName::Sparkle)
-                            .color(Color::Accent)
-                            .size(IconSize::Small),
-                    )
+                    .icon(IconName::Sparkle)
                     .title("Upgrade to Pro")
                     .description("• Unlimited threads\n• Priority support\n• Advanced analytics")
-                    .primary_action(
-                        Button::new("upgrade", "Upgrade Now").label_size(LabelSize::Small),
-                    )
-                    .secondary_action(
-                        Button::new("learn-more", "Learn More").label_size(LabelSize::Small),
-                    )
+                    .actions_slot(multiple_actions())
                     .into_any_element(),
             )
             .width(px(580.)),
         ];
 
+        let severity_examples = vec![
+            single_example(
+                "Info",
+                Callout::new()
+                    .icon(IconName::Info)
+                    .title("System maintenance scheduled for tonight")
+                    .actions_slot(single_action())
+                    .into_any_element(),
+            ),
+            single_example(
+                "Warning",
+                Callout::new()
+                    .severity(Severity::Warning)
+                    .icon(IconName::Triangle)
+                    .title("System maintenance scheduled for tonight")
+                    .actions_slot(single_action())
+                    .into_any_element(),
+            ),
+            single_example(
+                "Error",
+                Callout::new()
+                    .severity(Severity::Error)
+                    .icon(IconName::XCircle)
+                    .title("System maintenance scheduled for tonight")
+                    .actions_slot(single_action())
+                    .into_any_element(),
+            ),
+            single_example(
+                "Success",
+                Callout::new()
+                    .severity(Severity::Success)
+                    .icon(IconName::Check)
+                    .title("System maintenance scheduled for tonight")
+                    .actions_slot(single_action())
+                    .into_any_element(),
+            ),
+        ];
+
         Some(
-            example_group(callout_examples)
-                .vertical()
+            v_flex()
+                .gap_4()
+                .child(example_group(basic_examples).vertical())
+                .child(example_group_with_title("Severity", severity_examples).vertical())
                 .into_any_element(),
         )
     }

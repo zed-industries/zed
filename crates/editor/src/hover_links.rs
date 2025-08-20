@@ -271,7 +271,7 @@ impl Editor {
             Task::ready(Ok(Navigated::No))
         };
         self.select(SelectPhase::End, window, cx);
-        return navigate_task;
+        navigate_task
     }
 }
 
@@ -418,24 +418,22 @@ pub fn update_inlay_link_and_hover_points(
                                     }
                                     if let Some((language_server_id, location)) =
                                         hovered_hint_part.location
+                                        && secondary_held
+                                        && !editor.has_pending_nonempty_selection()
                                     {
-                                        if secondary_held
-                                            && !editor.has_pending_nonempty_selection()
-                                        {
-                                            go_to_definition_updated = true;
-                                            show_link_definition(
-                                                shift_held,
-                                                editor,
-                                                TriggerPoint::InlayHint(
-                                                    highlight,
-                                                    location,
-                                                    language_server_id,
-                                                ),
-                                                snapshot,
-                                                window,
-                                                cx,
-                                            );
-                                        }
+                                        go_to_definition_updated = true;
+                                        show_link_definition(
+                                            shift_held,
+                                            editor,
+                                            TriggerPoint::InlayHint(
+                                                highlight,
+                                                location,
+                                                language_server_id,
+                                            ),
+                                            snapshot,
+                                            window,
+                                            cx,
+                                        );
                                     }
                                 }
                             }
@@ -657,11 +655,11 @@ pub fn show_link_definition(
 pub(crate) fn find_url(
     buffer: &Entity<language::Buffer>,
     position: text::Anchor,
-    mut cx: AsyncWindowContext,
+    cx: AsyncWindowContext,
 ) -> Option<(Range<text::Anchor>, String)> {
     const LIMIT: usize = 2048;
 
-    let Ok(snapshot) = buffer.read_with(&mut cx, |buffer, _| buffer.snapshot()) else {
+    let Ok(snapshot) = buffer.read_with(&cx, |buffer, _| buffer.snapshot()) else {
         return None;
     };
 
@@ -719,11 +717,11 @@ pub(crate) fn find_url(
 pub(crate) fn find_url_from_range(
     buffer: &Entity<language::Buffer>,
     range: Range<text::Anchor>,
-    mut cx: AsyncWindowContext,
+    cx: AsyncWindowContext,
 ) -> Option<String> {
     const LIMIT: usize = 2048;
 
-    let Ok(snapshot) = buffer.read_with(&mut cx, |buffer, _| buffer.snapshot()) else {
+    let Ok(snapshot) = buffer.read_with(&cx, |buffer, _| buffer.snapshot()) else {
         return None;
     };
 
@@ -766,10 +764,11 @@ pub(crate) fn find_url_from_range(
     let mut finder = LinkFinder::new();
     finder.kinds(&[LinkKind::Url]);
 
-    if let Some(link) = finder.links(&text).next() {
-        if link.start() == 0 && link.end() == text.len() {
-            return Some(link.as_str().to_string());
-        }
+    if let Some(link) = finder.links(&text).next()
+        && link.start() == 0
+        && link.end() == text.len()
+    {
+        return Some(link.as_str().to_string());
     }
 
     None
@@ -794,7 +793,7 @@ pub(crate) async fn find_file(
     ) -> Option<ResolvedPath> {
         project
             .update(cx, |project, cx| {
-                project.resolve_path_in_buffer(&candidate_file_path, buffer, cx)
+                project.resolve_path_in_buffer(candidate_file_path, buffer, cx)
             })
             .ok()?
             .await
@@ -872,7 +871,7 @@ fn surrounding_filename(
         .peekable();
     while let Some(ch) = forwards.next() {
         // Skip escaped whitespace
-        if ch == '\\' && forwards.peek().map_or(false, |ch| ch.is_whitespace()) {
+        if ch == '\\' && forwards.peek().is_some_and(|ch| ch.is_whitespace()) {
             token_end += ch.len_utf8();
             let whitespace = forwards.next().unwrap();
             token_end += whitespace.len_utf8();

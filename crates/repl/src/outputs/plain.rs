@@ -68,7 +68,7 @@ pub fn text_style(window: &mut Window, cx: &mut App) -> TextStyle {
 
     let theme = cx.theme();
 
-    let text_style = TextStyle {
+    TextStyle {
         font_family,
         font_features,
         font_weight,
@@ -81,9 +81,7 @@ pub fn text_style(window: &mut Window, cx: &mut App) -> TextStyle {
         // These are going to be overridden per-cell
         color: theme.colors().terminal_foreground,
         ..Default::default()
-    };
-
-    text_style
+    }
 }
 
 /// Returns the default terminal size for the terminal output.

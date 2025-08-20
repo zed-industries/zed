@@ -530,10 +530,10 @@ where
         debug_assert!(self.stack.is_empty() || self.stack.last().unwrap().tree.0.is_leaf());
 
         let mut end = self.position.clone();
-        if bias == Bias::Left {
-            if let Some(summary) = self.item_summary() {
-                end.add_summary(summary, self.cx);
-            }
+        if bias == Bias::Left
+            && let Some(summary) = self.item_summary()
+        {
+            end.add_summary(summary, self.cx);
         }
 
         target.cmp(&end, self.cx) == Ordering::Equal

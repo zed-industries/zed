@@ -1,4 +1,3 @@
-use agent_client_protocol as acp;
 use anyhow::Result;
 use buffer_diff::{BufferDiff, BufferDiffSnapshot};
 use editor::{MultiBuffer, PathKey};
@@ -21,17 +20,13 @@ pub enum Diff {
 }
 
 impl Diff {
-    pub fn from_acp(
-        diff: acp::Diff,
+    pub fn finalized(
+        path: PathBuf,
+        old_text: Option<String>,
+        new_text: String,
         language_registry: Arc<LanguageRegistry>,
         cx: &mut Context<Self>,
     ) -> Self {
-        let acp::Diff {
-            path,
-            old_text,
-            new_text,
-        } = diff;
-
         let multibuffer = cx.new(|_cx| MultiBuffer::without_headers(Capability::ReadOnly));
 
         let new_buffer = cx.new(|cx| Buffer::local(new_text, cx));
@@ -71,8 +66,8 @@ impl Diff {
                         let hunk_ranges = {
                             let buffer = new_buffer.read(cx);
                             let diff = buffer_diff.read(cx);
-                            diff.hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &buffer, cx)
-                                .map(|diff_hunk| diff_hunk.buffer_range.to_point(&buffer))
+                            diff.hunks_intersecting_range(Anchor::MIN..Anchor::MAX, buffer, cx)
+                                .map(|diff_hunk| diff_hunk.buffer_range.to_point(buffer))
                                 .collect::<Vec<_>>()
                         };
 
@@ -227,7 +222,7 @@ impl PendingDiff {
     fn finalize(&self, cx: &mut Context<Diff>) -> FinalizedDiff {
         let ranges = self.excerpt_ranges(cx);
         let base_text = self.base_text.clone();
-        let language_registry = self.buffer.read(cx).language_registry().clone();
+        let language_registry = self.buffer.read(cx).language_registry();
 
         let path = self
             .buffer
@@ -253,7 +248,6 @@ impl PendingDiff {
 
         let buffer_diff = cx.spawn({
             let buffer = buffer.clone();
-            let language_registry = language_registry.clone();
             async move |_this, cx| {
                 build_buffer_diff(base_text, &buffer, language_registry, cx).await
             }
@@ -306,13 +300,13 @@ impl PendingDiff {
         let buffer = self.buffer.read(cx);
         let diff = self.diff.read(cx);
         let mut ranges = diff
-            .hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &buffer, cx)
-            .map(|diff_hunk| diff_hunk.buffer_range.to_point(&buffer))
+            .hunks_intersecting_range(Anchor::MIN..Anchor::MAX, buffer, cx)
+            .map(|diff_hunk| diff_hunk.buffer_range.to_point(buffer))
             .collect::<Vec<_>>();
         ranges.extend(
             self.revealed_ranges
                 .iter()
-                .map(|range| range.to_point(&buffer)),
+                .map(|range| range.to_point(buffer)),
         );
         ranges.sort_unstable_by_key(|range| (range.start, Reverse(range.end)));
 

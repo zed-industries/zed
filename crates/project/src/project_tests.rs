@@ -695,7 +695,7 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
         assert_eq!(
             buffer
                 .completion_triggers()
-                .into_iter()
+                .iter()
                 .cloned()
                 .collect::<Vec<_>>(),
             &[".".to_string(), "::".to_string()]
@@ -747,7 +747,7 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
         assert_eq!(
             buffer
                 .completion_triggers()
-                .into_iter()
+                .iter()
                 .cloned()
                 .collect::<Vec<_>>(),
             &[":".to_string()]
@@ -766,7 +766,7 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
         assert_eq!(
             buffer
                 .completion_triggers()
-                .into_iter()
+                .iter()
                 .cloned()
                 .collect::<Vec<_>>(),
             &[".".to_string(), "::".to_string()]
@@ -1099,9 +1099,9 @@ async fn test_reporting_fs_changes_to_language_servers(cx: &mut gpui::TestAppCon
     let prev_read_dir_count = fs.read_dir_call_count();
 
     let fake_server = fake_servers.next().await.unwrap();
-    let (server_id, server_name) = lsp_store.read_with(cx, |lsp_store, _| {
-        let (id, status) = lsp_store.language_server_statuses().next().unwrap();
-        (id, status.name.clone())
+    let server_id = lsp_store.read_with(cx, |lsp_store, _| {
+        let (id, _) = lsp_store.language_server_statuses().next().unwrap();
+        id
     });
 
     // Simulate jumping to a definition in a dependency outside of the worktree.
@@ -1110,7 +1110,6 @@ async fn test_reporting_fs_changes_to_language_servers(cx: &mut gpui::TestAppCon
             project.open_local_buffer_via_lsp(
                 lsp::Url::from_file_path(path!("/the-registry/dep1/src/dep1.rs")).unwrap(),
                 server_id,
-                server_name.clone(),
                 cx,
             )
         })
@@ -1819,7 +1818,7 @@ async fn test_restarting_server_with_diagnostics_published(cx: &mut gpui::TestAp
             buffer
                 .snapshot()
                 .diagnostics_in_range::<_, usize>(0..1, false)
-                .map(|entry| entry.diagnostic.message.clone())
+                .map(|entry| entry.diagnostic.message)
                 .collect::<Vec<_>>(),
             ["the message".to_string()]
         );
@@ -1845,7 +1844,7 @@ async fn test_restarting_server_with_diagnostics_published(cx: &mut gpui::TestAp
             buffer
                 .snapshot()
                 .diagnostics_in_range::<_, usize>(0..1, false)
-                .map(|entry| entry.diagnostic.message.clone())
+                .map(|entry| entry.diagnostic.message)
                 .collect::<Vec<_>>(),
             Vec::<String>::new(),
         );
@@ -2948,9 +2947,10 @@ fn chunks_with_diagnostics<T: ToOffset + ToPoint>(
 ) -> Vec<(String, Option<DiagnosticSeverity>)> {
     let mut chunks: Vec<(String, Option<DiagnosticSeverity>)> = Vec::new();
     for chunk in buffer.snapshot().chunks(range, true) {
-        if chunks.last().map_or(false, |prev_chunk| {
-            prev_chunk.1 == chunk.diagnostic_severity
-        }) {
+        if chunks
+            .last()
+            .is_some_and(|prev_chunk| prev_chunk.1 == chunk.diagnostic_severity)
+        {
             chunks.last_mut().unwrap().0.push_str(chunk.text);
         } else {
             chunks.push((chunk.text.to_string(), chunk.diagnostic_severity));
@@ -3712,7 +3712,7 @@ async fn test_save_file_spawns_language_server(cx: &mut gpui::TestAppContext) {
 async fn test_file_changes_multiple_times_on_disk(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
-    let fs = FakeFs::new(cx.executor().clone());
+    let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         path!("/dir"),
         json!({
@@ -3767,7 +3767,7 @@ async fn test_file_changes_multiple_times_on_disk(cx: &mut gpui::TestAppContext)
 async fn test_edit_buffer_while_it_reloads(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
-    let fs = FakeFs::new(cx.executor().clone());
+    let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         path!("/dir"),
         json!({
@@ -4123,7 +4123,7 @@ async fn test_buffer_identity_across_renames(cx: &mut gpui::TestAppContext) {
         })
         .unwrap()
         .await
-        .to_included()
+        .into_included()
         .unwrap();
     cx.executor().run_until_parked();
 
@@ -5897,7 +5897,7 @@ async fn test_search_with_unicode(cx: &mut gpui::TestAppContext) {
 async fn test_create_entry(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
-    let fs = FakeFs::new(cx.executor().clone());
+    let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         "/one/two",
         json!({
@@ -5918,7 +5918,7 @@ async fn test_create_entry(cx: &mut gpui::TestAppContext) {
         })
         .await
         .unwrap()
-        .to_included()
+        .into_included()
         .unwrap();
 
     // Can't create paths outside the project

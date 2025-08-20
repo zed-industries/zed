@@ -61,13 +61,13 @@ impl MouseContextMenu {
             source,
             offset: position - (source_position + content_origin),
         };
-        return Some(MouseContextMenu::new(
+        Some(MouseContextMenu::new(
             editor,
             menu_position,
             context_menu,
             window,
             cx,
-        ));
+        ))
     }
 
     pub(crate) fn new(
@@ -102,11 +102,11 @@ impl MouseContextMenu {
                 let display_snapshot = &editor
                     .display_map
                     .update(cx, |display_map, cx| display_map.snapshot(cx));
-                let selection_init_range = selection_init.display_range(&display_snapshot);
+                let selection_init_range = selection_init.display_range(display_snapshot);
                 let selection_now_range = editor
                     .selections
                     .newest_anchor()
-                    .display_range(&display_snapshot);
+                    .display_range(display_snapshot);
                 if selection_now_range == selection_init_range {
                     return;
                 }

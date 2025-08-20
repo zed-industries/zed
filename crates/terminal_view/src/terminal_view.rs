@@ -308,10 +308,10 @@ impl TerminalView {
                 } else {
                     let mut displayed_lines = total_lines;
 
-                    if !self.focus_handle.is_focused(window) {
-                        if let Some(max_lines) = max_lines_when_unfocused {
-                            displayed_lines = displayed_lines.min(*max_lines)
-                        }
+                    if !self.focus_handle.is_focused(window)
+                        && let Some(max_lines) = max_lines_when_unfocused
+                    {
+                        displayed_lines = displayed_lines.min(*max_lines)
                     }
 
                     ContentMode::Inline {
@@ -385,9 +385,7 @@ impl TerminalView {
             .workspace
             .upgrade()
             .and_then(|workspace| workspace.read(cx).panel::<TerminalPanel>(cx))
-            .map_or(false, |terminal_panel| {
-                terminal_panel.read(cx).assistant_enabled()
-            });
+            .is_some_and(|terminal_panel| terminal_panel.read(cx).assistant_enabled());
         let context_menu = ContextMenu::build(window, cx, |menu, _, _| {
             menu.context(self.focus_handle.clone())
                 .action("New Terminal", Box::new(NewTerminal))
@@ -1156,26 +1154,26 @@ fn subscribe_for_terminal_events(
 
                                 if let Some(opened_item) = opened_items.first() {
                                     if open_target.is_file() {
-                                        if let Some(Ok(opened_item)) = opened_item {
-                                            if let Some(row) = path_to_open.row {
-                                                let col = path_to_open.column.unwrap_or(0);
-                                                if let Some(active_editor) =
-                                                    opened_item.downcast::<Editor>()
-                                                {
-                                                    active_editor
-                                                        .downgrade()
-                                                        .update_in(cx, |editor, window, cx| {
-                                                            editor.go_to_singleton_buffer_point(
-                                                                language::Point::new(
-                                                                    row.saturating_sub(1),
-                                                                    col.saturating_sub(1),
-                                                                ),
-                                                                window,
-                                                                cx,
-                                                            )
-                                                        })
-                                                        .log_err();
-                                                }
+                                        if let Some(Ok(opened_item)) = opened_item
+                                            && let Some(row) = path_to_open.row
+                                        {
+                                            let col = path_to_open.column.unwrap_or(0);
+                                            if let Some(active_editor) =
+                                                opened_item.downcast::<Editor>()
+                                            {
+                                                active_editor
+                                                    .downgrade()
+                                                    .update_in(cx, |editor, window, cx| {
+                                                        editor.go_to_singleton_buffer_point(
+                                                            language::Point::new(
+                                                                row.saturating_sub(1),
+                                                                col.saturating_sub(1),
+                                                            ),
+                                                            window,
+                                                            cx,
+                                                        )
+                                                    })
+                                                    .log_err();
                                             }
                                         }
                                     } else if open_target.is_dir() {
@@ -1321,17 +1319,17 @@ fn possible_open_target(
                 }
             };
 
-            if path_to_check.path.is_relative() {
-                if let Some(entry) = worktree.read(cx).entry_for_path(&path_to_check.path) {
-                    return Task::ready(Some(OpenTarget::Worktree(
-                        PathWithPosition {
-                            path: worktree_root.join(&entry.path),
-                            row: path_to_check.row,
-                            column: path_to_check.column,
-                        },
-                        entry.clone(),
-                    )));
-                }
+            if path_to_check.path.is_relative()
+                && let Some(entry) = worktree.read(cx).entry_for_path(&path_to_check.path)
+            {
+                return Task::ready(Some(OpenTarget::Worktree(
+                    PathWithPosition {
+                        path: worktree_root.join(&entry.path),
+                        row: path_to_check.row,
+                        column: path_to_check.column,
+                    },
+                    entry.clone(),
+                )));
             }
 
             paths_to_check.push(path_to_check);
@@ -1399,8 +1397,8 @@ fn possible_open_target(
             let found_entry = worktree
                 .update(cx, |worktree, _| {
                     let worktree_root = worktree.abs_path();
-                    let mut traversal = worktree.traverse_from_path(true, true, false, "".as_ref());
-                    while let Some(entry) = traversal.next() {
+                    let traversal = worktree.traverse_from_path(true, true, false, "".as_ref());
+                    for entry in traversal {
                         if let Some(path_in_worktree) = worktree_paths_to_check
                             .iter()
                             .find(|path_to_check| entry.path.ends_with(&path_to_check.path))
@@ -1428,11 +1426,11 @@ fn possible_open_target(
     let fs = workspace.read(cx).project().read(cx).fs().clone();
     cx.background_spawn(async move {
         for mut path_to_check in fs_paths_to_check {
-            if let Some(fs_path_to_check) = fs.canonicalize(&path_to_check.path).await.ok() {
-                if let Some(metadata) = fs.metadata(&fs_path_to_check).await.ok().flatten() {
-                    path_to_check.path = fs_path_to_check;
-                    return Some(OpenTarget::File(path_to_check, metadata));
-                }
+            if let Some(fs_path_to_check) = fs.canonicalize(&path_to_check.path).await.ok()
+                && let Some(metadata) = fs.metadata(&fs_path_to_check).await.ok().flatten()
+            {
+                path_to_check.path = fs_path_to_check;
+                return Some(OpenTarget::File(path_to_check, metadata));
             }
         }
 
@@ -1604,15 +1602,15 @@ impl Item for TerminalView {
                 TaskStatus::Running => (
                     IconName::PlayFilled,
                     Color::Disabled,
-                    TerminalView::rerun_button(&terminal_task),
+                    TerminalView::rerun_button(terminal_task),
                 ),
                 TaskStatus::Unknown => (
                     IconName::Warning,
                     Color::Warning,
-                    TerminalView::rerun_button(&terminal_task),
+                    TerminalView::rerun_button(terminal_task),
                 ),
                 TaskStatus::Completed { success } => {
-                    let rerun_button = TerminalView::rerun_button(&terminal_task);
+                    let rerun_button = TerminalView::rerun_button(terminal_task);
 
                     if *success {
                         (IconName::Check, Color::Success, rerun_button)
@@ -1939,7 +1937,8 @@ impl SearchableItem for TerminalView {
         // Selection head might have a value if there's a selection that isn't
         // associated with a match. Therefore, if there are no matches, we should
         // report None, no matter the state of the terminal
-        let res = if !matches.is_empty() {
+
+        if !matches.is_empty() {
             if let Some(selection_head) = self.terminal().read(cx).selection_head {
                 // If selection head is contained in a match. Return that match
                 match direction {
@@ -1979,9 +1978,7 @@ impl SearchableItem for TerminalView {
             }
         } else {
             None
-        };
-
-        res
+        }
     }
     fn replace(
         &mut self,
@@ -2195,7 +2192,7 @@ mod tests {
             })
             .await
             .unwrap()
-            .to_included()
+            .into_included()
             .unwrap();
 
         (wt, entry)

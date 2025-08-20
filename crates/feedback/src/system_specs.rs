@@ -31,7 +31,7 @@ impl SystemSpecs {
         let architecture = env::consts::ARCH;
         let commit_sha = match release_channel {
             ReleaseChannel::Dev | ReleaseChannel::Nightly => {
-                AppCommitSha::try_global(cx).map(|sha| sha.full().clone())
+                AppCommitSha::try_global(cx).map(|sha| sha.full())
             }
             _ => None,
         };
@@ -135,7 +135,7 @@ impl Display for SystemSpecs {
 fn try_determine_available_gpus() -> Option<String> {
     #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     {
-        return std::process::Command::new("vulkaninfo")
+        std::process::Command::new("vulkaninfo")
             .args(&["--summary"])
             .output()
             .ok()
@@ -150,11 +150,11 @@ fn try_determine_available_gpus() -> Option<String> {
                 ]
                 .join("\n")
             })
-            .or(Some("Failed to run `vulkaninfo --summary`".to_string()));
+            .or(Some("Failed to run `vulkaninfo --summary`".to_string()))
     }
     #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
     {
-        return None;
+        None
     }
 }
 

@@ -1012,7 +1012,6 @@ where
                 let message: SharedString = format!("Error: {err}").into();
                 log::error!("Showing error notification in app: {message}");
                 show_app_notification(workspace_error_notification_id(), cx, {
-                    let message = message.clone();
                     move |cx| {
                         cx.new({
                             let message = message.clone();
@@ -1038,7 +1037,7 @@ where
 {
     fn detach_and_notify_err(self, window: &mut Window, cx: &mut App) {
         window
-            .spawn(cx, async move |mut cx| self.await.notify_async_err(&mut cx))
+            .spawn(cx, async move |cx| self.await.notify_async_err(cx))
             .detach();
     }
 }

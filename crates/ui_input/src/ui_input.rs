@@ -202,11 +202,11 @@ impl Component for SingleLineInput {
                 .children(vec![example_group(vec![
                     single_example(
                         "Small Label (Default)",
-                        div().child(input_small.clone()).into_any_element(),
+                        div().child(input_small).into_any_element(),
                     ),
                     single_example(
                         "Regular Label",
-                        div().child(input_regular.clone()).into_any_element(),
+                        div().child(input_regular).into_any_element(),
                     ),
                 ])])
                 .into_any_element(),
