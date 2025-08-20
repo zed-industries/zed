@@ -1,5 +1,6 @@
 use std::{
     cell::RefCell,
+    ffi::OsStr,
     mem::ManuallyDrop,
     path::{Path, PathBuf},
     rc::Rc,
@@ -460,13 +461,13 @@ impl Platform for WindowsPlatform {
     }
 
     fn open_url(&self, url: &str) {
+        if url.is_empty() {
+            return;
+        }
         let url_string = url.to_string();
         self.background_executor()
             .spawn(async move {
-                if url_string.is_empty() {
-                    return;
-                }
-                open_target(url_string.as_str());
+                open_target(url_string);
             })
             .detach();
     }
@@ -520,27 +521,21 @@ impl Platform for WindowsPlatform {
         let path = path.to_path_buf();
         self.background_executor()
             .spawn(async move {
-                open_target_in_explorer(path)
-                    .context("Revealing path in explorer")
+                open_target_in_explorer(&path)
+                    .with_context(|| format!("Revealing path {} in explorer", path.display()))
                     .log_err();
             })
             .detach();
     }
 
     fn open_with_system(&self, path: &Path) {
-        let Ok(full_path) = path.canonicalize() else {
-            log::error!("unable to parse file full path: {}", path.display());
+        if path.as_os_str().is_empty() {
             return;
-        };
+        }
+        let path = path.to_path_buf();
         self.background_executor()
             .spawn(async move {
-                let Some(full_path_str) = full_path.to_str() else {
-                    return;
-                };
-                if full_path_str.is_empty() {
-                    return;
-                };
-                open_target(full_path_str);
+                open_target(path);
             })
             .detach();
     }
@@ -731,7 +726,8 @@ pub(crate) struct WindowCreationInfo {
     pub(crate) disable_direct_composition: bool,
 }
 
-fn open_target(target: &str) {
+fn open_target(target: impl AsRef<OsStr>) {
+    let target = target.as_ref();
     unsafe {
         let ret = ShellExecuteW(
             None,
@@ -747,7 +743,7 @@ fn open_target(target: &str) {
     }
 }
 
-fn open_target_in_explorer(target: PathBuf) -> Result<()> {
+fn open_target_in_explorer(target: &Path) -> Result<()> {
     let dir = target.parent().context("No parent folder found")?;
     let desktop = unsafe { SHGetDesktopFolder()? };
 
@@ -768,7 +764,7 @@ fn open_target_in_explorer(target: PathBuf) -> Result<()> {
         desktop.ParseDisplayName(
             HWND::default(),
             None,
-            &HSTRING::from(target.as_path()),
+            &HSTRING::from(target),
             None,
             &mut file_item,
             std::ptr::null_mut(),
@@ -778,17 +774,8 @@ fn open_target_in_explorer(target: PathBuf) -> Result<()> {
     let highlight = [file_item as *const _];
     unsafe { SHOpenFolderAndSelectItems(dir_item as _, Some(&highlight), 0) }.or_else(|err| {
         if err.code().0 == ERROR_FILE_NOT_FOUND.0 as i32 {
-            unsafe {
-                ShellExecuteW(
-                    None,
-                    windows::core::w!("open"),
-                    &HSTRING::from(dir),
-                    None,
-                    None,
-                    SW_SHOWDEFAULT,
-                );
-                Ok(())
-            }
+            open_target(dir);
+            Ok(())
         } else {
             Err(anyhow::anyhow!("Can not open target path: {}", err))
         }
