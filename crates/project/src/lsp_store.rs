@@ -74,8 +74,9 @@ use lsp::{
     FileOperationPatternKind, FileOperationRegistrationOptions, FileRename, FileSystemWatcher,
     LSP_REQUEST_TIMEOUT, LanguageServer, LanguageServerBinary, LanguageServerBinaryOptions,
     LanguageServerId, LanguageServerName, LanguageServerSelector, LspRequestFuture,
-    MessageActionItem, MessageType, OneOf, RenameFilesParams, SymbolKind, TextDocumentSyncSaveOptions,TextEdit,
-    WillRenameFiles, WorkDoneProgressCancelParams, WorkspaceFolder, notification::DidRenameFiles,
+    MessageActionItem, MessageType, OneOf, RenameFilesParams, SymbolKind,
+    TextDocumentSyncSaveOptions, TextEdit, WillRenameFiles, WorkDoneProgressCancelParams,
+    WorkspaceFolder, notification::DidRenameFiles,
 };
 use node_runtime::read_package_installed_version;
 use parking_lot::Mutex;
@@ -3582,6 +3583,7 @@ impl LspStore {
     pub fn init(client: &AnyProtoClient) {
         client.add_entity_request_handler(Self::handle_lsp_query);
         client.add_entity_message_handler(Self::handle_lsp_query_response);
+        client.add_entity_request_handler(Self::handle_multi_lsp_query);
         client.add_entity_request_handler(Self::handle_restart_language_servers);
         client.add_entity_request_handler(Self::handle_stop_language_servers);
         client.add_entity_request_handler(Self::handle_cancel_language_server_work);
@@ -5654,9 +5656,9 @@ impl LspStore {
             });
             if !has_different_servers {
                 return Task::ready(Ok(Some(
-                        cached_data.lens.values().flatten().cloned().collect(),
-                    )))
-                    .shared();
+                    cached_data.lens.values().flatten().cloned().collect(),
+                )))
+                .shared();
             }
         }
 
@@ -8181,9 +8183,9 @@ impl LspStore {
     async fn handle_lsp_query_response(
         lsp_store: Entity<Self>,
         envelope: TypedEnvelope<proto::LspQueryResponse>,
-        mut cx: AsyncApp,
+        cx: AsyncApp,
     ) -> Result<()> {
-        lsp_store.read_with(&mut cx, |lsp_store, _| {
+        lsp_store.read_with(&cx, |lsp_store, _| {
             if let Some((upstream_client, _)) = lsp_store.upstream_client() {
                 upstream_client.handle_lsp_response(envelope.clone());
             }
@@ -8191,6 +8193,7 @@ impl LspStore {
         Ok(())
     }
 
+    // todo(lsp) remove after Zed Stable hits v0.204.x
     async fn handle_multi_lsp_query(
         lsp_store: Entity<Self>,
         envelope: TypedEnvelope<proto::MultiLspQuery>,
@@ -12091,7 +12094,7 @@ impl LspStore {
                 buffer.wait_for_version(version.clone())
             })?
             .await?;
-        let buffer_version = buffer.read_with(&mut cx, |buffer, _| buffer.version())?;
+        let buffer_version = buffer.read_with(&cx, |buffer, _| buffer.version())?;
         let request =
             T::from_proto(proto_request, lsp_store.clone(), buffer.clone(), cx.clone()).await?;
         lsp_store.update(&mut cx, |lsp_store, cx| {
