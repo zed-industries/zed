@@ -2944,9 +2944,7 @@ impl AcpThreadView {
     fn is_using_zed_ai_models(&self, cx: &App) -> bool {
         self.as_native_thread(cx)
             .and_then(|thread| thread.read(cx).model())
-            .map_or(false, |model| {
-                model.provider_id() == language_model::ZED_CLOUD_PROVIDER_ID
-            })
+            .is_some_and(|model| model.provider_id() == language_model::ZED_CLOUD_PROVIDER_ID)
     }
 
     fn render_token_usage(&self, cx: &mut Context<Self>) -> Option<Div> {
