@@ -539,12 +539,6 @@ List of `string` values
 - Setting: `selection_highlight`
 - Default: `true`
 
-## LSP Highlight Debounce
-
-- Description: The debounce delay before querying highlights from the language server based on the current cursor location.
-- Setting: `lsp_highlight_debounce`
-- Default: `75`
-
 ## Cursor Blink
 
 - Description: Whether or not the cursor blinks.
