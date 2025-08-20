@@ -193,19 +193,9 @@ impl Project {
 
         let local_path = if is_via_remote { None } else { path.clone() };
 
-        let shell = {
-            match self.remote_client.clone() {
-                Some(remote_client) => {
-                    match create_remote_shell(None, &mut env, path, remote_client, cx) {
-                        Ok(it) => it,
-                        Err(e) => return Task::ready(Err(e)),
-                    }
-                }
-                None => settings.shell,
-            }
-        };
         let toolchain =
             project_path_context.map(|p| self.active_toolchain(p, LanguageName::new("Python"), cx));
+        let remote_client = self.remote_client.clone();
         cx.spawn(async move |project, cx| {
             let toolchain = maybe!(async {
                 let toolchain = toolchain?.await?;
@@ -213,7 +203,16 @@ impl Project {
                 Some(())
             })
             .await;
+
             project.update(cx, move |this, cx| {
+                let shell = {
+                    match remote_client {
+                        Some(remote_client) => {
+                            create_remote_shell(None, &mut env, path, remote_client, cx)?
+                        }
+                        None => settings.shell,
+                    }
+                };
                 TerminalBuilder::new(
                     local_path.map(|path| path.to_path_buf()),
                     None,
