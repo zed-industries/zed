@@ -65,8 +65,8 @@ use theme::ThemeSettings;
 use time::UtcOffset;
 use ui::utils::WithRemSize;
 use ui::{
-    Banner, Callout, ContextMenu, ContextMenuEntry, Divider, ElevationIndex, KeyBinding,
-    PopoverMenu, PopoverMenuHandle, ProgressBar, Tab, Tooltip, prelude::*,
+    Banner, Callout, ContextMenu, ContextMenuEntry, ElevationIndex, KeyBinding, PopoverMenu,
+    PopoverMenuHandle, ProgressBar, Tab, Tooltip, prelude::*,
 };
 use util::ResultExt as _;
 use workspace::{
@@ -2563,23 +2563,17 @@ impl AgentPanel {
             )
             .child(
                 h_flex()
-                    .h_full()
-                    .gap_2()
-                    .children(self.render_token_count(cx))
-                    .child(
-                        h_flex()
-                            .h_full()
-                            .gap(DynamicSpacing::Base02.rems(cx))
-                            .pl(DynamicSpacing::Base04.rems(cx))
-                            .pr(DynamicSpacing::Base06.rems(cx))
-                            .child(new_thread_menu)
-                            .child(self.render_recent_entries_menu(
-                                IconName::MenuAltTemp,
-                                Corner::TopRight,
-                                cx,
-                            ))
-                            .child(self.render_panel_options_menu(window, cx)),
-                    ),
+                    .flex_none()
+                    .gap(DynamicSpacing::Base02.rems(cx))
+                    .pl(DynamicSpacing::Base04.rems(cx))
+                    .pr(DynamicSpacing::Base06.rems(cx))
+                    .child(new_thread_menu)
+                    .child(self.render_recent_entries_menu(
+                        IconName::MenuAltTemp,
+                        Corner::TopRight,
+                        cx,
+                    ))
+                    .child(self.render_panel_options_menu(window, cx)),
             )
     }
 
