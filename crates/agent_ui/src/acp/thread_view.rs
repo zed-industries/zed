@@ -4097,6 +4097,12 @@ impl AcpThreadView {
         })
     }
 
+    pub(crate) fn insert_selections(&self, window: &mut Window, cx: &mut Context<Self>) {
+        self.message_editor.update(cx, |message_editor, cx| {
+            message_editor.insert_selections(window, cx);
+        })
+    }
+
     fn render_thread_retry_status_callout(
         &self,
         _window: &mut Window,

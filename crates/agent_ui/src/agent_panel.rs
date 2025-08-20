@@ -903,6 +903,16 @@ impl AgentPanel {
         }
     }
 
+    fn active_thread_view(&self) -> Option<&Entity<AcpThreadView>> {
+        match &self.active_view {
+            ActiveView::ExternalAgentThread { thread_view } => Some(thread_view),
+            ActiveView::Thread { .. }
+            | ActiveView::TextThread { .. }
+            | ActiveView::History
+            | ActiveView::Configuration => None,
+        }
+    }
+
     fn new_thread(&mut self, action: &NewThread, window: &mut Window, cx: &mut Context<Self>) {
         if cx.has_flag::<GeminiAndNativeFeatureFlag>() {
             return self.new_agent_thread(AgentType::NativeAgent, window, cx);
@@ -3882,7 +3892,11 @@ impl AgentPanelDelegate for ConcreteAssistantPanelDelegate {
             // Wait to create a new context until the workspace is no longer
             // being updated.
             cx.defer_in(window, move |panel, window, cx| {
-                if let Some(message_editor) = panel.active_message_editor() {
+                if let Some(thread_view) = panel.active_thread_view() {
+                    thread_view.update(cx, |thread_view, cx| {
+                        thread_view.insert_selections(window, cx);
+                    });
+                } else if let Some(message_editor) = panel.active_message_editor() {
                     message_editor.update(cx, |message_editor, cx| {
                         message_editor.context_store().update(cx, |store, cx| {
                             let buffer = buffer.read(cx);

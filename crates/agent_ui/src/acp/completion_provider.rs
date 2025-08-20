@@ -108,62 +108,7 @@ impl ContextPickerCompletionProvider {
                 confirm: Some(Arc::new(|_, _, _| true)),
             }),
             ContextPickerEntry::Action(action) => {
-                let (new_text, on_action) = match action {
-                    ContextPickerAction::AddSelections => {
-                        const PLACEHOLDER: &str = "selection ";
-                        let selections = selection_ranges(workspace, cx)
-                            .into_iter()
-                            .enumerate()
-                            .map(|(ix, (buffer, range))| {
-                                (
-                                    buffer,
-                                    range,
-                                    (PLACEHOLDER.len() * ix)..(PLACEHOLDER.len() * (ix + 1) - 1),
-                                )
-                            })
-                            .collect::<Vec<_>>();
-
-                        let new_text: String = PLACEHOLDER.repeat(selections.len());
-
-                        let callback = Arc::new({
-                            let source_range = source_range.clone();
-                            move |_, window: &mut Window, cx: &mut App| {
-                                let selections = selections.clone();
-                                let message_editor = message_editor.clone();
-                                let source_range = source_range.clone();
-                                window.defer(cx, move |window, cx| {
-                                    message_editor
-                                        .update(cx, |message_editor, cx| {
-                                            message_editor.confirm_mention_for_selection(
-                                                source_range,
-                                                selections,
-                                                window,
-                                                cx,
-                                            )
-                                        })
-                                        .ok();
-                                });
-                                false
-                            }
-                        });
-
-                        (new_text, callback)
-                    }
-                };
-
-                Some(Completion {
-                    replace_range: source_range,
-                    new_text,
-                    label: CodeLabel::plain(action.label().to_string(), None),
-                    icon_path: Some(action.icon().path().into()),
-                    documentation: None,
-                    source: project::CompletionSource::Custom,
-                    insert_text_mode: None,
-                    // This ensures that when a user accepts this completion, the
-                    // completion menu will still be shown after "@category " is
-                    // inserted
-                    confirm: Some(on_action),
-                })
+                Self::completion_for_action(action, source_range, message_editor, workspace, cx)
             }
         }
     }
@@ -356,6 +301,71 @@ impl ContextPickerCompletionProvider {
                 message_editor,
                 mention_uri,
             )),
+        })
+    }
+
+    pub(crate) fn completion_for_action(
+        action: ContextPickerAction,
+        source_range: Range<Anchor>,
+        message_editor: WeakEntity<MessageEditor>,
+        workspace: &Entity<Workspace>,
+        cx: &mut App,
+    ) -> Option<Completion> {
+        let (new_text, on_action) = match action {
+            ContextPickerAction::AddSelections => {
+                const PLACEHOLDER: &str = "selection ";
+                let selections = selection_ranges(workspace, cx)
+                    .into_iter()
+                    .enumerate()
+                    .map(|(ix, (buffer, range))| {
+                        (
+                            buffer,
+                            range,
+                            (PLACEHOLDER.len() * ix)..(PLACEHOLDER.len() * (ix + 1) - 1),
+                        )
+                    })
+                    .collect::<Vec<_>>();
+
+                let new_text: String = PLACEHOLDER.repeat(selections.len());
+
+                let callback = Arc::new({
+                    let source_range = source_range.clone();
+                    move |_, window: &mut Window, cx: &mut App| {
+                        let selections = selections.clone();
+                        let message_editor = message_editor.clone();
+                        let source_range = source_range.clone();
+                        window.defer(cx, move |window, cx| {
+                            message_editor
+                                .update(cx, |message_editor, cx| {
+                                    message_editor.confirm_mention_for_selection(
+                                        source_range,
+                                        selections,
+                                        window,
+                                        cx,
+                                    )
+                                })
+                                .ok();
+                        });
+                        false
+                    }
+                });
+
+                (new_text, callback)
+            }
+        };
+
+        Some(Completion {
+            replace_range: source_range,
+            new_text,
+            label: CodeLabel::plain(action.label().to_string(), None),
+            icon_path: Some(action.icon().path().into()),
+            documentation: None,
+            source: project::CompletionSource::Custom,
+            insert_text_mode: None,
+            // This ensures that when a user accepts this completion, the
+            // completion menu will still be shown after "@category " is
+            // inserted
+            confirm: Some(on_action),
         })
     }
 
