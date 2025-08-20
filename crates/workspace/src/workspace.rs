@@ -4732,14 +4732,12 @@ impl Workspace {
                         })
                     });
 
-                    if let Some(view) = view {
-                        Some(entry.insert(FollowerView {
+                    view.map(|view| {
+                        entry.insert(FollowerView {
                             view,
                             location: None,
-                        }))
-                    } else {
-                        None
-                    }
+                        })
+                    })
                 }
             };
 
@@ -7670,7 +7668,7 @@ pub fn client_side_decorations(
 
     match decorations {
         Decorations::Client { .. } => window.set_client_inset(theme::CLIENT_SIDE_DECORATION_SHADOW),
-        Decorations::Server { .. } => window.set_client_inset(px(0.0)),
+        Decorations::Server => window.set_client_inset(px(0.0)),
     }
 
     struct GlobalResizeEdge(ResizeEdge);

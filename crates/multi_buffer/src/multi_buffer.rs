@@ -4069,13 +4069,9 @@ impl MultiBufferSnapshot {
                         buffer_end = buffer_end.min(end_buffer_offset);
                     }
 
-                    if let Some(iterator) =
-                        get_buffer_metadata(&excerpt.buffer, buffer_start..buffer_end)
-                    {
-                        Some(&mut current_excerpt_metadata.insert((excerpt.id, iterator)).1)
-                    } else {
-                        None
-                    }
+                    get_buffer_metadata(&excerpt.buffer, buffer_start..buffer_end).map(|iterator| {
+                        &mut current_excerpt_metadata.insert((excerpt.id, iterator)).1
+                    })
                 };
 
                 // Visit each metadata item.
