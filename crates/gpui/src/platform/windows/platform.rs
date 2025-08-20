@@ -748,9 +748,7 @@ fn open_target(target: &str) {
 }
 
 fn open_target_in_explorer(target: PathBuf) -> Result<()> {
-    let dir = target
-        .parent()
-        .with_context(|| format!("No parent folder found for path: {}", target.display()))?;
+    let dir = target.parent().context("No parent folder found")?;
     let desktop = unsafe { SHGetDesktopFolder()? };
 
     let mut dir_item = std::ptr::null_mut();
@@ -778,27 +776,21 @@ fn open_target_in_explorer(target: PathBuf) -> Result<()> {
     }
 
     let highlight = [file_item as *const _];
-    if let Err(err) = unsafe { SHOpenFolderAndSelectItems(dir_item as _, Some(&highlight), 0) } {
-        if err.code().0 == ERROR_FILE_NOT_FOUND.0 as i32 {
-            unsafe {
-                ShellExecuteW(
-                    None,
-                    windows::core::w!("open"),
-                    &HSTRING::from(dir),
-                    None,
-                    None,
-                    SW_SHOWDEFAULT,
-                );
-            }
-        } else {
-            return Err(anyhow::anyhow!(
-                "Can not open full path: {}",
-                target.display()
-            ));
-        }
+    match unsafe { SHOpenFolderAndSelectItems(dir_item as _, Some(&highlight), 0) } {
+        Ok(_) => Ok(()),
+        Err(err) if err.code().0 == ERROR_FILE_NOT_FOUND.0 as i32 => unsafe {
+            ShellExecuteW(
+                None,
+                windows::core::w!("open"),
+                &HSTRING::from(dir),
+                None,
+                None,
+                SW_SHOWDEFAULT,
+            );
+            Ok(())
+        },
+        Err(err) => Err(anyhow::anyhow!("Can not open target path: {}", err)),
     }
-
-    Ok(())
 }
 
 fn file_open_dialog(
