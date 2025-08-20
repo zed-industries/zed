@@ -3614,12 +3614,12 @@ impl AcpThreadView {
             }
         };
 
-        let burn_mode_available = self.as_native_thread(cx).map_or(false, |thread| {
+        let burn_mode_available = self.as_native_thread(cx).is_some_and(|thread| {
             thread.read(cx).completion_mode() == CompletionMode::Normal
                 && thread
                     .read(cx)
                     .model()
-                    .map_or(false, |model| model.supports_burn_mode())
+                    .is_some_and(|model| model.supports_burn_mode())
         });
 
         let description = if burn_mode_available {
