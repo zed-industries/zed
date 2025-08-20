@@ -1210,8 +1210,7 @@ mod tests {
                 check_hyperlink_match.check_iri_and_match(hyperlink_word, &hyperlink_match);
             }
             _ => {
-                assert!(
-                    false,
+                panic!(
                     "No hyperlink found\n     at {source_location}:\n{}",
                     check_hyperlink_match.format_renderable_content()
                 )

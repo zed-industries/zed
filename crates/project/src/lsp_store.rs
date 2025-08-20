@@ -10925,8 +10925,7 @@ impl LspStore {
                         .or_default()
                         .entry(server_id)
                         .and_modify(|_| {
-                            assert!(
-                            false,
+                            panic!(
                             "There should not be an existing snapshot for a newly inserted buffer"
                         )
                         })

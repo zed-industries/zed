@@ -826,6 +826,7 @@ style = { level = "allow", priority = -1 }
 
 # Temporary list of style lints that we've fixed so far.
 # Progress is being tracked in #36577
+assertions_on_constants = "warn"
 blocks_in_conditions = "warn"
 bool_assert_comparison = "warn"
 borrow_interior_mutable_const = "warn"

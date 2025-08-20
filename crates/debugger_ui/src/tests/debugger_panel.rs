@@ -418,8 +418,7 @@ async fn test_handle_start_debugging_request(
                 Ok(())
             });
             client.on_request::<dap::requests::Attach, _>(move |_, _| {
-                assert!(false, "should not get attach request");
-                Ok(())
+                panic!("should not get attach request");
             });
         }
     });
