@@ -550,17 +550,19 @@ impl ContextPickerCompletionProvider {
                 }),
         );
 
-        const RECENT_COUNT: usize = 2;
-        let threads = self
-            .history_store
-            .read(cx)
-            .recently_opened_entries(cx)
-            .into_iter()
-            .filter(|thread| !mentions.contains(&thread.mention_uri()))
-            .take(RECENT_COUNT)
-            .collect::<Vec<_>>();
+        if self.prompt_capabilities.get().embedded_context {
+            const RECENT_COUNT: usize = 2;
+            let threads = self
+                .history_store
+                .read(cx)
+                .recently_opened_entries(cx)
+                .into_iter()
+                .filter(|thread| !mentions.contains(&thread.mention_uri()))
+                .take(RECENT_COUNT)
+                .collect::<Vec<_>>();
 
-        recent.extend(threads.into_iter().map(Match::RecentThread));
+            recent.extend(threads.into_iter().map(Match::RecentThread));
+        }
 
         recent
     }
