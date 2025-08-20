@@ -619,15 +619,6 @@ async fn upload_minidump(
         form = form
             .text("sentry[logentry][formatted]", panic_info.message.clone())
             .text("span", panic_info.span.clone());
-        // .text(
-        //     "sentry[contexts][device][architecture]",
-        //     panic_info.architecture.clone(),
-        // )
-        // .text("sentry[contexts][os][name]", panic_info.os_name.clone())
-        // .text_if_some(
-        //     "sentry[contexts][os][release]",
-        //     panic_info.os_version.clone(),
-        // );
     }
     if let Some(minidump_error) = metadata.minidump_error.clone() {
         form = form.text("minidump_error", minidump_error);
@@ -643,39 +634,36 @@ async fn upload_minidump(
         commit_sha = metadata.init.commit_sha.clone(),
     );
 
-    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-    if let Ok(gpus) = system_specs::read_gpu_info_from_sys_class_drm() {
-        let gpu_count = gpus.len();
-        for (index, gpu) in gpus.into_iter().enumerate() {
-            let system_specs::GpuInfo {
-                device_name,
-                device_pci_id,
-                vendor_name,
-                vendor_pci_id,
-                driver_version,
-                driver_name,
-                pci_address: _,
-            } = gpu;
-            let num = if gpu_count == 1 {
-                String::new()
-            } else {
-                index.to_string()
-            };
-            let name = format!("gpu{num}");
-            let root = format!("sentry[contexts][{name}]");
-            form = form
-                .text(format!("{root}[type]"), "gpu")
-                .text(format!("{root}[name]"), device_name.unwrap_or(name))
-                .text(format!("{root}[id]"), format!("{:#06x}", device_pci_id))
-                .text(
-                    format!("{root}[vendor_id]"),
-                    format!("{:#06x}", vendor_pci_id),
-                )
-                .text_if_some(format!("{root}[vendor_name]"), vendor_name)
-                .text_if_some(format!("{root}[driver_version]"), driver_version)
-                .text_if_some(format!("{root}[driver_name]"), driver_name);
-        }
+    let gpu_count = metadata.gpus.len();
+    for (index, gpu) in metadata.gpus.iter().cloned().enumerate() {
+        let system_specs::GpuInfo {
+            device_name,
+            device_pci_id,
+            vendor_name,
+            vendor_pci_id,
+            driver_version,
+            driver_name,
+        } = gpu;
+        let num = if gpu_count == 1 {
+            String::new()
+        } else {
+            index.to_string()
+        };
+        let name = format!("gpu{num}");
+        let root = format!("sentry[contexts][{name}]");
+        form = form
+            .text(format!("{root}[type]"), "gpu")
+            .text(format!("{root}[name]"), device_name.unwrap_or(name))
+            .text(format!("{root}[id]"), format!("{:#06x}", device_pci_id))
+            .text(
+                format!("{root}[vendor_id]"),
+                format!("{:#06x}", vendor_pci_id),
+            )
+            .text_if_some(format!("{root}[vendor_name]"), vendor_name)
+            .text_if_some(format!("{root}[driver_version]"), driver_version)
+            .text_if_some(format!("{root}[driver_name]"), driver_name);
     }
+
     // TODO: add gpu-context, feature-flag-context, and more of device-context like gpu
     // name, screen resolution, available ram, device model, etc
 

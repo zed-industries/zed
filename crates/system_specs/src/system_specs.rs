@@ -169,7 +169,7 @@ fn try_determine_available_gpus() -> Option<String> {
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, serde::Deserialize, serde::Serialize, Clone)]
 pub struct GpuInfo {
     pub device_name: Option<String>,
     pub device_pci_id: u16,
@@ -177,14 +177,14 @@ pub struct GpuInfo {
     pub vendor_pci_id: u16,
     pub driver_version: Option<String>,
     pub driver_name: Option<String>,
-    pub pci_address: String,
 }
 
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 pub fn read_gpu_info_from_sys_class_drm() -> anyhow::Result<Vec<GpuInfo>> {
     use pciid_parser;
     let dir_iter = std::fs::read_dir("/sys/class/drm").context("Failed to read /sys/class/drm")?;
-    let mut gpus = vec![];
+    let mut pci_addresses = vec![];
+    let mut gpus = Vec::<GpuInfo>::new();
     let pci_db = pciid_parser::Database::read().ok();
     for entry in dir_iter {
         let Ok(entry) = entry else {
@@ -225,11 +225,14 @@ pub fn read_gpu_info_from_sys_class_drm() -> anyhow::Result<Vec<GpuInfo>> {
             .map(str::trim)
             .map(str::to_string);
 
-        let already_found = gpus.iter().any(|gpu: &GpuInfo| {
-            gpu.pci_address == pci_address
-                && gpu.driver_version == driver_version
-                && gpu.driver_name == driver_name
-        });
+        let already_found = gpus
+            .iter()
+            .zip(&pci_addresses)
+            .any(|(gpu, gpu_pci_address)| {
+                gpu_pci_address == &pci_address
+                    && gpu.driver_version == driver_version
+                    && gpu.driver_name == driver_name
+            });
 
         if already_found {
             continue;
@@ -250,8 +253,8 @@ pub fn read_gpu_info_from_sys_class_drm() -> anyhow::Result<Vec<GpuInfo>> {
             vendor_pci_id,
             driver_version,
             driver_name,
-            pci_address,
         });
+        pci_addresses.push(pci_address);
     }
 
     Ok(gpus)

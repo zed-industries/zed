@@ -4059,6 +4059,7 @@ dependencies = [
  "serde",
  "serde_json",
  "smol",
+ "system_specs",
  "workspace-hack",
 ]
 

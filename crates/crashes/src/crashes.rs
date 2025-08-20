@@ -135,6 +135,7 @@ pub struct CrashInfo {
     pub init: InitCrashHandler,
     pub panic: Option<CrashPanic>,
     pub minidump_error: Option<String>,
+    pub gpus: Vec<system_specs::GpuInfo>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -178,6 +179,18 @@ impl minidumper::ServerHandler for CrashServer {
             Err(e) => Some(format!("{e:?}")),
         };
 
+        #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
+        let mut gpus = vec![];
+
+        #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+        let gpus = match system_specs::read_gpu_info_from_sys_class_drm() {
+            Ok(gpus) => gpus.into_iter().map(Into::into).collect(),
+            Err(err) => {
+                log::warn!("Failed to collect GPU information for crash report: {err}");
+                vec![]
+            }
+        };
+
         let crash_info = CrashInfo {
             init: self
                 .initialization_params
@@ -186,6 +199,7 @@ impl minidumper::ServerHandler for CrashServer {
                 .clone(),
             panic: self.panic_info.get().cloned(),
             minidump_error,
+            gpus,
         };
 
         let crash_data_path = paths::logs_dir()
