@@ -1396,15 +1396,15 @@ impl AcpThread {
                             this.send_task.take();
                         }
 
+                        // Truncate entries if the last prompt was refused.
                         if let Ok(Ok(acp::PromptResponse {
                             stop_reason: acp::StopReason::Refusal,
                         })) = result
+                            && let Some((ix, _)) = this.last_user_message()
                         {
-                            if let Some((ix, _)) = this.last_user_message() {
-                                let range = ix..this.entries.len();
-                                this.entries.truncate(ix);
-                                cx.emit(AcpThreadEvent::EntriesRemoved(range));
-                            }
+                            let range = ix..this.entries.len();
+                            this.entries.truncate(ix);
+                            cx.emit(AcpThreadEvent::EntriesRemoved(range));
                         }
 
                         cx.emit(AcpThreadEvent::Stopped);
