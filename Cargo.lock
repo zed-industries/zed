@@ -7,7 +7,6 @@ name = "acp_thread"
 version = "0.1.0"
 dependencies = [
  "action_log",
- "agent",
  "agent-client-protocol",
  "anyhow",
  "buffer_diff",

@@ -6,9 +6,12 @@ use crate::{
 };
 use acp_thread::{MentionUri, UserMessageId};
 use action_log::ActionLog;
-use agent::thread::{DetailedSummaryState, GitState, ProjectSnapshot, WorktreeSnapshot};
+use agent::thread::{GitState, ProjectSnapshot, WorktreeSnapshot};
 use agent_client_protocol as acp;
-use agent_settings::{AgentProfileId, AgentSettings, CompletionMode, SUMMARIZE_THREAD_PROMPT};
+use agent_settings::{
+    AgentProfileId, AgentSettings, CompletionMode, SUMMARIZE_THREAD_DETAILED_PROMPT,
+    SUMMARIZE_THREAD_PROMPT,
+};
 use anyhow::{Context as _, Result, anyhow};
 use assistant_tool::adapt_schema_to_format;
 use chrono::{DateTime, Utc};
@@ -499,8 +502,7 @@ pub struct Thread {
     prompt_id: PromptId,
     updated_at: DateTime<Utc>,
     title: Option<SharedString>,
-    #[allow(unused)]
-    summary: DetailedSummaryState,
+    summary: Option<SharedString>,
     messages: Vec<Message>,
     completion_mode: CompletionMode,
     /// Holds the task that handles agent interaction until the end of the turn.
@@ -541,7 +543,7 @@ impl Thread {
             prompt_id: PromptId::new(),
             updated_at: Utc::now(),
             title: None,
-            summary: DetailedSummaryState::default(),
+            summary: None,
             messages: Vec::new(),
             completion_mode: AgentSettings::get_global(cx).preferred_completion_mode,
             running_turn: None,
@@ -691,7 +693,7 @@ impl Thread {
             } else {
                 Some(db_thread.title.clone())
             },
-            summary: db_thread.summary,
+            summary: db_thread.detailed_summary,
             messages: db_thread.messages,
             completion_mode: db_thread.completion_mode.unwrap_or_default(),
             running_turn: None,
@@ -719,7 +721,7 @@ impl Thread {
             title: self.title.clone().unwrap_or_default(),
             messages: self.messages.clone(),
             updated_at: self.updated_at,
-            summary: self.summary.clone(),
+            detailed_summary: self.summary.clone(),
             initial_project_snapshot: None,
             cumulative_token_usage: self.cumulative_token_usage,
             request_token_usage: self.request_token_usage.clone(),
@@ -976,7 +978,7 @@ impl Thread {
                 Message::Agent(_) | Message::Resume => {}
             }
         }
-
+        self.summary = None;
         cx.notify();
         Ok(())
     }
@@ -1047,6 +1049,7 @@ impl Thread {
         let event_stream = ThreadEventStream(events_tx);
         let message_ix = self.messages.len().saturating_sub(1);
         self.tool_use_limit_reached = false;
+        self.summary = None;
         self.running_turn = Some(RunningTurn {
             event_stream: event_stream.clone(),
             _task: cx.spawn(async move |this, cx| {
@@ -1507,6 +1510,63 @@ impl Thread {
         self.title.clone().unwrap_or("New Thread".into())
     }
 
+    pub fn summary(&mut self, cx: &mut Context<Self>) -> Task<Result<SharedString>> {
+        if let Some(summary) = self.summary.as_ref() {
+            return Task::ready(Ok(summary.clone()));
+        }
+        let Some(model) = self.summarization_model.clone() else {
+            return Task::ready(Err(anyhow!("No summarization model available")));
+        };
+        let mut request = LanguageModelRequest {
+            intent: Some(CompletionIntent::ThreadSummarization),
+            temperature: AgentSettings::temperature_for_model(&model, cx),
+            ..Default::default()
+        };
+
+        for message in &self.messages {
+            request.messages.extend(message.to_request());
+        }
+
+        request.messages.push(LanguageModelRequestMessage {
+            role: Role::User,
+            content: vec![SUMMARIZE_THREAD_DETAILED_PROMPT.into()],
+            cache: false,
+        });
+        cx.spawn(async move |this, cx| {
+            let mut summary = String::new();
+            let mut messages = model.stream_completion(request, cx).await?;
+            while let Some(event) = messages.next().await {
+                let event = event?;
+                let text = match event {
+                    LanguageModelCompletionEvent::Text(text) => text,
+                    LanguageModelCompletionEvent::StatusUpdate(
+                        CompletionRequestStatus::UsageUpdated { .. },
+                    ) => {
+                        // this.update(cx, |thread, cx| {
+                        //     thread.update_model_request_usage(amount as u32, limit, cx);
+                        // })?;
+                        // TODO: handle usage update
+                        continue;
+                    }
+                    _ => continue,
+                };
+
+                let mut lines = text.lines();
+                summary.extend(lines.next());
+            }
+
+            log::info!("Setting summary: {}", summary);
+            let summary = SharedString::from(summary);
+
+            this.update(cx, |this, cx| {
+                this.summary = Some(summary.clone());
+                cx.notify()
+            })?;
+
+            Ok(summary)
+        })
+    }
+
     fn update_title(
         &mut self,
         event_stream: &ThreadEventStream,
@@ -1617,6 +1677,7 @@ impl Thread {
 
         self.messages.push(Message::Agent(message));
         self.updated_at = Utc::now();
+        self.summary = None;
         cx.notify()
     }
 

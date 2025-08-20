@@ -1,6 +1,6 @@
 use crate::{AgentMessage, AgentMessageContent, UserMessage, UserMessageContent};
 use acp_thread::UserMessageId;
-use agent::thread_store;
+use agent::{thread::DetailedSummaryState, thread_store};
 use agent_client_protocol as acp;
 use agent_settings::{AgentProfileId, CompletionMode};
 use anyhow::{Result, anyhow};
@@ -20,7 +20,7 @@ use std::sync::Arc;
 use ui::{App, SharedString};
 
 pub type DbMessage = crate::Message;
-pub type DbSummary = agent::thread::DetailedSummaryState;
+pub type DbSummary = DetailedSummaryState;
 pub type DbLanguageModel = thread_store::SerializedLanguageModel;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -37,7 +37,7 @@ pub struct DbThread {
     pub messages: Vec<DbMessage>,
     pub updated_at: DateTime<Utc>,
     #[serde(default)]
-    pub summary: DbSummary,
+    pub detailed_summary: Option<SharedString>,
     #[serde(default)]
     pub initial_project_snapshot: Option<Arc<agent::thread::ProjectSnapshot>>,
     #[serde(default)]
@@ -185,7 +185,12 @@ impl DbThread {
             title: thread.summary,
             messages,
             updated_at: thread.updated_at,
-            summary: thread.detailed_summary_state,
+            detailed_summary: match thread.detailed_summary_state {
+                DetailedSummaryState::NotGenerated | DetailedSummaryState::Generating { .. } => {
+                    None
+                }
+                DetailedSummaryState::Generated { text, .. } => Some(text),
+            },
             initial_project_snapshot: thread.initial_project_snapshot,
             cumulative_token_usage: thread.cumulative_token_usage,
             request_token_usage,
