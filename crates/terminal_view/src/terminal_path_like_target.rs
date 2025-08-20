@@ -356,7 +356,7 @@ fn possibly_open_target(
                 return Ok(Some(open_target));
             }
         }
-        return Ok(None);
+        Ok(None)
     })
 }
 
@@ -411,10 +411,10 @@ mod tests {
             .await
             .expect("Failed to create a terminal");
 
-        let (terminal_a, workspace_a) = (terminal.clone(), workspace.clone());
+        let workspace_a = workspace.clone();
         let (terminal_view, cx) = app_cx.add_window_view(|window, cx| {
             TerminalView::new(
-                terminal_a,
+                terminal,
                 workspace_a.downgrade(),
                 None,
                 project.downgrade(),
