@@ -170,7 +170,7 @@ impl MessageEditor {
         cx: &mut Context<Self>,
     ) {
         let start = self.editor.update(cx, |editor, cx| {
-            editor.set_text(thread.title.to_string(), window, cx);
+            editor.set_text(format!("{}\n", thread.title), window, cx);
             editor
                 .buffer()
                 .read(cx)
