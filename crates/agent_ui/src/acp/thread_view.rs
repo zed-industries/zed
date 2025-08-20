@@ -65,6 +65,12 @@ const RESPONSE_PADDING_X: Pixels = px(19.);
 pub const MIN_EDITOR_LINES: usize = 4;
 pub const MAX_EDITOR_LINES: usize = 8;
 
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+enum ThreadFeedback {
+    Positive,
+    Negative,
+}
+
 enum ThreadError {
     PaymentRequired,
     ModelRequestLimitReached(cloud_llm_client::Plan),
@@ -130,6 +136,7 @@ pub struct AcpThreadView {
     editor_expanded: bool,
     terminal_expanded: bool,
     editing_message: Option<usize>,
+    thread_feedback: Option<ThreadFeedback>,
     _cancel_task: Option<Task<()>>,
     _subscriptions: [Subscription; 3],
 }
@@ -217,6 +224,7 @@ impl AcpThreadView {
             expanded_tool_calls: HashSet::default(),
             expanded_thinking_blocks: HashSet::default(),
             editing_message: None,
+            thread_feedback: None,
             edits_expanded: false,
             plan_expanded: false,
             editor_expanded: false,
@@ -610,6 +618,7 @@ impl AcpThreadView {
     ) {
         self.thread_error.take();
         self.editing_message.take();
+        self.thread_feedback.take();
 
         let Some(thread) = self.thread().cloned() else {
             return;
@@ -3546,7 +3555,9 @@ impl AcpThreadView {
                 this.scroll_to_top(cx);
             }));
 
-        h_flex()
+        let mut container = h_flex()
+            .id("thread-controls-container")
+            .group("thread-controls-container")
             .w_full()
             .mr_1()
             .pb_2()
@@ -3554,9 +3565,72 @@ impl AcpThreadView {
             .opacity(0.4)
             .hover(|style| style.opacity(1.))
             .flex_wrap()
-            .justify_end()
-            .child(open_as_markdown)
-            .child(scroll_to_top)
+            .justify_end();
+
+        if AgentSettings::get_global(cx).enable_feedback {
+            container = container.child(
+                div().visible_on_hover("thread-controls-container").child(
+                    Label::new(
+                        match self.thread_feedback {
+                            Some(ThreadFeedback::Positive) => "Thanks for your feedback!",
+                            Some(ThreadFeedback::Negative) => "We appreciate your feedback and will use it to improve.",
+                            None => "Rating the thread sends all of your current conversation to the Zed team.",
+                        }
+                    )
+                    .color(Color::Muted)
+                    .size(LabelSize::XSmall)
+                    .truncate(),
+                ),
+            ).child(
+                h_flex()
+                    .child(
+                        IconButton::new("feedback-thumbs-up", IconName::ThumbsUp)
+                            .shape(ui::IconButtonShape::Square)
+                            .icon_size(IconSize::Small)
+                            .icon_color(match self.thread_feedback {
+                                Some(ThreadFeedback::Positive) => Color::Accent,
+                                _ => Color::Ignored,
+                            })
+                            .tooltip(Tooltip::text("Helpful Response"))
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.handle_feedback_click(
+                                    ThreadFeedback::Positive,
+                                    window,
+                                    cx,
+                                );
+                            })),
+                    )
+                    .child(
+                        IconButton::new("feedback-thumbs-down", IconName::ThumbsDown)
+                            .shape(ui::IconButtonShape::Square)
+                            .icon_size(IconSize::Small)
+                            .icon_color(match self.thread_feedback {
+                                Some(ThreadFeedback::Negative) => Color::Accent,
+                                _ => Color::Ignored,
+                            })
+                            .tooltip(Tooltip::text("Not Helpful"))
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.handle_feedback_click(
+                                    ThreadFeedback::Negative,
+                                    window,
+                                    cx,
+                                );
+                            })),
+                    )
+            )
+        }
+
+        container.child(open_as_markdown).child(scroll_to_top)
+    }
+
+    fn handle_feedback_click(
+        &mut self,
+        feedback: ThreadFeedback,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.thread_feedback = Some(feedback);
+        cx.notify();
     }
 
     fn render_vertical_scrollbar(&self, cx: &mut Context<Self>) -> Stateful<Div> {
