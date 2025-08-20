@@ -326,6 +326,7 @@ pub enum Event {
     RefreshCodeLens,
     RevealInProjectPanel(ProjectEntryId),
     SnippetEdit(BufferId, Vec<(lsp::Range, Snippet)>),
+    UnsavedBufferEdit(Entity<Buffer>),
     ExpandedAllForEntry(WorktreeId, ProjectEntryId),
     AgentLocationChanged,
 }
@@ -2984,6 +2985,9 @@ impl Project {
                 if most_recent_edit.replica_id == self.replica_id() {
                     cx.emit(Event::SnippetEdit(*buffer_id, edits.clone()))
                 }
+            }
+            LspStoreEvent::UnsavedBufferEdit(buffer) => {
+                cx.emit(Event::UnsavedBufferEdit(buffer.clone()));
             }
         }
     }

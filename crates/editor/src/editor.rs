@@ -1903,6 +1903,30 @@ impl Editor {
                             editor.update_lsp_data(false, Some(*buffer_id), window, cx);
                         }
                     }
+                    project::Event::UnsavedBufferEdit(buffer) => {
+                        let Some(workspace) = editor.workspace() else {
+                            return;
+                        };
+                        workspace.update(cx, |workspace, cx| {
+                            Self::new_in_workspace_from_buffer(
+                                workspace,
+                                buffer.clone(),
+                                window,
+                                cx,
+                            ).detach_and_prompt_err(
+                                "Failed to open buffer",
+                                window,
+                                cx,
+                                |e, _, _| match e.error_code() {
+                                    ErrorCode::RemoteUpgradeRequired => Some(format!(
+                                    "The remote instance of Zed does not support this yet. It must be upgraded to {}",
+                                    e.error_tag("required").unwrap_or("the latest version")
+                                )),
+                                    _ => None,
+                                },
+                            );
+                        });
+                    }
                     _ => {}
                 },
             ));
@@ -2575,6 +2599,23 @@ impl Editor {
 
         cx.spawn_in(window, async move |workspace, cx| {
             let buffer = create.await?;
+            workspace.update_in(cx, |workspace, window, cx| {
+                let editor =
+                    cx.new(|cx| Editor::for_buffer(buffer, Some(project.clone()), window, cx));
+                workspace.add_item_to_active_pane(Box::new(editor.clone()), None, true, window, cx);
+                editor
+            })
+        })
+    }
+
+    fn new_in_workspace_from_buffer(
+        workspace: &mut Workspace,
+        buffer: Entity<Buffer>,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) -> Task<Result<Entity<Editor>>> {
+        let project = workspace.project().clone();
+        cx.spawn_in(window, async move |workspace, cx| {
             workspace.update_in(cx, |workspace, window, cx| {
                 let editor =
                     cx.new(|cx| Editor::for_buffer(buffer, Some(project.clone()), window, cx));

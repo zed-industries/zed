@@ -3555,6 +3555,7 @@ pub enum LspStoreEvent {
         edits: Vec<(lsp::Range, Snippet)>,
         most_recent_edit: clock::Lamport,
     },
+    UnsavedBufferEdit(Entity<Buffer>),
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -9210,15 +9211,24 @@ impl LspStore {
                                     .log_err()
                                     .flatten()?;
 
-                                LocalLspStore::deserialize_workspace_edit(
-                                    this.upgrade()?,
-                                    edit,
-                                    false,
-                                    language_server.clone(),
-                                    cx,
-                                )
-                                .await
-                                .ok();
+                                if let Some(transaction) =
+                                    LocalLspStore::deserialize_workspace_edit(
+                                        this.upgrade()?,
+                                        edit,
+                                        false,
+                                        language_server.clone(),
+                                        cx,
+                                    )
+                                    .await
+                                    .ok()
+                                {
+                                    for (buffer, _) in transaction.0 {
+                                        this.update(cx, |_, cx| {
+                                            cx.emit(LspStoreEvent::UnsavedBufferEdit(buffer));
+                                        })
+                                        .ok();
+                                    }
+                                }
                                 Some(())
                             }
                         });
