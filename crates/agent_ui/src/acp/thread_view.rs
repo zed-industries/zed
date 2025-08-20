@@ -1992,11 +1992,11 @@ impl AcpThreadView {
             .justify_center()
             .child(div().opacity(0.3).child(logo))
             .child(
-                h_flex().absolute().right_1().bottom_0().child(
-                    Icon::new(IconName::XCircle)
-                        .color(Color::Error)
-                        .size(IconSize::Small),
-                ),
+                h_flex()
+                    .absolute()
+                    .right_1()
+                    .bottom_0()
+                    .child(Icon::new(IconName::XCircleFilled).color(Color::Error)),
             )
             .into_any_element()
     }

@@ -246,6 +246,7 @@ pub enum IconName {
     Warning,
     WholeWord,
     XCircle,
+    XCircleFilled,
     ZedAgent,
     ZedAssistant,
     ZedBurnMode,
