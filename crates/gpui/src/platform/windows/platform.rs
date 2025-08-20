@@ -467,8 +467,8 @@ impl Platform for WindowsPlatform {
         let url_string = url.to_string();
         self.background_executor()
             .spawn(async move {
-                open_target(url_string)
-                    .with_context(|| format!("Opening url: {}", url))
+                open_target(&url_string)
+                    .with_context(|| format!("Opening url: {}", url_string))
                     .log_err();
             })
             .detach();
@@ -537,7 +537,7 @@ impl Platform for WindowsPlatform {
         let path = path.to_path_buf();
         self.background_executor()
             .spawn(async move {
-                open_target(path)
+                open_target(&path)
                     .with_context(|| format!("Opening {} with system", path.display()))
                     .log_err();
             })
