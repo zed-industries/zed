@@ -489,7 +489,7 @@ impl ClaudeAgentSession {
                                 .update(cx, |thread, cx| {
                                     let id = acp::ToolCallId(tool_use_id.into());
                                     let set_new_content = !content.is_empty()
-                                        && thread.tool_call(&id).map_or(true, |(_, tool_call)| {
+                                        && thread.tool_call(&id).is_none_or(|(_, tool_call)| {
                                             // preserve rich diff if we have one
                                             tool_call.diffs().next().is_none()
                                         });
