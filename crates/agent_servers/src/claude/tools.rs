@@ -313,11 +313,11 @@ impl ClaudeTool {
 ///
 /// File editing instructions:
 /// - The `old_text` param must match existing file content, including indentation.
-/// - The `old_text` param come from the actual file, not an outline.
+/// - The `old_text` param must come from the actual file, not an outline.
 /// - The `old_text` section must not be empty.
 /// - Be minimal with replacements:
-///     - For unique lines, incldue only those lines.
-///     - For non-unique lines, include enough context to indentify them.
+///     - For unique lines, include only those lines.
+///     - For non-unique lines, include enough context to identify them.
 /// - Do not escape quotes, newlines, or other characters.
 /// - Only edit the specified file.
 #[derive(Deserialize, JsonSchema, Debug)]
