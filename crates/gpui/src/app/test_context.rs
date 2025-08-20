@@ -134,7 +134,7 @@ impl TestAppContext {
             app: App::new_app(platform.clone(), asset_source, http_client),
             background_executor,
             foreground_executor,
-            dispatcher: dispatcher.clone(),
+            dispatcher,
             test_platform: platform,
             text_system,
             fn_name,
@@ -339,7 +339,7 @@ impl TestAppContext {
 
     /// Returns all windows open in the test.
     pub fn windows(&self) -> Vec<AnyWindowHandle> {
-        self.app.borrow().windows().clone()
+        self.app.borrow().windows()
     }
 
     /// Run the given task on the main thread.
@@ -619,7 +619,7 @@ impl<V> Entity<V> {
                 }
             }),
             cx.subscribe(self, {
-                let mut tx = tx.clone();
+                let mut tx = tx;
                 move |_, _: &Evt, _| {
                     tx.blocking_send(()).ok();
                 }
@@ -1026,7 +1026,7 @@ impl VisualContext for VisualTestContext {
     fn focus<V: crate::Focusable>(&mut self, view: &Entity<V>) -> Self::Result<()> {
         self.window
             .update(&mut self.cx, |_, window, cx| {
-                view.read(cx).focus_handle(cx).clone().focus(window)
+                view.read(cx).focus_handle(cx).focus(window)
             })
             .unwrap()
     }

@@ -685,7 +685,6 @@ impl BreakpointList {
                         selection_kind.map(|kind| kind.0) != Some(SelectedBreakpointKind::Source),
                     )
                     .on_click({
-                        let focus_handle = focus_handle.clone();
                         move |_, window, cx| {
                             focus_handle.focus(window);
                             window.dispatch_action(UnsetBreakpoint.boxed_clone(), cx)
@@ -1139,7 +1138,6 @@ impl ExceptionBreakpoint {
                     }
                 })
                 .on_click({
-                    let list = list.clone();
                     move |_, _, cx| {
                         list.update(cx, |this, cx| {
                             this.toggle_exception_breakpoint(&id, cx);

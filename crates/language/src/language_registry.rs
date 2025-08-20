@@ -432,7 +432,7 @@ impl LanguageRegistry {
             let mut state = self.state.write();
             state
                 .lsp_adapters
-                .entry(language_name.clone())
+                .entry(language_name)
                 .or_default()
                 .push(adapter.clone());
             state.all_lsp_adapters.insert(adapter.name(), adapter);
@@ -454,7 +454,7 @@ impl LanguageRegistry {
         let cached_adapter = CachedLspAdapter::new(Arc::new(adapter));
         state
             .lsp_adapters
-            .entry(language_name.clone())
+            .entry(language_name)
             .or_default()
             .push(cached_adapter.clone());
         state
@@ -1167,8 +1167,7 @@ impl LanguageRegistryState {
                 soft_wrap: language.config.soft_wrap,
                 auto_indent_on_paste: language.config.auto_indent_on_paste,
                 ..Default::default()
-            }
-            .clone(),
+            },
         );
         self.languages.push(language);
         self.version += 1;

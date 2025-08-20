@@ -679,7 +679,7 @@ impl Thread {
                 .and_then(|model| {
                     let model = SelectedModel {
                         provider: model.provider.clone().into(),
-                        model: model.model.clone().into(),
+                        model: model.model.into(),
                     };
                     registry.select_model(&model, cx)
                 })

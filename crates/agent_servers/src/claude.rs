@@ -787,7 +787,7 @@ impl Content {
     pub fn chunks(self) -> impl Iterator<Item = ContentChunk> {
         match self {
             Self::Chunks(chunks) => chunks.into_iter(),
-            Self::UntaggedText(text) => vec![ContentChunk::Text { text: text.clone() }].into_iter(),
+            Self::UntaggedText(text) => vec![ContentChunk::Text { text }].into_iter(),
         }
     }
 }

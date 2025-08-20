@@ -1968,7 +1968,7 @@ impl LocalWorktree {
         cx: &Context<Worktree>,
     ) -> Option<Task<Result<()>>> {
         let path = self.entry_for_id(entry_id).unwrap().path.clone();
-        let mut rx = self.add_path_prefix_to_scan(path.clone());
+        let mut rx = self.add_path_prefix_to_scan(path);
         Some(cx.background_spawn(async move {
             rx.next().await;
             Ok(())
@@ -3952,7 +3952,7 @@ impl BackgroundScanner {
             .iter()
             .map(|path| {
                 if path.file_name().is_some() {
-                    root_canonical_path.as_path().join(path).to_path_buf()
+                    root_canonical_path.as_path().join(path)
                 } else {
                     root_canonical_path.as_path().to_path_buf()
                 }

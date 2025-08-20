@@ -2507,7 +2507,7 @@ impl CollabPanel {
 
         let button = match section {
             Section::ActiveCall => channel_link.map(|channel_link| {
-                let channel_link_copy = channel_link.clone();
+                let channel_link_copy = channel_link;
                 IconButton::new("channel-link", IconName::Copy)
                     .icon_size(IconSize::Small)
                     .size(ButtonSize::None)
@@ -2691,7 +2691,7 @@ impl CollabPanel {
                 h_flex()
                     .w_full()
                     .justify_between()
-                    .child(Label::new(github_login.clone()))
+                    .child(Label::new(github_login))
                     .child(h_flex().children(controls)),
             )
             .start_slot(Avatar::new(user.avatar_uri.clone()))
@@ -3125,7 +3125,7 @@ impl Panel for CollabPanel {
 
 impl Focusable for CollabPanel {
     fn focus_handle(&self, cx: &App) -> gpui::FocusHandle {
-        self.filter_editor.focus_handle(cx).clone()
+        self.filter_editor.focus_handle(cx)
     }
 }
 

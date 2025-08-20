@@ -137,12 +137,11 @@ impl ProfileSelector {
         entry.handler({
             let fs = self.fs.clone();
             let provider = self.provider.clone();
-            let profile_id = profile_id.clone();
             move |_window, cx| {
                 update_settings_file::<AgentSettings>(fs.clone(), cx, {
                     let profile_id = profile_id.clone();
                     move |settings, _cx| {
-                        settings.set_profile(profile_id.clone());
+                        settings.set_profile(profile_id);
                     }
                 });
 
@@ -175,7 +174,6 @@ impl Render for ProfileSelector {
 
             PopoverMenu::new("profile-selector")
                 .trigger_with_tooltip(trigger_button, {
-                    let focus_handle = focus_handle.clone();
                     move |window, cx| {
                         Tooltip::for_action_in(
                             "Toggle Profile Menu",

@@ -88,11 +88,11 @@ pub fn text_diff_with_options(
                 let new_offset = new_byte_range.start;
                 hunk_input.clear();
                 hunk_input.update_before(tokenize(
-                    &old_text[old_byte_range.clone()],
+                    &old_text[old_byte_range],
                     options.language_scope.clone(),
                 ));
                 hunk_input.update_after(tokenize(
-                    &new_text[new_byte_range.clone()],
+                    &new_text[new_byte_range],
                     options.language_scope.clone(),
                 ));
                 diff_internal(&hunk_input, |old_byte_range, new_byte_range, _, _| {
@@ -103,7 +103,7 @@ pub fn text_diff_with_options(
                     let replacement_text = if new_byte_range.is_empty() {
                         empty.clone()
                     } else {
-                        new_text[new_byte_range.clone()].into()
+                        new_text[new_byte_range].into()
                     };
                     edits.push((old_byte_range, replacement_text));
                 });
@@ -111,9 +111,9 @@ pub fn text_diff_with_options(
                 let replacement_text = if new_byte_range.is_empty() {
                     empty.clone()
                 } else {
-                    new_text[new_byte_range.clone()].into()
+                    new_text[new_byte_range].into()
                 };
-                edits.push((old_byte_range.clone(), replacement_text));
+                edits.push((old_byte_range, replacement_text));
             }
         },
     );

@@ -1467,7 +1467,6 @@ impl GitPanel {
             .read(cx)
             .as_singleton()
             .unwrap()
-            .clone()
     }
 
     fn toggle_staged_for_selected(
@@ -3207,7 +3206,7 @@ impl GitPanel {
                     Some(ContextMenu::build(window, cx, |context_menu, _, _| {
                         context_menu
                             .when_some(keybinding_target.clone(), |el, keybinding_target| {
-                                el.context(keybinding_target.clone())
+                                el.context(keybinding_target)
                             })
                             .when(has_previous_commit, |this| {
                                 this.toggleable_entry(
@@ -3387,7 +3386,7 @@ impl GitPanel {
         let enable_coauthors = self.render_co_authors(cx);
 
         let editor_focus_handle = self.commit_editor.focus_handle(cx);
-        let expand_tooltip_focus_handle = editor_focus_handle.clone();
+        let expand_tooltip_focus_handle = editor_focus_handle;
 
         let branch = active_repository.read(cx).branch.clone();
         let head_commit = active_repository.read(cx).head_commit.clone();
@@ -3416,7 +3415,7 @@ impl GitPanel {
                 display_name,
                 branch,
                 head_commit,
-                Some(git_panel.clone()),
+                Some(git_panel),
             ))
             .child(
                 panel_editor_container(window, cx)
@@ -3567,7 +3566,7 @@ impl GitPanel {
                 }),
                 self.render_git_commit_menu(
                     ElementId::Name(format!("split-button-right-{}", title).into()),
-                    Some(commit_tooltip_focus_handle.clone()),
+                    Some(commit_tooltip_focus_handle),
                     cx,
                 )
                 .into_any_element(),
@@ -3633,7 +3632,7 @@ impl GitPanel {
                                 CommitView::open(
                                     commit.clone(),
                                     repo.clone(),
-                                    workspace.clone().clone(),
+                                    workspace.clone(),
                                     window,
                                     cx,
                                 );
@@ -4341,7 +4340,7 @@ impl GitPanel {
                         }
                     })
                     .child(
-                        self.entry_label(display_name.clone(), label_color)
+                        self.entry_label(display_name, label_color)
                             .when(status.is_deleted(), |this| this.strikethrough()),
                     ),
             )
@@ -4690,7 +4689,7 @@ impl GitPanelMessageTooltip {
                     author_email: details.author_email.clone(),
                     commit_time: OffsetDateTime::from_unix_timestamp(details.commit_timestamp)?,
                     message: Some(ParsedCommitMessage {
-                        message: details.message.clone(),
+                        message: details.message,
                         ..Default::default()
                     }),
                 };
@@ -4823,7 +4822,7 @@ impl RenderOnce for PanelRepoFooter {
         };
 
         let truncated_branch_name = if branch_actual_len <= branch_display_len {
-            branch_name.to_string()
+            branch_name
         } else {
             util::truncate_and_trailoff(branch_name.trim_ascii(), branch_display_len)
         };
@@ -4836,7 +4835,7 @@ impl RenderOnce for PanelRepoFooter {
 
         let repo_selector = PopoverMenu::new("repository-switcher")
             .menu({
-                let project = project.clone();
+                let project = project;
                 move |window, cx| {
                     let project = project.clone()?;
                     Some(cx.new(|cx| RepositorySelector::new(project, rems(16.), window, cx)))
@@ -5007,10 +5006,7 @@ impl Component for PanelRepoFooter {
                                 div()
                                     .w(example_width)
                                     .overflow_hidden()
-                                    .child(PanelRepoFooter::new_preview(
-                                        active_repository(1).clone(),
-                                        None,
-                                    ))
+                                    .child(PanelRepoFooter::new_preview(active_repository(1), None))
                                     .into_any_element(),
                             ),
                             single_example(
@@ -5019,7 +5015,7 @@ impl Component for PanelRepoFooter {
                                     .w(example_width)
                                     .overflow_hidden()
                                     .child(PanelRepoFooter::new_preview(
-                                        active_repository(2).clone(),
+                                        active_repository(2),
                                         Some(branch(unknown_upstream)),
                                     ))
                                     .into_any_element(),
@@ -5030,7 +5026,7 @@ impl Component for PanelRepoFooter {
                                     .w(example_width)
                                     .overflow_hidden()
                                     .child(PanelRepoFooter::new_preview(
-                                        active_repository(3).clone(),
+                                        active_repository(3),
                                         Some(branch(no_remote_upstream)),
                                     ))
                                     .into_any_element(),
@@ -5041,7 +5037,7 @@ impl Component for PanelRepoFooter {
                                     .w(example_width)
                                     .overflow_hidden()
                                     .child(PanelRepoFooter::new_preview(
-                                        active_repository(4).clone(),
+                                        active_repository(4),
                                         Some(branch(not_ahead_or_behind_upstream)),
                                     ))
                                     .into_any_element(),
@@ -5052,7 +5048,7 @@ impl Component for PanelRepoFooter {
                                     .w(example_width)
                                     .overflow_hidden()
                                     .child(PanelRepoFooter::new_preview(
-                                        active_repository(5).clone(),
+                                        active_repository(5),
                                         Some(branch(behind_upstream)),
                                     ))
                                     .into_any_element(),
@@ -5063,7 +5059,7 @@ impl Component for PanelRepoFooter {
                                     .w(example_width)
                                     .overflow_hidden()
                                     .child(PanelRepoFooter::new_preview(
-                                        active_repository(6).clone(),
+                                        active_repository(6),
                                         Some(branch(ahead_of_upstream)),
                                     ))
                                     .into_any_element(),
@@ -5074,7 +5070,7 @@ impl Component for PanelRepoFooter {
                                     .w(example_width)
                                     .overflow_hidden()
                                     .child(PanelRepoFooter::new_preview(
-                                        active_repository(7).clone(),
+                                        active_repository(7),
                                         Some(branch(ahead_and_behind_upstream)),
                                     ))
                                     .into_any_element(),

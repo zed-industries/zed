@@ -117,7 +117,6 @@ impl AudioStack {
 
         let (frame_tx, mut frame_rx) = futures::channel::mpsc::unbounded();
         let transmit_task = self.executor.spawn({
-            let source = source.clone();
             async move {
                 while let Some(frame) = frame_rx.next().await {
                     source.capture_frame(&frame).await.log_err();
@@ -132,12 +131,12 @@ impl AudioStack {
             drop(transmit_task);
             drop(capture_task);
         });
-        return Ok((
+        Ok((
             super::LocalAudioTrack(track),
             AudioStream::Output {
                 _drop: Box::new(on_drop),
             },
-        ));
+        ))
     }
 
     fn start_output(&self) -> Arc<Task<()>> {

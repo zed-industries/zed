@@ -112,7 +112,6 @@ impl McpServer {
                 annotations: Some(tool.annotations()),
             },
             handler: Box::new({
-                let tool = tool.clone();
                 move |input_value, cx| {
                     let input = match input_value {
                         Some(input) => serde_json::from_value(input),

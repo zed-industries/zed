@@ -475,7 +475,7 @@ impl Element for Img {
                         .paint_image(
                             new_bounds,
                             corner_radii,
-                            data.clone(),
+                            data,
                             layout_state.frame_index,
                             self.style.grayscale,
                         )

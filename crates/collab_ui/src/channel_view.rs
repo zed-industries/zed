@@ -66,7 +66,7 @@ impl ChannelView {
             channel_id,
             link_position,
             pane.clone(),
-            workspace.clone(),
+            workspace,
             window,
             cx,
         );

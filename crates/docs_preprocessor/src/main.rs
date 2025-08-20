@@ -61,15 +61,13 @@ impl PreprocessorError {
             for alias in action.deprecated_aliases {
                 if alias == &action_name {
                     return PreprocessorError::DeprecatedActionUsed {
-                        used: action_name.clone(),
+                        used: action_name,
                         should_be: action.name.to_string(),
                     };
                 }
             }
         }
-        PreprocessorError::ActionNotFound {
-            action_name: action_name.to_string(),
-        }
+        PreprocessorError::ActionNotFound { action_name }
     }
 }
 

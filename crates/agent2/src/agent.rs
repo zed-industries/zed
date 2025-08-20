@@ -255,7 +255,7 @@ impl NativeAgent {
             }),
             cx.subscribe(&thread_handle, Self::handle_thread_token_usage_updated),
             cx.observe(&thread_handle, move |this, thread, cx| {
-                this.save_thread(thread.clone(), cx)
+                this.save_thread(thread, cx)
             }),
         ];
 
@@ -499,8 +499,8 @@ impl NativeAgent {
         self.models.refresh_list(cx);
 
         let registry = LanguageModelRegistry::read_global(cx);
-        let default_model = registry.default_model().map(|m| m.model.clone());
-        let summarization_model = registry.thread_summary_model().map(|m| m.model.clone());
+        let default_model = registry.default_model().map(|m| m.model);
+        let summarization_model = registry.thread_summary_model().map(|m| m.model);
 
         for session in self.sessions.values_mut() {
             session.thread.update(cx, |thread, cx| {

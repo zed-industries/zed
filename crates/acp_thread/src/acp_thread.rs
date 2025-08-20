@@ -471,7 +471,7 @@ impl ContentBlock {
 
     fn block_string_contents(&self, block: acp::ContentBlock) -> String {
         match block {
-            acp::ContentBlock::Text(text_content) => text_content.text.clone(),
+            acp::ContentBlock::Text(text_content) => text_content.text,
             acp::ContentBlock::ResourceLink(resource_link) => {
                 Self::resource_link_md(&resource_link.uri)
             }
@@ -1020,7 +1020,7 @@ impl AcpThread {
                 let location_updated = update.fields.locations.is_some();
                 current_call.update_fields(update.fields, languages, cx);
                 if location_updated {
-                    self.resolve_locations(update.id.clone(), cx);
+                    self.resolve_locations(update.id, cx);
                 }
             }
             ToolCallUpdate::UpdateDiff(update) => {

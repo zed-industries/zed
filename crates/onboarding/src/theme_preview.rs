@@ -206,7 +206,7 @@ impl ThemePreviewTile {
                 sidebar_width,
                 skeleton_height.clone(),
             ))
-            .child(Self::render_pane(seed, theme, skeleton_height.clone()))
+            .child(Self::render_pane(seed, theme, skeleton_height))
     }
 
     fn render_borderless(seed: f32, theme: Arc<Theme>) -> impl IntoElement {
@@ -260,7 +260,7 @@ impl ThemePreviewTile {
                     .overflow_hidden()
                     .child(div().size_full().child(Self::render_editor(
                         seed,
-                        theme.clone(),
+                        theme,
                         sidebar_width,
                         Self::SKELETON_HEIGHT_DEFAULT,
                     )))
@@ -329,9 +329,9 @@ impl Component for ThemePreviewTile {
 
         let themes_to_preview = vec![
             one_dark.clone().ok(),
-            one_light.clone().ok(),
-            gruvbox_dark.clone().ok(),
-            gruvbox_light.clone().ok(),
+            one_light.ok(),
+            gruvbox_dark.ok(),
+            gruvbox_light.ok(),
         ]
         .into_iter()
         .flatten()
@@ -348,7 +348,7 @@ impl Component for ThemePreviewTile {
                             div()
                                 .w(px(240.))
                                 .h(px(180.))
-                                .child(ThemePreviewTile::new(one_dark.clone(), 0.42))
+                                .child(ThemePreviewTile::new(one_dark, 0.42))
                                 .into_any_element(),
                         )])]
                     } else {

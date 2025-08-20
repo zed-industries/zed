@@ -494,7 +494,7 @@ impl Thread {
             last_received_chunk_at: None,
             request_callback: None,
             remaining_turns: u32::MAX,
-            configured_model: configured_model.clone(),
+            configured_model,
             profile: AgentProfile::new(profile_id, tools),
         }
     }
@@ -532,7 +532,7 @@ impl Thread {
                 .and_then(|model| {
                     let model = SelectedModel {
                         provider: model.provider.clone().into(),
-                        model: model.model.clone().into(),
+                        model: model.model.into(),
                     };
                     registry.select_model(&model, cx)
                 })
@@ -1646,10 +1646,10 @@ impl Thread {
         };
 
         self.tool_use
-            .request_tool_use(tool_message_id, tool_use, tool_use_metadata.clone(), cx);
+            .request_tool_use(tool_message_id, tool_use, tool_use_metadata, cx);
 
         self.tool_use.insert_tool_output(
-            tool_use_id.clone(),
+            tool_use_id,
             tool_name,
             tool_output,
             self.configured_model.as_ref(),
@@ -3241,7 +3241,7 @@ impl Thread {
             self.configured_model.as_ref(),
             self.completion_mode,
         );
-        self.tool_finished(tool_use_id.clone(), None, true, window, cx);
+        self.tool_finished(tool_use_id, None, true, window, cx);
     }
 }
 
@@ -3873,7 +3873,7 @@ fn main() {{
                 AgentSettings {
                     model_parameters: vec![LanguageModelParameters {
                         provider: Some(model.provider_id().0.to_string().into()),
-                        model: Some(model.id().0.clone()),
+                        model: Some(model.id().0),
                         temperature: Some(0.66),
                     }],
                     ..AgentSettings::get_global(cx).clone()
@@ -3893,7 +3893,7 @@ fn main() {{
                 AgentSettings {
                     model_parameters: vec![LanguageModelParameters {
                         provider: None,
-                        model: Some(model.id().0.clone()),
+                        model: Some(model.id().0),
                         temperature: Some(0.66),
                     }],
                     ..AgentSettings::get_global(cx).clone()
@@ -3933,7 +3933,7 @@ fn main() {{
                 AgentSettings {
                     model_parameters: vec![LanguageModelParameters {
                         provider: Some("anthropic".into()),
-                        model: Some(model.id().0.clone()),
+                        model: Some(model.id().0),
                         temperature: Some(0.66),
                     }],
                     ..AgentSettings::get_global(cx).clone()

@@ -2282,7 +2282,7 @@ impl AssistantContext {
         let mut contents = self.contents(cx).peekable();
 
         fn collect_text_content(buffer: &Buffer, range: Range<usize>) -> Option<String> {
-            let text: String = buffer.text_for_range(range.clone()).collect();
+            let text: String = buffer.text_for_range(range).collect();
             if text.trim().is_empty() {
                 None
             } else {

@@ -491,7 +491,7 @@ fn render_markdown_code_block(
             .on_click({
                 let active_thread = active_thread.clone();
                 let parsed_markdown = parsed_markdown.clone();
-                let code_block_range = metadata.content_range.clone();
+                let code_block_range = metadata.content_range;
                 move |_event, _window, cx| {
                     active_thread.update(cx, |this, cx| {
                         this.copied_code_block_ids.insert((message_id, ix));
@@ -532,7 +532,6 @@ fn render_markdown_code_block(
                 "Expand Code"
             }))
             .on_click({
-                let active_thread = active_thread.clone();
                 move |_event, _window, cx| {
                     active_thread.update(cx, |this, cx| {
                         this.toggle_codeblock_expanded(message_id, ix);
@@ -916,7 +915,7 @@ impl ActiveThread {
     ) {
         let rendered = self
             .rendered_tool_uses
-            .entry(tool_use_id.clone())
+            .entry(tool_use_id)
             .or_insert_with(|| RenderedToolUse {
                 label: cx.new(|cx| {
                     Markdown::new("".into(), Some(self.language_registry.clone()), None, cx)
@@ -1218,7 +1217,7 @@ impl ActiveThread {
         match AgentSettings::get_global(cx).notify_when_agent_waiting {
             NotifyWhenAgentWaiting::PrimaryScreen => {
                 if let Some(primary) = cx.primary_display() {
-                    self.pop_up(icon, caption.into(), title.clone(), window, primary, cx);
+                    self.pop_up(icon, caption.into(), title, window, primary, cx);
                 }
             }
             NotifyWhenAgentWaiting::AllScreens => {
@@ -2112,7 +2111,7 @@ impl ActiveThread {
                                         .gap_1()
                                         .children(message_content)
                                         .when_some(editing_message_state, |this, state| {
-                                            let focus_handle = state.editor.focus_handle(cx).clone();
+                                            let focus_handle = state.editor.focus_handle(cx);
 
                                             this.child(
                                                 h_flex()
@@ -2173,7 +2172,6 @@ impl ActiveThread {
                                                                 .icon_color(Color::Muted)
                                                                 .icon_size(IconSize::Small)
                                                                 .tooltip({
-                                                                    let focus_handle = focus_handle.clone();
                                                                     move |window, cx| {
                                                                         Tooltip::for_action_in(
                                                                             "Regenerate",
@@ -2312,7 +2310,7 @@ impl ActiveThread {
                             .into_any_element()
                     } else if let Some(error) = error {
                         restore_checkpoint_button
-                            .tooltip(Tooltip::text(error.to_string()))
+                            .tooltip(Tooltip::text(error))
                             .into_any_element()
                     } else {
                         restore_checkpoint_button.into_any_element()

@@ -242,7 +242,7 @@ pub fn main() {
     if args.system_specs {
         let system_specs = feedback::system_specs::SystemSpecs::new_stateless(
             app_version,
-            app_commit_sha.clone(),
+            app_commit_sha,
             *release_channel::RELEASE_CHANNEL,
         );
         println!("Zed System Specs (from CLI):\n{}", system_specs);
@@ -367,7 +367,7 @@ pub fn main() {
         if let Some(app_state) = AppState::try_global(cx).and_then(|app_state| app_state.upgrade())
         {
             cx.spawn({
-                let app_state = app_state.clone();
+                let app_state = app_state;
                 async move |cx| {
                     if let Err(e) = restore_or_create_workspace(app_state, cx).await {
                         fail_to_open_window_async(e, cx)
@@ -523,13 +523,13 @@ pub fn main() {
         let app_session = cx.new(|cx| AppSession::new(session, cx));
 
         let app_state = Arc::new(AppState {
-            languages: languages.clone(),
+            languages,
             client: client.clone(),
-            user_store: user_store.clone(),
+            user_store,
             fs: fs.clone(),
             build_window_options,
             workspace_store,
-            node_runtime: node_runtime.clone(),
+            node_runtime,
             session: app_session,
         });
         AppState::set_global(Arc::downgrade(&app_state), cx);
@@ -751,7 +751,6 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
     if let Some(kind) = request.kind {
         match kind {
             OpenRequestKind::CliConnection(connection) => {
-                let app_state = app_state.clone();
                 cx.spawn(async move |cx| handle_cli_connection(connection, app_state, cx).await)
                     .detach();
             }
@@ -1313,7 +1312,6 @@ fn eager_load_active_theme_and_icon_theme(fs: Arc<dyn Fs>, cx: &App) {
             .path_to_extension_icon_theme(icon_theme_name)
         {
             cx.spawn({
-                let theme_registry = theme_registry.clone();
                 let fs = fs.clone();
                 async move |cx| {
                     theme_registry
@@ -1335,9 +1333,7 @@ fn load_user_themes_in_background(fs: Arc<dyn fs::Fs>, cx: &mut App) {
     cx.spawn({
         let fs = fs.clone();
         async move |cx| {
-            if let Some(theme_registry) =
-                cx.update(|cx| ThemeRegistry::global(cx).clone()).log_err()
-            {
+            if let Some(theme_registry) = cx.update(|cx| ThemeRegistry::global(cx)).log_err() {
                 let themes_dir = paths::themes_dir().as_ref();
                 match fs
                     .metadata(themes_dir)
@@ -1376,7 +1372,7 @@ fn watch_themes(fs: Arc<dyn fs::Fs>, cx: &mut App) {
             for event in paths {
                 if fs.metadata(&event.path).await.ok().flatten().is_some()
                     && let Some(theme_registry) =
-                        cx.update(|cx| ThemeRegistry::global(cx).clone()).log_err()
+                        cx.update(|cx| ThemeRegistry::global(cx)).log_err()
                     && let Some(()) = theme_registry
                         .load_user_theme(&event.path, fs.clone())
                         .await

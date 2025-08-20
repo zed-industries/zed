@@ -400,7 +400,7 @@ impl MarksState {
             } else {
                 HashMap::default()
             };
-        let old_points = self.serialized_marks.get(&path.clone());
+        let old_points = self.serialized_marks.get(&path);
         if old_points == Some(&new_points) {
             return;
         }
@@ -543,7 +543,7 @@ impl MarksState {
                 .insert(name.clone(), anchors);
             if self.is_global_mark(&name) {
                 self.global_marks
-                    .insert(name.clone(), MarkLocation::Buffer(multibuffer.entity_id()));
+                    .insert(name, MarkLocation::Buffer(multibuffer.entity_id()));
             }
             if let Some(buffer) = buffer {
                 let buffer_id = buffer.read(cx).remote_id();
@@ -559,7 +559,7 @@ impl MarksState {
 
         let buffer_id = buffer.read(cx).remote_id();
         self.buffer_marks.entry(buffer_id).or_default().insert(
-            name.clone(),
+            name,
             anchors
                 .into_iter()
                 .map(|anchor| anchor.text_anchor)
@@ -654,9 +654,9 @@ impl MarksState {
                 return;
             }
         };
-        self.global_marks.remove(&mark_name.clone());
+        self.global_marks.remove(&mark_name);
         self.serialized_marks
-            .get_mut(&path.clone())
+            .get_mut(&path)
             .map(|m| m.remove(&mark_name.clone()));
         if let Some(workspace_id) = self.workspace_id(cx) {
             cx.background_spawn(async move { DB.delete_mark(workspace_id, path, mark_name).await })
@@ -1282,7 +1282,7 @@ impl RegistersView {
                 if let Some(register) = register {
                     matches.push(RegisterMatch {
                         name: '%',
-                        contents: register.text.clone(),
+                        contents: register.text,
                     })
                 }
             }
@@ -1374,7 +1374,7 @@ impl PickerDelegate for MarksViewDelegate {
         _: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> gpui::Task<()> {
-        let Some(workspace) = self.workspace.upgrade().clone() else {
+        let Some(workspace) = self.workspace.upgrade() else {
             return Task::ready(());
         };
         cx.spawn(async move |picker, cx| {

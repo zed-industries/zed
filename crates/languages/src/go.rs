@@ -53,7 +53,7 @@ const BINARY: &str = if cfg!(target_os = "windows") {
 #[async_trait(?Send)]
 impl super::LspAdapter for GoLspAdapter {
     fn name(&self) -> LanguageServerName {
-        Self::SERVER_NAME.clone()
+        Self::SERVER_NAME
     }
 
     async fn fetch_latest_server_version(
@@ -525,7 +525,7 @@ impl ContextProvider for GoContextProvider {
                     })
                     .unwrap_or_else(|| format!("{}", buffer_dir.to_string_lossy()));
 
-                (GO_PACKAGE_TASK_VARIABLE.clone(), package_name.to_string())
+                (GO_PACKAGE_TASK_VARIABLE.clone(), package_name)
             });
 
         let go_module_root_variable = local_abs_path
@@ -702,7 +702,7 @@ impl ContextProvider for GoContextProvider {
                 label: format!("go generate {}", GO_PACKAGE_TASK_VARIABLE.template_value()),
                 command: "go".into(),
                 args: vec!["generate".into()],
-                cwd: package_cwd.clone(),
+                cwd: package_cwd,
                 tags: vec!["go-generate".to_owned()],
                 ..TaskTemplate::default()
             },
@@ -710,7 +710,7 @@ impl ContextProvider for GoContextProvider {
                 label: "go generate ./...".into(),
                 command: "go".into(),
                 args: vec!["generate".into(), "./...".into()],
-                cwd: module_cwd.clone(),
+                cwd: module_cwd,
                 ..TaskTemplate::default()
             },
         ])))

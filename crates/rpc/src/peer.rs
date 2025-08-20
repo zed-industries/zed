@@ -378,7 +378,6 @@ impl Peer {
         impl Future<Output = anyhow::Result<()>> + Send + use<>,
         BoxStream<'static, Box<dyn AnyTypedEnvelope>>,
     ) {
-        let executor = executor.clone();
         self.add_connection(connection, move |duration| executor.timer(duration))
     }
 

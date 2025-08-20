@@ -1648,7 +1648,7 @@ impl OnMatchingLines {
                         });
                         window.dispatch_action(action, cx);
                         cx.defer_in(window, move |editor, window, cx| {
-                            let newest = editor.selections.newest::<Point>(cx).clone();
+                            let newest = editor.selections.newest::<Point>(cx);
                             editor.change_selections(
                                 SelectionEffects::no_scroll(),
                                 window,

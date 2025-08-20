@@ -233,8 +233,8 @@ impl SshConnectionOptions {
         };
 
         Ok(Self {
-            host: hostname.to_string(),
-            username: username.clone(),
+            host: hostname,
+            username,
             port,
             port_forwards,
             args: Some(args),
@@ -1363,7 +1363,7 @@ impl ConnectionPool {
 
 impl From<SshRemoteClient> for AnyProtoClient {
     fn from(client: SshRemoteClient) -> Self {
-        AnyProtoClient::new(client.client.clone())
+        AnyProtoClient::new(client.client)
     }
 }
 

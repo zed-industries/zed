@@ -1693,7 +1693,7 @@ impl InlineAssist {
             }),
             range,
             codegen: codegen.clone(),
-            workspace: workspace.clone(),
+            workspace,
             _subscriptions: vec![
                 window.on_focus_in(&prompt_editor_focus_handle, cx, move |_, cx| {
                     InlineAssistant::update_global(cx, |this, cx| {
