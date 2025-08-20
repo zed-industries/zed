@@ -6261,7 +6261,7 @@ impl Editor {
                 let workspace = workspace.downgrade();
                 Some(cx.spawn_in(window, async move |editor, cx| {
                     let project_transaction = apply_code_action.await?;
-                    Self::open_project_transactions(
+                    Self::open_project_transaction(
                         Some(&editor),
                         workspace,
                         project_transaction,
@@ -6290,7 +6290,7 @@ impl Editor {
         }
     }
 
-    pub async fn open_project_transactions(
+    pub async fn open_project_transaction(
         editor: Option<&WeakEntity<Editor>>,
         workspace: WeakEntity<Workspace>,
         transaction: ProjectTransaction,
@@ -16449,7 +16449,7 @@ impl Editor {
 
         Some(cx.spawn_in(window, async move |editor, cx| {
             let project_transaction = rename.await?;
-            Self::open_project_transactions(
+            Self::open_project_transaction(
                 Some(&editor),
                 workspace,
                 project_transaction,
