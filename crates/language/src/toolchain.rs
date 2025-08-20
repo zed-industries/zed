@@ -13,6 +13,7 @@ use async_trait::async_trait;
 use collections::{FxHashMap, HashMap};
 use gpui::{AsyncApp, SharedString};
 use settings::WorktreeId;
+use task::ShellKind;
 
 use crate::{LanguageName, ManifestName};
 
@@ -26,7 +27,7 @@ pub struct Toolchain {
     /// Full toolchain data (including language-specific details)
     pub as_json: serde_json::Value,
     /// shell -> script
-    pub startup_script: FxHashMap<String, String>,
+    pub activation_script: FxHashMap<ShellKind, String>,
 }
 
 impl std::hash::Hash for Toolchain {
@@ -36,7 +37,7 @@ impl std::hash::Hash for Toolchain {
             path,
             language_name,
             as_json: _,
-            startup_script: _,
+            activation_script: _,
         } = self;
         name.hash(state);
         path.hash(state);
@@ -51,7 +52,7 @@ impl PartialEq for Toolchain {
             path,
             language_name,
             as_json: _,
-            startup_script,
+            activation_script: startup_script,
         } = self;
         // Do not use as_json for comparisons; it shouldn't impact equality, as it's not user-surfaced.
         // Thus, there could be multiple entries that look the same in the UI.
@@ -59,7 +60,7 @@ impl PartialEq for Toolchain {
             &other.name,
             &other.path,
             &other.language_name,
-            &other.startup_script,
+            &other.activation_script,
         ))
     }
 }

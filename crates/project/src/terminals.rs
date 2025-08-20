@@ -9,7 +9,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use task::{Shell, ShellBuilder, SpawnInTerminal, system_shell};
+use task::{Shell, ShellBuilder, ShellKind, SpawnInTerminal, system_shell};
 use terminal::{
     TaskState, TaskStatus, Terminal, TerminalBuilder, terminal_settings::TerminalSettings,
 };
@@ -216,10 +216,12 @@ impl Project {
         cx.spawn(async move |project, cx| {
             let scripts = maybe!(async {
                 let toolchain = toolchain?.await?;
-                Some(toolchain.startup_script)
+                Some(toolchain.activation_script)
             })
             .await;
-            let activation_script = scripts.as_ref().and_then(|it| it.get(&shell));
+            let activation_script = scripts
+                .as_ref()
+                .and_then(|it| it.get(&ShellKind::new(&shell)));
             project.update(cx, move |this, cx| {
                 let shell = {
                     match remote_client {

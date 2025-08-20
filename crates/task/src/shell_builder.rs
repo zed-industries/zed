@@ -1,3 +1,5 @@
+use std::fmt;
+
 use crate::Shell;
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
@@ -9,6 +11,19 @@ pub enum ShellKind {
     Powershell,
     Nushell,
     Cmd,
+}
+
+impl fmt::Display for ShellKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ShellKind::Posix => write!(f, "sh"),
+            ShellKind::Csh => write!(f, "csh"),
+            ShellKind::Fish => write!(f, "fish"),
+            ShellKind::Powershell => write!(f, "powershell"),
+            ShellKind::Nushell => write!(f, "nu"),
+            ShellKind::Cmd => write!(f, "cmd"),
+        }
+    }
 }
 
 impl ShellKind {

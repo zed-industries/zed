@@ -35,7 +35,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use task::{TaskTemplate, TaskTemplates, VariableName};
+use task::{ShellKind, TaskTemplate, TaskTemplates, VariableName};
 use util::ResultExt;
 
 pub(crate) struct PyprojectTomlManifestProvider;
@@ -874,14 +874,17 @@ impl ToolchainLister for PythonToolchainProvider {
                 if let Some(nk) = name_and_kind {
                     _ = write!(name, " {nk}");
                 }
-
                 Some(Toolchain {
                     name: name.into(),
                     path: toolchain.executable.as_ref()?.to_str()?.to_owned().into(),
                     language_name: LanguageName::new("Python"),
                     as_json: serde_json::to_value(toolchain).ok()?,
-                    startup_script: std::iter::once(("fish".to_owned(), "test".to_owned()))
-                        .collect(),
+                    activation_script: std::iter::once((
+                        ShellKind::Fish,
+                        "echo python recognized a venv and injected a fish startup command"
+                            .to_owned(),
+                    ))
+                    .collect(),
                 })
             })
             .collect();
@@ -1693,3 +1696,180 @@ mod tests {
         });
     }
 }
+/*
+fn python_venv_directory(
+    abs_path: Arc<Path>,
+    venv_settings: VenvSettings,
+    cx: &Context<Project>,
+) -> Task<Option<PathBuf>> {
+    cx.spawn(async move |this, cx| {
+        if let Some((worktree, relative_path)) = this
+            .update(cx, |this, cx| this.find_worktree(&abs_path, cx))
+            .ok()?
+        {
+            let toolchain = this
+                .update(cx, |this, cx| {
+                    this.active_toolchain(
+                        ProjectPath {
+                            worktree_id: worktree.read(cx).id(),
+                            path: relative_path.into(),
+                        },
+                        LanguageName::new("Python"),
+                        cx,
+                    )
+                })
+                .ok()?
+                .await;
+
+            if let Some(toolchain) = toolchain {
+                let toolchain_path = Path::new(toolchain.path.as_ref());
+                return Some(toolchain_path.parent()?.parent()?.to_path_buf());
+            }
+        }
+        let venv_settings = venv_settings.as_option()?;
+        this.update(cx, move |this, cx| {
+            if let Some(path) = this.find_venv_in_worktree(&abs_path, &venv_settings, cx) {
+                return Some(path);
+            }
+            this.find_venv_on_filesystem(&abs_path, &venv_settings, cx)
+        })
+        .ok()
+        .flatten()
+    })
+}
+
+fn find_venv_in_worktree(
+    &self,
+    abs_path: &Path,
+    venv_settings: &terminal_settings::VenvSettingsContent,
+    cx: &App,
+) -> Option<PathBuf> {
+    venv_settings
+        .directories
+        .iter()
+        .map(|name| abs_path.join(name))
+        .find(|venv_path| {
+            let bin_path = venv_path.join(PYTHON_VENV_BIN_DIR);
+            self.find_worktree(&bin_path, cx)
+                .and_then(|(worktree, relative_path)| {
+                    worktree.read(cx).entry_for_path(&relative_path)
+                })
+                .is_some_and(|entry| entry.is_dir())
+        })
+}
+
+fn find_venv_on_filesystem(
+    &self,
+    abs_path: &Path,
+    venv_settings: &terminal_settings::VenvSettingsContent,
+    cx: &App,
+) -> Option<PathBuf> {
+    let (worktree, _) = self.find_worktree(abs_path, cx)?;
+    let fs = worktree.read(cx).as_local()?.fs();
+    venv_settings
+        .directories
+        .iter()
+        .map(|name| abs_path.join(name))
+        .find(|venv_path| {
+            let bin_path = venv_path.join(PYTHON_VENV_BIN_DIR);
+            // One-time synchronous check is acceptable for terminal/task initialization
+            smol::block_on(fs.metadata(&bin_path))
+                .ok()
+                .flatten()
+                .map_or(false, |meta| meta.is_dir)
+        })
+}
+
+fn activate_script_kind(shell: Option<&str>) -> ActivateScript {
+    let shell_env = std::env::var("SHELL").ok();
+    let shell_path = shell.or_else(|| shell_env.as_deref());
+    let shell = std::path::Path::new(shell_path.unwrap_or(""))
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("");
+    match shell {
+        "fish" => ActivateScript::Fish,
+        "tcsh" => ActivateScript::Csh,
+        "nu" => ActivateScript::Nushell,
+        "powershell" | "pwsh" => ActivateScript::PowerShell,
+        _ => ActivateScript::Default,
+    }
+}
+
+fn python_activate_command(
+    &self,
+    venv_base_directory: &Path,
+    venv_settings: &VenvSettings,
+    shell: &Shell,
+    cx: &mut App,
+) -> Task<Option<String>> {
+    let Some(venv_settings) = venv_settings.as_option() else {
+        return Task::ready(None);
+    };
+    let activate_keyword = match venv_settings.activate_script {
+        terminal_settings::ActivateScript::Default => match std::env::consts::OS {
+            "windows" => ".",
+            _ => ".",
+        },
+        terminal_settings::ActivateScript::Nushell => "overlay use",
+        terminal_settings::ActivateScript::PowerShell => ".",
+        terminal_settings::ActivateScript::Pyenv => "pyenv",
+        _ => "source",
+    };
+    let script_kind = if venv_settings.activate_script == terminal_settings::ActivateScript::Default
+    {
+        match shell {
+            Shell::Program(program) => Self::activate_script_kind(Some(program)),
+            Shell::WithArguments {
+                program,
+                args: _,
+                title_override: _,
+            } => Self::activate_script_kind(Some(program)),
+            Shell::System => Self::activate_script_kind(None),
+        }
+    } else {
+        venv_settings.activate_script
+    };
+
+    let activate_script_name = match script_kind {
+        terminal_settings::ActivateScript::Default | terminal_settings::ActivateScript::Pyenv => {
+            "activate"
+        }
+        terminal_settings::ActivateScript::Csh => "activate.csh",
+        terminal_settings::ActivateScript::Fish => "activate.fish",
+        terminal_settings::ActivateScript::Nushell => "activate.nu",
+        terminal_settings::ActivateScript::PowerShell => "activate.ps1",
+    };
+
+    let line_ending = match std::env::consts::OS {
+        "windows" => "\r",
+        _ => "\n",
+    };
+
+    if venv_settings.venv_name.is_empty() {
+        let path = venv_base_directory
+            .join(PYTHON_VENV_BIN_DIR)
+            .join(activate_script_name)
+            .to_string_lossy()
+            .to_string();
+
+        let is_valid_path = self.resolve_abs_path(path.as_ref(), cx);
+        cx.background_spawn(async move {
+            let quoted = shlex::try_quote(&path).ok()?;
+            if is_valid_path.await.is_some_and(|meta| meta.is_file()) {
+                Some(format!(
+                    "{} {} ; clear{}",
+                    activate_keyword, quoted, line_ending
+                ))
+            } else {
+                None
+            }
+        })
+    } else {
+        Task::ready(Some(format!(
+            "{activate_keyword} {activate_script_name} {name}; clear{line_ending}",
+            name = venv_settings.venv_name
+        )))
+    }
+}
+*/
