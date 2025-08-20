@@ -6261,10 +6261,10 @@ impl Editor {
                 let workspace = workspace.downgrade();
                 Some(cx.spawn_in(window, async move |editor, cx| {
                     let project_transaction = apply_code_action.await?;
-                    Self::open_project_transaction(
+                    Self::open_project_transactions(
                         Some(&editor),
                         workspace,
-                        project_transaction,
+                        vec![project_transaction],
                         title,
                         cx,
                     )
@@ -6290,14 +6290,17 @@ impl Editor {
         }
     }
 
-    pub async fn open_project_transaction(
+    pub async fn open_project_transactions(
         editor: Option<&WeakEntity<Editor>>,
         workspace: WeakEntity<Workspace>,
-        transaction: ProjectTransaction,
+        transactions: Vec<ProjectTransaction>,
         title: String,
         cx: &mut AsyncWindowContext,
     ) -> Result<()> {
-        let mut entries = transaction.0.into_iter().collect::<Vec<_>>();
+        let mut entries = transactions
+            .into_iter()
+            .flat_map(|transaction| transaction.0.into_iter())
+            .collect::<Vec<_>>();
         cx.update(|_, cx| {
             entries.sort_unstable_by_key(|(buffer, _)| {
                 buffer.read(cx).file().map(|f| f.path().clone())
@@ -16449,10 +16452,10 @@ impl Editor {
 
         Some(cx.spawn_in(window, async move |editor, cx| {
             let project_transaction = rename.await?;
-            Self::open_project_transaction(
+            Self::open_project_transactions(
                 Some(&editor),
                 workspace,
-                project_transaction,
+                vec![project_transaction],
                 format!("Rename: {} → {}", old_name, new_name),
                 cx,
             )
