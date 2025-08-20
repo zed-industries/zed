@@ -206,9 +206,6 @@ jobs:
     runs-on: github-8vcpu-ubuntu-2404
     needs: tests
     name: Build Zed on FreeBSD
-    # env:
-    #   MYTOKEN : ${{ secrets.MYTOKEN }}
-    #   MYTOKEN2: "value2"
     steps:
       - uses: actions/checkout@v4
       - name: Build FreeBSD remote-server
@@ -243,7 +240,6 @@ jobs:
 
   bundle-nix:
     name: Build and cache Nix package
-    if: false
     needs: tests
     secrets: inherit
     uses: ./.github/workflows/nix.yml
