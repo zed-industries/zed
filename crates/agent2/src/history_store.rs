@@ -1,4 +1,5 @@
 use crate::{DbThreadMetadata, ThreadsDatabase};
+use acp_thread::MentionUri;
 use agent_client_protocol as acp;
 use anyhow::{Context as _, Result, anyhow};
 use assistant_context::SavedContextMetadata;
@@ -38,6 +39,19 @@ impl HistoryEntry {
         }
     }
 
+    pub fn mention_uri(&self) -> MentionUri {
+        match self {
+            HistoryEntry::AcpThread(thread) => MentionUri::Thread {
+                id: thread.id.clone(),
+                name: thread.title.to_string(),
+            },
+            HistoryEntry::TextThread(context) => MentionUri::TextThread {
+                path: context.path.as_ref().to_owned(),
+                name: context.title.to_string(),
+            },
+        }
+    }
+
     pub fn title(&self) -> &SharedString {
         match self {
             HistoryEntry::AcpThread(thread) if thread.title.is_empty() => DEFAULT_TITLE,
@@ -48,7 +62,7 @@ impl HistoryEntry {
 }
 
 /// Generic identifier for a history entry.
-#[derive(Clone, PartialEq, Eq, Debug)]
+#[derive(Clone, PartialEq, Eq, Debug, Hash)]
 pub enum HistoryEntryId {
     AcpThread(acp::SessionId),
     TextThread(Arc<Path>),
@@ -149,7 +163,7 @@ impl HistoryStore {
         .detach_and_log_err(cx);
     }
 
-    pub fn entries(&self, cx: &mut Context<Self>) -> Vec<HistoryEntry> {
+    pub fn entries(&self, cx: &App) -> Vec<HistoryEntry> {
         let mut history_entries = Vec::new();
 
         #[cfg(debug_assertions)]
@@ -178,10 +192,6 @@ impl HistoryStore {
                 .unordered_contexts()
                 .next()
                 .is_none()
-    }
-
-    pub fn recent_entries(&self, limit: usize, cx: &mut Context<Self>) -> Vec<HistoryEntry> {
-        self.entries(cx).into_iter().take(limit).collect()
     }
 
     pub fn recently_opened_entries(&self, cx: &App) -> Vec<HistoryEntry> {

@@ -999,7 +999,7 @@ impl AgentPanel {
         context_editor.focus_handle(cx).focus(window);
     }
 
-    fn external_thread(
+    pub fn external_thread(
         &mut self,
         agent_choice: Option<crate::ExternalAgent>,
         resume_thread: Option<DbThreadMetadata>,
@@ -1816,6 +1816,15 @@ impl AgentPanel {
                 self.external_thread(Some(crate::ExternalAgent::ClaudeCode), None, window, cx)
             }
         }
+    }
+
+    pub fn load_agent_thread(
+        &mut self,
+        thread: DbThreadMetadata,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.external_thread(Some(ExternalAgent::NativeAgent), Some(thread), window, cx);
     }
 }
 

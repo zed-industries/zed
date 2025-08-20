@@ -170,6 +170,7 @@ impl AcpThreadView {
                 project.clone(),
                 thread_store.clone(),
                 text_thread_store.clone(),
+                history_store.clone(),
                 "Message the agent － @ to include context",
                 prevent_slash_commands,
                 editor::EditorMode::AutoHeight {
@@ -189,6 +190,7 @@ impl AcpThreadView {
                 project.clone(),
                 thread_store.clone(),
                 text_thread_store.clone(),
+                history_store.clone(),
                 prevent_slash_commands,
             )
         });
@@ -3126,12 +3128,18 @@ impl AcpThreadView {
                         })
                         .detach_and_log_err(cx);
                 }
-                MentionUri::Thread { id, .. } => {
+                MentionUri::Thread { id, name } => {
                     if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
                         panel.update(cx, |panel, cx| {
-                            panel
-                                .open_thread_by_id(&id, window, cx)
-                                .detach_and_log_err(cx)
+                            panel.load_agent_thread(
+                                DbThreadMetadata {
+                                    id: id,
+                                    title: name.into(),
+                                    updated_at: Default::default(),
+                                },
+                                window,
+                                cx,
+                            )
                         });
                     }
                 }
