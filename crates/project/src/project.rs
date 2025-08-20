@@ -2129,7 +2129,7 @@ impl Project {
                 };
                 (root_path.join(&old_path), new_abs_path)
             };
-            LspStore::will_rename_entry(
+            let _transactions = LspStore::will_rename_entry(
                 lsp_store.clone(),
                 worktree_id,
                 &old_abs_path,

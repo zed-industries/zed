@@ -8715,7 +8715,7 @@ impl LspStore {
             (root_path.join(&old_path), root_path.join(&new_path))
         };
 
-        Self::will_rename_entry(
+        let _transactions = Self::will_rename_entry(
             this.downgrade(),
             worktree_id,
             &old_abs_path,
@@ -9177,11 +9177,12 @@ impl LspStore {
         new_path: &Path,
         is_dir: bool,
         cx: AsyncApp,
-    ) -> Task<()> {
+    ) -> Task<Vec<ProjectTransaction>> {
         let old_uri = lsp::Url::from_file_path(old_path).ok().map(String::from);
         let new_uri = lsp::Url::from_file_path(new_path).ok().map(String::from);
         cx.spawn(async move |cx| {
             let mut tasks = vec![];
+            let mut transactions = Vec::new();
             this.update(cx, |this, cx| {
                 let local_store = this.as_local()?;
                 let old_uri = old_uri?;
@@ -9210,7 +9211,7 @@ impl LspStore {
                                     .log_err()
                                     .flatten()?;
 
-                                LocalLspStore::deserialize_workspace_edit(
+                                let transaction = LocalLspStore::deserialize_workspace_edit(
                                     this.upgrade()?,
                                     edit,
                                     false,
@@ -9218,8 +9219,8 @@ impl LspStore {
                                     cx,
                                 )
                                 .await
-                                .ok();
-                                Some(())
+                                .ok()?;
+                                Some(transaction)
                             }
                         });
                         tasks.push(apply_edit);
@@ -9232,8 +9233,11 @@ impl LspStore {
             for task in tasks {
                 // Await on tasks sequentially so that the order of application of edits is deterministic
                 // (at least with regards to the order of registration of language servers)
-                task.await;
+                if let Some(transaction) = task.await {
+                    transactions.push(transaction);
+                }
             }
+            transactions
         })
     }
 
