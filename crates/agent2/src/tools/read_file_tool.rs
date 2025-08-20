@@ -21,8 +21,7 @@ use crate::{AgentTool, ToolCallEventStream};
 pub struct ReadFileToolInput {
     /// The relative path of the file to read.
     ///
-    /// This path should never be absolute, and the first component
-    /// of the path should always be a root directory in a project.
+    /// This path should never be absolute, and the first component of the path should always be a root directory in a project.
     ///
     /// <example>
     /// If the project has the following root directories:
@@ -34,11 +33,9 @@ pub struct ReadFileToolInput {
     /// If you want to access `file.txt` in `directory2`, you should use the path `directory2/file.txt`.
     /// </example>
     pub path: String,
-
     /// Optional line number to start reading on (1-based index)
     #[serde(default)]
     pub start_line: Option<u32>,
-
     /// Optional line number to end reading on (1-based index, inclusive)
     #[serde(default)]
     pub end_line: Option<u32>,
