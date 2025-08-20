@@ -1076,6 +1076,7 @@ impl Thread {
             event_stream: event_stream.clone(),
             _task: cx.spawn(async move |this, cx| {
                 log::info!("Starting agent turn execution");
+                let mut update_title = None;
                 let turn_result: Result<StopReason> = async {
                     let mut completion_intent = CompletionIntent::UserPrompt;
                     loop {
@@ -1130,9 +1131,14 @@ impl Thread {
                                 this.pending_message()
                                     .tool_results
                                     .insert(tool_result.tool_use_id.clone(), tool_result);
-                            })
-                            .ok();
+                            })?;
                         }
+
+                        this.update(cx, |this, cx| {
+                            if this.title.is_none() && update_title.is_none() {
+                                update_title = Some(this.update_title(&event_stream, cx));
+                            }
+                        })?;
 
                         if tool_use_limit_reached {
                             log::info!("Tool use limit reached, completing turn");
@@ -1154,10 +1160,6 @@ impl Thread {
                     Ok(reason) => {
                         log::info!("Turn execution completed: {:?}", reason);
 
-                        let update_title = this
-                            .update(cx, |this, cx| this.update_title(&event_stream, cx))
-                            .ok()
-                            .flatten();
                         if let Some(update_title) = update_title {
                             update_title.await.context("update title failed").log_err();
                         }
@@ -1601,17 +1603,14 @@ impl Thread {
         &mut self,
         event_stream: &ThreadEventStream,
         cx: &mut Context<Self>,
-    ) -> Option<Task<Result<()>>> {
-        if self.title.is_some() {
-            log::debug!("Skipping title generation because we already have one.");
-            return None;
-        }
-
+    ) -> Task<Result<()>> {
         log::info!(
             "Generating title with model: {:?}",
             self.summarization_model.as_ref().map(|model| model.name())
         );
-        let model = self.summarization_model.clone()?;
+        let Some(model) = self.summarization_model.clone() else {
+            return Task::ready(Ok(()));
+        };
         let event_stream = event_stream.clone();
         let mut request = LanguageModelRequest {
             intent: Some(CompletionIntent::ThreadSummarization),
@@ -1628,7 +1627,7 @@ impl Thread {
             content: vec![SUMMARIZE_THREAD_PROMPT.into()],
             cache: false,
         });
-        Some(cx.spawn(async move |this, cx| {
+        cx.spawn(async move |this, cx| {
             let mut title = String::new();
             let mut messages = model.stream_completion(request, cx).await?;
             while let Some(event) = messages.next().await {
@@ -1663,7 +1662,7 @@ impl Thread {
                 this.title = Some(title);
                 cx.notify();
             })
-        }))
+        })
     }
 
     fn last_user_message(&self) -> Option<&UserMessage> {
