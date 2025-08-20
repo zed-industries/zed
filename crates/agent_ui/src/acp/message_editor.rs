@@ -163,6 +163,36 @@ impl MessageEditor {
         }
     }
 
+    pub fn insert_thread_summary(
+        &mut self,
+        thread: agent2::DbThreadMetadata,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let start = self.editor.update(cx, |editor, cx| {
+            editor.set_text(format!("{}\n", thread.title), window, cx);
+            editor
+                .buffer()
+                .read(cx)
+                .snapshot(cx)
+                .anchor_before(Point::zero())
+                .text_anchor
+        });
+
+        self.confirm_completion(
+            thread.title.clone(),
+            start,
+            thread.title.len(),
+            MentionUri::Thread {
+                id: thread.id.clone(),
+                name: thread.title.to_string(),
+            },
+            window,
+            cx,
+        )
+        .detach();
+    }
+
     #[cfg(test)]
     pub(crate) fn editor(&self) -> &Entity<Editor> {
         &self.editor
