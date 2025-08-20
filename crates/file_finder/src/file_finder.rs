@@ -724,7 +724,7 @@ fn matching_history_items<'a>(
         })
         .fold(
             HashMap::default(),
-            |mut candidates, (worktree_id, new_candidate)| {
+            |mut candidates: HashMap<_, Vec<PathMatchCandidate>>, (worktree_id, new_candidate)| {
                 candidates
                     .entry(worktree_id)
                     .or_default()

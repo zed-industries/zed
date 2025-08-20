@@ -2526,10 +2526,13 @@ impl LocalLspStore {
                         )
                     })
             })
-            .fold(HashMap::default(), |mut acc, (worktree_id, server_node)| {
-                acc.entry(worktree_id).or_default().push(server_node);
-                acc
-            })
+            .fold(
+                HashMap::default(),
+                |mut acc: HashMap<_, Vec<LanguageServerTreeNode>>, (worktree_id, server_node)| {
+                    acc.entry(worktree_id).or_default().push(server_node);
+                    acc
+                },
+            )
             .into_values()
             .max_by_key(|servers| servers.len())?;
 
@@ -6638,7 +6641,11 @@ impl LspStore {
                     })
                     .fold(
                         HashMap::default(),
-                        |mut acc, (server_id, uri, diagnostics)| {
+                        |mut acc: HashMap<
+                            _,
+                            Vec<DocumentDiagnosticsUpdate<lsp::PublishDiagnosticsParams>>,
+                        >,
+                         (server_id, uri, diagnostics)| {
                             let (result_id, diagnostics) = match diagnostics {
                                 PulledDiagnostics::Unchanged { result_id } => {
                                     unchanged_buffers.insert(uri.clone());
@@ -6892,10 +6899,13 @@ impl LspStore {
                 )
                 .await
                 .into_iter()
-                .fold(HashMap::default(), |mut acc, (server_id, colors)| {
-                    acc.entry(server_id).or_default().extend(colors);
-                    acc
-                });
+                .fold(
+                    HashMap::default(),
+                    |mut acc: HashMap<_, HashSet<DocumentColor>>, (server_id, colors)| {
+                        acc.entry(server_id).or_default().extend(colors);
+                        acc
+                    },
+                );
                 Ok(colors)
             })
         } else {
@@ -6905,10 +6915,13 @@ impl LspStore {
                 Ok(document_colors_task
                     .await
                     .into_iter()
-                    .fold(HashMap::default(), |mut acc, (server_id, colors)| {
-                        acc.entry(server_id).or_default().extend(colors);
-                        acc
-                    })
+                    .fold(
+                        HashMap::default(),
+                        |mut acc: HashMap<_, HashSet<DocumentColor>>, (server_id, colors)| {
+                            acc.entry(server_id).or_default().extend(colors);
+                            acc
+                        },
+                    )
                     .into_iter()
                     .collect())
             })
@@ -11540,7 +11553,11 @@ impl LspStore {
             )
             .fold(
                 HashMap::default(),
-                |mut acc, (server_id, uri, diagnostics, version)| {
+                |mut acc: HashMap<
+                    _,
+                    Vec<DocumentDiagnosticsUpdate<lsp::PublishDiagnosticsParams>>,
+                >,
+                 (server_id, uri, diagnostics, version)| {
                     let (result_id, diagnostics) = match diagnostics {
                         PulledDiagnostics::Unchanged { result_id } => {
                             unchanged_buffers.insert(uri.clone());

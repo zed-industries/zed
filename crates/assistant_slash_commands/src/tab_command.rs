@@ -228,13 +228,13 @@ fn tab_items_for_queries(
                         let path_string = full_path.as_deref()?.to_string_lossy().to_string();
                         Some((id, path_string))
                     })
-                    .fold(HashMap::default(), |mut candidates, (id, path_string)| {
-                        candidates
-                            .entry(path_string)
-                            .or_default()
-                            .push(id);
-                        candidates
-                    });
+                    .fold(
+                        HashMap::default(),
+                        |mut candidates: HashMap<_, Vec<usize>>, (id, path_string)| {
+                            candidates.entry(path_string).or_default().push(id);
+                            candidates
+                        },
+                    );
 
                 queries
                     .iter()

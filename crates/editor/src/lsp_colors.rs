@@ -4,8 +4,8 @@ use collections::HashMap;
 use futures::future::join_all;
 use gpui::{Hsla, Rgba};
 use itertools::Itertools;
-use language::point_from_lsp;
-use multi_buffer::Anchor;
+use language::{BufferSnapshot, PointUtf16, point_from_lsp};
+use multi_buffer::{Anchor, ExcerptId};
 use project::{DocumentColor, lsp_store::LspFetchStrategy};
 use settings::Settings as _;
 use text::{Bias, BufferId, OffsetRangeExt as _};
@@ -203,9 +203,8 @@ impl Editor {
                 let editor_excerpts = multi_buffer_snapshot.excerpts().fold(
                     HashMap::default(),
                     |mut acc, (excerpt_id, buffer_snapshot, excerpt_range)| {
-                        let excerpt_data = acc
-                            .entry(buffer_snapshot.remote_id())
-                            .or_default();
+                        let excerpt_data: &mut Vec<(ExcerptId, BufferSnapshot, Range<PointUtf16>)> =
+                            acc.entry(buffer_snapshot.remote_id()).or_default();
                         let excerpt_point_range =
                             excerpt_range.context.to_point_utf16(buffer_snapshot);
                         excerpt_data.push((

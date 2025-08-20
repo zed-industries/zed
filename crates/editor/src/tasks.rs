@@ -100,9 +100,7 @@ impl Editor {
             .fold(
                 HashMap::default(),
                 |mut acc, (lsp_task_source, buffer_id)| {
-                    acc.entry(lsp_task_source)
-                        .or_default()
-                        .push(buffer_id);
+                    acc.entry(lsp_task_source).or_default().push(buffer_id);
                     acc
                 },
             )

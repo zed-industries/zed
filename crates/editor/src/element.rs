@@ -2151,12 +2151,13 @@ impl EditorElement {
                 .skip_while(|(point, _)| point.row() < start_row)
                 .take_while(|(point, _)| point.row() < end_row)
                 .filter(|(point, _)| !row_block_types.contains_key(&point.row()))
-                .fold(HashMap::default(), |mut acc, (point, diagnostic)| {
-                    acc.entry(point.row())
-                        .or_default()
-                        .push(diagnostic);
-                    acc
-                })
+                .fold(
+                    HashMap::default(),
+                    |mut acc: HashMap<_, Vec<crate::InlineDiagnostic>>, (point, diagnostic)| {
+                        acc.entry(point.row()).or_default().push(diagnostic);
+                        acc
+                    },
+                )
         });
 
         if diagnostics_by_rows.is_empty() {
