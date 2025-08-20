@@ -169,9 +169,17 @@ impl<'a> MarkdownParser<'a> {
                             }
                         }
                     };
-
+                
                     self.cursor += 1;
-
+                
+                    if let Some(lang) = &language {
+                        if lang.eq_ignore_ascii_case("mermaid") {
+                            println!("Parsing mermaid block with source range: {:?}", source_range);
+                            let mermaid = self.parse_mermaid(source_range.clone()).await;
+                            return Some(vec![ParsedMarkdownElement::Mermaid(mermaid)]);
+                        }
+                    }
+                
                     let code_block = self.parse_code_block(language).await;
                     Some(vec![ParsedMarkdownElement::CodeBlock(code_block)])
                 }
@@ -185,6 +193,33 @@ impl<'a> MarkdownParser<'a> {
             _ => None,
         }
     }
+
+    async fn parse_mermaid(&mut self, source_range: Range<usize>) -> ParsedMarkdownMermaid {
+        let mut contents = String::new();
+    
+        while let Some((event, _)) = self.current() {
+            match event {
+                Event::Text(t) => {
+                    contents.push_str(t.as_ref());
+                    self.cursor += 1;
+                }
+                Event::End(TagEnd::CodeBlock) => {
+                    self.cursor += 1;
+                    break;
+                }
+                _ => {
+                    self.cursor += 1;
+                }
+            }
+        }
+    
+        ParsedMarkdownMermaid {
+            source_range,
+            contents: contents.into(),
+        }
+    }
+
+
 
     fn parse_text(
         &mut self,

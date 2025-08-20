@@ -6,20 +6,29 @@ use std::{fmt::Display, ops::Range, path::PathBuf};
 
 #[derive(Debug)]
 #[cfg_attr(test, derive(PartialEq))]
+pub struct ParsedMarkdownMermaid {
+    pub source_range: Range<usize>,
+    pub contents: SharedString,
+}
+
+#[derive(Debug)]
+#[cfg_attr(test, derive(PartialEq))]
 pub enum ParsedMarkdownElement {
     Heading(ParsedMarkdownHeading),
     ListItem(ParsedMarkdownListItem),
     Table(ParsedMarkdownTable),
     BlockQuote(ParsedMarkdownBlockQuote),
     CodeBlock(ParsedMarkdownCodeBlock),
-    /// A paragraph of text and other inline elements.
+    Mermaid(ParsedMarkdownMermaid),   // 👈 new variant
     Paragraph(MarkdownParagraph),
     HorizontalRule(Range<usize>),
 }
 
+
 impl ParsedMarkdownElement {
     pub fn source_range(&self) -> Option<Range<usize>> {
         Some(match self {
+            Self::Mermaid(mermaid) => mermaid.source_range.clone(),
             Self::Heading(heading) => heading.source_range.clone(),
             Self::ListItem(list_item) => list_item.source_range.clone(),
             Self::Table(table) => table.source_range.clone(),

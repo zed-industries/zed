@@ -1,21 +1,12 @@
 use crate::markdown_elements::{
-    HeadingLevel, Link, MarkdownParagraph, MarkdownParagraphChunk, ParsedMarkdown,
-    ParsedMarkdownBlockQuote, ParsedMarkdownCodeBlock, ParsedMarkdownElement,
-    ParsedMarkdownHeading, ParsedMarkdownListItem, ParsedMarkdownListItemType, ParsedMarkdownTable,
-    ParsedMarkdownTableAlignment, ParsedMarkdownTableRow,
+    HeadingLevel, Link, MarkdownParagraph, MarkdownParagraphChunk, ParsedMarkdown, ParsedMarkdownBlockQuote, ParsedMarkdownCodeBlock, ParsedMarkdownElement, ParsedMarkdownHeading, ParsedMarkdownListItem, ParsedMarkdownListItemType, ParsedMarkdownMermaid, ParsedMarkdownTable, ParsedMarkdownTableAlignment, ParsedMarkdownTableRow
 };
-use fs::normalize_path;
 use gpui::{
-    AbsoluteLength, AnyElement, App, AppContext as _, ClipboardItem, Context, DefiniteLength, Div,
-    Element, ElementId, Entity, HighlightStyle, Hsla, ImageSource, InteractiveText, IntoElement,
-    Keystroke, Length, Modifiers, ParentElement, Render, Resource, SharedString, Styled,
-    StyledText, TextStyle, WeakEntity, Window, div, img, rems,
+    div, img, rems, AbsoluteLength, AnyElement, App, AppContext as _, ClipboardItem, Context, DefiniteLength, Div, Element, ElementId, Entity, HighlightStyle, Hsla, Image, ImageSource, InteractiveText, IntoElement, Keystroke, Length, Modifiers, ParentElement, Render, Resource, SharedString, Styled, StyledText, TextStyle, WeakEntity, Window
 };
 use settings::Settings;
 use std::{
-    ops::{Mul, Range},
-    sync::Arc,
-    vec,
+    ops::{Mul, Range}, path::PathBuf, sync::Arc, vec
 };
 use theme::{ActiveTheme, SyntaxTheme, ThemeSettings};
 use ui::{
@@ -25,7 +16,10 @@ use ui::{
     h_flex, relative, tooltip_container, v_flex,
 };
 use workspace::{OpenOptions, OpenVisible, Workspace};
-
+use std::process::Command;
+use fs::normalize_path;
+use std::env;
+use std::path::Path;
 pub struct CheckboxClickedEvent {
     pub checked: bool,
     pub source_range: Range<usize>,
@@ -165,7 +159,76 @@ pub fn render_markdown_block(block: &ParsedMarkdownElement, cx: &mut RenderConte
         BlockQuote(block_quote) => render_markdown_block_quote(block_quote, cx),
         CodeBlock(code_block) => render_markdown_code_block(code_block, cx),
         HorizontalRule(_) => render_markdown_rule(cx),
+        Mermaid(mermaid) => render_markdown_mermaid(mermaid, cx),
     }
+}
+
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
+
+use std::thread;
+
+
+fn generate_mermaid_svg_async(mermaid_code: &str) -> PathBuf {
+    // Hash the code so we always get a unique, deterministic filename
+    let mut hasher = DefaultHasher::new();
+    mermaid_code.hash(&mut hasher);
+    let hash = hasher.finish();
+
+    let tmp_dir = env::temp_dir();
+    let tmp_png = tmp_dir.join(format!("diagram_{}.png", hash));
+    let tmp_mmd = tmp_dir.join(format!("diagram_{}.mmd", hash));
+
+    // If PNG already exists, don’t regenerate
+    if tmp_png.exists() {
+        return tmp_png;
+    }
+
+    // Write .mmd (only if not already written)
+    if !tmp_mmd.exists() {
+        std::fs::write(&tmp_mmd, &mermaid_code).expect("Failed to write Mermaid file");
+    }
+
+    // Spawn thread to generate PNG in background
+    let png_clone = tmp_png.clone();
+    let mmd_clone = tmp_mmd.clone();
+    thread::spawn(move || {
+        if !png_clone.exists() {
+            Command::new(r"C:\nvm4w\nodejs\mmdc.cmd")
+                .args(&[
+                    "-i", mmd_clone.to_str().unwrap(),
+                    "-o", png_clone.to_str().unwrap(),
+                    "-w", "600",
+                    "-H", "400",
+                ])
+                .status()
+                .expect("Failed to execute Mermaid CLI for PNG");
+        }
+    });
+
+    tmp_png
+}
+fn render_markdown_mermaid(mermaid: &ParsedMarkdownMermaid, cx: &mut RenderContext) -> AnyElement {
+    // let url = String::from("file:///C:/Users/Charbel/Downloads/Untitled%20diagram%20_%20Mermaid%20Chart-2025-08-19-011545.svg");
+    //                let image_resource = Resource::Uri(url.into());0
+                   
+                 
+               let svg_path = generate_mermaid_svg_async(&mermaid.contents);
+             //  let svg_path = "tmp\test.png";
+               let image_resource = Resource::Path(Arc::from(Path::new(&svg_path)));
+                
+                let element_id = cx.next_id(&mermaid.source_range);
+
+                let image_element = div()
+                    .id(element_id)
+                    .cursor_pointer()
+                    .child(
+                        img(ImageSource::Resource(image_resource))
+                            .max_w_full()
+                    )
+                    .into_any();
+
+                    return image_element;
 }
 
 fn render_markdown_heading(parsed: &ParsedMarkdownHeading, cx: &mut RenderContext) -> AnyElement {
