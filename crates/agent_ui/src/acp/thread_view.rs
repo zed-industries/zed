@@ -81,7 +81,7 @@ enum ThreadError {
 }
 
 impl ThreadError {
-    fn from_err(error: anyhow::Error) -> Self {
+    fn from_err(error: anyhow::Error, agent: &Rc<dyn AgentServer>) -> Self {
         if error.is::<language_model::PaymentRequiredError>() {
             Self::PaymentRequired
         } else if error.is::<language_model::ToolUseLimitReachedError>() {
@@ -93,7 +93,8 @@ impl ThreadError {
         } else {
             let string = error.to_string();
             // TODO: we should have Gemini return better errors here.
-            if string.contains("Could not load the default credentials")
+            if agent.clone().downcast::<agent_servers::Gemini>().is_some()
+                && string.contains("Could not load the default credentials")
                 || string.contains("API key not valid")
                 || string.contains("Request had invalid authentication credentials")
             {
@@ -932,7 +933,7 @@ impl AcpThreadView {
     }
 
     fn handle_thread_error(&mut self, error: anyhow::Error, cx: &mut Context<Self>) {
-        self.thread_error = Some(ThreadError::from_err(error));
+        self.thread_error = Some(ThreadError::from_err(error, &self.agent));
         cx.notify();
     }
 
