@@ -448,6 +448,16 @@ impl GitSettings {
             _ => false,
         }
     }
+
+    pub fn inline_blame_share_with_collaborators(&self) -> bool {
+        match self.inline_blame {
+            Some(InlineBlameSettings {
+                share_with_collaborators,
+                ..
+            }) => share_with_collaborators,
+            _ => true,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, JsonSchema)]
@@ -501,6 +511,11 @@ pub struct InlineBlameSettings {
     /// Default: false
     #[serde(default)]
     pub show_commit_summary: bool,
+    /// Allow sending blame information to collaborators in shared projects.
+    ///
+    /// When false, the host will refuse remote blame requests for buffers. Default: true
+    #[serde(default = "default_true")]
+    pub share_with_collaborators: bool,
 }
 
 fn default_inline_blame_padding() -> u32 {
@@ -515,6 +530,7 @@ impl Default for InlineBlameSettings {
             padding: default_inline_blame_padding(),
             min_column: 0,
             show_commit_summary: false,
+            share_with_collaborators: true,
         }
     }
 }

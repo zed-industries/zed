@@ -4,6 +4,7 @@ pub mod git_traversal;
 use crate::{
     ProjectEnvironment, ProjectItem, ProjectPath,
     buffer_store::{BufferStore, BufferStoreEvent},
+    project_settings::ProjectSettings,
     worktree_store::{WorktreeStore, WorktreeStoreEvent},
 };
 use anyhow::{Context as _, Result, anyhow, bail};
@@ -47,6 +48,7 @@ use rpc::{
     proto::{self, FromProto, SSH_PROJECT_ID, ToProto, git_reset, split_repository_update},
 };
 use serde::Deserialize;
+use settings::Settings;
 use std::{
     cmp::Ordering,
     collections::{BTreeSet, VecDeque},
@@ -2244,6 +2246,21 @@ impl GitStore {
         let buffer = this.read_with(&cx, |this, cx| {
             this.buffer_store.read(cx).get_existing(buffer_id)
         })??;
+
+        if envelope.original_sender_id.is_some() {
+            let allowed = this.read_with(&cx, |_, cx| {
+                ProjectSettings::get_global(cx)
+                    .git
+                    .inline_blame_share_with_collaborators()
+            })?;
+
+            if !allowed {
+                return Ok(proto::BlameBufferResponse {
+                    blame_response: None,
+                });
+            }
+        }
+
         buffer
             .update(&mut cx, |buffer, _| {
                 buffer.wait_for_version(version.clone())
