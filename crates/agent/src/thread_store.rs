@@ -74,7 +74,7 @@ impl Column for DataType {
     }
 }
 
-const RULES_FILE_NAMES: [&'static str; 9] = [
+const RULES_FILE_NAMES: [&str; 9] = [
     ".rules",
     ".cursorrules",
     ".windsurfrules",

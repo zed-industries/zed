@@ -326,7 +326,7 @@ impl TextLayout {
             vec![text_style.to_run(text.len())]
         };
 
-        let layout_id = window.request_measured_layout(Default::default(), {
+        window.request_measured_layout(Default::default(), {
             let element_state = self.clone();
 
             move |known_dimensions, available_space, window, cx| {
@@ -416,9 +416,7 @@ impl TextLayout {
 
                 size
             }
-        });
-
-        layout_id
+        })
     }
 
     fn prepaint(&self, bounds: Bounds<Pixels>, text: &str) {

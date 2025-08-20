@@ -607,6 +607,9 @@ async fn upload_minidump(
         // TODO: add gpu-context, feature-flag-context, and more of device-context like gpu
         // name, screen resolution, available ram, device model, etc
     }
+    if let Some(minidump_error) = metadata.minidump_error.clone() {
+        form = form.text("minidump_error", minidump_error);
+    }
 
     let mut response_text = String::new();
     let mut response = http.send_multipart_form(endpoint, form).await?;

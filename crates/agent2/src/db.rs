@@ -1,4 +1,5 @@
 use crate::{AgentMessage, AgentMessageContent, UserMessage, UserMessageContent};
+use acp_thread::UserMessageId;
 use agent::thread_store;
 use agent_client_protocol as acp;
 use agent_settings::{AgentProfileId, CompletionMode};
@@ -42,7 +43,7 @@ pub struct DbThread {
     #[serde(default)]
     pub cumulative_token_usage: language_model::TokenUsage,
     #[serde(default)]
-    pub request_token_usage: Vec<language_model::TokenUsage>,
+    pub request_token_usage: HashMap<acp_thread::UserMessageId, language_model::TokenUsage>,
     #[serde(default)]
     pub model: Option<DbLanguageModel>,
     #[serde(default)]
@@ -67,7 +68,10 @@ impl DbThread {
 
     fn upgrade_from_agent_1(thread: agent::SerializedThread) -> Result<Self> {
         let mut messages = Vec::new();
-        for msg in thread.messages {
+        let mut request_token_usage = HashMap::default();
+
+        let mut last_user_message_id = None;
+        for (ix, msg) in thread.messages.into_iter().enumerate() {
             let message = match msg.role {
                 language_model::Role::User => {
                     let mut content = Vec::new();
@@ -93,9 +97,12 @@ impl DbThread {
                         content.push(UserMessageContent::Text(msg.context));
                     }
 
+                    let id = UserMessageId::new();
+                    last_user_message_id = Some(id.clone());
+
                     crate::Message::User(UserMessage {
                         // MessageId from old format can't be meaningfully converted, so generate a new one
-                        id: acp_thread::UserMessageId::new(),
+                        id,
                         content,
                     })
                 }
@@ -154,6 +161,12 @@ impl DbThread {
                         );
                     }
 
+                    if let Some(last_user_message_id) = &last_user_message_id
+                        && let Some(token_usage) = thread.request_token_usage.get(ix).copied()
+                    {
+                        request_token_usage.insert(last_user_message_id.clone(), token_usage);
+                    }
+
                     crate::Message::Agent(AgentMessage {
                         content,
                         tool_results,
@@ -175,7 +188,7 @@ impl DbThread {
             summary: thread.detailed_summary_state,
             initial_project_snapshot: thread.initial_project_snapshot,
             cumulative_token_usage: thread.cumulative_token_usage,
-            request_token_usage: thread.request_token_usage,
+            request_token_usage,
             model: thread.model,
             completion_mode: thread.completion_mode,
             profile: thread.profile,

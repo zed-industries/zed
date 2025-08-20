@@ -161,7 +161,7 @@ impl Client {
         working_directory: &Option<PathBuf>,
         cx: AsyncApp,
     ) -> Result<Self> {
-        log::info!(
+        log::debug!(
             "starting context server (executable={:?}, args={:?})",
             binary.executable,
             &binary.args
@@ -295,7 +295,7 @@ impl Client {
     /// Continuously reads and logs any error messages from the server.
     async fn handle_err(transport: Arc<dyn Transport>) -> anyhow::Result<()> {
         while let Some(err) = transport.receive_err().next().await {
-            log::warn!("context server stderr: {}", err.trim());
+            log::debug!("context server stderr: {}", err.trim());
         }
 
         Ok(())

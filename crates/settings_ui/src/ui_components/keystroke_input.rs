@@ -19,7 +19,7 @@ actions!(
     ]
 );
 
-const KEY_CONTEXT_VALUE: &'static str = "KeystrokeInput";
+const KEY_CONTEXT_VALUE: &str = "KeystrokeInput";
 
 const CLOSE_KEYSTROKE_CAPTURE_END_TIMEOUT: std::time::Duration =
     std::time::Duration::from_millis(300);

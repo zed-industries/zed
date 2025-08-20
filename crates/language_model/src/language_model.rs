@@ -300,7 +300,7 @@ impl From<AnthropicError> for LanguageModelCompletionError {
             },
             AnthropicError::ServerOverloaded { retry_after } => Self::ServerOverloaded {
                 provider,
-                retry_after: retry_after,
+                retry_after,
             },
             AnthropicError::ApiError(api_error) => api_error.into(),
         }

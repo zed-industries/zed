@@ -257,7 +257,7 @@ impl DebugPanel {
                                         .as_ref()
                                         .map(|entity| entity.downgrade()),
                                     task_context: task_context.clone(),
-                                    worktree_id: worktree_id,
+                                    worktree_id,
                                 });
                             };
                             running.resolve_scenario(

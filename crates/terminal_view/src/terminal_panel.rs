@@ -236,7 +236,7 @@ impl TerminalPanel {
     ) -> Result<Entity<Self>> {
         let mut terminal_panel = None;
 
-        match workspace
+        if let Some((database_id, serialization_key)) = workspace
             .read_with(&cx, |workspace, _| {
                 workspace
                     .database_id()
@@ -244,34 +244,29 @@ impl TerminalPanel {
             })
             .ok()
             .flatten()
+            && let Some(serialized_panel) = cx
+                .background_spawn(async move { KEY_VALUE_STORE.read_kvp(&serialization_key) })
+                .await
+                .log_err()
+                .flatten()
+                .map(|panel| serde_json::from_str::<SerializedTerminalPanel>(&panel))
+                .transpose()
+                .log_err()
+                .flatten()
+            && let Ok(serialized) = workspace
+                .update_in(&mut cx, |workspace, window, cx| {
+                    deserialize_terminal_panel(
+                        workspace.weak_handle(),
+                        workspace.project().clone(),
+                        database_id,
+                        serialized_panel,
+                        window,
+                        cx,
+                    )
+                })?
+                .await
         {
-            Some((database_id, serialization_key)) => {
-                if let Some(serialized_panel) = cx
-                    .background_spawn(async move { KEY_VALUE_STORE.read_kvp(&serialization_key) })
-                    .await
-                    .log_err()
-                    .flatten()
-                    .map(|panel| serde_json::from_str::<SerializedTerminalPanel>(&panel))
-                    .transpose()
-                    .log_err()
-                    .flatten()
-                    && let Ok(serialized) = workspace
-                        .update_in(&mut cx, |workspace, window, cx| {
-                            deserialize_terminal_panel(
-                                workspace.weak_handle(),
-                                workspace.project().clone(),
-                                database_id,
-                                serialized_panel,
-                                window,
-                                cx,
-                            )
-                        })?
-                        .await
-                {
-                    terminal_panel = Some(serialized);
-                }
-            }
-            _ => {}
+            terminal_panel = Some(serialized);
         }
 
         let terminal_panel = if let Some(panel) = terminal_panel {
@@ -629,7 +624,7 @@ impl TerminalPanel {
                 workspace
                     .read(cx)
                     .panes()
-                    .into_iter()
+                    .iter()
                     .cloned()
                     .flat_map(pane_terminal_views),
             )

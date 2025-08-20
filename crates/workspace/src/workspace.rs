@@ -2503,8 +2503,6 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Vec<Option<anyhow::Result<Box<dyn ItemHandle>>>>> {
-        log::info!("open paths {abs_paths:?}");
-
         let fs = self.app_state.fs.clone();
 
         // Sort the paths to ensure we add worktrees for parents before their children.
@@ -3283,7 +3281,8 @@ impl Workspace {
         let task = self.load_path(project_path.clone(), window, cx);
         window.spawn(cx, async move |cx| {
             let (project_entry_id, build_item) = task.await?;
-            let result = pane.update_in(cx, |pane, window, cx| {
+
+            pane.update_in(cx, |pane, window, cx| {
                 pane.open_item(
                     project_entry_id,
                     project_path,
@@ -3295,8 +3294,7 @@ impl Workspace {
                     cx,
                     build_item,
                 )
-            });
-            result
+            })
         })
     }
 
@@ -9150,13 +9148,12 @@ mod tests {
 
     fn split_pane(cx: &mut VisualTestContext, workspace: &Entity<Workspace>) -> Entity<Pane> {
         workspace.update_in(cx, |workspace, window, cx| {
-            let new_pane = workspace.split_pane(
+            workspace.split_pane(
                 workspace.active_pane().clone(),
                 SplitDirection::Right,
                 window,
                 cx,
-            );
-            new_pane
+            )
         })
     }
 
@@ -9413,7 +9410,7 @@ mod tests {
             let workspace = workspace.clone();
             move |cx: &mut VisualTestContext| {
                 workspace.update_in(cx, |workspace, window, cx| {
-                    if let Some(_) = workspace.active_modal::<TestModal>(cx) {
+                    if workspace.active_modal::<TestModal>(cx).is_some() {
                         workspace.toggle_modal(window, cx, TestModal::new);
                         workspace.toggle_modal(window, cx, TestModal::new);
                     } else {

@@ -413,13 +413,10 @@ impl LocalBufferStore {
         cx: &mut Context<BufferStore>,
     ) {
         cx.subscribe(worktree, |this, worktree, event, cx| {
-            if worktree.read(cx).is_local() {
-                match event {
-                    worktree::Event::UpdatedEntries(changes) => {
-                        Self::local_worktree_entries_changed(this, &worktree, changes, cx);
-                    }
-                    _ => {}
-                }
+            if worktree.read(cx).is_local()
+                && let worktree::Event::UpdatedEntries(changes) = event
+            {
+                Self::local_worktree_entries_changed(this, &worktree, changes, cx);
             }
         })
         .detach();
@@ -947,10 +944,9 @@ impl BufferStore {
     }
 
     pub fn get_by_path(&self, path: &ProjectPath) -> Option<Entity<Buffer>> {
-        self.path_to_buffer_id.get(path).and_then(|buffer_id| {
-            let buffer = self.get(*buffer_id);
-            buffer
-        })
+        self.path_to_buffer_id
+            .get(path)
+            .and_then(|buffer_id| self.get(*buffer_id))
     }
 
     pub fn get(&self, buffer_id: BufferId) -> Option<Entity<Buffer>> {

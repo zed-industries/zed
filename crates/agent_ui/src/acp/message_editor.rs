@@ -9,7 +9,7 @@ use anyhow::{Context as _, Result, anyhow};
 use assistant_slash_commands::codeblock_fence_for_path;
 use collections::{HashMap, HashSet};
 use editor::{
-    Anchor, AnchorRangeExt, ContextMenuOptions, ContextMenuPlacement, Editor, EditorElement,
+    Addon, Anchor, AnchorRangeExt, ContextMenuOptions, ContextMenuPlacement, Editor, EditorElement,
     EditorEvent, EditorMode, EditorStyle, ExcerptId, FoldPlaceholder, MultiBuffer,
     SemanticsProvider, ToOffset,
     actions::Paste,
@@ -21,8 +21,8 @@ use futures::{
 };
 use gpui::{
     AppContext, ClipboardEntry, Context, Entity, EventEmitter, FocusHandle, Focusable,
-    HighlightStyle, Image, ImageFormat, Img, Subscription, Task, TextStyle, UnderlineStyle,
-    WeakEntity,
+    HighlightStyle, Image, ImageFormat, Img, KeyContext, Subscription, Task, TextStyle,
+    UnderlineStyle, WeakEntity,
 };
 use language::{Buffer, Language};
 use language_model::LanguageModelImage;
@@ -66,7 +66,7 @@ pub struct MessageEditor {
     _parse_slash_command_task: Task<()>,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub enum MessageEditorEvent {
     Send,
     Cancel,
@@ -122,6 +122,7 @@ impl MessageEditor {
             if prevent_slash_commands {
                 editor.set_semantics_provider(Some(semantics_provider.clone()));
             }
+            editor.register_addon(MessageEditorAddon::new());
             editor
         });
 
@@ -134,8 +135,8 @@ impl MessageEditor {
         if prevent_slash_commands {
             subscriptions.push(cx.subscribe_in(&editor, window, {
                 let semantics_provider = semantics_provider.clone();
-                move |this, editor, event, window, cx| match event {
-                    EditorEvent::Edited { .. } => {
+                move |this, editor, event, window, cx| {
+                    if let EditorEvent::Edited { .. } = event {
                         this.highlight_slash_command(
                             semantics_provider.clone(),
                             editor.clone(),
@@ -143,7 +144,6 @@ impl MessageEditor {
                             cx,
                         );
                     }
-                    _ => {}
                 }
             }));
         }
@@ -729,6 +729,9 @@ impl MessageEditor {
     }
 
     fn send(&mut self, _: &Chat, _: &mut Window, cx: &mut Context<Self>) {
+        if self.is_empty(cx) {
+            return;
+        }
         cx.emit(MessageEditorEvent::Send)
     }
 
@@ -1644,6 +1647,31 @@ fn parse_slash_command(text: &str) -> Option<(usize, usize)> {
         }
     }
     None
+}
+
+pub struct MessageEditorAddon {}
+
+impl MessageEditorAddon {
+    pub fn new() -> Self {
+        Self {}
+    }
+}
+
+impl Addon for MessageEditorAddon {
+    fn to_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
+    fn to_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
+    fn extend_key_context(&self, key_context: &mut KeyContext, cx: &App) {
+        let settings = agent_settings::AgentSettings::get_global(cx);
+        if settings.use_modifier_to_send {
+            key_context.add("use_modifier_to_send");
+        }
+    }
 }
 
 #[cfg(test)]

@@ -26,6 +26,7 @@ chrono.workspace = true
 cloud_llm_client.workspace = true
 collections.workspace = true
 context_server.workspace = true
+db.workspace = true
 fs.workspace = true
 futures.workspace = true
 git.workspace = true
@@ -66,6 +67,7 @@ zstd.workspace = true
 
 [dev-dependencies]
 agent = { workspace = true, "features" = ["test-support"] }
+assistant_context = { workspace = true, "features" = ["test-support"] }
 ctor.workspace = true
 client = { workspace = true, "features" = ["test-support"] }
 clock = { workspace = true, "features" = ["test-support"] }
