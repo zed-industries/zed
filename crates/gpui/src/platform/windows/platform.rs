@@ -520,13 +520,9 @@ impl Platform for WindowsPlatform {
         let path = path.to_path_buf();
         self.background_executor()
             .spawn(async move {
-                let Some(path) = file_full_path.to_str() else {
-                    return;
-                };
-                if path.is_empty() {
-                    return;
-                }
-                open_target_in_explorer(path);
+                open_target_in_explorer(path)
+                    .context("Revealing path in explorer")
+                    .log_err();
             })
             .detach();
     }
