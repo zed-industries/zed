@@ -21,11 +21,11 @@ use file_icons::FileIcons;
 use fs::Fs;
 use gpui::{
     Action, Animation, AnimationExt, AnyView, App, BorderStyle, ClickEvent, ClipboardItem,
-    EdgesRefinement, Empty, Entity, FocusHandle, Focusable, Hsla, Length, ListOffset, ListState,
-    MouseButton, PlatformDisplay, SharedString, Stateful, StyleRefinement, Subscription, Task,
-    TextStyle, TextStyleRefinement, Transformation, UnderlineStyle, WeakEntity, Window,
-    WindowHandle, div, linear_color_stop, linear_gradient, list, percentage, point, prelude::*,
-    pulsating_between,
+    EdgesRefinement, ElementId, Empty, Entity, FocusHandle, Focusable, Hsla, Length, ListOffset,
+    ListState, MouseButton, PlatformDisplay, SharedString, Stateful, StyleRefinement, Subscription,
+    Task, TextStyle, TextStyleRefinement, Transformation, UnderlineStyle, WeakEntity, Window,
+    WindowHandle, div, ease_in_out, linear_color_stop, linear_gradient, list, percentage, point,
+    prelude::*, pulsating_between,
 };
 use language::Buffer;
 
@@ -1664,46 +1664,44 @@ impl AcpThreadView {
     }
 
     fn render_diff_loading(&self, cx: &Context<Self>) -> AnyElement {
-        let styles = [
-            ("w_4_5", (0.1, 0.85), 2000),
-            ("w_1_4", (0.2, 0.75), 2200),
-            ("w_2_4", (0.15, 0.64), 1900),
-            ("w_3_5", (0.25, 0.72), 2300),
-            ("w_2_5", (0.3, 0.56), 1800),
-        ];
+        let bar = |n: u64, width_class: &str| {
+            let bg_color = cx.theme().colors().element_active;
+            let base = h_flex().h_1().rounded_full();
 
-        let mut container = v_flex()
+            let modified = match width_class {
+                "w_4_5" => base.w_3_4(),
+                "w_1_4" => base.w_1_4(),
+                "w_2_4" => base.w_2_4(),
+                "w_3_5" => base.w_3_5(),
+                "w_2_5" => base.w_2_5(),
+                _ => base.w_1_2(),
+            };
+
+            modified.with_animation(
+                ElementId::Integer(n),
+                Animation::new(Duration::from_secs(2)).repeat(),
+                move |tab, delta| {
+                    let delta = (delta - 0.15 * n as f32) / 0.7;
+                    let delta = 1.0 - (0.5 - delta).abs() * 2.;
+                    let delta = ease_in_out(delta.clamp(0., 1.));
+                    let delta = 0.1 + 0.9 * delta;
+
+                    tab.bg(bg_color.opacity(delta))
+                },
+            )
+        };
+
+        v_flex()
             .p_3()
             .gap_1()
             .rounded_b_md()
-            .bg(cx.theme().colors().editor_background);
-
-        for (width_method, pulse_range, duration_ms) in styles.iter() {
-            let (min_opacity, max_opacity) = *pulse_range;
-            let placeholder = match *width_method {
-                "w_4_5" => div().w_3_4(),
-                "w_1_4" => div().w_1_4(),
-                "w_2_4" => div().w_2_4(),
-                "w_3_5" => div().w_3_5(),
-                "w_2_5" => div().w_2_5(),
-                _ => div().w_1_2(),
-            }
-            .id("loading_div")
-            .h_1()
-            .rounded_full()
-            .bg(cx.theme().colors().element_active)
-            .with_animation(
-                "loading_pulsate",
-                Animation::new(Duration::from_millis(*duration_ms))
-                    .repeat()
-                    .with_easing(pulsating_between(min_opacity, max_opacity)),
-                |label, delta| label.opacity(delta),
-            );
-
-            container = container.child(placeholder);
-        }
-
-        container.into_any_element()
+            .bg(cx.theme().colors().editor_background)
+            .child(bar(0, "w_4_5"))
+            .child(bar(1, "w_1_4"))
+            .child(bar(2, "w_2_4"))
+            .child(bar(3, "w_3_5"))
+            .child(bar(4, "w_2_5"))
+            .into_any_element()
     }
 
     fn render_diff_editor(
