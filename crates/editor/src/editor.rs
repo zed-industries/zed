@@ -14895,10 +14895,7 @@ impl Editor {
             };
 
             let hide_runnables = project
-                .update(cx, |project, cx| {
-                    // Do not display any test indicators in non-dev server remote projects.
-                    project.is_via_collab() && project.ssh_connection_string(cx).is_none()
-                })
+                .update(cx, |project, _| project.is_via_collab())
                 .unwrap_or(true);
             if hide_runnables {
                 return;

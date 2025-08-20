@@ -26,8 +26,7 @@ use parking_lot::Mutex;
 
 use release_channel::{AppCommitSha, AppVersion, ReleaseChannel};
 use rpc::{
-    AnyProtoClient, EntityMessageSubscriber, ErrorExt, ProtoClient, ProtoMessageHandlerSet,
-    RpcError,
+    AnyProtoClient, ErrorExt, ProtoClient, ProtoMessageHandlerSet, RpcError,
     proto::{self, Envelope, EnvelopedMessage, PeerId, RequestMessage, build_typed_envelope},
 };
 use schemars::JsonSchema;
@@ -37,7 +36,6 @@ use smol::{
     process::{self, Child, Stdio},
 };
 use std::{
-    any::TypeId,
     collections::VecDeque,
     fmt, iter,
     ops::ControlFlow,
@@ -664,6 +662,7 @@ impl ConnectionIdentifier {
     pub fn setup() -> Self {
         Self::Setup(NEXT_ID.fetch_add(1, SeqCst))
     }
+
     // This string gets used in a socket name, and so must be relatively short.
     // The total length of:
     //   /home/{username}/.local/share/zed/server_state/{name}/stdout.sock
@@ -758,6 +757,15 @@ impl SshRemoteClient {
                 result = success.fuse() =>  result
             }
         })
+    }
+
+    pub fn proto_client_from_channels(
+        incoming_rx: mpsc::UnboundedReceiver<Envelope>,
+        outgoing_tx: mpsc::UnboundedSender<Envelope>,
+        cx: &App,
+        name: &'static str,
+    ) -> AnyProtoClient {
+        ChannelClient::new(incoming_rx, outgoing_tx, cx, name).into()
     }
 
     pub fn shutdown_processes<T: RequestMessage>(
@@ -990,64 +998,63 @@ impl SshRemoteClient {
         };
 
         cx.spawn(async move |cx| {
-                let mut missed_heartbeats = 0;
+            let mut missed_heartbeats = 0;
 
-                let keepalive_timer = cx.background_executor().timer(HEARTBEAT_INTERVAL).fuse();
-                futures::pin_mut!(keepalive_timer);
+            let keepalive_timer = cx.background_executor().timer(HEARTBEAT_INTERVAL).fuse();
+            futures::pin_mut!(keepalive_timer);
 
-                loop {
-                    select_biased! {
-                        result = connection_activity_rx.next().fuse() => {
-                            if result.is_none() {
-                                log::warn!("ssh heartbeat: connection activity channel has been dropped. stopping.");
-                                return Ok(());
-                            }
-
-                            if missed_heartbeats != 0 {
-                                missed_heartbeats = 0;
-                                let _ =this.update(cx, |this, cx| {
-                                    this.handle_heartbeat_result(missed_heartbeats, cx)
-                                })?;
-                            }
+            loop {
+                select_biased! {
+                    result = connection_activity_rx.next().fuse() => {
+                        if result.is_none() {
+                            log::warn!("ssh heartbeat: connection activity channel has been dropped. stopping.");
+                            return Ok(());
                         }
-                        _ = keepalive_timer => {
-                            log::debug!("Sending heartbeat to server...");
 
-                            let result = select_biased! {
-                                _ = connection_activity_rx.next().fuse() => {
-                                    Ok(())
-                                }
-                                ping_result = client.ping(HEARTBEAT_TIMEOUT).fuse() => {
-                                    ping_result
-                                }
-                            };
-
-                            if result.is_err() {
-                                missed_heartbeats += 1;
-                                log::warn!(
-                                    "No heartbeat from server after {:?}. Missed heartbeat {} out of {}.",
-                                    HEARTBEAT_TIMEOUT,
-                                    missed_heartbeats,
-                                    MAX_MISSED_HEARTBEATS
-                                );
-                            } else if missed_heartbeats != 0 {
-                                missed_heartbeats = 0;
-                            } else {
-                                continue;
-                            }
-
-                            let result = this.update(cx, |this, cx| {
+                        if missed_heartbeats != 0 {
+                            missed_heartbeats = 0;
+                            let _ =this.update(cx, |this, cx| {
                                 this.handle_heartbeat_result(missed_heartbeats, cx)
                             })?;
-                            if result.is_break() {
-                                return Ok(());
-                            }
                         }
                     }
+                    _ = keepalive_timer => {
+                        log::debug!("Sending heartbeat to server...");
 
-                    keepalive_timer.set(cx.background_executor().timer(HEARTBEAT_INTERVAL).fuse());
+                        let result = select_biased! {
+                            _ = connection_activity_rx.next().fuse() => {
+                                Ok(())
+                            }
+                            ping_result = client.ping(HEARTBEAT_TIMEOUT).fuse() => {
+                                ping_result
+                            }
+                        };
+
+                        if result.is_err() {
+                            missed_heartbeats += 1;
+                            log::warn!(
+                                "No heartbeat from server after {:?}. Missed heartbeat {} out of {}.",
+                                HEARTBEAT_TIMEOUT,
+                                missed_heartbeats,
+                                MAX_MISSED_HEARTBEATS
+                            );
+                        } else if missed_heartbeats != 0 {
+                            missed_heartbeats = 0;
+                        } else {
+                            continue;
+                        }
+
+                        let result = this.update(cx, |this, cx| {
+                            this.handle_heartbeat_result(missed_heartbeats, cx)
+                        })?;
+                        if result.is_break() {
+                            return Ok(());
+                        }
+                    }
                 }
 
+                keepalive_timer.set(cx.background_executor().timer(HEARTBEAT_INTERVAL).fuse());
+            }
         })
     }
 
@@ -1145,10 +1152,6 @@ impl SshRemoteClient {
         cx.notify();
     }
 
-    pub fn subscribe_to_entity<E: 'static>(&self, remote_id: u64, entity: &Entity<E>) {
-        self.client.subscribe_to_entity(remote_id, entity);
-    }
-
     pub fn ssh_info(&self) -> Option<(SshArgs, PathStyle)> {
         self.state
             .lock()
@@ -1222,7 +1225,7 @@ impl SshRemoteClient {
     pub fn fake_server(
         client_cx: &mut gpui::TestAppContext,
         server_cx: &mut gpui::TestAppContext,
-    ) -> (SshConnectionOptions, Arc<ChannelClient>) {
+    ) -> (SshConnectionOptions, AnyProtoClient) {
         let port = client_cx
             .update(|cx| cx.default_global::<ConnectionPool>().connections.len() as u16 + 1);
         let opts = SshConnectionOptions {
@@ -1255,7 +1258,7 @@ impl SshRemoteClient {
             })
         });
 
-        (opts, server_client)
+        (opts, server_client.into())
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -2269,7 +2272,7 @@ impl SshRemoteConnection {
 
 type ResponseChannels = Mutex<HashMap<MessageId, oneshot::Sender<(Envelope, oneshot::Sender<()>)>>>;
 
-pub struct ChannelClient {
+struct ChannelClient {
     next_message_id: AtomicU32,
     outgoing_tx: Mutex<mpsc::UnboundedSender<Envelope>>,
     buffer: Mutex<VecDeque<Envelope>>,
@@ -2281,7 +2284,7 @@ pub struct ChannelClient {
 }
 
 impl ChannelClient {
-    pub fn new(
+    fn new(
         incoming_rx: mpsc::UnboundedReceiver<Envelope>,
         outgoing_tx: mpsc::UnboundedSender<Envelope>,
         cx: &App,
@@ -2402,7 +2405,7 @@ impl ChannelClient {
         })
     }
 
-    pub fn reconnect(
+    fn reconnect(
         self: &Arc<Self>,
         incoming_rx: UnboundedReceiver<Envelope>,
         outgoing_tx: UnboundedSender<Envelope>,
@@ -2412,26 +2415,7 @@ impl ChannelClient {
         *self.task.lock() = Self::start_handling_messages(Arc::downgrade(self), incoming_rx, cx);
     }
 
-    pub fn subscribe_to_entity<E: 'static>(&self, remote_id: u64, entity: &Entity<E>) {
-        let id = (TypeId::of::<E>(), remote_id);
-
-        let mut message_handlers = self.message_handlers.lock();
-        if message_handlers
-            .entities_by_type_and_remote_id
-            .contains_key(&id)
-        {
-            panic!("already subscribed to entity");
-        }
-
-        message_handlers.entities_by_type_and_remote_id.insert(
-            id,
-            EntityMessageSubscriber::Entity {
-                handle: entity.downgrade().into(),
-            },
-        );
-    }
-
-    pub fn request<T: RequestMessage>(
+    fn request<T: RequestMessage>(
         &self,
         payload: T,
     ) -> impl 'static + Future<Output = Result<T::Response>> {
@@ -2453,7 +2437,7 @@ impl ChannelClient {
         }
     }
 
-    pub async fn resync(&self, timeout: Duration) -> Result<()> {
+    async fn resync(&self, timeout: Duration) -> Result<()> {
         smol::future::or(
             async {
                 self.request_internal(proto::FlushBufferedMessages {}, false)
@@ -2475,7 +2459,7 @@ impl ChannelClient {
         .await
     }
 
-    pub async fn ping(&self, timeout: Duration) -> Result<()> {
+    async fn ping(&self, timeout: Duration) -> Result<()> {
         smol::future::or(
             async {
                 self.request(proto::Ping {}).await?;
