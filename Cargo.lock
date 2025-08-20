@@ -14577,6 +14577,7 @@ dependencies = [
  "language",
  "menu",
  "project",
+ "regex",
  "schemars",
  "serde",
  "serde_json",
