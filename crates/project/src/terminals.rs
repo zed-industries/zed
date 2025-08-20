@@ -67,13 +67,11 @@ pub struct SshDetails {
 
 impl Project {
     pub fn active_project_directory(&self, cx: &App) -> Option<Arc<Path>> {
-        let worktree = self
-            .active_entry()
+        self.active_entry()
             .and_then(|entry_id| self.worktree_for_entry(entry_id, cx))
             .into_iter()
             .chain(self.worktrees(cx))
-            .find_map(|tree| tree.read(cx).root_dir());
-        worktree
+            .find_map(|tree| tree.read(cx).root_dir())
     }
 
     pub fn first_project_directory(&self, cx: &App) -> Option<PathBuf> {
@@ -99,7 +97,7 @@ impl Project {
             }
         }
 
-        return None;
+        None
     }
 
     pub fn create_terminal(
@@ -119,13 +117,13 @@ impl Project {
         };
 
         let mut settings_location = None;
-        if let Some(path) = path.as_ref() {
-            if let Some((worktree, _)) = self.find_worktree(path, cx) {
-                settings_location = Some(SettingsLocation {
-                    worktree_id: worktree.read(cx).id(),
-                    path,
-                });
-            }
+        if let Some(path) = path.as_ref()
+            && let Some((worktree, _)) = self.find_worktree(path, cx)
+        {
+            settings_location = Some(SettingsLocation {
+                worktree_id: worktree.read(cx).id(),
+                path,
+            });
         }
         let venv = TerminalSettings::get(settings_location, cx)
             .detect_venv
@@ -151,13 +149,13 @@ impl Project {
         cx: &'a App,
     ) -> &'a TerminalSettings {
         let mut settings_location = None;
-        if let Some(path) = path.as_ref() {
-            if let Some((worktree, _)) = self.find_worktree(path, cx) {
-                settings_location = Some(SettingsLocation {
-                    worktree_id: worktree.read(cx).id(),
-                    path,
-                });
-            }
+        if let Some(path) = path.as_ref()
+            && let Some((worktree, _)) = self.find_worktree(path, cx)
+        {
+            settings_location = Some(SettingsLocation {
+                worktree_id: worktree.read(cx).id(),
+                path,
+            });
         }
         TerminalSettings::get(settings_location, cx)
     }
@@ -239,13 +237,13 @@ impl Project {
         let is_ssh_terminal = ssh_details.is_some();
 
         let mut settings_location = None;
-        if let Some(path) = path.as_ref() {
-            if let Some((worktree, _)) = this.find_worktree(path, cx) {
-                settings_location = Some(SettingsLocation {
-                    worktree_id: worktree.read(cx).id(),
-                    path,
-                });
-            }
+        if let Some(path) = path.as_ref()
+            && let Some((worktree, _)) = this.find_worktree(path, cx)
+        {
+            settings_location = Some(SettingsLocation {
+                worktree_id: worktree.read(cx).id(),
+                path,
+            });
         }
         let settings = TerminalSettings::get(settings_location, cx).clone();
 
@@ -518,7 +516,7 @@ impl Project {
                 smol::block_on(fs.metadata(&bin_path))
                     .ok()
                     .flatten()
-                    .map_or(false, |meta| meta.is_dir)
+                    .is_some_and(|meta| meta.is_dir)
             })
     }
 
@@ -665,11 +663,11 @@ pub fn wrap_for_ssh(
             env_changes.push_str(&format!("{}={} ", k, v));
         }
     }
-    if let Some(venv_directory) = venv_directory {
-        if let Ok(str) = shlex::try_quote(venv_directory.to_string_lossy().as_ref()) {
-            let path = RemotePathBuf::new(PathBuf::from(str.to_string()), path_style).to_string();
-            env_changes.push_str(&format!("PATH={}:$PATH ", path));
-        }
+    if let Some(venv_directory) = venv_directory
+        && let Ok(str) = shlex::try_quote(venv_directory.to_string_lossy().as_ref())
+    {
+        let path = RemotePathBuf::new(PathBuf::from(str.to_string()), path_style).to_string();
+        env_changes.push_str(&format!("PATH={}:$PATH ", path));
     }
 
     let commands = if let Some(path) = path {

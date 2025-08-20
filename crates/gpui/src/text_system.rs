@@ -366,15 +366,14 @@ impl WindowTextSystem {
 
         let mut decoration_runs = SmallVec::<[DecorationRun; 32]>::new();
         for run in runs {
-            if let Some(last_run) = decoration_runs.last_mut() {
-                if last_run.color == run.color
-                    && last_run.underline == run.underline
-                    && last_run.strikethrough == run.strikethrough
-                    && last_run.background_color == run.background_color
-                {
-                    last_run.len += run.len as u32;
-                    continue;
-                }
+            if let Some(last_run) = decoration_runs.last_mut()
+                && last_run.color == run.color
+                && last_run.underline == run.underline
+                && last_run.strikethrough == run.strikethrough
+                && last_run.background_color == run.background_color
+            {
+                last_run.len += run.len as u32;
+                continue;
             }
             decoration_runs.push(DecorationRun {
                 len: run.len as u32,
@@ -436,7 +435,7 @@ impl WindowTextSystem {
                     });
                 }
 
-                if decoration_runs.last().map_or(false, |last_run| {
+                if decoration_runs.last().is_some_and(|last_run| {
                     last_run.color == run.color
                         && last_run.underline == run.underline
                         && last_run.strikethrough == run.strikethrough
@@ -492,14 +491,14 @@ impl WindowTextSystem {
         let mut split_lines = text.split('\n');
         let mut processed = false;
 
-        if let Some(first_line) = split_lines.next() {
-            if let Some(second_line) = split_lines.next() {
-                processed = true;
-                process_line(first_line.to_string().into());
-                process_line(second_line.to_string().into());
-                for line_text in split_lines {
-                    process_line(line_text.to_string().into());
-                }
+        if let Some(first_line) = split_lines.next()
+            && let Some(second_line) = split_lines.next()
+        {
+            processed = true;
+            process_line(first_line.to_string().into());
+            process_line(second_line.to_string().into());
+            for line_text in split_lines {
+                process_line(line_text.to_string().into());
             }
         }
 
@@ -534,11 +533,11 @@ impl WindowTextSystem {
         let mut font_runs = self.font_runs_pool.lock().pop().unwrap_or_default();
         for run in runs.iter() {
             let font_id = self.resolve_font(&run.font);
-            if let Some(last_run) = font_runs.last_mut() {
-                if last_run.font_id == font_id {
-                    last_run.len += run.len;
-                    continue;
-                }
+            if let Some(last_run) = font_runs.last_mut()
+                && last_run.font_id == font_id
+            {
+                last_run.len += run.len;
+                continue;
             }
             font_runs.push(FontRun {
                 len: run.len,

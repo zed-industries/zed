@@ -124,12 +124,12 @@ pub(super) fn find_from_grid_point<T: EventListener>(
                     && file_path
                         .chars()
                         .nth(last_index - 1)
-                        .map_or(false, |c| c.is_ascii_digit());
+                        .is_some_and(|c| c.is_ascii_digit());
                 let next_is_digit = last_index < file_path.len() - 1
                     && file_path
                         .chars()
                         .nth(last_index + 1)
-                        .map_or(true, |c| c.is_ascii_digit());
+                        .is_none_or(|c| c.is_ascii_digit());
                 if prev_is_digit && !next_is_digit {
                     let stripped_len = file_path.len() - last_index;
                     word_match = Match::new(

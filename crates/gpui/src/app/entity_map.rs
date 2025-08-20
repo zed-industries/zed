@@ -786,7 +786,7 @@ impl<T: 'static> PartialOrd for WeakEntity<T> {
 
 #[cfg(any(test, feature = "leak-detection"))]
 static LEAK_BACKTRACE: std::sync::LazyLock<bool> =
-    std::sync::LazyLock::new(|| std::env::var("LEAK_BACKTRACE").map_or(false, |b| !b.is_empty()));
+    std::sync::LazyLock::new(|| std::env::var("LEAK_BACKTRACE").is_ok_and(|b| !b.is_empty()));
 
 #[cfg(any(test, feature = "leak-detection"))]
 #[derive(Clone, Copy, Debug, Default, Hash, PartialEq, Eq)]

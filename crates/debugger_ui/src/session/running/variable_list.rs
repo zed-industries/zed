@@ -947,7 +947,7 @@ impl VariableList {
     #[track_caller]
     #[cfg(test)]
     pub(crate) fn assert_visual_entries(&self, expected: Vec<&str>) {
-        const INDENT: &'static str = "    ";
+        const INDENT: &str = "    ";
 
         let entries = &self.entries;
         let mut visual_entries = Vec::with_capacity(entries.len());

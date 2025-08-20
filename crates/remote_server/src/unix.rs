@@ -19,11 +19,11 @@ use project::project_settings::ProjectSettings;
 
 use proto::CrashReport;
 use release_channel::{AppVersion, RELEASE_CHANNEL, ReleaseChannel};
-use remote::proxy::ProxyLaunchError;
-use remote::ssh_session::ChannelClient;
+use remote::SshRemoteClient;
 use remote::{
     json_log::LogRecord,
     protocol::{read_message, write_message},
+    proxy::ProxyLaunchError,
 };
 use reqwest_client::ReqwestClient;
 use rpc::proto::{self, Envelope, SSH_PROJECT_ID};
@@ -199,8 +199,7 @@ fn init_panic_hook(session_id: String) {
     }));
 }
 
-fn handle_crash_files_requests(project: &Entity<HeadlessProject>, client: &Arc<ChannelClient>) {
-    let client: AnyProtoClient = client.clone().into();
+fn handle_crash_files_requests(project: &Entity<HeadlessProject>, client: &AnyProtoClient) {
     client.add_request_handler(
         project.downgrade(),
         |_, _: TypedEnvelope<proto::GetCrashFiles>, _cx| async move {
@@ -276,7 +275,7 @@ fn start_server(
     listeners: ServerListeners,
     log_rx: Receiver<Vec<u8>>,
     cx: &mut App,
-) -> Arc<ChannelClient> {
+) -> AnyProtoClient {
     // This is the server idle timeout. If no connection comes in this timeout, the server will shut down.
     const IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10 * 60);
 
@@ -334,7 +333,7 @@ fn start_server(
             let (mut stdin_msg_tx, mut stdin_msg_rx) = mpsc::unbounded::<Envelope>();
             cx.background_spawn(async move {
                 while let Ok(msg) = read_message(&mut stdin_stream, &mut input_buffer).await {
-                    if let Err(_) = stdin_msg_tx.send(msg).await {
+                    if (stdin_msg_tx.send(msg).await).is_err() {
                         break;
                     }
                 }
@@ -395,7 +394,7 @@ fn start_server(
     })
     .detach();
 
-    ChannelClient::new(incoming_rx, outgoing_tx, cx, "server")
+    SshRemoteClient::proto_client_from_channels(incoming_rx, outgoing_tx, cx, "server")
 }
 
 fn init_paths() -> anyhow::Result<()> {
@@ -622,7 +621,7 @@ pub fn execute_proxy(identifier: String, is_reconnecting: bool) -> Result<()> {
                     Err(anyhow!(error))?;
                 }
                 n => {
-                    stderr.write_all(&mut stderr_buffer[..n]).await?;
+                    stderr.write_all(&stderr_buffer[..n]).await?;
                     stderr.flush().await?;
                 }
             }
@@ -792,7 +791,7 @@ async fn write_size_prefixed_buffer<S: AsyncWrite + Unpin>(
 }
 
 fn initialize_settings(
-    session: Arc<ChannelClient>,
+    session: AnyProtoClient,
     fs: Arc<dyn Fs>,
     cx: &mut App,
 ) -> watch::Receiver<Option<NodeBinaryOptions>> {
@@ -891,7 +890,8 @@ pub fn handle_settings_file_changes(
 
 fn read_proxy_settings(cx: &mut Context<HeadlessProject>) -> Option<Url> {
     let proxy_str = ProxySettings::get_global(cx).proxy.to_owned();
-    let proxy_url = proxy_str
+
+    proxy_str
         .as_ref()
         .and_then(|input: &String| {
             input
@@ -899,8 +899,7 @@ fn read_proxy_settings(cx: &mut Context<HeadlessProject>) -> Option<Url> {
                 .inspect_err(|e| log::error!("Error parsing proxy settings: {}", e))
                 .ok()
         })
-        .or_else(read_proxy_from_env);
-    proxy_url
+        .or_else(read_proxy_from_env)
 }
 
 fn daemonize() -> Result<ControlFlow<()>> {
@@ -951,13 +950,13 @@ fn cleanup_old_binaries() -> Result<()> {
     for entry in std::fs::read_dir(server_dir)? {
         let path = entry?.path();
 
-        if let Some(file_name) = path.file_name() {
-            if let Some(version) = file_name.to_string_lossy().strip_prefix(&prefix) {
-                if !is_new_version(version) && !is_file_in_use(file_name) {
-                    log::info!("removing old remote server binary: {:?}", path);
-                    std::fs::remove_file(&path)?;
-                }
-            }
+        if let Some(file_name) = path.file_name()
+            && let Some(version) = file_name.to_string_lossy().strip_prefix(&prefix)
+            && !is_new_version(version)
+            && !is_file_in_use(file_name)
+        {
+            log::info!("removing old remote server binary: {:?}", path);
+            std::fs::remove_file(&path)?;
         }
     }
 

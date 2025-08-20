@@ -116,7 +116,7 @@ impl ActionLog {
             } else if buffer
                 .read(cx)
                 .file()
-                .map_or(false, |file| file.disk_state().exists())
+                .is_some_and(|file| file.disk_state().exists())
             {
                 TrackedBufferStatus::Created {
                     existing_file_content: Some(buffer.read(cx).as_rope().clone()),
@@ -215,7 +215,7 @@ impl ActionLog {
                 if buffer
                     .read(cx)
                     .file()
-                    .map_or(false, |file| file.disk_state() == DiskState::Deleted)
+                    .is_some_and(|file| file.disk_state() == DiskState::Deleted)
                 {
                     // If the buffer had been edited by a tool, but it got
                     // deleted externally, we want to stop tracking it.
@@ -227,7 +227,7 @@ impl ActionLog {
                 if buffer
                     .read(cx)
                     .file()
-                    .map_or(false, |file| file.disk_state() != DiskState::Deleted)
+                    .is_some_and(|file| file.disk_state() != DiskState::Deleted)
                 {
                     // If the buffer had been deleted by a tool, but it got
                     // resurrected externally, we want to clear the edits we
@@ -264,15 +264,14 @@ impl ActionLog {
             if let Some((git_diff, (buffer_repo, _))) = git_diff.as_ref().zip(buffer_repo) {
                 cx.update(|cx| {
                     let mut old_head = buffer_repo.read(cx).head_commit.clone();
-                    Some(cx.subscribe(git_diff, move |_, event, cx| match event {
-                        buffer_diff::BufferDiffEvent::DiffChanged { .. } => {
+                    Some(cx.subscribe(git_diff, move |_, event, cx| {
+                        if let buffer_diff::BufferDiffEvent::DiffChanged { .. } = event {
                             let new_head = buffer_repo.read(cx).head_commit.clone();
                             if new_head != old_head {
                                 old_head = new_head;
                                 git_diff_updates_tx.send(()).ok();
                             }
                         }
-                        _ => {}
                     }))
                 })?
             } else {
@@ -614,10 +613,10 @@ impl ActionLog {
                         false
                     }
                 });
-                if tracked_buffer.unreviewed_edits.is_empty() {
-                    if let TrackedBufferStatus::Created { .. } = &mut tracked_buffer.status {
-                        tracked_buffer.status = TrackedBufferStatus::Modified;
-                    }
+                if tracked_buffer.unreviewed_edits.is_empty()
+                    && let TrackedBufferStatus::Created { .. } = &mut tracked_buffer.status
+                {
+                    tracked_buffer.status = TrackedBufferStatus::Modified;
                 }
                 tracked_buffer.schedule_diff_update(ChangeAuthor::User, cx);
             }
@@ -811,7 +810,7 @@ impl ActionLog {
                 tracked.version != buffer.version
                     && buffer
                         .file()
-                        .map_or(false, |file| file.disk_state() != DiskState::Deleted)
+                        .is_some_and(|file| file.disk_state() != DiskState::Deleted)
             })
             .map(|(buffer, _)| buffer)
     }
@@ -847,7 +846,7 @@ fn apply_non_conflicting_edits(
                 conflict = true;
                 if new_edits
                     .peek()
-                    .map_or(false, |next_edit| next_edit.old.overlaps(&old_edit.new))
+                    .is_some_and(|next_edit| next_edit.old.overlaps(&old_edit.new))
                 {
                     new_edit = new_edits.next().unwrap();
                 } else {

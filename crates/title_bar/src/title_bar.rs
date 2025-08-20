@@ -593,11 +593,11 @@ impl TitleBar {
                     Button::new("connection-status", label)
                         .label_size(LabelSize::Small)
                         .on_click(|_, window, cx| {
-                            if let Some(auto_updater) = auto_update::AutoUpdater::get(cx) {
-                                if auto_updater.read(cx).status().is_updated() {
-                                    workspace::reload(cx);
-                                    return;
-                                }
+                            if let Some(auto_updater) = auto_update::AutoUpdater::get(cx)
+                                && auto_updater.read(cx).status().is_updated()
+                            {
+                                workspace::reload(cx);
+                                return;
                             }
                             auto_update::check(&Default::default(), window, cx);
                         })

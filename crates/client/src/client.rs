@@ -76,7 +76,7 @@ pub static ZED_APP_PATH: LazyLock<Option<PathBuf>> =
     LazyLock::new(|| std::env::var("ZED_APP_PATH").ok().map(PathBuf::from));
 
 pub static ZED_ALWAYS_ACTIVE: LazyLock<bool> =
-    LazyLock::new(|| std::env::var("ZED_ALWAYS_ACTIVE").map_or(false, |e| !e.is_empty()));
+    LazyLock::new(|| std::env::var("ZED_ALWAYS_ACTIVE").is_ok_and(|e| !e.is_empty()));
 
 pub const INITIAL_RECONNECTION_DELAY: Duration = Duration::from_millis(500);
 pub const MAX_RECONNECTION_DELAY: Duration = Duration::from_secs(30);
@@ -864,22 +864,23 @@ impl Client {
         let mut credentials = None;
 
         let old_credentials = self.state.read().credentials.clone();
-        if let Some(old_credentials) = old_credentials {
-            if self.validate_credentials(&old_credentials, cx).await? {
-                credentials = Some(old_credentials);
-            }
+        if let Some(old_credentials) = old_credentials
+            && self.validate_credentials(&old_credentials, cx).await?
+        {
+            credentials = Some(old_credentials);
         }
 
-        if credentials.is_none() && try_provider {
-            if let Some(stored_credentials) = self.credentials_provider.read_credentials(cx).await {
-                if self.validate_credentials(&stored_credentials, cx).await? {
-                    credentials = Some(stored_credentials);
-                } else {
-                    self.credentials_provider
-                        .delete_credentials(cx)
-                        .await
-                        .log_err();
-                }
+        if credentials.is_none()
+            && try_provider
+            && let Some(stored_credentials) = self.credentials_provider.read_credentials(cx).await
+        {
+            if self.validate_credentials(&stored_credentials, cx).await? {
+                credentials = Some(stored_credentials);
+            } else {
+                self.credentials_provider
+                    .delete_credentials(cx)
+                    .await
+                    .log_err();
             }
         }
 
@@ -2072,8 +2073,8 @@ mod tests {
         let (done_tx1, done_rx1) = smol::channel::unbounded();
         let (done_tx2, done_rx2) = smol::channel::unbounded();
         AnyProtoClient::from(client.clone()).add_entity_message_handler(
-            move |entity: Entity<TestEntity>, _: TypedEnvelope<proto::JoinProject>, mut cx| {
-                match entity.read_with(&mut cx, |entity, _| entity.id).unwrap() {
+            move |entity: Entity<TestEntity>, _: TypedEnvelope<proto::JoinProject>, cx| {
+                match entity.read_with(&cx, |entity, _| entity.id).unwrap() {
                     1 => done_tx1.try_send(()).unwrap(),
                     2 => done_tx2.try_send(()).unwrap(),
                     _ => unreachable!(),
@@ -2097,17 +2098,17 @@ mod tests {
         let _subscription1 = client
             .subscribe_to_entity(1)
             .unwrap()
-            .set_entity(&entity1, &mut cx.to_async());
+            .set_entity(&entity1, &cx.to_async());
         let _subscription2 = client
             .subscribe_to_entity(2)
             .unwrap()
-            .set_entity(&entity2, &mut cx.to_async());
+            .set_entity(&entity2, &cx.to_async());
         // Ensure dropping a subscription for the same entity type still allows receiving of
         // messages for other entity IDs of the same type.
         let subscription3 = client
             .subscribe_to_entity(3)
             .unwrap()
-            .set_entity(&entity3, &mut cx.to_async());
+            .set_entity(&entity3, &cx.to_async());
         drop(subscription3);
 
         server.send(proto::JoinProject {

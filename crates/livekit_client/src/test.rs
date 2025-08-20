@@ -736,14 +736,14 @@ impl Room {
 
 impl Drop for RoomState {
     fn drop(&mut self) {
-        if self.connection_state == ConnectionState::Connected {
-            if let Ok(server) = TestServer::get(&self.url) {
-                let executor = server.executor.clone();
-                let token = self.token.clone();
-                executor
-                    .spawn(async move { server.leave_room(token).await.ok() })
-                    .detach();
-            }
+        if self.connection_state == ConnectionState::Connected
+            && let Ok(server) = TestServer::get(&self.url)
+        {
+            let executor = server.executor.clone();
+            let token = self.token.clone();
+            executor
+                .spawn(async move { server.leave_room(token).await.ok() })
+                .detach();
         }
     }
 }

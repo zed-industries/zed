@@ -525,26 +525,22 @@ impl BlockMap {
             // * Below blocks that end at the start of the edit
             // However, if we hit a replace block that ends at the start of the edit we want to reconstruct it.
             new_transforms.append(cursor.slice(&old_start, Bias::Left), &());
-            if let Some(transform) = cursor.item() {
-                if transform.summary.input_rows > 0
-                    && cursor.end() == old_start
-                    && transform
-                        .block
-                        .as_ref()
-                        .map_or(true, |b| !b.is_replacement())
-                {
-                    // Preserve the transform (push and next)
-                    new_transforms.push(transform.clone(), &());
-                    cursor.next();
+            if let Some(transform) = cursor.item()
+                && transform.summary.input_rows > 0
+                && cursor.end() == old_start
+                && transform.block.as_ref().is_none_or(|b| !b.is_replacement())
+            {
+                // Preserve the transform (push and next)
+                new_transforms.push(transform.clone(), &());
+                cursor.next();
 
-                    // Preserve below blocks at end of edit
-                    while let Some(transform) = cursor.item() {
-                        if transform.block.as_ref().map_or(false, |b| b.place_below()) {
-                            new_transforms.push(transform.clone(), &());
-                            cursor.next();
-                        } else {
-                            break;
-                        }
+                // Preserve below blocks at end of edit
+                while let Some(transform) = cursor.item() {
+                    if transform.block.as_ref().is_some_and(|b| b.place_below()) {
+                        new_transforms.push(transform.clone(), &());
+                        cursor.next();
+                    } else {
+                        break;
                     }
                 }
             }
@@ -607,7 +603,7 @@ impl BlockMap {
 
             // Discard below blocks at the end of the edit. They'll be reconstructed.
             while let Some(transform) = cursor.item() {
-                if transform.block.as_ref().map_or(false, |b| b.place_below()) {
+                if transform.block.as_ref().is_some_and(|b| b.place_below()) {
                     cursor.next();
                 } else {
                     break;
@@ -657,10 +653,10 @@ impl BlockMap {
                     .iter()
                     .filter_map(|block| {
                         let placement = block.placement.to_wrap_row(wrap_snapshot)?;
-                        if let BlockPlacement::Above(row) = placement {
-                            if row < new_start {
-                                return None;
-                            }
+                        if let BlockPlacement::Above(row) = placement
+                            && row < new_start
+                        {
+                            return None;
                         }
                         Some((placement, Block::Custom(block.clone())))
                     }),
@@ -977,10 +973,10 @@ impl BlockMapReader<'_> {
                 break;
             }
 
-            if let Some(BlockId::Custom(id)) = transform.block.as_ref().map(|block| block.id()) {
-                if id == block_id {
-                    return Some(cursor.start().1);
-                }
+            if let Some(BlockId::Custom(id)) = transform.block.as_ref().map(|block| block.id())
+                && id == block_id
+            {
+                return Some(cursor.start().1);
             }
             cursor.next();
         }
@@ -1299,14 +1295,14 @@ impl BlockSnapshot {
 
         let mut input_start = transform_input_start;
         let mut input_end = transform_input_start;
-        if let Some(transform) = cursor.item() {
-            if transform.block.is_none() {
-                input_start += rows.start - transform_output_start;
-                input_end += cmp::min(
-                    rows.end - transform_output_start,
-                    transform.summary.input_rows,
-                );
-            }
+        if let Some(transform) = cursor.item()
+            && transform.block.is_none()
+        {
+            input_start += rows.start - transform_output_start;
+            input_end += cmp::min(
+                rows.end - transform_output_start,
+                transform.summary.input_rows,
+            );
         }
 
         BlockChunks {
@@ -1329,7 +1325,7 @@ impl BlockSnapshot {
         let Dimensions(output_start, input_start, _) = cursor.start();
         let overshoot = if cursor
             .item()
-            .map_or(false, |transform| transform.block.is_none())
+            .is_some_and(|transform| transform.block.is_none())
         {
             start_row.0 - output_start.0
         } else {
@@ -1359,7 +1355,7 @@ impl BlockSnapshot {
                         && transform
                             .block
                             .as_ref()
-                            .map_or(false, |block| block.height() > 0))
+                            .is_some_and(|block| block.height() > 0))
                 {
                     break;
                 }
@@ -1472,18 +1468,18 @@ impl BlockSnapshot {
                 longest_row_chars = summary.longest_row_chars;
             }
 
-            if let Some(transform) = cursor.item() {
-                if transform.block.is_none() {
-                    let Dimensions(output_start, input_start, _) = cursor.start();
-                    let overshoot = range.end.0 - output_start.0;
-                    let wrap_start_row = input_start.0;
-                    let wrap_end_row = input_start.0 + overshoot;
-                    let summary = self
-                        .wrap_snapshot
-                        .text_summary_for_range(wrap_start_row..wrap_end_row);
-                    if summary.longest_row_chars > longest_row_chars {
-                        longest_row = BlockRow(output_start.0 + summary.longest_row);
-                    }
+            if let Some(transform) = cursor.item()
+                && transform.block.is_none()
+            {
+                let Dimensions(output_start, input_start, _) = cursor.start();
+                let overshoot = range.end.0 - output_start.0;
+                let wrap_start_row = input_start.0;
+                let wrap_end_row = input_start.0 + overshoot;
+                let summary = self
+                    .wrap_snapshot
+                    .text_summary_for_range(wrap_start_row..wrap_end_row);
+                if summary.longest_row_chars > longest_row_chars {
+                    longest_row = BlockRow(output_start.0 + summary.longest_row);
                 }
             }
         }
@@ -1512,7 +1508,7 @@ impl BlockSnapshot {
     pub(super) fn is_block_line(&self, row: BlockRow) -> bool {
         let mut cursor = self.transforms.cursor::<Dimensions<BlockRow, WrapRow>>(&());
         cursor.seek(&row, Bias::Right);
-        cursor.item().map_or(false, |t| t.block.is_some())
+        cursor.item().is_some_and(|t| t.block.is_some())
     }
 
     pub(super) fn is_folded_buffer_header(&self, row: BlockRow) -> bool {
@@ -1530,11 +1526,11 @@ impl BlockSnapshot {
             .make_wrap_point(Point::new(row.0, 0), Bias::Left);
         let mut cursor = self.transforms.cursor::<Dimensions<WrapRow, BlockRow>>(&());
         cursor.seek(&WrapRow(wrap_point.row()), Bias::Right);
-        cursor.item().map_or(false, |transform| {
+        cursor.item().is_some_and(|transform| {
             transform
                 .block
                 .as_ref()
-                .map_or(false, |block| block.is_replacement())
+                .is_some_and(|block| block.is_replacement())
         })
     }
 
@@ -1557,12 +1553,11 @@ impl BlockSnapshot {
 
                 match transform.block.as_ref() {
                     Some(block) => {
-                        if block.is_replacement() {
-                            if ((bias == Bias::Left || search_left) && output_start <= point.0)
-                                || (!search_left && output_start >= point.0)
-                            {
-                                return BlockPoint(output_start);
-                            }
+                        if block.is_replacement()
+                            && (((bias == Bias::Left || search_left) && output_start <= point.0)
+                                || (!search_left && output_start >= point.0))
+                        {
+                            return BlockPoint(output_start);
                         }
                     }
                     None => {
@@ -1655,7 +1650,7 @@ impl BlockChunks<'_> {
             if transform
                 .block
                 .as_ref()
-                .map_or(false, |block| block.height() == 0)
+                .is_some_and(|block| block.height() == 0)
             {
                 self.transforms.next();
             } else {
@@ -1666,7 +1661,7 @@ impl BlockChunks<'_> {
         if self
             .transforms
             .item()
-            .map_or(false, |transform| transform.block.is_none())
+            .is_some_and(|transform| transform.block.is_none())
         {
             let start_input_row = self.transforms.start().1.0;
             let start_output_row = self.transforms.start().0.0;
@@ -1776,7 +1771,7 @@ impl Iterator for BlockRows<'_> {
                 if transform
                     .block
                     .as_ref()
-                    .map_or(false, |block| block.height() == 0)
+                    .is_some_and(|block| block.height() == 0)
                 {
                     self.transforms.next();
                 } else {
@@ -1788,7 +1783,7 @@ impl Iterator for BlockRows<'_> {
             if transform
                 .block
                 .as_ref()
-                .map_or(true, |block| block.is_replacement())
+                .is_none_or(|block| block.is_replacement())
             {
                 self.input_rows.seek(self.transforms.start().1.0);
             }
@@ -3228,34 +3223,32 @@ mod tests {
                 let mut is_in_replace_block = false;
                 if let Some((BlockPlacement::Replace(replace_range), block)) =
                     sorted_blocks_iter.peek()
+                    && wrap_row >= replace_range.start().0
                 {
-                    if wrap_row >= replace_range.start().0 {
-                        is_in_replace_block = true;
+                    is_in_replace_block = true;
 
-                        if wrap_row == replace_range.start().0 {
-                            if matches!(block, Block::FoldedBuffer { .. }) {
-                                expected_buffer_rows.push(None);
-                            } else {
-                                expected_buffer_rows
-                                    .push(input_buffer_rows[multibuffer_row as usize]);
-                            }
+                    if wrap_row == replace_range.start().0 {
+                        if matches!(block, Block::FoldedBuffer { .. }) {
+                            expected_buffer_rows.push(None);
+                        } else {
+                            expected_buffer_rows.push(input_buffer_rows[multibuffer_row as usize]);
                         }
+                    }
 
-                        if wrap_row == replace_range.end().0 {
-                            expected_block_positions.push((block_row, block.id()));
-                            let text = "\n".repeat((block.height() - 1) as usize);
-                            if block_row > 0 {
-                                expected_text.push('\n');
-                            }
-                            expected_text.push_str(&text);
-
-                            for _ in 1..block.height() {
-                                expected_buffer_rows.push(None);
-                            }
-                            block_row += block.height();
-
-                            sorted_blocks_iter.next();
+                    if wrap_row == replace_range.end().0 {
+                        expected_block_positions.push((block_row, block.id()));
+                        let text = "\n".repeat((block.height() - 1) as usize);
+                        if block_row > 0 {
+                            expected_text.push('\n');
                         }
+                        expected_text.push_str(&text);
+
+                        for _ in 1..block.height() {
+                            expected_buffer_rows.push(None);
+                        }
+                        block_row += block.height();
+
+                        sorted_blocks_iter.next();
                     }
                 }
 

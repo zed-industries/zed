@@ -827,7 +827,7 @@ impl LanguageServer {
                     }),
                     synchronization: Some(TextDocumentSyncClientCapabilities {
                         did_save: Some(true),
-                        dynamic_registration: Some(false),
+                        dynamic_registration: Some(true),
                         ..TextDocumentSyncClientCapabilities::default()
                     }),
                     code_lens: Some(CodeLensClientCapabilities {

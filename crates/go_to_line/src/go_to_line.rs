@@ -103,11 +103,11 @@ impl GoToLine {
                             return;
                         };
                         editor.update(cx, |editor, cx| {
-                            if let Some(placeholder_text) = editor.placeholder_text() {
-                                if editor.text(cx).is_empty() {
-                                    let placeholder_text = placeholder_text.to_string();
-                                    editor.set_text(placeholder_text, window, cx);
-                                }
+                            if let Some(placeholder_text) = editor.placeholder_text()
+                                && editor.text(cx).is_empty()
+                            {
+                                let placeholder_text = placeholder_text.to_string();
+                                editor.set_text(placeholder_text, window, cx);
                             }
                         });
                     }

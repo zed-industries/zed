@@ -75,16 +75,16 @@ impl OpenPathDelegate {
                 ..
             } => {
                 let mut i = selected_match_index;
-                if let Some(user_input) = user_input {
-                    if !user_input.exists || !user_input.is_dir {
-                        if i == 0 {
-                            return Some(CandidateInfo {
-                                path: user_input.file.clone(),
-                                is_dir: false,
-                            });
-                        } else {
-                            i -= 1;
-                        }
+                if let Some(user_input) = user_input
+                    && (!user_input.exists || !user_input.is_dir)
+                {
+                    if i == 0 {
+                        return Some(CandidateInfo {
+                            path: user_input.file.clone(),
+                            is_dir: false,
+                        });
+                    } else {
+                        i -= 1;
                     }
                 }
                 let id = self.string_matches.get(i)?.candidate_id;
@@ -112,7 +112,7 @@ impl OpenPathDelegate {
                 entries,
                 ..
             } => user_input
-                .into_iter()
+                .iter()
                 .filter(|user_input| !user_input.exists || !user_input.is_dir)
                 .map(|user_input| user_input.file.string.clone())
                 .chain(self.string_matches.iter().filter_map(|string_match| {
@@ -728,7 +728,7 @@ impl PickerDelegate for OpenPathDelegate {
                         .child(LabelLike::new().child(label_with_highlights)),
                 )
             }
-            DirectoryState::None { .. } => return None,
+            DirectoryState::None { .. } => None,
         }
     }
 

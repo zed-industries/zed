@@ -403,7 +403,7 @@ impl LspAdapter for RustLspAdapter {
                 } else if completion
                     .detail
                     .as_ref()
-                    .map_or(false, |detail| detail.starts_with("macro_rules! "))
+                    .is_some_and(|detail| detail.starts_with("macro_rules! "))
                 {
                     let text = completion.label.clone();
                     let len = text.len();
@@ -496,7 +496,7 @@ impl LspAdapter for RustLspAdapter {
         let enable_lsp_tasks = ProjectSettings::get_global(cx)
             .lsp
             .get(&SERVER_NAME)
-            .map_or(false, |s| s.enable_lsp_tasks);
+            .is_some_and(|s| s.enable_lsp_tasks);
         if enable_lsp_tasks {
             let experimental = json!({
                 "runnables": {
@@ -598,12 +598,10 @@ impl ContextProvider for RustContextProvider {
             if let Some(path) = local_abs_path
                 .as_deref()
                 .and_then(|local_abs_path| local_abs_path.parent())
-            {
-                if let Some(package_name) =
+                && let Some(package_name) =
                     human_readable_package_name(path, project_env.as_ref()).await
-                {
-                    variables.insert(RUST_PACKAGE_TASK_VARIABLE.clone(), package_name);
-                }
+            {
+                variables.insert(RUST_PACKAGE_TASK_VARIABLE.clone(), package_name);
             }
             if let Some(path) = local_abs_path.as_ref()
                 && let Some((target, manifest_path)) =

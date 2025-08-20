@@ -287,15 +287,13 @@ impl DiagnosticBlock {
                     }
                 }
             }
-        } else {
-            if let Some(diagnostic) = editor
-                .snapshot(window, cx)
-                .buffer_snapshot
-                .diagnostic_group(buffer_id, group_id)
-                .nth(ix)
-            {
-                Self::jump_to(editor, diagnostic.range, window, cx)
-            }
+        } else if let Some(diagnostic) = editor
+            .snapshot(window, cx)
+            .buffer_snapshot
+            .diagnostic_group(buffer_id, group_id)
+            .nth(ix)
+        {
+            Self::jump_to(editor, diagnostic.range, window, cx)
         };
     }
 
