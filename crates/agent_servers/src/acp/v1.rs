@@ -219,7 +219,7 @@ impl AgentConnection for AcpConnection {
                         anyhow::bail!(err)
                     };
 
-                    // Temporary workaround until is generally available:
+                    // Temporary workaround until the following PR is generally available:
                     // https://github.com/google-gemini/gemini-cli/pull/6656
 
                     #[derive(Deserialize)]
