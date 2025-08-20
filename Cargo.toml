@@ -806,6 +806,9 @@ todo = "deny"
 # warning on this rule produces a lot of noise.
 single_range_in_vec_init = "allow"
 
+redundant_clone = "warn"
+declare_interior_mutable_const = "deny"
+
 # These are all of the rules that currently have violations in the Zed
 # codebase.
 #
@@ -840,12 +843,10 @@ match_like_matches_macro = "warn"
 module_inception = { level = "deny" }
 question_mark = { level = "deny" }
 single_match = "warn"
-redundant_clone = "warn"
 redundant_closure = { level = "deny" }
 redundant_static_lifetimes = { level = "warn" }
 redundant_pattern_matching = "warn"
 redundant_field_names = "warn"
-declare_interior_mutable_const = { level = "deny" }
 collapsible_if = { level = "warn"}
 collapsible_else_if = { level = "warn" }
 needless_borrow = { level = "warn"}
