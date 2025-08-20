@@ -136,7 +136,7 @@ fn try_determine_available_gpus() -> Option<String> {
     #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     {
         std::process::Command::new("vulkaninfo")
-            .args(&["--summary"])
+            .args(["--summary"])
             .output()
             .ok()
             .map(|output| {
