@@ -605,16 +605,15 @@ impl KeymapEditor {
                                         {
                                             let query = &keystroke_query[query_cursor];
                                             let keystroke = &keystrokes[keystroke_cursor];
-                                            let matches =
-                                                query.inner.modifiers.is_subset_of(&keystroke.inner.modifiers)
-                                                    && ((query.inner.key.is_empty()
-                                                        || query.inner.key == keystroke.inner.key)
-                                                        && query.inner
-                                                            .key_char
-                                                            .as_ref()
-                                                            .is_none_or(|q_kc| {
-                                                                q_kc == &keystroke.inner.key
-                                                            });
+                                            let matches = query
+                                                .inner
+                                                .modifiers
+                                                .is_subset_of(&keystroke.inner.modifiers)
+                                                && ((query.inner.key.is_empty()
+                                                    || query.inner.key == keystroke.inner.key)
+                                                    && query.inner.key_char.as_ref().is_none_or(
+                                                        |q_kc| q_kc == &keystroke.inner.key,
+                                                    ));
                                             if matches {
                                                 found_count += 1;
                                                 query_cursor += 1;
