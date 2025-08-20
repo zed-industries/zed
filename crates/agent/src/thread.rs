@@ -9,7 +9,10 @@ use crate::{
     tool_use::{PendingToolUse, ToolUse, ToolUseMetadata, ToolUseState},
 };
 use action_log::ActionLog;
-use agent_settings::{AgentProfileId, AgentSettings, CompletionMode, SUMMARIZE_THREAD_PROMPT};
+use agent_settings::{
+    AgentProfileId, AgentSettings, CompletionMode, SUMMARIZE_THREAD_DETAILED_PROMPT,
+    SUMMARIZE_THREAD_PROMPT,
+};
 use anyhow::{Result, anyhow};
 use assistant_tool::{AnyToolCard, Tool, ToolWorkingSet};
 use chrono::{DateTime, Utc};
@@ -107,7 +110,7 @@ impl std::fmt::Display for PromptId {
 }
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, Serialize, Deserialize)]
-pub struct MessageId(pub(crate) usize);
+pub struct MessageId(pub usize);
 
 impl MessageId {
     fn post_inc(&mut self) -> Self {
@@ -178,7 +181,7 @@ impl Message {
         }
     }
 
-    pub fn to_string(&self) -> String {
+    pub fn to_message_content(&self) -> String {
         let mut result = String::new();
 
         if !self.loaded_context.text.is_empty() {
@@ -491,7 +494,7 @@ impl Thread {
             last_received_chunk_at: None,
             request_callback: None,
             remaining_turns: u32::MAX,
-            configured_model: configured_model.clone(),
+            configured_model,
             profile: AgentProfile::new(profile_id, tools),
         }
     }
@@ -529,7 +532,7 @@ impl Thread {
                 .and_then(|model| {
                     let model = SelectedModel {
                         provider: model.provider.clone().into(),
-                        model: model.model.clone().into(),
+                        model: model.model.into(),
                     };
                     registry.select_model(&model, cx)
                 })
@@ -1643,17 +1646,15 @@ impl Thread {
         };
 
         self.tool_use
-            .request_tool_use(tool_message_id, tool_use, tool_use_metadata.clone(), cx);
+            .request_tool_use(tool_message_id, tool_use, tool_use_metadata, cx);
 
-        let pending_tool_use = self.tool_use.insert_tool_output(
-            tool_use_id.clone(),
+        self.tool_use.insert_tool_output(
+            tool_use_id,
             tool_name,
             tool_output,
             self.configured_model.as_ref(),
             self.completion_mode,
-        );
-
-        pending_tool_use
+        )
     }
 
     pub fn stream_completion(
@@ -2427,12 +2428,10 @@ impl Thread {
             return;
         }
 
-        let added_user_message = include_str!("./prompts/summarize_thread_detailed_prompt.txt");
-
         let request = self.to_summarize_request(
             &model,
             CompletionIntent::ThreadContextSummarization,
-            added_user_message.into(),
+            SUMMARIZE_THREAD_DETAILED_PROMPT.into(),
             cx,
         );
 
@@ -2824,7 +2823,7 @@ impl Thread {
 
         let message_content = self
             .message(message_id)
-            .map(|msg| msg.to_string())
+            .map(|msg| msg.to_message_content())
             .unwrap_or_default();
 
         cx.background_spawn(async move {
@@ -3242,7 +3241,7 @@ impl Thread {
             self.configured_model.as_ref(),
             self.completion_mode,
         );
-        self.tool_finished(tool_use_id.clone(), None, true, window, cx);
+        self.tool_finished(tool_use_id, None, true, window, cx);
     }
 }
 
@@ -3874,7 +3873,7 @@ fn main() {{
                 AgentSettings {
                     model_parameters: vec![LanguageModelParameters {
                         provider: Some(model.provider_id().0.to_string().into()),
-                        model: Some(model.id().0.clone()),
+                        model: Some(model.id().0),
                         temperature: Some(0.66),
                     }],
                     ..AgentSettings::get_global(cx).clone()
@@ -3894,7 +3893,7 @@ fn main() {{
                 AgentSettings {
                     model_parameters: vec![LanguageModelParameters {
                         provider: None,
-                        model: Some(model.id().0.clone()),
+                        model: Some(model.id().0),
                         temperature: Some(0.66),
                     }],
                     ..AgentSettings::get_global(cx).clone()
@@ -3934,7 +3933,7 @@ fn main() {{
                 AgentSettings {
                     model_parameters: vec![LanguageModelParameters {
                         provider: Some("anthropic".into()),
-                        model: Some(model.id().0.clone()),
+                        model: Some(model.id().0),
                         temperature: Some(0.66),
                     }],
                     ..AgentSettings::get_global(cx).clone()

@@ -1346,14 +1346,13 @@ impl Project {
             };
 
             // ssh -> local machine handlers
-            let ssh = ssh.read(cx);
-            ssh.subscribe_to_entity(SSH_PROJECT_ID, &cx.entity());
-            ssh.subscribe_to_entity(SSH_PROJECT_ID, &this.buffer_store);
-            ssh.subscribe_to_entity(SSH_PROJECT_ID, &this.worktree_store);
-            ssh.subscribe_to_entity(SSH_PROJECT_ID, &this.lsp_store);
-            ssh.subscribe_to_entity(SSH_PROJECT_ID, &this.dap_store);
-            ssh.subscribe_to_entity(SSH_PROJECT_ID, &this.settings_observer);
-            ssh.subscribe_to_entity(SSH_PROJECT_ID, &this.git_store);
+            ssh_proto.subscribe_to_entity(SSH_PROJECT_ID, &cx.entity());
+            ssh_proto.subscribe_to_entity(SSH_PROJECT_ID, &this.buffer_store);
+            ssh_proto.subscribe_to_entity(SSH_PROJECT_ID, &this.worktree_store);
+            ssh_proto.subscribe_to_entity(SSH_PROJECT_ID, &this.lsp_store);
+            ssh_proto.subscribe_to_entity(SSH_PROJECT_ID, &this.dap_store);
+            ssh_proto.subscribe_to_entity(SSH_PROJECT_ID, &this.settings_observer);
+            ssh_proto.subscribe_to_entity(SSH_PROJECT_ID, &this.git_store);
 
             ssh_proto.add_entity_message_handler(Self::handle_create_buffer_for_peer);
             ssh_proto.add_entity_message_handler(Self::handle_update_worktree);
@@ -1897,15 +1896,7 @@ impl Project {
             return true;
         }
 
-        return false;
-    }
-
-    pub fn ssh_connection_string(&self, cx: &App) -> Option<SharedString> {
-        if let Some(ssh_state) = &self.ssh_client {
-            return Some(ssh_state.read(cx).connection_string().into());
-        }
-
-        return None;
+        false
     }
 
     pub fn ssh_connection_state(&self, cx: &App) -> Option<remote::ConnectionState> {
@@ -2511,7 +2502,7 @@ impl Project {
         path: ProjectPath,
         cx: &mut Context<Self>,
     ) -> Task<Result<(Option<ProjectEntryId>, Entity<Buffer>)>> {
-        let task = self.open_buffer(path.clone(), cx);
+        let task = self.open_buffer(path, cx);
         cx.spawn(async move |_project, cx| {
             let buffer = task.await?;
             let project_entry_id = buffer.read_with(cx, |buffer, cx| {
@@ -2885,14 +2876,11 @@ impl Project {
         event: &DapStoreEvent,
         cx: &mut Context<Self>,
     ) {
-        match event {
-            DapStoreEvent::Notification(message) => {
-                cx.emit(Event::Toast {
-                    notification_id: "dap".into(),
-                    message: message.clone(),
-                });
-            }
-            _ => {}
+        if let DapStoreEvent::Notification(message) = event {
+            cx.emit(Event::Toast {
+                notification_id: "dap".into(),
+                message: message.clone(),
+            });
         }
     }
 
@@ -3131,7 +3119,7 @@ impl Project {
         event: &BufferEvent,
         cx: &mut Context<Self>,
     ) -> Option<()> {
-        if matches!(event, BufferEvent::Edited { .. } | BufferEvent::Reloaded) {
+        if matches!(event, BufferEvent::Edited | BufferEvent::Reloaded) {
             self.request_buffer_diff_recalculation(&buffer, cx);
         }
 
@@ -3179,14 +3167,11 @@ impl Project {
         event: &ImageItemEvent,
         cx: &mut Context<Self>,
     ) -> Option<()> {
-        match event {
-            ImageItemEvent::ReloadNeeded => {
-                if !self.is_via_collab() {
-                    self.reload_images([image.clone()].into_iter().collect(), cx)
-                        .detach_and_log_err(cx);
-                }
-            }
-            _ => {}
+        if let ImageItemEvent::ReloadNeeded = event
+            && !self.is_via_collab()
+        {
+            self.reload_images([image].into_iter().collect(), cx)
+                .detach_and_log_err(cx);
         }
 
         None
@@ -3667,7 +3652,7 @@ impl Project {
         cx: &mut Context<Self>,
     ) -> Task<Result<Vec<CodeAction>>> {
         let snapshot = buffer.read(cx).snapshot();
-        let range = range.clone().to_owned().to_point(&snapshot);
+        let range = range.to_point(&snapshot);
         let range_start = snapshot.anchor_before(range.start);
         let range_end = if range.start == range.end {
             range_start
@@ -4134,7 +4119,7 @@ impl Project {
                 }
             })
         } else {
-            return Task::ready(None);
+            Task::ready(None)
         }
     }
 
@@ -4344,7 +4329,7 @@ impl Project {
     /// # Arguments
     ///
     /// * `path` - A full path that starts with a worktree root name, or alternatively a
-    ///            relative path within a visible worktree.
+    ///   relative path within a visible worktree.
     /// * `cx` - A reference to the `AppContext`.
     ///
     /// # Returns
@@ -5187,7 +5172,7 @@ impl<'a> fuzzy::PathMatchCandidateSet<'a> for PathMatchCandidateSet {
     }
 
     fn prefix(&self) -> Arc<str> {
-        if self.snapshot.root_entry().map_or(false, |e| e.is_file()) {
+        if self.snapshot.root_entry().is_some_and(|e| e.is_file()) {
             self.snapshot.root_name().into()
         } else if self.include_root_name {
             format!("{}{}", self.snapshot.root_name(), std::path::MAIN_SEPARATOR).into()
@@ -5397,7 +5382,7 @@ impl Completion {
         self.source
             // `lsp::CompletionListItemDefaults` has `insert_text_format` field
             .lsp_completion(true)
-            .map_or(false, |lsp_completion| {
+            .is_some_and(|lsp_completion| {
                 lsp_completion.insert_text_format == Some(lsp::InsertTextFormat::SNIPPET)
             })
     }
@@ -5453,9 +5438,10 @@ fn provide_inline_values(
                     .collect::<String>();
                 let point = snapshot.offset_to_point(capture_range.end);
 
-                while scopes.last().map_or(false, |scope: &Range<_>| {
-                    !scope.contains(&capture_range.start)
-                }) {
+                while scopes
+                    .last()
+                    .is_some_and(|scope: &Range<_>| !scope.contains(&capture_range.start))
+                {
                     scopes.pop();
                 }
 
@@ -5465,7 +5451,7 @@ fn provide_inline_values(
 
                 let scope = if scopes
                     .last()
-                    .map_or(true, |scope| !scope.contains(&active_debug_line_offset))
+                    .is_none_or(|scope| !scope.contains(&active_debug_line_offset))
                 {
                     VariableScope::Global
                 } else {
@@ -5522,7 +5508,7 @@ mod disable_ai_settings_tests {
                 project: &[],
             };
             let settings = DisableAiSettings::load(sources, cx).unwrap();
-            assert_eq!(settings.disable_ai, false, "Default should allow AI");
+            assert!(!settings.disable_ai, "Default should allow AI");
 
             // Test 2: Global true, local false -> still disabled (local cannot re-enable)
             let global_true = Some(true);
@@ -5539,8 +5525,8 @@ mod disable_ai_settings_tests {
                 project: &[&local_false],
             };
             let settings = DisableAiSettings::load(sources, cx).unwrap();
-            assert_eq!(
-                settings.disable_ai, true,
+            assert!(
+                settings.disable_ai,
                 "Local false cannot override global true"
             );
 
@@ -5559,10 +5545,7 @@ mod disable_ai_settings_tests {
                 project: &[&local_true],
             };
             let settings = DisableAiSettings::load(sources, cx).unwrap();
-            assert_eq!(
-                settings.disable_ai, true,
-                "Local true can override global false"
-            );
+            assert!(settings.disable_ai, "Local true can override global false");
 
             // Test 4: Server can only make more restrictive (set to true)
             let user_false = Some(false);
@@ -5579,8 +5562,8 @@ mod disable_ai_settings_tests {
                 project: &[],
             };
             let settings = DisableAiSettings::load(sources, cx).unwrap();
-            assert_eq!(
-                settings.disable_ai, true,
+            assert!(
+                settings.disable_ai,
                 "Server can set to true even if user is false"
             );
 
@@ -5599,8 +5582,8 @@ mod disable_ai_settings_tests {
                 project: &[],
             };
             let settings = DisableAiSettings::load(sources, cx).unwrap();
-            assert_eq!(
-                settings.disable_ai, true,
+            assert!(
+                settings.disable_ai,
                 "Server false cannot override user true"
             );
 
@@ -5621,10 +5604,7 @@ mod disable_ai_settings_tests {
                 project: &[&local_false3, &local_true2, &local_false4],
             };
             let settings = DisableAiSettings::load(sources, cx).unwrap();
-            assert_eq!(
-                settings.disable_ai, true,
-                "Any local true should disable AI"
-            );
+            assert!(settings.disable_ai, "Any local true should disable AI");
 
             // Test 7: All three sources can independently disable AI
             let user_false2 = Some(false);
@@ -5642,8 +5622,8 @@ mod disable_ai_settings_tests {
                 project: &[&local_true3],
             };
             let settings = DisableAiSettings::load(sources, cx).unwrap();
-            assert_eq!(
-                settings.disable_ai, true,
+            assert!(
+                settings.disable_ai,
                 "Local can disable even if user and server are false"
             );
         });

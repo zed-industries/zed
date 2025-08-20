@@ -226,7 +226,7 @@ impl RunningMode {
 
     fn unset_breakpoints_from_paths(&self, paths: &Vec<Arc<Path>>, cx: &mut App) -> Task<()> {
         let tasks: Vec<_> = paths
-            .into_iter()
+            .iter()
             .map(|path| {
                 self.request(dap_command::SetBreakpoints {
                     source: client_source(path),
@@ -431,7 +431,7 @@ impl RunningMode {
         let should_send_exception_breakpoints = capabilities
             .exception_breakpoint_filters
             .as_ref()
-            .map_or(false, |filters| !filters.is_empty())
+            .is_some_and(|filters| !filters.is_empty())
             || !configuration_done_supported;
         let supports_exception_filters = capabilities
             .supports_exception_filter_options
@@ -508,13 +508,12 @@ impl RunningMode {
                         .ok();
                 }
 
-                let ret = if configuration_done_supported {
+                if configuration_done_supported {
                     this.request(ConfigurationDone {})
                 } else {
                     Task::ready(Ok(()))
                 }
-                .await;
-                ret
+                .await
             }
         });
 
@@ -710,9 +709,7 @@ where
     T: LocalDapCommand + PartialEq + Eq + Hash,
 {
     fn dyn_eq(&self, rhs: &dyn CacheableCommand) -> bool {
-        (rhs as &dyn Any)
-            .downcast_ref::<Self>()
-            .map_or(false, |rhs| self == rhs)
+        (rhs as &dyn Any).downcast_ref::<Self>() == Some(self)
     }
 
     fn dyn_hash(&self, mut hasher: &mut dyn Hasher) {
@@ -841,7 +838,7 @@ impl Session {
             })
             .detach();
 
-            let this = Self {
+            Self {
                 mode: SessionState::Booting(None),
                 id: session_id,
                 child_session_ids: HashSet::default(),
@@ -870,9 +867,7 @@ impl Session {
                 task_context,
                 memory: memory::Memory::new(),
                 quirks,
-            };
-
-            this
+            }
         })
     }
 
@@ -1085,7 +1080,7 @@ impl Session {
         })
         .detach();
 
-        return tx;
+        tx
     }
 
     pub fn is_started(&self) -> bool {
@@ -1399,7 +1394,7 @@ impl Session {
         let breakpoint_store = self.breakpoint_store.clone();
         if let Some((local, path)) = self.as_running_mut().and_then(|local| {
             let breakpoint = local.tmp_breakpoint.take()?;
-            let path = breakpoint.path.clone();
+            let path = breakpoint.path;
             Some((local, path))
         }) {
             local
@@ -1715,7 +1710,7 @@ impl Session {
 
                 this.threads = result
                     .into_iter()
-                    .map(|thread| (ThreadId(thread.id), Thread::from(thread.clone())))
+                    .map(|thread| (ThreadId(thread.id), Thread::from(thread)))
                     .collect();
 
                 this.invalidate_command_type::<StackTraceCommand>();
@@ -2558,10 +2553,7 @@ impl Session {
         mode: Option<String>,
         cx: &mut Context<Self>,
     ) -> Task<Option<dap::DataBreakpointInfoResponse>> {
-        let command = DataBreakpointInfoCommand {
-            context: context.clone(),
-            mode,
-        };
+        let command = DataBreakpointInfoCommand { context, mode };
 
         self.request(command, |_, response, _| response.ok(), cx)
     }

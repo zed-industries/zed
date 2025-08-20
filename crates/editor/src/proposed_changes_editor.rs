@@ -241,24 +241,13 @@ impl ProposedChangesEditor {
         event: &BufferEvent,
         _cx: &mut Context<Self>,
     ) {
-        match event {
-            BufferEvent::Operation { .. } => {
-                self.recalculate_diffs_tx
-                    .unbounded_send(RecalculateDiff {
-                        buffer,
-                        debounce: true,
-                    })
-                    .ok();
-            }
-            // BufferEvent::DiffBaseChanged => {
-            //     self.recalculate_diffs_tx
-            //         .unbounded_send(RecalculateDiff {
-            //             buffer,
-            //             debounce: false,
-            //         })
-            //         .ok();
-            // }
-            _ => (),
+        if let BufferEvent::Operation { .. } = event {
+            self.recalculate_diffs_tx
+                .unbounded_send(RecalculateDiff {
+                    buffer,
+                    debounce: true,
+                })
+                .ok();
         }
     }
 }

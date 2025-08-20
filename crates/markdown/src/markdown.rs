@@ -1084,7 +1084,13 @@ impl Element for MarkdownElement {
                                     cx,
                                 );
                                 el.child(
-                                    div().absolute().top_1().right_0p5().w_5().child(codeblock),
+                                    h_flex()
+                                        .w_5()
+                                        .absolute()
+                                        .top_1()
+                                        .right_1()
+                                        .justify_center()
+                                        .child(codeblock),
                                 )
                             });
                         }
@@ -1317,8 +1323,7 @@ fn render_copy_code_block_button(
     .shape(ui::IconButtonShape::Square)
     .tooltip(Tooltip::text("Copy Code"))
     .on_click({
-        let id = id.clone();
-        let markdown = markdown.clone();
+        let markdown = markdown;
         move |_event, _window, cx| {
             let id = id.clone();
             markdown.update(cx, |this, cx| {

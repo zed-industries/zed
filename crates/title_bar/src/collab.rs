@@ -41,7 +41,8 @@ fn toggle_screen_sharing(
             let Some(room) = call.room().cloned() else {
                 return;
             };
-            let toggle_screen_sharing = room.update(cx, |room, cx| {
+
+            room.update(cx, |room, cx| {
                 let clicked_on_currently_shared_screen =
                     room.shared_screen_id().is_some_and(|screen_id| {
                         Some(screen_id)
@@ -78,8 +79,7 @@ fn toggle_screen_sharing(
                 } else {
                     Task::ready(Ok(()))
                 }
-            });
-            toggle_screen_sharing
+            })
         }
         Err(e) => Task::ready(Err(e)),
     };
@@ -155,7 +155,7 @@ impl TitleBar {
             .gap_1()
             .overflow_x_scroll()
             .when_some(
-                current_user.clone().zip(client.peer_id()).zip(room.clone()),
+                current_user.zip(client.peer_id()).zip(room),
                 |this, ((current_user, peer_id), room)| {
                     let player_colors = cx.theme().players();
                     let room = room.read(cx);
@@ -189,7 +189,7 @@ impl TitleBar {
                             .as_ref()?
                             .read(cx)
                             .is_being_followed(collaborator.peer_id);
-                        let is_present = project_id.map_or(false, |project_id| {
+                        let is_present = project_id.is_some_and(|project_id| {
                             collaborator.location
                                 == ParticipantLocation::SharedProject { project_id }
                         });

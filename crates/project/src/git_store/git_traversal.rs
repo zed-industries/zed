@@ -199,7 +199,7 @@ pub struct GitEntryRef<'a> {
 }
 
 impl GitEntryRef<'_> {
-    pub fn to_owned(&self) -> GitEntry {
+    pub fn to_owned(self) -> GitEntry {
         GitEntry {
             entry: self.entry.clone(),
             git_summary: self.git_summary,

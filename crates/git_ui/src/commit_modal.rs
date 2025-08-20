@@ -35,7 +35,7 @@ impl ModalContainerProperties {
 
         // Calculate width based on character width
         let mut modal_width = 460.0;
-        let style = window.text_style().clone();
+        let style = window.text_style();
         let font_id = window.text_system().resolve_font(&style.font());
         let font_size = style.font_size.to_pixels(window.rem_size());
 
@@ -179,7 +179,7 @@ impl CommitModal {
 
         let commit_editor = git_panel.update(cx, |git_panel, cx| {
             git_panel.set_modal_open(true, cx);
-            let buffer = git_panel.commit_message_buffer(cx).clone();
+            let buffer = git_panel.commit_message_buffer(cx);
             let panel_editor = git_panel.commit_editor.clone();
             let project = git_panel.project.clone();
 
@@ -285,7 +285,7 @@ impl CommitModal {
                     Some(ContextMenu::build(window, cx, |context_menu, _, _| {
                         context_menu
                             .when_some(keybinding_target.clone(), |el, keybinding_target| {
-                                el.context(keybinding_target.clone())
+                                el.context(keybinding_target)
                             })
                             .when(has_previous_commit, |this| {
                                 this.toggleable_entry(
@@ -391,15 +391,9 @@ impl CommitModal {
             });
         let focus_handle = self.focus_handle(cx);
 
-        let close_kb_hint =
-            if let Some(close_kb) = ui::KeyBinding::for_action(&menu::Cancel, window, cx) {
-                Some(
-                    KeybindingHint::new(close_kb, cx.theme().colors().editor_background)
-                        .suffix("Cancel"),
-                )
-            } else {
-                None
-            };
+        let close_kb_hint = ui::KeyBinding::for_action(&menu::Cancel, window, cx).map(|close_kb| {
+            KeybindingHint::new(close_kb, cx.theme().colors().editor_background).suffix("Cancel")
+        });
 
         h_flex()
             .group("commit_editor_footer")
@@ -482,7 +476,7 @@ impl CommitModal {
                         }),
                         self.render_git_commit_menu(
                             ElementId::Name(format!("split-button-right-{}", commit_label).into()),
-                            Some(focus_handle.clone()),
+                            Some(focus_handle),
                         )
                         .into_any_element(),
                     )),

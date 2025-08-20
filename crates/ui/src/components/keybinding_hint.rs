@@ -269,7 +269,7 @@ impl Component for KeybindingHint {
                             ),
                             single_example(
                                 "Large",
-                                KeybindingHint::new(enter.clone(), bg_color)
+                                KeybindingHint::new(enter, bg_color)
                                     .size(Pixels::from(20.0))
                                     .prefix("Large:")
                                     .suffix("Size")

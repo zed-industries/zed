@@ -387,7 +387,7 @@ impl LanguageModel for GoogleLanguageModel {
         cx: &App,
     ) -> BoxFuture<'static, Result<u64>> {
         let model_id = self.model.request_id().to_string();
-        let request = into_google(request, model_id.clone(), self.model.mode());
+        let request = into_google(request, model_id, self.model.mode());
         let http_client = self.http_client.clone();
         let api_key = self.state.read(cx).api_key.clone();
 
@@ -530,7 +530,7 @@ pub fn into_google(
     let system_instructions = if request
         .messages
         .first()
-        .map_or(false, |msg| matches!(msg.role, Role::System))
+        .is_some_and(|msg| matches!(msg.role, Role::System))
     {
         let message = request.messages.remove(0);
         Some(SystemInstruction {
@@ -577,7 +577,7 @@ pub fn into_google(
             top_k: None,
         }),
         safety_settings: None,
-        tools: (request.tools.len() > 0).then(|| {
+        tools: (!request.tools.is_empty()).then(|| {
             vec![google_ai::Tool {
                 function_declarations: request
                     .tools

@@ -903,7 +903,7 @@ impl AppState {
         let languages = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
         let clock = Arc::new(clock::FakeSystemClock::new());
         let http_client = http_client::FakeHttpClient::with_404_response();
-        let client = Client::new(clock, http_client.clone(), cx);
+        let client = Client::new(clock, http_client, cx);
         let session = cx.new(|cx| AppSession::new(Session::test(), cx));
         let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
         let workspace_store = cx.new(|cx| WorkspaceStore::new(client.clone(), cx));
@@ -1323,7 +1323,6 @@ impl Workspace {
 
         let mut active_call = None;
         if let Some(call) = ActiveCall::try_global(cx) {
-            let call = call.clone();
             let subscriptions = vec![cx.subscribe_in(&call, window, Self::on_active_call_event)];
             active_call = Some((call, subscriptions));
         }
@@ -1804,7 +1803,7 @@ impl Workspace {
                             .max_by(|b1, b2| b1.worktree_id.cmp(&b2.worktree_id))
                     });
 
-                latest_project_path_opened.map_or(true, |path| path == history_path)
+                latest_project_path_opened.is_none_or(|path| path == history_path)
             })
     }
 
@@ -2284,7 +2283,7 @@ impl Workspace {
             // the current session.
             if close_intent != CloseIntent::Quit
                 && !save_last_workspace
-                && save_result.as_ref().map_or(false, |&res| res)
+                && save_result.as_ref().is_ok_and(|&res| res)
             {
                 this.update_in(cx, |this, window, cx| this.remove_from_session(window, cx))?
                     .await;
@@ -2503,8 +2502,6 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Vec<Option<anyhow::Result<Box<dyn ItemHandle>>>>> {
-        log::info!("open paths {abs_paths:?}");
-
         let fs = self.app_state.fs.clone();
 
         // Sort the paths to ensure we add worktrees for parents before their children.
@@ -3283,7 +3280,8 @@ impl Workspace {
         let task = self.load_path(project_path.clone(), window, cx);
         window.spawn(cx, async move |cx| {
             let (project_entry_id, build_item) = task.await?;
-            let result = pane.update_in(cx, |pane, window, cx| {
+
+            pane.update_in(cx, |pane, window, cx| {
                 pane.open_item(
                     project_entry_id,
                     project_path,
@@ -3295,8 +3293,7 @@ impl Workspace {
                     cx,
                     build_item,
                 )
-            });
-            result
+            })
         })
     }
 
@@ -4118,7 +4115,6 @@ impl Workspace {
             .unwrap_or_else(|| {
                 self.split_pane(self.active_pane.clone(), SplitDirection::Right, window, cx)
             })
-            .clone()
     }
 
     pub fn pane_for(&self, handle: &dyn ItemHandle) -> Option<Entity<Pane>> {
@@ -4736,14 +4732,12 @@ impl Workspace {
                         })
                     });
 
-                    if let Some(view) = view {
-                        Some(entry.insert(FollowerView {
+                    view.map(|view| {
+                        entry.insert(FollowerView {
                             view,
                             location: None,
-                        }))
-                    } else {
-                        None
-                    }
+                        })
+                    })
                 }
             };
 
@@ -5133,13 +5127,11 @@ impl Workspace {
         self.panes.retain(|p| p != pane);
         if let Some(focus_on) = focus_on {
             focus_on.update(cx, |pane, cx| window.focus(&pane.focus_handle(cx)));
-        } else {
-            if self.active_pane() == pane {
-                self.panes
-                    .last()
-                    .unwrap()
-                    .update(cx, |pane, cx| window.focus(&pane.focus_handle(cx)));
-            }
+        } else if self.active_pane() == pane {
+            self.panes
+                .last()
+                .unwrap()
+                .update(cx, |pane, cx| window.focus(&pane.focus_handle(cx)));
         }
         if self.last_active_center_pane == Some(pane.downgrade()) {
             self.last_active_center_pane = None;
@@ -5893,7 +5885,6 @@ impl Workspace {
 
     pub fn cancel(&mut self, _: &menu::Cancel, window: &mut Window, cx: &mut Context<Self>) {
         if cx.stop_active_drag(window) {
-            return;
         } else if let Some((notification_id, _)) = self.notifications.pop() {
             dismiss_app_notification(&notification_id, cx);
         } else {
@@ -6100,7 +6091,7 @@ fn open_items(
                         // here is a directory, it was already opened further above
                         // with a `find_or_create_worktree`.
                         if let Ok(task) = abs_path_task
-                            && task.await.map_or(true, |p| p.is_file())
+                            && task.await.is_none_or(|p| p.is_file())
                         {
                             return Some((
                                 ix,
@@ -6718,7 +6709,7 @@ impl WorkspaceStore {
                     .update(cx, |workspace, window, cx| {
                         let handler_response =
                             workspace.handle_follow(follower.project_id, window, cx);
-                        if let Some(active_view) = handler_response.active_view.clone()
+                        if let Some(active_view) = handler_response.active_view
                             && workspace.project.read(cx).remote_id() == follower.project_id
                         {
                             response.active_view = Some(active_view)
@@ -6970,7 +6961,7 @@ async fn join_channel_internal(
                     && project.visible_worktrees(cx).any(|tree| {
                         tree.read(cx)
                             .root_entry()
-                            .map_or(false, |entry| entry.is_dir())
+                            .is_some_and(|entry| entry.is_dir())
                     })
                 {
                     Some(workspace.project.clone())
@@ -7677,7 +7668,7 @@ pub fn client_side_decorations(
 
     match decorations {
         Decorations::Client { .. } => window.set_client_inset(theme::CLIENT_SIDE_DECORATION_SHADOW),
-        Decorations::Server { .. } => window.set_client_inset(px(0.0)),
+        Decorations::Server => window.set_client_inset(px(0.0)),
     }
 
     struct GlobalResizeEdge(ResizeEdge);
@@ -7900,7 +7891,6 @@ fn join_pane_into_active(
     cx: &mut App,
 ) {
     if pane == active_pane {
-        return;
     } else if pane.read(cx).items_len() == 0 {
         pane.update(cx, |_, cx| {
             cx.emit(pane::Event::Remove {
@@ -9149,19 +9139,18 @@ mod tests {
         workspace.update_in(cx, |workspace, window, cx| {
             workspace.add_item_to_active_pane(Box::new(item.clone()), None, false, window, cx);
         });
-        return item;
+        item
     }
 
     fn split_pane(cx: &mut VisualTestContext, workspace: &Entity<Workspace>) -> Entity<Pane> {
-        return workspace.update_in(cx, |workspace, window, cx| {
-            let new_pane = workspace.split_pane(
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.split_pane(
                 workspace.active_pane().clone(),
                 SplitDirection::Right,
                 window,
                 cx,
-            );
-            new_pane
-        });
+            )
+        })
     }
 
     #[gpui::test]
@@ -9417,7 +9406,7 @@ mod tests {
             let workspace = workspace.clone();
             move |cx: &mut VisualTestContext| {
                 workspace.update_in(cx, |workspace, window, cx| {
-                    if let Some(_) = workspace.active_modal::<TestModal>(cx) {
+                    if workspace.active_modal::<TestModal>(cx).is_some() {
                         workspace.toggle_modal(window, cx, TestModal::new);
                         workspace.toggle_modal(window, cx, TestModal::new);
                     } else {

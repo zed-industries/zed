@@ -427,7 +427,7 @@ impl AgentTool for EditFileTool {
 
             Ok(EditFileToolOutput {
                 input_path: input.path,
-                new_text: new_text.clone(),
+                new_text,
                 old_text,
                 diff: unified_diff,
                 edit_agent_output,
@@ -554,7 +554,6 @@ mod tests {
                 action_log,
                 Templates::new(),
                 Some(model),
-                None,
                 cx,
             )
         });
@@ -656,8 +655,7 @@ mod tests {
             mode: mode.clone(),
         };
 
-        let result = cx.update(|cx| resolve_path(&input, project, cx));
-        result
+        cx.update(|cx| resolve_path(&input, project, cx))
     }
 
     fn assert_resolved_path_eq(path: anyhow::Result<ProjectPath>, expected: &str) {
@@ -756,7 +754,6 @@ mod tests {
                 action_log.clone(),
                 Templates::new(),
                 Some(model.clone()),
-                None,
                 cx,
             )
         });
@@ -899,7 +896,6 @@ mod tests {
                 action_log.clone(),
                 Templates::new(),
                 Some(model.clone()),
-                None,
                 cx,
             )
         });
@@ -1029,7 +1025,6 @@ mod tests {
                 action_log.clone(),
                 Templates::new(),
                 Some(model.clone()),
-                None,
                 cx,
             )
         });
@@ -1168,7 +1163,6 @@ mod tests {
                 action_log.clone(),
                 Templates::new(),
                 Some(model.clone()),
-                None,
                 cx,
             )
         });
@@ -1279,7 +1273,6 @@ mod tests {
                 action_log.clone(),
                 Templates::new(),
                 Some(model.clone()),
-                None,
                 cx,
             )
         });
@@ -1362,7 +1355,6 @@ mod tests {
                 action_log.clone(),
                 Templates::new(),
                 Some(model.clone()),
-                None,
                 cx,
             )
         });
@@ -1448,7 +1440,6 @@ mod tests {
                 action_log.clone(),
                 Templates::new(),
                 Some(model.clone()),
-                None,
                 cx,
             )
         });
@@ -1531,7 +1522,6 @@ mod tests {
                 action_log.clone(),
                 Templates::new(),
                 Some(model.clone()),
-                None,
                 cx,
             )
         });

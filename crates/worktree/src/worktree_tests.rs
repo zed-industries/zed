@@ -1254,7 +1254,7 @@ async fn test_create_directory_during_initial_scan(cx: &mut TestAppContext) {
         let snapshot = Arc::new(Mutex::new(tree.snapshot()));
         tree.observe_updates(0, cx, {
             let snapshot = snapshot.clone();
-            let settings = tree.settings().clone();
+            let settings = tree.settings();
             move |update| {
                 snapshot
                     .lock()
@@ -1274,7 +1274,7 @@ async fn test_create_directory_during_initial_scan(cx: &mut TestAppContext) {
         })
         .await
         .unwrap()
-        .to_included()
+        .into_included()
         .unwrap();
     assert!(entry.is_dir());
 
@@ -1323,7 +1323,7 @@ async fn test_create_dir_all_on_create_entry(cx: &mut TestAppContext) {
         })
         .await
         .unwrap()
-        .to_included()
+        .into_included()
         .unwrap();
     assert!(entry.is_file());
 
@@ -1357,7 +1357,7 @@ async fn test_create_dir_all_on_create_entry(cx: &mut TestAppContext) {
         })
         .await
         .unwrap()
-        .to_included()
+        .into_included()
         .unwrap();
     assert!(entry.is_file());
 
@@ -1377,7 +1377,7 @@ async fn test_create_dir_all_on_create_entry(cx: &mut TestAppContext) {
         })
         .await
         .unwrap()
-        .to_included()
+        .into_included()
         .unwrap();
     assert!(entry.is_file());
 
@@ -1395,7 +1395,7 @@ async fn test_create_dir_all_on_create_entry(cx: &mut TestAppContext) {
         })
         .await
         .unwrap()
-        .to_included()
+        .into_included()
         .unwrap();
     assert!(entry.is_file());
 
@@ -1726,7 +1726,7 @@ fn randomly_mutate_worktree(
             );
             let task = worktree.rename_entry(entry.id, new_path, cx);
             cx.background_spawn(async move {
-                task.await?.to_included().unwrap();
+                task.await?.into_included().unwrap();
                 Ok(())
             })
         }

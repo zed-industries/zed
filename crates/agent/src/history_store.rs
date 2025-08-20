@@ -254,10 +254,9 @@ impl HistoryStore {
     }
 
     pub fn remove_recently_opened_thread(&mut self, id: ThreadId, cx: &mut Context<Self>) {
-        self.recently_opened_entries.retain(|entry| match entry {
-            HistoryEntryId::Thread(thread_id) if thread_id == &id => false,
-            _ => true,
-        });
+        self.recently_opened_entries.retain(
+            |entry| !matches!(entry, HistoryEntryId::Thread(thread_id) if thread_id == &id),
+        );
         self.save_recently_opened_entries(cx);
     }
 

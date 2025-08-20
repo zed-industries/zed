@@ -41,7 +41,7 @@ impl std::fmt::Display for ChannelId {
 pub struct ProjectId(pub u64);
 
 impl ProjectId {
-    pub fn to_proto(&self) -> u64 {
+    pub fn to_proto(self) -> u64 {
         self.0
     }
 }
@@ -848,7 +848,7 @@ impl UserStore {
 
     pub fn has_accepted_terms_of_service(&self) -> bool {
         self.accepted_tos_at
-            .map_or(false, |accepted_tos_at| accepted_tos_at.is_some())
+            .is_some_and(|accepted_tos_at| accepted_tos_at.is_some())
     }
 
     pub fn accept_terms_of_service(&self, cx: &Context<Self>) -> Task<Result<()>> {

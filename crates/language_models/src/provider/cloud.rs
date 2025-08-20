@@ -140,7 +140,7 @@ impl State {
         Self {
             client: client.clone(),
             llm_api_token: LlmApiToken::default(),
-            user_store: user_store.clone(),
+            user_store,
             status,
             accept_terms_of_service_task: None,
             models: Vec::new(),
@@ -270,7 +270,7 @@ impl State {
         if response.status().is_success() {
             let mut body = String::new();
             response.body_mut().read_to_string(&mut body).await?;
-            return Ok(serde_json::from_str(&body)?);
+            Ok(serde_json::from_str(&body)?)
         } else {
             let mut body = String::new();
             response.body_mut().read_to_string(&mut body).await?;
@@ -307,7 +307,7 @@ impl CloudLanguageModelProvider {
 
         Self {
             client,
-            state: state.clone(),
+            state,
             _maintain_client_status: maintain_client_status,
         }
     }
@@ -320,7 +320,7 @@ impl CloudLanguageModelProvider {
         Arc::new(CloudLanguageModel {
             id: LanguageModelId(SharedString::from(model.id.0.clone())),
             model,
-            llm_api_token: llm_api_token.clone(),
+            llm_api_token,
             client: self.client.clone(),
             request_limiter: RateLimiter::new(4),
         })

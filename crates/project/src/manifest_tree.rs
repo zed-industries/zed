@@ -43,12 +43,9 @@ impl WorktreeRoots {
                 match event {
                     WorktreeEvent::UpdatedEntries(changes) => {
                         for (path, _, kind) in changes.iter() {
-                            match kind {
-                                worktree::PathChange::Removed => {
-                                    let path = TriePath::from(path.as_ref());
-                                    this.roots.remove(&path);
-                                }
-                                _ => {}
+                            if kind == &worktree::PathChange::Removed {
+                                let path = TriePath::from(path.as_ref());
+                                this.roots.remove(&path);
                             }
                         }
                     }
@@ -80,7 +77,7 @@ impl ManifestTree {
             _subscriptions: [
                 cx.subscribe(&worktree_store, Self::on_worktree_store_event),
                 cx.observe_global::<SettingsStore>(|this, cx| {
-                    for (_, roots) in &mut this.root_points {
+                    for roots in this.root_points.values_mut() {
                         roots.update(cx, |worktree_roots, _| {
                             worktree_roots.roots = RootPathTrie::new();
                         })
@@ -197,11 +194,8 @@ impl ManifestTree {
         evt: &WorktreeStoreEvent,
         _: &mut Context<Self>,
     ) {
-        match evt {
-            WorktreeStoreEvent::WorktreeRemoved(_, worktree_id) => {
-                self.root_points.remove(worktree_id);
-            }
-            _ => {}
+        if let WorktreeStoreEvent::WorktreeRemoved(_, worktree_id) = evt {
+            self.root_points.remove(worktree_id);
         }
     }
 }
@@ -218,10 +212,8 @@ impl ManifestQueryDelegate {
 
 impl ManifestDelegate for ManifestQueryDelegate {
     fn exists(&self, path: &Path, is_dir: Option<bool>) -> bool {
-        self.worktree.entry_for_path(path).map_or(false, |entry| {
-            is_dir.map_or(true, |is_required_to_be_dir| {
-                is_required_to_be_dir == entry.is_dir()
-            })
+        self.worktree.entry_for_path(path).is_some_and(|entry| {
+            is_dir.is_none_or(|is_required_to_be_dir| is_required_to_be_dir == entry.is_dir())
         })
     }
 

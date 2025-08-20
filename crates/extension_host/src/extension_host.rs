@@ -562,12 +562,12 @@ impl ExtensionStore {
                 extensions
                     .into_iter()
                     .filter(|extension| {
-                        this.extension_index.extensions.get(&extension.id).map_or(
-                            true,
-                            |installed_extension| {
+                        this.extension_index
+                            .extensions
+                            .get(&extension.id)
+                            .is_none_or(|installed_extension| {
                                 installed_extension.manifest.version != extension.manifest.version
-                            },
-                        )
+                            })
                     })
                     .collect()
             })
@@ -1175,16 +1175,16 @@ impl ExtensionStore {
                 }
             }
 
-            for (server_id, _) in &extension.manifest.context_servers {
+            for server_id in extension.manifest.context_servers.keys() {
                 self.proxy.unregister_context_server(server_id.clone(), cx);
             }
-            for (adapter, _) in &extension.manifest.debug_adapters {
+            for adapter in extension.manifest.debug_adapters.keys() {
                 self.proxy.unregister_debug_adapter(adapter.clone());
             }
-            for (locator, _) in &extension.manifest.debug_locators {
+            for locator in extension.manifest.debug_locators.keys() {
                 self.proxy.unregister_debug_locator(locator.clone());
             }
-            for (command_name, _) in &extension.manifest.slash_commands {
+            for command_name in extension.manifest.slash_commands.keys() {
                 self.proxy.unregister_slash_command(command_name.clone());
             }
         }
@@ -1386,7 +1386,7 @@ impl ExtensionStore {
                         );
                     }
 
-                    for (id, _context_server_entry) in &manifest.context_servers {
+                    for id in manifest.context_servers.keys() {
                         this.proxy
                             .register_context_server(extension.clone(), id.clone(), cx);
                     }
@@ -1451,7 +1451,7 @@ impl ExtensionStore {
 
                     if extension_dir
                         .file_name()
-                        .map_or(false, |file_name| file_name == ".DS_Store")
+                        .is_some_and(|file_name| file_name == ".DS_Store")
                     {
                         continue;
                     }
@@ -1675,9 +1675,8 @@ impl ExtensionStore {
                 let schema_path = &extension::build_debug_adapter_schema_path(adapter_name, meta);
 
                 if fs.is_file(&src_dir.join(schema_path)).await {
-                    match schema_path.parent() {
-                        Some(parent) => fs.create_dir(&tmp_dir.join(parent)).await?,
-                        None => {}
+                    if let Some(parent) = schema_path.parent() {
+                        fs.create_dir(&tmp_dir.join(parent)).await?
                     }
                     fs.copy_file(
                         &src_dir.join(schema_path),

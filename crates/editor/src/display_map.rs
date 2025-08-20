@@ -991,7 +991,7 @@ impl DisplaySnapshot {
             if let Some(severity) = chunk.diagnostic_severity.filter(|severity| {
                 self.diagnostics_max_severity
                     .into_lsp()
-                    .map_or(false, |max_severity| severity <= &max_severity)
+                    .is_some_and(|max_severity| severity <= &max_severity)
             }) {
                 if chunk.is_unnecessary {
                     diagnostic_highlight.fade_out = Some(editor_style.unnecessary_code_fade);

@@ -607,7 +607,7 @@ impl Render for RateCompletionModal {
                                     .children(self.zeta.read(cx).shown_completions().cloned().enumerate().map(
                                         |(index, completion)| {
                                             let selected =
-                                                self.active_completion.as_ref().map_or(false, |selected| {
+                                                self.active_completion.as_ref().is_some_and(|selected| {
                                                     selected.completion.id == completion.id
                                                 });
                                             let rated =
