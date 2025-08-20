@@ -15,7 +15,8 @@ use agent_settings::{
 use anyhow::{Context as _, Result, anyhow};
 use assistant_tool::adapt_schema_to_format;
 use chrono::{DateTime, Utc};
-use cloud_llm_client::{CompletionIntent, CompletionRequestStatus};
+use client::{ModelRequestUsage, RequestUsage};
+use cloud_llm_client::{CompletionIntent, CompletionRequestStatus, UsageLimit};
 use collections::{HashMap, IndexMap};
 use fs::Fs;
 use futures::{
@@ -1193,8 +1194,15 @@ impl Thread {
                     )) => {
                         *tool_use_limit_reached = true;
                     }
+                    Ok(LanguageModelCompletionEvent::StatusUpdate(
+                        CompletionRequestStatus::UsageUpdated { amount, limit },
+                    )) => {
+                        this.update(cx, |this, cx| {
+                            this.update_model_request_usage(amount, limit, cx)
+                        })?;
+                    }
                     Ok(LanguageModelCompletionEvent::UsageUpdate(token_usage)) => {
-                        _ = this.update(cx, |this, cx| this.update_token_usage(token_usage, cx));
+                        this.update(cx, |this, cx| this.update_token_usage(token_usage, cx))?;
                     }
                     Ok(LanguageModelCompletionEvent::Stop(StopReason::Refusal)) => {
                         *refusal = true;
@@ -1215,8 +1223,7 @@ impl Thread {
                                 event_stream,
                                 cx,
                             ));
-                        })
-                        .ok();
+                        })?;
                     }
                     Err(error) => {
                         let completion_mode =
@@ -1326,8 +1333,8 @@ impl Thread {
                     json_parse_error,
                 )));
             }
-            UsageUpdate(_) | StatusUpdate(_) => {}
-            Stop(_) => unreachable!(),
+            StatusUpdate(_) => {}
+            UsageUpdate(_) | Stop(_) => unreachable!(),
         }
 
         None
@@ -1505,6 +1512,21 @@ impl Thread {
             content: LanguageModelToolResultContent::Text(tool_output.into()),
             output: Some(serde_json::Value::String(raw_input.to_string())),
         }
+    }
+
+    fn update_model_request_usage(&self, amount: usize, limit: UsageLimit, cx: &mut Context<Self>) {
+        self.project
+            .read(cx)
+            .user_store()
+            .update(cx, |user_store, cx| {
+                user_store.update_model_request_usage(
+                    ModelRequestUsage(RequestUsage {
+                        amount: amount as i32,
+                        limit,
+                    }),
+                    cx,
+                )
+            });
     }
 
     pub fn title(&self) -> SharedString {
