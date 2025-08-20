@@ -151,7 +151,7 @@ fn fail_to_open_window(e: anyhow::Error, _cx: &mut App) {
                             .as_str(),
                         ))
                         .priority(Priority::High)
-                        .icon(ashpd::desktop::Icon::with_names(&[
+                        .icon(ashpd::desktop::Icon::with_names([
                             "dialog-question-symbolic",
                         ])),
                 )
