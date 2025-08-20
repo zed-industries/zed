@@ -185,7 +185,7 @@ impl minidumper::ServerHandler for CrashServer {
 
         #[cfg(any(target_os = "linux", target_os = "freebsd"))]
         let gpus = match system_specs::read_gpu_info_from_sys_class_drm() {
-            Ok(gpus) => gpus.into_iter().map(Into::into).collect(),
+            Ok(gpus) => gpus,
             Err(err) => {
                 log::warn!("Failed to collect GPU information for crash report: {err}");
                 vec![]
