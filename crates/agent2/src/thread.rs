@@ -2463,18 +2463,15 @@ impl From<UserMessageContent> for acp::ContentBlock {
                 uri: None,
             }),
             UserMessageContent::Mention { uri, content } => {
-                acp::ContentBlock::ResourceLink(acp::ResourceLink {
-                    uri: uri.to_uri().to_string(),
-                    name: uri.name(),
+                acp::ContentBlock::Resource(acp::EmbeddedResource {
+                    resource: acp::EmbeddedResourceResource::TextResourceContents(
+                        acp::TextResourceContents {
+                            mime_type: None,
+                            text: content,
+                            uri: uri.to_uri().to_string(),
+                        },
+                    ),
                     annotations: None,
-                    description: if content.is_empty() {
-                        None
-                    } else {
-                        Some(content)
-                    },
-                    mime_type: None,
-                    size: None,
-                    title: None,
                 })
             }
         }
