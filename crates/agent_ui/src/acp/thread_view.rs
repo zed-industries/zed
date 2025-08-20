@@ -3815,7 +3815,11 @@ impl AcpThreadView {
             .flex_wrap()
             .justify_end();
 
-        if AgentSettings::get_global(cx).enable_feedback {
+        if AgentSettings::get_global(cx).enable_feedback
+            && self
+                .thread()
+                .is_some_and(|thread| thread.read(cx).connection().telemetry().is_some())
+        {
             let feedback = self.thread_feedback.feedback;
             container = container.child(
                 div().visible_on_hover("thread-controls-container").child(
