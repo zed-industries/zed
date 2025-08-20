@@ -161,7 +161,7 @@ impl UserMessage {
                 }
                 UserMessageContent::Mention { uri, content } => {
                     if !content.is_empty() {
-                        let _ = write!(&mut markdown, "{}\n\n{}\n", uri.as_link(), content);
+                        let _ = writeln!(&mut markdown, "{}\n\n{}", uri.as_link(), content);
                     } else {
                         let _ = writeln!(&mut markdown, "{}", uri.as_link());
                     }
