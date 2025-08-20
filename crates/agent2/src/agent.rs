@@ -989,10 +989,15 @@ impl acp_thread::AgentSessionResume for NativeAgentSessionResume {
 
 #[cfg(test)]
 mod tests {
+    use crate::HistoryEntryId;
+
     use super::*;
-    use acp_thread::{AgentConnection, AgentModelGroupName, AgentModelId, AgentModelInfo};
+    use acp_thread::{
+        AgentConnection, AgentModelGroupName, AgentModelId, AgentModelInfo, MentionUri,
+    };
     use fs::FakeFs;
     use gpui::TestAppContext;
+    use indoc::indoc;
     use serde_json::json;
     use settings::SettingsStore;
 
@@ -1177,6 +1182,145 @@ mod tests {
             settings_json["agent"]["default_model"]["provider"],
             json!("fake")
         );
+    }
+
+    #[gpui::test]
+    async fn test_save_load_thread(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/",
+            json!({
+                "a": {
+                    "b.md": "Lorem"
+                }
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [], cx).await;
+        let context_store = cx.new(|cx| assistant_context::ContextStore::fake(project.clone(), cx));
+        let history_store = cx.new(|cx| HistoryStore::new(context_store, cx));
+        let agent = NativeAgent::new(
+            project.clone(),
+            history_store.clone(),
+            Templates::new(),
+            None,
+            fs.clone(),
+            &mut cx.to_async(),
+        )
+        .await
+        .unwrap();
+        let connection = Rc::new(NativeAgentConnection(agent.clone()));
+
+        let acp_thread = cx
+            .update(|cx| {
+                connection
+                    .clone()
+                    .new_thread(project.clone(), Path::new(""), cx)
+            })
+            .await
+            .unwrap();
+        let session_id = acp_thread.read_with(cx, |thread, _| thread.session_id().clone());
+        let thread = agent.read_with(cx, |agent, _| {
+            agent.sessions.get(&session_id).unwrap().thread.clone()
+        });
+        let model = thread.read_with(cx, |thread, _| thread.model().unwrap().clone());
+        let model = model.as_fake();
+        let summary_model = thread.read_with(cx, |thread, _| {
+            thread.summarization_model().unwrap().clone()
+        });
+        let summary_model = summary_model.as_fake();
+        let send = acp_thread.update(cx, |thread, cx| {
+            thread.send(
+                vec![
+                    "What does ".into(),
+                    acp::ContentBlock::ResourceLink(acp::ResourceLink {
+                        name: "b.md".into(),
+                        uri: MentionUri::File {
+                            abs_path: "/a/b.md".into(),
+                        }
+                        .to_uri()
+                        .to_string(),
+                        annotations: None,
+                        description: None,
+                        mime_type: None,
+                        size: None,
+                        title: None,
+                    }),
+                    " mean?".into(),
+                ],
+                cx,
+            )
+        });
+        let send = cx.foreground_executor().spawn(send);
+        cx.run_until_parked();
+
+        model.send_last_completion_stream_text_chunk("Lorem.");
+        model.end_last_completion_stream();
+        cx.run_until_parked();
+        summary_model.send_last_completion_stream_text_chunk("Explaining /a/b.md");
+        summary_model.end_last_completion_stream();
+
+        send.await.unwrap();
+        acp_thread.read_with(cx, |thread, cx| {
+            assert_eq!(
+                thread.to_markdown(cx),
+                indoc! {"
+                    ## User
+
+                    What does [@b.md](file:///a/b.md) mean?
+
+                    ## Assistant
+
+                    Lorem.
+
+                "}
+            )
+        });
+
+        // Drop the ACP thread, which should cause the session to be dropped as well.
+        cx.update(|_| {
+            drop(thread);
+            drop(acp_thread);
+        });
+        agent.read_with(cx, |agent, _| {
+            assert_eq!(agent.sessions.keys().cloned().collect::<Vec<_>>(), []);
+        });
+
+        // Ensure the thread can be reloaded from disk.
+        history_store.read_with(cx, |history, cx| {
+            let entries = history
+                .entries(cx)
+                .iter()
+                .map(|e| (e.id(), e.title().to_string()))
+                .collect::<Vec<_>>();
+            assert_eq!(
+                entries,
+                vec![(
+                    HistoryEntryId::AcpThread(session_id.clone()),
+                    "Explaining /a/b.md".into()
+                )]
+            );
+        });
+        let acp_thread = agent
+            .update(cx, |agent, cx| agent.open_thread(session_id.clone(), cx))
+            .await
+            .unwrap();
+        acp_thread.read_with(cx, |thread, cx| {
+            assert_eq!(
+                thread.to_markdown(cx),
+                indoc! {"
+                    ## User
+
+                    What does [@b.md](file:///a/b.md) mean?
+
+                    ## Assistant
+
+                    Lorem.
+
+                "}
+            )
+        });
     }
 
     fn init_test(cx: &mut TestAppContext) {

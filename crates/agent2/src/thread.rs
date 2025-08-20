@@ -884,6 +884,10 @@ impl Thread {
         cx.notify()
     }
 
+    pub fn summarization_model(&self) -> Option<&Arc<dyn LanguageModel>> {
+        self.summarization_model.as_ref()
+    }
+
     pub fn set_summarization_model(
         &mut self,
         model: Option<Arc<dyn LanguageModel>>,
