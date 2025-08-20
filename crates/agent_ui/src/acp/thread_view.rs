@@ -2190,11 +2190,9 @@ impl AcpThreadView {
                     .items_center()
                     .justify_center()
                     .child(self.render_error_agent_logo())
-                    .child(
-                        h_flex().mt_4().mb_1().justify_center().child(
-                            Headline::new("Authentication Required").size(HeadlineSize::Medium),
-                        ),
-                    )
+                    .child(h_flex().mt_4().mb_1().justify_center().child(
+                        Headline::new(self.agent.empty_state_headline()).size(HeadlineSize::Medium),
+                    ))
                     .into_any(),
             )
             .children(description.map(|desc| {
