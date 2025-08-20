@@ -560,11 +560,7 @@ impl ContextPickerCompletionProvider {
             .take(RECENT_COUNT)
             .collect::<Vec<_>>();
 
-        recent.extend(
-            threads
-                .into_iter()
-                .map(|thread| Match::RecentThread(thread)),
-        );
+        recent.extend(threads.into_iter().map(Match::RecentThread));
 
         recent
     }

@@ -3204,7 +3204,7 @@ impl AcpThreadView {
                         panel.update(cx, |panel, cx| {
                             panel.load_agent_thread(
                                 DbThreadMetadata {
-                                    id: id,
+                                    id,
                                     title: name.into(),
                                     updated_at: Default::default(),
                                 },
