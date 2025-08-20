@@ -12691,7 +12691,7 @@ impl DiagnosticSummary {
     }
 
     pub fn to_proto(
-        &self,
+        self,
         language_server_id: LanguageServerId,
         path: &Path,
     ) -> proto::DiagnosticSummary {

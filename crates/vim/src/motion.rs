@@ -816,10 +816,7 @@ impl Motion {
     }
 
     fn skip_exclusive_special_case(&self) -> bool {
-        match self {
-            Motion::WrappingLeft | Motion::WrappingRight => true,
-            _ => false,
-        }
+        matches!(self, Motion::WrappingLeft | Motion::WrappingRight)
     }
 
     pub(crate) fn push_to_jump_list(&self) -> bool {
@@ -4099,7 +4096,7 @@ mod test {
         cx.shared_state().await.assert_eq(indoc! {"
              ˇhe quick brown fox
              jumped over the lazy dog"});
-        assert_eq!(cx.cx.forced_motion(), false);
+        assert!(!cx.cx.forced_motion());
 
         cx.set_shared_state(indoc! {"
             the quick bˇrown fox
@@ -4109,7 +4106,7 @@ mod test {
         cx.shared_state().await.assert_eq(indoc! {"
             ˇown fox
             jumped over the lazy dog"});
-        assert_eq!(cx.cx.forced_motion(), false);
+        assert!(!cx.cx.forced_motion());
 
         cx.set_shared_state(indoc! {"
             the quick brown foˇx
@@ -4119,7 +4116,7 @@ mod test {
         cx.shared_state().await.assert_eq(indoc! {"
             ˇ
             jumped over the lazy dog"});
-        assert_eq!(cx.cx.forced_motion(), false);
+        assert!(!cx.cx.forced_motion());
     }
 
     #[gpui::test]
@@ -4134,7 +4131,7 @@ mod test {
         cx.shared_state().await.assert_eq(indoc! {"
              ˇbrown fox
              jumped over the lazy dog"});
-        assert_eq!(cx.cx.forced_motion(), false);
+        assert!(!cx.cx.forced_motion());
 
         cx.set_shared_state(indoc! {"
             the quick bˇrown fox
@@ -4144,7 +4141,7 @@ mod test {
         cx.shared_state().await.assert_eq(indoc! {"
             the quickˇown fox
             jumped over the lazy dog"});
-        assert_eq!(cx.cx.forced_motion(), false);
+        assert!(!cx.cx.forced_motion());
 
         cx.set_shared_state(indoc! {"
             the quick brown foˇx
@@ -4154,7 +4151,7 @@ mod test {
         cx.shared_state().await.assert_eq(indoc! {"
             the quicˇk
             jumped over the lazy dog"});
-        assert_eq!(cx.cx.forced_motion(), false);
+        assert!(!cx.cx.forced_motion());
 
         cx.set_shared_state(indoc! {"
             ˇthe quick brown fox
@@ -4164,7 +4161,7 @@ mod test {
         cx.shared_state().await.assert_eq(indoc! {"
             ˇ fox
             jumped over the lazy dog"});
-        assert_eq!(cx.cx.forced_motion(), false);
+        assert!(!cx.cx.forced_motion());
 
         cx.set_shared_state(indoc! {"
             ˇthe quick brown fox
@@ -4174,7 +4171,7 @@ mod test {
         cx.shared_state().await.assert_eq(indoc! {"
             ˇuick brown fox
             jumped over the lazy dog"});
-        assert_eq!(cx.cx.forced_motion(), false);
+        assert!(!cx.cx.forced_motion());
     }
 
     #[gpui::test]
@@ -4189,7 +4186,7 @@ mod test {
         cx.shared_state().await.assert_eq(indoc! {"
              the quick brown foˇx
              jumped over the lazy dog"});
-        assert_eq!(cx.cx.forced_motion(), false);
+        assert!(!cx.cx.forced_motion());
 
         cx.set_shared_state(indoc! {"
              ˇthe quick brown fox
@@ -4199,7 +4196,7 @@ mod test {
         cx.shared_state().await.assert_eq(indoc! {"
              ˇx
              jumped over the lazy dog"});
-        assert_eq!(cx.cx.forced_motion(), false);
+        assert!(!cx.cx.forced_motion());
     }
 
     #[gpui::test]
@@ -4215,7 +4212,7 @@ mod test {
                the quick brown fox
                ˇthe quick brown fox
                jumped over the lazy dog"});
-        assert_eq!(cx.cx.forced_motion(), false);
+        assert!(!cx.cx.forced_motion());
 
         cx.set_shared_state(indoc! {"
               the quick bˇrown fox
@@ -4226,7 +4223,7 @@ mod test {
               the quick brˇrown fox
               jumped overown fox
               jumped over the lazy dog"});
-        assert_eq!(cx.cx.forced_motion(), false);
+        assert!(!cx.cx.forced_motion());
 
         cx.set_shared_state(indoc! {"
              the quick brown foˇx
@@ -4237,7 +4234,7 @@ mod test {
              the quick brown foxˇx
              jumped over the la
              jumped over the lazy dog"});
-        assert_eq!(cx.cx.forced_motion(), false);
+        assert!(!cx.cx.forced_motion());
 
         cx.set_shared_state(indoc! {"
              the quick brown fox
@@ -4248,7 +4245,7 @@ mod test {
             thˇhe quick brown fox
             je quick brown fox
             jumped over the lazy dog"});
-        assert_eq!(cx.cx.forced_motion(), false);
+        assert!(!cx.cx.forced_motion());
     }
 
     #[gpui::test]
@@ -4263,7 +4260,7 @@ mod test {
         cx.shared_state().await.assert_eq(indoc! {"
               ˇe quick brown fox
               jumped over the lazy dog"});
-        assert_eq!(cx.cx.forced_motion(), false);
+        assert!(!cx.cx.forced_motion());
 
         cx.set_shared_state(indoc! {"
               the quick bˇrown fox
@@ -4273,7 +4270,7 @@ mod test {
         cx.shared_state().await.assert_eq(indoc! {"
               the quick bˇn fox
               jumped over the lazy dog"});
-        assert_eq!(cx.cx.forced_motion(), false);
+        assert!(!cx.cx.forced_motion());
 
         cx.set_shared_state(indoc! {"
              the quick brown foˇx
@@ -4282,6 +4279,6 @@ mod test {
         cx.simulate_shared_keystrokes("d v e").await;
         cx.shared_state().await.assert_eq(indoc! {"
         the quick brown foˇd over the lazy dog"});
-        assert_eq!(cx.cx.forced_motion(), false);
+        assert!(!cx.cx.forced_motion());
     }
 }

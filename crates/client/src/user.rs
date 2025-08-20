@@ -41,7 +41,7 @@ impl std::fmt::Display for ChannelId {
 pub struct ProjectId(pub u64);
 
 impl ProjectId {
-    pub fn to_proto(&self) -> u64 {
+    pub fn to_proto(self) -> u64 {
         self.0
     }
 }

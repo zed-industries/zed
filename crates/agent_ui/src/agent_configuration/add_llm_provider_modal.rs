@@ -668,10 +668,10 @@ mod tests {
             );
 
             let parsed_model = model_input.parse(cx).unwrap();
-            assert_eq!(parsed_model.capabilities.tools, true);
-            assert_eq!(parsed_model.capabilities.images, false);
-            assert_eq!(parsed_model.capabilities.parallel_tool_calls, false);
-            assert_eq!(parsed_model.capabilities.prompt_cache_key, false);
+            assert!(parsed_model.capabilities.tools);
+            assert!(!parsed_model.capabilities.images);
+            assert!(!parsed_model.capabilities.parallel_tool_calls);
+            assert!(!parsed_model.capabilities.prompt_cache_key);
         });
     }
 
@@ -693,10 +693,10 @@ mod tests {
             model_input.capabilities.supports_prompt_cache_key = ToggleState::Unselected;
 
             let parsed_model = model_input.parse(cx).unwrap();
-            assert_eq!(parsed_model.capabilities.tools, false);
-            assert_eq!(parsed_model.capabilities.images, false);
-            assert_eq!(parsed_model.capabilities.parallel_tool_calls, false);
-            assert_eq!(parsed_model.capabilities.prompt_cache_key, false);
+            assert!(!parsed_model.capabilities.tools);
+            assert!(!parsed_model.capabilities.images);
+            assert!(!parsed_model.capabilities.parallel_tool_calls);
+            assert!(!parsed_model.capabilities.prompt_cache_key);
         });
     }
 
@@ -719,10 +719,10 @@ mod tests {
 
             let parsed_model = model_input.parse(cx).unwrap();
             assert_eq!(parsed_model.name, "somemodel");
-            assert_eq!(parsed_model.capabilities.tools, true);
-            assert_eq!(parsed_model.capabilities.images, false);
-            assert_eq!(parsed_model.capabilities.parallel_tool_calls, true);
-            assert_eq!(parsed_model.capabilities.prompt_cache_key, false);
+            assert!(parsed_model.capabilities.tools);
+            assert!(!parsed_model.capabilities.images);
+            assert!(parsed_model.capabilities.parallel_tool_calls);
+            assert!(!parsed_model.capabilities.prompt_cache_key);
         });
     }
 

@@ -7149,7 +7149,7 @@ impl ExcerptId {
         Self(usize::MAX)
     }
 
-    pub fn to_proto(&self) -> u64 {
+    pub fn to_proto(self) -> u64 {
         self.0 as _
     }
 

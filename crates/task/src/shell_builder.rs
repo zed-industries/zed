@@ -28,7 +28,7 @@ impl ShellKind {
         }
     }
 
-    fn to_shell_variable(&self, input: &str) -> String {
+    fn to_shell_variable(self, input: &str) -> String {
         match self {
             Self::Powershell => Self::to_powershell_variable(input),
             Self::Cmd => Self::to_cmd_variable(input),

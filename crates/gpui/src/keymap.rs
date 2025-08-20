@@ -364,20 +364,20 @@ mod tests {
         // Ensure `space` results in pending input on the workspace, but not editor
         let space_workspace = keymap.bindings_for_input(&[space()], &workspace_context());
         assert!(space_workspace.0.is_empty());
-        assert_eq!(space_workspace.1, true);
+        assert!(space_workspace.1);
 
         let space_editor = keymap.bindings_for_input(&[space()], &editor_workspace_context());
         assert!(space_editor.0.is_empty());
-        assert_eq!(space_editor.1, false);
+        assert!(!space_editor.1);
 
         // Ensure `space w` results in pending input on the workspace, but not editor
         let space_w_workspace = keymap.bindings_for_input(&space_w, &workspace_context());
         assert!(space_w_workspace.0.is_empty());
-        assert_eq!(space_w_workspace.1, true);
+        assert!(space_w_workspace.1);
 
         let space_w_editor = keymap.bindings_for_input(&space_w, &editor_workspace_context());
         assert!(space_w_editor.0.is_empty());
-        assert_eq!(space_w_editor.1, false);
+        assert!(!space_w_editor.1);
 
         // Ensure `space w w` results in the binding in the workspace, but not in the editor
         let space_w_w_workspace = keymap.bindings_for_input(&space_w_w, &workspace_context());

@@ -189,7 +189,7 @@ impl SlashCommand for DiagnosticsSlashCommand {
 
         window.spawn(cx, async move |_| {
             task.await?
-                .map(|output| output.to_event_stream())
+                .map(|output| output.into_event_stream())
                 .context("No diagnostics found")
         })
     }

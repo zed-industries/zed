@@ -1641,7 +1641,7 @@ impl Bounds<Pixels> {
     }
 
     /// Convert the bounds from logical pixels to physical pixels
-    pub fn to_device_pixels(&self, factor: f32) -> Bounds<DevicePixels> {
+    pub fn to_device_pixels(self, factor: f32) -> Bounds<DevicePixels> {
         Bounds {
             origin: point(
                 DevicePixels((self.origin.x.0 * factor).round() as i32),
@@ -1957,7 +1957,7 @@ impl Edges<DefiniteLength> {
     /// assert_eq!(edges_in_pixels.bottom, px(32.0)); // 2 rems
     /// assert_eq!(edges_in_pixels.left, px(50.0)); // 25% of parent width
     /// ```
-    pub fn to_pixels(&self, parent_size: Size<AbsoluteLength>, rem_size: Pixels) -> Edges<Pixels> {
+    pub fn to_pixels(self, parent_size: Size<AbsoluteLength>, rem_size: Pixels) -> Edges<Pixels> {
         Edges {
             top: self.top.to_pixels(parent_size.height, rem_size),
             right: self.right.to_pixels(parent_size.width, rem_size),
@@ -2027,7 +2027,7 @@ impl Edges<AbsoluteLength> {
     /// assert_eq!(edges_in_pixels.bottom, px(20.0)); // Already in pixels
     /// assert_eq!(edges_in_pixels.left, px(32.0)); // 2 rems converted to pixels
     /// ```
-    pub fn to_pixels(&self, rem_size: Pixels) -> Edges<Pixels> {
+    pub fn to_pixels(self, rem_size: Pixels) -> Edges<Pixels> {
         Edges {
             top: self.top.to_pixels(rem_size),
             right: self.right.to_pixels(rem_size),
@@ -2272,7 +2272,7 @@ impl Corners<AbsoluteLength> {
     /// assert_eq!(corners_in_pixels.bottom_right, Pixels(30.0));
     /// assert_eq!(corners_in_pixels.bottom_left, Pixels(32.0)); // 2 rems converted to pixels
     /// ```
-    pub fn to_pixels(&self, rem_size: Pixels) -> Corners<Pixels> {
+    pub fn to_pixels(self, rem_size: Pixels) -> Corners<Pixels> {
         Corners {
             top_left: self.top_left.to_pixels(rem_size),
             top_right: self.top_right.to_pixels(rem_size),
@@ -3073,8 +3073,8 @@ pub struct Rems(pub f32);
 
 impl Rems {
     /// Convert this Rem value to pixels.
-    pub fn to_pixels(&self, rem_size: Pixels) -> Pixels {
-        *self * rem_size
+    pub fn to_pixels(self, rem_size: Pixels) -> Pixels {
+        self * rem_size
     }
 }
 
@@ -3315,12 +3315,12 @@ impl DefiniteLength {
     /// assert_eq!(length_in_rems.to_pixels(base_size, rem_size), Pixels(32.0));
     /// assert_eq!(length_as_fraction.to_pixels(base_size, rem_size), Pixels(50.0));
     /// ```
-    pub fn to_pixels(&self, base_size: AbsoluteLength, rem_size: Pixels) -> Pixels {
+    pub fn to_pixels(self, base_size: AbsoluteLength, rem_size: Pixels) -> Pixels {
         match self {
             DefiniteLength::Absolute(size) => size.to_pixels(rem_size),
             DefiniteLength::Fraction(fraction) => match base_size {
-                AbsoluteLength::Pixels(px) => px * *fraction,
-                AbsoluteLength::Rems(rems) => rems * rem_size * *fraction,
+                AbsoluteLength::Pixels(px) => px * fraction,
+                AbsoluteLength::Rems(rems) => rems * rem_size * fraction,
             },
         }
     }

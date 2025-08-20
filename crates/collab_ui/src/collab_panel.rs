@@ -1821,10 +1821,10 @@ impl CollabPanel {
     }
 
     fn select_channel_editor(&mut self) {
-        self.selection = self.entries.iter().position(|entry| match entry {
-            ListEntry::ChannelEditor { .. } => true,
-            _ => false,
-        });
+        self.selection = self
+            .entries
+            .iter()
+            .position(|entry| matches!(entry, ListEntry::ChannelEditor { .. }));
     }
 
     fn new_subchannel(

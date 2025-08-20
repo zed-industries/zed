@@ -1192,7 +1192,7 @@ mod test {
             output.analysis,
             Some("The model did a good job but there were still compilations errors.".into())
         );
-        assert_eq!(output.passed, true);
+        assert!(output.passed);
 
         let response = r#"
             Text around ignored
@@ -1212,6 +1212,6 @@ mod test {
             output.analysis,
             Some("Failed to compile:\n- Error 1\n- Error 2".into())
         );
-        assert_eq!(output.passed, false);
+        assert!(!output.passed);
     }
 }
