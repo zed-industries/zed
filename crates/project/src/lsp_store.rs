@@ -3924,9 +3924,7 @@ impl LspStore {
         _: &mut Context<Self>,
     ) {
         match event {
-            ToolchainStoreEvent::ToolchainActivated { .. } => {
-                self.request_workspace_config_refresh()
-            }
+            ToolchainStoreEvent::ToolchainActivated => self.request_workspace_config_refresh(),
         }
     }
 
