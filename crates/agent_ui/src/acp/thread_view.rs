@@ -1519,7 +1519,7 @@ impl AcpThreadView {
                     Empty.into_any_element()
                 }
             }
-            ToolCallContent::Diff(diff) => self.render_diff_editor(entry_ix, diff, cx),
+            ToolCallContent::Diff(diff) => self.render_diff_editor(entry_ix, diff, tool_call, cx),
             ToolCallContent::Terminal(terminal) => {
                 self.render_terminal_tool_call(entry_ix, terminal, tool_call, window, cx)
             }
@@ -1710,8 +1710,14 @@ impl AcpThreadView {
         &self,
         entry_ix: usize,
         diff: &Entity<acp_thread::Diff>,
+        tool_call: &ToolCall,
         cx: &Context<Self>,
     ) -> AnyElement {
+        let tool_progress = matches!(
+            &tool_call.status,
+            ToolCallStatus::InProgress | ToolCallStatus::Pending
+        );
+
         v_flex()
             .h_full()
             .child(
@@ -1720,8 +1726,10 @@ impl AcpThreadView {
                     && diff.read(cx).has_revealed_range(cx)
                 {
                     editor.clone().into_any_element()
-                } else {
+                } else if tool_progress {
                     self.render_diff_loading(cx)
+                } else {
+                    Empty.into_any()
                 },
             )
             .into_any()
