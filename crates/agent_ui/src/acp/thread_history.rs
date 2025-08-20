@@ -745,7 +745,7 @@ impl RenderOnce for AcpHistoryEntryElement {
             })
             .on_click({
                 let thread_view = self.thread_view.clone();
-                let entry = self.entry.clone();
+                let entry = self.entry;
 
                 move |_event, window, cx| {
                     if let Some(workspace) = thread_view
