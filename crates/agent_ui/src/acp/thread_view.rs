@@ -793,7 +793,6 @@ impl AcpThreadView {
                 self.entry_view_state.update(cx, |view_state, cx| {
                     view_state.sync_entry(*index, thread, window, cx)
                 });
-                self.list_state.splice(*index..index + 1, 1);
             }
             AcpThreadEvent::EntriesRemoved(range) => {
                 self.entry_view_state
