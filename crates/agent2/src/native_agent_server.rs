@@ -73,3 +73,61 @@ impl AgentServer for NativeAgentServer {
         self
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use assistant_context::ContextStore;
+    use gpui::AppContext;
+
+    agent_servers::e2e_tests::common_e2e_tests!(
+        async |fs, project, cx| {
+            let auth = cx.update(|cx| {
+                gpui_tokio::init(cx);
+                let http_client = reqwest_client::ReqwestClient::user_agent("agent tests").unwrap();
+                cx.set_http_client(Arc::new(http_client));
+                client::init_settings(cx);
+                let client = client::Client::production(cx);
+                let user_store = cx.new(|cx| client::UserStore::new(client.clone(), cx));
+                language_model::init(client.clone(), cx);
+                language_models::init(user_store, client, cx);
+                prompt_store::init(cx);
+                agent_settings::init(cx);
+                terminal::init(cx);
+
+                let registry = language_model::LanguageModelRegistry::read_global(cx);
+                let auth = registry
+                    .provider(&language_model::ANTHROPIC_PROVIDER_ID)
+                    .unwrap()
+                    .authenticate(cx);
+
+                cx.spawn(async move |_| auth.await)
+            });
+
+            auth.await.unwrap();
+
+            cx.update(|cx| {
+                let registry = language_model::LanguageModelRegistry::global(cx);
+
+                registry.update(cx, |registry, cx| {
+                    registry.select_default_model(
+                        Some(&language_model::SelectedModel {
+                            provider: language_model::ANTHROPIC_PROVIDER_ID,
+                            model: language_model::LanguageModelId("claude-sonnet-4-latest".into()),
+                        }),
+                        cx,
+                    );
+                });
+            });
+
+            let history = cx.update(|cx| {
+                let context_store = cx.new(move |cx| ContextStore::fake(project.clone(), cx));
+                cx.new(move |cx| HistoryStore::new(context_store, cx))
+            });
+
+            NativeAgentServer::new(fs.clone(), history)
+        },
+        allow_option_id = "allow"
+    );
+}

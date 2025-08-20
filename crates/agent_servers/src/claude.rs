@@ -1093,7 +1093,7 @@ pub(crate) mod tests {
     use gpui::TestAppContext;
     use serde_json::json;
 
-    crate::common_e2e_tests!(ClaudeCode, allow_option_id = "allow");
+    crate::common_e2e_tests!(async |_, _, _| ClaudeCode, allow_option_id = "allow");
 
     pub fn local_command() -> AgentServerCommand {
         AgentServerCommand {

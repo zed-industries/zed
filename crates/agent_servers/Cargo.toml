@@ -7,7 +7,7 @@ license = "GPL-3.0-or-later"
 
 [features]
 test-support = ["acp_thread/test-support", "gpui/test-support", "project/test-support"]
-e2e = []
+e2e = ["dep:env_logger", "fs"]
 
 [lints]
 workspace = true
@@ -25,6 +25,8 @@ agentic-coding-protocol.workspace = true
 anyhow.workspace = true
 collections.workspace = true
 context_server.workspace = true
+env_logger = { workspace = true, optional = true }
+fs = { workspace = true, optional = true }
 futures.workspace = true
 gpui.workspace = true
 indoc.workspace = true
@@ -58,6 +60,7 @@ nix.workspace = true
 
 [dev-dependencies]
 env_logger.workspace = true
+fs.workspace = true
 language.workspace = true
 indoc.workspace = true
 acp_thread = { workspace = true, features = ["test-support"] }
