@@ -602,7 +602,7 @@ impl TerminalBuilder {
         use windows::Win32::Storage::FileSystem::SearchPathW;
         use windows::core::HSTRING;
 
-        let path = if path.starts_with(r"\\?\") || !path.contains(&['/', '\\']) {
+        let path = if path.starts_with(r"\\?\") || !path.contains(['/', '\\']) {
             path.to_string()
         } else {
             r"\\?\".to_string() + path
