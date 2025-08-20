@@ -644,7 +644,7 @@ async fn upload_minidump(
             driver_version,
             driver_name,
         } = gpu;
-        let num = if gpu_count == 1 {
+        let num = if gpu_count == 1 && metadata.active_gpu.is_none() {
             String::new()
         } else {
             index.to_string()
@@ -652,6 +652,10 @@ async fn upload_minidump(
         let name = format!("gpu{num}");
         let root = format!("sentry[contexts][{name}]");
         form = form
+            .text(
+                format!("{root}[Description]"),
+                "A GPU found on the users system. May or may not be the GPU Zed is running on",
+            )
             .text(format!("{root}[type]"), "gpu")
             .text(format!("{root}[name]"), device_name.unwrap_or(name))
             .text(format!("{root}[id]"), format!("{:#06x}", device_pci_id))
@@ -663,9 +667,29 @@ async fn upload_minidump(
             .text_if_some(format!("{root}[driver_version]"), driver_version)
             .text_if_some(format!("{root}[driver_name]"), driver_name);
     }
+    if let Some(active_gpu) = metadata.active_gpu.clone() {
+        form = form
+            .text(
+                "sentry[contexts][Active_GPU][Description]",
+                "The GPU Zed is running on",
+            )
+            .text("sentry[contexts][Active_GPU][type]", "gpu")
+            .text("sentry[contexts][Active_GPU][name]", active_gpu.device_name)
+            .text(
+                "sentry[contexts][Active_GPU][driver_version]",
+                active_gpu.driver_info,
+            )
+            .text(
+                "sentry[contexts][Active_GPU][driver_name]",
+                active_gpu.driver_name,
+            )
+            .text(
+                "sentry[contexts][Active_GPU][is_software_emulated]",
+                active_gpu.is_software_emulated.to_string(),
+            );
+    }
 
-    // TODO: add gpu-context, feature-flag-context, and more of device-context like gpu
-    // name, screen resolution, available ram, device model, etc
+    // TODO: feature-flag-context, and more of device-context like screen resolution, available ram, device model, etc
 
     let mut response_text = String::new();
     let mut response = http.send_multipart_form(endpoint, form).await?;

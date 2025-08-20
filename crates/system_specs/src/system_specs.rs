@@ -2,6 +2,7 @@
 
 use anyhow::Context as _;
 use client::telemetry;
+pub use gpui::GpuSpecs;
 use gpui::{App, AppContext as _, SemanticVersion, Task, Window, actions};
 use human_bytes::human_bytes;
 use release_channel::{AppCommitSha, AppVersion, ReleaseChannel};

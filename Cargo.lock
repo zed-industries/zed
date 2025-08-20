@@ -4050,6 +4050,7 @@ dependencies = [
 name = "crashes"
 version = "0.1.0"
 dependencies = [
+ "bincode",
  "crash-handler",
  "log",
  "mach2 0.5.0",
@@ -20431,6 +20432,7 @@ dependencies = [
  "auto_update",
  "auto_update_ui",
  "backtrace",
+ "bincode",
  "breadcrumbs",
  "call",
  "channel",

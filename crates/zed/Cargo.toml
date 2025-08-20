@@ -33,6 +33,7 @@ audio.workspace = true
 auto_update.workspace = true
 auto_update_ui.workspace = true
 backtrace = "0.3"
+bincode.workspace = true
 breadcrumbs.workspace = true
 call.workspace = true
 channel.workspace = true
