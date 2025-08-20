@@ -2593,7 +2593,7 @@ impl Pane {
 
         let single_entry_to_resolve = self.items[ix]
             .is_singleton(cx)
-            .then(|| self.items[ix].project_entry_ids(cx).get(0).copied())
+            .then(|| self.items[ix].project_entry_ids(cx).first().copied())
             .flatten();
 
         let total_items = self.items.len();

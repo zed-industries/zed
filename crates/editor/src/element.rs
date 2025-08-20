@@ -2153,7 +2153,7 @@ impl EditorElement {
                 .filter(|(point, _)| !row_block_types.contains_key(&point.row()))
                 .fold(HashMap::default(), |mut acc, (point, diagnostic)| {
                     acc.entry(point.row())
-                        .or_insert_with(Vec::new)
+                        .or_default()
                         .push(diagnostic);
                     acc
                 })

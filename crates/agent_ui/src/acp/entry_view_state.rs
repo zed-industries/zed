@@ -400,7 +400,7 @@ mod tests {
         let diff = thread.read_with(cx, |thread, _cx| {
             thread
                 .entries()
-                .get(0)
+                .first()
                 .unwrap()
                 .diffs()
                 .next()

@@ -167,7 +167,7 @@ impl Client {
             .executable
             .file_name()
             .map(|name| name.to_string_lossy().to_string())
-            .unwrap_or_else(String::new);
+            .unwrap_or_default();
 
         let transport = Arc::new(StdioTransport::new(binary, working_directory, &cx)?);
         Self::new(server_id, server_name.into(), transport, cx)

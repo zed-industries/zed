@@ -2527,9 +2527,7 @@ impl LocalLspStore {
                     })
             })
             .fold(HashMap::default(), |mut acc, (worktree_id, server_node)| {
-                acc.entry(worktree_id)
-                    .or_insert_with(Vec::new)
-                    .push(server_node);
+                acc.entry(worktree_id).or_default().push(server_node);
                 acc
             })
             .into_values()
@@ -6662,8 +6660,9 @@ impl LspStore {
                                     .unwrap_or(&[])
                                     .to_vec(),
                             );
-                            acc.entry(server_id).or_insert_with(Vec::new).push(
-                                DocumentDiagnosticsUpdate {
+                            acc.entry(server_id)
+                                .or_default()
+                                .push(DocumentDiagnosticsUpdate {
                                     server_id,
                                     diagnostics: lsp::PublishDiagnosticsParams {
                                         uri,
@@ -6672,8 +6671,7 @@ impl LspStore {
                                     },
                                     result_id,
                                     disk_based_sources,
-                                },
-                            );
+                                });
                             acc
                         },
                     );
@@ -6895,9 +6893,7 @@ impl LspStore {
                 .await
                 .into_iter()
                 .fold(HashMap::default(), |mut acc, (server_id, colors)| {
-                    acc.entry(server_id)
-                        .or_insert_with(HashSet::default)
-                        .extend(colors);
+                    acc.entry(server_id).or_default().extend(colors);
                     acc
                 });
                 Ok(colors)
@@ -6910,9 +6906,7 @@ impl LspStore {
                     .await
                     .into_iter()
                     .fold(HashMap::default(), |mut acc, (server_id, colors)| {
-                        acc.entry(server_id)
-                            .or_insert_with(HashSet::default)
-                            .extend(colors);
+                        acc.entry(server_id).or_default().extend(colors);
                         acc
                     })
                     .into_iter()
@@ -11568,7 +11562,7 @@ impl LspStore {
                             .to_vec(),
                     );
                     acc.entry(server_id)
-                        .or_insert_with(Vec::new)
+                        .or_default()
                         .push(DocumentDiagnosticsUpdate {
                             server_id,
                             diagnostics: lsp::PublishDiagnosticsParams {

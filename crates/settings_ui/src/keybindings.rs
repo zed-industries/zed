@@ -264,7 +264,7 @@ impl ConflictState {
 
         for indices in action_keybind_mapping.values_mut() {
             indices.sort_unstable_by_key(|origin| origin.override_source);
-            let Some((fst, snd)) = indices.get(0).zip(indices.get(1)) else {
+            let Some((fst, snd)) = indices.first().zip(indices.get(1)) else {
                 continue;
             };
 
@@ -1066,7 +1066,7 @@ impl KeymapEditor {
 
     fn select_first(&mut self, _: &menu::SelectFirst, window: &mut Window, cx: &mut Context<Self>) {
         self.show_hover_menus = false;
-        if self.matches.get(0).is_some() {
+        if !self.matches.is_empty() {
             self.select_index(0, Some(ScrollStrategy::Center), window, cx);
         }
     }

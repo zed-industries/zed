@@ -25,7 +25,7 @@ impl ParsedMarkdownElement {
             Self::Table(table) => table.source_range.clone(),
             Self::BlockQuote(block_quote) => block_quote.source_range.clone(),
             Self::CodeBlock(code_block) => code_block.source_range.clone(),
-            Self::Paragraph(text) => match text.get(0)? {
+            Self::Paragraph(text) => match text.first()? {
                 MarkdownParagraphChunk::Text(t) => t.source_range.clone(),
                 MarkdownParagraphChunk::Image(image) => image.source_range.clone(),
             },

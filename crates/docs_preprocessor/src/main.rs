@@ -31,7 +31,7 @@ fn main() -> Result<()> {
     zed::stdout_is_a_pty();
     let args = std::env::args().skip(1).collect::<Vec<_>>();
 
-    match args.get(0).map(String::as_str) {
+    match args.first().map(String::as_str) {
         Some("supports") => {
             let renderer = args.get(1).expect("Required argument");
             let supported = renderer != "not-supported";

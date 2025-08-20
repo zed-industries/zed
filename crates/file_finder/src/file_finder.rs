@@ -727,7 +727,7 @@ fn matching_history_items<'a>(
             |mut candidates, (worktree_id, new_candidate)| {
                 candidates
                     .entry(worktree_id)
-                    .or_insert_with(Vec::new)
+                    .or_default()
                     .push(new_candidate);
                 candidates
             },

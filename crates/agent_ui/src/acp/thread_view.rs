@@ -3469,7 +3469,7 @@ impl AcpThreadView {
         {
             self.notification_subscriptions
                 .entry(screen_window)
-                .or_insert_with(Vec::new)
+                .or_default()
                 .push(cx.subscribe_in(&pop_up, window, {
                     |this, _, event, window, cx| match event {
                         AgentNotificationEvent::Accepted => {
@@ -3506,7 +3506,7 @@ impl AcpThreadView {
             // If the user manually refocuses the original window, dismiss the popup.
             self.notification_subscriptions
                 .entry(screen_window)
-                .or_insert_with(Vec::new)
+                .or_default()
                 .push({
                     let pop_up_weak = pop_up.downgrade();
 

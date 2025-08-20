@@ -50,7 +50,7 @@ impl SignatureHelp {
                 for (index, parameter) in parameters.iter().enumerate() {
                     let label_range = match &parameter.label {
                         lsp::ParameterLabel::LabelOffsets(parameter_label_offsets) => {
-                            let range = *parameter_label_offsets.get(0)? as usize
+                            let range = *parameter_label_offsets.first()? as usize
                                 ..*parameter_label_offsets.get(1)? as usize;
                             if index == active_parameter {
                                 highlights.push((

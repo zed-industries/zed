@@ -79,7 +79,7 @@ impl SlashCommand for TerminalSlashCommand {
         };
 
         let line_count = arguments
-            .get(0)
+            .first()
             .and_then(|s| s.parse::<usize>().ok())
             .unwrap_or(DEFAULT_CONTEXT_LINES);
 

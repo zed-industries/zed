@@ -302,7 +302,7 @@ impl ComponentPreview {
             if self.filter_text.is_empty() {
                 scope_groups
                     .entry(component.scope())
-                    .or_insert_with(Vec::new)
+                    .or_default()
                     .push((component.clone(), None));
                 continue;
             }
@@ -332,7 +332,7 @@ impl ComponentPreview {
                     if !positions.is_empty() {
                         scope_groups
                             .entry(component.scope())
-                            .or_insert_with(Vec::new)
+                            .or_default()
                             .push((component.clone(), Some(positions)));
                         continue;
                     }
@@ -345,7 +345,7 @@ impl ComponentPreview {
             {
                 scope_groups
                     .entry(component.scope())
-                    .or_insert_with(Vec::new)
+                    .or_default()
                     .push((component.clone(), None));
             }
         }

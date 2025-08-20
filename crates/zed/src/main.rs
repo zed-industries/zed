@@ -1139,7 +1139,7 @@ fn init_paths() -> HashMap<io::ErrorKind, Vec<&'static Path>> {
     .into_iter()
     .fold(HashMap::default(), |mut errors, path| {
         if let Err(e) = std::fs::create_dir_all(path) {
-            errors.entry(e.kind()).or_insert_with(Vec::new).push(path);
+            errors.entry(e.kind()).or_default().push(path);
         }
         errors
     })

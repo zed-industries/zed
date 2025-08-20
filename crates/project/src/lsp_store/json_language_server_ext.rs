@@ -28,7 +28,7 @@ pub fn register_requests(_lsp_store: WeakEntity<LspStore>, language_server: &Lan
             let all_schemas = cx.update(|cx| HashMap::from_iter(cx.action_schemas(&mut generator)));
             async move {
                 let all_schemas = all_schemas?;
-                let Some(uri) = params.get(0) else {
+                let Some(uri) = params.first() else {
                     anyhow::bail!("No URI");
                 };
                 let normalized_action_name = uri
