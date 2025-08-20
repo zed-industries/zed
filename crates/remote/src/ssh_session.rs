@@ -2353,6 +2353,7 @@ impl ChannelClient {
                     build_typed_envelope(peer_id, Instant::now(), incoming)
                 {
                     let type_name = envelope.payload_type_name();
+                    let message_id = envelope.message_id();
                     if let Some(future) = ProtoMessageHandlerSet::handle_message(
                         &this.message_handlers,
                         envelope,
@@ -2391,6 +2392,15 @@ impl ChannelClient {
                             .detach()
                     } else {
                         log::error!("{}:unhandled ssh message name:{type_name}", this.name);
+                        if let Err(e) = AnyProtoClient::from(this.clone()).send_response(
+                            message_id,
+                            anyhow::anyhow!("no handler registered for {type_name}").to_proto(),
+                        ) {
+                            log::error!(
+                                "{}:error sending error response for {type_name}:{e:#}",
+                                this.name
+                            );
+                        }
                     }
                 }
             }
