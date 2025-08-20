@@ -27,8 +27,7 @@ use util::paths::PathMatcher;
 /// - DO NOT use HTML entities solely to escape characters in the tool parameters.
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct GrepToolInput {
-    /// A regex pattern to search for in the entire project. Note that the regex
-    /// will be parsed by the Rust `regex` crate.
+    /// A regex pattern to search for in the entire project. Note that the regex will be parsed by the Rust `regex` crate.
     ///
     /// Do NOT specify a path here! This will only be matched against the code **content**.
     pub regex: String,
