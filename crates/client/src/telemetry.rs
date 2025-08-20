@@ -126,11 +126,11 @@ pub fn os_version() -> String {
     {
         use std::path::Path;
 
-        let content = if let Ok(file) = std::fs::read_to_string(&Path::new("/etc/os-release")) {
+        let content = if let Ok(file) = std::fs::read_to_string(Path::new("/etc/os-release")) {
             file
-        } else if let Ok(file) = std::fs::read_to_string(&Path::new("/usr/lib/os-release")) {
+        } else if let Ok(file) = std::fs::read_to_string(Path::new("/usr/lib/os-release")) {
             file
-        } else if let Ok(file) = std::fs::read_to_string(&Path::new("/var/run/os-release")) {
+        } else if let Ok(file) = std::fs::read_to_string(Path::new("/var/run/os-release")) {
             file
         } else {
             log::error!(
