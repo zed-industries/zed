@@ -2017,6 +2017,34 @@ mod tests {
             (message_editor, editor)
         });
 
+        cx.simulate_input("Lorem @");
+
+        editor.update_in(&mut cx, |editor, window, cx| {
+            assert_eq!(editor.text(cx), "Lorem @");
+            assert!(editor.has_visible_completions_menu());
+
+            // Only files since we have default capabilities
+            assert_eq!(
+                current_completion_labels(editor),
+                &[
+                    "eight.txt dir/b/",
+                    "seven.txt dir/b/",
+                    "six.txt dir/b/",
+                    "five.txt dir/b/",
+                ]
+            );
+            editor.set_text("", window, cx);
+        });
+
+        message_editor.update(&mut cx, |editor, _cx| {
+            // Enable all prompt capabilities
+            editor.set_prompt_capabilities(acp::PromptCapabilities {
+                image: true,
+                audio: true,
+                embedded_context: true,
+            });
+        });
+
         cx.simulate_input("Lorem ");
 
         editor.update(&mut cx, |editor, cx| {

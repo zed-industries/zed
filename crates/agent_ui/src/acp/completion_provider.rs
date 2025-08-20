@@ -996,7 +996,7 @@ mod tests {
         assert_eq!(
             MentionCompletion::try_parse(true, "Lorem @symbol main", 0),
             Some(MentionCompletion {
-                source_range: 6..19,
+                source_range: 6..18,
                 mode: Some(ContextPickerMode::Symbol),
                 argument: Some("main".to_string()),
             })
@@ -1007,9 +1007,9 @@ mod tests {
         assert_eq!(
             MentionCompletion::try_parse(false, "Lorem @symbol main", 0),
             Some(MentionCompletion {
-                source_range: 6..19,
+                source_range: 6..18,
                 mode: None,
-                argument: Some("@symbol main".to_string()),
+                argument: Some("main".to_string()),
             })
         );
     }
