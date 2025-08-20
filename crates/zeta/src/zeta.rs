@@ -118,12 +118,8 @@ impl Dismissable for ZedPredictUpsell {
     }
 }
 
-pub fn should_show_upsell_modal(user_store: &Entity<UserStore>, cx: &App) -> bool {
-    if user_store.read(cx).has_accepted_terms_of_service() {
-        !ZedPredictUpsell::dismissed()
-    } else {
-        true
-    }
+pub fn should_show_upsell_modal() -> bool {
+    !ZedPredictUpsell::dismissed()
 }
 
 #[derive(Clone)]
@@ -1547,16 +1543,6 @@ impl edit_prediction::EditPredictionProvider for ZetaEditPredictionProvider {
     ) -> bool {
         true
     }
-
-    fn needs_terms_acceptance(&self, cx: &App) -> bool {
-        !self
-            .zeta
-            .read(cx)
-            .user_store
-            .read(cx)
-            .has_accepted_terms_of_service()
-    }
-
     fn is_refreshing(&self) -> bool {
         !self.pending_completions.is_empty()
     }

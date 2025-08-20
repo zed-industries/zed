@@ -1,5 +1,5 @@
 use super::{Client, Status, TypedEnvelope, proto};
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{Context as _, Result};
 use chrono::{DateTime, Utc};
 use cloud_api_client::websocket_protocol::MessageToClient;
 use cloud_api_client::{GetAuthenticatedUserResponse, PlanInfo};
@@ -844,32 +844,6 @@ impl UserStore {
 
     pub fn watch_current_user(&self) -> watch::Receiver<Option<Arc<User>>> {
         self.current_user.clone()
-    }
-
-    pub fn has_accepted_terms_of_service(&self) -> bool {
-        self.accepted_tos_at
-            .is_some_and(|accepted_tos_at| accepted_tos_at.is_some())
-    }
-
-    pub fn accept_terms_of_service(&self, cx: &Context<Self>) -> Task<Result<()>> {
-        if self.current_user().is_none() {
-            return Task::ready(Err(anyhow!("no current user")));
-        };
-
-        let client = self.client.clone();
-        cx.spawn(async move |this, cx| -> anyhow::Result<()> {
-            let client = client.upgrade().context("client not found")?;
-            let response = client
-                .cloud_client()
-                .accept_terms_of_service()
-                .await
-                .context("error accepting tos")?;
-            this.update(cx, |this, cx| {
-                this.accepted_tos_at = Some(response.user.accepted_tos_at);
-                cx.emit(Event::PrivateUserInfoUpdated);
-            })?;
-            Ok(())
-        })
     }
 
     fn load_users(
