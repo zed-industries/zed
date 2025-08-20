@@ -4362,6 +4362,7 @@ mod tests {
                     | "workspace::MoveItemToPaneInDirection"
                     | "workspace::OpenTerminal"
                     | "workspace::SendKeystrokes"
+                    | "agent::NewNativeAgentThreadFromSummary"
                     | "zed::OpenBrowser"
                     | "zed::OpenZedUrl" => {}
                     _ => {
