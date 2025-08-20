@@ -26,6 +26,7 @@ assistant_context.workspace = true
 assistant_tool.workspace = true
 assistant_tools.workspace = true
 chrono.workspace = true
+client.workspace = true
 cloud_llm_client.workspace = true
 collections.workspace = true
 context_server.workspace = true

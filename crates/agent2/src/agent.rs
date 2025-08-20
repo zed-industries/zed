@@ -1,8 +1,8 @@
-use crate::HistoryStore;
 use crate::{
     ContextServerRegistry, Thread, ThreadEvent, ThreadsDatabase, ToolCallAuthorization,
     UserMessageContent, templates::Templates,
 };
+use crate::{HistoryStore, TokenUsageUpdated};
 use acp_thread::{AcpThread, AgentModelSelector};
 use action_log::ActionLog;
 use agent_client_protocol as acp;
@@ -253,6 +253,7 @@ impl NativeAgent {
             cx.observe_release(&acp_thread, |this, acp_thread, _cx| {
                 this.sessions.remove(acp_thread.session_id());
             }),
+            cx.subscribe(&thread_handle, Self::handle_thread_token_usage_updated),
             cx.observe(&thread_handle, move |this, thread, cx| {
                 this.save_thread(thread.clone(), cx)
             }),
@@ -438,6 +439,23 @@ impl NativeAgent {
                 })
             })
         })
+    }
+
+    fn handle_thread_token_usage_updated(
+        &mut self,
+        thread: Entity<Thread>,
+        usage: &TokenUsageUpdated,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(session) = self.sessions.get(thread.read(cx).id()) else {
+            return;
+        };
+        session
+            .acp_thread
+            .update(cx, |acp_thread, cx| {
+                acp_thread.update_token_usage(usage.0.clone(), cx);
+            })
+            .ok();
     }
 
     fn handle_project_event(
@@ -694,11 +712,6 @@ impl NativeAgentConnection {
                                 acp_thread.update(cx, |thread, cx| {
                                     thread.update_tool_call(update, cx)
                                 })??;
-                            }
-                            ThreadEvent::TokenUsageUpdate(usage) => {
-                                acp_thread.update(cx, |thread, cx| {
-                                    thread.update_token_usage(Some(usage), cx)
-                                })?;
                             }
                             ThreadEvent::TitleUpdate(title) => {
                                 acp_thread
