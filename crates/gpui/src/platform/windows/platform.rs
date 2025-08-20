@@ -467,7 +467,9 @@ impl Platform for WindowsPlatform {
         let url_string = url.to_string();
         self.background_executor()
             .spawn(async move {
-                open_target(url_string);
+                open_target(url_string)
+                    .with_context(|| format!("Opening url: {}", url))
+                    .log_err();
             })
             .detach();
     }
@@ -535,7 +537,9 @@ impl Platform for WindowsPlatform {
         let path = path.to_path_buf();
         self.background_executor()
             .spawn(async move {
-                open_target(path);
+                open_target(path)
+                    .with_context(|| format!("Opening {} with system", path.display()))
+                    .log_err();
             })
             .detach();
     }
@@ -726,20 +730,25 @@ pub(crate) struct WindowCreationInfo {
     pub(crate) disable_direct_composition: bool,
 }
 
-fn open_target(target: impl AsRef<OsStr>) {
+fn open_target(target: impl AsRef<OsStr>) -> Result<()> {
     let target = target.as_ref();
-    unsafe {
-        let ret = ShellExecuteW(
+    let ret = unsafe {
+        ShellExecuteW(
             None,
             windows::core::w!("open"),
             &HSTRING::from(target),
             None,
             None,
             SW_SHOWDEFAULT,
-        );
-        if ret.0 as isize <= 32 {
-            log::error!("Unable to open target: {}", std::io::Error::last_os_error());
-        }
+        )
+    };
+    if ret.0 as isize <= 32 {
+        Err(anyhow::anyhow!(
+            "Unable to open target: {}",
+            std::io::Error::last_os_error()
+        ))
+    } else {
+        Ok(())
     }
 }
 
@@ -774,8 +783,7 @@ fn open_target_in_explorer(target: &Path) -> Result<()> {
     let highlight = [file_item as *const _];
     unsafe { SHOpenFolderAndSelectItems(dir_item as _, Some(&highlight), 0) }.or_else(|err| {
         if err.code().0 == ERROR_FILE_NOT_FOUND.0 as i32 {
-            open_target(dir);
-            Ok(())
+            open_target(dir).context("Opening target parent folder")
         } else {
             Err(anyhow::anyhow!("Can not open target path: {}", err))
         }
