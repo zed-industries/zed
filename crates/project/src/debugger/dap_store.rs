@@ -684,7 +684,7 @@ impl DapStore {
             let shutdown_id = parent_session.update(cx, |parent_session, _| {
                 parent_session.remove_child_session_id(session_id);
 
-                if parent_session.child_session_ids().len() == 0 {
+                if parent_session.child_session_ids().is_empty() {
                     Some(parent_session.session_id())
                 } else {
                     None
@@ -701,7 +701,7 @@ impl DapStore {
         cx.emit(DapStoreEvent::DebugClientShutdown(session_id));
 
         cx.background_spawn(async move {
-            if shutdown_children.len() > 0 {
+            if !shutdown_children.is_empty() {
                 let _ = join_all(shutdown_children).await;
             }
 

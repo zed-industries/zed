@@ -155,6 +155,7 @@ impl AcpThreadView {
     pub fn new(
         agent: Rc<dyn AgentServer>,
         resume_thread: Option<DbThreadMetadata>,
+        summarize_thread: Option<DbThreadMetadata>,
         workspace: WeakEntity<Workspace>,
         project: Entity<Project>,
         history_store: Entity<HistoryStore>,
@@ -164,7 +165,7 @@ impl AcpThreadView {
     ) -> Self {
         let prevent_slash_commands = agent.clone().downcast::<ClaudeCode>().is_some();
         let message_editor = cx.new(|cx| {
-            MessageEditor::new(
+            let mut editor = MessageEditor::new(
                 workspace.clone(),
                 project.clone(),
                 history_store.clone(),
@@ -177,7 +178,11 @@ impl AcpThreadView {
                 },
                 window,
                 cx,
-            )
+            );
+            if let Some(entry) = summarize_thread {
+                editor.insert_thread_summary(entry, window, cx);
+            }
+            editor
         });
 
         let list_state = ListState::new(0, gpui::ListAlignment::Bottom, px(2048.0));
@@ -2393,7 +2398,6 @@ impl AcpThreadView {
             })
             .when(!changed_buffers.is_empty(), |this| {
                 this.child(self.render_edits_summary(
-                    action_log,
                     &changed_buffers,
                     self.edits_expanded,
                     pending_edits,
@@ -2545,7 +2549,6 @@ impl AcpThreadView {
 
     fn render_edits_summary(
         &self,
-        action_log: &Entity<ActionLog>,
         changed_buffers: &BTreeMap<Entity<Buffer>, Entity<BufferDiff>>,
         expanded: bool,
         pending_edits: bool,
@@ -2656,14 +2659,9 @@ impl AcpThreadView {
                                 )
                                 .map(|kb| kb.size(rems_from_px(10.))),
                             )
-                            .on_click({
-                                let action_log = action_log.clone();
-                                cx.listener(move |_, _, _, cx| {
-                                    action_log.update(cx, |action_log, cx| {
-                                        action_log.reject_all_edits(cx).detach();
-                                    })
-                                })
-                            }),
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.reject_all(&RejectAll, window, cx);
+                            })),
                     )
                     .child(
                         Button::new("keep-all-changes", "Keep All")
@@ -2676,14 +2674,9 @@ impl AcpThreadView {
                                 KeyBinding::for_action_in(&KeepAll, &focus_handle, window, cx)
                                     .map(|kb| kb.size(rems_from_px(10.))),
                             )
-                            .on_click({
-                                let action_log = action_log.clone();
-                                cx.listener(move |_, _, _, cx| {
-                                    action_log.update(cx, |action_log, cx| {
-                                        action_log.keep_all_edits(cx);
-                                    })
-                                })
-                            }),
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.keep_all(&KeepAll, window, cx);
+                            })),
                     ),
             )
     }
@@ -3007,6 +3000,24 @@ impl AcpThreadView {
                 cx,
             );
         });
+    }
+
+    fn keep_all(&mut self, _: &KeepAll, _window: &mut Window, cx: &mut Context<Self>) {
+        let Some(thread) = self.thread() else {
+            return;
+        };
+        let action_log = thread.read(cx).action_log().clone();
+        action_log.update(cx, |action_log, cx| action_log.keep_all_edits(cx));
+    }
+
+    fn reject_all(&mut self, _: &RejectAll, _window: &mut Window, cx: &mut Context<Self>) {
+        let Some(thread) = self.thread() else {
+            return;
+        };
+        let action_log = thread.read(cx).action_log().clone();
+        action_log
+            .update(cx, |action_log, cx| action_log.reject_all_edits(cx))
+            .detach();
     }
 
     fn render_burn_mode_toggle(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
@@ -3636,8 +3647,18 @@ impl AcpThreadView {
                         .child(
                             Button::new("start-new-thread", "Start New Thread")
                                 .label_size(LabelSize::Small)
-                                .on_click(cx.listener(|_this, _, _window, _cx| {
-                                    // todo: Once thread summarization is implemented, start a new thread from a summary.
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    let Some(thread) = this.thread() else {
+                                        return;
+                                    };
+                                    let session_id = thread.read(cx).session_id().clone();
+                                    window.dispatch_action(
+                                        crate::NewNativeAgentThreadFromSummary {
+                                            from_session_id: session_id,
+                                        }
+                                        .boxed_clone(),
+                                        cx,
+                                    );
                                 })),
                         )
                         .when(burn_mode_available, |this| {
@@ -3937,6 +3958,8 @@ impl Render for AcpThreadView {
             .key_context("AcpThread")
             .on_action(cx.listener(Self::open_agent_diff))
             .on_action(cx.listener(Self::toggle_burn_mode))
+            .on_action(cx.listener(Self::keep_all))
+            .on_action(cx.listener(Self::reject_all))
             .bg(cx.theme().colors().panel_background)
             .child(match &self.thread_state {
                 ThreadState::Unauthenticated {
@@ -4320,6 +4343,7 @@ pub(crate) mod tests {
                 AcpThreadView::new(
                     Rc::new(agent),
                     None,
+                    None,
                     workspace.downgrade(),
                     project,
                     history_store,
@@ -4525,6 +4549,7 @@ pub(crate) mod tests {
             cx.new(|cx| {
                 AcpThreadView::new(
                     Rc::new(StubAgentServer::new(connection.as_ref().clone())),
+                    None,
                     None,
                     workspace.downgrade(),
                     project.clone(),

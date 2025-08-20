@@ -1394,6 +1394,17 @@ impl AcpThread {
                             this.send_task.take();
                         }
 
+                        // Truncate entries if the last prompt was refused.
+                        if let Ok(Ok(acp::PromptResponse {
+                            stop_reason: acp::StopReason::Refusal,
+                        })) = result
+                            && let Some((ix, _)) = this.last_user_message()
+                        {
+                            let range = ix..this.entries.len();
+                            this.entries.truncate(ix);
+                            cx.emit(AcpThreadEvent::EntriesRemoved(range));
+                        }
+
                         cx.emit(AcpThreadEvent::Stopped);
                         Ok(())
                     }
@@ -2367,6 +2378,92 @@ mod tests {
             );
         });
         assert_eq!(fs.files(), vec![Path::new(path!("/test/file-0"))]);
+    }
+
+    #[gpui::test]
+    async fn test_refusal(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(path!("/"), json!({})).await;
+        let project = Project::test(fs.clone(), [path!("/").as_ref()], cx).await;
+
+        let refuse_next = Arc::new(AtomicBool::new(false));
+        let connection = Rc::new(FakeAgentConnection::new().on_user_message({
+            let refuse_next = refuse_next.clone();
+            move |request, thread, mut cx| {
+                let refuse_next = refuse_next.clone();
+                async move {
+                    if refuse_next.load(SeqCst) {
+                        return Ok(acp::PromptResponse {
+                            stop_reason: acp::StopReason::Refusal,
+                        });
+                    }
+
+                    let acp::ContentBlock::Text(content) = &request.prompt[0] else {
+                        panic!("expected text content block");
+                    };
+                    thread.update(&mut cx, |thread, cx| {
+                        thread
+                            .handle_session_update(
+                                acp::SessionUpdate::AgentMessageChunk {
+                                    content: content.text.to_uppercase().into(),
+                                },
+                                cx,
+                            )
+                            .unwrap();
+                    })?;
+                    Ok(acp::PromptResponse {
+                        stop_reason: acp::StopReason::EndTurn,
+                    })
+                }
+                .boxed_local()
+            }
+        }));
+        let thread = cx
+            .update(|cx| connection.new_thread(project, Path::new(path!("/test")), cx))
+            .await
+            .unwrap();
+
+        cx.update(|cx| thread.update(cx, |thread, cx| thread.send(vec!["hello".into()], cx)))
+            .await
+            .unwrap();
+        thread.read_with(cx, |thread, cx| {
+            assert_eq!(
+                thread.to_markdown(cx),
+                indoc! {"
+                    ## User
+
+                    hello
+
+                    ## Assistant
+
+                    HELLO
+
+                "}
+            );
+        });
+
+        // Simulate refusing the second message, ensuring the conversation gets
+        // truncated to before sending it.
+        refuse_next.store(true, SeqCst);
+        cx.update(|cx| thread.update(cx, |thread, cx| thread.send(vec!["world".into()], cx)))
+            .await
+            .unwrap();
+        thread.read_with(cx, |thread, cx| {
+            assert_eq!(
+                thread.to_markdown(cx),
+                indoc! {"
+                    ## User
+
+                    hello
+
+                    ## Assistant
+
+                    HELLO
+
+                "}
+            );
+        });
     }
 
     async fn run_until_first_tool_call(
