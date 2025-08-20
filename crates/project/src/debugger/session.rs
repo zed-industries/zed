@@ -256,17 +256,19 @@ impl RunningMode {
         breakpoint_store: &Entity<BreakpointStore>,
         cx: &mut App,
     ) -> Task<()> {
-        let breakpoints =
-            breakpoint_store
-                .read(cx)
-                .source_breakpoints_from_path(&abs_path, cx)
-                .into_iter()
-                .filter(|bp| bp.state.is_enabled())
-                .chain(self.tmp_breakpoint.iter().filter_map(|breakpoint| {
-                    breakpoint.path.eq(&abs_path).then(|| breakpoint.clone())
-                }))
-                .map(Into::into)
-                .collect();
+        let breakpoints = breakpoint_store
+            .read(cx)
+            .source_breakpoints_from_path(&abs_path, cx)
+            .into_iter()
+            .filter(|bp| bp.state.is_enabled())
+            .chain(
+                self.tmp_breakpoint
+                    .iter()
+                    .filter(|&breakpoint| breakpoint.path.eq(&abs_path))
+                    .cloned(),
+            )
+            .map(Into::into)
+            .collect();
 
         let raw_breakpoints = breakpoint_store
             .read(cx)
@@ -1932,7 +1934,8 @@ impl Session {
             let exception_filters = self
                 .exception_breakpoints
                 .values()
-                .filter_map(|(filter, is_enabled)| is_enabled.then(|| filter.clone()))
+                .filter(|&(_filter, is_enabled)| *is_enabled)
+                .map(|(filter, _)| filter.clone())
                 .collect();
 
             let supports_exception_filters = self
@@ -1959,7 +1962,8 @@ impl Session {
             let breakpoints = self
                 .data_breakpoints
                 .values()
-                .filter_map(|state| state.is_enabled.then(|| state.dap.clone()))
+                .filter(|&state| state.is_enabled)
+                .map(|state| state.dap.clone())
                 .collect();
             let command = SetDataBreakpointsCommand { breakpoints };
             mode.request(command).detach_and_log_err(cx);

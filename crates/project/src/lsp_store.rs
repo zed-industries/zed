@@ -10541,7 +10541,8 @@ impl LspStore {
                         let all_language_servers_with_this_name = local
                             .language_server_ids
                             .iter()
-                            .filter_map(|(seed, state)| seed.name.eq(name).then(|| state.id));
+                            .filter(|&(seed, _state)| seed.name.eq(name))
+                            .map(|(_seed, state)| state.id);
                         language_servers_to_stop.extend(all_language_servers_with_this_name);
                         old_ids_count == language_servers_to_stop.len()
                     });
@@ -10553,7 +10554,8 @@ impl LspStore {
                 local
                     .language_server_ids
                     .iter()
-                    .filter_map(|(seed, v)| seed.name.eq(&name).then(|| v.id)),
+                    .filter(|&(seed, _)| seed.name.eq(&name))
+                    .map(|(_, v)| v.id),
             );
         }
 
@@ -11150,7 +11152,8 @@ impl LspStore {
         let mut language_server_ids = local
             .language_server_ids
             .iter()
-            .filter_map(|(seed, v)| seed.worktree_id.eq(&worktree_id).then(|| v.id))
+            .filter(|&(seed, _)| seed.worktree_id.eq(&worktree_id))
+            .map(|(_, v)| v.id)
             .collect::<Vec<_>>();
         language_server_ids.sort();
         language_server_ids.dedup();

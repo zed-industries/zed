@@ -181,7 +181,8 @@ mod tests {
         let mut expected_tools = profile_settings.context_servers["mcp"]
             .tools
             .iter()
-            .filter_map(|(key, enabled)| enabled.then(|| key.to_string()))
+            .filter(|&(_, enabled)| *enabled)
+            .map(|(key, _)| key.to_string())
             .collect::<Vec<_>>();
         expected_tools.sort();
 
