@@ -1903,6 +1903,33 @@ impl Editor {
                             editor.update_lsp_data(false, Some(*buffer_id), window, cx);
                         }
                     }
+
+                    project::Event::OpenProjectTransaction(transaction) => {
+                        let Some(workspace) = editor.workspace() else {
+                            return;
+                        };
+                        let Some(active_editor) = workspace.read(cx).active_item_as::<Self>(cx)
+                        else {
+                            return;
+                        };
+                        if &active_editor.read(cx).buffer == editor.buffer() {
+                            let workspace = workspace.downgrade();
+                            let transaction = transaction.clone();
+                            cx.spawn_in(window, async move |editor, mut cx| {
+                                Self::open_project_transaction(
+                                    Some(&editor),
+                                    workspace,
+                                    transaction,
+                                    "".to_string(),
+                                    &mut cx,
+                                )
+                                .await
+                                .ok()
+                            })
+                            .detach();
+                        }
+                    }
+
                     _ => {}
                 },
             ));
