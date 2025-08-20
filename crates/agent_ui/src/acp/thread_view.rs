@@ -240,6 +240,7 @@ pub struct AcpThreadView {
     project: Entity<Project>,
     thread_state: ThreadState,
     history_store: Entity<HistoryStore>,
+    hovered_recent_history_item: Option<usize>,
     entry_view_state: Entity<EntryViewState>,
     message_editor: Entity<MessageEditor>,
     model_selector: Option<Entity<AcpModelSelectorPopover>>,
@@ -357,6 +358,7 @@ impl AcpThreadView {
             editor_expanded: false,
             terminal_expanded: true,
             history_store,
+            hovered_recent_history_item: None,
             _subscriptions: subscriptions,
             _cancel_task: None,
         }
@@ -575,6 +577,10 @@ impl AcpThreadView {
             self.thread_state = ThreadState::LoadError(LoadError::Other(err.to_string().into()))
         }
         cx.notify();
+    }
+
+    pub fn workspace(&self) -> &WeakEntity<Workspace> {
+        &self.workspace
     }
 
     pub fn thread(&self) -> Option<&Entity<AcpThread>> {
@@ -4220,6 +4226,18 @@ impl AcpThreadView {
             cx,
         );
         cx.notify();
+    }
+
+    pub fn delete_history_entry(&mut self, entry: HistoryEntry, cx: &mut Context<Self>) {
+        let task = match entry {
+            HistoryEntry::AcpThread(thread) => self.history_store.update(cx, |history, cx| {
+                history.delete_thread(thread.id.clone(), cx)
+            }),
+            HistoryEntry::TextThread(context) => self.history_store.update(cx, |history, cx| {
+                history.delete_text_thread(context.path.clone(), cx)
+            }),
+        };
+        task.detach_and_log_err(cx);
     }
 }
 
