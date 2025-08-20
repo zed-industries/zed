@@ -100,8 +100,8 @@ impl AgentConnection for ClaudeAgentConnection {
             .await
             else {
                 return Err(LoadError::NotInstalled {
-                    error_message: "Failed to find claude binary".into(),
-                    install_message: "Install claude".into(),
+                    error_message: "Failed to find Claude Code binary".into(),
+                    install_message: "Install Claude Code".into(),
                     install_command: "npm install -g @anthropic-ai/claude-code@latest".into(),
                 }.into());
             };
@@ -222,12 +222,12 @@ impl AgentConnection for ClaudeAgentConnection {
                                 {
                                     LoadError::Unsupported {
                                     error_message: format!(
-                                            "Installed version of Claude Code ({}, version {}) is too old.",
+                                            "Your installed version of Claude Code ({}, version {}) does not have required features for use with Zed.",
                                             command.path.to_string_lossy(),
                                             version,
                                         )
                                         .into(),
-                                        upgrade_message: "Upgrade Claude Code to Latest".into(),
+                                        upgrade_message: "Upgrade Claude Code to latest".into(),
                                         upgrade_command: format!(
                                             "{} update",
                                             command.path.to_string_lossy()
