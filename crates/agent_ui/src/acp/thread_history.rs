@@ -1,11 +1,12 @@
-use crate::RemoveSelectedThread;
+use crate::acp::AcpThreadView;
+use crate::{AgentPanel, RemoveSelectedThread};
 use agent2::{HistoryEntry, HistoryStore};
 use chrono::{Datelike as _, Local, NaiveDate, TimeDelta};
 use editor::{Editor, EditorEvent};
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     App, Empty, Entity, EventEmitter, FocusHandle, Focusable, ScrollStrategy, Stateful, Task,
-    UniformListScrollHandle, Window, uniform_list,
+    UniformListScrollHandle, WeakEntity, Window, uniform_list,
 };
 use std::{fmt::Display, ops::Range, sync::Arc};
 use time::{OffsetDateTime, UtcOffset};
@@ -634,6 +635,150 @@ impl Render for AcpThreadHistory {
                         .when_some(self.render_scrollbar(cx), |div, scrollbar| {
                             div.child(scrollbar)
                         })
+                }
+            })
+    }
+}
+
+#[derive(IntoElement)]
+pub struct AcpHistoryEntryElement {
+    entry: HistoryEntry,
+    thread_view: WeakEntity<AcpThreadView>,
+    selected: bool,
+    hovered: bool,
+    on_hover: Box<dyn Fn(&bool, &mut Window, &mut App) + 'static>,
+}
+
+impl AcpHistoryEntryElement {
+    pub fn new(entry: HistoryEntry, thread_view: WeakEntity<AcpThreadView>) -> Self {
+        Self {
+            entry,
+            thread_view,
+            selected: false,
+            hovered: false,
+            on_hover: Box::new(|_, _, _| {}),
+        }
+    }
+
+    pub fn hovered(mut self, hovered: bool) -> Self {
+        self.hovered = hovered;
+        self
+    }
+
+    pub fn on_hover(mut self, on_hover: impl Fn(&bool, &mut Window, &mut App) + 'static) -> Self {
+        self.on_hover = Box::new(on_hover);
+        self
+    }
+}
+
+impl RenderOnce for AcpHistoryEntryElement {
+    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
+        let (id, title, timestamp) = match &self.entry {
+            HistoryEntry::AcpThread(thread) => (
+                thread.id.to_string(),
+                thread.title.clone(),
+                thread.updated_at,
+            ),
+            HistoryEntry::TextThread(context) => (
+                context.path.to_string_lossy().to_string(),
+                context.title.clone(),
+                context.mtime.to_utc(),
+            ),
+        };
+
+        let formatted_time = {
+            let now = chrono::Utc::now();
+            let duration = now.signed_duration_since(timestamp);
+
+            if duration.num_days() > 0 {
+                format!("{}d", duration.num_days())
+            } else if duration.num_hours() > 0 {
+                format!("{}h ago", duration.num_hours())
+            } else if duration.num_minutes() > 0 {
+                format!("{}m ago", duration.num_minutes())
+            } else {
+                "Just now".to_string()
+            }
+        };
+
+        ListItem::new(SharedString::from(id))
+            .rounded()
+            .toggle_state(self.selected)
+            .spacing(ListItemSpacing::Sparse)
+            .start_slot(
+                h_flex()
+                    .w_full()
+                    .gap_2()
+                    .justify_between()
+                    .child(Label::new(title).size(LabelSize::Small).truncate())
+                    .child(
+                        Label::new(formatted_time)
+                            .color(Color::Muted)
+                            .size(LabelSize::XSmall),
+                    ),
+            )
+            .on_hover(self.on_hover)
+            .end_slot::<IconButton>(if self.hovered || self.selected {
+                Some(
+                    IconButton::new("delete", IconName::Trash)
+                        .shape(IconButtonShape::Square)
+                        .icon_size(IconSize::XSmall)
+                        .icon_color(Color::Muted)
+                        .tooltip(move |window, cx| {
+                            Tooltip::for_action("Delete", &RemoveSelectedThread, window, cx)
+                        })
+                        .on_click({
+                            let thread_view = self.thread_view.clone();
+                            let entry = self.entry.clone();
+
+                            move |_event, _window, cx| {
+                                if let Some(thread_view) = thread_view.upgrade() {
+                                    thread_view.update(cx, |thread_view, cx| {
+                                        thread_view.delete_history_entry(entry.clone(), cx);
+                                    });
+                                }
+                            }
+                        }),
+                )
+            } else {
+                None
+            })
+            .on_click({
+                let thread_view = self.thread_view.clone();
+                let entry = self.entry;
+
+                move |_event, window, cx| {
+                    if let Some(workspace) = thread_view
+                        .upgrade()
+                        .and_then(|view| view.read(cx).workspace().upgrade())
+                    {
+                        match &entry {
+                            HistoryEntry::AcpThread(thread_metadata) => {
+                                if let Some(panel) = workspace.read(cx).panel::<AgentPanel>(cx) {
+                                    panel.update(cx, |panel, cx| {
+                                        panel.load_agent_thread(
+                                            thread_metadata.clone(),
+                                            window,
+                                            cx,
+                                        );
+                                    });
+                                }
+                            }
+                            HistoryEntry::TextThread(context) => {
+                                if let Some(panel) = workspace.read(cx).panel::<AgentPanel>(cx) {
+                                    panel.update(cx, |panel, cx| {
+                                        panel
+                                            .open_saved_prompt_editor(
+                                                context.path.clone(),
+                                                window,
+                                                cx,
+                                            )
+                                            .detach_and_log_err(cx);
+                                    });
+                                }
+                            }
+                        }
+                    }
                 }
             })
     }
