@@ -22,7 +22,7 @@ use project::{
 };
 use settings::Settings;
 use std::fmt::Write;
-use std::{cell::RefCell, ops::Range, rc::Rc, usize};
+use std::{cell::RefCell, ops::Range, rc::Rc};
 use theme::{Theme, ThemeSettings};
 use ui::{ContextMenu, Divider, PopoverMenu, SplitButton, Tooltip, prelude::*};
 use util::ResultExt;

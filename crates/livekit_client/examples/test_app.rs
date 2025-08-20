@@ -197,19 +197,23 @@ impl LivekitWindow {
                 cx.notify();
             }
 
-            RoomEvent::TrackMuted { participant, .. } => {
-                if let Participant::Remote(participant) = participant {
-                    self.remote_participant(participant).muted = true;
-                    cx.notify();
-                }
+            RoomEvent::TrackMuted {
+                participant: Participant::Remote(participant),
+                ..
+            } => {
+                self.remote_participant(participant).muted = true;
+                cx.notify();
             }
+            RoomEvent::TrackMuted { .. } => {}
 
-            RoomEvent::TrackUnmuted { participant, .. } => {
-                if let Participant::Remote(participant) = participant {
-                    self.remote_participant(participant).muted = false;
-                    cx.notify();
-                }
+            RoomEvent::TrackUnmuted {
+                participant: Participant::Remote(participant),
+                ..
+            } => {
+                self.remote_participant(participant).muted = false;
+                cx.notify();
             }
+            RoomEvent::TrackUnmuted { .. } => {}
 
             RoomEvent::ActiveSpeakersChanged { speakers } => {
                 for (identity, output) in &mut self.remote_participants {

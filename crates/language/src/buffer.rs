@@ -4481,7 +4481,7 @@ impl BufferSnapshot {
                         .and_then(|first_chunk| first_chunk.chars().next());
                     // Skip empty and "words" starting with digits as a heuristic to reduce useless completions
                     if !query.skip_digits
-                        || first_char.is_none_or(|first_char| !first_char.is_digit(10))
+                        || first_char.is_none_or(|first_char| !first_char.is_ascii_digit())
                     {
                         words.insert(word_text.collect(), word_range);
                     }

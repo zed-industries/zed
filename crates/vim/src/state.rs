@@ -441,7 +441,7 @@ impl MarksState {
     fn is_global_mark(&self, key: &str) -> bool {
         key.chars()
             .next()
-            .is_some_and(|c| c.is_uppercase() || c.is_digit(10))
+            .is_some_and(|c| c.is_uppercase() || c.is_ascii_digit())
     }
 
     fn rename_buffer(

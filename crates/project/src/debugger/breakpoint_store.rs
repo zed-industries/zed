@@ -13,7 +13,7 @@ use rpc::{
     AnyProtoClient, TypedEnvelope,
     proto::{self},
 };
-use std::{hash::Hash, ops::Range, path::Path, sync::Arc, u32};
+use std::{hash::Hash, ops::Range, path::Path, sync::Arc};
 use text::{Point, PointUtf16};
 use util::maybe;
 

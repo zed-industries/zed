@@ -5524,7 +5524,7 @@ impl Editor {
 
         let skip_digits = query
             .as_ref()
-            .is_none_or(|query| !query.chars().any(|c| c.is_digit(10)));
+            .is_none_or(|query| !query.chars().any(|c| c.is_ascii_digit()));
 
         let (mut words, provider_responses) = match &provider {
             Some(provider) => {

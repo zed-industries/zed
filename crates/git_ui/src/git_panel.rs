@@ -59,7 +59,7 @@ use settings::{Settings, SettingsStore};
 use std::future::Future;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
-use std::{collections::HashSet, sync::Arc, time::Duration, usize};
+use std::{collections::HashSet, sync::Arc, time::Duration};
 use strum::{IntoEnumIterator, VariantNames};
 use time::OffsetDateTime;
 use ui::{

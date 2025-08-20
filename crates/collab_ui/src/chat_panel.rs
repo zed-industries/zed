@@ -148,20 +148,21 @@ impl ChatPanel {
             this.subscriptions.push(cx.subscribe(
                 &ActiveCall::global(cx),
                 move |this: &mut Self, call, event: &room::Event, cx| match event {
-                    room::Event::RoomJoined { channel_id } => {
-                        if let Some(channel_id) = channel_id {
-                            this.select_channel(*channel_id, None, cx)
-                                .detach_and_log_err(cx);
+                    room::Event::RoomJoined {
+                        channel_id: Some(channel_id),
+                    } => {
+                        this.select_channel(*channel_id, None, cx)
+                            .detach_and_log_err(cx);
 
-                            if call
-                                .read(cx)
-                                .room()
-                                .is_some_and(|room| room.read(cx).contains_guests())
-                            {
-                                cx.emit(PanelEvent::Activate)
-                            }
+                        if call
+                            .read(cx)
+                            .room()
+                            .is_some_and(|room| room.read(cx).contains_guests())
+                        {
+                            cx.emit(PanelEvent::Activate)
                         }
                     }
+                    room::Event::RoomJoined { channel_id: None } => {}
                     room::Event::RoomLeft { channel_id } => {
                         if channel_id == &this.channel_id(cx) {
                             cx.emit(PanelEvent::Close)
