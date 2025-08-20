@@ -643,10 +643,11 @@ async fn upload_minidump(
         commit_sha = metadata.init.commit_sha.clone(),
     );
 
-    if let Ok(gpus) = feedback::system_specs::read_gpu_info_from_sys_class_drm() {
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    if let Ok(gpus) = system_specs::read_gpu_info_from_sys_class_drm() {
         let gpu_count = gpus.len();
         for (index, gpu) in gpus.into_iter().enumerate() {
-            let feedback::system_specs::GpuInfo {
+            let system_specs::GpuInfo {
                 device_name,
                 device_pci_id,
                 vendor_name,

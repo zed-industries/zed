@@ -1,11 +1,21 @@
+//! # system_specs
+
 use anyhow::Context as _;
 use client::telemetry;
-use gpui::{App, AppContext as _, SemanticVersion, Task, Window};
+use gpui::{App, AppContext as _, SemanticVersion, Task, Window, actions};
 use human_bytes::human_bytes;
 use release_channel::{AppCommitSha, AppVersion, ReleaseChannel};
 use serde::Serialize;
 use std::{env, fmt::Display};
 use sysinfo::{MemoryRefreshKind, RefreshKind, System};
+
+actions!(
+    zed,
+    [
+        /// Copies system specifications to the clipboard for bug reports.
+        CopySystemSpecsIntoClipboard,
+    ]
+);
 
 #[derive(Clone, Debug, Serialize)]
 pub struct SystemSpecs {
@@ -170,7 +180,9 @@ pub struct GpuInfo {
     pub pci_address: String,
 }
 
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
 pub fn read_gpu_info_from_sys_class_drm() -> anyhow::Result<Vec<GpuInfo>> {
+    use pciid_parser;
     let dir_iter = std::fs::read_dir("/sys/class/drm").context("Failed to read /sys/class/drm")?;
     let mut gpus = vec![];
     let pci_db = pciid_parser::Database::read().ok();
@@ -213,14 +225,11 @@ pub fn read_gpu_info_from_sys_class_drm() -> anyhow::Result<Vec<GpuInfo>> {
             .map(str::trim)
             .map(str::to_string);
 
-        let already_found = gpus
-            .iter()
-            .position(|gpu: &GpuInfo| {
-                gpu.pci_address == pci_address
-                    && gpu.driver_version == driver_version
-                    && gpu.driver_name == driver_name
-            })
-            .is_some();
+        let already_found = gpus.iter().any(|gpu: &GpuInfo| {
+            gpu.pci_address == pci_address
+                && gpu.driver_version == driver_version
+                && gpu.driver_name == driver_name
+        });
 
         if already_found {
             continue;
@@ -245,22 +254,23 @@ pub fn read_gpu_info_from_sys_class_drm() -> anyhow::Result<Vec<GpuInfo>> {
         });
     }
 
-    return Ok(gpus);
+    Ok(gpus)
+}
 
-    fn read_pci_id_from_path(path: impl AsRef<std::path::Path>) -> anyhow::Result<u16> {
-        let id = std::fs::read_to_string(path)?;
-        let id = id
-            .trim()
-            .strip_prefix("0x")
-            .context("Not a device ID")
-            .context(id.clone())?;
-        anyhow::ensure!(
-            id.len() == 4,
-            "Not a device id, expected 4 digits, found {}",
-            id.len()
-        );
-        u16::from_str_radix(id, 16).context("Failed to parse device ID")
-    }
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+fn read_pci_id_from_path(path: impl AsRef<std::path::Path>) -> anyhow::Result<u16> {
+    let id = std::fs::read_to_string(path)?;
+    let id = id
+        .trim()
+        .strip_prefix("0x")
+        .context("Not a device ID")
+        .context(id.clone())?;
+    anyhow::ensure!(
+        id.len() == 4,
+        "Not a device id, expected 4 digits, found {}",
+        id.len()
+    );
+    u16::from_str_radix(id, 16).context("Failed to parse device ID")
 }
 
 /// Returns value of `ZED_BUNDLE_TYPE` set at compiletime or else at runtime.

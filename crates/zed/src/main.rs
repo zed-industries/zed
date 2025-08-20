@@ -240,7 +240,7 @@ pub fn main() {
         option_env!("ZED_COMMIT_SHA").map(|commit_sha| AppCommitSha::new(commit_sha.to_string()));
 
     if args.system_specs {
-        let system_specs = feedback::system_specs::SystemSpecs::new_stateless(
+        let system_specs = system_specs::SystemSpecs::new_stateless(
             app_version,
             app_commit_sha,
             *release_channel::RELEASE_CHANNEL,

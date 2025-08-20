@@ -5738,16 +5738,10 @@ dependencies = [
 name = "feedback"
 version = "0.1.0"
 dependencies = [
- "anyhow",
- "client",
  "editor",
  "gpui",
- "human_bytes",
  "menu",
- "pciid-parser",
- "release_channel",
- "serde",
- "sysinfo",
+ "system_specs",
  "ui",
  "urlencoding",
  "util",
@@ -16163,6 +16157,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "system_specs"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "client",
+ "gpui",
+ "human_bytes",
+ "pciid-parser",
+ "release_channel",
+ "serde",
+ "sysinfo",
+ "workspace-hack",
+]
+
+[[package]]
 name = "tab_switcher"
 version = "0.1.0"
 dependencies = [
@@ -20519,6 +20528,7 @@ dependencies = [
  "supermaven",
  "svg_preview",
  "sysinfo",
+ "system_specs",
  "tab_switcher",
  "task",
  "tasks_ui",
