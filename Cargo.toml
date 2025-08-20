@@ -823,6 +823,7 @@ style = { level = "allow", priority = -1 }
 
 # Temporary list of style lints that we've fixed so far.
 comparison_to_empty = "warn"
+for_kv_map = "warn"
 into_iter_on_ref = "warn"
 iter_cloned_collect = "warn"
 iter_next_slice = "warn"
