@@ -240,6 +240,7 @@ impl NativeAgent {
         let title = thread.title();
         let project = thread.project.clone();
         let action_log = thread.action_log.clone();
+        let mut latest_token_usage = thread.latest_token_usage();
         let acp_thread = cx.new(|_cx| {
             acp_thread::AcpThread::new(
                 title,
@@ -253,8 +254,19 @@ impl NativeAgent {
             cx.observe_release(&acp_thread, |this, acp_thread, _cx| {
                 this.sessions.remove(acp_thread.session_id());
             }),
-            cx.observe(&thread_handle, move |this, thread, cx| {
-                this.save_thread(thread.clone(), cx)
+            cx.observe(&thread_handle, {
+                let acp_thread = acp_thread.clone();
+                move |this, thread, cx| {
+                    let usage = thread.read(cx).latest_token_usage();
+                    if latest_token_usage != usage {
+                        acp_thread.update(cx, |acp_thread, cx| {
+                            acp_thread.update_token_usage(usage.clone(), cx);
+                        });
+                        latest_token_usage = usage;
+                    }
+
+                    this.save_thread(thread.clone(), cx)
+                }
             }),
         ];
 

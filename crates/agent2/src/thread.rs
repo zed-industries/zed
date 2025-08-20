@@ -953,7 +953,7 @@ impl Thread {
         self.flush_pending_message(cx);
     }
 
-    pub fn update_token_usage(&mut self, update: language_model::TokenUsage) {
+    fn update_token_usage(&mut self, update: language_model::TokenUsage) {
         let Some(last_user_message) = self.last_user_message() else {
             return;
         };
