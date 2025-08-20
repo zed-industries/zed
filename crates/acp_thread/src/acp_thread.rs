@@ -674,6 +674,37 @@ pub struct TokenUsage {
     pub used_tokens: u64,
 }
 
+impl TokenUsage {
+    pub fn ratio(&self) -> TokenUsageRatio {
+        #[cfg(debug_assertions)]
+        let warning_threshold: f32 = std::env::var("ZED_THREAD_WARNING_THRESHOLD")
+            .unwrap_or("0.8".to_string())
+            .parse()
+            .unwrap();
+        #[cfg(not(debug_assertions))]
+        let warning_threshold: f32 = 0.8;
+
+        // When the maximum is unknown because there is no selected model,
+        // avoid showing the token limit warning.
+        if self.max_tokens == 0 {
+            TokenUsageRatio::Normal
+        } else if self.used_tokens >= self.max_tokens {
+            TokenUsageRatio::Exceeded
+        } else if self.used_tokens as f32 / self.max_tokens as f32 >= warning_threshold {
+            TokenUsageRatio::Warning
+        } else {
+            TokenUsageRatio::Normal
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TokenUsageRatio {
+    Normal,
+    Warning,
+    Exceeded,
+}
+
 #[derive(Debug, Clone)]
 pub struct RetryStatus {
     pub last_error: SharedString,
