@@ -2397,8 +2397,10 @@ impl AgentPanel {
         let focus_handle = self.focus_handle(cx);
 
         let active_thread = match &self.active_view {
-            ActiveView::Thread { thread, .. } => Some(thread.read(cx).thread().clone()),
-            ActiveView::ExternalAgentThread { .. }
+            ActiveView::ExternalAgentThread { thread_view } => {
+                thread_view.read(cx).as_native_thread(cx)
+            }
+            ActiveView::Thread { .. }
             | ActiveView::TextThread { .. }
             | ActiveView::History
             | ActiveView::Configuration => None,
@@ -2435,15 +2437,15 @@ impl AgentPanel {
                                 let thread = active_thread.read(cx);
 
                                 if !thread.is_empty() {
-                                    let thread_id = thread.id().clone();
+                                    let session_id = thread.id().clone();
                                     this.item(
                                         ContextMenuEntry::new("New From Summary")
                                             .icon(IconName::ThreadFromSummary)
                                             .icon_color(Color::Muted)
                                             .handler(move |window, cx| {
                                                 window.dispatch_action(
-                                                    Box::new(NewThread {
-                                                        from_thread_id: Some(thread_id.clone()),
+                                                    Box::new(NewNativeAgentThreadFromSummary {
+                                                        from_session_id: session_id.clone(),
                                                     }),
                                                     cx,
                                                 );

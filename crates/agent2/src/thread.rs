@@ -575,6 +575,10 @@ impl Thread {
         &self.id
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.messages.is_empty()
+    }
+
     pub fn replay(
         &mut self,
         cx: &mut Context<Self>,
