@@ -1,6 +1,7 @@
 use crate::{Editor, RangeToAnchorExt};
-use gpui::{Context, Window};
+use gpui::{Context, HighlightStyle, Window};
 use language::CursorShape;
+use theme::ActiveTheme;
 
 enum MatchingBracketHighlight {}
 
@@ -35,12 +36,19 @@ pub fn refresh_matching_bracket_highlights(
         .buffer_snapshot
         .innermost_enclosing_bracket_ranges(head..tail, None)
     {
-        editor.highlight_background::<MatchingBracketHighlight>(
-            &[
+        editor.highlight_text::<MatchingBracketHighlight>(
+            vec![
                 opening_range.to_anchors(&snapshot.buffer_snapshot),
                 closing_range.to_anchors(&snapshot.buffer_snapshot),
             ],
-            |theme| theme.colors().editor_document_highlight_bracket_background,
+            HighlightStyle {
+                background_color: Some(
+                    cx.theme()
+                        .colors()
+                        .editor_document_highlight_bracket_background,
+                ),
+                ..Default::default()
+            },
             cx,
         )
     }
