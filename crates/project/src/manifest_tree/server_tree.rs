@@ -181,6 +181,7 @@ impl LanguageServerTree {
                     &root_path.path,
                     language_name.clone(),
                 );
+
                 (
                     Arc::new(InnerTreeNode::new(
                         adapter.name(),
@@ -408,6 +409,7 @@ impl ServerTreeRebase {
                 if live_node.id.get().is_some() {
                     return Some(node);
                 }
+
                 let disposition = &live_node.disposition;
                 let Some((existing_node, _)) = self
                     .old_contents
