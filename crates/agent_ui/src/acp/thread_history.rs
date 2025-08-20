@@ -640,132 +640,6 @@ impl Render for AcpThreadHistory {
     }
 }
 
-#[derive(Clone, Copy)]
-pub enum EntryTimeFormat {
-    DateAndTime,
-    TimeOnly,
-}
-
-impl EntryTimeFormat {
-    fn format_timestamp(&self, timestamp: i64, timezone: UtcOffset) -> String {
-        let timestamp = OffsetDateTime::from_unix_timestamp(timestamp).unwrap();
-
-        match self {
-            EntryTimeFormat::DateAndTime => time_format::format_localized_timestamp(
-                timestamp,
-                OffsetDateTime::now_utc(),
-                timezone,
-                time_format::TimestampFormat::EnhancedAbsolute,
-            ),
-            EntryTimeFormat::TimeOnly => time_format::format_time(timestamp),
-        }
-    }
-}
-
-impl From<TimeBucket> for EntryTimeFormat {
-    fn from(bucket: TimeBucket) -> Self {
-        match bucket {
-            TimeBucket::Today => EntryTimeFormat::TimeOnly,
-            TimeBucket::Yesterday => EntryTimeFormat::TimeOnly,
-            TimeBucket::ThisWeek => EntryTimeFormat::DateAndTime,
-            TimeBucket::PastWeek => EntryTimeFormat::DateAndTime,
-            TimeBucket::All => EntryTimeFormat::DateAndTime,
-        }
-    }
-}
-
-#[derive(PartialEq, Eq, Clone, Copy, Debug)]
-enum TimeBucket {
-    Today,
-    Yesterday,
-    ThisWeek,
-    PastWeek,
-    All,
-}
-
-impl TimeBucket {
-    fn from_dates(reference: NaiveDate, date: NaiveDate) -> Self {
-        if date == reference {
-            return TimeBucket::Today;
-        }
-
-        if date == reference - TimeDelta::days(1) {
-            return TimeBucket::Yesterday;
-        }
-
-        let week = date.iso_week();
-
-        if reference.iso_week() == week {
-            return TimeBucket::ThisWeek;
-        }
-
-        let last_week = (reference - TimeDelta::days(7)).iso_week();
-
-        if week == last_week {
-            return TimeBucket::PastWeek;
-        }
-
-        TimeBucket::All
-    }
-}
-
-impl Display for TimeBucket {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            TimeBucket::Today => write!(f, "Today"),
-            TimeBucket::Yesterday => write!(f, "Yesterday"),
-            TimeBucket::ThisWeek => write!(f, "This Week"),
-            TimeBucket::PastWeek => write!(f, "Past Week"),
-            TimeBucket::All => write!(f, "All"),
-        }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use chrono::NaiveDate;
-
-    #[test]
-    fn test_time_bucket_from_dates() {
-        let today = NaiveDate::from_ymd_opt(2023, 1, 15).unwrap();
-
-        let date = today;
-        assert_eq!(TimeBucket::from_dates(today, date), TimeBucket::Today);
-
-        let date = NaiveDate::from_ymd_opt(2023, 1, 14).unwrap();
-        assert_eq!(TimeBucket::from_dates(today, date), TimeBucket::Yesterday);
-
-        let date = NaiveDate::from_ymd_opt(2023, 1, 13).unwrap();
-        assert_eq!(TimeBucket::from_dates(today, date), TimeBucket::ThisWeek);
-
-        let date = NaiveDate::from_ymd_opt(2023, 1, 11).unwrap();
-        assert_eq!(TimeBucket::from_dates(today, date), TimeBucket::ThisWeek);
-
-        let date = NaiveDate::from_ymd_opt(2023, 1, 8).unwrap();
-        assert_eq!(TimeBucket::from_dates(today, date), TimeBucket::PastWeek);
-
-        let date = NaiveDate::from_ymd_opt(2023, 1, 5).unwrap();
-        assert_eq!(TimeBucket::from_dates(today, date), TimeBucket::PastWeek);
-
-        // All: not in this week or last week
-        let date = NaiveDate::from_ymd_opt(2023, 1, 1).unwrap();
-        assert_eq!(TimeBucket::from_dates(today, date), TimeBucket::All);
-
-        // Test year boundary cases
-        let new_year = NaiveDate::from_ymd_opt(2023, 1, 1).unwrap();
-
-        let date = NaiveDate::from_ymd_opt(2022, 12, 31).unwrap();
-        assert_eq!(
-            TimeBucket::from_dates(new_year, date),
-            TimeBucket::Yesterday
-        );
-
-        let date = NaiveDate::from_ymd_opt(2022, 12, 28).unwrap();
-        assert_eq!(TimeBucket::from_dates(new_year, date), TimeBucket::ThisWeek);
-    }
-}
-
 #[derive(IntoElement)]
 pub struct AcpHistoryEntryElement {
     entry: HistoryEntry,
@@ -784,11 +658,6 @@ impl AcpHistoryEntryElement {
             hovered: false,
             on_hover: Box::new(|_, _, _| {}),
         }
-    }
-
-    pub fn selected(mut self, selected: bool) -> Self {
-        self.selected = selected;
-        self
     }
 
     pub fn hovered(mut self, hovered: bool) -> Self {
@@ -912,5 +781,131 @@ impl RenderOnce for AcpHistoryEntryElement {
                     }
                 }
             })
+    }
+}
+
+#[derive(Clone, Copy)]
+pub enum EntryTimeFormat {
+    DateAndTime,
+    TimeOnly,
+}
+
+impl EntryTimeFormat {
+    fn format_timestamp(&self, timestamp: i64, timezone: UtcOffset) -> String {
+        let timestamp = OffsetDateTime::from_unix_timestamp(timestamp).unwrap();
+
+        match self {
+            EntryTimeFormat::DateAndTime => time_format::format_localized_timestamp(
+                timestamp,
+                OffsetDateTime::now_utc(),
+                timezone,
+                time_format::TimestampFormat::EnhancedAbsolute,
+            ),
+            EntryTimeFormat::TimeOnly => time_format::format_time(timestamp),
+        }
+    }
+}
+
+impl From<TimeBucket> for EntryTimeFormat {
+    fn from(bucket: TimeBucket) -> Self {
+        match bucket {
+            TimeBucket::Today => EntryTimeFormat::TimeOnly,
+            TimeBucket::Yesterday => EntryTimeFormat::TimeOnly,
+            TimeBucket::ThisWeek => EntryTimeFormat::DateAndTime,
+            TimeBucket::PastWeek => EntryTimeFormat::DateAndTime,
+            TimeBucket::All => EntryTimeFormat::DateAndTime,
+        }
+    }
+}
+
+#[derive(PartialEq, Eq, Clone, Copy, Debug)]
+enum TimeBucket {
+    Today,
+    Yesterday,
+    ThisWeek,
+    PastWeek,
+    All,
+}
+
+impl TimeBucket {
+    fn from_dates(reference: NaiveDate, date: NaiveDate) -> Self {
+        if date == reference {
+            return TimeBucket::Today;
+        }
+
+        if date == reference - TimeDelta::days(1) {
+            return TimeBucket::Yesterday;
+        }
+
+        let week = date.iso_week();
+
+        if reference.iso_week() == week {
+            return TimeBucket::ThisWeek;
+        }
+
+        let last_week = (reference - TimeDelta::days(7)).iso_week();
+
+        if week == last_week {
+            return TimeBucket::PastWeek;
+        }
+
+        TimeBucket::All
+    }
+}
+
+impl Display for TimeBucket {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TimeBucket::Today => write!(f, "Today"),
+            TimeBucket::Yesterday => write!(f, "Yesterday"),
+            TimeBucket::ThisWeek => write!(f, "This Week"),
+            TimeBucket::PastWeek => write!(f, "Past Week"),
+            TimeBucket::All => write!(f, "All"),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::NaiveDate;
+
+    #[test]
+    fn test_time_bucket_from_dates() {
+        let today = NaiveDate::from_ymd_opt(2023, 1, 15).unwrap();
+
+        let date = today;
+        assert_eq!(TimeBucket::from_dates(today, date), TimeBucket::Today);
+
+        let date = NaiveDate::from_ymd_opt(2023, 1, 14).unwrap();
+        assert_eq!(TimeBucket::from_dates(today, date), TimeBucket::Yesterday);
+
+        let date = NaiveDate::from_ymd_opt(2023, 1, 13).unwrap();
+        assert_eq!(TimeBucket::from_dates(today, date), TimeBucket::ThisWeek);
+
+        let date = NaiveDate::from_ymd_opt(2023, 1, 11).unwrap();
+        assert_eq!(TimeBucket::from_dates(today, date), TimeBucket::ThisWeek);
+
+        let date = NaiveDate::from_ymd_opt(2023, 1, 8).unwrap();
+        assert_eq!(TimeBucket::from_dates(today, date), TimeBucket::PastWeek);
+
+        let date = NaiveDate::from_ymd_opt(2023, 1, 5).unwrap();
+        assert_eq!(TimeBucket::from_dates(today, date), TimeBucket::PastWeek);
+
+        // All: not in this week or last week
+        let date = NaiveDate::from_ymd_opt(2023, 1, 1).unwrap();
+        assert_eq!(TimeBucket::from_dates(today, date), TimeBucket::All);
+
+        // Test year boundary cases
+        let new_year = NaiveDate::from_ymd_opt(2023, 1, 1).unwrap();
+
+        let date = NaiveDate::from_ymd_opt(2022, 12, 31).unwrap();
+        assert_eq!(
+            TimeBucket::from_dates(new_year, date),
+            TimeBucket::Yesterday
+        );
+
+        let date = NaiveDate::from_ymd_opt(2022, 12, 28).unwrap();
+        assert_eq!(TimeBucket::from_dates(new_year, date), TimeBucket::ThisWeek);
     }
 }
