@@ -445,6 +445,7 @@ fn font_picker_stepper(
             optimistic_font_size.write(cx, Some(*new_value));
             write_font_size(Pixels::from(*new_value), cx);
         })
+        .format(|value| format!("{value}px"))
         .style(ui_input::NumericStepperStyle::Outlined)
         .tab_index({
             *tab_index += 2;
