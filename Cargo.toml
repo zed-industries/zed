@@ -806,6 +806,9 @@ todo = "deny"
 # warning on this rule produces a lot of noise.
 single_range_in_vec_init = "allow"
 
+redundant_clone = "warn"
+declare_interior_mutable_const = "deny"
+
 # These are all of the rules that currently have violations in the Zed
 # codebase.
 #
