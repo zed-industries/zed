@@ -242,7 +242,7 @@ impl AgentConnection for AcpConnection {
                             if suppress_abort_err && details.contains("This operation was aborted")
                             {
                                 Ok(acp::PromptResponse {
-                                    stop_reason: acp::StopReason::Canceled,
+                                    stop_reason: acp::StopReason::Cancelled,
                                 })
                             } else {
                                 Err(anyhow!(details))
@@ -302,7 +302,7 @@ impl acp::Client for ClientDelegate {
 
         let outcome = match result {
             Ok(option) => acp::RequestPermissionOutcome::Selected { option_id: option },
-            Err(oneshot::Canceled) => acp::RequestPermissionOutcome::Canceled,
+            Err(oneshot::Canceled) => acp::RequestPermissionOutcome::Cancelled,
         };
 
         Ok(acp::RequestPermissionResponse { outcome })

@@ -705,7 +705,7 @@ impl ClaudeAgentSession {
                     let stop_reason = match subtype {
                         ResultErrorType::Success => acp::StopReason::EndTurn,
                         ResultErrorType::ErrorMaxTurns => acp::StopReason::MaxTurnRequests,
-                        ResultErrorType::ErrorDuringExecution => acp::StopReason::Canceled,
+                        ResultErrorType::ErrorDuringExecution => acp::StopReason::Cancelled,
                     };
                     end_turn_tx
                         .send(Ok(acp::PromptResponse { stop_reason }))

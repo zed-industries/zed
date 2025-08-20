@@ -1381,7 +1381,7 @@ impl AcpThread {
                         let canceled = matches!(
                             result,
                             Ok(Ok(acp::PromptResponse {
-                                stop_reason: acp::StopReason::Canceled
+                                stop_reason: acp::StopReason::Cancelled
                             }))
                         );
 
