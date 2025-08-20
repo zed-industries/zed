@@ -128,6 +128,12 @@ actions!(
     ]
 );
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Action)]
+#[action(namespace = agent)]
+#[action(deprecated_aliases = ["assistant::QuoteSelection"])]
+/// Quotes the current selection in the agent panel's message editor.
+pub struct QuoteSelection;
+
 /// Creates a new conversation thread, optionally based on an existing thread.
 #[derive(Default, Clone, PartialEq, Deserialize, JsonSchema, Action)]
 #[action(namespace = agent)]
