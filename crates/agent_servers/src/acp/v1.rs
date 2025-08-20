@@ -268,7 +268,7 @@ impl AgentConnection for AcpConnection {
             .spawn(async move {
                 let resp = conn.cancel(params).await;
                 if let Some(session) = sessions.borrow_mut().get_mut(&session_id) {
-                    session.pending_cancel = true;
+                    session.pending_cancel = false;
                 }
                 resp
             })
