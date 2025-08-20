@@ -794,10 +794,8 @@ mod tests {
     fn finish(mut finder: StreamingFuzzyMatcher) -> Option<String> {
         let snapshot = finder.snapshot.clone();
         let matches = finder.finish();
-        if let Some(range) = matches.first() {
-            Some(snapshot.text_for_range(range.clone()).collect::<String>())
-        } else {
-            None
-        }
+        matches
+            .first()
+            .map(|range| snapshot.text_for_range(range.clone()).collect::<String>())
     }
 }

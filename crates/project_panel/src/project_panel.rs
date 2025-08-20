@@ -3895,14 +3895,12 @@ impl ProjectPanel {
         // Always highlight directory or parent directory if it's file
         if target_entry.is_dir() {
             Some(target_entry.id)
-        } else if let Some(parent_entry) = target_entry
-            .path
-            .parent()
-            .and_then(|parent_path| target_worktree.entry_for_path(parent_path))
-        {
-            Some(parent_entry.id)
         } else {
-            None
+            target_entry
+                .path
+                .parent()
+                .and_then(|parent_path| target_worktree.entry_for_path(parent_path))
+                .map(|parent_entry| parent_entry.id)
         }
     }
 
@@ -3939,12 +3937,10 @@ impl ProjectPanel {
         // Always highlight directory or parent directory if it's file
         if target_entry.is_dir() {
             Some(target_entry.id)
-        } else if let Some(parent_entry) =
-            target_parent_path.and_then(|parent_path| target_worktree.entry_for_path(parent_path))
-        {
-            Some(parent_entry.id)
         } else {
-            None
+            target_parent_path
+                .and_then(|parent_path| target_worktree.entry_for_path(parent_path))
+                .map(|parent_entry| parent_entry.id)
         }
     }
 

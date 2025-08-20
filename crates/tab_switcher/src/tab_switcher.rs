@@ -5,9 +5,9 @@ use collections::HashMap;
 use editor::items::entry_git_aware_label_color;
 use fuzzy::StringMatchCandidate;
 use gpui::{
-    Action, AnyElement, App, Context, DismissEvent, Entity, EntityId, EventEmitter, FocusHandle,
-    Focusable, Modifiers, ModifiersChangedEvent, MouseButton, MouseUpEvent, ParentElement, Render,
-    Styled, Task, WeakEntity, Window, actions, rems,
+    actions, rems, Action, AnyElement, App, Context, DismissEvent, Entity, EntityId, EventEmitter,
+    FocusHandle, Focusable, Modifiers, ModifiersChangedEvent, MouseButton, MouseUpEvent,
+    ParentElement, Render, Styled, Task, WeakEntity, Window,
 };
 use picker::{Picker, PickerDelegate};
 use project::Project;
@@ -15,12 +15,12 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use settings::Settings;
 use std::{cmp::Reverse, sync::Arc};
-use ui::{ListItem, ListItemSpacing, Tooltip, prelude::*};
+use ui::{prelude::*, ListItem, ListItemSpacing, Tooltip};
 use util::ResultExt;
 use workspace::{
-    ModalView, Pane, SaveIntent, Workspace,
     item::{ItemHandle, ItemSettings, TabContentParams},
-    pane::{Event as PaneEvent, render_item_indicator, tab_details},
+    pane::{render_item_indicator, tab_details, Event as PaneEvent},
+    ModalView, Pane, SaveIntent, Workspace,
 };
 
 const PANEL_WIDTH_REMS: f32 = 28.;

@@ -461,7 +461,7 @@ impl PickerDelegate for TasksModalDelegate {
             tooltip_label_text.push_str(&resolved_task.resolved.command_label);
         }
 
-        if template.tags.len() > 0 {
+        if !template.tags.is_empty() {
             tooltip_label_text.push('\n');
             tooltip_label_text.push_str(
                 template

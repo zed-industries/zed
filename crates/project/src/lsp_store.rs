@@ -12270,11 +12270,10 @@ async fn populate_labels_for_completions(
     let lsp_completions = new_completions
         .iter()
         .filter_map(|new_completion| {
-            if let Some(lsp_completion) = new_completion.source.lsp_completion(true) {
-                Some(lsp_completion.into_owned())
-            } else {
-                None
-            }
+            new_completion
+                .source
+                .lsp_completion(true)
+                .map(|lsp_completion| lsp_completion.into_owned())
         })
         .collect::<Vec<_>>();
 
@@ -12294,11 +12293,7 @@ async fn populate_labels_for_completions(
     for completion in new_completions {
         match completion.source.lsp_completion(true) {
             Some(lsp_completion) => {
-                let documentation = if let Some(docs) = lsp_completion.documentation.clone() {
-                    Some(docs.into())
-                } else {
-                    None
-                };
+                let documentation = lsp_completion.documentation.clone().map(|docs| docs.into());
 
                 let mut label = labels.next().flatten().unwrap_or_else(|| {
                     CodeLabel::fallback_for_completion(&lsp_completion, language.as_deref())
@@ -13154,10 +13149,10 @@ fn ensure_uniform_list_compatible_label(label: &mut CodeLabel) {
     let mut offset_map = vec![0; label.text.len() + 1];
     let mut last_char_was_space = false;
     let mut new_idx = 0;
-    let mut chars = label.text.char_indices().fuse();
+    let chars = label.text.char_indices().fuse();
     let mut newlines_removed = false;
 
-    while let Some((idx, c)) = chars.next() {
+    for (idx, c) in chars {
         offset_map[idx] = new_idx;
 
         match c {

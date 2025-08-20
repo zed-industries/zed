@@ -1682,7 +1682,7 @@ impl Render for MessageEditor {
         let has_history = self
             .history_store
             .as_ref()
-            .and_then(|hs| hs.update(cx, |hs, cx| hs.entries(cx).len() > 0).ok())
+            .and_then(|hs| hs.update(cx, |hs, cx| !hs.entries(cx).is_empty()).ok())
             .unwrap_or(false)
             || self
                 .thread
@@ -1695,7 +1695,7 @@ impl Render for MessageEditor {
                 !has_history && is_signed_out && has_configured_providers,
                 |this| this.child(cx.new(ApiKeysWithProviders::new)),
             )
-            .when(changed_buffers.len() > 0, |parent| {
+            .when(!changed_buffers.is_empty(), |parent| {
                 parent.child(self.render_edits_bar(&changed_buffers, window, cx))
             })
             .child(self.render_editor(window, cx))

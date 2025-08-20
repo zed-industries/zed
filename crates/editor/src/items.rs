@@ -103,9 +103,9 @@ impl FollowableItem for Editor {
                         multibuffer = MultiBuffer::new(project.read(cx).capability());
                         let mut sorted_excerpts = state.excerpts.clone();
                         sorted_excerpts.sort_by_key(|e| e.id);
-                        let mut sorted_excerpts = sorted_excerpts.into_iter().peekable();
+                        let sorted_excerpts = sorted_excerpts.into_iter().peekable();
 
-                        while let Some(excerpt) = sorted_excerpts.next() {
+                        for excerpt in sorted_excerpts {
                             let Ok(buffer_id) = BufferId::new(excerpt.buffer_id) else {
                                 continue;
                             };

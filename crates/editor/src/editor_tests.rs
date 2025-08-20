@@ -21030,7 +21030,7 @@ fn assert_breakpoint(
     path: &Arc<Path>,
     expected: Vec<(u32, Breakpoint)>,
 ) {
-    if expected.len() == 0usize {
+    if expected.is_empty() {
         assert!(!breakpoints.contains_key(path), "{}", path.display());
     } else {
         let mut breakpoint = breakpoints
@@ -21065,13 +21065,7 @@ fn add_log_breakpoint_at_cursor(
     let (anchor, bp) = editor
         .breakpoints_at_cursors(window, cx)
         .first()
-        .and_then(|(anchor, bp)| {
-            if let Some(bp) = bp {
-                Some((*anchor, bp.clone()))
-            } else {
-                None
-            }
-        })
+        .and_then(|(anchor, bp)| bp.as_ref().map(|bp| (*anchor, bp.clone())))
         .unwrap_or_else(|| {
             let cursor_position: Point = editor.selections.newest(cx).head();
 

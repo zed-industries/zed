@@ -11021,7 +11021,7 @@ impl Editor {
                 let mut col = 0;
                 let mut changed = false;
 
-                while let Some(ch) = chars.next() {
+                for ch in chars.by_ref() {
                     match ch {
                         ' ' => {
                             reindented_line.push(' ');
@@ -11077,7 +11077,7 @@ impl Editor {
                 let mut first_non_indent_char = None;
                 let mut changed = false;
 
-                while let Some(ch) = chars.next() {
+                for ch in chars.by_ref() {
                     match ch {
                         ' ' => {
                             // Keep track of spaces. Append \t when we reach tab_size

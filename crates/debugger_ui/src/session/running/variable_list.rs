@@ -291,7 +291,7 @@ impl VariableList {
                 }
 
                 self.session.update(cx, |session, cx| {
-                    session.variables(scope.variables_reference, cx).len() > 0
+                    !session.variables(scope.variables_reference, cx).is_empty()
                 })
             })
             .map(|scope| {
@@ -997,7 +997,7 @@ impl VariableList {
                 DapEntry::Watcher { .. } => continue,
                 DapEntry::Variable(dap) => scopes[idx].1.push(dap.clone()),
                 DapEntry::Scope(scope) => {
-                    if scopes.len() > 0 {
+                    if !scopes.is_empty() {
                         idx += 1;
                     }
 

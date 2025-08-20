@@ -1532,13 +1532,11 @@ impl InlineAssistant {
             .and_then(|item| item.act_as::<Editor>(cx))
         {
             Some(InlineAssistTarget::Editor(workspace_editor))
-        } else if let Some(terminal_view) = workspace
-            .active_item(cx)
-            .and_then(|item| item.act_as::<TerminalView>(cx))
-        {
-            Some(InlineAssistTarget::Terminal(terminal_view))
         } else {
-            None
+            workspace
+                .active_item(cx)
+                .and_then(|item| item.act_as::<TerminalView>(cx))
+                .map(InlineAssistTarget::Terminal)
         }
     }
 }

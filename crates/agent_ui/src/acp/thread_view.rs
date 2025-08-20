@@ -65,6 +65,12 @@ const RESPONSE_PADDING_X: Pixels = px(19.);
 pub const MIN_EDITOR_LINES: usize = 4;
 pub const MAX_EDITOR_LINES: usize = 8;
 
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+enum ThreadFeedback {
+    Positive,
+    Negative,
+}
+
 enum ThreadError {
     PaymentRequired,
     ModelRequestLimitReached(cloud_llm_client::Plan),
@@ -106,6 +112,128 @@ impl ProfileProvider for Entity<agent2::Thread> {
     }
 }
 
+#[derive(Default)]
+struct ThreadFeedbackState {
+    feedback: Option<ThreadFeedback>,
+    comments_editor: Option<Entity<Editor>>,
+}
+
+impl ThreadFeedbackState {
+    pub fn submit(
+        &mut self,
+        thread: Entity<AcpThread>,
+        feedback: ThreadFeedback,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        let Some(telemetry) = thread.read(cx).connection().telemetry() else {
+            return;
+        };
+
+        if self.feedback == Some(feedback) {
+            return;
+        }
+
+        self.feedback = Some(feedback);
+        match feedback {
+            ThreadFeedback::Positive => {
+                self.comments_editor = None;
+            }
+            ThreadFeedback::Negative => {
+                self.comments_editor = Some(Self::build_feedback_comments_editor(window, cx));
+            }
+        }
+        let session_id = thread.read(cx).session_id().clone();
+        let agent_name = telemetry.agent_name();
+        let task = telemetry.thread_data(&session_id, cx);
+        let rating = match feedback {
+            ThreadFeedback::Positive => "positive",
+            ThreadFeedback::Negative => "negative",
+        };
+        cx.background_spawn(async move {
+            let thread = task.await?;
+            telemetry::event!(
+                "Agent Thread Rated",
+                session_id = session_id,
+                rating = rating,
+                agent = agent_name,
+                thread = thread
+            );
+            anyhow::Ok(())
+        })
+        .detach_and_log_err(cx);
+    }
+
+    pub fn submit_comments(&mut self, thread: Entity<AcpThread>, cx: &mut App) {
+        let Some(telemetry) = thread.read(cx).connection().telemetry() else {
+            return;
+        };
+
+        let Some(comments) = self
+            .comments_editor
+            .as_ref()
+            .map(|editor| editor.read(cx).text(cx))
+            .filter(|text| !text.trim().is_empty())
+        else {
+            return;
+        };
+
+        self.comments_editor.take();
+
+        let session_id = thread.read(cx).session_id().clone();
+        let agent_name = telemetry.agent_name();
+        let task = telemetry.thread_data(&session_id, cx);
+        cx.background_spawn(async move {
+            let thread = task.await?;
+            telemetry::event!(
+                "Agent Thread Feedback Comments",
+                session_id = session_id,
+                comments = comments,
+                agent = agent_name,
+                thread = thread
+            );
+            anyhow::Ok(())
+        })
+        .detach_and_log_err(cx);
+    }
+
+    pub fn clear(&mut self) {
+        *self = Self::default()
+    }
+
+    pub fn dismiss_comments(&mut self) {
+        self.comments_editor.take();
+    }
+
+    fn build_feedback_comments_editor(window: &mut Window, cx: &mut App) -> Entity<Editor> {
+        let buffer = cx.new(|cx| {
+            let empty_string = String::new();
+            MultiBuffer::singleton(cx.new(|cx| Buffer::local(empty_string, cx)), cx)
+        });
+
+        let editor = cx.new(|cx| {
+            let mut editor = Editor::new(
+                editor::EditorMode::AutoHeight {
+                    min_lines: 1,
+                    max_lines: Some(4),
+                },
+                buffer,
+                None,
+                window,
+                cx,
+            );
+            editor.set_placeholder_text(
+                "What went wrong? Share your feedback so we can improve.",
+                cx,
+            );
+            editor
+        });
+
+        editor.read(cx).focus_handle(cx).focus(window);
+        editor
+    }
+}
+
 pub struct AcpThreadView {
     agent: Rc<dyn AgentServer>,
     workspace: WeakEntity<Workspace>,
@@ -120,6 +248,7 @@ pub struct AcpThreadView {
     notification_subscriptions: HashMap<WindowHandle<AgentNotification>, Vec<Subscription>>,
     thread_retry_status: Option<RetryStatus>,
     thread_error: Option<ThreadError>,
+    thread_feedback: ThreadFeedbackState,
     list_state: ListState,
     scrollbar_state: ScrollbarState,
     auth_task: Option<Task<()>>,
@@ -155,6 +284,7 @@ impl AcpThreadView {
     pub fn new(
         agent: Rc<dyn AgentServer>,
         resume_thread: Option<DbThreadMetadata>,
+        summarize_thread: Option<DbThreadMetadata>,
         workspace: WeakEntity<Workspace>,
         project: Entity<Project>,
         history_store: Entity<HistoryStore>,
@@ -164,7 +294,7 @@ impl AcpThreadView {
     ) -> Self {
         let prevent_slash_commands = agent.clone().downcast::<ClaudeCode>().is_some();
         let message_editor = cx.new(|cx| {
-            MessageEditor::new(
+            let mut editor = MessageEditor::new(
                 workspace.clone(),
                 project.clone(),
                 history_store.clone(),
@@ -177,7 +307,11 @@ impl AcpThreadView {
                 },
                 window,
                 cx,
-            )
+            );
+            if let Some(entry) = summarize_thread {
+                editor.insert_thread_summary(entry, window, cx);
+            }
+            editor
         });
 
         let list_state = ListState::new(0, gpui::ListAlignment::Bottom, px(2048.0));
@@ -213,6 +347,7 @@ impl AcpThreadView {
             scrollbar_state: ScrollbarState::new(list_state).parent_entity(&cx.entity()),
             thread_retry_status: None,
             thread_error: None,
+            thread_feedback: Default::default(),
             auth_task: None,
             expanded_tool_calls: HashSet::default(),
             expanded_thinking_blocks: HashSet::default(),
@@ -604,18 +739,19 @@ impl AcpThreadView {
 
     fn send_impl(
         &mut self,
-        contents: Task<anyhow::Result<Vec<acp::ContentBlock>>>,
+        contents: Task<anyhow::Result<(Vec<acp::ContentBlock>, Vec<Entity<Buffer>>)>>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         self.thread_error.take();
         self.editing_message.take();
+        self.thread_feedback.clear();
 
         let Some(thread) = self.thread().cloned() else {
             return;
         };
         let task = cx.spawn_in(window, async move |this, cx| {
-            let contents = contents.await?;
+            let (contents, tracked_buffers) = contents.await?;
 
             if contents.is_empty() {
                 return Ok(());
@@ -628,7 +764,14 @@ impl AcpThreadView {
                     message_editor.clear(window, cx);
                 });
             })?;
-            let send = thread.update(cx, |thread, cx| thread.send(contents, cx))?;
+            let send = thread.update(cx, |thread, cx| {
+                thread.action_log().update(cx, |action_log, cx| {
+                    for buffer in tracked_buffers {
+                        action_log.buffer_read(buffer, cx)
+                    }
+                });
+                thread.send(contents, cx)
+            })?;
             send.await
         });
 
@@ -788,7 +931,6 @@ impl AcpThreadView {
                 self.entry_view_state.update(cx, |view_state, cx| {
                     view_state.sync_entry(*index, thread, window, cx)
                 });
-                self.list_state.splice(*index..index + 1, 1);
             }
             AcpThreadEvent::EntriesRemoved(range) => {
                 self.entry_view_state
@@ -1083,6 +1225,12 @@ impl AcpThreadView {
                 .w_full()
                 .child(primary)
                 .child(self.render_thread_controls(cx))
+                .when_some(
+                    self.thread_feedback.comments_editor.clone(),
+                    |this, editor| {
+                        this.child(Self::render_feedback_feedback_editor(editor, window, cx))
+                    },
+                )
                 .into_any_element()
         } else {
             primary
@@ -2393,7 +2541,6 @@ impl AcpThreadView {
             })
             .when(!changed_buffers.is_empty(), |this| {
                 this.child(self.render_edits_summary(
-                    action_log,
                     &changed_buffers,
                     self.edits_expanded,
                     pending_edits,
@@ -2545,7 +2692,6 @@ impl AcpThreadView {
 
     fn render_edits_summary(
         &self,
-        action_log: &Entity<ActionLog>,
         changed_buffers: &BTreeMap<Entity<Buffer>, Entity<BufferDiff>>,
         expanded: bool,
         pending_edits: bool,
@@ -2656,14 +2802,9 @@ impl AcpThreadView {
                                 )
                                 .map(|kb| kb.size(rems_from_px(10.))),
                             )
-                            .on_click({
-                                let action_log = action_log.clone();
-                                cx.listener(move |_, _, _, cx| {
-                                    action_log.update(cx, |action_log, cx| {
-                                        action_log.reject_all_edits(cx).detach();
-                                    })
-                                })
-                            }),
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.reject_all(&RejectAll, window, cx);
+                            })),
                     )
                     .child(
                         Button::new("keep-all-changes", "Keep All")
@@ -2676,14 +2817,9 @@ impl AcpThreadView {
                                 KeyBinding::for_action_in(&KeepAll, &focus_handle, window, cx)
                                     .map(|kb| kb.size(rems_from_px(10.))),
                             )
-                            .on_click({
-                                let action_log = action_log.clone();
-                                cx.listener(move |_, _, _, cx| {
-                                    action_log.update(cx, |action_log, cx| {
-                                        action_log.keep_all_edits(cx);
-                                    })
-                                })
-                            }),
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.keep_all(&KeepAll, window, cx);
+                            })),
                     ),
             )
     }
@@ -3007,6 +3143,24 @@ impl AcpThreadView {
                 cx,
             );
         });
+    }
+
+    fn keep_all(&mut self, _: &KeepAll, _window: &mut Window, cx: &mut Context<Self>) {
+        let Some(thread) = self.thread() else {
+            return;
+        };
+        let action_log = thread.read(cx).action_log().clone();
+        action_log.update(cx, |action_log, cx| action_log.keep_all_edits(cx));
+    }
+
+    fn reject_all(&mut self, _: &RejectAll, _window: &mut Window, cx: &mut Context<Self>) {
+        let Some(thread) = self.thread() else {
+            return;
+        };
+        let action_log = thread.read(cx).action_log().clone();
+        action_log
+            .update(cx, |action_log, cx| action_log.reject_all_edits(cx))
+            .detach();
     }
 
     fn render_burn_mode_toggle(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
@@ -3546,7 +3700,9 @@ impl AcpThreadView {
                 this.scroll_to_top(cx);
             }));
 
-        h_flex()
+        let mut container = h_flex()
+            .id("thread-controls-container")
+            .group("thread-controls-container")
             .w_full()
             .mr_1()
             .pb_2()
@@ -3554,9 +3710,145 @@ impl AcpThreadView {
             .opacity(0.4)
             .hover(|style| style.opacity(1.))
             .flex_wrap()
-            .justify_end()
-            .child(open_as_markdown)
-            .child(scroll_to_top)
+            .justify_end();
+
+        if AgentSettings::get_global(cx).enable_feedback {
+            let feedback = self.thread_feedback.feedback;
+            container = container.child(
+                div().visible_on_hover("thread-controls-container").child(
+                    Label::new(
+                        match feedback {
+                            Some(ThreadFeedback::Positive) => "Thanks for your feedback!",
+                            Some(ThreadFeedback::Negative) => "We appreciate your feedback and will use it to improve.",
+                            None => "Rating the thread sends all of your current conversation to the Zed team.",
+                        }
+                    )
+                    .color(Color::Muted)
+                    .size(LabelSize::XSmall)
+                    .truncate(),
+                ),
+            ).child(
+                h_flex()
+                    .child(
+                        IconButton::new("feedback-thumbs-up", IconName::ThumbsUp)
+                            .shape(ui::IconButtonShape::Square)
+                            .icon_size(IconSize::Small)
+                            .icon_color(match feedback {
+                                Some(ThreadFeedback::Positive) => Color::Accent,
+                                _ => Color::Ignored,
+                            })
+                            .tooltip(Tooltip::text("Helpful Response"))
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.handle_feedback_click(
+                                    ThreadFeedback::Positive,
+                                    window,
+                                    cx,
+                                );
+                            })),
+                    )
+                    .child(
+                        IconButton::new("feedback-thumbs-down", IconName::ThumbsDown)
+                            .shape(ui::IconButtonShape::Square)
+                            .icon_size(IconSize::Small)
+                            .icon_color(match feedback {
+                                Some(ThreadFeedback::Negative) => Color::Accent,
+                                _ => Color::Ignored,
+                            })
+                            .tooltip(Tooltip::text("Not Helpful"))
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.handle_feedback_click(
+                                    ThreadFeedback::Negative,
+                                    window,
+                                    cx,
+                                );
+                            })),
+                    )
+            )
+        }
+
+        container.child(open_as_markdown).child(scroll_to_top)
+    }
+
+    fn render_feedback_feedback_editor(
+        editor: Entity<Editor>,
+        window: &mut Window,
+        cx: &Context<Self>,
+    ) -> Div {
+        let focus_handle = editor.focus_handle(cx);
+        v_flex()
+            .key_context("AgentFeedbackMessageEditor")
+            .on_action(cx.listener(move |this, _: &menu::Cancel, _, cx| {
+                this.thread_feedback.dismiss_comments();
+                cx.notify();
+            }))
+            .on_action(cx.listener(move |this, _: &menu::Confirm, _window, cx| {
+                this.submit_feedback_message(cx);
+            }))
+            .mb_2()
+            .mx_4()
+            .p_2()
+            .rounded_md()
+            .border_1()
+            .border_color(cx.theme().colors().border)
+            .bg(cx.theme().colors().editor_background)
+            .child(editor)
+            .child(
+                h_flex()
+                    .gap_1()
+                    .justify_end()
+                    .child(
+                        Button::new("dismiss-feedback-message", "Cancel")
+                            .label_size(LabelSize::Small)
+                            .key_binding(
+                                KeyBinding::for_action_in(&menu::Cancel, &focus_handle, window, cx)
+                                    .map(|kb| kb.size(rems_from_px(10.))),
+                            )
+                            .on_click(cx.listener(move |this, _, _window, cx| {
+                                this.thread_feedback.dismiss_comments();
+                                cx.notify();
+                            })),
+                    )
+                    .child(
+                        Button::new("submit-feedback-message", "Share Feedback")
+                            .style(ButtonStyle::Tinted(ui::TintColor::Accent))
+                            .label_size(LabelSize::Small)
+                            .key_binding(
+                                KeyBinding::for_action_in(
+                                    &menu::Confirm,
+                                    &focus_handle,
+                                    window,
+                                    cx,
+                                )
+                                .map(|kb| kb.size(rems_from_px(10.))),
+                            )
+                            .on_click(cx.listener(move |this, _, _window, cx| {
+                                this.submit_feedback_message(cx);
+                            })),
+                    ),
+            )
+    }
+
+    fn handle_feedback_click(
+        &mut self,
+        feedback: ThreadFeedback,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(thread) = self.thread().cloned() else {
+            return;
+        };
+
+        self.thread_feedback.submit(thread, feedback, window, cx);
+        cx.notify();
+    }
+
+    fn submit_feedback_message(&mut self, cx: &mut Context<Self>) {
+        let Some(thread) = self.thread().cloned() else {
+            return;
+        };
+
+        self.thread_feedback.submit_comments(thread, cx);
+        cx.notify();
     }
 
     fn render_vertical_scrollbar(&self, cx: &mut Context<Self>) -> Stateful<Div> {
@@ -3636,8 +3928,18 @@ impl AcpThreadView {
                         .child(
                             Button::new("start-new-thread", "Start New Thread")
                                 .label_size(LabelSize::Small)
-                                .on_click(cx.listener(|_this, _, _window, _cx| {
-                                    // todo: Once thread summarization is implemented, start a new thread from a summary.
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    let Some(thread) = this.thread() else {
+                                        return;
+                                    };
+                                    let session_id = thread.read(cx).session_id().clone();
+                                    window.dispatch_action(
+                                        crate::NewNativeAgentThreadFromSummary {
+                                            from_session_id: session_id,
+                                        }
+                                        .boxed_clone(),
+                                        cx,
+                                    );
                                 })),
                         )
                         .when(burn_mode_available, |this| {
@@ -3937,6 +4239,8 @@ impl Render for AcpThreadView {
             .key_context("AcpThread")
             .on_action(cx.listener(Self::open_agent_diff))
             .on_action(cx.listener(Self::toggle_burn_mode))
+            .on_action(cx.listener(Self::keep_all))
+            .on_action(cx.listener(Self::reject_all))
             .bg(cx.theme().colors().panel_background)
             .child(match &self.thread_state {
                 ThreadState::Unauthenticated {
@@ -4012,12 +4316,9 @@ impl Render for AcpThreadView {
             .children(
                 if let Some(usage_callout) = self.render_usage_callout(line_height, cx) {
                     Some(usage_callout.into_any_element())
-                } else if let Some(token_limit_callout) =
-                    self.render_token_limit_callout(line_height, cx)
-                {
-                    Some(token_limit_callout.into_any_element())
                 } else {
-                    None
+                    self.render_token_limit_callout(line_height, cx)
+                        .map(|token_limit_callout| token_limit_callout.into_any_element())
                 },
             )
             .child(self.render_message_editor(window, cx))
@@ -4323,6 +4624,7 @@ pub(crate) mod tests {
                 AcpThreadView::new(
                     Rc::new(agent),
                     None,
+                    None,
                     workspace.downgrade(),
                     project,
                     history_store,
@@ -4528,6 +4830,7 @@ pub(crate) mod tests {
             cx.new(|cx| {
                 AcpThreadView::new(
                     Rc::new(StubAgentServer::new(connection.as_ref().clone())),
+                    None,
                     None,
                     workspace.downgrade(),
                     project.clone(),

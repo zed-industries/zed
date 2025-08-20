@@ -779,13 +779,11 @@ impl ActiveThread {
 
         let list_state = ListState::new(0, ListAlignment::Bottom, px(2048.));
 
-        let workspace_subscription = if let Some(workspace) = workspace.upgrade() {
-            Some(cx.observe_release(&workspace, |this, _, cx| {
+        let workspace_subscription = workspace.upgrade().map(|workspace| {
+            cx.observe_release(&workspace, |this, _, cx| {
                 this.dismiss_notifications(cx);
-            }))
-        } else {
-            None
-        };
+            })
+        });
 
         let mut this = Self {
             language_registry,
@@ -2351,7 +2349,6 @@ impl ActiveThread {
                                     this.submit_feedback_message(message_id, cx);
                                     cx.notify();
                                 }))
-                                .on_action(cx.listener(Self::confirm_editing_message))
                                 .mb_2()
                                 .mx_4()
                                 .p_2()
