@@ -34,7 +34,7 @@ use settings::Settings;
 use std::{
     cell::Cell,
     ffi::OsStr,
-    fmt::{Display, Write},
+    fmt::Write,
     ops::Range,
     path::{Path, PathBuf},
     rc::Rc,
@@ -51,7 +51,10 @@ use ui::{
 };
 use url::Url;
 use util::ResultExt;
-use workspace::{Workspace, notifications::NotifyResultExt as _};
+use workspace::{
+    Toast, Workspace,
+    notifications::{NotificationId, NotifyResultExt as _},
+};
 use zed_actions::agent::Chat;
 
 const PARSE_SLASH_COMMAND_DEBOUNCE: Duration = Duration::from_millis(50);
@@ -64,6 +67,7 @@ pub struct MessageEditor {
     history_store: Entity<HistoryStore>,
     prompt_store: Option<Entity<PromptStore>>,
     prevent_slash_commands: bool,
+    prompt_capabilities: Rc<Cell<acp::PromptCapabilities>>,
     _subscriptions: Vec<Subscription>,
     _parse_slash_command_task: Task<()>,
 }
@@ -96,11 +100,13 @@ impl MessageEditor {
             },
             None,
         );
+        let prompt_capabilities = Rc::new(Cell::new(acp::PromptCapabilities::default()));
         let completion_provider = ContextPickerCompletionProvider::new(
             cx.weak_entity(),
             workspace.clone(),
             history_store.clone(),
             prompt_store.clone(),
+            prompt_capabilities.clone(),
         );
         let semantics_provider = Rc::new(SlashCommandSemanticsProvider {
             range: Cell::new(None),
@@ -158,6 +164,7 @@ impl MessageEditor {
             history_store,
             prompt_store,
             prevent_slash_commands,
+            prompt_capabilities,
             _subscriptions: subscriptions,
             _parse_slash_command_task: Task::ready(()),
         }
@@ -191,6 +198,10 @@ impl MessageEditor {
             cx,
         )
         .detach();
+    }
+
+    pub fn set_prompt_capabilities(&mut self, capabilities: acp::PromptCapabilities) {
+        self.prompt_capabilities.set(capabilities);
     }
 
     #[cfg(test)]
@@ -230,7 +241,7 @@ impl MessageEditor {
         let Some((excerpt_id, _, _)) = snapshot.buffer_snapshot.as_singleton() else {
             return Task::ready(());
         };
-        let Some(anchor) = snapshot
+        let Some(start_anchor) = snapshot
             .buffer_snapshot
             .anchor_in_excerpt(*excerpt_id, start)
         else {
@@ -244,6 +255,33 @@ impl MessageEditor {
                 .unwrap_or_default();
 
             if Img::extensions().contains(&extension) && !extension.contains("svg") {
+                if !self.prompt_capabilities.get().image {
+                    struct ImagesNotAllowed;
+
+                    let end_anchor = snapshot.buffer_snapshot.anchor_before(
+                        start_anchor.to_offset(&snapshot.buffer_snapshot) + content_len + 1,
+                    );
+
+                    self.editor.update(cx, |editor, cx| {
+                        // Remove mention
+                        editor.edit([((start_anchor..end_anchor), "")], cx);
+                    });
+
+                    self.workspace
+                        .update(cx, |workspace, cx| {
+                            workspace.show_toast(
+                                Toast::new(
+                                    NotificationId::unique::<ImagesNotAllowed>(),
+                                    "This agent does not support images yet",
+                                )
+                                .autohide(),
+                                cx,
+                            );
+                        })
+                        .ok();
+                    return Task::ready(());
+                }
+
                 let project = self.project.clone();
                 let Some(project_path) = project
                     .read(cx)
@@ -277,7 +315,7 @@ impl MessageEditor {
                 };
                 return self.confirm_mention_for_image(
                     crease_id,
-                    anchor,
+                    start_anchor,
                     Some(abs_path.clone()),
                     image,
                     window,
@@ -301,17 +339,22 @@ impl MessageEditor {
 
         match mention_uri {
             MentionUri::Fetch { url } => {
-                self.confirm_mention_for_fetch(crease_id, anchor, url, window, cx)
+                self.confirm_mention_for_fetch(crease_id, start_anchor, url, window, cx)
             }
             MentionUri::Directory { abs_path } => {
-                self.confirm_mention_for_directory(crease_id, anchor, abs_path, window, cx)
+                self.confirm_mention_for_directory(crease_id, start_anchor, abs_path, window, cx)
             }
             MentionUri::Thread { id, name } => {
-                self.confirm_mention_for_thread(crease_id, anchor, id, name, window, cx)
+                self.confirm_mention_for_thread(crease_id, start_anchor, id, name, window, cx)
             }
-            MentionUri::TextThread { path, name } => {
-                self.confirm_mention_for_text_thread(crease_id, anchor, path, name, window, cx)
-            }
+            MentionUri::TextThread { path, name } => self.confirm_mention_for_text_thread(
+                crease_id,
+                start_anchor,
+                path,
+                name,
+                window,
+                cx,
+            ),
             MentionUri::File { .. }
             | MentionUri::Symbol { .. }
             | MentionUri::Rule { .. }
@@ -391,30 +434,33 @@ impl MessageEditor {
                         let rope = buffer
                             .read_with(cx, |buffer, _cx| buffer.as_rope().clone())
                             .log_err()?;
-                        Some(rope)
+                        Some((rope, buffer))
                     });
 
                     cx.background_spawn(async move {
-                        let rope = rope_task.await?;
-                        Some((rel_path, full_path, rope.to_string()))
+                        let (rope, buffer) = rope_task.await?;
+                        Some((rel_path, full_path, rope.to_string(), buffer))
                     })
                 }))
             })?;
 
             let contents = cx
                 .background_spawn(async move {
-                    let contents = descendants_future.await.into_iter().flatten();
-                    contents.collect()
+                    let (contents, tracked_buffers) = descendants_future
+                        .await
+                        .into_iter()
+                        .flatten()
+                        .map(|(rel_path, full_path, rope, buffer)| {
+                            ((rel_path, full_path, rope), buffer)
+                        })
+                        .unzip();
+                    (render_directory_contents(contents), tracked_buffers)
                 })
                 .await;
             anyhow::Ok(contents)
         });
         let task = cx
-            .spawn(async move |_, _| {
-                task.await
-                    .map(|contents| DirectoryContents(contents).to_string())
-                    .map_err(|e| e.to_string())
-            })
+            .spawn(async move |_, _| task.await.map_err(|e| e.to_string()))
             .shared();
 
         self.mention_set
@@ -663,7 +709,7 @@ impl MessageEditor {
         &self,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Task<Result<Vec<acp::ContentBlock>>> {
+    ) -> Task<Result<(Vec<acp::ContentBlock>, Vec<Entity<Buffer>>)>> {
         let contents =
             self.mention_set
                 .contents(&self.project, self.prompt_store.as_ref(), window, cx);
@@ -672,6 +718,7 @@ impl MessageEditor {
 
         cx.spawn(async move |_, cx| {
             let contents = contents.await?;
+            let mut all_tracked_buffers = Vec::new();
 
             editor.update(cx, |editor, cx| {
                 let mut ix = 0;
@@ -702,7 +749,12 @@ impl MessageEditor {
                             chunks.push(chunk);
                         }
                         let chunk = match mention {
-                            Mention::Text { uri, content } => {
+                            Mention::Text {
+                                uri,
+                                content,
+                                tracked_buffers,
+                            } => {
+                                all_tracked_buffers.extend(tracked_buffers.iter().cloned());
                                 acp::ContentBlock::Resource(acp::EmbeddedResource {
                                     annotations: None,
                                     resource: acp::EmbeddedResourceResource::TextResourceContents(
@@ -745,7 +797,7 @@ impl MessageEditor {
                     }
                 });
 
-                chunks
+                (chunks, all_tracked_buffers)
             })
         })
     }
@@ -769,6 +821,10 @@ impl MessageEditor {
     }
 
     fn paste(&mut self, _: &Paste, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.prompt_capabilities.get().image {
+            return;
+        }
+
         let images = cx
             .read_from_clipboard()
             .map(|item| {
@@ -1043,7 +1099,7 @@ impl MessageEditor {
                         .add_fetch_result(url, Task::ready(Ok(text)).shared());
                 }
                 MentionUri::Directory { abs_path } => {
-                    let task = Task::ready(Ok(text)).shared();
+                    let task = Task::ready(Ok((text, Vec::new()))).shared();
                     self.mention_set.directories.insert(abs_path, task);
                 }
                 MentionUri::File { .. }
@@ -1153,16 +1209,13 @@ impl MessageEditor {
     }
 }
 
-struct DirectoryContents(Arc<[(Arc<Path>, PathBuf, String)]>);
-
-impl Display for DirectoryContents {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        for (_relative_path, full_path, content) in self.0.iter() {
-            let fence = codeblock_fence_for_path(Some(full_path), None);
-            write!(f, "\n{fence}\n{content}\n```")?;
-        }
-        Ok(())
+fn render_directory_contents(entries: Vec<(Arc<Path>, PathBuf, String)>) -> String {
+    let mut output = String::new();
+    for (_relative_path, full_path, content) in entries {
+        let fence = codeblock_fence_for_path(Some(&full_path), None);
+        write!(output, "\n{fence}\n{content}\n```").unwrap();
     }
+    output
 }
 
 impl Focusable for MessageEditor {
@@ -1328,7 +1381,11 @@ impl Render for ImageHover {
 
 #[derive(Debug, Eq, PartialEq)]
 pub enum Mention {
-    Text { uri: MentionUri, content: String },
+    Text {
+        uri: MentionUri,
+        content: String,
+        tracked_buffers: Vec<Entity<Buffer>>,
+    },
     Image(MentionImage),
 }
 
@@ -1346,7 +1403,7 @@ pub struct MentionSet {
     images: HashMap<CreaseId, Shared<Task<Result<MentionImage, String>>>>,
     thread_summaries: HashMap<acp::SessionId, Shared<Task<Result<SharedString, String>>>>,
     text_thread_summaries: HashMap<PathBuf, Shared<Task<Result<String, String>>>>,
-    directories: HashMap<PathBuf, Shared<Task<Result<String, String>>>>,
+    directories: HashMap<PathBuf, Shared<Task<Result<(String, Vec<Entity<Buffer>>), String>>>>,
 }
 
 impl MentionSet {
@@ -1382,6 +1439,7 @@ impl MentionSet {
         self.fetch_results.clear();
         self.thread_summaries.clear();
         self.text_thread_summaries.clear();
+        self.directories.clear();
         self.uri_by_crease_id
             .drain()
             .map(|(id, _)| id)
@@ -1424,7 +1482,14 @@ impl MentionSet {
                             let buffer = buffer_task?.await?;
                             let content = buffer.read_with(cx, |buffer, _cx| buffer.text())?;
 
-                            anyhow::Ok((crease_id, Mention::Text { uri, content }))
+                            anyhow::Ok((
+                                crease_id,
+                                Mention::Text {
+                                    uri,
+                                    content,
+                                    tracked_buffers: vec![buffer],
+                                },
+                            ))
                         })
                     }
                     MentionUri::Directory { abs_path } => {
@@ -1433,11 +1498,14 @@ impl MentionSet {
                         };
                         let uri = uri.clone();
                         cx.spawn(async move |_| {
+                            let (content, tracked_buffers) =
+                                content.await.map_err(|e| anyhow::anyhow!("{e}"))?;
                             Ok((
                                 crease_id,
                                 Mention::Text {
                                     uri,
-                                    content: content.await.map_err(|e| anyhow::anyhow!("{e}"))?,
+                                    content,
+                                    tracked_buffers,
                                 },
                             ))
                         })
@@ -1473,7 +1541,14 @@ impl MentionSet {
                                     .collect()
                             })?;
 
-                            anyhow::Ok((crease_id, Mention::Text { uri, content }))
+                            anyhow::Ok((
+                                crease_id,
+                                Mention::Text {
+                                    uri,
+                                    content,
+                                    tracked_buffers: vec![buffer],
+                                },
+                            ))
                         })
                     }
                     MentionUri::Thread { id, .. } => {
@@ -1490,6 +1565,7 @@ impl MentionSet {
                                         .await
                                         .map_err(|e| anyhow::anyhow!("{e}"))?
                                         .to_string(),
+                                    tracked_buffers: Vec::new(),
                                 },
                             ))
                         })
@@ -1505,6 +1581,7 @@ impl MentionSet {
                                 Mention::Text {
                                     uri,
                                     content: content.await.map_err(|e| anyhow::anyhow!("{e}"))?,
+                                    tracked_buffers: Vec::new(),
                                 },
                             ))
                         })
@@ -1518,7 +1595,14 @@ impl MentionSet {
                         cx.spawn(async move |_| {
                             // TODO: report load errors instead of just logging
                             let text = text_task.await?;
-                            anyhow::Ok((crease_id, Mention::Text { uri, content: text }))
+                            anyhow::Ok((
+                                crease_id,
+                                Mention::Text {
+                                    uri,
+                                    content: text,
+                                    tracked_buffers: Vec::new(),
+                                },
+                            ))
                         })
                     }
                     MentionUri::Fetch { url } => {
@@ -1532,6 +1616,7 @@ impl MentionSet {
                                 Mention::Text {
                                     uri,
                                     content: content.await.map_err(|e| anyhow::anyhow!("{e}"))?,
+                                    tracked_buffers: Vec::new(),
                                 },
                             ))
                         })
@@ -1703,6 +1788,7 @@ impl Addon for MessageEditorAddon {
 mod tests {
     use std::{ops::Range, path::Path, sync::Arc};
 
+    use acp_thread::MentionUri;
     use agent_client_protocol as acp;
     use agent2::HistoryStore;
     use assistant_context::ContextStore;
@@ -1815,7 +1901,7 @@ mod tests {
             editor.backspace(&Default::default(), window, cx);
         });
 
-        let content = message_editor
+        let (content, _) = message_editor
             .update_in(cx, |message_editor, window, cx| {
                 message_editor.contents(window, cx)
             })
@@ -1970,6 +2056,34 @@ mod tests {
             (message_editor, editor)
         });
 
+        cx.simulate_input("Lorem @");
+
+        editor.update_in(&mut cx, |editor, window, cx| {
+            assert_eq!(editor.text(cx), "Lorem @");
+            assert!(editor.has_visible_completions_menu());
+
+            // Only files since we have default capabilities
+            assert_eq!(
+                current_completion_labels(editor),
+                &[
+                    "eight.txt dir/b/",
+                    "seven.txt dir/b/",
+                    "six.txt dir/b/",
+                    "five.txt dir/b/",
+                ]
+            );
+            editor.set_text("", window, cx);
+        });
+
+        message_editor.update(&mut cx, |editor, _cx| {
+            // Enable all prompt capabilities
+            editor.set_prompt_capabilities(acp::PromptCapabilities {
+                image: true,
+                audio: true,
+                embedded_context: true,
+            });
+        });
+
         cx.simulate_input("Lorem ");
 
         editor.update(&mut cx, |editor, cx| {
@@ -2046,13 +2160,13 @@ mod tests {
             .into_values()
             .collect::<Vec<_>>();
 
-        pretty_assertions::assert_eq!(
-            contents,
-            [Mention::Text {
-                content: "1".into(),
-                uri: url_one.parse().unwrap()
-            }]
-        );
+        {
+            let [Mention::Text { content, uri, .. }] = contents.as_slice() else {
+                panic!("Unexpected mentions");
+            };
+            pretty_assertions::assert_eq!(content, "1");
+            pretty_assertions::assert_eq!(uri, &url_one.parse::<MentionUri>().unwrap());
+        }
 
         cx.simulate_input(" ");
 
@@ -2098,15 +2212,15 @@ mod tests {
             .into_values()
             .collect::<Vec<_>>();
 
-        assert_eq!(contents.len(), 2);
         let url_eight = uri!("file:///dir/b/eight.txt");
-        pretty_assertions::assert_eq!(
-            contents[1],
-            Mention::Text {
-                content: "8".to_string(),
-                uri: url_eight.parse().unwrap(),
-            }
-        );
+
+        {
+            let [_, Mention::Text { content, uri, .. }] = contents.as_slice() else {
+                panic!("Unexpected mentions");
+            };
+            pretty_assertions::assert_eq!(content, "8");
+            pretty_assertions::assert_eq!(uri, &url_eight.parse::<MentionUri>().unwrap());
+        }
 
         editor.update(&mut cx, |editor, cx| {
             assert_eq!(
@@ -2208,14 +2322,18 @@ mod tests {
             .into_values()
             .collect::<Vec<_>>();
 
-        assert_eq!(contents.len(), 3);
-        pretty_assertions::assert_eq!(
-            contents[2],
-            Mention::Text {
-                content: "1".into(),
-                uri: format!("{url_one}?symbol=MySymbol#L1:1").parse().unwrap(),
-            }
-        );
+        {
+            let [_, _, Mention::Text { content, uri, .. }] = contents.as_slice() else {
+                panic!("Unexpected mentions");
+            };
+            pretty_assertions::assert_eq!(content, "1");
+            pretty_assertions::assert_eq!(
+                uri,
+                &format!("{url_one}?symbol=MySymbol#L1:1")
+                    .parse::<MentionUri>()
+                    .unwrap()
+            );
+        }
 
         cx.run_until_parked();
 

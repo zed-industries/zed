@@ -319,6 +319,14 @@ impl AgentConnection for ClaudeAgentConnection {
         cx.foreground_executor().spawn(async move { end_rx.await? })
     }
 
+    fn prompt_capabilities(&self) -> acp::PromptCapabilities {
+        acp::PromptCapabilities {
+            image: true,
+            audio: false,
+            embedded_context: true,
+        }
+    }
+
     fn cancel(&self, session_id: &acp::SessionId, _cx: &mut App) {
         let sessions = self.sessions.borrow();
         let Some(session) = sessions.get(session_id) else {

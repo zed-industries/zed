@@ -1397,8 +1397,8 @@ fn possible_open_target(
             let found_entry = worktree
                 .update(cx, |worktree, _| {
                     let worktree_root = worktree.abs_path();
-                    let mut traversal = worktree.traverse_from_path(true, true, false, "".as_ref());
-                    while let Some(entry) = traversal.next() {
+                    let traversal = worktree.traverse_from_path(true, true, false, "".as_ref());
+                    for entry in traversal {
                         if let Some(path_in_worktree) = worktree_paths_to_check
                             .iter()
                             .find(|path_to_check| entry.path.ends_with(&path_to_check.path))
