@@ -4012,12 +4012,9 @@ impl Render for AcpThreadView {
             .children(
                 if let Some(usage_callout) = self.render_usage_callout(line_height, cx) {
                     Some(usage_callout.into_any_element())
-                } else if let Some(token_limit_callout) =
-                    self.render_token_limit_callout(line_height, cx)
-                {
-                    Some(token_limit_callout.into_any_element())
                 } else {
-                    None
+                    self.render_token_limit_callout(line_height, cx)
+                        .map(|token_limit_callout| token_limit_callout.into_any_element())
                 },
             )
             .child(self.render_message_editor(window, cx))
