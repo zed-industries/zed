@@ -115,6 +115,7 @@ members = [
     "crates/net",
     "crates/node_runtime",
     "crates/notifications",
+    "crates/oracle",
     "crates/ollama",
     "crates/onboarding",
     "crates/open_ai",
@@ -345,6 +346,7 @@ nc = { path = "crates/nc" }
 net = { path = "crates/net" }
 node_runtime = { path = "crates/node_runtime" }
 notifications = { path = "crates/notifications" }
+oracle_code_assist = { path = "crates/oracle" }
 ollama = { path = "crates/ollama" }
 onboarding = { path = "crates/onboarding" }
 open_ai = { path = "crates/open_ai" }
