@@ -2461,7 +2461,7 @@ impl AcpThreadView {
             .child(
                 h_flex()
                     .mt_1p5()
-                    .gap_2()
+                    .gap_1()
                     .flex_wrap()
                     .justify_center()
                     .children(connection.auth_methods().iter().enumerate().rev().map(
@@ -2569,6 +2569,8 @@ impl AcpThreadView {
             let install_command = install_command.clone();
             container = container.child(
                 Button::new("install", install_message)
+                    .style(ButtonStyle::Tinted(ui::TintColor::Accent))
+                    .size(ButtonSize::Medium)
                     .tooltip(Tooltip::text(install_command.clone()))
                     .on_click(cx.listener(move |this, _, window, cx| {
                         let task = this
