@@ -913,6 +913,14 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
         })
     }
 
+    fn prompt_capabilities(&self) -> acp::PromptCapabilities {
+        acp::PromptCapabilities {
+            image: true,
+            audio: false,
+            embedded_context: true,
+        }
+    }
+
     fn resume(
         &self,
         session_id: &acp::SessionId,

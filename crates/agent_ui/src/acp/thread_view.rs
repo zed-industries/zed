@@ -362,6 +362,11 @@ impl AcpThreadView {
                             })
                         });
 
+                        this.message_editor.update(cx, |message_editor, _cx| {
+                            message_editor
+                                .set_prompt_capabilities(connection.prompt_capabilities());
+                        });
+
                         cx.notify();
                     }
                     Err(err) => {
@@ -4478,6 +4483,14 @@ pub(crate) mod tests {
 
         fn auth_methods(&self) -> &[acp::AuthMethod] {
             &[]
+        }
+
+        fn prompt_capabilities(&self) -> acp::PromptCapabilities {
+            acp::PromptCapabilities {
+                image: true,
+                audio: true,
+                embedded_context: true,
+            }
         }
 
         fn authenticate(

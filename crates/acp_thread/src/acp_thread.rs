@@ -2598,6 +2598,14 @@ mod tests {
             }
         }
 
+        fn prompt_capabilities(&self) -> acp::PromptCapabilities {
+            acp::PromptCapabilities {
+                image: true,
+                audio: true,
+                embedded_context: true,
+            }
+        }
+
         fn cancel(&self, session_id: &acp::SessionId, cx: &mut App) {
             let sessions = self.sessions.lock();
             let thread = sessions.get(session_id).unwrap().clone();
