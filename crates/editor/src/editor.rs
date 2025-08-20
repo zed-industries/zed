@@ -6262,7 +6262,7 @@ impl Editor {
                 Some(cx.spawn_in(window, async move |editor, cx| {
                     let project_transaction = apply_code_action.await?;
                     Self::open_project_transaction(
-                        &editor,
+                        Some(&editor),
                         workspace,
                         project_transaction,
                         title,
@@ -6291,7 +6291,7 @@ impl Editor {
     }
 
     pub async fn open_project_transaction(
-        this: &WeakEntity<Editor>,
+        editor: Option<&WeakEntity<Editor>>,
         workspace: WeakEntity<Workspace>,
         transaction: ProjectTransaction,
         title: String,
@@ -6307,33 +6307,36 @@ impl Editor {
         // If the project transaction's edits are all contained within this editor, then
         // avoid opening a new editor to display them.
 
-        if let Some((buffer, transaction)) = entries.first() {
-            if entries.len() == 1 {
-                let excerpt = this.update(cx, |editor, cx| {
-                    editor
-                        .buffer()
-                        .read(cx)
-                        .excerpt_containing(editor.selections.newest_anchor().head(), cx)
-                })?;
-                if let Some((_, excerpted_buffer, excerpt_range)) = excerpt
-                    && excerpted_buffer == *buffer
-                {
-                    let all_edits_within_excerpt = buffer.read_with(cx, |buffer, _| {
-                        let excerpt_range = excerpt_range.to_offset(buffer);
-                        buffer
-                            .edited_ranges_for_transaction::<usize>(transaction)
-                            .all(|range| {
-                                excerpt_range.start <= range.start && excerpt_range.end >= range.end
-                            })
+        if let Some(editor) = editor {
+            if let Some((buffer, transaction)) = entries.first() {
+                if entries.len() == 1 {
+                    let excerpt = editor.update(cx, |editor, cx| {
+                        editor
+                            .buffer()
+                            .read(cx)
+                            .excerpt_containing(editor.selections.newest_anchor().head(), cx)
                     })?;
+                    if let Some((_, excerpted_buffer, excerpt_range)) = excerpt
+                        && excerpted_buffer == *buffer
+                    {
+                        let all_edits_within_excerpt = buffer.read_with(cx, |buffer, _| {
+                            let excerpt_range = excerpt_range.to_offset(buffer);
+                            buffer
+                                .edited_ranges_for_transaction::<usize>(transaction)
+                                .all(|range| {
+                                    excerpt_range.start <= range.start
+                                        && excerpt_range.end >= range.end
+                                })
+                        })?;
 
-                    if all_edits_within_excerpt {
-                        return Ok(());
+                        if all_edits_within_excerpt {
+                            return Ok(());
+                        }
                     }
                 }
+            } else {
+                return Ok(());
             }
-        } else {
-            return Ok(());
         }
 
         let mut ranges_to_highlight = Vec::new();
@@ -16447,7 +16450,7 @@ impl Editor {
         Some(cx.spawn_in(window, async move |editor, cx| {
             let project_transaction = rename.await?;
             Self::open_project_transaction(
-                &editor,
+                Some(&editor),
                 workspace,
                 project_transaction,
                 format!("Rename: {} → {}", old_name, new_name),
