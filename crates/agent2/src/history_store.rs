@@ -266,6 +266,10 @@ impl HistoryStore {
             cx.background_executor()
                 .timer(SAVE_RECENTLY_OPENED_ENTRIES_DEBOUNCE)
                 .await;
+
+            if cfg!(any(feature = "test-support", test)) {
+                return;
+            }
             KEY_VALUE_STORE
                 .write_kvp(RECENTLY_OPENED_THREADS_KEY.to_owned(), content)
                 .await
@@ -275,6 +279,9 @@ impl HistoryStore {
 
     fn load_recently_opened_entries(cx: &AsyncApp) -> Task<Result<VecDeque<HistoryEntryId>>> {
         cx.background_spawn(async move {
+            if cfg!(any(feature = "test-support", test)) {
+                anyhow::bail!("history store does not persist in tests");
+            }
             let json = KEY_VALUE_STORE
                 .read_kvp(RECENTLY_OPENED_THREADS_KEY)?
                 .unwrap_or("[]".to_string());
