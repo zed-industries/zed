@@ -209,7 +209,7 @@ fn replace_value_in_json_text(
                     if ch == ',' {
                         removal_end = existing_value_range.end + offset + 1;
                         // Also consume whitespace after the comma
-                        while let Some((_, next_ch)) = chars.next() {
+                        for (_, next_ch) in chars.by_ref() {
                             if next_ch.is_whitespace() {
                                 removal_end += next_ch.len_utf8();
                             } else {

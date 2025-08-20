@@ -2024,8 +2024,8 @@ mod tests {
         fn gen_working_copy(rng: &mut StdRng, head: &str) -> String {
             let mut old_lines = {
                 let mut old_lines = Vec::new();
-                let mut old_lines_iter = head.lines();
-                while let Some(line) = old_lines_iter.next() {
+                let old_lines_iter = head.lines();
+                for line in old_lines_iter {
                     assert!(!line.ends_with("\n"));
                     old_lines.push(line.to_owned());
                 }

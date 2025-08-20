@@ -1492,7 +1492,7 @@ impl OnMatchingLines {
         let mut search = String::new();
         let mut escaped = false;
 
-        while let Some(c) = chars.next() {
+        for c in chars.by_ref() {
             if escaped {
                 escaped = false;
                 // unescape escaped parens
