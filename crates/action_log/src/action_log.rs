@@ -190,7 +190,7 @@ impl ActionLog {
         cx: &mut Context<Self>,
     ) {
         match event {
-            BufferEvent::Edited { .. } => self.handle_buffer_edited(buffer, cx),
+            BufferEvent::Edited => self.handle_buffer_edited(buffer, cx),
             BufferEvent::FileHandleChanged => {
                 self.handle_buffer_file_changed(buffer, cx);
             }

@@ -1029,11 +1029,11 @@ impl Client {
             Status::SignedOut | Status::Authenticated => true,
             Status::ConnectionError
             | Status::ConnectionLost
-            | Status::Authenticating { .. }
+            | Status::Authenticating
             | Status::AuthenticationError
-            | Status::Reauthenticating { .. }
+            | Status::Reauthenticating
             | Status::ReconnectionError { .. } => false,
-            Status::Connected { .. } | Status::Connecting { .. } | Status::Reconnecting { .. } => {
+            Status::Connected { .. } | Status::Connecting | Status::Reconnecting => {
                 return ConnectionResult::Result(Ok(()));
             }
             Status::UpgradeRequired => {
@@ -1904,7 +1904,7 @@ mod tests {
         executor.advance_clock(CONNECTION_TIMEOUT);
         assert!(matches!(
             status.next().await,
-            Some(Status::ConnectionError { .. })
+            Some(Status::ConnectionError)
         ));
         auth_and_connect.await.into_response().unwrap_err();
 
@@ -1931,7 +1931,7 @@ mod tests {
         executor.advance_clock(2 * INITIAL_RECONNECTION_DELAY);
         assert!(matches!(
             status.next().await,
-            Some(Status::Reconnecting { .. })
+            Some(Status::Reconnecting)
         ));
 
         executor.advance_clock(CONNECTION_TIMEOUT);

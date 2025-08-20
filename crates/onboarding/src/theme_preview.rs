@@ -362,13 +362,12 @@ impl Component for ThemePreviewTile {
                             .gap_4()
                             .children(
                                 themes_to_preview
-                                    .iter()
-                                    .enumerate()
-                                    .map(|(_, theme)| {
+                                    .into_iter()
+                                    .map(|theme| {
                                         div()
                                             .w(px(200.))
                                             .h(px(140.))
-                                            .child(ThemePreviewTile::new(theme.clone(), 0.42))
+                                            .child(ThemePreviewTile::new(theme, 0.42))
                                     })
                                     .collect::<Vec<_>>(),
                             )

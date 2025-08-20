@@ -104,7 +104,7 @@ impl ActivityIndicator {
                 &workspace_handle,
                 window,
                 |activity_indicator, _, event, window, cx| {
-                    if let workspace::Event::ClearActivityIndicator { .. } = event
+                    if let workspace::Event::ClearActivityIndicator = event
                         && activity_indicator.statuses.pop().is_some()
                     {
                         activity_indicator.dismiss_error_message(&DismissErrorMessage, window, cx);

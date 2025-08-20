@@ -2983,7 +2983,7 @@ impl GitPanel {
             let status_toast = StatusToast::new(message, cx, move |this, _cx| {
                 use remote_output::SuccessStyle::*;
                 match style {
-                    Toast { .. } => {
+                    Toast => {
                         this.icon(ToastIcon::new(IconName::GitBranchAlt).color(Color::Muted))
                     }
                     ToastWithLog { output } => this

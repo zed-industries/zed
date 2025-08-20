@@ -948,7 +948,7 @@ impl SshRemoteClient {
                     if old_state.is_reconnecting() {
                         match &new_state {
                             State::Connecting
-                            | State::Reconnecting { .. }
+                            | State::Reconnecting
                             | State::HeartbeatMissed { .. }
                             | State::ServerNotRunning => {}
                             State::Connected { .. } => {
