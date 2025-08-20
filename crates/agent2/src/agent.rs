@@ -577,6 +577,10 @@ impl NativeAgent {
     }
 
     fn save_thread(&mut self, thread: Entity<Thread>, cx: &mut Context<Self>) {
+        if thread.read(cx).is_empty() {
+            return;
+        }
+
         let database_future = ThreadsDatabase::connect(cx);
         let (id, db_thread) =
             thread.update(cx, |thread, cx| (thread.id().clone(), thread.to_db(cx)));
@@ -998,6 +1002,7 @@ mod tests {
     use fs::FakeFs;
     use gpui::TestAppContext;
     use indoc::indoc;
+    use language_model::fake_provider::FakeLanguageModel;
     use serde_json::json;
     use settings::SettingsStore;
 
@@ -1224,6 +1229,17 @@ mod tests {
         let thread = agent.read_with(cx, |agent, _| {
             agent.sessions.get(&session_id).unwrap().thread.clone()
         });
+
+        // Ensure empty threads are not saved, even if they get mutated.
+        let model = Arc::new(FakeLanguageModel::default());
+        let summary_model = Arc::new(FakeLanguageModel::default());
+        thread.update(cx, |thread, cx| {
+            thread.set_model(model, cx);
+            thread.set_summarization_model(Some(summary_model), cx);
+        });
+        cx.run_until_parked();
+        assert_eq!(history_entries(&history_store, cx), vec![]);
+
         let model = thread.read_with(cx, |thread, _| thread.model().unwrap().clone());
         let model = model.as_fake();
         let summary_model = thread.read_with(cx, |thread, _| {
@@ -1288,20 +1304,13 @@ mod tests {
         });
 
         // Ensure the thread can be reloaded from disk.
-        history_store.read_with(cx, |history, cx| {
-            let entries = history
-                .entries(cx)
-                .iter()
-                .map(|e| (e.id(), e.title().to_string()))
-                .collect::<Vec<_>>();
-            assert_eq!(
-                entries,
-                vec![(
-                    HistoryEntryId::AcpThread(session_id.clone()),
-                    "Explaining /a/b.md".into()
-                )]
-            );
-        });
+        assert_eq!(
+            history_entries(&history_store, cx),
+            vec![(
+                HistoryEntryId::AcpThread(session_id.clone()),
+                "Explaining /a/b.md".into()
+            )]
+        );
         let acp_thread = agent
             .update(cx, |agent, cx| agent.open_thread(session_id.clone(), cx))
             .await
@@ -1321,6 +1330,19 @@ mod tests {
                 "}
             )
         });
+    }
+
+    fn history_entries(
+        history: &Entity<HistoryStore>,
+        cx: &mut TestAppContext,
+    ) -> Vec<(HistoryEntryId, String)> {
+        history.read_with(cx, |history, cx| {
+            history
+                .entries(cx)
+                .iter()
+                .map(|e| (e.id(), e.title().to_string()))
+                .collect::<Vec<_>>()
+        })
     }
 
     fn init_test(cx: &mut TestAppContext) {

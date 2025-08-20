@@ -870,6 +870,10 @@ impl Thread {
         &self.action_log
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.messages.is_empty() && self.title.is_none()
+    }
+
     pub fn model(&self) -> Option<&Arc<dyn LanguageModel>> {
         self.model.as_ref()
     }
