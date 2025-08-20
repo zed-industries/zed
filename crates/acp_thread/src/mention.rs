@@ -1,4 +1,4 @@
-use agent::ThreadId;
+use agent_client_protocol as acp;
 use anyhow::{Context as _, Result, bail};
 use file_icons::FileIcons;
 use prompt_store::{PromptId, UserPromptId};
@@ -12,7 +12,7 @@ use std::{
 use ui::{App, IconName, SharedString};
 use url::Url;
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Hash)]
 pub enum MentionUri {
     File {
         abs_path: PathBuf,
@@ -26,7 +26,7 @@ pub enum MentionUri {
         line_range: Range<u32>,
     },
     Thread {
-        id: ThreadId,
+        id: acp::SessionId,
         name: String,
     },
     TextThread {
@@ -89,7 +89,7 @@ impl MentionUri {
                 if let Some(thread_id) = path.strip_prefix("/agent/thread/") {
                     let name = single_query_param(&url, "name")?.context("Missing thread name")?;
                     Ok(Self::Thread {
-                        id: thread_id.into(),
+                        id: acp::SessionId(thread_id.into()),
                         name,
                     })
                 } else if let Some(path) = path.strip_prefix("/agent/text-thread/") {

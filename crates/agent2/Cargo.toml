@@ -8,6 +8,9 @@ license = "GPL-3.0-or-later"
 [lib]
 path = "src/agent2.rs"
 
+[features]
+test-support = ["db/test-support"]
+
 [lints]
 workspace = true
 
@@ -72,6 +75,7 @@ ctor.workspace = true
 client = { workspace = true, "features" = ["test-support"] }
 clock = { workspace = true, "features" = ["test-support"] }
 context_server = { workspace = true, "features" = ["test-support"] }
+db = { workspace = true, "features" = ["test-support"] }
 editor = { workspace = true, "features" = ["test-support"] }
 env_logger.workspace = true
 fs = { workspace = true, "features" = ["test-support"] }

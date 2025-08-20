@@ -536,6 +536,28 @@ impl NativeAgent {
         })
     }
 
+    pub fn thread_summary(
+        &mut self,
+        id: acp::SessionId,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<SharedString>> {
+        let thread = self.open_thread(id.clone(), cx);
+        cx.spawn(async move |this, cx| {
+            let acp_thread = thread.await?;
+            let result = this
+                .update(cx, |this, cx| {
+                    this.sessions
+                        .get(&id)
+                        .unwrap()
+                        .thread
+                        .update(cx, |thread, cx| thread.summary(cx))
+                })?
+                .await?;
+            drop(acp_thread);
+            Ok(result)
+        })
+    }
+
     fn save_thread(&mut self, thread: Entity<Thread>, cx: &mut Context<Self>) {
         let database_future = ThreadsDatabase::connect(cx);
         let (id, db_thread) =
