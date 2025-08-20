@@ -776,21 +776,23 @@ fn open_target_in_explorer(target: PathBuf) -> Result<()> {
     }
 
     let highlight = [file_item as *const _];
-    match unsafe { SHOpenFolderAndSelectItems(dir_item as _, Some(&highlight), 0) } {
-        Ok(_) => Ok(()),
-        Err(err) if err.code().0 == ERROR_FILE_NOT_FOUND.0 as i32 => unsafe {
-            ShellExecuteW(
-                None,
-                windows::core::w!("open"),
-                &HSTRING::from(dir),
-                None,
-                None,
-                SW_SHOWDEFAULT,
-            );
-            Ok(())
-        },
-        Err(err) => Err(anyhow::anyhow!("Can not open target path: {}", err)),
-    }
+    unsafe { SHOpenFolderAndSelectItems(dir_item as _, Some(&highlight), 0) }.or_else(|err| {
+        if err.code().0 == ERROR_FILE_NOT_FOUND.0 as i32 {
+            unsafe {
+                ShellExecuteW(
+                    None,
+                    windows::core::w!("open"),
+                    &HSTRING::from(dir),
+                    None,
+                    None,
+                    SW_SHOWDEFAULT,
+                );
+                Ok(())
+            }
+        } else {
+            Err(anyhow::anyhow!("Can not open target path: {}", err))
+        }
+    })
 }
 
 fn file_open_dialog(
