@@ -315,7 +315,7 @@ impl EmbeddingIndex {
                         );
                     }
 
-                    embeddings.extend(iter::repeat(None).take(embedding_batch.len()));
+                    embeddings.extend(iter::repeat_n(None, embedding_batch.len()));
                 }
 
                 let mut embeddings = embeddings.into_iter();

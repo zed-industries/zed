@@ -621,7 +621,7 @@ impl MemoryView {
         }
         let zeros_to_write = 8 - memory.len();
         let mut acc = String::from("0x");
-        acc.extend(std::iter::repeat("00").take(zeros_to_write));
+        acc.extend(std::iter::repeat_n("00", zeros_to_write));
         let as_query = memory.into_iter().rev().fold(acc, |mut acc, byte| {
             _ = write!(&mut acc, "{:02x}", byte);
             acc

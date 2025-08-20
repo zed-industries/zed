@@ -22,7 +22,7 @@ impl RenderOnce for UsageCallout {
             UsageLimit::Limited(limit) => {
                 let percentage = self.usage.amount as f32 / limit as f32;
                 let is_limit_reached = percentage >= 1.0;
-                let is_near_limit = percentage >= 0.9 && percentage < 1.0;
+                let is_near_limit = (0.9..1.0).contains(&percentage);
                 (
                     is_limit_reached,
                     is_near_limit,

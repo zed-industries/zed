@@ -1812,8 +1812,7 @@ impl Buffer {
                     let point = Point::new(row, 0);
                     Some((
                         point..point,
-                        iter::repeat(new_size.char())
-                            .take((new_size.len - current_size.len) as usize)
+                        iter::repeat_n(new_size.char(), (new_size.len - current_size.len) as usize)
                             .collect::<String>(),
                     ))
                 }
@@ -1828,9 +1827,7 @@ impl Buffer {
         } else {
             Some((
                 Point::new(row, 0)..Point::new(row, current_size.len),
-                iter::repeat(new_size.char())
-                    .take(new_size.len as usize)
-                    .collect::<String>(),
+                iter::repeat_n(new_size.char(), new_size.len as usize).collect::<String>(),
             ))
         }
     }
@@ -4854,7 +4851,7 @@ impl IndentSize {
 
     /// An iterator over the characters represented by this [`IndentSize`].
     pub fn chars(&self) -> impl Iterator<Item = char> {
-        iter::repeat(self.char()).take(self.len as usize)
+        std::iter::repeat_n(self.char(), self.len as usize)
     }
 
     /// The character representation of this [`IndentSize`].

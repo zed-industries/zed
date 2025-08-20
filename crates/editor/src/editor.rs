@@ -11257,7 +11257,7 @@ impl Editor {
             text.chars()
                 .map(|c| {
                     let code_point = c as u32;
-                    if code_point >= 33 && code_point <= 126 {
+                    if (33..=126).contains(&code_point) {
                         return char::from_u32(33 + ((code_point + 14) % 94)).unwrap();
                     }
                     c

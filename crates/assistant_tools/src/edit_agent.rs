@@ -622,7 +622,7 @@ impl EditAgent {
                             let new_indent_len =
                                 cmp::max(0, non_whitespace_ix as isize + delta.len()) as usize;
                             indented_new_text
-                                .extend(iter::repeat(delta.character()).take(new_indent_len));
+                                .extend(iter::repeat_n(delta.character(), new_indent_len));
                             indented_new_text.push_str(&line[non_whitespace_ix..]);
                             in_leading_whitespace = false;
                         } else if is_pending_line {

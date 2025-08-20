@@ -1340,7 +1340,7 @@ impl Session {
     }
 
     pub fn has_new_output(&self, last_update: OutputToken) -> bool {
-        self.output_token.0.checked_sub(last_update.0).unwrap_or(0) != 0
+        self.output_token.0.saturating_sub(last_update.0) != 0
     }
 
     pub fn output(
@@ -1351,7 +1351,7 @@ impl Session {
             return (self.output.range(0..0), OutputToken(0));
         };
 
-        let events_since = self.output_token.0.checked_sub(since.0).unwrap_or(0);
+        let events_since = self.output_token.0.saturating_sub(since.0);
 
         let clamped_events_since = events_since.clamp(0, self.output.len());
         (

@@ -50,11 +50,7 @@ impl ScrollableHandle for TerminalScrollHandle {
         let state = self.state.borrow();
         size(
             Pixels::ZERO,
-            state
-                .total_lines
-                .checked_sub(state.viewport_lines)
-                .unwrap_or(0) as f32
-                * state.line_height,
+            state.total_lines.saturating_sub(state.viewport_lines) as f32 * state.line_height,
         )
     }
 

@@ -848,7 +848,7 @@ impl ansi::Handler for ConsoleHandler {
 
     fn put_tab(&mut self, count: u16) {
         self.output
-            .extend(std::iter::repeat('\t').take(count as usize));
+            .extend(std::iter::repeat_n('\t', count as usize));
         self.pos += count as usize;
     }
 
