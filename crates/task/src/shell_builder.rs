@@ -1,26 +1,40 @@
 use crate::Shell;
 
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-enum ShellKind {
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ShellKind {
     #[default]
     Posix,
+    Csh,
+    Fish,
     Powershell,
     Nushell,
     Cmd,
 }
 
 impl ShellKind {
-    fn new(program: &str) -> Self {
+    pub fn system() -> Self {
+        Self::new(&system_shell())
+    }
+
+    pub fn new(program: &str) -> Self {
+        #[cfg(windows)]
+        let (_, program) = program.rsplit_once('\\').unwrap_or(("", program));
+        #[cfg(not(windows))]
+        let (_, program) = program.rsplit_once('/').unwrap_or(("", program));
         if program == "powershell"
-            || program.ends_with("powershell.exe")
+            || program == "powershell.exe"
             || program == "pwsh"
-            || program.ends_with("pwsh.exe")
+            || program == "pwsh.exe"
         {
             ShellKind::Powershell
-        } else if program == "cmd" || program.ends_with("cmd.exe") {
+        } else if program == "cmd" || program == "cmd.exe" {
             ShellKind::Cmd
         } else if program == "nu" {
             ShellKind::Nushell
+        } else if program == "fish" {
+            ShellKind::Fish
+        } else if program == "csh" {
+            ShellKind::Csh
         } else {
             // Someother shell detected, the user might install and use a
             // unix-like shell.
@@ -33,6 +47,8 @@ impl ShellKind {
             Self::Powershell => Self::to_powershell_variable(input),
             Self::Cmd => Self::to_cmd_variable(input),
             Self::Posix => input.to_owned(),
+            Self::Fish => input.to_owned(),
+            Self::Csh => input.to_owned(),
             Self::Nushell => Self::to_nushell_variable(input),
         }
     }
@@ -153,7 +169,7 @@ impl ShellKind {
         match self {
             ShellKind::Powershell => vec!["-C".to_owned(), combined_command],
             ShellKind::Cmd => vec!["/C".to_owned(), combined_command],
-            ShellKind::Posix | ShellKind::Nushell => interactive
+            ShellKind::Posix | ShellKind::Nushell | ShellKind::Fish | ShellKind::Csh => interactive
                 .then(|| "-i".to_owned())
                 .into_iter()
                 .chain(["-c".to_owned(), combined_command])
@@ -184,19 +200,14 @@ pub struct ShellBuilder {
     kind: ShellKind,
 }
 
-pub static DEFAULT_REMOTE_SHELL: &str = "\"${SHELL:-sh}\"";
-
 impl ShellBuilder {
     /// Create a new ShellBuilder as configured.
-    pub fn new(is_local: bool, shell: &Shell) -> Self {
+    pub fn new(remote_system_shell: Option<&str>, shell: &Shell) -> Self {
         let (program, args) = match shell {
-            Shell::System => {
-                if is_local {
-                    (system_shell(), Vec::new())
-                } else {
-                    (DEFAULT_REMOTE_SHELL.to_string(), Vec::new())
-                }
-            }
+            Shell::System => match remote_system_shell {
+                Some(remote_shell) => (remote_shell.to_string(), Vec::new()),
+                None => (system_shell(), Vec::new()),
+            },
             Shell::Program(shell) => (shell.clone(), Vec::new()),
             Shell::WithArguments { program, args, .. } => (program.clone(), args.clone()),
         };
@@ -212,6 +223,7 @@ impl ShellBuilder {
         self.interactive = false;
         self
     }
+
     /// Returns the label to show in the terminal tab
     pub fn command_label(&self, command_label: &str) -> String {
         match self.kind {
@@ -221,7 +233,7 @@ impl ShellBuilder {
             ShellKind::Cmd => {
                 format!("{} /C '{}'", self.program, command_label)
             }
-            ShellKind::Posix | ShellKind::Nushell => {
+            ShellKind::Posix | ShellKind::Nushell | ShellKind::Fish | ShellKind::Csh => {
                 let interactivity = self.interactive.then_some("-i ").unwrap_or_default();
                 format!(
                     "{} {interactivity}-c '$\"{}\"'",
@@ -234,7 +246,7 @@ impl ShellBuilder {
     pub fn build(
         mut self,
         task_command: Option<String>,
-        task_args: &Vec<String>,
+        task_args: &[String],
     ) -> (String, Vec<String>) {
         if let Some(task_command) = task_command {
             let combined_command = task_args.iter().fold(task_command, |mut command, arg| {
@@ -258,11 +270,11 @@ mod test {
     #[test]
     fn test_nu_shell_variable_substitution() {
         let shell = Shell::Program("nu".to_owned());
-        let shell_builder = ShellBuilder::new(true, &shell);
+        let shell_builder = ShellBuilder::new(None, &shell);
 
         let (program, args) = shell_builder.build(
             Some("echo".into()),
-            &vec![
+            &[
                 "${hello}".to_string(),
                 "$world".to_string(),
                 "nothing".to_string(),
