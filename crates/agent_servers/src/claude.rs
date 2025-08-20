@@ -11,7 +11,6 @@ use smol::process::Child;
 use std::any::Any;
 use std::cell::RefCell;
 use std::fmt::Display;
-use std::fmt::Write;
 use std::path::Path;
 use std::rc::Rc;
 use uuid::Uuid;
@@ -268,21 +267,27 @@ impl AgentConnection for ClaudeAgentConnection {
         let (end_tx, end_rx) = oneshot::channel();
         session.turn_state.replace(TurnState::InProgress { end_tx });
 
-        let mut content = String::new();
-        let mut context = String::new();
+        let mut content = Vec::with_capacity(params.prompt.len());
+        let mut context = Vec::with_capacity(params.prompt.len());
 
         for chunk in params.prompt {
             match chunk {
                 acp::ContentBlock::Text(text_content) => {
-                    content.push_str(&text_content.text);
+                    content.push(ContentChunk::Text {
+                        text: text_content.text,
+                    });
                 }
                 acp::ContentBlock::ResourceLink(resource_link) => {
                     match MentionUri::parse(&resource_link.uri) {
                         Ok(uri) => {
-                            write!(&mut content, "{}", uri.as_link()).ok();
+                            content.push(ContentChunk::Text {
+                                text: format!("{}", uri.as_link()),
+                            });
                         }
                         Err(_) => {
-                            write!(&mut content, "@{}", resource_link.uri).ok();
+                            content.push(ContentChunk::Text {
+                                text: resource_link.uri,
+                            });
                         }
                     }
                 }
@@ -290,38 +295,48 @@ impl AgentConnection for ClaudeAgentConnection {
                     acp::EmbeddedResourceResource::TextResourceContents(resource) => {
                         match MentionUri::parse(&resource.uri) {
                             Ok(uri) => {
-                                write!(&mut content, "{}", uri.as_link()).ok();
+                                content.push(ContentChunk::Text {
+                                    text: format!("{}", uri.as_link()),
+                                });
                             }
                             Err(_) => {
-                                write!(&mut content, "@{}", resource.uri).ok();
+                                content.push(ContentChunk::Text {
+                                    text: resource.uri.clone(),
+                                });
                             }
                         }
 
-                        write!(
-                            &mut context,
-                            "<context ref=\"{}\">\n{}\n</context>\n",
-                            resource.uri, resource.text
-                        )
-                        .ok();
+                        context.push(ContentChunk::Text {
+                            text: format!(
+                                "<context ref=\"{}\">\n{}\n</context>\n",
+                                resource.uri, resource.text
+                            ),
+                        });
                     }
                     acp::EmbeddedResourceResource::BlobResourceContents(_) => {
-                        // TODO
+                        // Unsupported by SDK
                     }
                 },
-                acp::ContentBlock::Audio(_) | acp::ContentBlock::Image(_) => {
-                    // TODO
+                acp::ContentBlock::Image(acp::ImageContent {
+                    data, mime_type, ..
+                }) => content.push(ContentChunk::Image {
+                    source: ImageSource::Base64 {
+                        data,
+                        media_type: mime_type,
+                    },
+                }),
+                acp::ContentBlock::Audio(_) => {
+                    // Unsupported by SDK
                 }
             }
         }
 
-        if !context.is_empty() {
-            write!(&mut content, "\n{}", context).ok();
-        }
+        content.extend(context);
 
         if let Err(err) = session.outgoing_tx.unbounded_send(SdkMessage::User {
             message: Message {
                 role: Role::User,
-                content: Content::UntaggedText(content),
+                content: Content::Chunks(content),
                 id: None,
                 model: None,
                 stop_reason: None,
@@ -547,10 +562,17 @@ impl ClaudeAgentSession {
                                 chunk
                             );
                         }
+                        ContentChunk::Image { source } => {
+                            if !turn_state.borrow().is_canceled() {
+                                thread
+                                    .update(cx, |thread, cx| {
+                                        thread.push_user_content_block(None, source.into(), cx)
+                                    })
+                                    .log_err();
+                            }
+                        }
 
-                        ContentChunk::Image
-                        | ContentChunk::Document
-                        | ContentChunk::WebSearchToolResult => {
+                        ContentChunk::Document | ContentChunk::WebSearchToolResult => {
                             thread
                                 .update(cx, |thread, cx| {
                                     thread.push_assistant_content_block(
@@ -636,7 +658,14 @@ impl ClaudeAgentSession {
                                 "Should not get tool results with role: assistant. should we handle this?"
                             );
                         }
-                        ContentChunk::Image | ContentChunk::Document => {
+                        ContentChunk::Image { source } => {
+                            thread
+                                .update(cx, |thread, cx| {
+                                    thread.push_assistant_content_block(source.into(), false, cx)
+                                })
+                                .log_err();
+                        }
+                        ContentChunk::Document => {
                             thread
                                 .update(cx, |thread, cx| {
                                     thread.push_assistant_content_block(
@@ -802,12 +831,42 @@ enum ContentChunk {
         thinking: String,
     },
     RedactedThinking,
+    Image {
+        source: ImageSource,
+    },
     // TODO
-    Image,
     Document,
     WebSearchToolResult,
     #[serde(untagged)]
     UntaggedText(String),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum ImageSource {
+    Base64 { data: String, media_type: String },
+    Url { url: String },
+}
+
+impl Into<acp::ContentBlock> for ImageSource {
+    fn into(self) -> acp::ContentBlock {
+        match self {
+            ImageSource::Base64 { data, media_type } => {
+                acp::ContentBlock::Image(acp::ImageContent {
+                    annotations: None,
+                    data,
+                    mime_type: media_type,
+                    uri: None,
+                })
+            }
+            ImageSource::Url { url } => acp::ContentBlock::Image(acp::ImageContent {
+                annotations: None,
+                data: "".to_string(),
+                mime_type: "".to_string(),
+                uri: Some(url),
+            }),
+        }
+    }
 }
 
 impl Display for ContentChunk {
@@ -818,7 +877,7 @@ impl Display for ContentChunk {
             ContentChunk::RedactedThinking => write!(f, "Thinking: [REDACTED]"),
             ContentChunk::UntaggedText(text) => write!(f, "{}", text),
             ContentChunk::ToolResult { content, .. } => write!(f, "{}", content),
-            ContentChunk::Image
+            ContentChunk::Image { .. }
             | ContentChunk::Document
             | ContentChunk::ToolUse { .. }
             | ContentChunk::WebSearchToolResult => {
