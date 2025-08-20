@@ -89,7 +89,7 @@ impl State {
             .clone();
         cx.spawn(async move |this, cx| {
             credentials_provider
-                .delete_credentials(&api_url, &cx)
+                .delete_credentials(&api_url, cx)
                 .await
                 .log_err();
             this.update(cx, |this, cx| {
@@ -108,7 +108,7 @@ impl State {
             .clone();
         cx.spawn(async move |this, cx| {
             credentials_provider
-                .write_credentials(&api_url, "Bearer", api_key.as_bytes(), &cx)
+                .write_credentials(&api_url, "Bearer", api_key.as_bytes(), cx)
                 .await
                 .log_err();
             this.update(cx, |this, cx| {
@@ -192,7 +192,7 @@ impl State {
             let (api_key, from_env) = if let Ok(api_key) = std::env::var(OLLAMA_API_KEY_VAR) {
                 (Some(api_key), true)
             } else {
-                match credentials_provider.read_credentials(&api_url, &cx).await {
+                match credentials_provider.read_credentials(&api_url, cx).await {
                     Ok(Some((_, api_key))) => (
                         Some(String::from_utf8(api_key).context("invalid Ollama API key")?),
                         false,
@@ -770,10 +770,10 @@ impl ConfigurationView {
             let fs = <dyn Fs>::global(cx);
             update_settings_file::<AllLanguageModelSettings>(fs, cx, move |settings, _| {
                 if let Some(settings) = settings.ollama.as_mut() {
-                    settings.api_url = Some(api_url.clone());
+                    settings.api_url = Some(api_url);
                 } else {
                     settings.ollama = Some(crate::settings::OllamaSettingsContent {
-                        api_url: Some(api_url.clone()),
+                        api_url: Some(api_url),
                         available_models: None,
                     });
                 }
