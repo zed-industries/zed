@@ -5347,7 +5347,7 @@ impl Render for ProjectPanel {
                     Scrollbars::for_settings::<ProjectPanelSettings>()
                         .tracked_scroll_handle(self.scroll_handle.clone())
                         .with_track_along(ScrollAxes::Horizontal)
-                        .tracked_entity(cx.entity()),
+                        .notify_content(),
                     window,
                     cx,
                 )

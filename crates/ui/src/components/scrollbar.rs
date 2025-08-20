@@ -18,7 +18,7 @@ use std::ops::Range;
 
 use crate::scrollbars::{ScrollbarVisibilitySetting, ShowScrollbar};
 
-const SCROLLBAR_SHOW_INTERVAL: Duration = Duration::from_secs(1);
+const SCROLLBAR_SHOW_INTERVAL: Duration = Duration::from_millis(1500);
 const SCROLLBAR_PADDING: Pixels = px(4.);
 
 pub mod scrollbars {
@@ -105,7 +105,10 @@ where
     let element_id = config.id.take().unwrap_or_else(|| caller_location.into());
 
     window.use_keyed_state(element_id, cx, |window, cx| {
-        ScrollbarStateWrapper(cx.new(|cx| ScrollbarState::new_from_config(config, window, cx)))
+        let parent_id = cx.entity_id();
+        ScrollbarStateWrapper(
+            cx.new(|cx| ScrollbarState::new_from_config(config, parent_id, window, cx)),
+        )
     })
 }
 
@@ -352,7 +355,7 @@ pub struct Scrollbars<
 > {
     id: Option<ElementId>,
     tracked_setting: PhantomData<S>,
-    tracked_entity_id: Option<EntityId>,
+    tracked_entity: Option<Option<EntityId>>,
     scrollable_handle: Box<dyn FnOnce() -> T>,
     handle_was_added: bool,
     visibility: Point<ReservedSpace>,
@@ -376,7 +379,7 @@ impl<S: ScrollbarVisibilitySetting> Scrollbars<S> {
             tracked_setting: PhantomData,
             handle_was_added: false,
             scrollable_handle: Box::new(ScrollHandle::new),
-            tracked_entity_id: None,
+            tracked_entity: None,
             visibility: show_along.apply_to(Default::default(), ReservedSpace::Thumb),
             scrollbar_width: ScrollbarWidth::Normal,
         }
@@ -398,9 +401,15 @@ impl<Setting: ScrollbarVisibilitySetting, ScrollHandle: ScrollableHandle>
         self
     }
 
-    /// Set a parent model which should be notified whenever this Scrollbar gets a scroll event.
-    pub fn tracked_entity<E: 'static>(mut self, entity: Entity<E>) -> Self {
-        self.tracked_entity_id = Some(entity.entity_id());
+    /// Notify the current context whenever this scrollbar gets a scroll event
+    pub fn notify_content(mut self) -> Self {
+        self.tracked_entity = Some(None);
+        self
+    }
+
+    /// Set a parent model which should be notified whenever this scrollbar gets a scroll event.
+    pub fn tracked_entity<E: 'static>(mut self, entity: &Entity<E>) -> Self {
+        self.tracked_entity = Some(Some(entity.entity_id()));
         self
     }
 
@@ -411,7 +420,7 @@ impl<Setting: ScrollbarVisibilitySetting, ScrollHandle: ScrollableHandle>
         let Self {
             id,
             tracked_setting,
-            tracked_entity_id,
+            tracked_entity: tracked_entity_id,
             scrollbar_width,
             visibility,
             ..
@@ -422,7 +431,7 @@ impl<Setting: ScrollbarVisibilitySetting, ScrollHandle: ScrollableHandle>
             scrollable_handle: Box::new(|| tracked_scroll_handle),
             id,
             tracked_setting,
-            tracked_entity_id,
+            tracked_entity: tracked_entity_id,
             visibility,
             scrollbar_width,
         }
@@ -475,6 +484,11 @@ impl VisibilityState {
     }
 }
 
+enum ParentHovered {
+    Yes(bool),
+    No(bool),
+}
+
 /// This is used to ensure notifies within the state do not notify the parent
 /// unintentionally.
 struct ScrollbarStateWrapper<S: ScrollbarVisibilitySetting, T: ScrollableHandle>(
@@ -484,7 +498,7 @@ struct ScrollbarStateWrapper<S: ScrollbarVisibilitySetting, T: ScrollableHandle>
 /// A scrollbar state that should be persisted across frames.
 struct ScrollbarState<S: ScrollbarVisibilitySetting, T: ScrollableHandle = ScrollHandle> {
     thumb_state: ThumbState,
-    parent_id: Option<EntityId>,
+    notify_id: Option<EntityId>,
     manually_added: bool,
     scroll_handle: T,
     width: ScrollbarWidth,
@@ -492,6 +506,7 @@ struct ScrollbarState<S: ScrollbarVisibilitySetting, T: ScrollableHandle = Scrol
     show_setting: ShowScrollbar,
     visibility: Point<ReservedSpace>,
     show_state: VisibilityState,
+    mouse_in_parent: bool,
     last_prepaint_state: Option<ScrollbarPrepaintState>,
     _auto_hide_task: Option<Task<()>>,
 }
@@ -499,6 +514,7 @@ struct ScrollbarState<S: ScrollbarVisibilitySetting, T: ScrollableHandle = Scrol
 impl<S: ScrollbarVisibilitySetting, T: ScrollableHandle> ScrollbarState<S, T> {
     fn new_from_config(
         config: Scrollbars<S, T>,
+        parent_id: EntityId,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -507,7 +523,7 @@ impl<S: ScrollbarVisibilitySetting, T: ScrollableHandle> ScrollbarState<S, T> {
 
         let mut state = ScrollbarState {
             thumb_state: Default::default(),
-            parent_id: config.tracked_entity_id,
+            notify_id: config.tracked_entity.map(|id| id.unwrap_or(parent_id)),
             manually_added: config.handle_was_added,
             scroll_handle: (config.scrollable_handle)(),
             width: config.scrollbar_width,
@@ -515,6 +531,7 @@ impl<S: ScrollbarVisibilitySetting, T: ScrollableHandle> ScrollbarState<S, T> {
             tracked_setting: PhantomData,
             show_setting: ShowScrollbar::Always,
             show_state: VisibilityState::Visible,
+            mouse_in_parent: true,
             last_prepaint_state: None,
             _auto_hide_task: None,
         };
@@ -545,9 +562,10 @@ impl<S: ScrollbarVisibilitySetting, T: ScrollableHandle> ScrollbarState<S, T> {
         }
     }
 
-    fn show_scrollbars(&mut self, cx: &mut Context<Self>) {
-        self._auto_hide_task.take();
+    fn show_scrollbars(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.set_visibility(VisibilityState::Visible, cx);
+        self._auto_hide_task.take();
+        self.schedule_auto_hide(window, cx);
     }
 
     fn set_show_scrollbar(
@@ -600,7 +618,7 @@ impl<S: ScrollbarVisibilitySetting, T: ScrollableHandle> ScrollbarState<S, T> {
         &self.scroll_handle
     }
 
-    fn set_offset(&mut self, offset: Point<Pixels>, cx: &mut Context<Self>) {
+    fn set_offset(&mut self, offset: Point<Pixels>, window: &mut Window, cx: &mut Context<Self>) {
         if self.scroll_handle.offset() != offset {
             self.scroll_handle.set_offset(offset);
             self.notify_parent(cx);
@@ -608,19 +626,30 @@ impl<S: ScrollbarVisibilitySetting, T: ScrollableHandle> ScrollbarState<S, T> {
         }
 
         // We always want to show scrollbars in cases where the offset is updated.
-        self.show_scrollbars(cx);
+        self.show_scrollbars(window, cx);
     }
 
     fn is_dragging(&self) -> bool {
         self.thumb_state.is_dragging()
     }
 
-    fn set_dragging(&mut self, axis: ScrollbarAxis, drag_offset: Pixels, cx: &mut Context<Self>) {
-        self.set_thumb_state(ThumbState::Dragging(axis, drag_offset), cx);
+    fn set_dragging(
+        &mut self,
+        axis: ScrollbarAxis,
+        drag_offset: Pixels,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.set_thumb_state(ThumbState::Dragging(axis, drag_offset), window, cx);
         self.scroll_handle().drag_started();
     }
 
-    fn update_hovered_thumb(&mut self, position: &Point<Pixels>, cx: &mut Context<Self>) {
+    fn update_hovered_thumb(
+        &mut self,
+        position: &Point<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.set_thumb_state(
             if let Some(&ScrollbarLayout { axis, .. }) = self
                 .last_prepaint_state
@@ -631,14 +660,30 @@ impl<S: ScrollbarVisibilitySetting, T: ScrollableHandle> ScrollbarState<S, T> {
             } else {
                 ThumbState::Inactive
             },
+            window,
             cx,
         );
     }
 
-    fn set_thumb_state(&mut self, state: ThumbState, cx: &mut Context<Self>) {
+    fn set_thumb_state(&mut self, state: ThumbState, window: &mut Window, cx: &mut Context<Self>) {
         if self.thumb_state != state {
+            if matches!(state, ThumbState::Inactive) {
+                self.schedule_auto_hide(window, cx);
+            } else {
+                self.show_scrollbars(window, cx);
+            }
             self.thumb_state = state;
             cx.notify();
+        }
+    }
+
+    fn update_parent_hovered(&mut self, position: &Point<Pixels>) -> ParentHovered {
+        let last_parent_hovered = self.mouse_in_parent;
+        self.mouse_in_parent = self.parent_hovered(position);
+        let state_changed = self.mouse_in_parent != last_parent_hovered;
+        match self.mouse_in_parent {
+            true => ParentHovered::Yes(state_changed),
+            false => ParentHovered::No(state_changed),
         }
     }
 
@@ -714,7 +759,7 @@ impl<S: ScrollbarVisibilitySetting, T: ScrollableHandle> ScrollbarState<S, T> {
     }
 
     fn notify_parent(&self, cx: &mut App) {
-        if let Some(entity_id) = self.parent_id {
+        if let Some(entity_id) = self.notify_id {
             cx.notify(entity_id);
         }
     }
@@ -1036,7 +1081,7 @@ impl<S: ScrollbarVisibilitySetting, T: ScrollableHandle> Element for ScrollbarEl
                     ..
                 } in &prepaint_state.thumbs
                 {
-                    const MAXIMUM_OPACITY: f32 = 0.5;
+                    const MAXIMUM_OPACITY: f32 = 0.7;
                     let thumb_state = self.state.read(cx).thumb_state;
                     let thumb_base_color = match thumb_state {
                         ThumbState::Dragging(dragged_axis, _) if dragged_axis == *axis => {
@@ -1083,7 +1128,7 @@ impl<S: ScrollbarVisibilitySetting, T: ScrollableHandle> Element for ScrollbarEl
             window.on_mouse_event({
                 let state = self.state.clone();
 
-                move |event: &MouseDownEvent, phase, _, cx| {
+                move |event: &MouseDownEvent, phase, window, cx| {
                     state.update(cx, |state, cx| {
                         let Some(scrollbar_layout) = (phase.capture()
                             && event.button == MouseButton::Left)
@@ -1100,7 +1145,7 @@ impl<S: ScrollbarVisibilitySetting, T: ScrollableHandle> Element for ScrollbarEl
                         if thumb_bounds.contains(&event.position) {
                             let offset =
                                 event.position.along(*axis) - thumb_bounds.origin.along(*axis);
-                            state.set_dragging(*axis, offset, cx);
+                            state.set_dragging(*axis, offset, window, cx);
                         } else {
                             let scroll_handle = state.scroll_handle();
                             let click_offset = scrollbar_layout.compute_click_offset(
@@ -1110,6 +1155,7 @@ impl<S: ScrollbarVisibilitySetting, T: ScrollableHandle> Element for ScrollbarEl
                             );
                             state.set_offset(
                                 scroll_handle.offset().apply_along(*axis, |_| click_offset),
+                                window,
                                 cx,
                             );
                         };
@@ -1131,9 +1177,10 @@ impl<S: ScrollbarVisibilitySetting, T: ScrollableHandle> Element for ScrollbarEl
                         state.update(cx, |state, cx| {
                             state.set_offset(
                                 current_offset + event.delta.pixel_delta(window.line_height()),
+                                window,
                                 cx,
                             );
-                            state.show_scrollbars(cx);
+                            state.show_scrollbars(window, cx);
                             cx.stop_propagation();
                         });
                     }
@@ -1160,21 +1207,27 @@ impl<S: ScrollbarVisibilitySetting, T: ScrollableHandle> Element for ScrollbarEl
                                 let new_offset =
                                     scroll_handle.offset().apply_along(axis, |_| drag_offset);
 
-                                state.update(cx, |state, cx| state.set_offset(new_offset, cx));
+                                state.update(cx, |state, cx| {
+                                    state.set_offset(new_offset, window, cx)
+                                });
                                 cx.stop_propagation();
                             }
                         }
                         _ => state.update(cx, |state, cx| {
-                            if state.parent_hovered(&event.position) {
-                                // todo! this should only be fired on first re-enter, if at all
-                                state.show_scrollbars(cx);
-
-                                if event.pressed_button.is_none() {
-                                    state.update_hovered_thumb(&event.position, cx);
+                            match state.update_parent_hovered(&event.position) {
+                                ParentHovered::Yes(state_changed)
+                                    if event.pressed_button.is_none() =>
+                                {
+                                    if state_changed {
+                                        state.show_scrollbars(window, cx);
+                                    }
+                                    state.update_hovered_thumb(&event.position, window, cx);
                                     cx.stop_propagation();
                                 }
-                            } else {
-                                state.schedule_auto_hide(window, cx);
+                                ParentHovered::No(state_changed) if state_changed => {
+                                    state.schedule_auto_hide(window, cx);
+                                }
+                                _ => {}
                             }
                         }),
                     }
@@ -1198,7 +1251,7 @@ impl<S: ScrollbarVisibilitySetting, T: ScrollableHandle> Element for ScrollbarEl
                             return;
                         }
 
-                        state.update_hovered_thumb(&event.position, cx);
+                        state.update_hovered_thumb(&event.position, window, cx);
                     });
                 }
             });
