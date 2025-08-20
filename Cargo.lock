@@ -8912,6 +8912,7 @@ dependencies = [
  "ollama",
  "open_ai",
  "open_router",
+ "oracle_code_assist",
  "partial-json-fixer",
  "project",
  "release_channel",
@@ -11103,10 +11104,9 @@ dependencies = [
  "base64 0.22.1",
  "futures 0.3.31",
  "gpui",
- "http_client",
  "open_ai",
- "rand 0.8.5",
- "schemars",
+ "rand 0.9.1",
+ "schemars 1.0.1",
  "serde",
  "serde_json",
  "sha2",
@@ -11115,6 +11115,7 @@ dependencies = [
  "url",
  "urlencoding",
  "workspace-hack",
+ "zed-http-client",
 ]
 
 [[package]]

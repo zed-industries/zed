@@ -19,6 +19,7 @@ pub struct AllLanguageModelSettingsContent {
     pub open_router: Option<OpenRouterSettingsContent>,
     pub openai: Option<OpenAiSettingsContent>,
     pub openai_compatible: Option<HashMap<Arc<str>, OpenAiCompatibleSettingsContent>>,
+    pub oracle: Option<OracleCodeAssistSettingsContent>,
     pub vercel: Option<VercelSettingsContent>,
     pub x_ai: Option<XAiSettingsContent>,
     #[serde(rename = "zed.dev")]
@@ -86,6 +87,22 @@ pub enum BedrockAuthMethodContent {
     /// IMDSv2, PodIdentity, env vars, etc.
     #[serde(rename = "default")]
     Automatic,
+}
+
+#[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema, MergeFrom)]
+pub struct OracleCodeAssistSettingsContent {
+    pub api_url: Option<String>,
+    pub available_models: Option<Vec<OracleAvailableModel>>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct OracleAvailableModel {
+    pub name: String,
+    pub display_name: Option<String>,
+    pub max_tokens: u64,
+    pub max_output_tokens: Option<u64>,
+    pub max_completion_tokens: Option<u64>,
+    pub reasoning_effort: Option<OpenAiReasoningEffort>,
 }
 
 #[skip_serializing_none]

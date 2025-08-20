@@ -8,7 +8,7 @@ use crate::provider::{
     deepseek::DeepSeekSettings, google::GoogleSettings, lmstudio::LmStudioSettings,
     mistral::MistralSettings, ollama::OllamaSettings, open_ai::OpenAiSettings,
     open_ai_compatible::OpenAiCompatibleSettings, open_router::OpenRouterSettings,
-    vercel::VercelSettings, x_ai::XAiSettings,
+    oracle::OracleCodeAssistSettings, vercel::VercelSettings, x_ai::XAiSettings,
 };
 
 #[derive(Debug, RegisterSetting)]
@@ -23,6 +23,7 @@ pub struct AllLanguageModelSettings {
     pub open_router: OpenRouterSettings,
     pub openai: OpenAiSettings,
     pub openai_compatible: HashMap<Arc<str>, OpenAiCompatibleSettings>,
+    pub oracle: OracleCodeAssistSettings,
     pub vercel: VercelSettings,
     pub x_ai: XAiSettings,
     pub zed_dot_dev: ZedDotDevSettings,
@@ -40,6 +41,7 @@ impl settings::Settings for AllLanguageModelSettings {
         let lmstudio = language_models.lmstudio.unwrap();
         let mistral = language_models.mistral.unwrap();
         let ollama = language_models.ollama.unwrap();
+        let oracle = language_models.oracle.unwrap();
         let open_router = language_models.open_router.unwrap();
         let openai = language_models.openai.unwrap();
         let openai_compatible = language_models.openai_compatible.unwrap();
@@ -78,6 +80,10 @@ impl settings::Settings for AllLanguageModelSettings {
             ollama: OllamaSettings {
                 api_url: ollama.api_url.unwrap(),
                 available_models: ollama.available_models.unwrap_or_default(),
+            },
+            oracle: OracleCodeAssistSettings {
+                api_url: oracle.api_url.unwrap(),
+                available_models: oracle.available_models.unwrap(),
             },
             open_router: OpenRouterSettings {
                 api_url: open_router.api_url.unwrap(),

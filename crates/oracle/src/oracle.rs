@@ -1,4 +1,4 @@
-mod oauth;
+pub mod oauth;
 
 use anyhow::Result;
 use open_ai::ReasoningEffort;
