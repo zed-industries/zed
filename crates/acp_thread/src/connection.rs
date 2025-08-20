@@ -38,6 +38,8 @@ pub trait AgentConnection {
         cx: &mut App,
     ) -> Task<Result<acp::PromptResponse>>;
 
+    fn prompt_capabilities(&self) -> acp::PromptCapabilities;
+
     fn resume(
         &self,
         _session_id: &acp::SessionId,
@@ -332,6 +334,14 @@ mod test_support {
                 },
             );
             Task::ready(Ok(thread))
+        }
+
+        fn prompt_capabilities(&self) -> acp::PromptCapabilities {
+            acp::PromptCapabilities {
+                image: true,
+                audio: true,
+                embedded_context: true,
+            }
         }
 
         fn authenticate(
