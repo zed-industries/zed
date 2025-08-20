@@ -19,7 +19,6 @@ use project::{
     task_store::TaskStore,
     worktree_store::WorktreeStore,
 };
-use remote::ssh_session::ChannelClient;
 use rpc::{
     AnyProtoClient, TypedEnvelope,
     proto::{self, SSH_PEER_ID, SSH_PROJECT_ID},
@@ -50,7 +49,7 @@ pub struct HeadlessProject {
 }
 
 pub struct HeadlessAppState {
-    pub session: Arc<ChannelClient>,
+    pub session: AnyProtoClient,
     pub fs: Arc<dyn Fs>,
     pub http_client: Arc<dyn HttpClient>,
     pub node_runtime: NodeRuntime,
@@ -81,7 +80,7 @@ impl HeadlessProject {
 
         let worktree_store = cx.new(|cx| {
             let mut store = WorktreeStore::local(true, fs.clone());
-            store.shared(SSH_PROJECT_ID, session.clone().into(), cx);
+            store.shared(SSH_PROJECT_ID, session.clone(), cx);
             store
         });
 
@@ -99,7 +98,7 @@ impl HeadlessProject {
 
         let buffer_store = cx.new(|cx| {
             let mut buffer_store = BufferStore::local(worktree_store.clone(), cx);
-            buffer_store.shared(SSH_PROJECT_ID, session.clone().into(), cx);
+            buffer_store.shared(SSH_PROJECT_ID, session.clone(), cx);
             buffer_store
         });
 
@@ -117,7 +116,7 @@ impl HeadlessProject {
                 breakpoint_store.clone(),
                 cx,
             );
-            dap_store.shared(SSH_PROJECT_ID, session.clone().into(), cx);
+            dap_store.shared(SSH_PROJECT_ID, session.clone(), cx);
             dap_store
         });
 
@@ -129,7 +128,7 @@ impl HeadlessProject {
                 fs.clone(),
                 cx,
             );
-            store.shared(SSH_PROJECT_ID, session.clone().into(), cx);
+            store.shared(SSH_PROJECT_ID, session.clone(), cx);
             store
         });
 
@@ -152,7 +151,7 @@ impl HeadlessProject {
                 environment.clone(),
                 cx,
             );
-            task_store.shared(SSH_PROJECT_ID, session.clone().into(), cx);
+            task_store.shared(SSH_PROJECT_ID, session.clone(), cx);
             task_store
         });
         let settings_observer = cx.new(|cx| {
@@ -162,7 +161,7 @@ impl HeadlessProject {
                 task_store.clone(),
                 cx,
             );
-            observer.shared(SSH_PROJECT_ID, session.clone().into(), cx);
+            observer.shared(SSH_PROJECT_ID, session.clone(), cx);
             observer
         });
 
@@ -183,7 +182,7 @@ impl HeadlessProject {
                 fs.clone(),
                 cx,
             );
-            lsp_store.shared(SSH_PROJECT_ID, session.clone().into(), cx);
+            lsp_store.shared(SSH_PROJECT_ID, session.clone(), cx);
             lsp_store
         });
 
@@ -210,8 +209,6 @@ impl HeadlessProject {
             cx,
         );
 
-        let client: AnyProtoClient = session.clone().into();
-
         // local_machine -> ssh handlers
         session.subscribe_to_entity(SSH_PROJECT_ID, &worktree_store);
         session.subscribe_to_entity(SSH_PROJECT_ID, &buffer_store);
@@ -223,44 +220,45 @@ impl HeadlessProject {
         session.subscribe_to_entity(SSH_PROJECT_ID, &settings_observer);
         session.subscribe_to_entity(SSH_PROJECT_ID, &git_store);
 
-        client.add_request_handler(cx.weak_entity(), Self::handle_list_remote_directory);
-        client.add_request_handler(cx.weak_entity(), Self::handle_get_path_metadata);
-        client.add_request_handler(cx.weak_entity(), Self::handle_shutdown_remote_server);
-        client.add_request_handler(cx.weak_entity(), Self::handle_ping);
+        session.add_request_handler(cx.weak_entity(), Self::handle_list_remote_directory);
+        session.add_request_handler(cx.weak_entity(), Self::handle_get_path_metadata);
+        session.add_request_handler(cx.weak_entity(), Self::handle_shutdown_remote_server);
+        session.add_request_handler(cx.weak_entity(), Self::handle_ping);
 
-        client.add_entity_request_handler(Self::handle_add_worktree);
-        client.add_request_handler(cx.weak_entity(), Self::handle_remove_worktree);
+        session.add_entity_request_handler(Self::handle_add_worktree);
+        session.add_request_handler(cx.weak_entity(), Self::handle_remove_worktree);
 
-        client.add_entity_request_handler(Self::handle_open_buffer_by_path);
-        client.add_entity_request_handler(Self::handle_open_new_buffer);
-        client.add_entity_request_handler(Self::handle_find_search_candidates);
-        client.add_entity_request_handler(Self::handle_open_server_settings);
+        session.add_entity_request_handler(Self::handle_open_buffer_by_path);
+        session.add_entity_request_handler(Self::handle_open_new_buffer);
+        session.add_entity_request_handler(Self::handle_find_search_candidates);
+        session.add_entity_request_handler(Self::handle_open_server_settings);
 
-        client.add_entity_request_handler(BufferStore::handle_update_buffer);
-        client.add_entity_message_handler(BufferStore::handle_close_buffer);
+        session.add_entity_request_handler(BufferStore::handle_update_buffer);
+        session.add_entity_message_handler(BufferStore::handle_close_buffer);
 
-        client.add_request_handler(
+        session.add_request_handler(
             extensions.clone().downgrade(),
             HeadlessExtensionStore::handle_sync_extensions,
         );
-        client.add_request_handler(
+        session.add_request_handler(
             extensions.clone().downgrade(),
             HeadlessExtensionStore::handle_install_extension,
         );
 
-        BufferStore::init(&client);
-        WorktreeStore::init(&client);
-        SettingsObserver::init(&client);
-        LspStore::init(&client);
-        TaskStore::init(Some(&client));
-        ToolchainStore::init(&client);
-        DapStore::init(&client, cx);
+        BufferStore::init(&session);
+        WorktreeStore::init(&session);
+        SettingsObserver::init(&session);
+        LspStore::init(&session);
+        TaskStore::init(Some(&session));
+        ToolchainStore::init(&session);
+        DapStore::init(&session, cx);
         // todo(debugger): Re init breakpoint store when we set it up for collab
         // BreakpointStore::init(&client);
-        GitStore::init(&client);
+        GitStore::init(&session);
 
         HeadlessProject {
-            session: client,
+            next_entry_id: Default::default(),
+            session,
             settings_observer,
             fs,
             worktree_store,
@@ -268,7 +266,6 @@ impl HeadlessProject {
             lsp_store,
             task_store,
             dap_store,
-            next_entry_id: Default::default(),
             languages,
             extensions,
             git_store,

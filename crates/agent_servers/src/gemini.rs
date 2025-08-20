@@ -50,7 +50,11 @@ impl AgentServer for Gemini {
             let Some(command) =
                 AgentServerCommand::resolve("gemini", &[ACP_ARG], None, settings, &project, cx).await
             else {
-                anyhow::bail!("Failed to find gemini binary");
+                return Err(LoadError::NotInstalled {
+                    error_message: "Failed to find Gemini CLI binary".into(),
+                    install_message: "Install Gemini CLI".into(),
+                    install_command: "npm install -g @google/gemini-cli@latest".into()
+                }.into());
             };
 
             let result = crate::acp::connect(server_name, command.clone(), &root_dir, cx).await;
@@ -75,10 +79,11 @@ impl AgentServer for Gemini {
                 if !supported {
                     return Err(LoadError::Unsupported {
                         error_message: format!(
-                            "Your installed version of Gemini {} doesn't support the Agentic Coding Protocol (ACP).",
+                            "Your installed version of Gemini CLI ({}, version {}) doesn't support the Agentic Coding Protocol (ACP).",
+                            command.path.to_string_lossy(),
                             current_version
                         ).into(),
-                        upgrade_message: "Upgrade Gemini to Latest".into(),
+                        upgrade_message: "Upgrade Gemini CLI to latest".into(),
                         upgrade_command: "npm install -g @google/gemini-cli@latest".into(),
                     }.into())
                 }

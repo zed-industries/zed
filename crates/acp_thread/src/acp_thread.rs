@@ -3,9 +3,12 @@ mod diff;
 mod mention;
 mod terminal;
 
+use collections::HashSet;
 pub use connection::*;
 pub use diff::*;
+use language::language_settings::FormatOnSave;
 pub use mention::*;
+use project::lsp_store::{FormatTrigger, LspFormatTarget};
 use serde::{Deserialize, Serialize};
 pub use terminal::*;
 
@@ -704,7 +707,7 @@ pub enum AcpThreadEvent {
     Retry(RetryStatus),
     Stopped,
     Error,
-    ServerExited(ExitStatus),
+    LoadError(LoadError),
 }
 
 impl EventEmitter<AcpThreadEvent> for AcpThread {}
@@ -718,20 +721,30 @@ pub enum ThreadStatus {
 
 #[derive(Debug, Clone)]
 pub enum LoadError {
+    NotInstalled {
+        error_message: SharedString,
+        install_message: SharedString,
+        install_command: String,
+    },
     Unsupported {
         error_message: SharedString,
         upgrade_message: SharedString,
         upgrade_command: String,
     },
-    Exited(i32),
+    Exited {
+        status: ExitStatus,
+    },
     Other(SharedString),
 }
 
 impl Display for LoadError {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            LoadError::Unsupported { error_message, .. } => write!(f, "{}", error_message),
-            LoadError::Exited(status) => write!(f, "Server exited with status {}", status),
+            LoadError::NotInstalled { error_message, .. }
+            | LoadError::Unsupported { error_message, .. } => {
+                write!(f, "{error_message}")
+            }
+            LoadError::Exited { status } => write!(f, "Server exited with status {status}"),
             LoadError::Other(msg) => write!(f, "{}", msg),
         }
     }
@@ -1038,6 +1051,22 @@ impl AcpThread {
         // At the moment, it doesn't seem like a hashmap would be a good fit for this use case.
         self.entries
             .iter_mut()
+            .enumerate()
+            .rev()
+            .find_map(|(index, tool_call)| {
+                if let AgentThreadEntry::ToolCall(tool_call) = tool_call
+                    && &tool_call.id == id
+                {
+                    Some((index, tool_call))
+                } else {
+                    None
+                }
+            })
+    }
+
+    pub fn tool_call(&mut self, id: &acp::ToolCallId) -> Option<(usize, &ToolCall)> {
+        self.entries
+            .iter()
             .enumerate()
             .rev()
             .find_map(|(index, tool_call)| {
@@ -1601,30 +1630,59 @@ impl AcpThread {
                         .collect::<Vec<_>>()
                 })
                 .await;
-            cx.update(|cx| {
-                project.update(cx, |project, cx| {
-                    project.set_agent_location(
-                        Some(AgentLocation {
-                            buffer: buffer.downgrade(),
-                            position: edits
-                                .last()
-                                .map(|(range, _)| range.end)
-                                .unwrap_or(Anchor::MIN),
-                        }),
-                        cx,
-                    );
-                });
 
+            project.update(cx, |project, cx| {
+                project.set_agent_location(
+                    Some(AgentLocation {
+                        buffer: buffer.downgrade(),
+                        position: edits
+                            .last()
+                            .map(|(range, _)| range.end)
+                            .unwrap_or(Anchor::MIN),
+                    }),
+                    cx,
+                );
+            })?;
+
+            let format_on_save = cx.update(|cx| {
                 action_log.update(cx, |action_log, cx| {
                     action_log.buffer_read(buffer.clone(), cx);
                 });
-                buffer.update(cx, |buffer, cx| {
+
+                let format_on_save = buffer.update(cx, |buffer, cx| {
                     buffer.edit(edits, None, cx);
+
+                    let settings = language::language_settings::language_settings(
+                        buffer.language().map(|l| l.name()),
+                        buffer.file(),
+                        cx,
+                    );
+
+                    settings.format_on_save != FormatOnSave::Off
                 });
                 action_log.update(cx, |action_log, cx| {
                     action_log.buffer_edited(buffer.clone(), cx);
                 });
+                format_on_save
             })?;
+
+            if format_on_save {
+                let format_task = project.update(cx, |project, cx| {
+                    project.format(
+                        HashSet::from_iter([buffer.clone()]),
+                        LspFormatTarget::Buffers,
+                        false,
+                        FormatTrigger::Save,
+                        cx,
+                    )
+                })?;
+                format_task.await.log_err();
+
+                action_log.update(cx, |action_log, cx| {
+                    action_log.buffer_edited(buffer.clone(), cx);
+                })?;
+            }
+
             project
                 .update(cx, |project, cx| project.save_buffer(buffer, cx))?
                 .await
@@ -1635,8 +1693,8 @@ impl AcpThread {
         self.entries.iter().map(|e| e.to_markdown(cx)).collect()
     }
 
-    pub fn emit_server_exited(&mut self, status: ExitStatus, cx: &mut Context<Self>) {
-        cx.emit(AcpThreadEvent::ServerExited(status));
+    pub fn emit_load_error(&mut self, error: LoadError, cx: &mut Context<Self>) {
+        cx.emit(AcpThreadEvent::LoadError(error));
     }
 }
 

@@ -19,11 +19,11 @@ use project::project_settings::ProjectSettings;
 
 use proto::CrashReport;
 use release_channel::{AppVersion, RELEASE_CHANNEL, ReleaseChannel};
-use remote::proxy::ProxyLaunchError;
-use remote::ssh_session::ChannelClient;
+use remote::SshRemoteClient;
 use remote::{
     json_log::LogRecord,
     protocol::{read_message, write_message},
+    proxy::ProxyLaunchError,
 };
 use reqwest_client::ReqwestClient;
 use rpc::proto::{self, Envelope, SSH_PROJECT_ID};
@@ -199,8 +199,7 @@ fn init_panic_hook(session_id: String) {
     }));
 }
 
-fn handle_crash_files_requests(project: &Entity<HeadlessProject>, client: &Arc<ChannelClient>) {
-    let client: AnyProtoClient = client.clone().into();
+fn handle_crash_files_requests(project: &Entity<HeadlessProject>, client: &AnyProtoClient) {
     client.add_request_handler(
         project.downgrade(),
         |_, _: TypedEnvelope<proto::GetCrashFiles>, _cx| async move {
@@ -276,7 +275,7 @@ fn start_server(
     listeners: ServerListeners,
     log_rx: Receiver<Vec<u8>>,
     cx: &mut App,
-) -> Arc<ChannelClient> {
+) -> AnyProtoClient {
     // This is the server idle timeout. If no connection comes in this timeout, the server will shut down.
     const IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10 * 60);
 
@@ -395,7 +394,7 @@ fn start_server(
     })
     .detach();
 
-    ChannelClient::new(incoming_rx, outgoing_tx, cx, "server")
+    SshRemoteClient::proto_client_from_channels(incoming_rx, outgoing_tx, cx, "server")
 }
 
 fn init_paths() -> anyhow::Result<()> {
@@ -792,7 +791,7 @@ async fn write_size_prefixed_buffer<S: AsyncWrite + Unpin>(
 }
 
 fn initialize_settings(
-    session: Arc<ChannelClient>,
+    session: AnyProtoClient,
     fs: Arc<dyn Fs>,
     cx: &mut App,
 ) -> watch::Receiver<Option<NodeBinaryOptions>> {

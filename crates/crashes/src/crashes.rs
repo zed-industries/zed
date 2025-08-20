@@ -128,6 +128,7 @@ pub struct CrashServer {
 pub struct CrashInfo {
     pub init: InitCrashHandler,
     pub panic: Option<CrashPanic>,
+    pub minidump_error: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -162,16 +163,14 @@ impl minidumper::ServerHandler for CrashServer {
     }
 
     fn on_minidump_created(&self, result: Result<MinidumpBinary, minidumper::Error>) -> LoopAction {
-        match result {
+        let minidump_error = match result {
             Ok(mut md_bin) => {
                 use io::Write;
                 let _ = md_bin.file.flush();
-                info!("wrote minidump to disk {:?}", md_bin.path);
+                None
             }
-            Err(e) => {
-                info!("failed to write minidump: {:#}", e);
-            }
-        }
+            Err(e) => Some(format!("{e:?}")),
+        };
 
         let crash_info = CrashInfo {
             init: self
@@ -180,6 +179,7 @@ impl minidumper::ServerHandler for CrashServer {
                 .expect("not initialized")
                 .clone(),
             panic: self.panic_info.get().cloned(),
+            minidump_error,
         };
 
         let crash_data_path = paths::logs_dir()

@@ -296,7 +296,7 @@ impl LocalLspStore {
         let stderr_capture = Arc::new(Mutex::new(Some(String::new())));
 
         let server_id = self.languages.next_language_server_id();
-        log::info!(
+        log::trace!(
             "attempting to start language server {:?}, path: {root_path:?}, id: {server_id}",
             adapter.name.0
         );
@@ -7529,7 +7529,7 @@ impl LspStore {
                 .ok()
                 .flatten()?;
 
-            log::info!("Refreshing workspace configurations for servers {refreshed_servers:?}");
+            log::debug!("Refreshing workspace configurations for servers {refreshed_servers:?}");
             // TODO this asynchronous job runs concurrently with extension (de)registration and may take enough time for a certain extension
             // to stop and unregister its language server wrapper.
             // This is racy : an extension might have already removed all `local.language_servers` state, but here we `.clone()` and hold onto it anyway.
