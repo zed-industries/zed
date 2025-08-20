@@ -534,6 +534,23 @@ impl InputEvent for FileDropEvent {
 }
 impl MouseEvent for FileDropEvent {}
 
+/// A swipe direction on macOS.
+#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug)]
+#[allow(missing_docs)]
+pub enum SwipeDirection {
+    Left,
+    Right,
+    Up,
+    Down,
+}
+/// Recognizing touch pad gesture, such as swipe.
+/// For now only swipe is supported.
+#[derive(Clone, Copy, Eq, PartialEq, Debug)]
+pub enum TouchPadGestureEvent {
+    /// A swipe gesture was performed.
+    Swipe(SwipeDirection),
+}
+
 /// An enum corresponding to all kinds of platform input events.
 #[derive(Clone, Debug)]
 pub enum PlatformInput {
@@ -555,6 +572,8 @@ pub enum PlatformInput {
     ScrollWheel(ScrollWheelEvent),
     /// Files were dragged and dropped onto the window.
     FileDrop(FileDropEvent),
+    /// Touch pad gesture was performed.
+    TouchPad(TouchPadGestureEvent),
 }
 
 impl PlatformInput {
@@ -569,6 +588,7 @@ impl PlatformInput {
             PlatformInput::MouseExited(event) => Some(event),
             PlatformInput::ScrollWheel(event) => Some(event),
             PlatformInput::FileDrop(event) => Some(event),
+            PlatformInput::TouchPad(_) => None,
         }
     }
 
@@ -583,6 +603,13 @@ impl PlatformInput {
             PlatformInput::MouseExited(_) => None,
             PlatformInput::ScrollWheel(_) => None,
             PlatformInput::FileDrop(_) => None,
+            PlatformInput::TouchPad(_) => None,
+        }
+    }
+    pub(crate) fn touchpad_event(&self) -> Option<&TouchPadGestureEvent> {
+        match self {
+            PlatformInput::TouchPad(event) => Some(event),
+            _ => None,
         }
     }
 }
