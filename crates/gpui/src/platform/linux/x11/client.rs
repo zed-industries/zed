@@ -1028,8 +1028,7 @@ impl X11Client {
                                 state.pre_edit_text = compose_state
                                     .utf8()
                                     .or(crate::Keystroke::underlying_dead_key(keysym));
-                                let pre_edit =
-                                    state.pre_edit_text.clone().unwrap_or(String::default());
+                                let pre_edit = state.pre_edit_text.clone().unwrap_or_default();
                                 drop(state);
                                 window.handle_ime_preedit(pre_edit);
                                 state = self.0.borrow_mut();
