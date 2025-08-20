@@ -2129,7 +2129,7 @@ mod tests {
             diff.hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &working_copy, cx)
                 .collect::<Vec<_>>()
         });
-        if hunks.len() == 0 {
+        if hunks.is_empty() {
             return;
         }
 

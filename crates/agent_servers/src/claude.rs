@@ -1117,7 +1117,7 @@ pub(crate) mod tests {
 
         thread.read_with(cx, |thread, _| {
             entries_len = thread.plan().entries.len();
-            assert!(thread.plan().entries.len() > 0, "Empty plan");
+            assert!(!thread.plan().entries.is_empty(), "Empty plan");
         });
 
         thread
