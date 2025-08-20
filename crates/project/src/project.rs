@@ -1346,14 +1346,13 @@ impl Project {
             };
 
             // ssh -> local machine handlers
-            let ssh = ssh.read(cx);
-            ssh.subscribe_to_entity(SSH_PROJECT_ID, &cx.entity());
-            ssh.subscribe_to_entity(SSH_PROJECT_ID, &this.buffer_store);
-            ssh.subscribe_to_entity(SSH_PROJECT_ID, &this.worktree_store);
-            ssh.subscribe_to_entity(SSH_PROJECT_ID, &this.lsp_store);
-            ssh.subscribe_to_entity(SSH_PROJECT_ID, &this.dap_store);
-            ssh.subscribe_to_entity(SSH_PROJECT_ID, &this.settings_observer);
-            ssh.subscribe_to_entity(SSH_PROJECT_ID, &this.git_store);
+            ssh_proto.subscribe_to_entity(SSH_PROJECT_ID, &cx.entity());
+            ssh_proto.subscribe_to_entity(SSH_PROJECT_ID, &this.buffer_store);
+            ssh_proto.subscribe_to_entity(SSH_PROJECT_ID, &this.worktree_store);
+            ssh_proto.subscribe_to_entity(SSH_PROJECT_ID, &this.lsp_store);
+            ssh_proto.subscribe_to_entity(SSH_PROJECT_ID, &this.dap_store);
+            ssh_proto.subscribe_to_entity(SSH_PROJECT_ID, &this.settings_observer);
+            ssh_proto.subscribe_to_entity(SSH_PROJECT_ID, &this.git_store);
 
             ssh_proto.add_entity_message_handler(Self::handle_create_buffer_for_peer);
             ssh_proto.add_entity_message_handler(Self::handle_update_worktree);
@@ -1898,14 +1897,6 @@ impl Project {
         }
 
         false
-    }
-
-    pub fn ssh_connection_string(&self, cx: &App) -> Option<SharedString> {
-        if let Some(ssh_state) = &self.ssh_client {
-            return Some(ssh_state.read(cx).connection_string().into());
-        }
-
-        None
     }
 
     pub fn ssh_connection_state(&self, cx: &App) -> Option<remote::ConnectionState> {
