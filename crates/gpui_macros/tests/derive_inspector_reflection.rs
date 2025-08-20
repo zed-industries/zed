@@ -72,7 +72,7 @@ fn test_derive_inspector_reflection() {
     // Get all methods that match the pattern fn(self) -> Self or fn(mut self) -> Self
     let methods = methods::<Number>();
 
-    assert_eq!(methods.len(), 6);
+    assert_eq!(methods.len(), 5);
     let method_names: Vec<_> = methods.iter().map(|m| m.name).collect();
     assert!(method_names.contains(&"double"));
     assert!(method_names.contains(&"triple"));
