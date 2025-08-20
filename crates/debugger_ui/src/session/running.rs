@@ -1114,7 +1114,7 @@ impl RunningState {
         let session = self.session.read(cx);
 
         let cwd = Some(&request.cwd)
-            .filter(|cwd| cwd.len() > 0)
+            .filter(|cwd| !cwd.is_empty())
             .map(PathBuf::from)
             .or_else(|| session.binary().unwrap().cwd.clone());
 
@@ -1150,7 +1150,7 @@ impl RunningState {
             } else {
                 None
             }
-        } else if args.len() > 0 {
+        } else if !args.is_empty() {
             Some(args.remove(0))
         } else {
             None

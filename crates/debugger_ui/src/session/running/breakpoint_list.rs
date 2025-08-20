@@ -244,7 +244,7 @@ impl BreakpointList {
             return;
         }
         let ix = match self.selected_ix {
-            _ if self.breakpoints.len() == 0 => None,
+            _ if self.breakpoints.is_empty() => None,
             None => Some(0),
             Some(ix) => {
                 if ix == self.breakpoints.len() - 1 {
@@ -268,7 +268,7 @@ impl BreakpointList {
             return;
         }
         let ix = match self.selected_ix {
-            _ if self.breakpoints.len() == 0 => None,
+            _ if self.breakpoints.is_empty() => None,
             None => Some(self.breakpoints.len() - 1),
             Some(ix) => {
                 if ix == 0 {
@@ -286,7 +286,7 @@ impl BreakpointList {
             cx.propagate();
             return;
         }
-        let ix = if self.breakpoints.len() > 0 {
+        let ix = if !self.breakpoints.is_empty() {
             Some(0)
         } else {
             None
@@ -299,7 +299,7 @@ impl BreakpointList {
             cx.propagate();
             return;
         }
-        let ix = if self.breakpoints.len() > 0 {
+        let ix = if !self.breakpoints.is_empty() {
             Some(self.breakpoints.len() - 1)
         } else {
             None

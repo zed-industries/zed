@@ -21030,7 +21030,7 @@ fn assert_breakpoint(
     path: &Arc<Path>,
     expected: Vec<(u32, Breakpoint)>,
 ) {
-    if expected.len() == 0usize {
+    if expected.is_empty() {
         assert!(!breakpoints.contains_key(path), "{}", path.display());
     } else {
         let mut breakpoint = breakpoints
