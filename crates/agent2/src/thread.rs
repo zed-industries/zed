@@ -1541,7 +1541,7 @@ impl Thread {
             return Task::ready(Err(anyhow!("No summarization model available")));
         };
         let mut request = LanguageModelRequest {
-            intent: Some(CompletionIntent::ThreadSummarization),
+            intent: Some(CompletionIntent::ThreadContextSummarization),
             temperature: AgentSettings::temperature_for_model(&model, cx),
             ..Default::default()
         };
