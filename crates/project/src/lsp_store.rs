@@ -12032,16 +12032,15 @@ impl LspStore {
     }
 }
 
-// Registration with empty capabilities should be ignored.
-// https://github.com/microsoft/vscode-languageserver-node/blob/d90a87f9557a0df9142cfb33e251cfa6fe27d970/client/src/common/formatting.ts#L67-L70
+// Registration with registerOptions as null, should fallback to true.
+// https://github.com/microsoft/vscode-languageserver-node/blob/d90a87f9557a0df9142cfb33e251cfa6fe27d970/client/src/common/client.ts#L2133
 fn parse_register_capabilities<T: serde::de::DeserializeOwned>(
     reg: lsp::Registration,
 ) -> anyhow::Result<Option<OneOf<bool, T>>> {
-    Ok(reg
-        .register_options
-        .map(|options| serde_json::from_value::<T>(options))
-        .transpose()?
-        .map(OneOf::Right))
+    Ok(match reg.register_options {
+        Some(options) => Some(OneOf::Right(serde_json::from_value::<T>(options)?)),
+        None => Some(OneOf::Left(true)),
+    })
 }
 
 fn subscribe_to_binary_statuses(
