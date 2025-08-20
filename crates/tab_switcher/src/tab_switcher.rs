@@ -307,7 +307,7 @@ impl TabSwitcherDelegate {
                     (Reverse(history.get(&item.item.item_id())), item.item_index)
                 )
             }
-            eprintln!("");
+            eprintln!();
             all_items
                 .sort_by_key(|tab| (Reverse(history.get(&tab.item.item_id())), tab.item_index));
             all_items
