@@ -5856,7 +5856,7 @@ impl Editor {
             multibuffer_anchor.start.to_offset(&snapshot)
                 ..multibuffer_anchor.end.to_offset(&snapshot)
         };
-        if newest_anchor.head().buffer_id != Some(buffer.remote_id()) {
+        if snapshot.buffer_id_for_anchor(newest_anchor.head()) != Some(buffer.remote_id()) {
             return None;
         }
 

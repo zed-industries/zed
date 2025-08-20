@@ -6314,6 +6314,14 @@ impl MultiBufferSnapshot {
         })
     }
 
+    pub fn buffer_id_for_anchor(&self, anchor: Anchor) -> Option<BufferId> {
+        if let Some(id) = anchor.buffer_id {
+            return Some(id);
+        }
+        let excerpt = self.excerpt_containing(anchor..anchor)?;
+        Some(excerpt.buffer_id())
+    }
+
     pub fn selections_in_range<'a>(
         &'a self,
         range: &'a Range<Anchor>,
