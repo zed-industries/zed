@@ -93,8 +93,8 @@ impl DivInspector {
                     Ok((json_style_buffer, rust_style_buffer)) => {
                         this.update_in(cx, |this, window, cx| {
                             this.state = State::BuffersLoaded {
-                                json_style_buffer: json_style_buffer,
-                                rust_style_buffer: rust_style_buffer,
+                                json_style_buffer,
+                                rust_style_buffer,
                             };
 
                             // Initialize editors immediately instead of waiting for
@@ -200,8 +200,8 @@ impl DivInspector {
         cx.subscribe_in(&json_style_editor, window, {
             let id = id.clone();
             let rust_style_buffer = rust_style_buffer.clone();
-            move |this, editor, event: &EditorEvent, window, cx| match event {
-                EditorEvent::BufferEdited => {
+            move |this, editor, event: &EditorEvent, window, cx| {
+                if event == &EditorEvent::BufferEdited {
                     let style_json = editor.read(cx).text(cx);
                     match serde_json_lenient::from_str_lenient::<StyleRefinement>(&style_json) {
                         Ok(new_style) => {
@@ -243,7 +243,6 @@ impl DivInspector {
                         Err(err) => this.json_style_error = Some(err.to_string().into()),
                     }
                 }
-                _ => {}
             }
         })
         .detach();
@@ -251,11 +250,10 @@ impl DivInspector {
         cx.subscribe(&rust_style_editor, {
             let json_style_buffer = json_style_buffer.clone();
             let rust_style_buffer = rust_style_buffer.clone();
-            move |this, _editor, event: &EditorEvent, cx| match event {
-                EditorEvent::BufferEdited => {
+            move |this, _editor, event: &EditorEvent, cx| {
+                if let EditorEvent::BufferEdited = event {
                     this.update_json_style_from_rust(&json_style_buffer, &rust_style_buffer, cx);
                 }
-                _ => {}
             }
         })
         .detach();
@@ -271,23 +269,19 @@ impl DivInspector {
     }
 
     fn reset_style(&mut self, cx: &mut App) {
-        match &self.state {
-            State::Ready {
-                rust_style_buffer,
-                json_style_buffer,
-                ..
-            } => {
-                if let Err(err) = self.reset_style_editors(
-                    &rust_style_buffer.clone(),
-                    &json_style_buffer.clone(),
-                    cx,
-                ) {
-                    self.json_style_error = Some(format!("{err}").into());
-                } else {
-                    self.json_style_error = None;
-                }
+        if let State::Ready {
+            rust_style_buffer,
+            json_style_buffer,
+            ..
+        } = &self.state
+        {
+            if let Err(err) =
+                self.reset_style_editors(&rust_style_buffer.clone(), &json_style_buffer.clone(), cx)
+            {
+                self.json_style_error = Some(format!("{err}").into());
+            } else {
+                self.json_style_error = None;
             }
-            _ => {}
         }
     }
 

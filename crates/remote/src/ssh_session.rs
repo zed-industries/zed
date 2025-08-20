@@ -2125,109 +2125,106 @@ impl SshRemoteConnection {
                     .env("RUSTFLAGS", &rust_flags),
             )
             .await?;
+        } else if build_remote_server.contains("cross") {
+            #[cfg(target_os = "windows")]
+            use util::paths::SanitizedPath;
+
+            delegate.set_status(Some("Installing cross.rs for cross-compilation"), cx);
+            log::info!("installing cross");
+            run_cmd(Command::new("cargo").args([
+                "install",
+                "cross",
+                "--git",
+                "https://github.com/cross-rs/cross",
+            ]))
+            .await?;
+
+            delegate.set_status(
+                Some(&format!(
+                    "Building remote server binary from source for {} with Docker",
+                    &triple
+                )),
+                cx,
+            );
+            log::info!("building remote server binary from source for {}", &triple);
+
+            // On Windows, the binding needs to be set to the canonical path
+            #[cfg(target_os = "windows")]
+            let src =
+                SanitizedPath::from(smol::fs::canonicalize("./target").await?).to_glob_string();
+            #[cfg(not(target_os = "windows"))]
+            let src = "./target";
+            run_cmd(
+                Command::new("cross")
+                    .args([
+                        "build",
+                        "--package",
+                        "remote_server",
+                        "--features",
+                        "debug-embed",
+                        "--target-dir",
+                        "target/remote_server",
+                        "--target",
+                        &triple,
+                    ])
+                    .env(
+                        "CROSS_CONTAINER_OPTS",
+                        format!("--mount type=bind,src={src},dst=/app/target"),
+                    )
+                    .env("RUSTFLAGS", &rust_flags),
+            )
+            .await?;
         } else {
-            if build_remote_server.contains("cross") {
-                #[cfg(target_os = "windows")]
-                use util::paths::SanitizedPath;
+            let which = cx
+                .background_spawn(async move { which::which("zig") })
+                .await;
 
-                delegate.set_status(Some("Installing cross.rs for cross-compilation"), cx);
-                log::info!("installing cross");
-                run_cmd(Command::new("cargo").args([
-                    "install",
-                    "cross",
-                    "--git",
-                    "https://github.com/cross-rs/cross",
-                ]))
-                .await?;
-
-                delegate.set_status(
-                    Some(&format!(
-                        "Building remote server binary from source for {} with Docker",
-                        &triple
-                    )),
-                    cx,
-                );
-                log::info!("building remote server binary from source for {}", &triple);
-
-                // On Windows, the binding needs to be set to the canonical path
-                #[cfg(target_os = "windows")]
-                let src =
-                    SanitizedPath::from(smol::fs::canonicalize("./target").await?).to_glob_string();
+            if which.is_err() {
                 #[cfg(not(target_os = "windows"))]
-                let src = "./target";
-                run_cmd(
-                    Command::new("cross")
-                        .args([
-                            "build",
-                            "--package",
-                            "remote_server",
-                            "--features",
-                            "debug-embed",
-                            "--target-dir",
-                            "target/remote_server",
-                            "--target",
-                            &triple,
-                        ])
-                        .env(
-                            "CROSS_CONTAINER_OPTS",
-                            format!("--mount type=bind,src={src},dst=/app/target"),
-                        )
-                        .env("RUSTFLAGS", &rust_flags),
-                )
-                .await?;
-            } else {
-                let which = cx
-                    .background_spawn(async move { which::which("zig") })
-                    .await;
-
-                if which.is_err() {
-                    #[cfg(not(target_os = "windows"))]
-                    {
-                        anyhow::bail!(
-                            "zig not found on $PATH, install zig (see https://ziglang.org/learn/getting-started or use zigup) or pass ZED_BUILD_REMOTE_SERVER=cross to use cross"
-                        )
-                    }
-                    #[cfg(target_os = "windows")]
-                    {
-                        anyhow::bail!(
-                            "zig not found on $PATH, install zig (use `winget install -e --id zig.zig` or see https://ziglang.org/learn/getting-started or use zigup) or pass ZED_BUILD_REMOTE_SERVER=cross to use cross"
-                        )
-                    }
+                {
+                    anyhow::bail!(
+                        "zig not found on $PATH, install zig (see https://ziglang.org/learn/getting-started or use zigup) or pass ZED_BUILD_REMOTE_SERVER=cross to use cross"
+                    )
                 }
-
-                delegate.set_status(Some("Adding rustup target for cross-compilation"), cx);
-                log::info!("adding rustup target");
-                run_cmd(Command::new("rustup").args(["target", "add"]).arg(&triple)).await?;
-
-                delegate.set_status(Some("Installing cargo-zigbuild for cross-compilation"), cx);
-                log::info!("installing cargo-zigbuild");
-                run_cmd(Command::new("cargo").args(["install", "--locked", "cargo-zigbuild"]))
-                    .await?;
-
-                delegate.set_status(
-                    Some(&format!(
-                        "Building remote binary from source for {triple} with Zig"
-                    )),
-                    cx,
-                );
-                log::info!("building remote binary from source for {triple} with Zig");
-                run_cmd(
-                    Command::new("cargo")
-                        .args([
-                            "zigbuild",
-                            "--package",
-                            "remote_server",
-                            "--features",
-                            "debug-embed",
-                            "--target-dir",
-                            "target/remote_server",
-                            "--target",
-                            &triple,
-                        ])
-                        .env("RUSTFLAGS", &rust_flags),
-                )
-                .await?;
+                #[cfg(target_os = "windows")]
+                {
+                    anyhow::bail!(
+                        "zig not found on $PATH, install zig (use `winget install -e --id zig.zig` or see https://ziglang.org/learn/getting-started or use zigup) or pass ZED_BUILD_REMOTE_SERVER=cross to use cross"
+                    )
+                }
             }
+
+            delegate.set_status(Some("Adding rustup target for cross-compilation"), cx);
+            log::info!("adding rustup target");
+            run_cmd(Command::new("rustup").args(["target", "add"]).arg(&triple)).await?;
+
+            delegate.set_status(Some("Installing cargo-zigbuild for cross-compilation"), cx);
+            log::info!("installing cargo-zigbuild");
+            run_cmd(Command::new("cargo").args(["install", "--locked", "cargo-zigbuild"])).await?;
+
+            delegate.set_status(
+                Some(&format!(
+                    "Building remote binary from source for {triple} with Zig"
+                )),
+                cx,
+            );
+            log::info!("building remote binary from source for {triple} with Zig");
+            run_cmd(
+                Command::new("cargo")
+                    .args([
+                        "zigbuild",
+                        "--package",
+                        "remote_server",
+                        "--features",
+                        "debug-embed",
+                        "--target-dir",
+                        "target/remote_server",
+                        "--target",
+                        &triple,
+                    ])
+                    .env("RUSTFLAGS", &rust_flags),
+            )
+            .await?;
         };
         let bin_path = Path::new("target")
             .join("remote_server")
