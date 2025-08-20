@@ -128,11 +128,9 @@ pub fn truncate_lines_to_byte_limit(s: &str, max_bytes: usize) -> &str {
     }
 
     for i in (0..max_bytes).rev() {
-        if s.is_char_boundary(i) {
-            if s.as_bytes()[i] == b'\n' {
-                // Since the i-th character is \n, valid to slice at i + 1.
-                return &s[..i + 1];
-            }
+        if s.is_char_boundary(i) && s.as_bytes()[i] == b'\n' {
+            // Since the i-th character is \n, valid to slice at i + 1.
+            return &s[..i + 1];
         }
     }
 
@@ -303,7 +301,7 @@ pub fn get_shell_safe_zed_path() -> anyhow::Result<String> {
     let zed_path_escaped =
         shlex::try_quote(&zed_path).context("Failed to shell-escape Zed executable path.")?;
 
-    return Ok(zed_path_escaped.to_string());
+    Ok(zed_path_escaped.to_string())
 }
 
 #[cfg(unix)]
@@ -827,7 +825,7 @@ mod rng {
         pub fn new(rng: T) -> Self {
             Self {
                 rng,
-                simple_text: std::env::var("SIMPLE_TEXT").map_or(false, |v| !v.is_empty()),
+                simple_text: std::env::var("SIMPLE_TEXT").is_ok_and(|v| !v.is_empty()),
             }
         }
 

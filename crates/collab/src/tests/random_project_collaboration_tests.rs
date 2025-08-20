@@ -304,7 +304,7 @@ impl RandomizedTest for ProjectCollaborationTest {
                                         let worktree = worktree.read(cx);
                                         worktree.is_visible()
                                             && worktree.entries(false, 0).any(|e| e.is_file())
-                                            && worktree.root_entry().map_or(false, |e| e.is_dir())
+                                            && worktree.root_entry().is_some_and(|e| e.is_dir())
                                     })
                                     .choose(rng)
                             });
@@ -643,7 +643,7 @@ impl RandomizedTest for ProjectCollaborationTest {
                 );
 
                 let project = project.await?;
-                client.dev_server_projects_mut().push(project.clone());
+                client.dev_server_projects_mut().push(project);
             }
 
             ClientOperation::CreateWorktreeEntry {
@@ -1162,8 +1162,8 @@ impl RandomizedTest for ProjectCollaborationTest {
                             Some((project, cx))
                         });
 
-                        if !guest_project.is_disconnected(cx) {
-                            if let Some((host_project, host_cx)) = host_project {
+                        if !guest_project.is_disconnected(cx)
+                            && let Some((host_project, host_cx)) = host_project {
                                 let host_worktree_snapshots =
                                     host_project.read_with(host_cx, |host_project, cx| {
                                         host_project
@@ -1235,7 +1235,6 @@ impl RandomizedTest for ProjectCollaborationTest {
                                     );
                                 }
                             }
-                        }
 
                         for buffer in guest_project.opened_buffers(cx) {
                             let buffer = buffer.read(cx);

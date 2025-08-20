@@ -32,79 +32,74 @@ pub enum SvgPreviewMode {
 impl SvgPreviewView {
     pub fn register(workspace: &mut Workspace, _window: &mut Window, _cx: &mut Context<Workspace>) {
         workspace.register_action(move |workspace, _: &OpenPreview, window, cx| {
-            if let Some(editor) = Self::resolve_active_item_as_svg_editor(workspace, cx) {
-                if Self::is_svg_file(&editor, cx) {
-                    let view = Self::create_svg_view(
-                        SvgPreviewMode::Default,
-                        workspace,
-                        editor.clone(),
-                        window,
-                        cx,
-                    );
-                    workspace.active_pane().update(cx, |pane, cx| {
-                        if let Some(existing_view_idx) =
-                            Self::find_existing_preview_item_idx(pane, &editor, cx)
-                        {
-                            pane.activate_item(existing_view_idx, true, true, window, cx);
-                        } else {
-                            pane.add_item(Box::new(view), true, true, None, window, cx)
-                        }
-                    });
-                    cx.notify();
-                }
+            if let Some(editor) = Self::resolve_active_item_as_svg_editor(workspace, cx)
+                && Self::is_svg_file(&editor, cx)
+            {
+                let view = Self::create_svg_view(
+                    SvgPreviewMode::Default,
+                    workspace,
+                    editor.clone(),
+                    window,
+                    cx,
+                );
+                workspace.active_pane().update(cx, |pane, cx| {
+                    if let Some(existing_view_idx) =
+                        Self::find_existing_preview_item_idx(pane, &editor, cx)
+                    {
+                        pane.activate_item(existing_view_idx, true, true, window, cx);
+                    } else {
+                        pane.add_item(Box::new(view), true, true, None, window, cx)
+                    }
+                });
+                cx.notify();
             }
         });
 
         workspace.register_action(move |workspace, _: &OpenPreviewToTheSide, window, cx| {
-            if let Some(editor) = Self::resolve_active_item_as_svg_editor(workspace, cx) {
-                if Self::is_svg_file(&editor, cx) {
-                    let editor_clone = editor.clone();
-                    let view = Self::create_svg_view(
-                        SvgPreviewMode::Default,
-                        workspace,
-                        editor_clone,
-                        window,
-                        cx,
-                    );
-                    let pane = workspace
-                        .find_pane_in_direction(workspace::SplitDirection::Right, cx)
-                        .unwrap_or_else(|| {
-                            workspace.split_pane(
-                                workspace.active_pane().clone(),
-                                workspace::SplitDirection::Right,
-                                window,
-                                cx,
-                            )
-                        });
-                    pane.update(cx, |pane, cx| {
-                        if let Some(existing_view_idx) =
-                            Self::find_existing_preview_item_idx(pane, &editor, cx)
-                        {
-                            pane.activate_item(existing_view_idx, true, true, window, cx);
-                        } else {
-                            pane.add_item(Box::new(view), false, false, None, window, cx)
-                        }
+            if let Some(editor) = Self::resolve_active_item_as_svg_editor(workspace, cx)
+                && Self::is_svg_file(&editor, cx)
+            {
+                let editor_clone = editor.clone();
+                let view = Self::create_svg_view(
+                    SvgPreviewMode::Default,
+                    workspace,
+                    editor_clone,
+                    window,
+                    cx,
+                );
+                let pane = workspace
+                    .find_pane_in_direction(workspace::SplitDirection::Right, cx)
+                    .unwrap_or_else(|| {
+                        workspace.split_pane(
+                            workspace.active_pane().clone(),
+                            workspace::SplitDirection::Right,
+                            window,
+                            cx,
+                        )
                     });
-                    cx.notify();
-                }
+                pane.update(cx, |pane, cx| {
+                    if let Some(existing_view_idx) =
+                        Self::find_existing_preview_item_idx(pane, &editor, cx)
+                    {
+                        pane.activate_item(existing_view_idx, true, true, window, cx);
+                    } else {
+                        pane.add_item(Box::new(view), false, false, None, window, cx)
+                    }
+                });
+                cx.notify();
             }
         });
 
         workspace.register_action(move |workspace, _: &OpenFollowingPreview, window, cx| {
-            if let Some(editor) = Self::resolve_active_item_as_svg_editor(workspace, cx) {
-                if Self::is_svg_file(&editor, cx) {
-                    let view = Self::create_svg_view(
-                        SvgPreviewMode::Follow,
-                        workspace,
-                        editor,
-                        window,
-                        cx,
-                    );
-                    workspace.active_pane().update(cx, |pane, cx| {
-                        pane.add_item(Box::new(view), true, true, None, window, cx)
-                    });
-                    cx.notify();
-                }
+            if let Some(editor) = Self::resolve_active_item_as_svg_editor(workspace, cx)
+                && Self::is_svg_file(&editor, cx)
+            {
+                let view =
+                    Self::create_svg_view(SvgPreviewMode::Follow, workspace, editor, window, cx);
+                workspace.active_pane().update(cx, |pane, cx| {
+                    pane.add_item(Box::new(view), true, true, None, window, cx)
+                });
+                cx.notify();
             }
         });
     }
@@ -162,18 +157,15 @@ impl SvgPreviewView {
                 &active_editor,
                 window,
                 |this: &mut SvgPreviewView, _editor, event: &EditorEvent, window, cx| {
-                    match event {
-                        EditorEvent::Saved => {
-                            // Remove cached image to force reload
-                            if let Some(svg_path) = &this.svg_path {
-                                let resource = Resource::Path(svg_path.clone().into());
-                                this.image_cache.update(cx, |cache, cx| {
-                                    cache.remove(&resource, window, cx);
-                                });
-                            }
-                            cx.notify();
+                    if event == &EditorEvent::Saved {
+                        // Remove cached image to force reload
+                        if let Some(svg_path) = &this.svg_path {
+                            let resource = Resource::Path(svg_path.clone().into());
+                            this.image_cache.update(cx, |cache, cx| {
+                                cache.remove(&resource, window, cx);
+                            });
                         }
-                        _ => {}
+                        cx.notify();
                     }
                 },
             );
@@ -189,25 +181,18 @@ impl SvgPreviewView {
                          event: &workspace::Event,
                          _window,
                          cx| {
-                            match event {
-                                workspace::Event::ActiveItemChanged => {
-                                    let workspace_read = workspace.read(cx);
-                                    if let Some(active_item) = workspace_read.active_item(cx) {
-                                        if let Some(editor_entity) =
-                                            active_item.downcast::<Editor>()
-                                        {
-                                            if Self::is_svg_file(&editor_entity, cx) {
-                                                let new_path =
-                                                    Self::get_svg_path(&editor_entity, cx);
-                                                if this.svg_path != new_path {
-                                                    this.svg_path = new_path;
-                                                    cx.notify();
-                                                }
-                                            }
-                                        }
+                            if let workspace::Event::ActiveItemChanged = event {
+                                let workspace_read = workspace.read(cx);
+                                if let Some(active_item) = workspace_read.active_item(cx)
+                                    && let Some(editor_entity) = active_item.downcast::<Editor>()
+                                    && Self::is_svg_file(&editor_entity, cx)
+                                {
+                                    let new_path = Self::get_svg_path(&editor_entity, cx);
+                                    if this.svg_path != new_path {
+                                        this.svg_path = new_path;
+                                        cx.notify();
                                     }
                                 }
-                                _ => {}
                             }
                         },
                     )
@@ -232,15 +217,15 @@ impl SvgPreviewView {
     {
         let app = cx.borrow();
         let buffer = editor.read(app).buffer().read(app);
-        if let Some(buffer) = buffer.as_singleton() {
-            if let Some(file) = buffer.read(app).file() {
-                return file
-                    .path()
-                    .extension()
-                    .and_then(|ext| ext.to_str())
-                    .map(|ext| ext.eq_ignore_ascii_case("svg"))
-                    .unwrap_or(false);
-            }
+        if let Some(buffer) = buffer.as_singleton()
+            && let Some(file) = buffer.read(app).file()
+        {
+            return file
+                .path()
+                .extension()
+                .and_then(|ext| ext.to_str())
+                .map(|ext| ext.eq_ignore_ascii_case("svg"))
+                .unwrap_or(false);
         }
         false
     }

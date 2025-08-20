@@ -199,7 +199,7 @@ impl LanguageSettings {
                 if language_server.0.as_ref() == Self::REST_OF_LANGUAGE_SERVERS {
                     rest.clone()
                 } else {
-                    vec![language_server.clone()]
+                    vec![language_server]
                 }
             })
             .collect::<Vec<_>>()
@@ -253,7 +253,7 @@ impl EditPredictionSettings {
         !self.disabled_globs.iter().any(|glob| {
             if glob.is_absolute {
                 file.as_local()
-                    .map_or(false, |local| glob.matcher.is_match(local.abs_path(cx)))
+                    .is_some_and(|local| glob.matcher.is_match(local.abs_path(cx)))
             } else {
                 glob.matcher.is_match(file.path())
             }
@@ -1793,7 +1793,7 @@ mod tests {
         assert!(!settings.enabled_for_file(&dot_env_file, &cx));
 
         // Test tilde expansion
-        let home = shellexpand::tilde("~").into_owned().to_string();
+        let home = shellexpand::tilde("~").into_owned();
         let home_file = make_test_file(&[&home, "test.rs"]);
         let settings = build_settings(&["~/test.rs"]);
         assert!(!settings.enabled_for_file(&home_file, &cx));

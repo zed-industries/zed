@@ -66,23 +66,22 @@ impl SlashCommand for DeltaSlashCommand {
                 .metadata
                 .as_ref()
                 .and_then(|value| serde_json::from_value::<FileCommandMetadata>(value.clone()).ok())
+                && paths.insert(metadata.path.clone())
             {
-                if paths.insert(metadata.path.clone()) {
-                    file_command_old_outputs.push(
-                        context_buffer
-                            .as_rope()
-                            .slice(section.range.to_offset(&context_buffer)),
-                    );
-                    file_command_new_outputs.push(Arc::new(FileSlashCommand).run(
-                        std::slice::from_ref(&metadata.path),
-                        context_slash_command_output_sections,
-                        context_buffer.clone(),
-                        workspace.clone(),
-                        delegate.clone(),
-                        window,
-                        cx,
-                    ));
-                }
+                file_command_old_outputs.push(
+                    context_buffer
+                        .as_rope()
+                        .slice(section.range.to_offset(&context_buffer)),
+                );
+                file_command_new_outputs.push(Arc::new(FileSlashCommand).run(
+                    std::slice::from_ref(&metadata.path),
+                    context_slash_command_output_sections,
+                    context_buffer.clone(),
+                    workspace.clone(),
+                    delegate.clone(),
+                    window,
+                    cx,
+                ));
             }
         }
 
@@ -95,31 +94,31 @@ impl SlashCommand for DeltaSlashCommand {
                 .into_iter()
                 .zip(file_command_new_outputs)
             {
-                if let Ok(new_output) = new_output {
-                    if let Ok(new_output) = SlashCommandOutput::from_event_stream(new_output).await
-                    {
-                        if let Some(file_command_range) = new_output.sections.first() {
-                            let new_text = &new_output.text[file_command_range.range.clone()];
-                            if old_text.chars().ne(new_text.chars()) {
-                                changes_detected = true;
-                                output.sections.extend(new_output.sections.into_iter().map(
-                                    |section| SlashCommandOutputSection {
-                                        range: output.text.len() + section.range.start
-                                            ..output.text.len() + section.range.end,
-                                        icon: section.icon,
-                                        label: section.label,
-                                        metadata: section.metadata,
-                                    },
-                                ));
-                                output.text.push_str(&new_output.text);
-                            }
-                        }
+                if let Ok(new_output) = new_output
+                    && let Ok(new_output) = SlashCommandOutput::from_event_stream(new_output).await
+                    && let Some(file_command_range) = new_output.sections.first()
+                {
+                    let new_text = &new_output.text[file_command_range.range.clone()];
+                    if old_text.chars().ne(new_text.chars()) {
+                        changes_detected = true;
+                        output
+                            .sections
+                            .extend(new_output.sections.into_iter().map(|section| {
+                                SlashCommandOutputSection {
+                                    range: output.text.len() + section.range.start
+                                        ..output.text.len() + section.range.end,
+                                    icon: section.icon,
+                                    label: section.label,
+                                    metadata: section.metadata,
+                                }
+                            }));
+                        output.text.push_str(&new_output.text);
                     }
                 }
             }
 
             anyhow::ensure!(changes_detected, "no new changes detected");
-            Ok(output.to_event_stream())
+            Ok(output.into_event_stream())
         })
     }
 }

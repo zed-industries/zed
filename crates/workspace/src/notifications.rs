@@ -1012,7 +1012,6 @@ where
                 let message: SharedString = format!("Error: {err}").into();
                 log::error!("Showing error notification in app: {message}");
                 show_app_notification(workspace_error_notification_id(), cx, {
-                    let message = message.clone();
                     move |cx| {
                         cx.new({
                             let message = message.clone();

@@ -155,10 +155,10 @@ impl Tool for EditFileTool {
 
         // It's also possible that the global config dir is configured to be inside the project,
         // so check for that edge case too.
-        if let Ok(canonical_path) = std::fs::canonicalize(&input.path) {
-            if canonical_path.starts_with(paths::config_dir()) {
-                return true;
-            }
+        if let Ok(canonical_path) = std::fs::canonicalize(&input.path)
+            && canonical_path.starts_with(paths::config_dir())
+        {
+            return true;
         }
 
         // Check if path is inside the global config directory
@@ -199,10 +199,10 @@ impl Tool for EditFileTool {
                     .any(|c| c.as_os_str() == local_settings_folder.as_os_str())
                 {
                     description.push_str(" (local settings)");
-                } else if let Ok(canonical_path) = std::fs::canonicalize(&input.path) {
-                    if canonical_path.starts_with(paths::config_dir()) {
-                        description.push_str(" (global settings)");
-                    }
+                } else if let Ok(canonical_path) = std::fs::canonicalize(&input.path)
+                    && canonical_path.starts_with(paths::config_dir())
+                {
+                    description.push_str(" (global settings)");
                 }
 
                 description
@@ -376,7 +376,7 @@ impl Tool for EditFileTool {
 
             let output = EditFileToolOutput {
                 original_path: project_path.path.to_path_buf(),
-                new_text: new_text.clone(),
+                new_text,
                 old_text,
                 raw_output: Some(agent_output),
             };
@@ -643,7 +643,7 @@ impl EditFileToolCard {
             diff
         });
 
-        self.buffer = Some(buffer.clone());
+        self.buffer = Some(buffer);
         self.base_text = Some(base_text.into());
         self.buffer_diff = Some(buffer_diff.clone());
 
@@ -776,7 +776,6 @@ impl EditFileToolCard {
 
         let buffer_diff = cx.spawn({
             let buffer = buffer.clone();
-            let language_registry = language_registry.clone();
             async move |_this, cx| {
                 build_buffer_diff(base_text, &buffer, &language_registry, cx).await
             }
@@ -863,7 +862,6 @@ impl ToolCard for EditFileToolCard {
             )
             .on_click({
                 let path = self.path.clone();
-                let workspace = workspace.clone();
                 move |_, window, cx| {
                     workspace
                         .update(cx, {
@@ -1356,8 +1354,7 @@ mod tests {
             mode: mode.clone(),
         };
 
-        let result = cx.update(|cx| resolve_path(&input, project, cx));
-        result
+        cx.update(|cx| resolve_path(&input, project, cx))
     }
 
     fn assert_resolved_path_eq(path: anyhow::Result<ProjectPath>, expected: &str) {

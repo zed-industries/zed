@@ -583,15 +583,15 @@ impl TerminalElement {
             strikethrough,
         };
 
-        if let Some((style, range)) = hyperlink {
-            if range.contains(&indexed.point) {
-                if let Some(underline) = style.underline {
-                    result.underline = Some(underline);
-                }
+        if let Some((style, range)) = hyperlink
+            && range.contains(&indexed.point)
+        {
+            if let Some(underline) = style.underline {
+                result.underline = Some(underline);
+            }
 
-                if let Some(color) = style.color {
-                    result.color = color;
-                }
+            if let Some(color) = style.color {
+                result.color = color;
             }
         }
 
@@ -653,7 +653,7 @@ impl TerminalElement {
             let terminal = self.terminal.clone();
             let hitbox = hitbox.clone();
             let focus = focus.clone();
-            let terminal_view = terminal_view.clone();
+            let terminal_view = terminal_view;
             move |e: &MouseMoveEvent, phase, window, cx| {
                 if phase != DispatchPhase::Bubble {
                     return;
@@ -1275,9 +1275,9 @@ impl Element for TerminalElement {
                     }
                     let text_paint_time = text_paint_start.elapsed();
 
-                    if let Some(text_to_mark) = &marked_text_cloned {
-                        if !text_to_mark.is_empty() {
-                            if let Some(cursor_layout) = &original_cursor {
+                    if let Some(text_to_mark) = &marked_text_cloned
+                        && !text_to_mark.is_empty()
+                            && let Some(cursor_layout) = &original_cursor {
                                 let ime_position = cursor_layout.bounding_rect(origin).origin;
                                 let mut ime_style = layout.base_text_style.clone();
                                 ime_style.underline = Some(UnderlineStyle {
@@ -1303,14 +1303,11 @@ impl Element for TerminalElement {
                                     .paint(ime_position, layout.dimensions.line_height, window, cx)
                                     .log_err();
                             }
-                        }
-                    }
 
-                    if self.cursor_visible && marked_text_cloned.is_none() {
-                        if let Some(mut cursor) = original_cursor {
+                    if self.cursor_visible && marked_text_cloned.is_none()
+                        && let Some(mut cursor) = original_cursor {
                             cursor.paint(origin, window, cx);
                         }
-                    }
 
                     if let Some(mut element) = block_below_cursor_element {
                         element.paint(window, cx);
@@ -1481,7 +1478,7 @@ pub fn is_blank(cell: &IndexedCell) -> bool {
         return false;
     }
 
-    return true;
+    true
 }
 
 fn to_highlighted_range_lines(
@@ -1841,8 +1838,7 @@ mod tests {
         };
 
         let font_size = AbsoluteLength::Pixels(px(12.0));
-        let batch =
-            BatchedTextRun::new_from_char(AlacPoint::new(0, 0), 'a', style1.clone(), font_size);
+        let batch = BatchedTextRun::new_from_char(AlacPoint::new(0, 0), 'a', style1, font_size);
 
         // Should be able to append same style
         assert!(batch.can_append(&style2));

@@ -206,7 +206,7 @@ impl CachedLspAdapter {
     }
 
     pub fn name(&self) -> LanguageServerName {
-        self.adapter.name().clone()
+        self.adapter.name()
     }
 
     pub async fn get_language_server_command(
@@ -329,9 +329,9 @@ pub trait LspAdapter: 'static + Send + Sync {
             // We only want to cache when we fall back to the global one,
             // because we don't want to download and overwrite our global one
             // for each worktree we might have open.
-            if binary_options.allow_path_lookup {
-                if let Some(binary) = self.check_if_user_installed(delegate.as_ref(), toolchains, cx).await {
-                    log::info!(
+            if binary_options.allow_path_lookup
+                && let Some(binary) = self.check_if_user_installed(delegate.as_ref(), toolchains, cx).await {
+                    log::debug!(
                         "found user-installed language server for {}. path: {:?}, arguments: {:?}",
                         self.name().0,
                         binary.path,
@@ -339,7 +339,6 @@ pub trait LspAdapter: 'static + Send + Sync {
                     );
                     return Ok(binary);
                 }
-            }
 
             anyhow::ensure!(binary_options.allow_binary_download, "downloading language servers disabled");
 
@@ -602,7 +601,7 @@ async fn try_fetch_server_binary<L: LspAdapter + 'static + Send + Sync + ?Sized>
     }
 
     let name = adapter.name();
-    log::info!("fetching latest version of language server {:?}", name.0);
+    log::debug!("fetching latest version of language server {:?}", name.0);
     delegate.update_status(name.clone(), BinaryStatus::CheckingForUpdate);
 
     let latest_version = adapter
@@ -613,7 +612,7 @@ async fn try_fetch_server_binary<L: LspAdapter + 'static + Send + Sync + ?Sized>
         .check_if_version_installed(latest_version.as_ref(), &container_dir, delegate.as_ref())
         .await
     {
-        log::info!("language server {:?} is already installed", name.0);
+        log::debug!("language server {:?} is already installed", name.0);
         delegate.update_status(name.clone(), BinaryStatus::None);
         Ok(binary)
     } else {
@@ -1514,9 +1513,8 @@ impl Language {
             .map(|ix| {
                 let mut config = BracketsPatternConfig::default();
                 for setting in query.property_settings(ix) {
-                    match setting.key.as_ref() {
-                        "newline.only" => config.newline_only = true,
-                        _ => {}
+                    if setting.key.as_ref() == "newline.only" {
+                        config.newline_only = true
                     }
                 }
                 config
@@ -1776,10 +1774,10 @@ impl Language {
                 BufferChunks::new(text, range, Some((captures, highlight_maps)), false, None)
             {
                 let end_offset = offset + chunk.text.len();
-                if let Some(highlight_id) = chunk.syntax_highlight_id {
-                    if !highlight_id.is_default() {
-                        result.push((offset..end_offset, highlight_id));
-                    }
+                if let Some(highlight_id) = chunk.syntax_highlight_id
+                    && !highlight_id.is_default()
+                {
+                    result.push((offset..end_offset, highlight_id));
                 }
                 offset = end_offset;
             }
@@ -1796,11 +1794,11 @@ impl Language {
     }
 
     pub fn set_theme(&self, theme: &SyntaxTheme) {
-        if let Some(grammar) = self.grammar.as_ref() {
-            if let Some(highlights_query) = &grammar.highlights_query {
-                *grammar.highlight_map.lock() =
-                    HighlightMap::new(highlights_query.capture_names(), theme);
-            }
+        if let Some(grammar) = self.grammar.as_ref()
+            && let Some(highlights_query) = &grammar.highlights_query
+        {
+            *grammar.highlight_map.lock() =
+                HighlightMap::new(highlights_query.capture_names(), theme);
         }
     }
 
@@ -1920,11 +1918,11 @@ impl LanguageScope {
             .enumerate()
             .map(move |(ix, bracket)| {
                 let mut is_enabled = true;
-                if let Some(next_disabled_ix) = disabled_ids.first() {
-                    if ix == *next_disabled_ix as usize {
-                        disabled_ids = &disabled_ids[1..];
-                        is_enabled = false;
-                    }
+                if let Some(next_disabled_ix) = disabled_ids.first()
+                    && ix == *next_disabled_ix as usize
+                {
+                    disabled_ids = &disabled_ids[1..];
+                    is_enabled = false;
                 }
                 (bracket, is_enabled)
             })

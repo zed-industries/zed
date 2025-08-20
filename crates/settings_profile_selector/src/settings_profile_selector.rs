@@ -126,7 +126,7 @@ impl SettingsProfileSelectorDelegate {
     ) -> Option<String> {
         let mat = self.matches.get(self.selected_index)?;
         let profile_name = self.profile_names.get(mat.candidate_id)?;
-        return Self::update_active_profile_name_global(profile_name.clone(), cx);
+        Self::update_active_profile_name_global(profile_name.clone(), cx)
     }
 
     fn update_active_profile_name_global(
@@ -135,7 +135,7 @@ impl SettingsProfileSelectorDelegate {
     ) -> Option<String> {
         if let Some(profile_name) = profile_name {
             cx.set_global(ActiveSettingsProfileName(profile_name.clone()));
-            return Some(profile_name.clone());
+            return Some(profile_name);
         }
 
         if cx.has_global::<ActiveSettingsProfileName>() {

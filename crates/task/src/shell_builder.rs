@@ -28,7 +28,7 @@ impl ShellKind {
         }
     }
 
-    fn to_shell_variable(&self, input: &str) -> String {
+    fn to_shell_variable(self, input: &str) -> String {
         match self {
             Self::Powershell => Self::to_powershell_variable(input),
             Self::Cmd => Self::to_cmd_variable(input),
@@ -237,13 +237,11 @@ impl ShellBuilder {
         task_args: &Vec<String>,
     ) -> (String, Vec<String>) {
         if let Some(task_command) = task_command {
-            let combined_command = task_args
-                .into_iter()
-                .fold(task_command, |mut command, arg| {
-                    command.push(' ');
-                    command.push_str(&self.kind.to_shell_variable(arg));
-                    command
-                });
+            let combined_command = task_args.iter().fold(task_command, |mut command, arg| {
+                command.push(' ');
+                command.push_str(&self.kind.to_shell_variable(arg));
+                command
+            });
 
             self.args
                 .extend(self.kind.args_for_shell(self.interactive, combined_command));

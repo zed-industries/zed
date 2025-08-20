@@ -420,18 +420,19 @@ impl Fs for RealFs {
 
     async fn remove_file(&self, path: &Path, options: RemoveOptions) -> Result<()> {
         #[cfg(windows)]
-        if let Ok(Some(metadata)) = self.metadata(path).await {
-            if metadata.is_symlink && metadata.is_dir {
-                self.remove_dir(
-                    path,
-                    RemoveOptions {
-                        recursive: false,
-                        ignore_if_not_exists: true,
-                    },
-                )
-                .await?;
-                return Ok(());
-            }
+        if let Ok(Some(metadata)) = self.metadata(path).await
+            && metadata.is_symlink
+            && metadata.is_dir
+        {
+            self.remove_dir(
+                path,
+                RemoveOptions {
+                    recursive: false,
+                    ignore_if_not_exists: true,
+                },
+            )
+            .await?;
+            return Ok(());
         }
 
         match smol::fs::remove_file(path).await {
@@ -467,11 +468,11 @@ impl Fs for RealFs {
 
     #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     async fn trash_file(&self, path: &Path, _options: RemoveOptions) -> Result<()> {
-        if let Ok(Some(metadata)) = self.metadata(path).await {
-            if metadata.is_symlink {
-                // TODO: trash_file does not support trashing symlinks yet - https://github.com/bilelmoussaoui/ashpd/issues/255
-                return self.remove_file(path, RemoveOptions::default()).await;
-            }
+        if let Ok(Some(metadata)) = self.metadata(path).await
+            && metadata.is_symlink
+        {
+            // TODO: trash_file does not support trashing symlinks yet - https://github.com/bilelmoussaoui/ashpd/issues/255
+            return self.remove_file(path, RemoveOptions::default()).await;
         }
         let file = smol::fs::File::open(path).await?;
         match trash::trash_file(&file.as_fd()).await {
@@ -624,13 +625,13 @@ impl Fs for RealFs {
     async fn is_file(&self, path: &Path) -> bool {
         smol::fs::metadata(path)
             .await
-            .map_or(false, |metadata| metadata.is_file())
+            .is_ok_and(|metadata| metadata.is_file())
     }
 
     async fn is_dir(&self, path: &Path) -> bool {
         smol::fs::metadata(path)
             .await
-            .map_or(false, |metadata| metadata.is_dir())
+            .is_ok_and(|metadata| metadata.is_dir())
     }
 
     async fn metadata(&self, path: &Path) -> Result<Option<Metadata>> {
@@ -766,24 +767,23 @@ impl Fs for RealFs {
         let pending_paths: Arc<Mutex<Vec<PathEvent>>> = Default::default();
         let watcher = Arc::new(fs_watcher::FsWatcher::new(tx, pending_paths.clone()));
 
-        if watcher.add(path).is_err() {
-            // If the path doesn't exist yet (e.g. settings.json), watch the parent dir to learn when it's created.
-            if let Some(parent) = path.parent() {
-                if let Err(e) = watcher.add(parent) {
-                    log::warn!("Failed to watch: {e}");
-                }
-            }
+        // If the path doesn't exist yet (e.g. settings.json), watch the parent dir to learn when it's created.
+        if watcher.add(path).is_err()
+            && let Some(parent) = path.parent()
+            && let Err(e) = watcher.add(parent)
+        {
+            log::warn!("Failed to watch: {e}");
         }
 
         // Check if path is a symlink and follow the target parent
         if let Some(mut target) = self.read_link(path).await.ok() {
             // Check if symlink target is relative path, if so make it absolute
-            if target.is_relative() {
-                if let Some(parent) = path.parent() {
-                    target = parent.join(target);
-                    if let Ok(canonical) = self.canonicalize(&target).await {
-                        target = SanitizedPath::from(canonical).as_path().to_path_buf();
-                    }
+            if target.is_relative()
+                && let Some(parent) = path.parent()
+            {
+                target = parent.join(target);
+                if let Ok(canonical) = self.canonicalize(&target).await {
+                    target = SanitizedPath::from(canonical).as_path().to_path_buf();
                 }
             }
             watcher.add(&target).ok();
@@ -1068,13 +1068,13 @@ impl FakeFsState {
                         let current_entry = *entry_stack.last()?;
                         if let FakeFsEntry::Dir { entries, .. } = current_entry {
                             let entry = entries.get(name.to_str().unwrap())?;
-                            if path_components.peek().is_some() || follow_symlink {
-                                if let FakeFsEntry::Symlink { target, .. } = entry {
-                                    let mut target = target.clone();
-                                    target.extend(path_components);
-                                    path = target;
-                                    continue 'outer;
-                                }
+                            if (path_components.peek().is_some() || follow_symlink)
+                                && let FakeFsEntry::Symlink { target, .. } = entry
+                            {
+                                let mut target = target.clone();
+                                target.extend(path_components);
+                                path = target;
+                                continue 'outer;
                             }
                             entry_stack.push(entry);
                             canonical_path = canonical_path.join(name);
@@ -1101,7 +1101,9 @@ impl FakeFsState {
     ) -> Option<(&mut FakeFsEntry, PathBuf)> {
         let canonical_path = self.canonicalize(target, follow_symlink)?;
 
-        let mut components = canonical_path.components();
+        let mut components = canonical_path
+            .components()
+            .skip_while(|component| matches!(component, Component::Prefix(_)));
         let Some(Component::RootDir) = components.next() else {
             panic!(
                 "the path {:?} was not canonicalized properly {:?}",
@@ -1566,10 +1568,10 @@ impl FakeFs {
 
     pub fn insert_branches(&self, dot_git: &Path, branches: &[&str]) {
         self.with_git_state(dot_git, true, |state| {
-            if let Some(first) = branches.first() {
-                if state.current_branch_name.is_none() {
-                    state.current_branch_name = Some(first.to_string())
-                }
+            if let Some(first) = branches.first()
+                && state.current_branch_name.is_none()
+            {
+                state.current_branch_name = Some(first.to_string())
             }
             state
                 .branches
@@ -1958,7 +1960,7 @@ impl FileHandle for FakeHandle {
         };
 
         if state.try_entry(&target, false).is_some() {
-            return Ok(target.clone());
+            return Ok(target);
         }
         anyhow::bail!("fake fd target not found")
     }
@@ -2254,7 +2256,7 @@ impl Fs for FakeFs {
 
     async fn load(&self, path: &Path) -> Result<String> {
         let content = self.load_internal(path).await?;
-        Ok(String::from_utf8(content.clone())?)
+        Ok(String::from_utf8(content)?)
     }
 
     async fn load_bytes(&self, path: &Path) -> Result<Vec<u8>> {
@@ -2410,19 +2412,18 @@ impl Fs for FakeFs {
             tx,
             original_path: path.to_owned(),
             fs_state: self.state.clone(),
-            prefixes: Mutex::new(vec![path.to_owned()]),
+            prefixes: Mutex::new(vec![path]),
         });
         (
             Box::pin(futures::StreamExt::filter(rx, {
                 let watcher = watcher.clone();
                 move |events| {
                     let result = events.iter().any(|evt_path| {
-                        let result = watcher
+                        watcher
                             .prefixes
                             .lock()
                             .iter()
-                            .any(|prefix| evt_path.path.starts_with(prefix));
-                        result
+                            .any(|prefix| evt_path.path.starts_with(prefix))
                     });
                     let executor = executor.clone();
                     async move {

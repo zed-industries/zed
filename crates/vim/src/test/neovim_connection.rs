@@ -217,10 +217,11 @@ impl NeovimConnection {
                 .expect("Could not set nvim cursor position");
         }
 
-        if let Some(NeovimData::Get { mode, state }) = self.data.back() {
-            if *mode == Mode::Normal && *state == marked_text {
-                return;
-            }
+        if let Some(NeovimData::Get { mode, state }) = self.data.back()
+            && *mode == Mode::Normal
+            && *state == marked_text
+        {
+            return;
         }
         self.data.push_back(NeovimData::Put {
             state: marked_text.to_string(),
@@ -298,10 +299,10 @@ impl NeovimConnection {
         if let Some(NeovimData::Get { .. }) = self.data.front() {
             self.data.pop_front();
         };
-        if let Some(NeovimData::ReadRegister { name, value }) = self.data.pop_front() {
-            if name == register {
-                return value;
-            }
+        if let Some(NeovimData::ReadRegister { name, value }) = self.data.pop_front()
+            && name == register
+        {
+            return value;
         }
 
         panic!("operation does not match recorded script. re-record with --features=neovim")
@@ -452,7 +453,7 @@ impl NeovimConnection {
         };
 
         if self.data.back() != Some(&state) {
-            self.data.push_back(state.clone());
+            self.data.push_back(state);
         }
 
         (mode, ranges)
@@ -589,7 +590,7 @@ fn parse_state(marked_text: &str) -> (String, Vec<Range<Point>>) {
 #[cfg(feature = "neovim")]
 fn encode_ranges(text: &str, point_ranges: &Vec<Range<Point>>) -> String {
     let byte_ranges = point_ranges
-        .into_iter()
+        .iter()
         .map(|range| {
             let mut byte_range = 0..0;
             let mut ix = 0;

@@ -116,8 +116,8 @@ impl SearchOption {
         }
     }
 
-    pub fn to_toggle_action(&self) -> &'static dyn Action {
-        match *self {
+    pub fn to_toggle_action(self) -> &'static dyn Action {
+        match self {
             SearchOption::WholeWord => &ToggleWholeWord,
             SearchOption::CaseSensitive => &ToggleCaseSensitive,
             SearchOption::IncludeIgnored => &ToggleIncludeIgnored,

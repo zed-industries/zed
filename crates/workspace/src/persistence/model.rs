@@ -235,7 +235,7 @@ impl SerializedWorkspaceLocation {
     pub fn sorted_paths(&self) -> Arc<Vec<PathBuf>> {
         match self {
             SerializedWorkspaceLocation::Local(paths, order) => {
-                if order.order().len() == 0 {
+                if order.order().is_empty() {
                     paths.paths().clone()
                 } else {
                     Arc::new(
@@ -620,7 +620,7 @@ mod tests {
         ]);
         let order = vec![2, 0, 1];
         let serialized =
-            SerializedWorkspaceLocation::Local(LocalPaths(paths.clone()), LocalPathsOrder(order));
+            SerializedWorkspaceLocation::Local(LocalPaths(paths), LocalPathsOrder(order));
         assert_eq!(
             serialized.sorted_paths(),
             Arc::new(vec![
