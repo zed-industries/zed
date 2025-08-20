@@ -2583,10 +2583,8 @@ impl Pane {
                     .children(
                         std::iter::once(if let Some(decorated_icon) = decorated_icon {
                             Some(div().child(decorated_icon.into_any_element()))
-                        } else if let Some(icon) = icon {
-                            Some(div().child(icon.into_any_element()))
                         } else {
-                            None
+                            icon.map(|icon| div().child(icon.into_any_element()))
                         })
                         .flatten(),
                     )

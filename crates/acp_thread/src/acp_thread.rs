@@ -301,11 +301,9 @@ impl ToolCall {
     ) -> Option<AgentLocation> {
         let buffer = project
             .update(cx, |project, cx| {
-                if let Some(path) = project.project_path_for_absolute_path(&location.path, cx) {
-                    Some(project.open_buffer(path, cx))
-                } else {
-                    None
-                }
+                project
+                    .project_path_for_absolute_path(&location.path, cx)
+                    .map(|path| project.open_buffer(path, cx))
             })
             .ok()??;
         let buffer = buffer.await.log_err()?;

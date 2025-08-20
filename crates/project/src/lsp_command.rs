@@ -2595,11 +2595,9 @@ impl LspCommand for GetCodeActions {
         server_id: LanguageServerId,
         cx: AsyncApp,
     ) -> Result<Vec<CodeAction>> {
-        let requested_kinds_set = if let Some(kinds) = self.kinds {
-            Some(kinds.into_iter().collect::<HashSet<_>>())
-        } else {
-            None
-        };
+        let requested_kinds_set = self
+            .kinds
+            .map(|kinds| kinds.into_iter().collect::<HashSet<_>>());
 
         let language_server = cx.update(|cx| {
             lsp_store
@@ -3821,12 +3819,11 @@ impl GetDocumentDiagnostics {
                 _ => None,
             },
             code,
-            code_description: match diagnostic.code_description {
-                Some(code_description) => Some(CodeDescription {
+            code_description: diagnostic
+                .code_description
+                .map(|code_description| CodeDescription {
                     href: Some(lsp::Url::parse(&code_description).unwrap()),
                 }),
-                None => None,
-            },
             related_information: Some(related_information),
             tags: Some(tags),
             source: diagnostic.source.clone(),
