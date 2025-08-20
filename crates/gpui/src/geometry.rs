@@ -2858,7 +2858,7 @@ impl DevicePixels {
     /// let total_bytes = pixels.to_bytes(bytes_per_pixel);
     /// assert_eq!(total_bytes, 40); // 10 pixels * 4 bytes/pixel = 40 bytes
     /// ```
-    pub fn to_bytes(&self, bytes_per_pixel: u8) -> u32 {
+    pub fn to_bytes(self, bytes_per_pixel: u8) -> u32 {
         self.0 as u32 * bytes_per_pixel as u32
     }
 }
@@ -3168,9 +3168,9 @@ impl AbsoluteLength {
     /// assert_eq!(length_in_pixels.to_pixels(rem_size), Pixels(42.0));
     /// assert_eq!(length_in_rems.to_pixels(rem_size), Pixels(32.0));
     /// ```
-    pub fn to_pixels(&self, rem_size: Pixels) -> Pixels {
+    pub fn to_pixels(self, rem_size: Pixels) -> Pixels {
         match self {
-            AbsoluteLength::Pixels(pixels) => *pixels,
+            AbsoluteLength::Pixels(pixels) => pixels,
             AbsoluteLength::Rems(rems) => rems.to_pixels(rem_size),
         }
     }
@@ -3184,10 +3184,10 @@ impl AbsoluteLength {
     /// # Returns
     ///
     /// Returns the `AbsoluteLength` as `Pixels`.
-    pub fn to_rems(&self, rem_size: Pixels) -> Rems {
+    pub fn to_rems(self, rem_size: Pixels) -> Rems {
         match self {
             AbsoluteLength::Pixels(pixels) => Rems(pixels.0 / rem_size.0),
-            AbsoluteLength::Rems(rems) => *rems,
+            AbsoluteLength::Rems(rems) => rems,
         }
     }
 }

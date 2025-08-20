@@ -218,7 +218,7 @@ impl RemotePathBuf {
     }
 
     #[cfg(target_os = "windows")]
-    pub fn to_proto(self) -> String {
+    pub fn to_proto(&self) -> String {
         match self.path_style() {
             PathStyle::Posix => self.to_string(),
             PathStyle::Windows => self.inner.to_string_lossy().replace('\\', "/"),
@@ -226,7 +226,7 @@ impl RemotePathBuf {
     }
 
     #[cfg(not(target_os = "windows"))]
-    pub fn to_proto(self) -> String {
+    pub fn to_proto(&self) -> String {
         match self.path_style() {
             PathStyle::Posix => self.inner.to_string_lossy().to_string(),
             PathStyle::Windows => self.to_string(),

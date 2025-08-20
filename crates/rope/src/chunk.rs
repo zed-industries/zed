@@ -92,7 +92,7 @@ impl Into<Chunk> for ChunkSlice<'_> {
 
 impl<'a> ChunkSlice<'a> {
     #[inline(always)]
-    pub fn is_empty(self) -> bool {
+    pub fn is_empty(&self) -> bool {
         self.text.is_empty()
     }
 
