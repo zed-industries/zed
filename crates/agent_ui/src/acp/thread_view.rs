@@ -3816,9 +3816,9 @@ impl AcpThreadView {
             .justify_end();
 
         if AgentSettings::get_global(cx).enable_feedback
-            && self.thread().map_or(false, |thread| {
-                thread.read(cx).connection().telemetry().is_some()
-            })
+            && self
+                .thread()
+                .is_some_and(|thread| thread.read(cx).connection().telemetry().is_some())
         {
             let feedback = self.thread_feedback.feedback;
             container = container.child(
