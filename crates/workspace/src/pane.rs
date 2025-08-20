@@ -3082,7 +3082,7 @@ impl Pane {
                             .read(cx)
                             .items()
                             .find(|item| item.item_id() == item_id)
-                            .map(|item| item.clone())
+                            .cloned()
                         else {
                             return;
                         };
