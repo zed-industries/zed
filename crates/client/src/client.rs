@@ -293,7 +293,7 @@ pub enum Status {
 
 impl Status {
     pub fn is_connected(&self) -> bool {
-        matches!(self, Self::Connected { .. })
+        matches!(self, Self::Connected { .. } | Self::Authenticated)
     }
 
     pub fn is_signing_in(&self) -> bool {
