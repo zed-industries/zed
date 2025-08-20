@@ -27,7 +27,7 @@ impl AgentServer for NativeAgentServer {
     }
 
     fn empty_state_headline(&self) -> &'static str {
-        ""
+        "Welcome to the Agent Panel"
     }
 
     fn empty_state_message(&self) -> &'static str {
