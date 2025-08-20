@@ -88,7 +88,7 @@ macro_rules! lsp_messages {
                 self.buffer_id
             }
 
-            fn version(&self) -> &[$crate::VectorClockEntry] {
+            fn buffer_version(&self) -> &[$crate::VectorClockEntry] {
                 &self.version
             }
 

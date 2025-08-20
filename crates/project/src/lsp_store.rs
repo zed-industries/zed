@@ -5748,7 +5748,7 @@ impl LspStore {
                     let cx = cx.clone();
                     async move {
                         (
-                            LanguageServerId::from_proto(response.server_id.0),
+                            LanguageServerId::from_proto(response.server_id),
                             GetCodeLens
                                 .response_from_proto(response.response, lsp_store, buffer, cx)
                                 .await,
@@ -6768,7 +6768,7 @@ impl LspStore {
                             );
                             async move {
                                 (
-                                    LanguageServerId::from_proto(color_response.server_id.0),
+                                    LanguageServerId::from_proto(color_response.server_id),
                                     response.await.log_err().unwrap_or_default(),
                                 )
                             }
@@ -8139,7 +8139,7 @@ impl LspStore {
             // Diagnostics pull synchronizes internally via the buffer state, and cannot be handled generically as the other requests.
             Request::GetDocumentDiagnostics(get_document_diagnostics) => {
                 let buffer_id = BufferId::new(get_document_diagnostics.buffer_id())?;
-                let version = deserialize_version(get_document_diagnostics.version());
+                let version = deserialize_version(get_document_diagnostics.buffer_version());
                 let buffer = lsp_store.update(&mut cx, |this, cx| {
                     this.buffer_store.read(cx).get_existing(buffer_id)
                 })??;
@@ -12080,12 +12080,11 @@ impl LspStore {
     where
         T: LspCommand + Clone,
         T::ProtoRequest: proto::LspRequestMessage,
-        // TODO kb tidy up the proto types
         <T::ProtoRequest as proto::RequestMessage>::Response:
             Into<<T::ProtoRequest as proto::LspRequestMessage>::Response>,
     {
         let buffer_id = BufferId::new(proto_request.buffer_id())?;
-        let version = deserialize_version(proto_request.version());
+        let version = deserialize_version(proto_request.buffer_version());
         let buffer = lsp_store.update(&mut cx, |this, cx| {
             this.buffer_store.read(cx).get_existing(buffer_id)
         })??;
@@ -12121,7 +12120,7 @@ impl LspStore {
                                     .into_iter()
                                     .map(|(server_id, response)| {
                                         (
-                                            proto::LanguageServerId(server_id.to_proto()),
+                                            server_id.to_proto(),
                                             T::response_to_proto(
                                                 response,
                                                 lsp_store,
@@ -12133,12 +12132,11 @@ impl LspStore {
                                         )
                                     })
                                     .collect::<HashMap<_, _>>();
-                                let send_result = client.send_lsp_response::<T::ProtoRequest>(
+                                match client.send_lsp_response::<T::ProtoRequest>(
                                     project_id,
                                     lsp_request_id,
                                     response,
-                                );
-                                match send_result {
+                                ) {
                                     Ok(()) => {}
                                     Err(e) => {
                                         log::error!("Failed to send LSP response: {e:#}",)

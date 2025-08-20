@@ -247,14 +247,25 @@ impl AnyProtoClient {
 
         let query = proto::LspQuery {
             project_id,
-            lsp_request_id: new_id.to_proto(),
+            lsp_request_id: new_id.0,
             request: Some(request.clone().to_proto_query()),
         };
         let request = self.request(query);
+        let request_ids = self.0.request_ids.clone();
         async move {
-            let _request_enqueued: proto::Ack =
-                request.await.context("sending LSP proto request")?;
-            match rx.with_timeout(timeout, &executor).await {
+            match request.await {
+                Ok(_request_enqueued) => {}
+                Err(e) => {
+                    request_ids.lock().remove(&new_id);
+                    return Err(e).context("sending LSP proto request");
+                }
+            }
+
+            let response = rx.with_timeout(timeout, &executor).await;
+            {
+                request_ids.lock().remove(&new_id);
+            }
+            match response {
                 Ok(Ok(response)) => {
                     let response = response
                         .context("waiting for LSP proto response")?
@@ -285,15 +296,15 @@ impl AnyProtoClient {
         &self,
         project_id: u64,
         lsp_request_id: LspRequestId,
-        response: HashMap<proto::LanguageServerId, T::Response>,
+        server_responses: HashMap<u64, T::Response>,
     ) -> Result<()> {
         self.send(proto::LspQueryResponse {
             project_id,
-            lsp_request_id: lsp_request_id.to_proto(),
-            responses: response
+            lsp_request_id: lsp_request_id.0,
+            responses: server_responses
                 .into_iter()
                 .map(|(server_id, response)| proto::LspResponse {
-                    server_id: server_id.to_proto(),
+                    server_id,
                     response: Some(T::response_to_proto_query(response)),
                 })
                 .collect(),
@@ -302,8 +313,8 @@ impl AnyProtoClient {
 
     pub fn handle_lsp_response(&self, mut envelope: TypedEnvelope<proto::LspQueryResponse>) {
         let request_id = LspRequestId(envelope.payload.lsp_request_id);
-        let mut a = self.0.request_ids.lock();
-        if let Some(tx) = a.remove(&request_id) {
+        let mut response_senders = self.0.request_ids.lock();
+        if let Some(tx) = response_senders.remove(&request_id) {
             let responses = envelope.payload.responses.drain(..).collect::<Vec<_>>();
             tx.send(Ok(Some(proto::TypedEnvelope {
                 sender_id: envelope.sender_id,
@@ -315,7 +326,7 @@ impl AnyProtoClient {
                     .filter_map(|response| {
                         use proto::lsp_response::Response;
 
-                        let server_id = proto::LanguageServerId(response.server_id);
+                        let server_id = response.server_id;
                         let response = match response.response? {
                             Response::GetReferencesResponse(response) => {
                                 to_any_envelope(&envelope, response)

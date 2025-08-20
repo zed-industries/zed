@@ -31,6 +31,10 @@ pub trait RequestMessage: EnvelopedMessage {
     type Response: EnvelopedMessage;
 }
 
+/// A trait to bind LSP request and responses for the proto layer.
+/// Should be used for every LSP request that has to traverse through the proto layer.
+///
+/// `lsp_messages` macro in the same crate provides a convenient way to implement this.
 pub trait LspRequestMessage: EnvelopedMessage {
     type Response: EnvelopedMessage;
 
@@ -40,32 +44,21 @@ pub trait LspRequestMessage: EnvelopedMessage {
 
     fn buffer_id(&self) -> u64;
 
-    fn version(&self) -> &[crate::VectorClockEntry];
+    fn buffer_version(&self) -> &[crate::VectorClockEntry];
 
+    /// Whether to deduplicate the requests, or keep the previous ones running when another
+    /// request of the same kind is processed.
     fn stop_previous_requests() -> bool;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct LspRequestId(pub u64);
 
-// TODO consider lower visibility bounds for all new structs
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct LanguageServerId(pub u64);
-
-impl LspRequestId {
-    pub fn to_proto(&self) -> u64 {
-        self.0
-    }
-}
-
-impl LanguageServerId {
-    pub fn to_proto(&self) -> u64 {
-        self.0
-    }
-}
-
+/// A response from a single language server.
+/// There could be multiple responses for a single LSP request,
+/// from different servers.
 pub struct ProtoLspResponse<R> {
-    pub server_id: LanguageServerId,
+    pub server_id: u64,
     pub response: R,
 }
 

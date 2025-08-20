@@ -816,7 +816,7 @@ impl LspQuery {
             Some(lsp_query::Request::GetImplementation(_)) => ("GetImplementation", false),
             Some(lsp_query::Request::GetReferences(_)) => ("GetReferences", false),
             Some(lsp_query::Request::GetDocumentColor(_)) => ("GetDocumentColor", false),
-            None => ("<unknown>", false),
+            None => ("<unknown>", true),
         }
     }
 }
