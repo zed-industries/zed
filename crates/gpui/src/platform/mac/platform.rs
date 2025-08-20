@@ -213,6 +213,7 @@ impl MacPlatform {
             finish_launching: None,
             dock_menu: None,
             on_keyboard_layout_change: None,
+            quit_when_last_window_closes: false,
             menus: None,
             keyboard_mapper,
         }))
@@ -870,6 +871,11 @@ impl Platform for MacPlatform {
 
     fn on_keyboard_layout_change(&self, callback: Box<dyn FnMut()>) {
         self.0.lock().on_keyboard_layout_change = Some(callback);
+    }
+
+    fn set_quit_when_last_window_closes(&self, should_quit: bool) {
+        self.0.lock().quit_when_last_window_closes = should_quit;
+        unimplemented!("quit_when_last_window_closes is not implemented on macOS yet");
     }
 
     fn on_app_menu_action(&self, callback: Box<dyn FnMut(&dyn Action)>) {

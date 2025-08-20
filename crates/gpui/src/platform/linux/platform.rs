@@ -92,6 +92,7 @@ pub(crate) struct LinuxCommon {
     pub(crate) text_system: Arc<dyn PlatformTextSystem>,
     pub(crate) appearance: WindowAppearance,
     pub(crate) auto_hide_scrollbars: bool,
+    pub(crate) quit_when_last_window_closes: bool,
     pub(crate) callbacks: PlatformHandlers,
     pub(crate) signal: LoopSignal,
     pub(crate) menus: Vec<OwnedMenu>,
@@ -118,6 +119,7 @@ impl LinuxCommon {
             text_system,
             appearance: WindowAppearance::Light,
             auto_hide_scrollbars: false,
+            quit_when_last_window_closes: true,
             callbacks,
             signal,
             menus: Vec::new(),
@@ -150,6 +152,10 @@ impl<P: LinuxClient + 'static> Platform for P {
 
     fn on_keyboard_layout_change(&self, callback: Box<dyn FnMut()>) {
         self.with_common(|common| common.callbacks.keyboard_layout_change = Some(callback));
+    }
+
+    fn set_quit_when_last_window_closes(&self, should_quit: bool) {
+        self.with_common(|common| common.quit_when_last_window_closes = should_quit);
     }
 
     fn run(&self, on_finish_launching: Box<dyn FnOnce()>) {
