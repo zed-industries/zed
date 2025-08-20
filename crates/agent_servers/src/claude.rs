@@ -15,8 +15,9 @@ use smol::process::Child;
 use std::any::Any;
 use std::cell::RefCell;
 use std::fmt::Display;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
+use util::command::new_smol_command;
 use uuid::Uuid;
 
 use agent_client_protocol as acp;
@@ -36,7 +37,7 @@ use util::{ResultExt, debug_panic};
 use crate::claude::mcp_server::{ClaudeZedMcpServer, McpConfig};
 use crate::claude::tools::ClaudeTool;
 use crate::{AgentServer, AgentServerCommand, AllAgentServersSettings};
-use acp_thread::{AcpThread, AgentConnection, AuthRequired, MentionUri};
+use acp_thread::{AcpThread, AgentConnection, AuthRequired, LoadError, MentionUri};
 
 #[derive(Clone)]
 pub struct ClaudeCode;
@@ -103,7 +104,11 @@ impl AgentConnection for ClaudeAgentConnection {
             )
             .await
             else {
-                anyhow::bail!("Failed to find claude binary");
+                return Err(LoadError::NotInstalled {
+                    error_message: "Failed to find Claude Code binary".into(),
+                    install_message: "Install Claude Code".into(),
+                    install_command: "npm install -g @anthropic-ai/claude-code@latest".into(),
+                }.into());
             };
 
             let api_key =
@@ -211,9 +216,32 @@ impl AgentConnection for ClaudeAgentConnection {
                     if let Some(status) = child.status().await.log_err()
                         && let Some(thread) = thread_rx.recv().await.ok()
                     {
+                        let version = claude_version(command.path.clone(), cx).await.log_err();
+                        let help = claude_help(command.path.clone(), cx).await.log_err();
                         thread
                             .update(cx, |thread, cx| {
-                                thread.emit_server_exited(status, cx);
+                                let error = if let Some(version) = version
+                                    && let Some(help) = help
+                                    && (!help.contains("--input-format")
+                                        || !help.contains("--session-id"))
+                                {
+                                    LoadError::Unsupported {
+                                    error_message: format!(
+                                            "Your installed version of Claude Code ({}, version {}) does not have required features for use with Zed.",
+                                            command.path.to_string_lossy(),
+                                            version,
+                                        )
+                                        .into(),
+                                        upgrade_message: "Upgrade Claude Code to latest".into(),
+                                        upgrade_command: format!(
+                                            "{} update",
+                                            command.path.to_string_lossy()
+                                        ),
+                                    }
+                                } else {
+                                    LoadError::Exited { status }
+                                };
+                                thread.emit_load_error(error, cx);
                             })
                             .ok();
                     }
@@ -381,6 +409,27 @@ fn spawn_claude(
         .spawn()?;
 
     Ok(child)
+}
+
+fn claude_version(path: PathBuf, cx: &mut AsyncApp) -> Task<Result<semver::Version>> {
+    cx.background_spawn(async move {
+        let output = new_smol_command(path).arg("--version").output().await?;
+        let output = String::from_utf8(output.stdout)?;
+        let version = output
+            .trim()
+            .strip_suffix(" (Claude Code)")
+            .context("parsing Claude version")?;
+        let version = semver::Version::parse(version)?;
+        anyhow::Ok(version)
+    })
+}
+
+fn claude_help(path: PathBuf, cx: &mut AsyncApp) -> Task<Result<String>> {
+    cx.background_spawn(async move {
+        let output = new_smol_command(path).arg("--help").output().await?;
+        let output = String::from_utf8(output.stdout)?;
+        anyhow::Ok(output)
+    })
 }
 
 struct ClaudeAgentSession {
