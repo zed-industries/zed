@@ -56,8 +56,9 @@ impl LineEndingSelector {
     }
 
     fn new(buffer: Entity<Buffer>, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let delegate = LineEndingSelectorDelegate::new(cx.entity().downgrade(), buffer);
-
+        let line_ending = buffer.read(cx).line_ending();
+        let delegate =
+            LineEndingSelectorDelegate::new(cx.entity().downgrade(), buffer, line_ending);
         let picker = cx.new(|cx| Picker::uniform_list(delegate, window, cx));
         Self { picker }
     }
@@ -81,15 +82,21 @@ impl ModalView for LineEndingSelector {}
 struct LineEndingSelectorDelegate {
     line_ending_selector: WeakEntity<LineEndingSelector>,
     buffer: Entity<Buffer>,
+    line_ending: LineEnding,
     matches: Vec<StringMatch>,
     selected_index: usize,
 }
 
 impl LineEndingSelectorDelegate {
-    fn new(line_ending_selector: WeakEntity<LineEndingSelector>, buffer: Entity<Buffer>) -> Self {
+    fn new(
+        line_ending_selector: WeakEntity<LineEndingSelector>,
+        buffer: Entity<Buffer>,
+        line_ending: LineEnding,
+    ) -> Self {
         Self {
             line_ending_selector,
             buffer,
+            line_ending,
             matches: vec![],
             selected_index: 0,
         }
@@ -202,17 +209,26 @@ impl PickerDelegate for LineEndingSelectorDelegate {
         _: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let mat = &self.matches[ix];
-        let label = match mat.candidate_id {
-            0 => "LF",
-            1 => "CRLF",
+        let line_ending = match mat.candidate_id {
+            0 => LineEnding::Unix,
+            1 => LineEnding::Windows,
             _ => unreachable!(),
         };
-        Some(
-            ListItem::new(ix)
-                .inset(true)
-                .spacing(ListItemSpacing::Sparse)
-                .toggle_state(selected)
-                .child(HighlightedLabel::new(label, mat.positions.clone())),
-        )
+        let label = match line_ending {
+            LineEnding::Unix => "LF",
+            LineEnding::Windows => "CRLF",
+        };
+
+        let mut list_item = ListItem::new(ix)
+            .inset(true)
+            .spacing(ListItemSpacing::Sparse)
+            .toggle_state(selected)
+            .child(HighlightedLabel::new(label, mat.positions.clone()));
+
+        if self.line_ending == line_ending {
+            list_item = list_item.end_slot(Icon::new(IconName::Check).color(Color::Muted));
+        }
+
+        Some(list_item)
     }
 }
