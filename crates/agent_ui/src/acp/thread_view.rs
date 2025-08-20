@@ -1011,16 +1011,16 @@ impl AcpThreadView {
                 });
                 return;
             }
-        } else if method.0.as_ref() == "vertex-ai" {
-            if std::env::var("GOOGLE_API_KEY").is_err()
-                && (std::env::var("GOOGLE_CLOUD_PROJECT").is_err()
-                    || (std::env::var("GOOGLE_CLOUD_PROJECT").is_err()))
-            {
-                let this = cx.weak_entity();
-                let agent = self.agent.clone();
-                let connection = connection.clone();
+        } else if method.0.as_ref() == "vertex-ai"
+            && std::env::var("GOOGLE_API_KEY").is_err()
+            && (std::env::var("GOOGLE_CLOUD_PROJECT").is_err()
+                || (std::env::var("GOOGLE_CLOUD_PROJECT").is_err()))
+        {
+            let this = cx.weak_entity();
+            let agent = self.agent.clone();
+            let connection = connection.clone();
 
-                window.defer(cx, |window, cx| {
+            window.defer(cx, |window, cx| {
                     Self::handle_auth_required(
                         this,
                         AuthRequired {
@@ -1036,8 +1036,7 @@ impl AcpThreadView {
                         cx,
                     )
                 });
-                return;
-            }
+            return;
         }
 
         self.thread_error.take();
