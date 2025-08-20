@@ -38,6 +38,8 @@ pub trait AgentConnection {
         cx: &mut App,
     ) -> Task<Result<acp::PromptResponse>>;
 
+    fn prompt_capabilities(&self) -> acp::PromptCapabilities;
+
     fn resume(
         &self,
         _session_id: &acp::SessionId,
@@ -64,6 +66,10 @@ pub trait AgentConnection {
         None
     }
 
+    fn telemetry(&self) -> Option<Rc<dyn AgentTelemetry>> {
+        None
+    }
+
     fn into_any(self: Rc<Self>) -> Rc<dyn Any>;
 }
 
@@ -79,6 +85,19 @@ pub trait AgentSessionEditor {
 
 pub trait AgentSessionResume {
     fn run(&self, cx: &mut App) -> Task<Result<acp::PromptResponse>>;
+}
+
+pub trait AgentTelemetry {
+    /// The name of the agent used for telemetry.
+    fn agent_name(&self) -> String;
+
+    /// A representation of the current thread state that can be serialized for
+    /// storage with telemetry events.
+    fn thread_data(
+        &self,
+        session_id: &acp::SessionId,
+        cx: &mut App,
+    ) -> Task<Result<serde_json::Value>>;
 }
 
 #[derive(Debug)]
@@ -315,6 +334,14 @@ mod test_support {
                 },
             );
             Task::ready(Ok(thread))
+        }
+
+        fn prompt_capabilities(&self) -> acp::PromptCapabilities {
+            acp::PromptCapabilities {
+                image: true,
+                audio: true,
+                embedded_context: true,
+            }
         }
 
         fn authenticate(

@@ -1,8 +1,11 @@
+use std::cell::Cell;
 use std::ops::Range;
+use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
 use acp_thread::MentionUri;
+use agent_client_protocol as acp;
 use agent2::{HistoryEntry, HistoryStore};
 use anyhow::Result;
 use editor::{CompletionProvider, Editor, ExcerptId};
@@ -63,6 +66,7 @@ pub struct ContextPickerCompletionProvider {
     workspace: WeakEntity<Workspace>,
     history_store: Entity<HistoryStore>,
     prompt_store: Option<Entity<PromptStore>>,
+    prompt_capabilities: Rc<Cell<acp::PromptCapabilities>>,
 }
 
 impl ContextPickerCompletionProvider {
@@ -71,12 +75,14 @@ impl ContextPickerCompletionProvider {
         workspace: WeakEntity<Workspace>,
         history_store: Entity<HistoryStore>,
         prompt_store: Option<Entity<PromptStore>>,
+        prompt_capabilities: Rc<Cell<acp::PromptCapabilities>>,
     ) -> Self {
         Self {
             message_editor,
             workspace,
             history_store,
             prompt_store,
+            prompt_capabilities,
         }
     }
 
@@ -544,17 +550,19 @@ impl ContextPickerCompletionProvider {
                 }),
         );
 
-        const RECENT_COUNT: usize = 2;
-        let threads = self
-            .history_store
-            .read(cx)
-            .recently_opened_entries(cx)
-            .into_iter()
-            .filter(|thread| !mentions.contains(&thread.mention_uri()))
-            .take(RECENT_COUNT)
-            .collect::<Vec<_>>();
+        if self.prompt_capabilities.get().embedded_context {
+            const RECENT_COUNT: usize = 2;
+            let threads = self
+                .history_store
+                .read(cx)
+                .recently_opened_entries(cx)
+                .into_iter()
+                .filter(|thread| !mentions.contains(&thread.mention_uri()))
+                .take(RECENT_COUNT)
+                .collect::<Vec<_>>();
 
-        recent.extend(threads.into_iter().map(Match::RecentThread));
+            recent.extend(threads.into_iter().map(Match::RecentThread));
+        }
 
         recent
     }
@@ -564,11 +572,17 @@ impl ContextPickerCompletionProvider {
         workspace: &Entity<Workspace>,
         cx: &mut App,
     ) -> Vec<ContextPickerEntry> {
-        let mut entries = vec![
-            ContextPickerEntry::Mode(ContextPickerMode::File),
-            ContextPickerEntry::Mode(ContextPickerMode::Symbol),
-            ContextPickerEntry::Mode(ContextPickerMode::Thread),
-        ];
+        let embedded_context = self.prompt_capabilities.get().embedded_context;
+        let mut entries = if embedded_context {
+            vec![
+                ContextPickerEntry::Mode(ContextPickerMode::File),
+                ContextPickerEntry::Mode(ContextPickerMode::Symbol),
+                ContextPickerEntry::Mode(ContextPickerMode::Thread),
+            ]
+        } else {
+            // File is always available, but we don't need a mode entry
+            vec![]
+        };
 
         let has_selection = workspace
             .read(cx)
@@ -583,11 +597,13 @@ impl ContextPickerCompletionProvider {
             ));
         }
 
-        if self.prompt_store.is_some() {
-            entries.push(ContextPickerEntry::Mode(ContextPickerMode::Rules));
-        }
+        if embedded_context {
+            if self.prompt_store.is_some() {
+                entries.push(ContextPickerEntry::Mode(ContextPickerMode::Rules));
+            }
 
-        entries.push(ContextPickerEntry::Mode(ContextPickerMode::Fetch));
+            entries.push(ContextPickerEntry::Mode(ContextPickerMode::Fetch));
+        }
 
         entries
     }
@@ -625,7 +641,11 @@ impl CompletionProvider for ContextPickerCompletionProvider {
             let offset_to_line = buffer.point_to_offset(line_start);
             let mut lines = buffer.text_for_range(line_start..position).lines();
             let line = lines.next()?;
-            MentionCompletion::try_parse(line, offset_to_line)
+            MentionCompletion::try_parse(
+                self.prompt_capabilities.get().embedded_context,
+                line,
+                offset_to_line,
+            )
         });
         let Some(state) = state else {
             return Task::ready(Ok(Vec::new()));
@@ -745,12 +765,16 @@ impl CompletionProvider for ContextPickerCompletionProvider {
         let offset_to_line = buffer.point_to_offset(line_start);
         let mut lines = buffer.text_for_range(line_start..position).lines();
         if let Some(line) = lines.next() {
-            MentionCompletion::try_parse(line, offset_to_line)
-                .map(|completion| {
-                    completion.source_range.start <= offset_to_line + position.column as usize
-                        && completion.source_range.end >= offset_to_line + position.column as usize
-                })
-                .unwrap_or(false)
+            MentionCompletion::try_parse(
+                self.prompt_capabilities.get().embedded_context,
+                line,
+                offset_to_line,
+            )
+            .map(|completion| {
+                completion.source_range.start <= offset_to_line + position.column as usize
+                    && completion.source_range.end >= offset_to_line + position.column as usize
+            })
+            .unwrap_or(false)
         } else {
             false
         }
@@ -841,7 +865,7 @@ struct MentionCompletion {
 }
 
 impl MentionCompletion {
-    fn try_parse(line: &str, offset_to_line: usize) -> Option<Self> {
+    fn try_parse(allow_non_file_mentions: bool, line: &str, offset_to_line: usize) -> Option<Self> {
         let last_mention_start = line.rfind('@')?;
         if last_mention_start >= line.len() {
             return Some(Self::default());
@@ -865,7 +889,9 @@ impl MentionCompletion {
         if let Some(mode_text) = parts.next() {
             end += mode_text.len();
 
-            if let Some(parsed_mode) = ContextPickerMode::try_from(mode_text).ok() {
+            if let Some(parsed_mode) = ContextPickerMode::try_from(mode_text).ok()
+                && (allow_non_file_mentions || matches!(parsed_mode, ContextPickerMode::File))
+            {
                 mode = Some(parsed_mode);
             } else {
                 argument = Some(mode_text.to_string());
@@ -898,10 +924,10 @@ mod tests {
 
     #[test]
     fn test_mention_completion_parse() {
-        assert_eq!(MentionCompletion::try_parse("Lorem Ipsum", 0), None);
+        assert_eq!(MentionCompletion::try_parse(true, "Lorem Ipsum", 0), None);
 
         assert_eq!(
-            MentionCompletion::try_parse("Lorem @", 0),
+            MentionCompletion::try_parse(true, "Lorem @", 0),
             Some(MentionCompletion {
                 source_range: 6..7,
                 mode: None,
@@ -910,7 +936,7 @@ mod tests {
         );
 
         assert_eq!(
-            MentionCompletion::try_parse("Lorem @file", 0),
+            MentionCompletion::try_parse(true, "Lorem @file", 0),
             Some(MentionCompletion {
                 source_range: 6..11,
                 mode: Some(ContextPickerMode::File),
@@ -919,7 +945,7 @@ mod tests {
         );
 
         assert_eq!(
-            MentionCompletion::try_parse("Lorem @file ", 0),
+            MentionCompletion::try_parse(true, "Lorem @file ", 0),
             Some(MentionCompletion {
                 source_range: 6..12,
                 mode: Some(ContextPickerMode::File),
@@ -928,7 +954,7 @@ mod tests {
         );
 
         assert_eq!(
-            MentionCompletion::try_parse("Lorem @file main.rs", 0),
+            MentionCompletion::try_parse(true, "Lorem @file main.rs", 0),
             Some(MentionCompletion {
                 source_range: 6..19,
                 mode: Some(ContextPickerMode::File),
@@ -937,7 +963,7 @@ mod tests {
         );
 
         assert_eq!(
-            MentionCompletion::try_parse("Lorem @file main.rs ", 0),
+            MentionCompletion::try_parse(true, "Lorem @file main.rs ", 0),
             Some(MentionCompletion {
                 source_range: 6..19,
                 mode: Some(ContextPickerMode::File),
@@ -946,7 +972,7 @@ mod tests {
         );
 
         assert_eq!(
-            MentionCompletion::try_parse("Lorem @file main.rs Ipsum", 0),
+            MentionCompletion::try_parse(true, "Lorem @file main.rs Ipsum", 0),
             Some(MentionCompletion {
                 source_range: 6..19,
                 mode: Some(ContextPickerMode::File),
@@ -955,7 +981,7 @@ mod tests {
         );
 
         assert_eq!(
-            MentionCompletion::try_parse("Lorem @main", 0),
+            MentionCompletion::try_parse(true, "Lorem @main", 0),
             Some(MentionCompletion {
                 source_range: 6..11,
                 mode: None,
@@ -963,6 +989,28 @@ mod tests {
             })
         );
 
-        assert_eq!(MentionCompletion::try_parse("test@", 0), None);
+        assert_eq!(MentionCompletion::try_parse(true, "test@", 0), None);
+
+        // Allowed non-file mentions
+
+        assert_eq!(
+            MentionCompletion::try_parse(true, "Lorem @symbol main", 0),
+            Some(MentionCompletion {
+                source_range: 6..18,
+                mode: Some(ContextPickerMode::Symbol),
+                argument: Some("main".to_string()),
+            })
+        );
+
+        // Disallowed non-file mentions
+
+        assert_eq!(
+            MentionCompletion::try_parse(false, "Lorem @symbol main", 0),
+            Some(MentionCompletion {
+                source_range: 6..18,
+                mode: None,
+                argument: Some("main".to_string()),
+            })
+        );
     }
 }

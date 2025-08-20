@@ -3183,9 +3183,9 @@ mod tests {
             // so we special case row 0 to assume a leading '\n'.
             //
             // Linehood is the birthright of strings.
-            let mut input_text_lines = input_text.split('\n').enumerate().peekable();
+            let input_text_lines = input_text.split('\n').enumerate().peekable();
             let mut block_row = 0;
-            while let Some((wrap_row, input_line)) = input_text_lines.next() {
+            for (wrap_row, input_line) in input_text_lines {
                 let wrap_row = wrap_row as u32;
                 let multibuffer_row = wraps_snapshot
                     .to_point(WrapPoint::new(wrap_row, 0), Bias::Left)
