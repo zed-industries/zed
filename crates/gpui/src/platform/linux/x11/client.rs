@@ -2108,7 +2108,7 @@ fn current_pointer_device_states(
                     .classes
                     .iter()
                     .filter_map(|class| class.data.as_scroll())
-                    .map(|class| *class)
+                    .copied()
                     .rev()
                     .collect::<Vec<_>>();
                 let old_state = scroll_values_to_preserve.get(&info.deviceid);
