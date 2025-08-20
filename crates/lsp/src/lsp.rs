@@ -318,7 +318,7 @@ impl LanguageServer {
         } else {
             root_path.parent().unwrap_or_else(|| Path::new("/"))
         };
-        let root_uri = Url::from_file_path(&working_dir)
+        let root_uri = Url::from_file_path(working_dir)
             .map_err(|()| anyhow!("{working_dir:?} is not a valid URI"))?;
 
         log::info!(

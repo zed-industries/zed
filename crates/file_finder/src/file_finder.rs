@@ -978,7 +978,7 @@ impl FileFinderDelegate {
             if let Some(worktree) = expect_worktree {
                 let worktree = worktree.read(cx);
                 if query_path.is_relative()
-                    && worktree.entry_for_path(&query_path).is_none()
+                    && worktree.entry_for_path(query_path).is_none()
                     && !filename.ends_with("/")
                 {
                     self.matches.matches.push(Match::CreateNew(ProjectPath {

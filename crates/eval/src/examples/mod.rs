@@ -50,7 +50,7 @@ struct DeclarativeExample {
 impl DeclarativeExample {
     pub fn load(example_path: &Path) -> Result<Self> {
         let name = Self::name_from_path(example_path);
-        let base: ExampleToml = toml::from_str(&fs::read_to_string(&example_path)?)?;
+        let base: ExampleToml = toml::from_str(&fs::read_to_string(example_path)?)?;
         let example_dir = example_path.parent().unwrap();
 
         let language_server = if base.require_lsp {

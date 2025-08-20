@@ -653,7 +653,7 @@ impl SnowflakeRow {
         client
             .put_record()
             .stream_name(stream)
-            .partition_key(&self.user_id.unwrap_or_default())
+            .partition_key(self.user_id.unwrap_or_default())
             .data(row.into())
             .send()
             .await?;

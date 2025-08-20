@@ -505,7 +505,7 @@ impl DapStore {
         let session_id = SessionId::from_proto(envelope.payload.session_id);
 
         this.update(&mut cx, |this, cx| {
-            if let Some(session) = this.session_by_id(&session_id) {
+            if let Some(session) = this.session_by_id(session_id) {
                 session.update(cx, |session, cx| {
                     session.set_ignore_breakpoints(envelope.payload.ignore, cx)
                 })

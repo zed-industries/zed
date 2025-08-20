@@ -18,7 +18,7 @@ async fn find_best_executable(executables: &[String], test_name: &str) -> Option
         return executables.first().cloned();
     }
     for executable in executables {
-        let Some(mut child) = Command::new(&executable)
+        let Some(mut child) = Command::new(executable)
             .arg("--list")
             .stdout(Stdio::piped())
             .spawn()
@@ -44,7 +44,7 @@ async fn find_best_executable(executables: &[String], test_name: &str) -> Option
             log::warn!("Failed to list tests for {executable}: {err}");
         } else {
             for line in test_lines.lines() {
-                if line.contains(&test_name) {
+                if line.contains(test_name) {
                     return Some(executable.clone());
                 }
             }

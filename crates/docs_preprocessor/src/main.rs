@@ -121,7 +121,7 @@ fn handle_frontmatter(book: &mut Book, errors: &mut HashSet<PreprocessorError>) 
     for_each_chapter_mut(book, |chapter| {
         let new_content = frontmatter_regex.replace(&chapter.content, |caps: &regex::Captures| {
             let frontmatter = caps[1].trim();
-            let frontmatter = frontmatter.trim_matches(&[' ', '-', '\n']);
+            let frontmatter = frontmatter.trim_matches([' ', '-', '\n']);
             let mut metadata = HashMap::<String, String>::default();
             for line in frontmatter.lines() {
                 let Some((name, value)) = line.split_once(':') else {
@@ -397,7 +397,7 @@ fn handle_postprocessing() -> Result<()> {
         path: &'a std::path::PathBuf,
         root: &'a std::path::PathBuf,
     ) -> &'a std::path::Path {
-        path.strip_prefix(&root).unwrap_or(path)
+        path.strip_prefix(root).unwrap_or(path)
     }
     fn extract_title_from_page(contents: &str, pretty_path: &std::path::Path) -> String {
         let title_tag_contents = &title_regex()

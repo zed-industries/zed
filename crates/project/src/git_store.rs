@@ -2860,7 +2860,7 @@ impl RepositorySnapshot {
         abs_path: &Path,
     ) -> Option<RepoPath> {
         abs_path
-            .strip_prefix(&work_directory_abs_path)
+            .strip_prefix(work_directory_abs_path)
             .map(RepoPath::from)
             .ok()
     }

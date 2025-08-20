@@ -11916,7 +11916,7 @@ impl Editor {
                         Ok(line_trimmed)
                     } else {
                         line_trimmed
-                            .strip_prefix(&line_prefix.trim_start())
+                            .strip_prefix(line_prefix.trim_start())
                             .with_context(|| {
                                 format!("line did not start with prefix {line_prefix:?}: {line:?}")
                             })

@@ -236,7 +236,7 @@ impl HeadlessExtensionStore {
             .remove(extension_id)
             .unwrap_or_default();
         let proxy = self.proxy.clone();
-        let path = self.extension_dir.join(&extension_id.to_string());
+        let path = self.extension_dir.join(extension_id.to_string());
         let fs = self.fs.clone();
         cx.spawn(async move |_, cx| {
             let mut removal_tasks = Vec::with_capacity(servers_to_remove.len());

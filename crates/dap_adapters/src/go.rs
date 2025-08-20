@@ -411,7 +411,7 @@ impl DebugAdapter for GoDebugAdapter {
         user_args: Option<Vec<String>>,
         _cx: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary> {
-        let adapter_path = paths::debug_adapters_dir().join(&Self::ADAPTER_NAME);
+        let adapter_path = paths::debug_adapters_dir().join(Self::ADAPTER_NAME);
         let dlv_path = adapter_path.join("dlv");
 
         let delve_path = if let Some(path) = user_installed_path {
@@ -426,12 +426,12 @@ impl DebugAdapter for GoDebugAdapter {
                 .await
                 .context("Go not found in path. Please install Go first, then Dlv will be installed automatically.")?;
 
-            let adapter_path = paths::debug_adapters_dir().join(&Self::ADAPTER_NAME);
+            let adapter_path = paths::debug_adapters_dir().join(Self::ADAPTER_NAME);
 
             let install_output = util::command::new_smol_command(&go)
                 .env("GO111MODULE", "on")
                 .env("GOBIN", &adapter_path)
-                .args(&["install", "github.com/go-delve/delve/cmd/dlv@latest"])
+                .args(["install", "github.com/go-delve/delve/cmd/dlv@latest"])
                 .output()
                 .await?;
 

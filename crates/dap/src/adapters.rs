@@ -276,7 +276,7 @@ pub async fn download_adapter_from_github(
     file_type: DownloadedFileType,
     delegate: &dyn DapDelegate,
 ) -> Result<PathBuf> {
-    let adapter_path = paths::debug_adapters_dir().join(&adapter_name.as_ref());
+    let adapter_path = paths::debug_adapters_dir().join(adapter_name.as_ref());
     let version_path = adapter_path.join(format!("{}_{}", adapter_name, github_version.tag_name));
     let fs = delegate.fs();
 

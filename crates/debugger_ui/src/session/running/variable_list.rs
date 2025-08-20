@@ -1280,7 +1280,7 @@ impl VariableList {
                         .text_ui_sm(cx)
                         .w_full()
                         .child(
-                            Label::new(&Self::center_truncate_string(
+                            Label::new(Self::center_truncate_string(
                                 watcher.expression.as_ref(),
                                 watcher_len,
                             ))

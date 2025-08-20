@@ -185,7 +185,7 @@ impl LspAdapter for ExtensionLspAdapter {
             // - toml@0.0.2
             // - zig@0.0.1
             if ["toml", "zig"].contains(&self.extension.manifest().id.as_ref())
-                && path.starts_with(&self.extension.work_dir())
+                && path.starts_with(self.extension.work_dir())
             {
                 make_file_executable(&path)
                     .await

@@ -539,7 +539,7 @@ impl ServerPaths {
     fn new(identifier: &str) -> Result<Self> {
         let server_dir = paths::remote_server_state_dir().join(identifier);
         std::fs::create_dir_all(&server_dir)?;
-        std::fs::create_dir_all(&logs_dir())?;
+        std::fs::create_dir_all(logs_dir())?;
 
         let pid_file = server_dir.join("server.pid");
         let stdin_socket = server_dir.join("stdin.sock");
@@ -718,7 +718,7 @@ fn spawn_server(paths: &ServerPaths) -> Result<()> {
 }
 
 fn check_pid_file(path: &Path) -> Result<Option<u32>> {
-    let Some(pid) = std::fs::read_to_string(&path)
+    let Some(pid) = std::fs::read_to_string(path)
         .ok()
         .and_then(|contents| contents.parse::<u32>().ok())
     else {
@@ -742,7 +742,7 @@ fn check_pid_file(path: &Path) -> Result<Option<u32>> {
             log::debug!(
                 "Found PID file, but process with that PID does not exist. Removing PID file."
             );
-            std::fs::remove_file(&path).context("Failed to remove PID file")?;
+            std::fs::remove_file(path).context("Failed to remove PID file")?;
             Ok(None)
         }
     }

@@ -37,7 +37,7 @@ impl CaptureInput {
     pub fn finish(self) -> Result<PathBuf> {
         let name = self.name;
         let mut path = env::current_dir().context("Could not get current dir")?;
-        path.push(&format!("test_recording_{name}.wav"));
+        path.push(format!("test_recording_{name}.wav"));
         log::info!("Test recording written to: {}", path.display());
         write_out(self.samples, self.config, &path)?;
         Ok(path)

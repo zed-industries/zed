@@ -1199,7 +1199,7 @@ impl Worktree {
         }
 
         if worktree_relative_path.components().next().is_some() {
-            full_path.push(&worktree_relative_path);
+            full_path.push(worktree_relative_path);
         }
 
         full_path
@@ -3393,7 +3393,7 @@ impl File {
 
         let disk_state = if proto.is_deleted {
             DiskState::Deleted
-        } else if let Some(mtime) = proto.mtime.map(&Into::into) {
+        } else if let Some(mtime) = proto.mtime.map(Into::into) {
             DiskState::Present { mtime }
         } else {
             DiskState::New

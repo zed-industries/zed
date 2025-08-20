@@ -532,7 +532,7 @@ fn resolve_path(
                 .parent()
                 .context("Can't create file: incorrect path")?;
 
-            let parent_project_path = project.find_project_path(&parent_path, cx);
+            let parent_project_path = project.find_project_path(parent_path, cx);
 
             let parent_entry = parent_project_path
                 .as_ref()
@@ -2054,7 +2054,7 @@ mod tests {
 
         // Create test files in the global config directory
         let global_config_dir = paths::config_dir();
-        fs::create_dir_all(&global_config_dir).unwrap();
+        fs::create_dir_all(global_config_dir).unwrap();
         let global_settings_path = global_config_dir.join("settings.json");
         fs::write(&global_settings_path, "{}").unwrap();
 

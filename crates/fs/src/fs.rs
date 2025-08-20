@@ -820,7 +820,7 @@ impl Fs for RealFs {
     fn git_init(&self, abs_work_directory_path: &Path, fallback_branch_name: String) -> Result<()> {
         let config = new_std_command("git")
             .current_dir(abs_work_directory_path)
-            .args(&["config", "--global", "--get", "init.defaultBranch"])
+            .args(["config", "--global", "--get", "init.defaultBranch"])
             .output()?;
 
         let branch_name;
@@ -833,7 +833,7 @@ impl Fs for RealFs {
 
         new_std_command("git")
             .current_dir(abs_work_directory_path)
-            .args(&["init", "-b"])
+            .args(["init", "-b"])
             .arg(branch_name.trim())
             .output()?;
 
@@ -843,7 +843,7 @@ impl Fs for RealFs {
     async fn git_clone(&self, repo_url: &str, abs_work_directory: &Path) -> Result<()> {
         let output = new_smol_command("git")
             .current_dir(abs_work_directory)
-            .args(&["clone", repo_url])
+            .args(["clone", repo_url])
             .output()
             .await?;
 
@@ -1685,7 +1685,7 @@ impl FakeFs {
             state.head_contents.clear();
             state.unmerged_paths.clear();
             for (path, content) in workdir_contents {
-                let repo_path: RepoPath = path.strip_prefix(&workdir_path).unwrap().into();
+                let repo_path: RepoPath = path.strip_prefix(workdir_path).unwrap().into();
                 let status = statuses
                     .iter()
                     .find_map(|(p, status)| (**p == *repo_path.0).then_some(status));

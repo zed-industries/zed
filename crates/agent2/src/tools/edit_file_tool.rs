@@ -493,7 +493,7 @@ fn resolve_path(
                 .parent()
                 .context("Can't create file: incorrect path")?;
 
-            let parent_project_path = project.find_project_path(&parent_path, cx);
+            let parent_project_path = project.find_project_path(parent_path, cx);
 
             let parent_entry = parent_project_path
                 .as_ref()

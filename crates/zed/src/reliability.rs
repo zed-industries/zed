@@ -698,7 +698,7 @@ async fn upload_previous_crashes(
                 .await
                 .context("error reading crash file")?;
 
-            let mut request = http_client::Request::post(&crash_report_url.to_string())
+            let mut request = http_client::Request::post(crash_report_url.to_string())
                 .follow_redirects(http_client::RedirectPolicy::FollowAll)
                 .header("Content-Type", "text/plain");
 

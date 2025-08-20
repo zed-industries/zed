@@ -1262,7 +1262,7 @@ impl GitRepository for RealGitRepository {
                 cmd.current_dir(&working_directory?)
                     .envs(env.iter())
                     .args(["commit", "--quiet", "-m"])
-                    .arg(&message.to_string())
+                    .arg(message.to_string())
                     .arg("--cleanup=strip");
 
                 if options.amend {
@@ -1274,7 +1274,7 @@ impl GitRepository for RealGitRepository {
                 }
 
                 if let Some((name, email)) = name_and_email {
-                    cmd.arg("--author").arg(&format!("{name} <{email}>"));
+                    cmd.arg("--author").arg(format!("{name} <{email}>"));
                 }
 
                 let output = cmd.output().await?;

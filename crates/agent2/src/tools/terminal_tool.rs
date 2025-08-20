@@ -289,7 +289,7 @@ fn working_dir(
             // Absolute paths are allowed, but only if they're in one of the project's worktrees.
             if project
                 .worktrees(cx)
-                .any(|worktree| input_path.starts_with(&worktree.read(cx).abs_path()))
+                .any(|worktree| input_path.starts_with(worktree.read(cx).abs_path()))
             {
                 return Ok(Some(input_path.into()));
             }

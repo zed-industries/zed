@@ -1694,8 +1694,8 @@ impl MultiBuffer {
                 let range = Anchor::range_in_buffer(
                     excerpt_id,
                     buffer_snapshot.remote_id(),
-                    buffer_snapshot.anchor_before(&range.primary.start)
-                        ..buffer_snapshot.anchor_after(&range.primary.end),
+                    buffer_snapshot.anchor_before(range.primary.start)
+                        ..buffer_snapshot.anchor_after(range.primary.end),
                 );
                 result.push(range)
             }

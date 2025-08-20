@@ -120,7 +120,7 @@ impl Example for CodeBlockCitations {
                                     cx.assert(
                                         deindent(&buffer_text)
                                             .trim()
-                                            .contains(deindent(&content).trim()),
+                                            .contains(deindent(content).trim()),
                                         "Code block content was found in file",
                                     )
                                     .ok();

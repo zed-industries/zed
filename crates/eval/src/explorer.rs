@@ -103,7 +103,7 @@ pub fn generate_explorer_html(input_paths: &[PathBuf], output_path: &PathBuf) ->
 
     let all_threads_data = json!({ "threads": threads });
     let html_content = inject_thread_data(template_content, all_threads_data)?;
-    fs::write(&output_path, &html_content)
+    fs::write(output_path, &html_content)
         .context(format!("Failed to write output: {}", output_path.display()))?;
 
     println!(

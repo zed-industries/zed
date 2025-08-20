@@ -242,7 +242,7 @@ impl ToolchainSelectorDelegate {
     }
     fn relativize_path(path: SharedString, worktree_root: &Path) -> SharedString {
         Path::new(&path.as_ref())
-            .strip_prefix(&worktree_root)
+            .strip_prefix(worktree_root)
             .ok()
             .map(|suffix| Path::new(".").join(suffix))
             .and_then(|path| path.to_str().map(String::from).map(SharedString::from))

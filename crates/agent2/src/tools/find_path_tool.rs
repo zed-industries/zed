@@ -173,7 +173,7 @@ fn search_paths(glob: &str, project: Entity<Project>, cx: &mut App) -> Task<Resu
                 snapshot
                     .entries(false, 0)
                     .map(move |entry| root_name.join(&entry.path))
-                    .filter(|path| path_matcher.is_match(&path))
+                    .filter(|path| path_matcher.is_match(path))
             })
             .collect())
     })

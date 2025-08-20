@@ -10567,8 +10567,7 @@ impl LspStore {
     }
 
     fn get_buffer<'a>(&self, abs_path: &Path, cx: &'a App) -> Option<&'a Buffer> {
-        let (worktree, relative_path) =
-            self.worktree_store.read(cx).find_worktree(&abs_path, cx)?;
+        let (worktree, relative_path) = self.worktree_store.read(cx).find_worktree(abs_path, cx)?;
 
         let project_path = ProjectPath {
             worktree_id: worktree.read(cx).id(),

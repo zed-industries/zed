@@ -2902,7 +2902,7 @@ impl AssistantContext {
                 let mut discriminant = 1;
                 let mut new_path;
                 loop {
-                    new_path = contexts_dir().join(&format!(
+                    new_path = contexts_dir().join(format!(
                         "{} - {}.zed.json",
                         summary.trim(),
                         discriminant

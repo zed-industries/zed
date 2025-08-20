@@ -4929,7 +4929,7 @@ impl ProjectPanel {
             if is_expanded_dir {
                 break;
             }
-            entry = worktree.entry_for_path(&entry.path.parent()?)?;
+            entry = worktree.entry_for_path(entry.path.parent()?)?;
         }
 
         let (active_indent_range, depth) = {
@@ -5357,7 +5357,7 @@ impl Render for ProjectPanel {
                                                     .worktree_for_id(worktree_id, cx)?;
                                                 let target_entry = worktree
                                                     .read(cx)
-                                                    .entry_for_path(&entry.path.parent()?)?;
+                                                    .entry_for_path(entry.path.parent()?)?;
                                                 Some((target_entry, worktree))
                                             }) else {
                                                 return;

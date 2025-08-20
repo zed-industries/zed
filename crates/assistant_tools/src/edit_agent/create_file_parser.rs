@@ -57,7 +57,7 @@ impl CreateFileParser {
                     }
                 }
                 ParserState::WithinText => {
-                    let text = self.buffer.trim_end_matches(&['`', '\n', ' ']);
+                    let text = self.buffer.trim_end_matches(['`', '\n', ' ']);
                     let text_len = text.len();
 
                     if text_len > 0 {

@@ -384,7 +384,7 @@ impl LspAdapter for RustLspAdapter {
                 static FULL_SIGNATURE_REGEX: LazyLock<Regex> =
                     LazyLock::new(|| Regex::new(r"fn (.?+)\(").expect("Failed to create REGEX"));
                 if let Some((function_signature, match_)) = function_signature
-                    .filter(|it| it.contains(&label))
+                    .filter(|it| it.contains(label))
                     .and_then(|it| Some((it, FULL_SIGNATURE_REGEX.find(it)?)))
                 {
                     let source = Rope::from(function_signature);

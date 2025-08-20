@@ -292,8 +292,8 @@ async fn copy_extension_resources(
         }
         copy_recursive(
             fs.as_ref(),
-            &extension_path.join(&snippets_path),
-            &output_dir.join(&snippets_path),
+            &extension_path.join(snippets_path),
+            &output_dir.join(snippets_path),
             CopyOptions {
                 overwrite: true,
                 ignore_if_exists: false,

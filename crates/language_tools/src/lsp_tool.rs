@@ -157,8 +157,8 @@ impl LanguageServerState {
                                             let worktree =
                                                 servers.worktree.as_ref()?.upgrade()?.read(cx);
                                             let relative_path =
-                                                abs_path.strip_prefix(&worktree.abs_path()).ok()?;
-                                            let entry = worktree.entry_for_path(&relative_path)?;
+                                                abs_path.strip_prefix(worktree.abs_path()).ok()?;
+                                            let entry = worktree.entry_for_path(relative_path)?;
                                             let project_path =
                                                 project.read(cx).path_for_entry(entry.id, cx)?;
                                             buffer_store.read(cx).get_by_path(&project_path)

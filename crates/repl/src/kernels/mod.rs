@@ -104,7 +104,7 @@ pub fn python_env_kernel_specifications(
 
                 // Check if ipykernel is installed
                 let ipykernel_check = util::command::new_smol_command(&python_path)
-                    .args(&["-c", "import ipykernel"])
+                    .args(["-c", "import ipykernel"])
                     .output()
                     .await;
 

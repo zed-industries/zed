@@ -2306,7 +2306,7 @@ mod tests {
         assert_eq!(have.len(), 6);
         assert_eq!(
             have[0],
-            SerializedWorkspaceLocation::from_local_paths(&[dir4.path()])
+            SerializedWorkspaceLocation::from_local_paths([dir4.path()])
         );
         assert_eq!(
             have[1],

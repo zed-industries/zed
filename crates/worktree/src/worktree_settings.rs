@@ -22,12 +22,12 @@ impl WorktreeSettings {
 
     pub fn is_path_excluded(&self, path: &Path) -> bool {
         path.ancestors()
-            .any(|ancestor| self.file_scan_exclusions.is_match(&ancestor))
+            .any(|ancestor| self.file_scan_exclusions.is_match(ancestor))
     }
 
     pub fn is_path_always_included(&self, path: &Path) -> bool {
         path.ancestors()
-            .any(|ancestor| self.file_scan_inclusions.is_match(&ancestor))
+            .any(|ancestor| self.file_scan_inclusions.is_match(ancestor))
     }
 }
 

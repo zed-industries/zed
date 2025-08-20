@@ -514,7 +514,7 @@ impl TcpTransport {
         let mut stderr_task = None;
 
         if let Some(command) = &binary.command {
-            let mut command = util::command::new_std_command(&command);
+            let mut command = util::command::new_std_command(command);
 
             if let Some(cwd) = &binary.cwd {
                 command.current_dir(cwd);
@@ -664,7 +664,7 @@ impl StdioTransport {
                 "When using the `stdio` transport, the path to a debug adapter binary must be set by Zed."
             );
         };
-        let mut command = util::command::new_std_command(&binary_command);
+        let mut command = util::command::new_std_command(binary_command);
 
         if let Some(cwd) = &binary.cwd {
             command.current_dir(cwd);
