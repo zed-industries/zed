@@ -669,8 +669,14 @@ impl AcpThreadView {
     ) {
         match &event.view_event {
             ViewEvent::MessageEditorEvent(_editor, MessageEditorEvent::Focus) => {
-                self.editing_message = Some(event.entry_index);
-                cx.notify();
+                if let Some(thread) = self.thread()
+                    && let Some(AgentThreadEntry::UserMessage(user_message)) =
+                        thread.read(cx).entries().get(event.entry_index)
+                    && user_message.id.is_some()
+                {
+                    self.editing_message = Some(event.entry_index);
+                    cx.notify();
+                }
             }
             ViewEvent::MessageEditorEvent(editor, MessageEditorEvent::Send) => {
                 self.regenerate(event.entry_index, editor, window, cx);
@@ -1116,16 +1122,18 @@ impl AcpThreadView {
                                     .when(editing && !editor_focus, |this| this.border_dashed())
                                     .border_color(cx.theme().colors().border)
                                     .map(|this|{
-                                        if editor_focus {
+                                        if editing && editor_focus {
                                             this.border_color(focus_border)
-                                        } else {
+                                        } else if message.id.is_some() {
                                             this.hover(|s| s.border_color(focus_border.opacity(0.8)))
+                                        } else {
+                                            this
                                         }
                                     })
                                     .text_xs()
                                     .child(editor.clone().into_any_element()),
                             )
-                            .when(editor_focus, |this|
+                            .when(editing && editor_focus, |this|
                                 this.child(
                                     h_flex()
                                         .absolute()
