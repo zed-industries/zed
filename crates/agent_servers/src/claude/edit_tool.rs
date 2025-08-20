@@ -87,7 +87,7 @@ impl McpServerTool for EditTool {
 
 #[cfg(test)]
 mod tests {
-    use std::{path::Path, rc::Rc};
+    use std::rc::Rc;
 
     use acp_thread::{AgentConnection, StubAgentConnection};
     use gpui::{Entity, TestAppContext};
@@ -95,6 +95,7 @@ mod tests {
     use project::{FakeFs, Project};
     use serde_json::json;
     use settings::SettingsStore;
+    use util::path;
 
     use super::*;
 
@@ -156,17 +157,17 @@ mod tests {
         let connection = Rc::new(StubAgentConnection::new());
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree(
-            "/root",
+            path!("/root"),
             json!({
                 "file.txt": "hello"
             }),
         )
         .await;
-        let project = Project::test(fs, [Path::new("/root")], cx).await;
+        let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
         let (mut thread_tx, thread_rx) = watch::channel(WeakEntity::new_invalid());
 
         let thread = cx
-            .update(|cx| connection.new_thread(project, "/test".as_ref(), cx))
+            .update(|cx| connection.new_thread(project, path!("/test").as_ref(), cx))
             .await
             .unwrap();
 
