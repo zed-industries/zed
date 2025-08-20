@@ -106,7 +106,7 @@ mod tests {
         let result = tool
             .run(
                 EditToolParams {
-                    abs_path: "/root/file.txt".into(),
+                    abs_path: path!("/root/file.txt").into(),
                     old_text: "hi".into(),
                     new_text: "bye".into(),
                 },
@@ -124,7 +124,7 @@ mod tests {
         let result = tool
             .run(
                 EditToolParams {
-                    abs_path: "/root/file.txt".into(),
+                    abs_path: path!("/root/file.txt").into(),
                     old_text: "hello".into(),
                     new_text: "hi".into(),
                 },
