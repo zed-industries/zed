@@ -267,71 +267,7 @@ impl AgentConnection for ClaudeAgentConnection {
         let (end_tx, end_rx) = oneshot::channel();
         session.turn_state.replace(TurnState::InProgress { end_tx });
 
-        let mut content = Vec::with_capacity(params.prompt.len());
-        let mut context = Vec::with_capacity(params.prompt.len());
-
-        for chunk in params.prompt {
-            match chunk {
-                acp::ContentBlock::Text(text_content) => {
-                    content.push(ContentChunk::Text {
-                        text: text_content.text,
-                    });
-                }
-                acp::ContentBlock::ResourceLink(resource_link) => {
-                    match MentionUri::parse(&resource_link.uri) {
-                        Ok(uri) => {
-                            content.push(ContentChunk::Text {
-                                text: format!("{}", uri.as_link()),
-                            });
-                        }
-                        Err(_) => {
-                            content.push(ContentChunk::Text {
-                                text: resource_link.uri,
-                            });
-                        }
-                    }
-                }
-                acp::ContentBlock::Resource(resource) => match resource.resource {
-                    acp::EmbeddedResourceResource::TextResourceContents(resource) => {
-                        match MentionUri::parse(&resource.uri) {
-                            Ok(uri) => {
-                                content.push(ContentChunk::Text {
-                                    text: format!("{}", uri.as_link()),
-                                });
-                            }
-                            Err(_) => {
-                                content.push(ContentChunk::Text {
-                                    text: resource.uri.clone(),
-                                });
-                            }
-                        }
-
-                        context.push(ContentChunk::Text {
-                            text: format!(
-                                "<context ref=\"{}\">\n{}\n</context>\n",
-                                resource.uri, resource.text
-                            ),
-                        });
-                    }
-                    acp::EmbeddedResourceResource::BlobResourceContents(_) => {
-                        // Unsupported by SDK
-                    }
-                },
-                acp::ContentBlock::Image(acp::ImageContent {
-                    data, mime_type, ..
-                }) => content.push(ContentChunk::Image {
-                    source: ImageSource::Base64 {
-                        data,
-                        media_type: mime_type,
-                    },
-                }),
-                acp::ContentBlock::Audio(_) => {
-                    // Unsupported by SDK
-                }
-            }
-        }
-
-        content.extend(context);
+        let content = acp_content_to_claude(params.prompt);
 
         if let Err(err) = session.outgoing_tx.unbounded_send(SdkMessage::User {
             message: Message {
@@ -989,6 +925,75 @@ impl Display for ResultErrorType {
     }
 }
 
+fn acp_content_to_claude(prompt: Vec<acp::ContentBlock>) -> Vec<ContentChunk> {
+    let mut content = Vec::with_capacity(prompt.len());
+    let mut context = Vec::with_capacity(prompt.len());
+
+    for chunk in prompt {
+        match chunk {
+            acp::ContentBlock::Text(text_content) => {
+                content.push(ContentChunk::Text {
+                    text: text_content.text,
+                });
+            }
+            acp::ContentBlock::ResourceLink(resource_link) => {
+                match MentionUri::parse(&resource_link.uri) {
+                    Ok(uri) => {
+                        content.push(ContentChunk::Text {
+                            text: format!("{}", uri.as_link()),
+                        });
+                    }
+                    Err(_) => {
+                        content.push(ContentChunk::Text {
+                            text: resource_link.uri,
+                        });
+                    }
+                }
+            }
+            acp::ContentBlock::Resource(resource) => match resource.resource {
+                acp::EmbeddedResourceResource::TextResourceContents(resource) => {
+                    match MentionUri::parse(&resource.uri) {
+                        Ok(uri) => {
+                            content.push(ContentChunk::Text {
+                                text: format!("{}", uri.as_link()),
+                            });
+                        }
+                        Err(_) => {
+                            content.push(ContentChunk::Text {
+                                text: resource.uri.clone(),
+                            });
+                        }
+                    }
+
+                    context.push(ContentChunk::Text {
+                        text: format!(
+                            "\n<context ref=\"{}\">\n{}\n</context>",
+                            resource.uri, resource.text
+                        ),
+                    });
+                }
+                acp::EmbeddedResourceResource::BlobResourceContents(_) => {
+                    // Unsupported by SDK
+                }
+            },
+            acp::ContentBlock::Image(acp::ImageContent {
+                data, mime_type, ..
+            }) => content.push(ContentChunk::Image {
+                source: ImageSource::Base64 {
+                    data,
+                    media_type: mime_type,
+                },
+            }),
+            acp::ContentBlock::Audio(_) => {
+                // Unsupported by SDK
+            }
+        }
+    }
+
+    content.extend(context);
+    content
+}
+
 fn new_request_id() -> String {
     use rand::Rng;
     // In the Claude Code TS SDK they just generate a random 12 character string,
@@ -1203,6 +1208,102 @@ pub(crate) mod tests {
                 assert_eq!(tool_use_id, "tool_789");
             }
             _ => panic!("Expected ToolResult variant"),
+        }
+    }
+
+    #[test]
+    fn test_acp_content_to_claude() {
+        let acp_content = vec![
+            acp::ContentBlock::Text(acp::TextContent {
+                text: "Hello world".to_string(),
+                annotations: None,
+            }),
+            acp::ContentBlock::Image(acp::ImageContent {
+                data: "base64data".to_string(),
+                mime_type: "image/png".to_string(),
+                annotations: None,
+                uri: None,
+            }),
+            acp::ContentBlock::ResourceLink(acp::ResourceLink {
+                uri: "file:///path/to/example.rs".to_string(),
+                name: "example.rs".to_string(),
+                annotations: None,
+                description: None,
+                mime_type: None,
+                size: None,
+                title: None,
+            }),
+            acp::ContentBlock::Resource(acp::EmbeddedResource {
+                annotations: None,
+                resource: acp::EmbeddedResourceResource::TextResourceContents(
+                    acp::TextResourceContents {
+                        mime_type: None,
+                        text: "fn main() { println!(\"Hello!\"); }".to_string(),
+                        uri: "file:///path/to/code.rs".to_string(),
+                    },
+                ),
+            }),
+            acp::ContentBlock::ResourceLink(acp::ResourceLink {
+                uri: "invalid_uri_format".to_string(),
+                name: "invalid.txt".to_string(),
+                annotations: None,
+                description: None,
+                mime_type: None,
+                size: None,
+                title: None,
+            }),
+        ];
+
+        let claude_content = acp_content_to_claude(acp_content);
+
+        assert_eq!(claude_content.len(), 6);
+
+        match &claude_content[0] {
+            ContentChunk::Text { text } => assert_eq!(text, "Hello world"),
+            _ => panic!("Expected Text chunk"),
+        }
+
+        match &claude_content[1] {
+            ContentChunk::Image { source } => match source {
+                ImageSource::Base64 { data, media_type } => {
+                    assert_eq!(data, "base64data");
+                    assert_eq!(media_type, "image/png");
+                }
+                _ => panic!("Expected Base64 image source"),
+            },
+            _ => panic!("Expected Image chunk"),
+        }
+
+        match &claude_content[2] {
+            ContentChunk::Text { text } => {
+                assert!(text.contains("example.rs"));
+                assert!(text.contains("file:///path/to/example.rs"));
+            }
+            _ => panic!("Expected Text chunk for ResourceLink"),
+        }
+
+        match &claude_content[3] {
+            ContentChunk::Text { text } => {
+                assert!(text.contains("code.rs"));
+                assert!(text.contains("file:///path/to/code.rs"));
+            }
+            _ => panic!("Expected Text chunk for Resource"),
+        }
+
+        match &claude_content[4] {
+            ContentChunk::Text { text } => {
+                assert_eq!(text, "invalid_uri_format");
+            }
+            _ => panic!("Expected Text chunk for invalid URI"),
+        }
+
+        match &claude_content[5] {
+            ContentChunk::Text { text } => {
+                assert!(text.contains("<context ref=\"file:///path/to/code.rs\">"));
+                assert!(text.contains("fn main() { println!(\"Hello!\"); }"));
+                assert!(text.contains("</context>"));
+            }
+            _ => panic!("Expected Text chunk for context"),
         }
     }
 }
