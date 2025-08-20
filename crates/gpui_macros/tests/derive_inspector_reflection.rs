@@ -36,10 +36,9 @@ trait Transform: Clone {
     fn add_one(self) -> Self;
 
     /// cfg attributes are respected
-    #[cfg(all())]
+
     fn cfg_included(self) -> Self;
 
-    #[cfg(any())]
     fn cfg_omitted(self) -> Self;
 }
 
