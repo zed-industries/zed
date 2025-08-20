@@ -101,6 +101,7 @@ fn handle_preprocessing() -> Result<()> {
     let mut errors = HashSet::<PreprocessorError>::new();
 
     handle_frontmatter(&mut book, &mut errors);
+    template_big_table_of_actions(&mut book);
     template_and_validate_keybindings(&mut book, &mut errors);
     template_and_validate_actions(&mut book, &mut errors);
 
@@ -148,6 +149,18 @@ fn handle_frontmatter(book: &mut Book, errors: &mut HashSet<PreprocessorError>) 
                 chapter.content = content;
             }
             Cow::Borrowed(_) => {}
+        }
+    });
+}
+
+fn template_big_table_of_actions(book: &mut Book) {
+    for_each_chapter_mut(book, |chapter| {
+        let needle = "{#ACTIONS_TABLE#}";
+        if let Some(start) = chapter.content.rfind(needle) {
+            chapter.content.replace_range(
+                start..start + needle.len(),
+                &generate_big_table_of_actions(),
+            );
         }
     });
 }
@@ -282,6 +295,7 @@ struct ActionDef {
     name: &'static str,
     human_name: String,
     deprecated_aliases: &'static [&'static str],
+    docs: Option<&'static str>,
 }
 
 fn dump_all_gpui_actions() -> Vec<ActionDef> {
@@ -290,6 +304,7 @@ fn dump_all_gpui_actions() -> Vec<ActionDef> {
             name: action.name,
             human_name: command_palette::humanize_action_name(action.name),
             deprecated_aliases: action.deprecated_aliases,
+            docs: action.documentation,
         })
         .collect::<Vec<ActionDef>>();
 
@@ -422,4 +437,40 @@ fn handle_postprocessing() -> Result<()> {
 fn title_regex() -> &'static Regex {
     static TITLE_REGEX: OnceLock<Regex> = OnceLock::new();
     TITLE_REGEX.get_or_init(|| Regex::new(r"<title>\s*(.*?)\s*</title>").unwrap())
+}
+
+fn generate_big_table_of_actions() -> String {
+    let actions = &*ALL_ACTIONS;
+    let mut table = String::new();
+
+    fn push_row(table: &mut String, a: &str, b: &str, c: &str) {
+        table.reserve(6 + a.len() + b.len() + c.len());
+        table.push('|');
+        table.push_str(a);
+        table.push('|');
+        table.push_str(b);
+        table.push('|');
+        table.push_str(c);
+        table.push('|');
+        table.push('\n');
+    }
+
+    push_row(&mut table, "Action", "Keymap Name", "Description");
+    push_row(&mut table, "-", "-", "-");
+
+    let mut actions_sorted = actions.iter().collect::<Vec<_>>();
+    actions_sorted.sort_by_key(|a| a.name);
+    for action in actions_sorted.into_iter() {
+        push_row(
+            &mut table,
+            &action.human_name,
+            action.name,
+            &action
+                .docs
+                .unwrap_or("<no documentation>")
+                .replace('|', "\\|")
+                .replace('\n', "<br>"),
+        );
+    }
+    return table;
 }
