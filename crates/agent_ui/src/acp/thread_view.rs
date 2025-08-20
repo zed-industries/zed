@@ -739,7 +739,7 @@ impl AcpThreadView {
 
     fn send_impl(
         &mut self,
-        contents: Task<anyhow::Result<Vec<acp::ContentBlock>>>,
+        contents: Task<anyhow::Result<(Vec<acp::ContentBlock>, Vec<Entity<Buffer>>)>>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -751,7 +751,7 @@ impl AcpThreadView {
             return;
         };
         let task = cx.spawn_in(window, async move |this, cx| {
-            let contents = contents.await?;
+            let (contents, tracked_buffers) = contents.await?;
 
             if contents.is_empty() {
                 return Ok(());
@@ -764,7 +764,14 @@ impl AcpThreadView {
                     message_editor.clear(window, cx);
                 });
             })?;
-            let send = thread.update(cx, |thread, cx| thread.send(contents, cx))?;
+            let send = thread.update(cx, |thread, cx| {
+                thread.action_log().update(cx, |action_log, cx| {
+                    for buffer in tracked_buffers {
+                        action_log.buffer_read(buffer, cx)
+                    }
+                });
+                thread.send(contents, cx)
+            })?;
             send.await
         });
 
