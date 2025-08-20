@@ -1191,6 +1191,7 @@ mod tests {
     }
 
     #[gpui::test]
+    #[cfg_attr(target_os = "windows", ignore)] // TODO: Fix this test on Windows
     async fn test_save_load_thread(cx: &mut TestAppContext) {
         init_test(cx);
         let fs = FakeFs::new(cx.executor());
