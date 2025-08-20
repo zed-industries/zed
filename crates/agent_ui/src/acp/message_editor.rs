@@ -66,7 +66,7 @@ pub struct MessageEditor {
     _parse_slash_command_task: Task<()>,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub enum MessageEditorEvent {
     Send,
     Cancel,
@@ -728,6 +728,9 @@ impl MessageEditor {
     }
 
     fn send(&mut self, _: &Chat, _: &mut Window, cx: &mut Context<Self>) {
+        if self.is_empty(cx) {
+            return;
+        }
         cx.emit(MessageEditorEvent::Send)
     }
 
