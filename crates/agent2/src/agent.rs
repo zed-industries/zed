@@ -1,8 +1,8 @@
+use crate::HistoryStore;
 use crate::{
-    ContextServerRegistry, Thread, ThreadEvent, ToolCallAuthorization, UserMessageContent,
-    templates::Templates,
+    ContextServerRegistry, Thread, ThreadEvent, ThreadsDatabase, ToolCallAuthorization,
+    UserMessageContent, templates::Templates,
 };
-use crate::{HistoryStore, ThreadsDatabase};
 use acp_thread::{AcpThread, AgentModelSelector};
 use action_log::ActionLog;
 use agent_client_protocol as acp;
@@ -28,7 +28,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 use util::ResultExt;
 
-const RULES_FILE_NAMES: [&'static str; 9] = [
+const RULES_FILE_NAMES: [&str; 9] = [
     ".rules",
     ".cursorrules",
     ".windsurfrules",
@@ -536,6 +536,28 @@ impl NativeAgent {
         })
     }
 
+    pub fn thread_summary(
+        &mut self,
+        id: acp::SessionId,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<SharedString>> {
+        let thread = self.open_thread(id.clone(), cx);
+        cx.spawn(async move |this, cx| {
+            let acp_thread = thread.await?;
+            let result = this
+                .update(cx, |this, cx| {
+                    this.sessions
+                        .get(&id)
+                        .unwrap()
+                        .thread
+                        .update(cx, |thread, cx| thread.summary(cx))
+                })?
+                .await?;
+            drop(acp_thread);
+            Ok(result)
+        })
+    }
+
     fn save_thread(&mut self, thread: Entity<Thread>, cx: &mut Context<Self>) {
         let database_future = ThreadsDatabase::connect(cx);
         let (id, db_thread) =
@@ -672,6 +694,11 @@ impl NativeAgentConnection {
                                 acp_thread.update(cx, |thread, cx| {
                                     thread.update_tool_call(update, cx)
                                 })??;
+                            }
+                            ThreadEvent::TokenUsageUpdate(usage) => {
+                                acp_thread.update(cx, |thread, cx| {
+                                    thread.update_token_usage(Some(usage), cx)
+                                })?;
                             }
                             ThreadEvent::TitleUpdate(title) => {
                                 acp_thread
@@ -895,10 +922,12 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
         cx: &mut App,
     ) -> Option<Rc<dyn acp_thread::AgentSessionEditor>> {
         self.0.update(cx, |agent, _cx| {
-            agent
-                .sessions
-                .get(session_id)
-                .map(|session| Rc::new(NativeAgentSessionEditor(session.thread.clone())) as _)
+            agent.sessions.get(session_id).map(|session| {
+                Rc::new(NativeAgentSessionEditor {
+                    thread: session.thread.clone(),
+                    acp_thread: session.acp_thread.clone(),
+                }) as _
+            })
         })
     }
 
@@ -907,14 +936,27 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
     }
 }
 
-struct NativeAgentSessionEditor(Entity<Thread>);
+struct NativeAgentSessionEditor {
+    thread: Entity<Thread>,
+    acp_thread: WeakEntity<AcpThread>,
+}
 
 impl acp_thread::AgentSessionEditor for NativeAgentSessionEditor {
     fn truncate(&self, message_id: acp_thread::UserMessageId, cx: &mut App) -> Task<Result<()>> {
-        Task::ready(
-            self.0
-                .update(cx, |thread, cx| thread.truncate(message_id, cx)),
-        )
+        match self.thread.update(cx, |thread, cx| {
+            thread.truncate(message_id.clone(), cx)?;
+            Ok(thread.latest_token_usage())
+        }) {
+            Ok(usage) => {
+                self.acp_thread
+                    .update(cx, |thread, cx| {
+                        thread.update_token_usage(usage, cx);
+                    })
+                    .ok();
+                Task::ready(Ok(()))
+            }
+            Err(error) => Task::ready(Err(error)),
+        }
     }
 }
 
@@ -954,7 +996,7 @@ mod tests {
         .await;
         let project = Project::test(fs.clone(), [], cx).await;
         let context_store = cx.new(|cx| assistant_context::ContextStore::fake(project.clone(), cx));
-        let history_store = cx.new(|cx| HistoryStore::new(context_store, [], cx));
+        let history_store = cx.new(|cx| HistoryStore::new(context_store, cx));
         let agent = NativeAgent::new(
             project.clone(),
             history_store,
@@ -1012,7 +1054,7 @@ mod tests {
         fs.insert_tree("/", json!({ "a": {}  })).await;
         let project = Project::test(fs.clone(), [], cx).await;
         let context_store = cx.new(|cx| assistant_context::ContextStore::fake(project.clone(), cx));
-        let history_store = cx.new(|cx| HistoryStore::new(context_store, [], cx));
+        let history_store = cx.new(|cx| HistoryStore::new(context_store, cx));
         let connection = NativeAgentConnection(
             NativeAgent::new(
                 project.clone(),
@@ -1068,7 +1110,7 @@ mod tests {
         let project = Project::test(fs.clone(), [], cx).await;
 
         let context_store = cx.new(|cx| assistant_context::ContextStore::fake(project.clone(), cx));
-        let history_store = cx.new(|cx| HistoryStore::new(context_store, [], cx));
+        let history_store = cx.new(|cx| HistoryStore::new(context_store, cx));
 
         // Create the agent and connection
         let agent = NativeAgent::new(

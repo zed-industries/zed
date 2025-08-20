@@ -3,13 +3,14 @@ use crate::{
     context_picker::fetch_context_picker::fetch_url_content,
 };
 use acp_thread::{MentionUri, selection_name};
-use agent::{TextThreadStore, ThreadId, ThreadStore};
 use agent_client_protocol as acp;
+use agent_servers::AgentServer;
+use agent2::HistoryStore;
 use anyhow::{Context as _, Result, anyhow};
 use assistant_slash_commands::codeblock_fence_for_path;
 use collections::{HashMap, HashSet};
 use editor::{
-    Anchor, AnchorRangeExt, ContextMenuOptions, ContextMenuPlacement, Editor, EditorElement,
+    Addon, Anchor, AnchorRangeExt, ContextMenuOptions, ContextMenuPlacement, Editor, EditorElement,
     EditorEvent, EditorMode, EditorStyle, ExcerptId, FoldPlaceholder, MultiBuffer,
     SemanticsProvider, ToOffset,
     actions::Paste,
@@ -21,12 +22,13 @@ use futures::{
 };
 use gpui::{
     AppContext, ClipboardEntry, Context, Entity, EventEmitter, FocusHandle, Focusable,
-    HighlightStyle, Image, ImageFormat, Img, Subscription, Task, TextStyle, UnderlineStyle,
-    WeakEntity,
+    HighlightStyle, Image, ImageFormat, Img, KeyContext, Subscription, Task, TextStyle,
+    UnderlineStyle, WeakEntity,
 };
 use language::{Buffer, Language};
 use language_model::LanguageModelImage;
 use project::{Project, ProjectPath, Worktree};
+use prompt_store::PromptStore;
 use rope::Point;
 use settings::Settings;
 use std::{
@@ -59,14 +61,14 @@ pub struct MessageEditor {
     editor: Entity<Editor>,
     project: Entity<Project>,
     workspace: WeakEntity<Workspace>,
-    thread_store: Entity<ThreadStore>,
-    text_thread_store: Entity<TextThreadStore>,
+    history_store: Entity<HistoryStore>,
+    prompt_store: Option<Entity<PromptStore>>,
     prevent_slash_commands: bool,
     _subscriptions: Vec<Subscription>,
     _parse_slash_command_task: Task<()>,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub enum MessageEditorEvent {
     Send,
     Cancel,
@@ -79,8 +81,8 @@ impl MessageEditor {
     pub fn new(
         workspace: WeakEntity<Workspace>,
         project: Entity<Project>,
-        thread_store: Entity<ThreadStore>,
-        text_thread_store: Entity<TextThreadStore>,
+        history_store: Entity<HistoryStore>,
+        prompt_store: Option<Entity<PromptStore>>,
         placeholder: impl Into<Arc<str>>,
         prevent_slash_commands: bool,
         mode: EditorMode,
@@ -95,10 +97,10 @@ impl MessageEditor {
             None,
         );
         let completion_provider = ContextPickerCompletionProvider::new(
-            workspace.clone(),
-            thread_store.downgrade(),
-            text_thread_store.downgrade(),
             cx.weak_entity(),
+            workspace.clone(),
+            history_store.clone(),
+            prompt_store.clone(),
         );
         let semantics_provider = Rc::new(SlashCommandSemanticsProvider {
             range: Cell::new(None),
@@ -122,6 +124,7 @@ impl MessageEditor {
             if prevent_slash_commands {
                 editor.set_semantics_provider(Some(semantics_provider.clone()));
             }
+            editor.register_addon(MessageEditorAddon::new());
             editor
         });
 
@@ -134,8 +137,8 @@ impl MessageEditor {
         if prevent_slash_commands {
             subscriptions.push(cx.subscribe_in(&editor, window, {
                 let semantics_provider = semantics_provider.clone();
-                move |this, editor, event, window, cx| match event {
-                    EditorEvent::Edited { .. } => {
+                move |this, editor, event, window, cx| {
+                    if let EditorEvent::Edited { .. } = event {
                         this.highlight_slash_command(
                             semantics_provider.clone(),
                             editor.clone(),
@@ -143,7 +146,6 @@ impl MessageEditor {
                             cx,
                         );
                     }
-                    _ => {}
                 }
             }));
         }
@@ -152,9 +154,9 @@ impl MessageEditor {
             editor,
             project,
             mention_set,
-            thread_store,
-            text_thread_store,
             workspace,
+            history_store,
+            prompt_store,
             prevent_slash_commands,
             _subscriptions: subscriptions,
             _parse_slash_command_task: Task::ready(()),
@@ -175,23 +177,12 @@ impl MessageEditor {
         self.editor.read(cx).is_empty(cx)
     }
 
-    pub fn mentioned_path_and_threads(&self) -> (HashSet<PathBuf>, HashSet<ThreadId>) {
-        let mut excluded_paths = HashSet::default();
-        let mut excluded_threads = HashSet::default();
-
-        for uri in self.mention_set.uri_by_crease_id.values() {
-            match uri {
-                MentionUri::File { abs_path, .. } => {
-                    excluded_paths.insert(abs_path.clone());
-                }
-                MentionUri::Thread { id, .. } => {
-                    excluded_threads.insert(id.clone());
-                }
-                _ => {}
-            }
-        }
-
-        (excluded_paths, excluded_threads)
+    pub fn mentions(&self) -> HashSet<MentionUri> {
+        self.mention_set
+            .uri_by_crease_id
+            .values()
+            .cloned()
+            .collect()
     }
 
     pub fn confirm_completion(
@@ -529,7 +520,7 @@ impl MessageEditor {
         &mut self,
         crease_id: CreaseId,
         anchor: Anchor,
-        id: ThreadId,
+        id: acp::SessionId,
         name: String,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -538,17 +529,25 @@ impl MessageEditor {
             id: id.clone(),
             name,
         };
-        let open_task = self.thread_store.update(cx, |thread_store, cx| {
-            thread_store.open_thread(&id, window, cx)
+        let server = Rc::new(agent2::NativeAgentServer::new(
+            self.project.read(cx).fs().clone(),
+            self.history_store.clone(),
+        ));
+        let connection = server.connect(Path::new(""), &self.project, cx);
+        let load_summary = cx.spawn({
+            let id = id.clone();
+            async move |_, cx| {
+                let agent = connection.await?;
+                let agent = agent.downcast::<agent2::NativeAgentConnection>().unwrap();
+                let summary = agent
+                    .0
+                    .update(cx, |agent, cx| agent.thread_summary(id, cx))?
+                    .await?;
+                anyhow::Ok(summary)
+            }
         });
         let task = cx
-            .spawn(async move |_, cx| {
-                let thread = open_task.await.map_err(|e| e.to_string())?;
-                let content = thread
-                    .read_with(cx, |thread, _cx| thread.latest_detailed_summary_or_text())
-                    .map_err(|e| e.to_string())?;
-                Ok(content)
-            })
+            .spawn(async move |_, _| load_summary.await.map_err(|e| format!("{e}")))
             .shared();
 
         self.mention_set.insert_thread(id.clone(), task.clone());
@@ -590,8 +589,8 @@ impl MessageEditor {
             path: path.clone(),
             name,
         };
-        let context = self.text_thread_store.update(cx, |text_thread_store, cx| {
-            text_thread_store.open_local_context(path.as_path().into(), cx)
+        let context = self.history_store.update(cx, |text_thread_store, cx| {
+            text_thread_store.load_text_thread(path.as_path().into(), cx)
         });
         let task = cx
             .spawn(async move |_, cx| {
@@ -637,7 +636,7 @@ impl MessageEditor {
     ) -> Task<Result<Vec<acp::ContentBlock>>> {
         let contents =
             self.mention_set
-                .contents(self.project.clone(), self.thread_store.clone(), window, cx);
+                .contents(&self.project, self.prompt_store.as_ref(), window, cx);
         let editor = self.editor.clone();
         let prevent_slash_commands = self.prevent_slash_commands;
 
@@ -729,6 +728,9 @@ impl MessageEditor {
     }
 
     fn send(&mut self, _: &Chat, _: &mut Window, cx: &mut Context<Self>) {
+        if self.is_empty(cx) {
+            return;
+        }
         cx.emit(MessageEditorEvent::Send)
     }
 
@@ -1312,7 +1314,7 @@ pub struct MentionSet {
     uri_by_crease_id: HashMap<CreaseId, MentionUri>,
     fetch_results: HashMap<Url, Shared<Task<Result<String, String>>>>,
     images: HashMap<CreaseId, Shared<Task<Result<MentionImage, String>>>>,
-    thread_summaries: HashMap<ThreadId, Shared<Task<Result<SharedString, String>>>>,
+    thread_summaries: HashMap<acp::SessionId, Shared<Task<Result<SharedString, String>>>>,
     text_thread_summaries: HashMap<PathBuf, Shared<Task<Result<String, String>>>>,
     directories: HashMap<PathBuf, Shared<Task<Result<String, String>>>>,
 }
@@ -1334,7 +1336,11 @@ impl MentionSet {
         self.images.insert(crease_id, task);
     }
 
-    fn insert_thread(&mut self, id: ThreadId, task: Shared<Task<Result<SharedString, String>>>) {
+    fn insert_thread(
+        &mut self,
+        id: acp::SessionId,
+        task: Shared<Task<Result<SharedString, String>>>,
+    ) {
         self.thread_summaries.insert(id, task);
     }
 
@@ -1354,8 +1360,8 @@ impl MentionSet {
 
     pub fn contents(
         &self,
-        project: Entity<Project>,
-        thread_store: Entity<ThreadStore>,
+        project: &Entity<Project>,
+        prompt_store: Option<&Entity<PromptStore>>,
         _window: &mut Window,
         cx: &mut App,
     ) -> Task<Result<HashMap<CreaseId, Mention>>> {
@@ -1474,8 +1480,7 @@ impl MentionSet {
                         })
                     }
                     MentionUri::Rule { id: prompt_id, .. } => {
-                        let Some(prompt_store) = thread_store.read(cx).prompt_store().clone()
-                        else {
+                        let Some(prompt_store) = prompt_store else {
                             return Task::ready(Err(anyhow!("missing prompt store")));
                         };
                         let text_task = prompt_store.read(cx).load(*prompt_id, cx);
@@ -1639,12 +1644,38 @@ fn parse_slash_command(text: &str) -> Option<(usize, usize)> {
     None
 }
 
+pub struct MessageEditorAddon {}
+
+impl MessageEditorAddon {
+    pub fn new() -> Self {
+        Self {}
+    }
+}
+
+impl Addon for MessageEditorAddon {
+    fn to_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
+    fn to_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
+    fn extend_key_context(&self, key_context: &mut KeyContext, cx: &App) {
+        let settings = agent_settings::AgentSettings::get_global(cx);
+        if settings.use_modifier_to_send {
+            key_context.add("use_modifier_to_send");
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::{ops::Range, path::Path, sync::Arc};
 
-    use agent::{TextThreadStore, ThreadStore};
     use agent_client_protocol as acp;
+    use agent2::HistoryStore;
+    use assistant_context::ContextStore;
     use editor::{AnchorRangeExt as _, Editor, EditorMode};
     use fs::FakeFs;
     use futures::StreamExt as _;
@@ -1675,16 +1706,16 @@ mod tests {
         let (workspace, cx) =
             cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
-        let thread_store = cx.new(|cx| ThreadStore::fake(project.clone(), cx));
-        let text_thread_store = cx.new(|cx| TextThreadStore::fake(project.clone(), cx));
+        let context_store = cx.new(|cx| ContextStore::fake(project.clone(), cx));
+        let history_store = cx.new(|cx| HistoryStore::new(context_store, cx));
 
         let message_editor = cx.update(|window, cx| {
             cx.new(|cx| {
                 MessageEditor::new(
                     workspace.downgrade(),
                     project.clone(),
-                    thread_store.clone(),
-                    text_thread_store.clone(),
+                    history_store.clone(),
+                    None,
                     "Test",
                     false,
                     EditorMode::AutoHeight {
@@ -1873,8 +1904,8 @@ mod tests {
             opened_editors.push(buffer);
         }
 
-        let thread_store = cx.new(|cx| ThreadStore::fake(project.clone(), cx));
-        let text_thread_store = cx.new(|cx| TextThreadStore::fake(project.clone(), cx));
+        let context_store = cx.new(|cx| ContextStore::fake(project.clone(), cx));
+        let history_store = cx.new(|cx| HistoryStore::new(context_store, cx));
 
         let (message_editor, editor) = workspace.update_in(&mut cx, |workspace, window, cx| {
             let workspace_handle = cx.weak_entity();
@@ -1882,8 +1913,8 @@ mod tests {
                 MessageEditor::new(
                     workspace_handle,
                     project.clone(),
-                    thread_store.clone(),
-                    text_thread_store.clone(),
+                    history_store.clone(),
+                    None,
                     "Test",
                     false,
                     EditorMode::AutoHeight {
@@ -1976,12 +2007,9 @@ mod tests {
 
         let contents = message_editor
             .update_in(&mut cx, |message_editor, window, cx| {
-                message_editor.mention_set().contents(
-                    project.clone(),
-                    thread_store.clone(),
-                    window,
-                    cx,
-                )
+                message_editor
+                    .mention_set()
+                    .contents(&project, None, window, cx)
             })
             .await
             .unwrap()
@@ -2031,12 +2059,9 @@ mod tests {
 
         let contents = message_editor
             .update_in(&mut cx, |message_editor, window, cx| {
-                message_editor.mention_set().contents(
-                    project.clone(),
-                    thread_store.clone(),
-                    window,
-                    cx,
-                )
+                message_editor
+                    .mention_set()
+                    .contents(&project, None, window, cx)
             })
             .await
             .unwrap()
@@ -2146,7 +2171,7 @@ mod tests {
             .update_in(&mut cx, |message_editor, window, cx| {
                 message_editor
                     .mention_set()
-                    .contents(project.clone(), thread_store, window, cx)
+                    .contents(&project, None, window, cx)
             })
             .await
             .unwrap()

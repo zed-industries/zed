@@ -59,12 +59,9 @@ impl TerminalTool {
             }
 
             if which::which("bash").is_ok() {
-                log::info!("agent selected bash for terminal tool");
                 "bash".into()
             } else {
-                let shell = get_system_shell();
-                log::info!("agent selected {shell} for terminal tool");
-                shell
+                get_system_shell()
             }
         });
         Self {
@@ -216,7 +213,8 @@ impl Tool for TerminalTool {
             async move |cx| {
                 let program = program.await;
                 let env = env.await;
-                let terminal = project
+
+                project
                     .update(cx, |project, cx| {
                         project.create_terminal(
                             TerminalKind::Task(task::SpawnInTerminal {
@@ -229,8 +227,7 @@ impl Tool for TerminalTool {
                             cx,
                         )
                     })?
-                    .await;
-                terminal
+                    .await
             }
         });
 

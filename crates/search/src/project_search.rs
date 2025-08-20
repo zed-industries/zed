@@ -1113,8 +1113,8 @@ impl ProjectSearchView {
                     .await
                     .log_err();
                 }
-                let should_search = result != 2;
-                should_search
+
+                result != 2
             } else {
                 true
             };

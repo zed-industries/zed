@@ -711,7 +711,7 @@ impl Default for PythonToolchainProvider {
     }
 }
 
-static ENV_PRIORITY_LIST: &'static [PythonEnvironmentKind] = &[
+static ENV_PRIORITY_LIST: &[PythonEnvironmentKind] = &[
     // Prioritize non-Conda environments.
     PythonEnvironmentKind::Poetry,
     PythonEnvironmentKind::Pipenv,

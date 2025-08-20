@@ -9,7 +9,10 @@ use crate::{
     tool_use::{PendingToolUse, ToolUse, ToolUseMetadata, ToolUseState},
 };
 use action_log::ActionLog;
-use agent_settings::{AgentProfileId, AgentSettings, CompletionMode, SUMMARIZE_THREAD_PROMPT};
+use agent_settings::{
+    AgentProfileId, AgentSettings, CompletionMode, SUMMARIZE_THREAD_DETAILED_PROMPT,
+    SUMMARIZE_THREAD_PROMPT,
+};
 use anyhow::{Result, anyhow};
 use assistant_tool::{AnyToolCard, Tool, ToolWorkingSet};
 use chrono::{DateTime, Utc};
@@ -107,7 +110,7 @@ impl std::fmt::Display for PromptId {
 }
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, Serialize, Deserialize)]
-pub struct MessageId(pub(crate) usize);
+pub struct MessageId(pub usize);
 
 impl MessageId {
     fn post_inc(&mut self) -> Self {
@@ -1645,15 +1648,13 @@ impl Thread {
         self.tool_use
             .request_tool_use(tool_message_id, tool_use, tool_use_metadata, cx);
 
-        let pending_tool_use = self.tool_use.insert_tool_output(
+        self.tool_use.insert_tool_output(
             tool_use_id,
             tool_name,
             tool_output,
             self.configured_model.as_ref(),
             self.completion_mode,
-        );
-
-        pending_tool_use
+        )
     }
 
     pub fn stream_completion(
@@ -2427,12 +2428,10 @@ impl Thread {
             return;
         }
 
-        let added_user_message = include_str!("./prompts/summarize_thread_detailed_prompt.txt");
-
         let request = self.to_summarize_request(
             &model,
             CompletionIntent::ThreadContextSummarization,
-            added_user_message.into(),
+            SUMMARIZE_THREAD_DETAILED_PROMPT.into(),
             cx,
         );
 

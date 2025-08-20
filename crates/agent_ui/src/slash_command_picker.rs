@@ -327,9 +327,7 @@ where
         };
 
         let picker_view = cx.new(|cx| {
-            let picker =
-                Picker::uniform_list(delegate, window, cx).max_height(Some(rems(20.).into()));
-            picker
+            Picker::uniform_list(delegate, window, cx).max_height(Some(rems(20.).into()))
         });
 
         let handle = self

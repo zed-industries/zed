@@ -532,7 +532,7 @@ fn wasm_engine(executor: &BackgroundExecutor) -> wasmtime::Engine {
                     // `Future::poll`.
                     const EPOCH_INTERVAL: Duration = Duration::from_millis(100);
                     let mut timer = Timer::interval(EPOCH_INTERVAL);
-                    while let Some(_) = timer.next().await {
+                    while (timer.next().await).is_some() {
                         // Exit the loop and thread once the engine is dropped.
                         let Some(engine) = engine_ref.upgrade() else {
                             break;

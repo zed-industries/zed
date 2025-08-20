@@ -1084,7 +1084,13 @@ impl Element for MarkdownElement {
                                     cx,
                                 );
                                 el.child(
-                                    div().absolute().top_1().right_0p5().w_5().child(codeblock),
+                                    h_flex()
+                                        .w_5()
+                                        .absolute()
+                                        .top_1()
+                                        .right_1()
+                                        .justify_center()
+                                        .child(codeblock),
                                 )
                             });
                         }

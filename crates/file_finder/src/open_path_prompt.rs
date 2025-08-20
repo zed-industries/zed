@@ -112,7 +112,7 @@ impl OpenPathDelegate {
                 entries,
                 ..
             } => user_input
-                .into_iter()
+                .iter()
                 .filter(|user_input| !user_input.exists || !user_input.is_dir)
                 .map(|user_input| user_input.file.string.clone())
                 .chain(self.string_matches.iter().filter_map(|string_match| {

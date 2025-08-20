@@ -123,7 +123,7 @@ impl FileDiffView {
             old_buffer,
             new_buffer,
             _recalculate_diff_task: cx.spawn(async move |this, cx| {
-                while let Ok(_) = buffer_changes_rx.recv().await {
+                while buffer_changes_rx.recv().await.is_ok() {
                     loop {
                         let mut timer = cx
                             .background_executor()

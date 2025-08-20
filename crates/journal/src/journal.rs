@@ -195,11 +195,9 @@ pub fn new_journal_entry(workspace: &Workspace, window: &mut Window, cx: &mut Ap
 }
 
 fn journal_dir(path: &str) -> Option<PathBuf> {
-    let expanded_journal_dir = shellexpand::full(path) //TODO handle this better
+    shellexpand::full(path) //TODO handle this better
         .ok()
-        .map(|dir| Path::new(&dir.to_string()).to_path_buf().join("journal"));
-
-    expanded_journal_dir
+        .map(|dir| Path::new(&dir.to_string()).to_path_buf().join("journal"))
 }
 
 fn heading_entry(now: NaiveTime, hour_format: &Option<HourFormat>) -> String {

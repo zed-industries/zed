@@ -2501,8 +2501,8 @@ pub(crate) fn parse_completion_text_edit(
     };
 
     Some(ParsedCompletionEdit {
-        insert_range: insert_range,
-        replace_range: replace_range,
+        insert_range,
+        replace_range,
         new_text: new_text.clone(),
     })
 }

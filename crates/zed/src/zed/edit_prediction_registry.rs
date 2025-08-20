@@ -60,11 +60,17 @@ pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
     cx.subscribe(&user_store, {
         let editors = editors.clone();
         let client = client.clone();
-        move |user_store, event, cx| match event {
-            client::user::Event::PrivateUserInfoUpdated => {
-                assign_edit_prediction_providers(&editors, provider, &client, user_store, cx);
+
+        move |user_store, event, cx| {
+            if let client::user::Event::PrivateUserInfoUpdated = event {
+                assign_edit_prediction_providers(
+                    &editors,
+                    provider,
+                    &client,
+                    user_store,
+                    cx,
+                );
             }
-            _ => {}
         }
     })
     .detach();

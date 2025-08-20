@@ -43,12 +43,9 @@ impl WorktreeRoots {
                 match event {
                     WorktreeEvent::UpdatedEntries(changes) => {
                         for (path, _, kind) in changes.iter() {
-                            match kind {
-                                worktree::PathChange::Removed => {
-                                    let path = TriePath::from(path.as_ref());
-                                    this.roots.remove(&path);
-                                }
-                                _ => {}
+                            if kind == &worktree::PathChange::Removed {
+                                let path = TriePath::from(path.as_ref());
+                                this.roots.remove(&path);
                             }
                         }
                     }
@@ -197,11 +194,8 @@ impl ManifestTree {
         evt: &WorktreeStoreEvent,
         _: &mut Context<Self>,
     ) {
-        match evt {
-            WorktreeStoreEvent::WorktreeRemoved(_, worktree_id) => {
-                self.root_points.remove(worktree_id);
-            }
-            _ => {}
+        if let WorktreeStoreEvent::WorktreeRemoved(_, worktree_id) = evt {
+            self.root_points.remove(worktree_id);
         }
     }
 }

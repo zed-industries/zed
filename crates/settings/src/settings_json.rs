@@ -295,9 +295,9 @@ fn replace_value_in_json_text(
     }
 }
 
-const TS_DOCUMENT_KIND: &'static str = "document";
-const TS_ARRAY_KIND: &'static str = "array";
-const TS_COMMENT_KIND: &'static str = "comment";
+const TS_DOCUMENT_KIND: &str = "document";
+const TS_ARRAY_KIND: &str = "array";
+const TS_COMMENT_KIND: &str = "comment";
 
 pub fn replace_top_level_array_value_in_json_text(
     text: &str,

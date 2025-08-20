@@ -3586,7 +3586,7 @@ impl ProjectPanel {
                                         previous_components.next();
                                     }
 
-                                    if let Some(_) = suffix_components {
+                                    if suffix_components.is_some() {
                                         new_path.push(previous_components);
                                     }
                                     if let Some(str) = new_path.to_str() {
@@ -4419,9 +4419,7 @@ impl ProjectPanel {
                                     let components = Path::new(&file_name)
                                         .components()
                                         .map(|comp| {
-                                            let comp_str =
-                                                comp.as_os_str().to_string_lossy().into_owned();
-                                            comp_str
+                                            comp.as_os_str().to_string_lossy().into_owned()
                                         })
                                         .collect::<Vec<_>>();
 

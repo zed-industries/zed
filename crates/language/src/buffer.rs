@@ -1123,7 +1123,7 @@ impl Buffer {
         } else {
             ranges.as_slice()
         }
-        .into_iter()
+        .iter()
         .peekable();
 
         let mut edits = Vec::new();
@@ -1390,7 +1390,8 @@ impl Buffer {
                     is_first = false;
                     return true;
                 }
-                let any_sub_ranges_contain_range = layer
+
+                layer
                     .included_sub_ranges
                     .map(|sub_ranges| {
                         sub_ranges.iter().any(|sub_range| {
@@ -1399,9 +1400,7 @@ impl Buffer {
                             !is_before_start && !is_after_end
                         })
                     })
-                    .unwrap_or(true);
-                let result = any_sub_ranges_contain_range;
-                result
+                    .unwrap_or(true)
             })
             .last()
             .map(|info| info.language.clone())
@@ -2611,7 +2610,7 @@ impl Buffer {
                     self.completion_triggers = self
                         .completion_triggers_per_language_server
                         .values()
-                        .flat_map(|triggers| triggers.into_iter().cloned())
+                        .flat_map(|triggers| triggers.iter().cloned())
                         .collect();
                 } else {
                     self.completion_triggers_per_language_server
@@ -2771,7 +2770,7 @@ impl Buffer {
             self.completion_triggers = self
                 .completion_triggers_per_language_server
                 .values()
-                .flat_map(|triggers| triggers.into_iter().cloned())
+                .flat_map(|triggers| triggers.iter().cloned())
                 .collect();
         } else {
             self.completion_triggers_per_language_server

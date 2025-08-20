@@ -346,22 +346,19 @@ impl ProjectDiff {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        match event {
-            EditorEvent::SelectionsChanged { local: true } => {
-                let Some(project_path) = self.active_path(cx) else {
-                    return;
-                };
-                self.workspace
-                    .update(cx, |workspace, cx| {
-                        if let Some(git_panel) = workspace.panel::<GitPanel>(cx) {
-                            git_panel.update(cx, |git_panel, cx| {
-                                git_panel.select_entry_by_path(project_path, window, cx)
-                            })
-                        }
-                    })
-                    .ok();
-            }
-            _ => {}
+        if let EditorEvent::SelectionsChanged { local: true } = event {
+            let Some(project_path) = self.active_path(cx) else {
+                return;
+            };
+            self.workspace
+                .update(cx, |workspace, cx| {
+                    if let Some(git_panel) = workspace.panel::<GitPanel>(cx) {
+                        git_panel.update(cx, |git_panel, cx| {
+                            git_panel.select_entry_by_path(project_path, window, cx)
+                        })
+                    }
+                })
+                .ok();
         }
         if editor.focus_handle(cx).contains_focused(window, cx)
             && self.multibuffer.read(cx).is_empty()
@@ -513,7 +510,7 @@ impl ProjectDiff {
         mut recv: postage::watch::Receiver<()>,
         cx: &mut AsyncWindowContext,
     ) -> Result<()> {
-        while let Some(_) = recv.next().await {
+        while (recv.next().await).is_some() {
             let buffers_to_load = this.update(cx, |this, cx| this.load_buffers(cx))?;
             for buffer_to_load in buffers_to_load {
                 if let Some(buffer) = buffer_to_load.await.log_err() {

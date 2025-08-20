@@ -110,7 +110,7 @@ impl<T: InventoryContents> InventoryFor<T> {
 
     fn global_scenarios(&self) -> impl '_ + Iterator<Item = (TaskSourceKind, T)> {
         self.global.iter().flat_map(|(file_path, templates)| {
-            templates.into_iter().map(|template| {
+            templates.iter().map(|template| {
                 (
                     TaskSourceKind::AbsPath {
                         id_base: Cow::Owned(format!("global {}", T::GLOBAL_SOURCE_FILE)),

@@ -470,9 +470,8 @@ impl DapStore {
         session_id: impl Borrow<SessionId>,
     ) -> Option<Entity<session::Session>> {
         let session_id = session_id.borrow();
-        let client = self.sessions.get(session_id).cloned();
 
-        client
+        self.sessions.get(session_id).cloned()
     }
     pub fn sessions(&self) -> impl Iterator<Item = &Entity<Session>> {
         self.sessions.values()

@@ -157,18 +157,15 @@ impl SvgPreviewView {
                 &active_editor,
                 window,
                 |this: &mut SvgPreviewView, _editor, event: &EditorEvent, window, cx| {
-                    match event {
-                        EditorEvent::Saved => {
-                            // Remove cached image to force reload
-                            if let Some(svg_path) = &this.svg_path {
-                                let resource = Resource::Path(svg_path.clone().into());
-                                this.image_cache.update(cx, |cache, cx| {
-                                    cache.remove(&resource, window, cx);
-                                });
-                            }
-                            cx.notify();
+                    if event == &EditorEvent::Saved {
+                        // Remove cached image to force reload
+                        if let Some(svg_path) = &this.svg_path {
+                            let resource = Resource::Path(svg_path.clone().into());
+                            this.image_cache.update(cx, |cache, cx| {
+                                cache.remove(&resource, window, cx);
+                            });
                         }
-                        _ => {}
+                        cx.notify();
                     }
                 },
             );
@@ -184,22 +181,18 @@ impl SvgPreviewView {
                          event: &workspace::Event,
                          _window,
                          cx| {
-                            match event {
-                                workspace::Event::ActiveItemChanged => {
-                                    let workspace_read = workspace.read(cx);
-                                    if let Some(active_item) = workspace_read.active_item(cx)
-                                        && let Some(editor_entity) =
-                                            active_item.downcast::<Editor>()
-                                        && Self::is_svg_file(&editor_entity, cx)
-                                    {
-                                        let new_path = Self::get_svg_path(&editor_entity, cx);
-                                        if this.svg_path != new_path {
-                                            this.svg_path = new_path;
-                                            cx.notify();
-                                        }
+                            if let workspace::Event::ActiveItemChanged = event {
+                                let workspace_read = workspace.read(cx);
+                                if let Some(active_item) = workspace_read.active_item(cx)
+                                    && let Some(editor_entity) = active_item.downcast::<Editor>()
+                                    && Self::is_svg_file(&editor_entity, cx)
+                                {
+                                    let new_path = Self::get_svg_path(&editor_entity, cx);
+                                    if this.svg_path != new_path {
+                                        this.svg_path = new_path;
+                                        cx.notify();
                                     }
                                 }
-                                _ => {}
                             }
                         },
                     )

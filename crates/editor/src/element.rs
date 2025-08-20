@@ -724,7 +724,7 @@ impl EditorElement {
                         ColumnarMode::FromMouse => true,
                         ColumnarMode::FromSelection => false,
                     },
-                    mode: mode,
+                    mode,
                     goal_column: point_for_position.exact_unclipped.column(),
                 },
                 window,
@@ -2437,14 +2437,13 @@ impl EditorElement {
                 .unwrap_or_default()
                 .padding as f32;
 
-            if let Some(edit_prediction) = editor.active_edit_prediction.as_ref() {
-                match &edit_prediction.completion {
-                    EditPrediction::Edit {
-                        display_mode: EditDisplayMode::TabAccept,
-                        ..
-                    } => padding += INLINE_ACCEPT_SUGGESTION_EM_WIDTHS,
-                    _ => {}
-                }
+            if let Some(edit_prediction) = editor.active_edit_prediction.as_ref()
+                && let EditPrediction::Edit {
+                    display_mode: EditDisplayMode::TabAccept,
+                    ..
+                } = &edit_prediction.completion
+            {
+                padding += INLINE_ACCEPT_SUGGESTION_EM_WIDTHS
             }
 
             padding * em_width
@@ -2978,8 +2977,8 @@ impl EditorElement {
             .ilog10()
             + 1;
 
-        let elements = buffer_rows
-            .into_iter()
+        buffer_rows
+            .iter()
             .enumerate()
             .map(|(ix, row_info)| {
                 let ExpandInfo {
@@ -3034,9 +3033,7 @@ impl EditorElement {
 
                 Some((toggle, origin))
             })
-            .collect();
-
-        elements
+            .collect()
     }
 
     fn calculate_relative_line_numbers(
@@ -3136,7 +3133,7 @@ impl EditorElement {
         let relative_rows = self.calculate_relative_line_numbers(snapshot, &rows, relative_to);
         let mut line_number = String::new();
         let line_numbers = buffer_rows
-            .into_iter()
+            .iter()
             .enumerate()
             .flat_map(|(ix, row_info)| {
                 let display_row = DisplayRow(rows.start.0 + ix as u32);
@@ -3213,7 +3210,7 @@ impl EditorElement {
             && self.editor.read(cx).is_singleton(cx);
         if include_fold_statuses {
             row_infos
-                .into_iter()
+                .iter()
                 .enumerate()
                 .map(|(ix, info)| {
                     if info.expand_info.is_some() {

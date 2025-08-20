@@ -232,15 +232,12 @@ impl X11ClientStatePtr {
         };
         let mut state = client.0.borrow_mut();
 
-        if let Some(window_ref) = state.windows.remove(&x_window) {
-            match window_ref.refresh_state {
-                Some(RefreshState::PeriodicRefresh {
-                    event_loop_token, ..
-                }) => {
-                    state.loop_handle.remove(event_loop_token);
-                }
-                _ => {}
-            }
+        if let Some(window_ref) = state.windows.remove(&x_window)
+            && let Some(RefreshState::PeriodicRefresh {
+                event_loop_token, ..
+            }) = window_ref.refresh_state
+        {
+            state.loop_handle.remove(event_loop_token);
         }
         if state.mouse_focused_window == Some(x_window) {
             state.mouse_focused_window = None;
@@ -876,22 +873,19 @@ impl X11Client {
                 let Some(reply) = reply else {
                     return Some(());
                 };
-                match str::from_utf8(&reply.value) {
-                    Ok(file_list) => {
-                        let paths: SmallVec<[_; 2]> = file_list
-                            .lines()
-                            .filter_map(|path| Url::parse(path).log_err())
-                            .filter_map(|url| url.to_file_path().log_err())
-                            .collect();
-                        let input = PlatformInput::FileDrop(FileDropEvent::Entered {
-                            position: state.xdnd_state.position,
-                            paths: crate::ExternalPaths(paths),
-                        });
-                        drop(state);
-                        window.handle_input(input);
-                        self.0.borrow_mut().xdnd_state.retrieved = true;
-                    }
-                    Err(_) => {}
+                if let Ok(file_list) = str::from_utf8(&reply.value) {
+                    let paths: SmallVec<[_; 2]> = file_list
+                        .lines()
+                        .filter_map(|path| Url::parse(path).log_err())
+                        .filter_map(|url| url.to_file_path().log_err())
+                        .collect();
+                    let input = PlatformInput::FileDrop(FileDropEvent::Entered {
+                        position: state.xdnd_state.position,
+                        paths: crate::ExternalPaths(paths),
+                    });
+                    drop(state);
+                    window.handle_input(input);
+                    self.0.borrow_mut().xdnd_state.retrieved = true;
                 }
             }
             Event::ConfigureNotify(event) => {
