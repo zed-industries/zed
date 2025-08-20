@@ -1412,8 +1412,10 @@ impl AcpThreadView {
                                 .pr_1p5()
                                 .py_1()
                                 .rounded_t_md()
-                                .border_b_1()
-                                .border_color(self.tool_card_border_color(cx))
+                                .when(is_open, |this| {
+                                    this.border_b_1()
+                                        .border_color(self.tool_card_border_color(cx))
+                                })
                                 .bg(self.tool_card_header_bg(cx))
                         } else {
                             this.opacity(0.8).hover(|style| style.opacity(1.))
