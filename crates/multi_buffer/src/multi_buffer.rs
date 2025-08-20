@@ -5269,10 +5269,17 @@ impl MultiBufferSnapshot {
                 text_anchor,
                 diff_base_anchor,
             }
-        } else if excerpt_offset.is_zero() && bias == Bias::Left {
-            Anchor::min()
         } else {
-            Anchor::max()
+            let mut anchor = if excerpt_offset.is_zero() && bias == Bias::Left {
+                Anchor::min()
+            } else {
+                Anchor::max()
+            };
+            // TODO this is a hack, remove it
+            if let Some((excerpt_id, _, _)) = self.as_singleton() {
+                anchor.excerpt_id = *excerpt_id;
+            }
+            anchor
         }
     }
 
