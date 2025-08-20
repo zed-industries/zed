@@ -11,6 +11,7 @@ use smol::process::Child;
 use std::any::Any;
 use std::cell::RefCell;
 use std::fmt::Display;
+use std::fmt::Write;
 use std::path::Path;
 use std::rc::Rc;
 use uuid::Uuid;
@@ -32,7 +33,7 @@ use util::{ResultExt, debug_panic};
 use crate::claude::mcp_server::{ClaudeZedMcpServer, McpConfig};
 use crate::claude::tools::ClaudeTool;
 use crate::{AgentServer, AgentServerCommand, AllAgentServersSettings};
-use acp_thread::{AcpThread, AgentConnection, AuthRequired};
+use acp_thread::{AcpThread, AgentConnection, AuthRequired, MentionUri};
 
 #[derive(Clone)]
 pub struct ClaudeCode;
@@ -268,20 +269,53 @@ impl AgentConnection for ClaudeAgentConnection {
         session.turn_state.replace(TurnState::InProgress { end_tx });
 
         let mut content = String::new();
+        let mut context = String::new();
+
         for chunk in params.prompt {
             match chunk {
                 acp::ContentBlock::Text(text_content) => {
                     content.push_str(&text_content.text);
                 }
                 acp::ContentBlock::ResourceLink(resource_link) => {
-                    content.push_str(&format!("@{}", resource_link.uri));
+                    match MentionUri::parse(&resource_link.uri) {
+                        Ok(uri) => {
+                            write!(&mut content, "{}", uri.as_link()).ok();
+                        }
+                        Err(_) => {
+                            write!(&mut content, "@{}", resource_link.uri).ok();
+                        }
+                    }
                 }
-                acp::ContentBlock::Audio(_)
-                | acp::ContentBlock::Image(_)
-                | acp::ContentBlock::Resource(_) => {
+                acp::ContentBlock::Resource(resource) => match resource.resource {
+                    acp::EmbeddedResourceResource::TextResourceContents(resource) => {
+                        match MentionUri::parse(&resource.uri) {
+                            Ok(uri) => {
+                                write!(&mut content, "{}", uri.as_link()).ok();
+                            }
+                            Err(_) => {
+                                write!(&mut content, "@{}", resource.uri).ok();
+                            }
+                        }
+
+                        write!(
+                            &mut context,
+                            "<context ref=\"{}\">\n{}\n</context>\n",
+                            resource.uri, resource.text
+                        )
+                        .ok();
+                    }
+                    acp::EmbeddedResourceResource::BlobResourceContents(_) => {
+                        // TODO
+                    }
+                },
+                acp::ContentBlock::Audio(_) | acp::ContentBlock::Image(_) => {
                     // TODO
                 }
             }
+        }
+
+        if !context.is_empty() {
+            write!(&mut content, "\n{}", context).ok();
         }
 
         if let Err(err) = session.outgoing_tx.unbounded_send(SdkMessage::User {
