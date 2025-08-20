@@ -108,13 +108,13 @@ impl LinuxCommon {
 
         let callbacks = PlatformHandlers::default();
 
-        let dispatcher = Arc::new(LinuxDispatcher::new(main_sender.clone()));
+        let dispatcher = Arc::new(LinuxDispatcher::new(main_sender));
 
         let background_executor = BackgroundExecutor::new(dispatcher.clone());
 
         let common = LinuxCommon {
             background_executor,
-            foreground_executor: ForegroundExecutor::new(dispatcher.clone()),
+            foreground_executor: ForegroundExecutor::new(dispatcher),
             text_system,
             appearance: WindowAppearance::Light,
             auto_hide_scrollbars: false,
