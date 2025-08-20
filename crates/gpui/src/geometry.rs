@@ -1046,7 +1046,7 @@ where
             size: self.size.clone()
                 + size(
                     amount.left.clone() + amount.right.clone(),
-                    amount.top.clone() + amount.bottom.clone(),
+                    amount.top.clone() + amount.bottom,
                 ),
         }
     }
@@ -1159,10 +1159,10 @@ where
     /// Computes the space available within outer bounds.
     pub fn space_within(&self, outer: &Self) -> Edges<T> {
         Edges {
-            top: self.top().clone() - outer.top().clone(),
-            right: outer.right().clone() - self.right().clone(),
-            bottom: outer.bottom().clone() - self.bottom().clone(),
-            left: self.left().clone() - outer.left().clone(),
+            top: self.top() - outer.top(),
+            right: outer.right() - self.right(),
+            bottom: outer.bottom() - self.bottom(),
+            left: self.left() - outer.left(),
         }
     }
 }
@@ -1712,7 +1712,7 @@ where
             top: self.top.clone() * rhs.top,
             right: self.right.clone() * rhs.right,
             bottom: self.bottom.clone() * rhs.bottom,
-            left: self.left.clone() * rhs.left,
+            left: self.left * rhs.left,
         }
     }
 }
@@ -2411,7 +2411,7 @@ where
             top_left: self.top_left.clone() * rhs.top_left,
             top_right: self.top_right.clone() * rhs.top_right,
             bottom_right: self.bottom_right.clone() * rhs.bottom_right,
-            bottom_left: self.bottom_left.clone() * rhs.bottom_left,
+            bottom_left: self.bottom_left * rhs.bottom_left,
         }
     }
 }

@@ -712,7 +712,7 @@ mod tests {
     ) -> Entity<GoToLine> {
         cx.dispatch_action(editor::actions::ToggleGoToLine);
         workspace.update(cx, |workspace, cx| {
-            workspace.active_modal::<GoToLine>(cx).unwrap().clone()
+            workspace.active_modal::<GoToLine>(cx).unwrap()
         })
     }
 

@@ -140,7 +140,7 @@ impl State {
         Self {
             client: client.clone(),
             llm_api_token: LlmApiToken::default(),
-            user_store: user_store.clone(),
+            user_store,
             status,
             accept_terms_of_service_task: None,
             models: Vec::new(),
@@ -307,7 +307,7 @@ impl CloudLanguageModelProvider {
 
         Self {
             client,
-            state: state.clone(),
+            state,
             _maintain_client_status: maintain_client_status,
         }
     }
@@ -320,7 +320,7 @@ impl CloudLanguageModelProvider {
         Arc::new(CloudLanguageModel {
             id: LanguageModelId(SharedString::from(model.id.0.clone())),
             model,
-            llm_api_token: llm_api_token.clone(),
+            llm_api_token,
             client: self.client.clone(),
             request_limiter: RateLimiter::new(4),
         })

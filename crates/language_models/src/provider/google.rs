@@ -387,7 +387,7 @@ impl LanguageModel for GoogleLanguageModel {
         cx: &App,
     ) -> BoxFuture<'static, Result<u64>> {
         let model_id = self.model.request_id().to_string();
-        let request = into_google(request, model_id.clone(), self.model.mode());
+        let request = into_google(request, model_id, self.model.mode());
         let http_client = self.http_client.clone();
         let api_key = self.state.read(cx).api_key.clone();
 

@@ -447,7 +447,7 @@ impl ProjectPanel {
             cx.subscribe(&project, |this, project, event, cx| match event {
                 project::Event::ActiveEntryChanged(Some(entry_id)) => {
                     if ProjectPanelSettings::get_global(cx).auto_reveal_entries {
-                        this.reveal_entry(project.clone(), *entry_id, true, cx).ok();
+                        this.reveal_entry(project, *entry_id, true, cx).ok();
                     }
                 }
                 project::Event::ActiveEntryChanged(None) => {
@@ -462,10 +462,7 @@ impl ProjectPanel {
                     }
                 }
                 project::Event::RevealInProjectPanel(entry_id) => {
-                    if let Some(()) = this
-                        .reveal_entry(project.clone(), *entry_id, false, cx)
-                        .log_err()
-                    {
+                    if let Some(()) = this.reveal_entry(project, *entry_id, false, cx).log_err() {
                         cx.emit(PanelEvent::Activate);
                     }
                 }
@@ -813,7 +810,7 @@ impl ProjectPanel {
         diagnostic_severity: DiagnosticSeverity,
     ) {
         diagnostics
-            .entry((project_path.worktree_id, path_buffer.clone()))
+            .entry((project_path.worktree_id, path_buffer))
             .and_modify(|strongest_diagnostic_severity| {
                 *strongest_diagnostic_severity =
                     cmp::min(*strongest_diagnostic_severity, diagnostic_severity);
@@ -2780,7 +2777,7 @@ impl ProjectPanel {
 
         let destination_worktree = self.project.update(cx, |project, cx| {
             let entry_path = project.path_for_entry(entry_to_move, cx)?;
-            let destination_entry_path = project.path_for_entry(destination, cx)?.path.clone();
+            let destination_entry_path = project.path_for_entry(destination, cx)?.path;
 
             let mut destination_path = destination_entry_path.as_ref();
             if destination_is_file {
@@ -4023,8 +4020,8 @@ impl ProjectPanel {
                 .as_ref()
                 .map_or(ValidationState::None, |e| e.validation_state.clone())
             {
-                ValidationState::Error(msg) => Some((Color::Error.color(cx), msg.clone())),
-                ValidationState::Warning(msg) => Some((Color::Warning.color(cx), msg.clone())),
+                ValidationState::Error(msg) => Some((Color::Error.color(cx), msg)),
+                ValidationState::Warning(msg) => Some((Color::Warning.color(cx), msg)),
                 ValidationState::None => None,
             }
         } else {
@@ -5505,7 +5502,7 @@ impl Render for ProjectPanel {
                     .with_priority(3)
                 }))
         } else {
-            let focus_handle = self.focus_handle(cx).clone();
+            let focus_handle = self.focus_handle(cx);
 
             v_flex()
                 .id("empty-project_panel")

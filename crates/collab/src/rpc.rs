@@ -310,7 +310,7 @@ impl Server {
         let mut server = Self {
             id: parking_lot::Mutex::new(id),
             peer: Peer::new(id.0 as u32),
-            app_state: app_state.clone(),
+            app_state,
             connection_pool: Default::default(),
             handlers: Default::default(),
             teardown: watch::channel(false).0,
@@ -1386,9 +1386,7 @@ async fn create_room(
         let live_kit = live_kit?;
         let user_id = session.user_id().to_string();
 
-        let token = live_kit
-            .room_token(&livekit_room, &user_id.to_string())
-            .trace_err()?;
+        let token = live_kit.room_token(&livekit_room, &user_id).trace_err()?;
 
         Some(proto::LiveKitConnectionInfo {
             server_url: live_kit.url().into(),
@@ -2015,9 +2013,9 @@ async fn join_project(
         .unzip();
     response.send(proto::JoinProjectResponse {
         project_id: project.id.0 as u64,
-        worktrees: worktrees.clone(),
+        worktrees,
         replica_id: replica_id.0 as u32,
-        collaborators: collaborators.clone(),
+        collaborators,
         language_servers,
         language_server_capabilities,
         role: project.role.into(),

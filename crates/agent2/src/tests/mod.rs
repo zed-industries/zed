@@ -1401,7 +1401,7 @@ async fn test_agent_connection(cx: &mut TestAppContext) {
         let client = Client::new(clock, http_client, cx);
         let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
         language_model::init(client.clone(), cx);
-        language_models::init(user_store.clone(), client.clone(), cx);
+        language_models::init(user_store, client.clone(), cx);
         Project::init_settings(cx);
         LanguageModelRegistry::test(cx);
         agent_settings::init(cx);
@@ -1854,7 +1854,7 @@ async fn setup(cx: &mut TestAppContext, model: TestModel) -> ThreadTest {
         let client = Client::production(cx);
         let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
         language_model::init(client.clone(), cx);
-        language_models::init(user_store.clone(), client.clone(), cx);
+        language_models::init(user_store, client.clone(), cx);
 
         watch_settings(fs.clone(), cx);
     });

@@ -242,7 +242,7 @@ impl ProjectDiff {
             TRACKED_NAMESPACE
         };
 
-        let path_key = PathKey::namespaced(namespace, entry.repo_path.0.clone());
+        let path_key = PathKey::namespaced(namespace, entry.repo_path.0);
 
         self.move_to_path(path_key, window, cx)
     }
@@ -448,10 +448,10 @@ impl ProjectDiff {
         let diff = diff.read(cx);
         let diff_hunk_ranges = diff
             .hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot, cx)
-            .map(|diff_hunk| diff_hunk.buffer_range.clone());
+            .map(|diff_hunk| diff_hunk.buffer_range);
         let conflicts = conflict_addon
             .conflict_set(snapshot.remote_id())
-            .map(|conflict_set| conflict_set.read(cx).snapshot().conflicts.clone())
+            .map(|conflict_set| conflict_set.read(cx).snapshot().conflicts)
             .unwrap_or_default();
         let conflicts = conflicts.iter().map(|conflict| conflict.range.clone());
 
@@ -737,7 +737,7 @@ impl Render for ProjectDiff {
                 } else {
                     None
                 };
-                let keybinding_focus_handle = self.focus_handle(cx).clone();
+                let keybinding_focus_handle = self.focus_handle(cx);
                 el.child(
                     v_flex()
                         .gap_1()

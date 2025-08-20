@@ -159,7 +159,6 @@ fn distance_string(
         } else {
             format!("about {} hours", hours)
         }
-        .to_string()
     } else if distance < 172_800 {
         "1 day".to_string()
     } else if distance < 2_592_000 {
@@ -206,21 +205,16 @@ fn distance_string(
             } else {
                 format!("about {} years", years)
             }
-            .to_string()
         } else if remaining_months < 9 {
             if hide_prefix {
                 format!("{} years", years)
             } else {
                 format!("over {} years", years)
             }
-            .to_string()
+        } else if hide_prefix {
+            format!("{} years", years + 1)
         } else {
-            if hide_prefix {
-                format!("{} years", years + 1)
-            } else {
-                format!("almost {} years", years + 1)
-            }
-            .to_string()
+            format!("almost {} years", years + 1)
         }
     };
 

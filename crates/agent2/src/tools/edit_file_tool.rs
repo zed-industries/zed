@@ -427,7 +427,7 @@ impl AgentTool for EditFileTool {
 
             Ok(EditFileToolOutput {
                 input_path: input.path,
-                new_text: new_text.clone(),
+                new_text,
                 old_text,
                 diff: unified_diff,
                 edit_agent_output,

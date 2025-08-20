@@ -165,8 +165,8 @@ impl AgentConfiguration {
         provider: &Arc<dyn LanguageModelProvider>,
         cx: &mut Context<Self>,
     ) -> impl IntoElement + use<> {
-        let provider_id = provider.id().0.clone();
-        let provider_name = provider.name().0.clone();
+        let provider_id = provider.id().0;
+        let provider_name = provider.name().0;
         let provider_id_string = SharedString::from(format!("provider-disclosure-{provider_id}"));
 
         let configuration_view = self
@@ -269,7 +269,7 @@ impl AgentConfiguration {
                                     .closed_icon(IconName::ChevronDown),
                             )
                             .on_click(cx.listener({
-                                let provider_id = provider.id().clone();
+                                let provider_id = provider.id();
                                 move |this, _event, _window, _cx| {
                                     let is_expanded = this
                                         .expanded_provider_configurations
@@ -665,7 +665,7 @@ impl AgentConfiguration {
                     .size(IconSize::XSmall)
                     .color(Color::Accent)
                     .with_animation(
-                        SharedString::from(format!("{}-starting", context_server_id.0.clone(),)),
+                        SharedString::from(format!("{}-starting", context_server_id.0,)),
                         Animation::new(Duration::from_secs(3)).repeat(),
                         |icon, delta| icon.transform(Transformation::rotate(percentage(delta))),
                     )
@@ -865,7 +865,6 @@ impl AgentConfiguration {
                                     .on_click({
                                         let context_server_manager =
                                             self.context_server_store.clone();
-                                        let context_server_id = context_server_id.clone();
                                         let fs = self.fs.clone();
 
                                         move |state, _window, cx| {
@@ -1075,7 +1074,6 @@ fn show_unable_to_uninstall_extension_with_context_server(
         cx,
         move |this, _cx| {
             let workspace_handle = workspace_handle.clone();
-            let context_server_id = context_server_id.clone();
 
             this.icon(ToastIcon::new(IconName::Warning).color(Color::Warning))
                 .dismiss_button(true)

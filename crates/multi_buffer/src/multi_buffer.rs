@@ -2427,7 +2427,7 @@ impl MultiBuffer {
         cx.emit(match event {
             language::BufferEvent::Edited => Event::Edited {
                 singleton_buffer_edited: true,
-                edited_buffer: Some(buffer.clone()),
+                edited_buffer: Some(buffer),
             },
             language::BufferEvent::DirtyChanged => Event::DirtyChanged,
             language::BufferEvent::Saved => Event::Saved,
@@ -3560,9 +3560,7 @@ impl MultiBuffer {
         let multi = cx.new(|_| Self::new(Capability::ReadWrite));
         for (text, ranges) in excerpts {
             let buffer = cx.new(|cx| Buffer::local(text, cx));
-            let excerpt_ranges = ranges
-                .into_iter()
-                .map(|range| ExcerptRange::new(range.clone()));
+            let excerpt_ranges = ranges.into_iter().map(ExcerptRange::new);
             multi.update(cx, |multi, cx| {
                 multi.push_excerpts(buffer, excerpt_ranges, cx)
             });

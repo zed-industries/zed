@@ -956,7 +956,7 @@ impl AgentPanel {
 
         message_editor.focus_handle(cx).focus(window);
 
-        let thread_view = ActiveView::thread(active_thread.clone(), message_editor, window, cx);
+        let thread_view = ActiveView::thread(active_thread, message_editor, window, cx);
         self.set_active_view(thread_view, window, cx);
 
         AgentDiff::set_active_thread(&self.workspace, thread.clone(), window, cx);
@@ -1163,7 +1163,7 @@ impl AgentPanel {
         });
         self.set_active_view(
             ActiveView::prompt_editor(
-                editor.clone(),
+                editor,
                 self.history_store.clone(),
                 self.acp_history_store.clone(),
                 self.language_registry.clone(),
@@ -1236,7 +1236,7 @@ impl AgentPanel {
         });
         message_editor.focus_handle(cx).focus(window);
 
-        let thread_view = ActiveView::thread(active_thread.clone(), message_editor, window, cx);
+        let thread_view = ActiveView::thread(active_thread, message_editor, window, cx);
         self.set_active_view(thread_view, window, cx);
         AgentDiff::set_active_thread(&self.workspace, thread.clone(), window, cx);
     }
@@ -1525,7 +1525,7 @@ impl AgentPanel {
             return;
         }
 
-        let model = thread_state.configured_model().map(|cm| cm.model.clone());
+        let model = thread_state.configured_model().map(|cm| cm.model);
         if let Some(model) = model {
             thread.update(cx, |active_thread, cx| {
                 active_thread.thread().update(cx, |thread, cx| {
@@ -1680,7 +1680,7 @@ impl AgentPanel {
                                     .open_thread_by_id(&id, window, cx)
                                     .detach_and_log_err(cx),
                                 HistoryEntryId::Context(path) => this
-                                    .open_saved_prompt_editor(path.clone(), window, cx)
+                                    .open_saved_prompt_editor(path, window, cx)
                                     .detach_and_log_err(cx),
                             })
                             .ok();
@@ -1966,7 +1966,7 @@ impl AgentPanel {
                 };
 
                 match state {
-                    ThreadSummary::Pending => Label::new(ThreadSummary::DEFAULT.clone())
+                    ThreadSummary::Pending => Label::new(ThreadSummary::DEFAULT)
                         .truncate()
                         .into_any_element(),
                     ThreadSummary::Generating => Label::new(LOADING_SUMMARY_PLACEHOLDER)
@@ -2106,7 +2106,6 @@ impl AgentPanel {
             .anchor(Corner::TopRight)
             .with_handle(self.agent_panel_menu_handle.clone())
             .menu({
-                let focus_handle = focus_handle.clone();
                 move |window, cx| {
                     Some(ContextMenu::build(window, cx, |mut menu, _window, _| {
                         menu = menu.context(focus_handle.clone());
@@ -2184,7 +2183,6 @@ impl AgentPanel {
             .trigger_with_tooltip(
                 IconButton::new("agent-nav-menu", icon).icon_size(IconSize::Small),
                 {
-                    let focus_handle = focus_handle.clone();
                     move |window, cx| {
                         Tooltip::for_action_in(
                             "Toggle Recent Threads",
@@ -2222,8 +2220,6 @@ impl AgentPanel {
                 this.go_back(&workspace::GoBack, window, cx);
             }))
             .tooltip({
-                let focus_handle = focus_handle.clone();
-
                 move |window, cx| {
                     Tooltip::for_action_in("Go Back", &workspace::GoBack, &focus_handle, window, cx)
                 }
@@ -2249,7 +2245,6 @@ impl AgentPanel {
             .anchor(Corner::TopRight)
             .with_handle(self.new_thread_menu_handle.clone())
             .menu({
-                let focus_handle = focus_handle.clone();
                 move |window, cx| {
                     let active_thread = active_thread.clone();
                     Some(ContextMenu::build(window, cx, |mut menu, _window, cx| {
@@ -2377,7 +2372,6 @@ impl AgentPanel {
             .anchor(Corner::TopLeft)
             .with_handle(self.new_thread_menu_handle.clone())
             .menu({
-                let focus_handle = focus_handle.clone();
                 let workspace = self.workspace.clone();
 
                 move |window, cx| {
@@ -3015,7 +3009,7 @@ impl AgentPanel {
                                     // TODO: Add keyboard navigation.
                                     let is_hovered =
                                         self.hovered_recent_history_item == Some(index);
-                                    HistoryEntryElement::new(entry.clone(), cx.entity().downgrade())
+                                    HistoryEntryElement::new(entry, cx.entity().downgrade())
                                         .hovered(is_hovered)
                                         .on_hover(cx.listener(
                                             move |this, is_hovered, _window, cx| {
@@ -3339,7 +3333,7 @@ impl AgentPanel {
             .severity(Severity::Error)
             .icon(IconName::XCircle)
             .title(header)
-            .description(message.clone())
+            .description(message)
             .actions_slot(
                 h_flex()
                     .gap_0p5()
@@ -3359,7 +3353,7 @@ impl AgentPanel {
         Callout::new()
             .severity(Severity::Error)
             .title("Error")
-            .description(message.clone())
+            .description(message)
             .actions_slot(
                 h_flex()
                     .gap_0p5()

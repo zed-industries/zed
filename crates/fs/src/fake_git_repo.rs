@@ -345,7 +345,7 @@ impl GitRepository for FakeGitRepository {
 
     fn create_branch(&self, name: String) -> BoxFuture<'_, Result<()>> {
         self.with_state_async(true, move |state| {
-            state.branches.insert(name.to_owned());
+            state.branches.insert(name);
             Ok(())
         })
     }

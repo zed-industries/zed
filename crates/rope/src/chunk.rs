@@ -408,7 +408,7 @@ impl<'a> ChunkSlice<'a> {
         }
 
         let row_offset_range = self.offset_range_for_row(point.0.row);
-        let line = self.slice(row_offset_range.clone());
+        let line = self.slice(row_offset_range);
         if point.0.column == 0 {
             Point::new(point.0.row, 0)
         } else if point.0.column >= line.len_utf16().0 as u32 {

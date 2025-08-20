@@ -2156,7 +2156,7 @@ mod tests {
         }
 
         let multi_buffer_snapshot = multi_buffer.read(cx).snapshot(cx);
-        let (_, inlay_snapshot) = InlayMap::new(multi_buffer_snapshot.clone());
+        let (_, inlay_snapshot) = InlayMap::new(multi_buffer_snapshot);
         let (_, fold_snapshot) = FoldMap::new(inlay_snapshot);
         let (_, tab_snapshot) = TabMap::new(fold_snapshot, 4.try_into().unwrap());
         let (_, wraps_snapshot) = WrapMap::new(tab_snapshot, font, font_size, Some(wrap_width), cx);
@@ -2275,7 +2275,7 @@ mod tests {
             new_heights.insert(block_ids[0], 3);
             block_map_writer.resize(new_heights);
 
-            let snapshot = block_map.read(wraps_snapshot.clone(), Default::default());
+            let snapshot = block_map.read(wraps_snapshot, Default::default());
             // Same height as before, should remain the same
             assert_eq!(snapshot.text(), "aaa\n\n\n\n\n\nbbb\nccc\nddd\n\n\n");
         }
@@ -2360,16 +2360,14 @@ mod tests {
             buffer.edit([(Point::new(2, 0)..Point::new(3, 0), "")], None, cx);
             buffer.snapshot(cx)
         });
-        let (inlay_snapshot, inlay_edits) = inlay_map.sync(
-            buffer_snapshot.clone(),
-            buffer_subscription.consume().into_inner(),
-        );
+        let (inlay_snapshot, inlay_edits) =
+            inlay_map.sync(buffer_snapshot, buffer_subscription.consume().into_inner());
         let (fold_snapshot, fold_edits) = fold_map.read(inlay_snapshot, inlay_edits);
         let (tab_snapshot, tab_edits) = tab_map.sync(fold_snapshot, fold_edits, tab_size);
         let (wraps_snapshot, wrap_edits) = wrap_map.update(cx, |wrap_map, cx| {
             wrap_map.sync(tab_snapshot, tab_edits, cx)
         });
-        let blocks_snapshot = block_map.read(wraps_snapshot.clone(), wrap_edits);
+        let blocks_snapshot = block_map.read(wraps_snapshot, wrap_edits);
         assert_eq!(blocks_snapshot.text(), "line1\n\n\n\n\nline5");
 
         let buffer_snapshot = buffer.update(cx, |buffer, cx| {
@@ -2454,7 +2452,7 @@ mod tests {
         // Removing the replace block shows all the hidden blocks again.
         let mut writer = block_map.write(wraps_snapshot.clone(), Default::default());
         writer.remove(HashSet::from_iter([replace_block_id]));
-        let blocks_snapshot = block_map.read(wraps_snapshot.clone(), Default::default());
+        let blocks_snapshot = block_map.read(wraps_snapshot, Default::default());
         assert_eq!(
             blocks_snapshot.text(),
             "\nline1\n\nline2\n\n\nline 2.1\nline2.2\nline 2.3\nline 2.4\n\nline4\n\nline5"
@@ -2793,7 +2791,7 @@ mod tests {
         buffer.read_with(cx, |buffer, cx| {
             writer.fold_buffers([buffer_id_3], buffer, cx);
         });
-        let blocks_snapshot = block_map.read(wrap_snapshot.clone(), Patch::default());
+        let blocks_snapshot = block_map.read(wrap_snapshot, Patch::default());
         let blocks = blocks_snapshot
             .blocks_in_range(0..u32::MAX)
             .collect::<Vec<_>>();
@@ -2846,7 +2844,7 @@ mod tests {
         assert_eq!(buffer_ids.len(), 1);
         let buffer_id = buffer_ids[0];
 
-        let (_, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
+        let (_, inlay_snapshot) = InlayMap::new(buffer_snapshot);
         let (_, fold_snapshot) = FoldMap::new(inlay_snapshot);
         let (_, tab_snapshot) = TabMap::new(fold_snapshot, 4.try_into().unwrap());
         let (_, wrap_snapshot) =
@@ -2860,7 +2858,7 @@ mod tests {
         buffer.read_with(cx, |buffer, cx| {
             writer.fold_buffers([buffer_id], buffer, cx);
         });
-        let blocks_snapshot = block_map.read(wrap_snapshot.clone(), Patch::default());
+        let blocks_snapshot = block_map.read(wrap_snapshot, Patch::default());
         let blocks = blocks_snapshot
             .blocks_in_range(0..u32::MAX)
             .collect::<Vec<_>>();
@@ -3527,7 +3525,7 @@ mod tests {
                 ..buffer_snapshot.anchor_after(Point::new(1, 0))],
             false,
         );
-        let blocks_snapshot = block_map.read(wraps_snapshot.clone(), Default::default());
+        let blocks_snapshot = block_map.read(wraps_snapshot, Default::default());
         assert_eq!(blocks_snapshot.text(), "abc\n\ndef\nghi\njkl\nmno");
     }
 

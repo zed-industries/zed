@@ -248,7 +248,7 @@ impl MessageEditor {
             editor: editor.clone(),
             project: thread.read(cx).project().clone(),
             thread,
-            incompatible_tools_state: incompatible_tools.clone(),
+            incompatible_tools_state: incompatible_tools,
             workspace,
             context_store,
             prompt_store,
@@ -839,7 +839,6 @@ impl MessageEditor {
                                     .child(self.profile_selector.clone())
                                     .child(self.model_selector.clone())
                                     .map({
-                                        let focus_handle = focus_handle.clone();
                                         move |parent| {
                                             if is_generating {
                                                 parent
@@ -1801,7 +1800,7 @@ impl AgentPreview for MessageEditor {
                             .bg(cx.theme().colors().panel_background)
                             .border_1()
                             .border_color(cx.theme().colors().border)
-                            .child(default_message_editor.clone())
+                            .child(default_message_editor)
                             .into_any_element(),
                     )])
                     .into_any_element(),

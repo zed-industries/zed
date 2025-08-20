@@ -168,7 +168,7 @@ impl RemoteBufferStore {
                             .with_context(|| {
                                 format!("no worktree found for id {}", file.worktree_id)
                             })?;
-                        buffer_file = Some(Arc::new(File::from_proto(file, worktree.clone(), cx)?)
+                        buffer_file = Some(Arc::new(File::from_proto(file, worktree, cx)?)
                             as Arc<dyn language::File>);
                     }
                     Buffer::from_proto(replica_id, capability, state, buffer_file)
@@ -591,7 +591,7 @@ impl LocalBufferStore {
         else {
             return Task::ready(Err(anyhow!("no such worktree")));
         };
-        self.save_local_buffer(buffer, worktree, path.path.clone(), true, cx)
+        self.save_local_buffer(buffer, worktree, path.path, true, cx)
     }
 
     fn open_buffer(
@@ -845,7 +845,7 @@ impl BufferStore {
     ) -> Task<Result<()>> {
         match &mut self.state {
             BufferStoreState::Local(this) => this.save_buffer(buffer, cx),
-            BufferStoreState::Remote(this) => this.save_remote_buffer(buffer.clone(), None, cx),
+            BufferStoreState::Remote(this) => this.save_remote_buffer(buffer, None, cx),
         }
     }
 
@@ -1138,7 +1138,7 @@ impl BufferStore {
         envelope: TypedEnvelope<proto::UpdateBuffer>,
         mut cx: AsyncApp,
     ) -> Result<proto::Ack> {
-        let payload = envelope.payload.clone();
+        let payload = envelope.payload;
         let buffer_id = BufferId::new(payload.buffer_id)?;
         let ops = payload
             .operations

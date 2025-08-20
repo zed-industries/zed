@@ -2502,7 +2502,7 @@ impl Project {
         path: ProjectPath,
         cx: &mut Context<Self>,
     ) -> Task<Result<(Option<ProjectEntryId>, Entity<Buffer>)>> {
-        let task = self.open_buffer(path.clone(), cx);
+        let task = self.open_buffer(path, cx);
         cx.spawn(async move |_project, cx| {
             let buffer = task.await?;
             let project_entry_id = buffer.read_with(cx, |buffer, cx| {
@@ -3170,7 +3170,7 @@ impl Project {
         if let ImageItemEvent::ReloadNeeded = event
             && !self.is_via_collab()
         {
-            self.reload_images([image.clone()].into_iter().collect(), cx)
+            self.reload_images([image].into_iter().collect(), cx)
                 .detach_and_log_err(cx);
         }
 
@@ -3652,7 +3652,7 @@ impl Project {
         cx: &mut Context<Self>,
     ) -> Task<Result<Vec<CodeAction>>> {
         let snapshot = buffer.read(cx).snapshot();
-        let range = range.clone().to_owned().to_point(&snapshot);
+        let range = range.to_point(&snapshot);
         let range_start = snapshot.anchor_before(range.start);
         let range_end = if range.start == range.end {
             range_start

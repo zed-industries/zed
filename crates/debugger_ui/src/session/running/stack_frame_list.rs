@@ -126,7 +126,7 @@ impl StackFrameList {
         self.stack_frames(cx)
             .unwrap_or_default()
             .into_iter()
-            .map(|stack_frame| stack_frame.dap.clone())
+            .map(|stack_frame| stack_frame.dap)
             .collect()
     }
 
@@ -224,7 +224,7 @@ impl StackFrameList {
 
         let collapsed_entries = std::mem::take(&mut collapsed_entries);
         if !collapsed_entries.is_empty() {
-            entries.push(StackFrameEntry::Collapsed(collapsed_entries.clone()));
+            entries.push(StackFrameEntry::Collapsed(collapsed_entries));
         }
         self.entries = entries;
 
@@ -418,7 +418,7 @@ impl StackFrameList {
         let source = stack_frame.source.clone();
         let is_selected_frame = Some(ix) == self.selected_ix;
 
-        let path = source.clone().and_then(|s| s.path.or(s.name));
+        let path = source.and_then(|s| s.path.or(s.name));
         let formatted_path = path.map(|path| format!("{}:{}", path, stack_frame.line,));
         let formatted_path = formatted_path.map(|path| {
             Label::new(path)

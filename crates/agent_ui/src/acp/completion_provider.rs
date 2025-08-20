@@ -89,7 +89,7 @@ impl ContextPickerCompletionProvider {
     ) -> Option<Completion> {
         match entry {
             ContextPickerEntry::Mode(mode) => Some(Completion {
-                replace_range: source_range.clone(),
+                replace_range: source_range,
                 new_text: format!("@{} ", mode.keyword()),
                 label: CodeLabel::plain(mode.label().to_string(), None),
                 icon_path: Some(mode.icon().path().into()),
@@ -146,7 +146,7 @@ impl ContextPickerCompletionProvider {
                 };
 
                 Some(Completion {
-                    replace_range: source_range.clone(),
+                    replace_range: source_range,
                     new_text,
                     label: CodeLabel::plain(action.label().to_string(), None),
                     icon_path: Some(action.icon().path().into()),
@@ -187,7 +187,7 @@ impl ContextPickerCompletionProvider {
             documentation: None,
             insert_text_mode: None,
             source: project::CompletionSource::Custom,
-            icon_path: Some(icon_for_completion.clone()),
+            icon_path: Some(icon_for_completion),
             confirm: Some(confirm_completion_callback(
                 thread_entry.title().clone(),
                 source_range.start,
@@ -218,9 +218,9 @@ impl ContextPickerCompletionProvider {
             documentation: None,
             insert_text_mode: None,
             source: project::CompletionSource::Custom,
-            icon_path: Some(icon_path.clone()),
+            icon_path: Some(icon_path),
             confirm: Some(confirm_completion_callback(
-                rule.title.clone(),
+                rule.title,
                 source_range.start,
                 new_text_len - 1,
                 editor,
@@ -260,7 +260,7 @@ impl ContextPickerCompletionProvider {
         let completion_icon_path = if is_recent {
             IconName::HistoryRerun.path().into()
         } else {
-            crease_icon_path.clone()
+            crease_icon_path
         };
 
         let new_text = format!("{} ", uri.as_link());
@@ -309,10 +309,10 @@ impl ContextPickerCompletionProvider {
             label,
             documentation: None,
             source: project::CompletionSource::Custom,
-            icon_path: Some(icon_path.clone()),
+            icon_path: Some(icon_path),
             insert_text_mode: None,
             confirm: Some(confirm_completion_callback(
-                symbol.name.clone().into(),
+                symbol.name.into(),
                 source_range.start,
                 new_text_len - 1,
                 message_editor,
@@ -327,7 +327,7 @@ impl ContextPickerCompletionProvider {
         message_editor: WeakEntity<MessageEditor>,
         cx: &mut App,
     ) -> Option<Completion> {
-        let new_text = format!("@fetch {} ", url_to_fetch.clone());
+        let new_text = format!("@fetch {} ", url_to_fetch);
         let url_to_fetch = url::Url::parse(url_to_fetch.as_ref())
             .or_else(|_| url::Url::parse(&format!("https://{url_to_fetch}")))
             .ok()?;
@@ -341,7 +341,7 @@ impl ContextPickerCompletionProvider {
             label: CodeLabel::plain(url_to_fetch.to_string(), None),
             documentation: None,
             source: project::CompletionSource::Custom,
-            icon_path: Some(icon_path.clone()),
+            icon_path: Some(icon_path),
             insert_text_mode: None,
             confirm: Some(confirm_completion_callback(
                 url_to_fetch.to_string().into(),
@@ -365,8 +365,7 @@ impl ContextPickerCompletionProvider {
         };
         match mode {
             Some(ContextPickerMode::File) => {
-                let search_files_task =
-                    search_files(query.clone(), cancellation_flag.clone(), &workspace, cx);
+                let search_files_task = search_files(query, cancellation_flag, &workspace, cx);
                 cx.background_spawn(async move {
                     search_files_task
                         .await
@@ -377,8 +376,7 @@ impl ContextPickerCompletionProvider {
             }
 
             Some(ContextPickerMode::Symbol) => {
-                let search_symbols_task =
-                    search_symbols(query.clone(), cancellation_flag.clone(), &workspace, cx);
+                let search_symbols_task = search_symbols(query, cancellation_flag, &workspace, cx);
                 cx.background_spawn(async move {
                     search_symbols_task
                         .await
@@ -389,12 +387,8 @@ impl ContextPickerCompletionProvider {
             }
 
             Some(ContextPickerMode::Thread) => {
-                let search_threads_task = search_threads(
-                    query.clone(),
-                    cancellation_flag.clone(),
-                    &self.history_store,
-                    cx,
-                );
+                let search_threads_task =
+                    search_threads(query, cancellation_flag, &self.history_store, cx);
                 cx.background_spawn(async move {
                     search_threads_task
                         .await
@@ -415,7 +409,7 @@ impl ContextPickerCompletionProvider {
             Some(ContextPickerMode::Rules) => {
                 if let Some(prompt_store) = self.prompt_store.as_ref() {
                     let search_rules_task =
-                        search_rules(query.clone(), cancellation_flag.clone(), prompt_store, cx);
+                        search_rules(query, cancellation_flag, prompt_store, cx);
                     cx.background_spawn(async move {
                         search_rules_task
                             .await
@@ -448,7 +442,7 @@ impl ContextPickerCompletionProvider {
                 let executor = cx.background_executor().clone();
 
                 let search_files_task =
-                    search_files(query.clone(), cancellation_flag.clone(), &workspace, cx);
+                    search_files(query.clone(), cancellation_flag, &workspace, cx);
 
                 let entries = self.available_context_picker_entries(&workspace, cx);
                 let entry_candidates = entries

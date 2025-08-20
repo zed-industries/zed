@@ -90,11 +90,8 @@ impl ExampleInstance {
         worktrees_dir: &Path,
         repetition: usize,
     ) -> Self {
-        let name = thread.meta().name.to_string();
-        let run_directory = run_dir
-            .join(&name)
-            .join(repetition.to_string())
-            .to_path_buf();
+        let name = thread.meta().name;
+        let run_directory = run_dir.join(&name).join(repetition.to_string());
 
         let repo_path = repo_path_for_url(repos_dir, &thread.meta().url);
 
@@ -772,7 +769,7 @@ pub async fn query_lsp_diagnostics(
 }
 
 fn parse_assertion_result(response: &str) -> Result<RanAssertionResult> {
-    let analysis = get_tag("analysis", response)?.to_string();
+    let analysis = get_tag("analysis", response)?;
     let passed = match get_tag("passed", response)?.to_lowercase().as_str() {
         "true" => true,
         "false" => false,

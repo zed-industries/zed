@@ -3593,7 +3593,7 @@ async fn test_add_breakpoints(cx_a: &mut TestAppContext, cx_b: &mut TestAppConte
     let abs_path = project_a.read_with(cx_a, |project, cx| {
         project
             .absolute_path(&project_path, cx)
-            .map(|path_buf| Arc::from(path_buf.to_owned()))
+            .map(Arc::from)
             .unwrap()
     });
 
@@ -3647,20 +3647,16 @@ async fn test_add_breakpoints(cx_a: &mut TestAppContext, cx_b: &mut TestAppConte
     let breakpoints_a = editor_a.update(cx_a, |editor, cx| {
         editor
             .breakpoint_store()
-            .clone()
             .unwrap()
             .read(cx)
             .all_source_breakpoints(cx)
-            .clone()
     });
     let breakpoints_b = editor_b.update(cx_b, |editor, cx| {
         editor
             .breakpoint_store()
-            .clone()
             .unwrap()
             .read(cx)
             .all_source_breakpoints(cx)
-            .clone()
     });
 
     assert_eq!(1, breakpoints_a.len());
@@ -3680,20 +3676,16 @@ async fn test_add_breakpoints(cx_a: &mut TestAppContext, cx_b: &mut TestAppConte
     let breakpoints_a = editor_a.update(cx_a, |editor, cx| {
         editor
             .breakpoint_store()
-            .clone()
             .unwrap()
             .read(cx)
             .all_source_breakpoints(cx)
-            .clone()
     });
     let breakpoints_b = editor_b.update(cx_b, |editor, cx| {
         editor
             .breakpoint_store()
-            .clone()
             .unwrap()
             .read(cx)
             .all_source_breakpoints(cx)
-            .clone()
     });
 
     assert_eq!(1, breakpoints_a.len());
@@ -3713,20 +3705,16 @@ async fn test_add_breakpoints(cx_a: &mut TestAppContext, cx_b: &mut TestAppConte
     let breakpoints_a = editor_a.update(cx_a, |editor, cx| {
         editor
             .breakpoint_store()
-            .clone()
             .unwrap()
             .read(cx)
             .all_source_breakpoints(cx)
-            .clone()
     });
     let breakpoints_b = editor_b.update(cx_b, |editor, cx| {
         editor
             .breakpoint_store()
-            .clone()
             .unwrap()
             .read(cx)
             .all_source_breakpoints(cx)
-            .clone()
     });
 
     assert_eq!(1, breakpoints_a.len());
@@ -3746,20 +3734,16 @@ async fn test_add_breakpoints(cx_a: &mut TestAppContext, cx_b: &mut TestAppConte
     let breakpoints_a = editor_a.update(cx_a, |editor, cx| {
         editor
             .breakpoint_store()
-            .clone()
             .unwrap()
             .read(cx)
             .all_source_breakpoints(cx)
-            .clone()
     });
     let breakpoints_b = editor_b.update(cx_b, |editor, cx| {
         editor
             .breakpoint_store()
-            .clone()
             .unwrap()
             .read(cx)
             .all_source_breakpoints(cx)
-            .clone()
     });
 
     assert_eq!(0, breakpoints_a.len());

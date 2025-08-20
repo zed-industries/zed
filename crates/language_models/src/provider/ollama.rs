@@ -237,7 +237,7 @@ impl LanguageModelProvider for OllamaLanguageModelProvider {
             .map(|model| {
                 Arc::new(OllamaLanguageModel {
                     id: LanguageModelId::from(model.name.clone()),
-                    model: model.clone(),
+                    model,
                     http_client: self.http_client.clone(),
                     request_limiter: RateLimiter::new(4),
                 }) as Arc<dyn LanguageModel>

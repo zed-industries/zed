@@ -160,7 +160,7 @@ fn init_panic_hook(session_id: String) {
 
         let panic_data = telemetry_events::Panic {
             thread: thread_name.into(),
-            payload: payload.clone(),
+            payload,
             location_data: info.location().map(|location| LocationData {
                 file: location.file().into(),
                 line: location.line(),
@@ -799,7 +799,6 @@ fn initialize_settings(
         watch_config_file(cx.background_executor(), fs, paths::settings_file().clone());
 
     handle_settings_file_changes(user_settings_file_rx, cx, {
-        let session = session.clone();
         move |err, _cx| {
             if let Some(e) = err {
                 log::info!("Server settings failed to change: {}", e);

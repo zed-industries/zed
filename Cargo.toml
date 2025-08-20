@@ -840,6 +840,7 @@ match_like_matches_macro = "warn"
 module_inception = { level = "deny" }
 question_mark = { level = "deny" }
 single_match = "warn"
+redundant_clone = "warn"
 redundant_closure = { level = "deny" }
 redundant_static_lifetimes = { level = "warn" }
 redundant_pattern_matching = "warn"

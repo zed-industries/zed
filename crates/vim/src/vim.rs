@@ -1693,7 +1693,7 @@ impl Vim {
                         }) {
                             editor.do_paste(
                                 &register.text.to_string(),
-                                register.clipboard_selections.clone(),
+                                register.clipboard_selections,
                                 false,
                                 window,
                                 cx,

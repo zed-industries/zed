@@ -256,7 +256,7 @@ pub(crate) fn deserialize_pane_layout(
             Some(Member::Axis(PaneAxis::load(
                 if should_invert { axis.invert() } else { axis },
                 members,
-                flexes.clone(),
+                flexes,
             )))
         }
         SerializedPaneLayout::Pane(serialized_pane) => {

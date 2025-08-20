@@ -719,21 +719,14 @@ impl Vim {
                         target: Some(SurroundsType::Motion(motion)),
                     });
                 } else {
-                    self.normal_motion(
-                        motion.clone(),
-                        active_operator.clone(),
-                        count,
-                        forced_motion,
-                        window,
-                        cx,
-                    )
+                    self.normal_motion(motion, active_operator, count, forced_motion, window, cx)
                 }
             }
             Mode::Visual | Mode::VisualLine | Mode::VisualBlock => {
-                self.visual_motion(motion.clone(), count, window, cx)
+                self.visual_motion(motion, count, window, cx)
             }
 
-            Mode::HelixNormal => self.helix_normal_motion(motion.clone(), count, window, cx),
+            Mode::HelixNormal => self.helix_normal_motion(motion, count, window, cx),
         }
         self.clear_operator(window, cx);
         if let Some(operator) = waiting_operator {
@@ -1327,7 +1320,7 @@ impl Motion {
     pub fn range(
         &self,
         map: &DisplaySnapshot,
-        selection: Selection<DisplayPoint>,
+        mut selection: Selection<DisplayPoint>,
         times: Option<usize>,
         text_layout_details: &TextLayoutDetails,
         forced_motion: bool,
@@ -1372,7 +1365,6 @@ impl Motion {
             (None, true) => Some((selection.head(), selection.goal)),
         }?;
 
-        let mut selection = selection.clone();
         selection.set_head(new_head, goal);
 
         let mut kind = match (self.default_kind(), forced_motion) {
@@ -2401,9 +2393,7 @@ fn matching(map: &DisplaySnapshot, display_point: DisplayPoint) -> DisplayPoint 
     let line_range = map.prev_line_boundary(point).0..line_end;
     let visible_line_range =
         line_range.start..Point::new(line_range.end.row, line_range.end.column.saturating_sub(1));
-    let ranges = map
-        .buffer_snapshot
-        .bracket_ranges(visible_line_range.clone());
+    let ranges = map.buffer_snapshot.bracket_ranges(visible_line_range);
     if let Some(ranges) = ranges {
         let line_range = line_range.start.to_offset(&map.buffer_snapshot)
             ..line_range.end.to_offset(&map.buffer_snapshot);
