@@ -169,10 +169,7 @@ pub enum KernelStatus {
 
 impl KernelStatus {
     pub fn is_connected(&self) -> bool {
-        match self {
-            KernelStatus::Idle | KernelStatus::Busy => true,
-            _ => false,
-        }
+        matches!(self, KernelStatus::Idle | KernelStatus::Busy)
     }
 }
 

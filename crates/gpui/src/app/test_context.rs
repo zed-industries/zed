@@ -192,6 +192,7 @@ impl TestAppContext {
         &self.foreground_executor
     }
 
+    #[expect(clippy::wrong_self_convention)]
     fn new<T: 'static>(&mut self, build_entity: impl FnOnce(&mut Context<T>) -> T) -> Entity<T> {
         let mut cx = self.app.borrow_mut();
         cx.new(build_entity)
@@ -244,7 +245,7 @@ impl TestAppContext {
             )
             .unwrap();
         drop(cx);
-        let cx = VisualTestContext::from_window(*window.deref(), self).as_mut();
+        let cx = VisualTestContext::from_window(*window.deref(), self).into_mut();
         cx.run_until_parked();
         cx
     }
@@ -273,7 +274,7 @@ impl TestAppContext {
             .unwrap();
         drop(cx);
         let view = window.root(self).unwrap();
-        let cx = VisualTestContext::from_window(*window.deref(), self).as_mut();
+        let cx = VisualTestContext::from_window(*window.deref(), self).into_mut();
         cx.run_until_parked();
 
         // it might be nice to try and cleanup these at the end of each test.
@@ -882,7 +883,7 @@ impl VisualTestContext {
 
     /// Get an &mut VisualTestContext (which is mostly what you need to pass to other methods).
     /// This method internally retains the VisualTestContext until the end of the test.
-    pub fn as_mut(self) -> &'static mut Self {
+    pub fn into_mut(self) -> &'static mut Self {
         let ptr = Box::into_raw(Box::new(self));
         // safety: on_quit will be called after the test has finished.
         // the executor will ensure that all tasks related to the test have stopped.

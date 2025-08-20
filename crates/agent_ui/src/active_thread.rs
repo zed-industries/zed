@@ -1765,7 +1765,7 @@ impl ActiveThread {
                 .thread
                 .read(cx)
                 .message(message_id)
-                .map(|msg| msg.to_string())
+                .map(|msg| msg.to_message_content())
                 .unwrap_or_default();
 
             telemetry::event!(

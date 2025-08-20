@@ -122,9 +122,6 @@ impl Model {
     }
 
     pub fn supports_images(&self) -> bool {
-        match self {
-            Self::Grok2Vision => true,
-            _ => false,
-        }
+        matches!(self, Self::Grok2Vision)
     }
 }

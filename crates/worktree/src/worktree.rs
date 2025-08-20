@@ -5509,7 +5509,7 @@ impl ProjectEntryId {
         Self(id as usize)
     }
 
-    pub fn to_proto(&self) -> u64 {
+    pub fn to_proto(self) -> u64 {
         self.0 as u64
     }
 
@@ -5517,14 +5517,14 @@ impl ProjectEntryId {
         ProjectEntryId(id)
     }
 
-    pub fn to_usize(&self) -> usize {
+    pub fn to_usize(self) -> usize {
         self.0
     }
 }
 
 #[cfg(any(test, feature = "test-support"))]
 impl CreatedEntry {
-    pub fn to_included(self) -> Option<Entry> {
+    pub fn into_included(self) -> Option<Entry> {
         match self {
             CreatedEntry::Included(entry) => Some(entry),
             CreatedEntry::Excluded { .. } => None,

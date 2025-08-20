@@ -172,6 +172,10 @@ pub trait AppContext {
     type Result<T>;
 
     /// Create a new entity in the app context.
+    #[expect(
+        clippy::wrong_self_convention,
+        reason = "`App::new` is an ubiquitous function for creating entities"
+    )]
     fn new<T: 'static>(
         &mut self,
         build_entity: impl FnOnce(&mut Context<T>) -> T,

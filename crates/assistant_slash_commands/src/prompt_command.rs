@@ -117,7 +117,7 @@ impl SlashCommand for PromptSlashCommand {
                 }],
                 run_commands_in_text: true,
             }
-            .to_event_stream())
+            .into_event_stream())
         })
     }
 }

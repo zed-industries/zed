@@ -293,7 +293,7 @@ impl FollowableItem for Editor {
                 EditorEvent::ExcerptsRemoved { ids, .. } => {
                     update
                         .deleted_excerpts
-                        .extend(ids.iter().map(ExcerptId::to_proto));
+                        .extend(ids.iter().copied().map(ExcerptId::to_proto));
                     true
                 }
                 EditorEvent::ScrollPositionChanged { autoscroll, .. } if !autoscroll => {
