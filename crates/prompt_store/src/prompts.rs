@@ -229,12 +229,12 @@ impl PromptBuilder {
                         log_message.push_str(" -> ");
                         log_message.push_str(&target.display().to_string());
                     }
-                    log::info!("{}.", log_message);
+                    log::trace!("{}.", log_message);
                 } else {
                     if !found_dir_once {
-                        log::info!("No prompt template overrides directory found at {}. Using built-in prompts.", templates_dir.display());
+                        log::trace!("No prompt template overrides directory found at {}. Using built-in prompts.", templates_dir.display());
                         if let Some(target) = symlink_status {
-                            log::info!("Symlink found pointing to {}, but target is invalid.", target.display());
+                            log::trace!("Symlink found pointing to {}, but target is invalid.", target.display());
                         }
                     }
 
@@ -247,7 +247,7 @@ impl PromptBuilder {
                                     log_message.push_str(" -> ");
                                     log_message.push_str(&target.display().to_string());
                                 }
-                                log::info!("{}.", log_message);
+                                log::trace!("{}.", log_message);
                                 break;
                             }
                         }
