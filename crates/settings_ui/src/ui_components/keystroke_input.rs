@@ -308,8 +308,10 @@ impl KeystrokeInput {
             && (!self.search || self.previous_modifiers.modified())
         {
             let key = keystroke.key.clone();
+            let inner_key = keystroke.inner.key.clone();
             keystroke = last.clone();
             keystroke.key = key;
+            keystroke.inner.key = inner_key;
             self.keystrokes.pop();
         }
 
