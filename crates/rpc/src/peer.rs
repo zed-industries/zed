@@ -26,7 +26,6 @@ use std::{
     time::Duration,
     time::Instant,
 };
-use tracing::instrument;
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Serialize)]
 pub struct ConnectionId {
@@ -109,7 +108,6 @@ impl Peer {
         self.epoch.load(SeqCst)
     }
 
-    #[instrument(skip_all)]
     pub fn add_connection<F, Fut, Out>(
         self: &Arc<Self>,
         connection: Connection,
