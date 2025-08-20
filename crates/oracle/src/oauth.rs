@@ -13,7 +13,7 @@ use std::{
 };
 use url::Url;
 
-pub struct OcaOAuthClient;
+pub struct OracleOAuthClient;
 
 #[derive(Debug)]
 pub struct OAuthSession {
@@ -40,7 +40,7 @@ impl Pkce {
     }
 }
 
-impl OcaOAuthClient {
+impl OracleOAuthClient {
     const CLIENT_ID: &'static str = "a8331954c0cf48ba99b5dd223a14c6ea";
     const OAUTH_DOMAIN: &'static str =
         "https://idcs-9dc693e80d9b469480d7afe00e743931.identity.oraclecloud.com";
@@ -253,12 +253,15 @@ impl OAuthToken {
         let form_data = format!(
             "grant_type=refresh_token&refresh_token={}&client_id={}",
             urlencoding::encode(&self.refresh_token),
-            OcaOAuthClient::CLIENT_ID
+            OracleOAuthClient::CLIENT_ID
         );
 
         let request = HttpRequest::builder()
             .method(Method::POST)
-            .uri(&format!("{}/oauth2/v1/token", OcaOAuthClient::OAUTH_DOMAIN))
+            .uri(&format!(
+                "{}/oauth2/v1/token",
+                OracleOAuthClient::OAUTH_DOMAIN
+            ))
             .header("Content-Type", "application/x-www-form-urlencoded")
             .body(form_data.into())?;
 

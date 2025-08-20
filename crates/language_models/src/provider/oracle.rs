@@ -3,10 +3,7 @@ use collections::BTreeMap;
 use credentials_provider::CredentialsProvider;
 
 use futures::{FutureExt, StreamExt, future::BoxFuture};
-use gpui::{
-    Animation, AnimationExt, AnyView, App, AsyncApp, Context, Subscription, Task, Transformation,
-    Window, percentage,
-};
+use gpui::{AnyView, App, AsyncApp, Context, Subscription, Task, Window};
 use http_client::HttpClient;
 use language_model::{
     AuthenticateError, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
@@ -16,12 +13,11 @@ use language_model::{
 };
 
 use open_ai::ResponseStreamEvent;
-use oracle_code_assist::oauth::{OAuthToken, OcaOAuthClient};
+use oracle_code_assist::oauth::{OAuthToken, OracleOAuthClient};
 use oracle_code_assist::{Model, stream_completion};
 pub use settings::OracleAvailableModel as AvailableModel;
 use settings::{Settings, SettingsStore};
 use std::sync::Arc;
-use std::time::Duration;
 use strum::IntoEnumIterator;
 
 use ui::{CommonAnimationExt, prelude::*};
@@ -449,14 +445,14 @@ impl ConfigurationView {
         let state = self.state.clone();
         let authentication_task = cx.spawn_in(window, async move |this, cx| {
             let result = cx
-                .update(|_window, cx| (OcaOAuthClient::initiate_oauth(cx), cx.http_client()))
+                .update(|_window, cx| (OracleOAuthClient::initiate_oauth(cx), cx.http_client()))
                 .log_err();
 
             if let Some((oauth_session, http_client)) = result {
                 if let Some(oauth_session) = oauth_session.log_err() {
                     let auth_result = cx
                         .background_spawn(async move {
-                            OcaOAuthClient::authenticate(http_client, oauth_session).await
+                            OracleOAuthClient::authenticate(http_client, oauth_session).await
                         })
                         .await;
 
