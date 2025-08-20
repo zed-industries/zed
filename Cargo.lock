@@ -11100,10 +11100,20 @@ name = "oracle_code_assist"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "base64 0.22.1",
+ "futures 0.3.31",
+ "gpui",
+ "http_client",
  "open_ai",
+ "rand 0.8.5",
  "schemars",
  "serde",
+ "serde_json",
+ "sha2",
  "strum 0.27.1",
+ "tiny_http",
+ "url",
+ "urlencoding",
  "workspace-hack",
 ]
 

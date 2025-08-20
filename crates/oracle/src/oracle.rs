@@ -1,3 +1,5 @@
+mod oauth;
+
 use anyhow::Result;
 use open_ai::ReasoningEffort;
 use serde::{Deserialize, Serialize};
