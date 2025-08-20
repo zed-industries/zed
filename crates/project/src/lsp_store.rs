@@ -13149,10 +13149,10 @@ fn ensure_uniform_list_compatible_label(label: &mut CodeLabel) {
     let mut offset_map = vec![0; label.text.len() + 1];
     let mut last_char_was_space = false;
     let mut new_idx = 0;
-    let mut chars = label.text.char_indices().fuse();
+    let chars = label.text.char_indices().fuse();
     let mut newlines_removed = false;
 
-    while let Some((idx, c)) = chars.next() {
+    for (idx, c) in chars {
         offset_map[idx] = new_idx;
 
         match c {
