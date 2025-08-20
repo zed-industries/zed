@@ -42,8 +42,8 @@ impl<'a> GitTraversal<'a> {
         //   other_repo/
         //     .git/
         //   our_query.txt
-        let mut query = path.ancestors();
-        while let Some(query) = query.next() {
+        let query = path.ancestors();
+        for query in query {
             let (_, snapshot) = self
                 .repo_root_to_snapshot
                 .range(Path::new("")..=query)
