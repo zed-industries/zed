@@ -367,7 +367,7 @@ impl McpServer {
                     if let Some(message) = message {
                         log::trace!("send: {}", &message);
                         outgoing_bytes.write_all(message.as_bytes()).await?;
-                        outgoing_bytes.write_all(&[b'\n']).await?;
+                        outgoing_bytes.write_all(b"\n").await?;
                     } else {
                         break;
                     }
@@ -389,7 +389,7 @@ impl McpServer {
                                     "message": format!("Failed to parse: {error}"),
                                 }),
                             }))?.as_bytes()).await?;
-                            outgoing_bytes.write_all(&[b'\n']).await?;
+                            outgoing_bytes.write_all(b"\n").await?;
                             log::error!("failed to parse incoming message: {error}. Raw: {incoming_line}");
                         }
                     }

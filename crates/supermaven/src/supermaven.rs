@@ -340,7 +340,7 @@ impl SupermavenAgent {
         while let Some(message) = outgoing.next().await {
             let bytes = serde_json::to_vec(&message)?;
             stdin.write_all(&bytes).await?;
-            stdin.write_all(&[b'\n']).await?;
+            stdin.write_all(b"\n").await?;
         }
         Ok(())
     }

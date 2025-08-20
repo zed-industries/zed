@@ -1699,7 +1699,7 @@ impl Vim {
             if c != '%' && c != '!' {
                 ret.push(c);
                 continue;
-            } else if ret.chars().last() == Some('\\') {
+            } else if ret.ends_with('\\') {
                 ret.pop();
                 ret.push(c);
                 continue;
@@ -1978,7 +1978,7 @@ impl ShellExec {
             }
             text.push_str(&String::from_utf8_lossy(&output.stdout));
             text.push_str(&String::from_utf8_lossy(&output.stderr));
-            if !text.is_empty() && text.chars().last() != Some('\n') {
+            if !text.is_empty() && !text.ends_with('\n') {
                 text.push('\n');
             }
 

@@ -1797,7 +1797,7 @@ impl GitBinary {
         S: AsRef<OsStr>,
     {
         let mut stdout = self.run_raw(args).await?;
-        if stdout.chars().last() == Some('\n') {
+        if stdout.ends_with('\n') {
             stdout.pop();
         }
         Ok(stdout)
