@@ -1005,6 +1005,7 @@ mod tests {
     use language_model::fake_provider::FakeLanguageModel;
     use serde_json::json;
     use settings::SettingsStore;
+    use util::path;
 
     #[gpui::test]
     async fn test_maintaining_project_context(cx: &mut TestAppContext) {
@@ -1202,7 +1203,7 @@ mod tests {
             }),
         )
         .await;
-        let project = Project::test(fs.clone(), [], cx).await;
+        let project = Project::test(fs.clone(), [path!("/a").as_ref()], cx).await;
         let context_store = cx.new(|cx| assistant_context::ContextStore::fake(project.clone(), cx));
         let history_store = cx.new(|cx| HistoryStore::new(context_store, cx));
         let agent = NativeAgent::new(
@@ -1253,7 +1254,7 @@ mod tests {
                     acp::ContentBlock::ResourceLink(acp::ResourceLink {
                         name: "b.md".into(),
                         uri: MentionUri::File {
-                            abs_path: "/a/b.md".into(),
+                            abs_path: path!("/a/b.md").into(),
                         }
                         .to_uri()
                         .to_string(),
