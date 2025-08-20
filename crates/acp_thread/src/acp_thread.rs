@@ -707,7 +707,7 @@ pub enum AcpThreadEvent {
     Retry(RetryStatus),
     Stopped,
     Error,
-    ServerExited(ExitStatus),
+    LoadError(LoadError),
 }
 
 impl EventEmitter<AcpThreadEvent> for AcpThread {}
@@ -721,20 +721,30 @@ pub enum ThreadStatus {
 
 #[derive(Debug, Clone)]
 pub enum LoadError {
+    NotInstalled {
+        error_message: SharedString,
+        install_message: SharedString,
+        install_command: String,
+    },
     Unsupported {
         error_message: SharedString,
         upgrade_message: SharedString,
         upgrade_command: String,
     },
-    Exited(i32),
+    Exited {
+        status: ExitStatus,
+    },
     Other(SharedString),
 }
 
 impl Display for LoadError {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            LoadError::Unsupported { error_message, .. } => write!(f, "{}", error_message),
-            LoadError::Exited(status) => write!(f, "Server exited with status {}", status),
+            LoadError::NotInstalled { error_message, .. }
+            | LoadError::Unsupported { error_message, .. } => {
+                write!(f, "{error_message}")
+            }
+            LoadError::Exited { status } => write!(f, "Server exited with status {status}"),
             LoadError::Other(msg) => write!(f, "{}", msg),
         }
     }
@@ -1683,8 +1693,8 @@ impl AcpThread {
         self.entries.iter().map(|e| e.to_markdown(cx)).collect()
     }
 
-    pub fn emit_server_exited(&mut self, status: ExitStatus, cx: &mut Context<Self>) {
-        cx.emit(AcpThreadEvent::ServerExited(status));
+    pub fn emit_load_error(&mut self, error: LoadError, cx: &mut Context<Self>) {
+        cx.emit(AcpThreadEvent::LoadError(error));
     }
 }
 

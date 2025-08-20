@@ -37,7 +37,7 @@ use rope::Point;
 use settings::{Settings as _, SettingsStore};
 use std::sync::Arc;
 use std::time::Instant;
-use std::{collections::BTreeMap, process::ExitStatus, rc::Rc, time::Duration};
+use std::{collections::BTreeMap, rc::Rc, time::Duration};
 use text::Anchor;
 use theme::ThemeSettings;
 use ui::{
@@ -148,9 +148,6 @@ enum ThreadState {
         description: Option<Entity<Markdown>>,
         configuration_view: Option<AnyView>,
         _subscription: Option<Subscription>,
-    },
-    ServerExited {
-        status: ExitStatus,
     },
 }
 
@@ -451,8 +448,7 @@ impl AcpThreadView {
             ThreadState::Ready { thread, .. } => Some(thread),
             ThreadState::Unauthenticated { .. }
             | ThreadState::Loading { .. }
-            | ThreadState::LoadError(..)
-            | ThreadState::ServerExited { .. } => None,
+            | ThreadState::LoadError { .. } => None,
         }
     }
 
@@ -462,7 +458,6 @@ impl AcpThreadView {
             ThreadState::Loading { .. } => "Loading…".into(),
             ThreadState::LoadError(_) => "Failed to load".into(),
             ThreadState::Unauthenticated { .. } => "Authentication Required".into(),
-            ThreadState::ServerExited { .. } => "Server exited unexpectedly".into(),
         }
     }
 
@@ -830,9 +825,9 @@ impl AcpThreadView {
                     cx,
                 );
             }
-            AcpThreadEvent::ServerExited(status) => {
+            AcpThreadEvent::LoadError(error) => {
                 self.thread_retry_status.take();
-                self.thread_state = ThreadState::ServerExited { status: *status };
+                self.thread_state = ThreadState::LoadError(error.clone());
             }
             AcpThreadEvent::TitleUpdated | AcpThreadEvent::TokenUsageUpdated => {}
         }
@@ -2154,28 +2149,6 @@ impl AcpThreadView {
             ))
     }
 
-    fn render_server_exited(&self, status: ExitStatus, _cx: &Context<Self>) -> AnyElement {
-        v_flex()
-            .items_center()
-            .justify_center()
-            .child(self.render_error_agent_logo())
-            .child(
-                v_flex()
-                    .mt_4()
-                    .mb_2()
-                    .gap_0p5()
-                    .text_center()
-                    .items_center()
-                    .child(Headline::new("Server exited unexpectedly").size(HeadlineSize::Medium))
-                    .child(
-                        Label::new(format!("Exit status: {}", status.code().unwrap_or(-127)))
-                            .size(LabelSize::Small)
-                            .color(Color::Muted),
-                    ),
-            )
-            .into_any_element()
-    }
-
     fn render_load_error(&self, e: &LoadError, cx: &Context<Self>) -> AnyElement {
         let mut container = v_flex()
             .items_center()
@@ -2204,39 +2177,102 @@ impl AcpThreadView {
         {
             let upgrade_message = upgrade_message.clone();
             let upgrade_command = upgrade_command.clone();
-            container = container.child(Button::new("upgrade", upgrade_message).on_click(
-                cx.listener(move |this, _, window, cx| {
-                    this.workspace
-                        .update(cx, |workspace, cx| {
-                            let project = workspace.project().read(cx);
-                            let cwd = project.first_project_directory(cx);
-                            let shell = project.terminal_settings(&cwd, cx).shell.clone();
-                            let spawn_in_terminal = task::SpawnInTerminal {
-                                id: task::TaskId("install".to_string()),
-                                full_label: upgrade_command.clone(),
-                                label: upgrade_command.clone(),
-                                command: Some(upgrade_command.clone()),
-                                args: Vec::new(),
-                                command_label: upgrade_command.clone(),
-                                cwd,
-                                env: Default::default(),
-                                use_new_terminal: true,
-                                allow_concurrent_runs: true,
-                                reveal: Default::default(),
-                                reveal_target: Default::default(),
-                                hide: Default::default(),
-                                shell,
-                                show_summary: true,
-                                show_command: true,
-                                show_rerun: false,
-                            };
-                            workspace
-                                .spawn_in_terminal(spawn_in_terminal, window, cx)
-                                .detach();
+            container = container.child(
+                Button::new("upgrade", upgrade_message)
+                    .tooltip(Tooltip::text(upgrade_command.clone()))
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        let task = this
+                            .workspace
+                            .update(cx, |workspace, cx| {
+                                let project = workspace.project().read(cx);
+                                let cwd = project.first_project_directory(cx);
+                                let shell = project.terminal_settings(&cwd, cx).shell.clone();
+                                let spawn_in_terminal = task::SpawnInTerminal {
+                                    id: task::TaskId("upgrade".to_string()),
+                                    full_label: upgrade_command.clone(),
+                                    label: upgrade_command.clone(),
+                                    command: Some(upgrade_command.clone()),
+                                    args: Vec::new(),
+                                    command_label: upgrade_command.clone(),
+                                    cwd,
+                                    env: Default::default(),
+                                    use_new_terminal: true,
+                                    allow_concurrent_runs: true,
+                                    reveal: Default::default(),
+                                    reveal_target: Default::default(),
+                                    hide: Default::default(),
+                                    shell,
+                                    show_summary: true,
+                                    show_command: true,
+                                    show_rerun: false,
+                                };
+                                workspace.spawn_in_terminal(spawn_in_terminal, window, cx)
+                            })
+                            .ok();
+                        let Some(task) = task else { return };
+                        cx.spawn_in(window, async move |this, cx| {
+                            if let Some(Ok(_)) = task.await {
+                                this.update_in(cx, |this, window, cx| {
+                                    this.reset(window, cx);
+                                })
+                                .ok();
+                            }
                         })
-                        .ok();
-                }),
-            ));
+                        .detach()
+                    })),
+            );
+        } else if let LoadError::NotInstalled {
+            install_message,
+            install_command,
+            ..
+        } = e
+        {
+            let install_message = install_message.clone();
+            let install_command = install_command.clone();
+            container = container.child(
+                Button::new("install", install_message)
+                    .tooltip(Tooltip::text(install_command.clone()))
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        let task = this
+                            .workspace
+                            .update(cx, |workspace, cx| {
+                                let project = workspace.project().read(cx);
+                                let cwd = project.first_project_directory(cx);
+                                let shell = project.terminal_settings(&cwd, cx).shell.clone();
+                                let spawn_in_terminal = task::SpawnInTerminal {
+                                    id: task::TaskId("install".to_string()),
+                                    full_label: install_command.clone(),
+                                    label: install_command.clone(),
+                                    command: Some(install_command.clone()),
+                                    args: Vec::new(),
+                                    command_label: install_command.clone(),
+                                    cwd,
+                                    env: Default::default(),
+                                    use_new_terminal: true,
+                                    allow_concurrent_runs: true,
+                                    reveal: Default::default(),
+                                    reveal_target: Default::default(),
+                                    hide: Default::default(),
+                                    shell,
+                                    show_summary: true,
+                                    show_command: true,
+                                    show_rerun: false,
+                                };
+                                workspace.spawn_in_terminal(spawn_in_terminal, window, cx)
+                            })
+                            .ok();
+                        let Some(task) = task else { return };
+                        cx.spawn_in(window, async move |this, cx| {
+                            if let Some(Ok(_)) = task.await {
+                                this.update_in(cx, |this, window, cx| {
+                                    this.reset(window, cx);
+                                })
+                                .ok();
+                            }
+                        })
+                        .detach()
+                    })),
+            );
         }
 
         container.into_any()
@@ -3705,6 +3741,18 @@ impl AcpThreadView {
                 }
             }))
     }
+
+    fn reset(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.thread_state = Self::initial_state(
+            self.agent.clone(),
+            None,
+            self.workspace.clone(),
+            self.project.clone(),
+            window,
+            cx,
+        );
+        cx.notify();
+    }
 }
 
 impl Focusable for AcpThreadView {
@@ -3743,12 +3791,6 @@ impl Render for AcpThreadView {
                     .items_center()
                     .justify_center()
                     .child(self.render_load_error(e, cx)),
-                ThreadState::ServerExited { status } => v_flex()
-                    .p_2()
-                    .flex_1()
-                    .items_center()
-                    .justify_center()
-                    .child(self.render_server_exited(*status, cx)),
                 ThreadState::Ready { thread, .. } => {
                     let thread_clone = thread.clone();
 

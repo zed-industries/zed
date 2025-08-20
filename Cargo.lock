@@ -285,6 +285,7 @@ dependencies = [
  "project",
  "rand 0.8.5",
  "schemars",
+ "semver",
  "serde",
  "serde_json",
  "settings",
