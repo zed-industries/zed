@@ -327,7 +327,7 @@ pub enum Event {
     RevealInProjectPanel(ProjectEntryId),
     SnippetEdit(BufferId, Vec<(lsp::Range, Snippet)>),
     ExpandedAllForEntry(WorktreeId, ProjectEntryId),
-    OpenProjectTransaction(ProjectTransaction),
+    EntryRenamed(ProjectTransaction),
     AgentLocationChanged,
 }
 
@@ -2148,7 +2148,7 @@ impl Project {
 
             project
                 .update(cx, |_, cx| {
-                    cx.emit(Event::OpenProjectTransaction(transaction));
+                    cx.emit(Event::EntryRenamed(transaction));
                 })
                 .ok();
 

@@ -1904,7 +1904,7 @@ impl Editor {
                         }
                     }
 
-                    project::Event::OpenProjectTransaction(transaction) => {
+                    project::Event::EntryRenamed(transaction) => {
                         let Some(workspace) = editor.workspace() else {
                             return;
                         };
@@ -1920,7 +1920,7 @@ impl Editor {
                                     Some(&editor),
                                     workspace,
                                     transaction,
-                                    "".to_string(),
+                                    "Rename".to_string(),
                                     &mut cx,
                                 )
                                 .await
