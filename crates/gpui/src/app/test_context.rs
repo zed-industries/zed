@@ -131,7 +131,7 @@ impl TestAppContext {
         let text_system = Arc::new(TextSystem::new(platform.text_system()));
 
         Self {
-            app: App::new_app(platform.clone(), asset_source, http_client),
+            app: App::new_app(platform.clone(), asset_source).with_http_client(http_client),
             background_executor,
             foreground_executor,
             dispatcher,

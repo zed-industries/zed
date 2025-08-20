@@ -24,6 +24,7 @@ pub use async_context::*;
 use collections::{FxHashMap, FxHashSet, HashMap, VecDeque};
 pub use context::*;
 pub use entity_map::*;
+#[cfg(feature = "http_client")]
 use http_client::{HttpClient, Url};
 use smallvec::SmallVec;
 #[cfg(any(test, feature = "test-support"))]
@@ -132,22 +133,14 @@ impl Application {
         #[cfg(any(test, feature = "test-support"))]
         log::info!("GPUI was compiled in test mode");
 
-        Self(App::new_app(
-            current_platform(false),
-            Arc::new(()),
-            Arc::new(NullHttpClient),
-        ))
+        Self(App::new_app(current_platform(false), Arc::new(())))
     }
 
     /// Build an app in headless mode. This prevents opening windows,
     /// but makes it possible to run an application in an context like
     /// SSH, where GUI applications are not allowed.
     pub fn headless() -> Self {
-        Self(App::new_app(
-            current_platform(true),
-            Arc::new(()),
-            Arc::new(NullHttpClient),
-        ))
+        Self(App::new_app(current_platform(true), Arc::new(())))
     }
 
     /// Assign
@@ -161,6 +154,7 @@ impl Application {
     }
 
     /// Sets the HTTP client for the application.
+    #[cfg(feature = "http_client")]
     pub fn with_http_client(self, http_client: Arc<dyn HttpClient>) -> Self {
         let mut context_lock = self.0.borrow_mut();
         context_lock.http_client = http_client;
@@ -253,6 +247,7 @@ pub struct App {
     pub(crate) loading_assets: FxHashMap<(TypeId, u64), Box<dyn Any>>,
     asset_source: Arc<dyn AssetSource>,
     pub(crate) svg_renderer: SvgRenderer,
+    #[cfg(feature = "http_client")]
     http_client: Arc<dyn HttpClient>,
     pub(crate) globals_by_type: FxHashMap<TypeId, Box<dyn Any>>,
     pub(crate) entities: EntityMap,
@@ -300,7 +295,6 @@ impl App {
     pub(crate) fn new_app(
         platform: Rc<dyn Platform>,
         asset_source: Arc<dyn AssetSource>,
-        http_client: Arc<dyn HttpClient>,
     ) -> Rc<AppCell> {
         let executor = platform.background_executor();
         let foreground_executor = platform.foreground_executor();
@@ -327,7 +321,8 @@ impl App {
                 svg_renderer: SvgRenderer::new(asset_source.clone()),
                 loading_assets: Default::default(),
                 asset_source,
-                http_client,
+                #[cfg(feature = "http_client")]
+                http_client: Arc::new(NullHttpClient),
                 globals_by_type: FxHashMap::default(),
                 entities,
                 new_entity_observers: SubscriberSet::new(),
@@ -850,11 +845,13 @@ impl App {
     }
 
     /// Returns the HTTP client for the application.
+    #[cfg(feature = "http_client")]
     pub fn http_client(&self) -> Arc<dyn HttpClient> {
         self.http_client.clone()
     }
 
     /// Sets the HTTP client for the application.
+    #[cfg(feature = "http_client")]
     pub fn set_http_client(&mut self, new_client: Arc<dyn HttpClient>) {
         self.http_client = new_client;
     }
@@ -2033,8 +2030,10 @@ pub struct KeystrokeEvent {
     pub context_stack: Vec<KeyContext>,
 }
 
+#[cfg(feature = "http_client")]
 struct NullHttpClient;
 
+#[cfg(feature = "http_client")]
 impl HttpClient for NullHttpClient {
     fn send(
         &self,

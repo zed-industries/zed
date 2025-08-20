@@ -49,16 +49,19 @@ pub enum ImageSource {
     Custom(Arc<dyn Fn(&mut Window, &mut App) -> Option<Result<Arc<RenderImage>, ImageCacheError>>>),
 }
 
+#[cfg(feature = "http_client")]
 fn is_uri(uri: &str) -> bool {
     http_client::Uri::from_str(uri).is_ok()
 }
 
+#[cfg(feature = "http_client")]
 impl From<SharedUri> for ImageSource {
     fn from(value: SharedUri) -> Self {
         Self::Resource(Resource::Uri(value))
     }
 }
 
+#[cfg(feature = "http_client")]
 impl<'a> From<&'a str> for ImageSource {
     fn from(s: &'a str) -> Self {
         if is_uri(s) {
@@ -69,6 +72,14 @@ impl<'a> From<&'a str> for ImageSource {
     }
 }
 
+#[cfg(not(feature = "http_client"))]
+impl<'a> From<&'a str> for ImageSource {
+    fn from(s: &'a str) -> Self {
+        Self::Resource(Resource::Embedded(s.to_string().into()))
+    }
+}
+
+#[cfg(feature = "http_client")]
 impl From<String> for ImageSource {
     fn from(s: String) -> Self {
         if is_uri(&s) {
@@ -76,6 +87,13 @@ impl From<String> for ImageSource {
         } else {
             Self::Resource(Resource::Embedded(s.into()))
         }
+    }
+}
+
+#[cfg(not(feature = "http_client"))]
+impl From<String> for ImageSource {
+    fn from(s: String) -> Self {
+        Self::Resource(Resource::Embedded(s.into()))
     }
 }
 
@@ -591,7 +609,6 @@ impl Asset for ImageAssetLoader {
         source: Self::Source,
         cx: &mut App,
     ) -> impl Future<Output = Self::Output> + Send + 'static {
-        let client = cx.http_client();
         // TODO: Can we make SVGs always rescale?
         // let scale_factor = cx.scale_factor();
         let svg_renderer = cx.svg_renderer();
@@ -599,7 +616,9 @@ impl Asset for ImageAssetLoader {
         async move {
             let bytes = match source.clone() {
                 Resource::Path(uri) => fs::read(uri.as_ref())?,
+                #[cfg(feature = "http_client")]
                 Resource::Uri(uri) => {
+                    let client = cx.http_client();
                     let mut response = client
                         .get(uri.as_ref(), ().into(), true)
                         .await
@@ -720,6 +739,7 @@ pub enum ImageCacheError {
     Io(Arc<std::io::Error>),
     /// An error that occurred while processing an image.
     #[error("unexpected http status for {uri}: {status}, body: {body}")]
+    #[cfg(feature = "http_client")]
     BadStatus {
         /// The URI of the image.
         uri: SharedUri,

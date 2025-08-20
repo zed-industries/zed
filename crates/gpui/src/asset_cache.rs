@@ -11,6 +11,7 @@ use std::sync::Arc;
 #[derive(Debug, PartialEq, Eq, Hash, Clone)]
 pub enum Resource {
     /// This resource is at a given URI
+    #[cfg(feature = "http_client")]
     Uri(SharedUri),
     /// This resource is at a given path in the file system
     Path(Arc<Path>),
@@ -18,6 +19,7 @@ pub enum Resource {
     Embedded(SharedString),
 }
 
+#[cfg(feature = "http_client")]
 impl From<SharedUri> for Resource {
     fn from(value: SharedUri) -> Self {
         Self::Uri(value)
