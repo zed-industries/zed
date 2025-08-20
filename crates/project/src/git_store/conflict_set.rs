@@ -653,7 +653,7 @@ mod tests {
 
         cx.run_until_parked();
         conflict_set.update(cx, |conflict_set, _| {
-            assert_eq!(conflict_set.has_conflict, false);
+            assert!(!conflict_set.has_conflict);
             assert_eq!(conflict_set.snapshot.conflicts.len(), 0);
         });
 

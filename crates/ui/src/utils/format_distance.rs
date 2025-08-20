@@ -13,9 +13,9 @@ impl DateTimeType {
     ///
     /// If the [`DateTimeType`] is already a [`NaiveDateTime`], it will be returned as is.
     /// If the [`DateTimeType`] is a [`DateTime<Local>`], it will be converted to a [`NaiveDateTime`].
-    pub fn to_naive(&self) -> NaiveDateTime {
+    pub fn to_naive(self) -> NaiveDateTime {
         match self {
-            DateTimeType::Naive(naive) => *naive,
+            DateTimeType::Naive(naive) => naive,
             DateTimeType::Local(local) => local.naive_local(),
         }
     }

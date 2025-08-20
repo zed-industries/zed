@@ -2868,12 +2868,7 @@ mod tests {
             1,
             blocks
                 .iter()
-                .filter(|(_, block)| {
-                    match block {
-                        Block::FoldedBuffer { .. } => true,
-                        _ => false,
-                    }
-                })
+                .filter(|(_, block)| { matches!(block, Block::FoldedBuffer { .. }) })
                 .count(),
             "Should have one folded block, producing a header of the second buffer"
         );

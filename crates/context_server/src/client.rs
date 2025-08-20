@@ -67,11 +67,7 @@ pub(crate) struct Client {
 pub(crate) struct ContextServerId(pub Arc<str>);
 
 fn is_null_value<T: Serialize>(value: &T) -> bool {
-    if let Ok(Value::Null) = serde_json::to_value(value) {
-        true
-    } else {
-        false
-    }
+    matches!(serde_json::to_value(value), Ok(Value::Null))
 }
 
 #[derive(Serialize, Deserialize)]

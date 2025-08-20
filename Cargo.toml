@@ -822,15 +822,21 @@ single_range_in_vec_init = "allow"
 style = { level = "allow", priority = -1 }
 
 # Temporary list of style lints that we've fixed so far.
+bool_assert_comparison = "warn"
 comparison_to_empty = "warn"
+doc_lazy_continuation = "warn"
+doc_overindented_list_items = "warn"
+inherent_to_string = "warn"
 for_kv_map = "warn"
 into_iter_on_ref = "warn"
+io_other_error = "warn"
 iter_cloned_collect = "warn"
 iter_next_slice = "warn"
 iter_nth = "warn"
 iter_nth_zero = "warn"
 iter_skip_next = "warn"
 let_and_return = "warn"
+match_like_matches_macro = "warn"
 module_inception = { level = "deny" }
 question_mark = { level = "deny" }
 single_match = "warn"
@@ -846,6 +852,7 @@ needless_return = { level = "warn" }
 unnecessary_mut_passed = {level = "warn"}
 unnecessary_map_or = { level = "warn" }
 unused_unit = "warn"
+wrong_self_convention = "warn"
 
 # Individual rules that have violations in the codebase:
 type_complexity = "allow"

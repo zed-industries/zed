@@ -2515,7 +2515,7 @@ impl ProjectPanel {
 
             if clip_is_cut {
                 // Convert the clipboard cut entry to a copy entry after the first paste.
-                self.clipboard = self.clipboard.take().map(ClipboardEntry::to_copy_entry);
+                self.clipboard = self.clipboard.take().map(ClipboardEntry::into_copy_entry);
             }
 
             self.expand_entry(worktree_id, entry.id, cx);
@@ -5709,7 +5709,7 @@ impl ClipboardEntry {
         }
     }
 
-    fn to_copy_entry(self) -> Self {
+    fn into_copy_entry(self) -> Self {
         match self {
             ClipboardEntry::Copied(_) => self,
             ClipboardEntry::Cut(entries) => ClipboardEntry::Copied(entries),

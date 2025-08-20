@@ -1070,8 +1070,7 @@ pub struct ProjectDiffEmptyState {
 impl RenderOnce for ProjectDiffEmptyState {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let status_against_remote = |ahead_by: usize, behind_by: usize| -> bool {
-            match self.current_branch {
-                Some(Branch {
+            matches!(self.current_branch, Some(Branch {
                     upstream:
                         Some(Upstream {
                             tracking:
@@ -1081,9 +1080,7 @@ impl RenderOnce for ProjectDiffEmptyState {
                             ..
                         }),
                     ..
-                }) if (ahead > 0) == (ahead_by > 0) && (behind > 0) == (behind_by > 0) => true,
-                _ => false,
-            }
+                }) if (ahead > 0) == (ahead_by > 0) && (behind > 0) == (behind_by > 0))
         };
 
         let change_count = |current_branch: &Branch| -> (usize, usize) {

@@ -181,7 +181,7 @@ impl Message {
         }
     }
 
-    pub fn to_string(&self) -> String {
+    pub fn to_message_content(&self) -> String {
         let mut result = String::new();
 
         if !self.loaded_context.text.is_empty() {
@@ -2823,7 +2823,7 @@ impl Thread {
 
         let message_content = self
             .message(message_id)
-            .map(|msg| msg.to_string())
+            .map(|msg| msg.to_message_content())
             .unwrap_or_default();
 
         cx.background_spawn(async move {

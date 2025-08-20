@@ -1139,7 +1139,7 @@ fn update_window(mut state: RefMut<WaylandWindowState>) {
 }
 
 impl WindowDecorations {
-    fn to_xdg(&self) -> zxdg_toplevel_decoration_v1::Mode {
+    fn to_xdg(self) -> zxdg_toplevel_decoration_v1::Mode {
         match self {
             WindowDecorations::Client => zxdg_toplevel_decoration_v1::Mode::ClientSide,
             WindowDecorations::Server => zxdg_toplevel_decoration_v1::Mode::ServerSide,
@@ -1148,7 +1148,7 @@ impl WindowDecorations {
 }
 
 impl ResizeEdge {
-    fn to_xdg(&self) -> xdg_toplevel::ResizeEdge {
+    fn to_xdg(self) -> xdg_toplevel::ResizeEdge {
         match self {
             ResizeEdge::Top => xdg_toplevel::ResizeEdge::Top,
             ResizeEdge::TopRight => xdg_toplevel::ResizeEdge::TopRight,

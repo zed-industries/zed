@@ -904,7 +904,7 @@ impl BreakpointState {
     }
 
     #[inline]
-    pub fn to_int(&self) -> i32 {
+    pub fn to_int(self) -> i32 {
         match self {
             BreakpointState::Enabled => 0,
             BreakpointState::Disabled => 1,
