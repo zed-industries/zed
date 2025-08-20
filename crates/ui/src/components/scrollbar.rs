@@ -693,12 +693,6 @@ impl<S: ScrollbarVisibilitySetting, T: ScrollableHandle> ScrollbarState<S, T> {
             .is_some_and(|state| state.parent_bounds.contains(position))
     }
 
-    fn thumb_for_position(&self, position: &Point<Pixels>) -> Option<&ScrollbarLayout> {
-        self.last_prepaint_state
-            .as_ref()
-            .and_then(|state| state.thumb_for_position(position))
-    }
-
     fn hit_for_position(&self, position: &Point<Pixels>) -> Option<&ScrollbarLayout> {
         self.last_prepaint_state
             .as_ref()
@@ -1169,19 +1163,9 @@ impl<S: ScrollbarVisibilitySetting, T: ScrollableHandle> Element for ScrollbarEl
                 let state = self.state.clone();
 
                 move |event: &ScrollWheelEvent, phase, window, cx| {
-                    if phase.capture()
-                        && state.read(cx).thumb_for_position(&event.position).is_some()
-                    {
-                        let scroll_handle = state.read(cx).scroll_handle();
-                        let current_offset = scroll_handle.offset();
+                    if phase.capture() {
                         state.update(cx, |state, cx| {
-                            state.set_offset(
-                                current_offset + event.delta.pixel_delta(window.line_height()),
-                                window,
-                                cx,
-                            );
-                            state.show_scrollbars(window, cx);
-                            cx.stop_propagation();
+                            state.update_hovered_thumb(&event.position, window, cx)
                         });
                     }
                 }
