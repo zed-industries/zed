@@ -59,8 +59,7 @@ use crate::ui::preview::UsageCallout;
 use crate::ui::{AgentNotification, AgentNotificationEvent, BurnModeTooltip};
 use crate::{
     AgentDiffPane, AgentPanel, ContinueThread, ContinueWithBurnMode, ExpandMessageEditor, Follow,
-    KeepAll, NewExternalAgentThread, NewTextThread, NewThread, OpenAgentDiff, OpenHistory,
-    RejectAll, ToggleBurnMode, ToggleProfileSelector,
+    KeepAll, OpenAgentDiff, OpenHistory, RejectAll, ToggleBurnMode, ToggleProfileSelector,
 };
 
 const RESPONSE_PADDING_X: Pixels = px(19.);
