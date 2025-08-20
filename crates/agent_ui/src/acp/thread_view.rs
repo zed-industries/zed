@@ -3626,11 +3626,40 @@ impl AcpThreadView {
     fn handle_feedback_click(
         &mut self,
         feedback: ThreadFeedback,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.thread_feedback == Some(feedback) {
+            return;
+        }
+        let Some(thread) = self.thread().cloned() else {
+            return;
+        };
+        let Some(telemetry) = thread.read(cx).connection().telemetry() else {
+            return;
+        };
+
         self.thread_feedback = Some(feedback);
         cx.notify();
+
+        let session_id = thread.read(cx).session_id().clone();
+        let agent_name = telemetry.agent_name();
+        let task = telemetry.thread_data(&session_id, cx);
+        cx.background_spawn(async move {
+            let thread = task.await?;
+            let rating = match feedback {
+                ThreadFeedback::Positive => "positive",
+                ThreadFeedback::Negative => "negative",
+            };
+            telemetry::event!(
+                "Agent Thread Rated",
+                rating = rating,
+                agent = agent_name,
+                thread = thread
+            );
+            anyhow::Ok(())
+        })
+        .detach_and_log_err(cx);
     }
 
     fn render_vertical_scrollbar(&self, cx: &mut Context<Self>) -> Stateful<Div> {
