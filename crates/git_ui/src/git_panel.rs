@@ -2175,7 +2175,7 @@ impl GitPanel {
 
         let worktree = if worktrees.len() == 1 {
             Task::ready(Some(worktrees.first().unwrap().clone()))
-        } else if worktrees.len() == 0 {
+        } else if worktrees.is_empty() {
             let result = window.prompt(
                 PromptLevel::Warning,
                 "Unable to initialize a git repository",
@@ -2758,22 +2758,22 @@ impl GitPanel {
             }
         }
 
-        if conflict_entries.len() == 0 && staged_count == 1 && pending_staged_count == 0 {
+        if conflict_entries.is_empty() && staged_count == 1 && pending_staged_count == 0 {
             match pending_status_for_single_staged {
                 Some(TargetStatus::Staged) | None => {
                     self.single_staged_entry = single_staged_entry;
                 }
                 _ => {}
             }
-        } else if conflict_entries.len() == 0 && pending_staged_count == 1 {
+        } else if conflict_entries.is_empty() && pending_staged_count == 1 {
             self.single_staged_entry = last_pending_staged;
         }
 
-        if conflict_entries.len() == 0 && changed_entries.len() == 1 {
+        if conflict_entries.is_empty() && changed_entries.len() == 1 {
             self.single_tracked_entry = changed_entries.first().cloned();
         }
 
-        if conflict_entries.len() > 0 {
+        if !conflict_entries.is_empty() {
             self.entries.push(GitListEntry::Header(GitHeaderEntry {
                 header: Section::Conflict,
             }));
@@ -2781,7 +2781,7 @@ impl GitPanel {
                 .extend(conflict_entries.into_iter().map(GitListEntry::Status));
         }
 
-        if changed_entries.len() > 0 {
+        if !changed_entries.is_empty() {
             if !sort_by_path {
                 self.entries.push(GitListEntry::Header(GitHeaderEntry {
                     header: Section::Tracked,
@@ -2790,7 +2790,7 @@ impl GitPanel {
             self.entries
                 .extend(changed_entries.into_iter().map(GitListEntry::Status));
         }
-        if new_entries.len() > 0 {
+        if !new_entries.is_empty() {
             self.entries.push(GitListEntry::Header(GitHeaderEntry {
                 header: Section::New,
             }));
@@ -4476,7 +4476,7 @@ fn current_language_model(cx: &Context<'_, GitPanel>) -> Option<Arc<dyn Language
 impl Render for GitPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let project = self.project.read(cx);
-        let has_entries = self.entries.len() > 0;
+        let has_entries = !self.entries.is_empty();
         let room = self
             .workspace
             .upgrade()

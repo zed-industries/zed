@@ -234,7 +234,7 @@ impl ToolCard for FindPathToolCard {
         workspace: WeakEntity<Workspace>,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let matches_label: SharedString = if self.paths.len() == 0 {
+        let matches_label: SharedString = if self.paths.is_empty() {
             "No matches".into()
         } else if self.paths.len() == 1 {
             "1 match".into()

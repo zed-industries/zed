@@ -4377,7 +4377,7 @@ mod tests {
                     }
                 }
             }
-            if errors.len() > 0 {
+            if !errors.is_empty() {
                 panic!(
                     "Failed to build actions using {{}} as input: {:?}. Errors:\n{}",
                     failing_names,

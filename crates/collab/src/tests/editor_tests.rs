@@ -2908,7 +2908,7 @@ async fn test_lsp_pull_diagnostics(
 
     {
         assert!(
-            diagnostics_pulls_result_ids.lock().await.len() > 0,
+            !diagnostics_pulls_result_ids.lock().await.is_empty(),
             "Initial diagnostics pulls should report None at least"
         );
         assert_eq!(

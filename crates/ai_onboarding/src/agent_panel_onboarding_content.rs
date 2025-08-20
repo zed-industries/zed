@@ -74,7 +74,7 @@ impl Render for AgentPanelOnboarding {
                 }),
             )
             .map(|this| {
-                if enrolled_in_trial || is_pro_user || self.configured_providers.len() >= 1 {
+                if enrolled_in_trial || is_pro_user || !self.configured_providers.is_empty() {
                     this
                 } else {
                     this.child(ApiKeysWithoutProviders::new())
