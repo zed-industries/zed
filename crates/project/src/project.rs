@@ -4329,7 +4329,7 @@ impl Project {
     /// # Arguments
     ///
     /// * `path` - A full path that starts with a worktree root name, or alternatively a
-    ///            relative path within a visible worktree.
+    ///   relative path within a visible worktree.
     /// * `cx` - A reference to the `AppContext`.
     ///
     /// # Returns
