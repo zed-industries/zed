@@ -171,7 +171,7 @@ impl AcpThreadView {
                 project.clone(),
                 thread_store.clone(),
                 text_thread_store.clone(),
-                "Message the agent － @ to include context",
+                "Message the agent — @ to include context",
                 prevent_slash_commands,
                 editor::EditorMode::AutoHeight {
                     min_lines: MIN_EDITOR_LINES,
