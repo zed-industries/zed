@@ -1,6 +1,5 @@
 //! # system_specs
 
-use anyhow::Context as _;
 use client::telemetry;
 pub use gpui::GpuSpecs;
 use gpui::{App, AppContext as _, SemanticVersion, Task, Window, actions};
@@ -182,6 +181,7 @@ pub struct GpuInfo {
 
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 pub fn read_gpu_info_from_sys_class_drm() -> anyhow::Result<Vec<GpuInfo>> {
+    use anyhow::Context as _;
     use pciid_parser;
     let dir_iter = std::fs::read_dir("/sys/class/drm").context("Failed to read /sys/class/drm")?;
     let mut pci_addresses = vec![];
@@ -263,6 +263,7 @@ pub fn read_gpu_info_from_sys_class_drm() -> anyhow::Result<Vec<GpuInfo>> {
 
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 fn read_pci_id_from_path(path: impl AsRef<std::path::Path>) -> anyhow::Result<u16> {
+    use anyhow::Context as _;
     let id = std::fs::read_to_string(path)?;
     let id = id
         .trim()
