@@ -53,7 +53,7 @@ impl AgentServer for Gemini {
                 return Err(LoadError::NotInstalled {
                     error_message: "Failed to find Gemini CLI binary".into(),
                     install_message: "Install Gemini CLI".into(),
-                    install_command: "npm install -g @google/gemini-cli@latest".into()
+                    install_command: "npm install -g @google/gemini-cli@preview".into()
                 }.into());
             };
 
