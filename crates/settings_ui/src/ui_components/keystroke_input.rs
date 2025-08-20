@@ -268,12 +268,14 @@ impl KeystrokeInput {
             if self.search {
                 if self.previous_modifiers.modified() {
                     last.modifiers |= event.modifiers;
+                    last.inner.modifiers |= event.modifiers;
                 } else {
                     self.keystrokes.push(Self::dummy(event.modifiers));
                 }
                 self.previous_modifiers |= event.modifiers;
             } else {
                 last.modifiers = event.modifiers;
+                last.inner.modifiers = event.modifiers;
                 return;
             }
         } else if keystrokes_len < Self::KEYSTROKE_COUNT_MAX {
