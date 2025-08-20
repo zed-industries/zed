@@ -1563,12 +1563,11 @@ impl Thread {
                 let text = match event {
                     LanguageModelCompletionEvent::Text(text) => text,
                     LanguageModelCompletionEvent::StatusUpdate(
-                        CompletionRequestStatus::UsageUpdated { .. },
+                        CompletionRequestStatus::UsageUpdated { amount, limit },
                     ) => {
-                        // this.update(cx, |thread, cx| {
-                        //     thread.update_model_request_usage(amount as u32, limit, cx);
-                        // })?;
-                        // TODO: handle usage update
+                        this.update(cx, |thread, cx| {
+                            thread.update_model_request_usage(amount, limit, cx);
+                        })?;
                         continue;
                     }
                     _ => continue,
@@ -1629,12 +1628,11 @@ impl Thread {
                 let text = match event {
                     LanguageModelCompletionEvent::Text(text) => text,
                     LanguageModelCompletionEvent::StatusUpdate(
-                        CompletionRequestStatus::UsageUpdated { .. },
+                        CompletionRequestStatus::UsageUpdated { amount, limit },
                     ) => {
-                        // this.update(cx, |thread, cx| {
-                        //     thread.update_model_request_usage(amount as u32, limit, cx);
-                        // })?;
-                        // TODO: handle usage update
+                        this.update(cx, |thread, cx| {
+                            thread.update_model_request_usage(amount, limit, cx);
+                        })?;
                         continue;
                     }
                     _ => continue,
