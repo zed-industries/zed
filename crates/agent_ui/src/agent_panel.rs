@@ -45,7 +45,7 @@ use assistant_tool::ToolWorkingSet;
 use client::{UserStore, zed_urls};
 use cloud_llm_client::{CompletionIntent, Plan, UsageLimit};
 use editor::{Anchor, AnchorRangeExt as _, Editor, EditorEvent, MultiBuffer};
-use feature_flags::{self, AcpFeatureFlag, ClaudeCodeFeatureFlag, FeatureFlagAppExt};
+use feature_flags::{self, ClaudeCodeFeatureFlag, FeatureFlagAppExt, GeminiAndNativeFeatureFlag};
 use fs::Fs;
 use gpui::{
     Action, Animation, AnimationExt as _, AnyElement, App, AsyncWindowContext, ClipboardItem,
@@ -725,7 +725,7 @@ impl AgentPanel {
             let assistant_navigation_menu =
                 ContextMenu::build_persistent(window, cx, move |mut menu, _window, cx| {
                     if let Some(panel) = panel.upgrade() {
-                        if cx.has_flag::<AcpFeatureFlag>() {
+                        if cx.has_flag::<GeminiAndNativeFeatureFlag>() {
                             menu = Self::populate_recently_opened_menu_section_new(menu, panel, cx);
                         } else {
                             menu = Self::populate_recently_opened_menu_section_old(menu, panel, cx);
@@ -881,7 +881,7 @@ impl AgentPanel {
     }
 
     fn new_thread(&mut self, action: &NewThread, window: &mut Window, cx: &mut Context<Self>) {
-        if cx.has_flag::<AcpFeatureFlag>() {
+        if cx.has_flag::<GeminiAndNativeFeatureFlag>() {
             return self.new_agent_thread(AgentType::NativeAgent, window, cx);
         }
         // Preserve chat box text when using creating new thread
@@ -1058,7 +1058,7 @@ impl AgentPanel {
             this.update_in(cx, |this, window, cx| {
                 match ext_agent {
                     crate::ExternalAgent::Gemini | crate::ExternalAgent::NativeAgent => {
-                        if !cx.has_flag::<AcpFeatureFlag>() {
+                        if !cx.has_flag::<GeminiAndNativeFeatureFlag>() {
                             return;
                         }
                     }
@@ -1825,7 +1825,7 @@ impl Focusable for AgentPanel {
             ActiveView::Thread { message_editor, .. } => message_editor.focus_handle(cx),
             ActiveView::ExternalAgentThread { thread_view, .. } => thread_view.focus_handle(cx),
             ActiveView::History => {
-                if cx.has_flag::<feature_flags::AcpFeatureFlag>() {
+                if cx.has_flag::<feature_flags::GeminiAndNativeFeatureFlag>() {
                     self.acp_history.focus_handle(cx)
                 } else {
                     self.history.focus_handle(cx)
@@ -2441,7 +2441,7 @@ impl AgentPanel {
                             )
                             .separator()
                             .header("External Agents")
-                            .when(cx.has_flag::<AcpFeatureFlag>(), |menu| {
+                            .when(cx.has_flag::<GeminiAndNativeFeatureFlag>(), |menu| {
                                 menu.item(
                                     ContextMenuEntry::new("New Gemini Thread")
                                         .icon(IconName::AiGemini)
@@ -2564,7 +2564,7 @@ impl AgentPanel {
     }
 
     fn render_toolbar(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        if cx.has_flag::<feature_flags::AcpFeatureFlag>()
+        if cx.has_flag::<feature_flags::GeminiAndNativeFeatureFlag>()
             || cx.has_flag::<feature_flags::ClaudeCodeFeatureFlag>()
         {
             self.render_toolbar_new(window, cx).into_any_element()
@@ -2749,7 +2749,7 @@ impl AgentPanel {
                 false
             }
             _ => {
-                let history_is_empty = if cx.has_flag::<AcpFeatureFlag>() {
+                let history_is_empty = if cx.has_flag::<GeminiAndNativeFeatureFlag>() {
                     self.acp_history_store.read(cx).is_empty(cx)
                 } else {
                     self.history_store
@@ -3641,7 +3641,7 @@ impl Render for AgentPanel {
                     .child(thread_view.clone())
                     .child(self.render_drag_target(cx)),
                 ActiveView::History => {
-                    if cx.has_flag::<feature_flags::AcpFeatureFlag>() {
+                    if cx.has_flag::<feature_flags::GeminiAndNativeFeatureFlag>() {
                         parent.child(self.acp_history.clone())
                     } else {
                         parent.child(self.history.clone())
