@@ -271,7 +271,7 @@ fn working_dir(
     let project = project.read(cx);
     let cd = &input.cd;
 
-    if cd == "." || cd == "" {
+    if cd == "." || cd.is_empty() {
         // Accept "." or "" as meaning "the one worktree" if we only have one worktree.
         let mut worktrees = project.worktrees(cx);
 
@@ -296,10 +296,8 @@ fn working_dir(
             {
                 return Ok(Some(input_path.into()));
             }
-        } else {
-            if let Some(worktree) = project.worktree_for_root_name(cd, cx) {
-                return Ok(Some(worktree.read(cx).abs_path().to_path_buf()));
-            }
+        } else if let Some(worktree) = project.worktree_for_root_name(cd, cx) {
+            return Ok(Some(worktree.read(cx).abs_path().to_path_buf()));
         }
 
         anyhow::bail!("`cd` directory {cd:?} was not in any of the project's worktrees.");
@@ -319,7 +317,7 @@ mod tests {
     use theme::ThemeSettings;
     use util::test::TempTree;
 
-    use crate::AgentResponseEvent;
+    use crate::ThreadEvent;
 
     use super::*;
 
@@ -396,7 +394,7 @@ mod tests {
             });
             cx.run_until_parked();
             let event = stream_rx.try_next();
-            if let Ok(Some(Ok(AgentResponseEvent::ToolCallAuthorization(auth)))) = event {
+            if let Ok(Some(Ok(ThreadEvent::ToolCallAuthorization(auth)))) = event {
                 auth.response.send(auth.options[0].id.clone()).unwrap();
             }
 

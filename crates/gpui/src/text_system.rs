@@ -435,7 +435,7 @@ impl WindowTextSystem {
                     });
                 }
 
-                if decoration_runs.last().map_or(false, |last_run| {
+                if decoration_runs.last().is_some_and(|last_run| {
                     last_run.color == run.color
                         && last_run.underline == run.underline
                         && last_run.strikethrough == run.strikethrough

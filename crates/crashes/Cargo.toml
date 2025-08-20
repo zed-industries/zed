@@ -16,6 +16,9 @@ serde.workspace = true
 serde_json.workspace = true
 workspace-hack.workspace = true
 
+[target.'cfg(target_os = "macos")'.dependencies]
+mach2.workspace = true
+
 [lints]
 workspace = true
 

@@ -82,7 +82,7 @@ impl Settings for WorktreeSettings {
                     .ancestors()
                     .map(|a| a.to_string_lossy().into())
             })
-            .filter(|p| p != "")
+            .filter(|p: &String| !p.is_empty())
             .collect();
         file_scan_exclusions.sort();
         private_files.sort();

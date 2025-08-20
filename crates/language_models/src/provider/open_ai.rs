@@ -404,7 +404,7 @@ pub fn into_open_ai(
             match content {
                 MessageContent::Text(text) | MessageContent::Thinking { text, .. } => {
                     add_message_content_part(
-                        open_ai::MessagePart::Text { text: text },
+                        open_ai::MessagePart::Text { text },
                         message.role,
                         &mut messages,
                     )

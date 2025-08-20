@@ -37,7 +37,7 @@ impl ModalView for DisconnectedOverlay {
         _window: &mut Window,
         _: &mut Context<Self>,
     ) -> workspace::DismissDecision {
-        return workspace::DismissDecision::Dismiss(self.finished);
+        workspace::DismissDecision::Dismiss(self.finished)
     }
     fn fade_out_background(&self) -> bool {
         true
@@ -88,11 +88,8 @@ impl DisconnectedOverlay {
         self.finished = true;
         cx.emit(DismissEvent);
 
-        match &self.host {
-            Host::SshRemoteProject(ssh_connection_options) => {
-                self.reconnect_to_ssh_remote(ssh_connection_options.clone(), window, cx);
-            }
-            _ => {}
+        if let Host::SshRemoteProject(ssh_connection_options) = &self.host {
+            self.reconnect_to_ssh_remote(ssh_connection_options.clone(), window, cx);
         }
     }
 

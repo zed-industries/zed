@@ -1340,7 +1340,7 @@ impl BufferSearchBar {
         if self.query(cx).is_empty()
             && let Some(new_query) = self
                 .search_history
-                .current(&mut self.search_history_cursor)
+                .current(&self.search_history_cursor)
                 .map(str::to_string)
         {
             drop(self.search(&new_query, Some(self.search_options), window, cx));

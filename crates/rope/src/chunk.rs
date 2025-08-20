@@ -543,7 +543,7 @@ impl Iterator for Tabs {
         // Since tabs are 1 byte the tab offset is the same as the byte offset
         let position = TabPosition {
             byte_offset: tab_offset,
-            char_offset: char_offset,
+            char_offset,
         };
         // Remove the tab we've just seen
         self.tabs ^= 1 << tab_offset;

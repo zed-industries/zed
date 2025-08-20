@@ -213,7 +213,7 @@ impl TableInteractionState {
 
         let mut column_ix = 0;
         let resizable_columns_slice = *resizable_columns;
-        let mut resizable_columns = resizable_columns.into_iter();
+        let mut resizable_columns = resizable_columns.iter();
 
         let dividers = intersperse_with(spacers, || {
             window.with_id(column_ix, |window| {
@@ -731,7 +731,7 @@ impl<const COLS: usize> ColumnWidths<COLS> {
         }
         widths[col_idx] = widths[col_idx] + (diff - diff_remaining);
 
-        return diff_remaining;
+        diff_remaining
     }
 }
 
@@ -801,7 +801,7 @@ impl<const COLS: usize> Table<COLS> {
     ) -> Self {
         self.rows = TableContents::UniformList(UniformListData {
             element_id: id.into(),
-            row_count: row_count,
+            row_count,
             render_item_fn: Box::new(render_item_fn),
         });
         self

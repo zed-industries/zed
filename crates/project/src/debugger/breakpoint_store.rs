@@ -267,7 +267,7 @@ impl BreakpointStore {
         message: TypedEnvelope<proto::ToggleBreakpoint>,
         mut cx: AsyncApp,
     ) -> Result<proto::Ack> {
-        let breakpoints = this.read_with(&mut cx, |this, _| this.breakpoint_store())?;
+        let breakpoints = this.read_with(&cx, |this, _| this.breakpoint_store())?;
         let path = this
             .update(&mut cx, |this, cx| {
                 this.project_path_for_absolute_path(message.payload.path.as_ref(), cx)

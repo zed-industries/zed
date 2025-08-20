@@ -146,7 +146,7 @@ impl DapLocator for CargoLocator {
         let is_test = build_config
             .args
             .first()
-            .map_or(false, |arg| arg == "test" || arg == "t");
+            .is_some_and(|arg| arg == "test" || arg == "t");
 
         let executables = output
             .lines()

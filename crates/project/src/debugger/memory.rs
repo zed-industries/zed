@@ -329,7 +329,7 @@ impl Iterator for MemoryIterator {
         }
         if !self.fetch_next_page() {
             self.start += 1;
-            return Some(MemoryCell(None));
+            Some(MemoryCell(None))
         } else {
             self.next()
         }

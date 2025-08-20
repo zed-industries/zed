@@ -773,7 +773,7 @@ impl LanguageRegistry {
             };
 
             let content_matches = || {
-                config.first_line_pattern.as_ref().map_or(false, |pattern| {
+                config.first_line_pattern.as_ref().is_some_and(|pattern| {
                     content
                         .as_ref()
                         .is_some_and(|content| pattern.is_match(content))

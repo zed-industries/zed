@@ -80,33 +80,48 @@ impl AgentTool for WebSearchTool {
                 }
             };
 
-            let result_text = if response.results.len() == 1 {
-                "1 result".to_string()
-            } else {
-                format!("{} results", response.results.len())
-            };
-            event_stream.update_fields(acp::ToolCallUpdateFields {
-                title: Some(format!("Searched the web: {result_text}")),
-                content: Some(
-                    response
-                        .results
-                        .iter()
-                        .map(|result| acp::ToolCallContent::Content {
-                            content: acp::ContentBlock::ResourceLink(acp::ResourceLink {
-                                name: result.title.clone(),
-                                uri: result.url.clone(),
-                                title: Some(result.title.clone()),
-                                description: Some(result.text.clone()),
-                                mime_type: None,
-                                annotations: None,
-                                size: None,
-                            }),
-                        })
-                        .collect(),
-                ),
-                ..Default::default()
-            });
+            emit_update(&response, &event_stream);
             Ok(WebSearchToolOutput(response))
         })
     }
+
+    fn replay(
+        &self,
+        _input: Self::Input,
+        output: Self::Output,
+        event_stream: ToolCallEventStream,
+        _cx: &mut App,
+    ) -> Result<()> {
+        emit_update(&output.0, &event_stream);
+        Ok(())
+    }
+}
+
+fn emit_update(response: &WebSearchResponse, event_stream: &ToolCallEventStream) {
+    let result_text = if response.results.len() == 1 {
+        "1 result".to_string()
+    } else {
+        format!("{} results", response.results.len())
+    };
+    event_stream.update_fields(acp::ToolCallUpdateFields {
+        title: Some(format!("Searched the web: {result_text}")),
+        content: Some(
+            response
+                .results
+                .iter()
+                .map(|result| acp::ToolCallContent::Content {
+                    content: acp::ContentBlock::ResourceLink(acp::ResourceLink {
+                        name: result.title.clone(),
+                        uri: result.url.clone(),
+                        title: Some(result.title.clone()),
+                        description: Some(result.text.clone()),
+                        mime_type: None,
+                        annotations: None,
+                        size: None,
+                    }),
+                })
+                .collect(),
+        ),
+        ..Default::default()
+    });
 }

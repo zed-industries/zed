@@ -1373,12 +1373,12 @@ impl ActiveThread {
             editor.focus_handle(cx).focus(window);
             editor.move_to_end(&editor::actions::MoveToEnd, window, cx);
         });
-        let buffer_edited_subscription = cx.subscribe(&editor, |this, _, event, cx| match event {
-            EditorEvent::BufferEdited => {
-                this.update_editing_message_token_count(true, cx);
-            }
-            _ => {}
-        });
+        let buffer_edited_subscription =
+            cx.subscribe(&editor, |this, _, event: &EditorEvent, cx| {
+                if event == &EditorEvent::BufferEdited {
+                    this.update_editing_message_token_count(true, cx);
+                }
+            });
 
         let context_picker_menu_handle = PopoverMenuHandle::default();
         let context_strip = cx.new(|cx| {
@@ -2246,9 +2246,7 @@ impl ActiveThread {
         let after_editing_message = self
             .editing_message
             .as_ref()
-            .map_or(false, |(editing_message_id, _)| {
-                message_id > *editing_message_id
-            });
+            .is_some_and(|(editing_message_id, _)| message_id > *editing_message_id);
 
         let backdrop = div()
             .id(("backdrop", ix))

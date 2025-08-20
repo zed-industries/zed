@@ -332,9 +332,9 @@ impl UserStore {
     async fn handle_update_contacts(
         this: Entity<Self>,
         message: TypedEnvelope<proto::UpdateContacts>,
-        mut cx: AsyncApp,
+        cx: AsyncApp,
     ) -> Result<()> {
-        this.read_with(&mut cx, |this, _| {
+        this.read_with(&cx, |this, _| {
             this.update_contacts_tx
                 .unbounded_send(UpdateContacts::Update(message.payload))
                 .unwrap();
@@ -848,7 +848,7 @@ impl UserStore {
 
     pub fn has_accepted_terms_of_service(&self) -> bool {
         self.accepted_tos_at
-            .map_or(false, |accepted_tos_at| accepted_tos_at.is_some())
+            .is_some_and(|accepted_tos_at| accepted_tos_at.is_some())
     }
 
     pub fn accept_terms_of_service(&self, cx: &Context<Self>) -> Task<Result<()>> {

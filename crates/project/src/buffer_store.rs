@@ -234,7 +234,7 @@ impl RemoteBufferStore {
                 }
             }
         }
-        return Ok(None);
+        Ok(None)
     }
 
     pub fn incomplete_buffer_ids(&self) -> Vec<BufferId> {
@@ -413,13 +413,10 @@ impl LocalBufferStore {
         cx: &mut Context<BufferStore>,
     ) {
         cx.subscribe(worktree, |this, worktree, event, cx| {
-            if worktree.read(cx).is_local() {
-                match event {
-                    worktree::Event::UpdatedEntries(changes) => {
-                        Self::local_worktree_entries_changed(this, &worktree, changes, cx);
-                    }
-                    _ => {}
-                }
+            if worktree.read(cx).is_local()
+                && let worktree::Event::UpdatedEntries(changes) = event
+            {
+                Self::local_worktree_entries_changed(this, &worktree, changes, cx);
             }
         })
         .detach();
@@ -947,10 +944,9 @@ impl BufferStore {
     }
 
     pub fn get_by_path(&self, path: &ProjectPath) -> Option<Entity<Buffer>> {
-        self.path_to_buffer_id.get(path).and_then(|buffer_id| {
-            let buffer = self.get(*buffer_id);
-            buffer
-        })
+        self.path_to_buffer_id
+            .get(path)
+            .and_then(|buffer_id| self.get(*buffer_id))
     }
 
     pub fn get(&self, buffer_id: BufferId) -> Option<Entity<Buffer>> {
@@ -1313,10 +1309,7 @@ impl BufferStore {
                     let new_path = file.path.clone();
 
                     buffer.file_updated(Arc::new(file), cx);
-                    if old_file
-                        .as_ref()
-                        .map_or(true, |old| *old.path() != new_path)
-                    {
+                    if old_file.as_ref().is_none_or(|old| *old.path() != new_path) {
                         Some(old_file)
                     } else {
                         None
@@ -1345,7 +1338,7 @@ impl BufferStore {
         mut cx: AsyncApp,
     ) -> Result<proto::BufferSaved> {
         let buffer_id = BufferId::new(envelope.payload.buffer_id)?;
-        let (buffer, project_id) = this.read_with(&mut cx, |this, _| {
+        let (buffer, project_id) = this.read_with(&cx, |this, _| {
             anyhow::Ok((
                 this.get_existing(buffer_id)?,
                 this.downstream_client
@@ -1359,7 +1352,7 @@ impl BufferStore {
                 buffer.wait_for_version(deserialize_version(&envelope.payload.version))
             })?
             .await?;
-        let buffer_id = buffer.read_with(&mut cx, |buffer, _| buffer.remote_id())?;
+        let buffer_id = buffer.read_with(&cx, |buffer, _| buffer.remote_id())?;
 
         if let Some(new_path) = envelope.payload.new_path {
             let new_path = ProjectPath::from_proto(new_path);
@@ -1372,7 +1365,7 @@ impl BufferStore {
                 .await?;
         }
 
-        buffer.read_with(&mut cx, |buffer, _| proto::BufferSaved {
+        buffer.read_with(&cx, |buffer, _| proto::BufferSaved {
             project_id,
             buffer_id: buffer_id.into(),
             version: serialize_version(buffer.saved_version()),

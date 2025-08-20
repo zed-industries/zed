@@ -202,7 +202,7 @@ mod tests {
 
         assert_eq!(search_history.current(&cursor), Some("TypeScript"));
         cursor.reset();
-        assert_eq!(search_history.current(&mut cursor), None);
+        assert_eq!(search_history.current(&cursor), None);
         assert_eq!(
             search_history.previous(&mut cursor),
             Some("TypeScript"),

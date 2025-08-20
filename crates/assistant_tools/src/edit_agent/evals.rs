@@ -1586,7 +1586,7 @@ impl EditAgentTest {
         let has_system_prompt = eval
             .conversation
             .first()
-            .map_or(false, |msg| msg.role == Role::System);
+            .is_some_and(|msg| msg.role == Role::System);
         let messages = if has_system_prompt {
             eval.conversation
         } else {

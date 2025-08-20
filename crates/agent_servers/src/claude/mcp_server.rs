@@ -175,9 +175,9 @@ impl McpServerTool for PermissionTool {
         let claude_tool = ClaudeTool::infer(&input.tool_name, input.input.clone());
         let tool_call_id = acp::ToolCallId(input.tool_use_id.context("Tool ID required")?.into());
 
-        const ALWAYS_ALLOW: &'static str = "always_allow";
-        const ALLOW: &'static str = "allow";
-        const REJECT: &'static str = "reject";
+        const ALWAYS_ALLOW: &str = "always_allow";
+        const ALLOW: &str = "allow";
+        const REJECT: &str = "reject";
 
         let chosen_option = thread
             .update(cx, |thread, cx| {
