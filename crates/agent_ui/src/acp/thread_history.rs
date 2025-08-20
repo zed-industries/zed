@@ -849,6 +849,31 @@ impl RenderOnce for AcpHistoryEntryElement {
                     ),
             )
             .on_hover(self.on_hover)
+            .end_slot::<IconButton>(if self.hovered || self.selected {
+                Some(
+                    IconButton::new("delete", IconName::Trash)
+                        .shape(IconButtonShape::Square)
+                        .icon_size(IconSize::XSmall)
+                        .icon_color(Color::Muted)
+                        .tooltip(move |window, cx| {
+                            Tooltip::for_action("Delete", &RemoveSelectedThread, window, cx)
+                        })
+                        .on_click({
+                            let thread_view = self.thread_view.clone();
+                            let entry = self.entry.clone();
+
+                            move |_event, _window, cx| {
+                                if let Some(thread_view) = thread_view.upgrade() {
+                                    thread_view.update(cx, |thread_view, cx| {
+                                        thread_view.delete_history_entry(entry.clone(), cx);
+                                    });
+                                }
+                            }
+                        }),
+                )
+            } else {
+                None
+            })
             .on_click({
                 let thread_view = self.thread_view.clone();
                 let entry = self.entry.clone();
