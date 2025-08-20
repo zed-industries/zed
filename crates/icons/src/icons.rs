@@ -155,6 +155,7 @@ pub enum IconName {
     Maximize,
     Menu,
     MenuAlt,
+    MenuAltTemp,
     Mic,
     MicMute,
     Minimize,

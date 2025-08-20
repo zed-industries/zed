@@ -250,12 +250,11 @@ impl AgentType {
         }
     }
 
-    fn icon(self) -> IconName {
+    fn icon(self) -> Option<IconName> {
         match self {
-            Self::Zed | Self::TextThread => IconName::AiZed,
-            Self::NativeAgent => IconName::ZedAssistant,
-            Self::Gemini => IconName::AiGemini,
-            Self::ClaudeCode => IconName::AiClaude,
+            Self::Zed | Self::NativeAgent | Self::TextThread => None,
+            Self::Gemini => Some(IconName::AiGemini),
+            Self::ClaudeCode => Some(IconName::AiClaude),
         }
     }
 }
@@ -2147,12 +2146,17 @@ impl AgentPanel {
             })
     }
 
-    fn render_recent_entries_menu(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_recent_entries_menu(
+        &self,
+        icon: IconName,
+        corner: Corner,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         let focus_handle = self.focus_handle(cx);
 
         PopoverMenu::new("agent-nav-menu")
             .trigger_with_tooltip(
-                IconButton::new("agent-nav-menu", IconName::MenuAlt).icon_size(IconSize::Small),
+                IconButton::new("agent-nav-menu", icon).icon_size(IconSize::Small),
                 {
                     let focus_handle = focus_handle.clone();
                     move |window, cx| {
@@ -2166,7 +2170,7 @@ impl AgentPanel {
                     }
                 },
             )
-            .anchor(Corner::TopLeft)
+            .anchor(corner)
             .with_handle(self.assistant_navigation_menu_handle.clone())
             .menu({
                 let menu = self.assistant_navigation_menu.clone();
@@ -2293,7 +2297,9 @@ impl AgentPanel {
                             .pl(DynamicSpacing::Base04.rems(cx))
                             .child(self.render_toolbar_back_button(cx))
                             .into_any_element(),
-                        _ => self.render_recent_entries_menu(cx).into_any_element(),
+                        _ => self
+                            .render_recent_entries_menu(IconName::MenuAlt, Corner::TopLeft, cx)
+                            .into_any_element(),
                     })
                     .child(self.render_title_view(window, cx)),
             )
@@ -2517,16 +2523,18 @@ impl AgentPanel {
         let selected_agent_label = self.selected_agent.label().into();
         let selected_agent = div()
             .id("selected_agent_icon")
-            .px(DynamicSpacing::Base02.rems(cx))
-            .child(Icon::new(self.selected_agent.icon()).color(Color::Muted))
-            .tooltip(move |window, cx| {
-                Tooltip::with_meta(
-                    selected_agent_label.clone(),
-                    None,
-                    "Selected Agent",
-                    window,
-                    cx,
-                )
+            .when_some(self.selected_agent.icon(), |this, icon| {
+                this.px(DynamicSpacing::Base02.rems(cx))
+                    .child(Icon::new(icon).color(Color::Muted))
+                    .tooltip(move |window, cx| {
+                        Tooltip::with_meta(
+                            selected_agent_label.clone(),
+                            None,
+                            "Selected Agent",
+                            window,
+                            cx,
+                        )
+                    })
             })
             .into_any_element();
 
@@ -2549,12 +2557,7 @@ impl AgentPanel {
                         ActiveView::History | ActiveView::Configuration => {
                             self.render_toolbar_back_button(cx).into_any_element()
                         }
-                        _ => h_flex()
-                            .gap_1()
-                            .child(self.render_recent_entries_menu(cx))
-                            .child(Divider::vertical())
-                            .child(selected_agent)
-                            .into_any_element(),
+                        _ => selected_agent.into_any_element(),
                     })
                     .child(self.render_title_view(window, cx)),
             )
@@ -2569,9 +2572,12 @@ impl AgentPanel {
                             .gap(DynamicSpacing::Base02.rems(cx))
                             .pl(DynamicSpacing::Base04.rems(cx))
                             .pr(DynamicSpacing::Base06.rems(cx))
-                            .border_l_1()
-                            .border_color(cx.theme().colors().border)
                             .child(new_thread_menu)
+                            .child(self.render_recent_entries_menu(
+                                IconName::MenuAltTemp,
+                                Corner::TopRight,
+                                cx,
+                            ))
                             .child(self.render_panel_options_menu(window, cx)),
                     ),
             )
