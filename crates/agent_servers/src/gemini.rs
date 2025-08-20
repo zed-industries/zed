@@ -18,11 +18,11 @@ const ACP_ARG: &str = "--experimental-acp";
 
 impl AgentServer for Gemini {
     fn name(&self) -> &'static str {
-        "Gemini"
+        "Gemini CLI"
     }
 
     fn empty_state_headline(&self) -> &'static str {
-        "Welcome to Gemini"
+        "Welcome to Gemini CLI"
     }
 
     fn empty_state_message(&self) -> &'static str {

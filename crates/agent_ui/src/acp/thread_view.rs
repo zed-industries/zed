@@ -8,7 +8,7 @@ use action_log::ActionLog;
 use agent_client_protocol::{self as acp};
 use agent_servers::{AgentServer, ClaudeCode};
 use agent_settings::{AgentProfileId, AgentSettings, CompletionMode, NotifyWhenAgentWaiting};
-use agent2::{DbThreadMetadata, HistoryEntryId, HistoryStore};
+use agent2::{DbThreadMetadata, HistoryEntry, HistoryEntryId, HistoryStore};
 use anyhow::bail;
 use audio::{Audio, Sound};
 use buffer_diff::BufferDiff;
@@ -54,11 +54,12 @@ use crate::acp::entry_view_state::{EntryViewEvent, ViewEvent};
 use crate::acp::message_editor::{MessageEditor, MessageEditorEvent};
 use crate::agent_diff::AgentDiff;
 use crate::profile_selector::{ProfileProvider, ProfileSelector};
+
 use crate::ui::preview::UsageCallout;
 use crate::ui::{AgentNotification, AgentNotificationEvent, BurnModeTooltip};
 use crate::{
     AgentDiffPane, AgentPanel, ContinueThread, ContinueWithBurnMode, ExpandMessageEditor, Follow,
-    KeepAll, OpenAgentDiff, RejectAll, ToggleBurnMode, ToggleProfileSelector,
+    KeepAll, OpenAgentDiff, OpenHistory, RejectAll, ToggleBurnMode, ToggleProfileSelector,
 };
 
 const RESPONSE_PADDING_X: Pixels = px(19.);
@@ -240,6 +241,7 @@ pub struct AcpThreadView {
     project: Entity<Project>,
     thread_state: ThreadState,
     history_store: Entity<HistoryStore>,
+    hovered_recent_history_item: Option<usize>,
     entry_view_state: Entity<EntryViewState>,
     message_editor: Entity<MessageEditor>,
     model_selector: Option<Entity<AcpModelSelectorPopover>>,
@@ -357,6 +359,7 @@ impl AcpThreadView {
             editor_expanded: false,
             terminal_expanded: true,
             history_store,
+            hovered_recent_history_item: None,
             _subscriptions: subscriptions,
             _cancel_task: None,
         }
@@ -580,6 +583,10 @@ impl AcpThreadView {
             self.thread_state = ThreadState::LoadError(LoadError::Other(err.to_string().into()))
         }
         cx.notify();
+    }
+
+    pub fn workspace(&self) -> &WeakEntity<Workspace> {
+        &self.workspace
     }
 
     pub fn thread(&self) -> Option<&Entity<AcpThread>> {
@@ -2284,51 +2291,132 @@ impl AcpThreadView {
         )
     }
 
-    fn render_empty_state(&self, cx: &App) -> AnyElement {
+    fn render_empty_state_section_header(
+        &self,
+        label: impl Into<SharedString>,
+        action_slot: Option<AnyElement>,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        div().pl_1().pr_1p5().child(
+            h_flex()
+                .mt_2()
+                .pl_1p5()
+                .pb_1()
+                .w_full()
+                .justify_between()
+                .border_b_1()
+                .border_color(cx.theme().colors().border_variant)
+                .child(
+                    Label::new(label.into())
+                        .size(LabelSize::Small)
+                        .color(Color::Muted),
+                )
+                .children(action_slot),
+        )
+    }
+
+    fn render_empty_state(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let loading = matches!(&self.thread_state, ThreadState::Loading { .. });
+        let recent_history = self
+            .history_store
+            .update(cx, |history_store, cx| history_store.recent_entries(3, cx));
+        let no_history = self
+            .history_store
+            .update(cx, |history_store, cx| history_store.is_empty(cx));
 
         v_flex()
             .size_full()
-            .items_center()
-            .justify_center()
-            .child(if loading {
-                h_flex()
-                    .justify_center()
-                    .child(self.render_agent_logo())
-                    .with_animation(
-                        "pulsating_icon",
-                        Animation::new(Duration::from_secs(2))
-                            .repeat()
-                            .with_easing(pulsating_between(0.4, 1.0)),
-                        |icon, delta| icon.opacity(delta),
-                    )
-                    .into_any()
-            } else {
-                self.render_agent_logo().into_any_element()
-            })
-            .child(h_flex().mt_4().mb_1().justify_center().child(if loading {
-                div()
-                    .child(LoadingLabel::new("").size(LabelSize::Large))
-                    .into_any_element()
-            } else {
-                Headline::new(self.agent.empty_state_headline())
-                    .size(HeadlineSize::Medium)
-                    .into_any_element()
-            }))
-            .child(
-                div()
-                    .max_w_1_2()
-                    .text_sm()
-                    .text_center()
-                    .map(|this| {
-                        if loading {
-                            this.invisible()
+            .when(no_history, |this| {
+                this.child(
+                    v_flex()
+                        .size_full()
+                        .items_center()
+                        .justify_center()
+                        .child(if loading {
+                            h_flex()
+                                .justify_center()
+                                .child(self.render_agent_logo())
+                                .with_animation(
+                                    "pulsating_icon",
+                                    Animation::new(Duration::from_secs(2))
+                                        .repeat()
+                                        .with_easing(pulsating_between(0.4, 1.0)),
+                                    |icon, delta| icon.opacity(delta),
+                                )
+                                .into_any()
                         } else {
-                            this.text_color(cx.theme().colors().text_muted)
-                        }
-                    })
-                    .child(self.agent.empty_state_message()),
-            )
+                            self.render_agent_logo().into_any_element()
+                        })
+                        .child(h_flex().mt_4().mb_2().justify_center().child(if loading {
+                            div()
+                                .child(LoadingLabel::new("").size(LabelSize::Large))
+                                .into_any_element()
+                        } else {
+                            Headline::new(self.agent.empty_state_headline())
+                                .size(HeadlineSize::Medium)
+                                .into_any_element()
+                        })),
+                )
+            })
+            .when(!no_history, |this| {
+                this.justify_end().child(
+                    v_flex()
+                        .child(
+                            self.render_empty_state_section_header(
+                                "Recent",
+                                Some(
+                                    Button::new("view-history", "View All")
+                                        .style(ButtonStyle::Subtle)
+                                        .label_size(LabelSize::Small)
+                                        .key_binding(
+                                            KeyBinding::for_action_in(
+                                                &OpenHistory,
+                                                &self.focus_handle(cx),
+                                                window,
+                                                cx,
+                                            )
+                                            .map(|kb| kb.size(rems_from_px(12.))),
+                                        )
+                                        .on_click(move |_event, window, cx| {
+                                            window.dispatch_action(OpenHistory.boxed_clone(), cx);
+                                        })
+                                        .into_any_element(),
+                                ),
+                                cx,
+                            ),
+                        )
+                        .child(
+                            v_flex().p_1().pr_1p5().gap_1().children(
+                                recent_history
+                                    .into_iter()
+                                    .enumerate()
+                                    .map(|(index, entry)| {
+                                        // TODO: Add keyboard navigation.
+                                        let is_hovered =
+                                            self.hovered_recent_history_item == Some(index);
+                                        crate::acp::thread_history::AcpHistoryEntryElement::new(
+                                            entry,
+                                            cx.entity().downgrade(),
+                                        )
+                                        .hovered(is_hovered)
+                                        .on_hover(cx.listener(
+                                            move |this, is_hovered, _window, cx| {
+                                                if *is_hovered {
+                                                    this.hovered_recent_history_item = Some(index);
+                                                } else if this.hovered_recent_history_item
+                                                    == Some(index)
+                                                {
+                                                    this.hovered_recent_history_item = None;
+                                                }
+                                                cx.notify();
+                                            },
+                                        ))
+                                        .into_any_element()
+                                    }),
+                            ),
+                        ),
+                )
+            })
             .into_any()
     }
 
@@ -2351,9 +2439,11 @@ impl AcpThreadView {
                     .items_center()
                     .justify_center()
                     .child(self.render_error_agent_logo())
-                    .child(h_flex().mt_4().mb_1().justify_center().child(
-                        Headline::new(self.agent.empty_state_headline()).size(HeadlineSize::Medium),
-                    ))
+                    .child(
+                        h_flex().mt_4().mb_1().justify_center().child(
+                            Headline::new("Authentication Required").size(HeadlineSize::Medium),
+                        ),
+                    )
                     .into_any(),
             )
             .children(description.map(|desc| {
@@ -4234,6 +4324,18 @@ impl AcpThreadView {
         );
         cx.notify();
     }
+
+    pub fn delete_history_entry(&mut self, entry: HistoryEntry, cx: &mut Context<Self>) {
+        let task = match entry {
+            HistoryEntry::AcpThread(thread) => self.history_store.update(cx, |history, cx| {
+                history.delete_thread(thread.id.clone(), cx)
+            }),
+            HistoryEntry::TextThread(context) => self.history_store.update(cx, |history, cx| {
+                history.delete_text_thread(context.path.clone(), cx)
+            }),
+        };
+        task.detach_and_log_err(cx);
+    }
 }
 
 impl Focusable for AcpThreadView {
@@ -4268,7 +4370,9 @@ impl Render for AcpThreadView {
                     window,
                     cx,
                 ),
-                ThreadState::Loading { .. } => v_flex().flex_1().child(self.render_empty_state(cx)),
+                ThreadState::Loading { .. } => {
+                    v_flex().flex_1().child(self.render_empty_state(window, cx))
+                }
                 ThreadState::LoadError(e) => v_flex()
                     .p_2()
                     .flex_1()
@@ -4310,7 +4414,7 @@ impl Render for AcpThreadView {
                                 },
                             )
                         } else {
-                            this.child(self.render_empty_state(cx))
+                            this.child(self.render_empty_state(window, cx))
                         }
                     })
                 }
