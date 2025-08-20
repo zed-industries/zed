@@ -441,36 +441,41 @@ fn title_regex() -> &'static Regex {
 
 fn generate_big_table_of_actions() -> String {
     let actions = &*ALL_ACTIONS;
-    let mut table = String::new();
-
-    fn push_row(table: &mut String, a: &str, b: &str, c: &str) {
-        table.reserve(6 + a.len() + b.len() + c.len());
-        table.push('|');
-        table.push_str(a);
-        table.push('|');
-        table.push_str(b);
-        table.push('|');
-        table.push_str(c);
-        table.push('|');
-        table.push('\n');
-    }
-
-    push_row(&mut table, "Action", "Keymap Name", "Description");
-    push_row(&mut table, "-", "-", "-");
+    let mut output = String::new();
 
     let mut actions_sorted = actions.iter().collect::<Vec<_>>();
     actions_sorted.sort_by_key(|a| a.name);
+
+    // Start the definition list with custom styling for better spacing
+    output.push_str("<dl style=\"line-height: 1.8;\">\n");
+
     for action in actions_sorted.into_iter() {
-        push_row(
-            &mut table,
-            &action.human_name,
-            action.name,
-            &action
-                .docs
-                .unwrap_or("<no documentation>")
-                .replace('|', "\\|")
-                .replace('\n', "<br>"),
+        // Add the humanized action name as the term with margin
+        output.push_str(
+            "<dt style=\"margin-top: 1.5em; margin-bottom: 0.5em; font-weight: bold;\"><code>",
         );
+        output.push_str(&action.human_name);
+        output.push_str("</code></dt>\n");
+
+        // Add the definition with keymap name and description
+        output.push_str("<dd style=\"margin-left: 2em; margin-bottom: 1em;\">\n");
+        output.push_str("Keymap Name: <code>");
+        output.push_str(action.name);
+        output.push_str("</code><br>\n");
+
+        // Add the description, escaping HTML if needed
+        let description = action.docs.unwrap_or("<no documentation>");
+        output.push_str(
+            &description
+                .replace("&", "&amp;")
+                .replace("<", "&lt;")
+                .replace(">", "&gt;"),
+        );
+        output.push_str("\n</dd>\n");
     }
-    return table;
+
+    // Close the definition list
+    output.push_str("</dl>\n");
+
+    output
 }
