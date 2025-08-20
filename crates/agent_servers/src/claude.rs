@@ -1,5 +1,9 @@
+mod edit_tool;
 mod mcp_server;
+mod permission_tool;
+mod read_tool;
 pub mod tools;
+mod write_tool;
 
 use action_log::ActionLog;
 use collections::HashMap;
@@ -351,18 +355,16 @@ fn spawn_claude(
             &format!(
                 "mcp__{}__{}",
                 mcp_server::SERVER_NAME,
-                mcp_server::PermissionTool::NAME,
+                permission_tool::PermissionTool::NAME,
             ),
             "--allowedTools",
             &format!(
-                "mcp__{}__{},mcp__{}__{}",
+                "mcp__{}__{}",
                 mcp_server::SERVER_NAME,
-                mcp_server::EditTool::NAME,
-                mcp_server::SERVER_NAME,
-                mcp_server::ReadTool::NAME
+                read_tool::ReadTool::NAME
             ),
             "--disallowedTools",
-            "Read,Edit",
+            "Read,Write,Edit,MultiEdit",
         ])
         .args(match mode {
             ClaudeSessionMode::Start => ["--session-id".to_string(), session_id.to_string()],
@@ -470,9 +472,16 @@ impl ClaudeAgentSession {
                             let content = content.to_string();
                             thread
                                 .update(cx, |thread, cx| {
+                                    let id = acp::ToolCallId(tool_use_id.into());
+                                    let set_new_content = !content.is_empty()
+                                        && thread.tool_call(&id).is_none_or(|(_, tool_call)| {
+                                            // preserve rich diff if we have one
+                                            tool_call.diffs().next().is_none()
+                                        });
+
                                     thread.update_tool_call(
                                         acp::ToolCallUpdate {
-                                            id: acp::ToolCallId(tool_use_id.into()),
+                                            id,
                                             fields: acp::ToolCallUpdateFields {
                                                 status: if turn_state.borrow().is_canceled() {
                                                     // Do not set to completed if turn was canceled
@@ -480,7 +489,7 @@ impl ClaudeAgentSession {
                                                 } else {
                                                     Some(acp::ToolCallStatus::Completed)
                                                 },
-                                                content: (!content.is_empty())
+                                                content: set_new_content
                                                     .then(|| vec![content.into()]),
                                                 ..Default::default()
                                             },

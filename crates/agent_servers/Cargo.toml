@@ -29,6 +29,7 @@ futures.workspace = true
 gpui.workspace = true
 indoc.workspace = true
 itertools.workspace = true
+language.workspace = true
 language_model.workspace = true
 language_models.workspace = true
 log.workspace = true
