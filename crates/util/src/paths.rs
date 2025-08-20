@@ -2,7 +2,7 @@ use globset::{Glob, GlobSet, GlobSetBuilder};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
-use std::fmt::Display;
+use std::fmt::{Display, Formatter};
 use std::path::StripPrefixError;
 use std::sync::{Arc, OnceLock};
 use std::{
@@ -131,6 +131,12 @@ impl SanitizedPath {
 
     pub fn strip_prefix(&self, base: &Self) -> Result<&Path, StripPrefixError> {
         self.0.strip_prefix(base.as_path())
+    }
+}
+
+impl Display for SanitizedPath {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0.display())
     }
 }
 
