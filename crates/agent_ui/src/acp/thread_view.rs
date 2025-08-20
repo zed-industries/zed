@@ -155,6 +155,7 @@ impl AcpThreadView {
     pub fn new(
         agent: Rc<dyn AgentServer>,
         resume_thread: Option<DbThreadMetadata>,
+        summarize_thread: Option<DbThreadMetadata>,
         workspace: WeakEntity<Workspace>,
         project: Entity<Project>,
         history_store: Entity<HistoryStore>,
@@ -164,7 +165,7 @@ impl AcpThreadView {
     ) -> Self {
         let prevent_slash_commands = agent.clone().downcast::<ClaudeCode>().is_some();
         let message_editor = cx.new(|cx| {
-            MessageEditor::new(
+            let mut editor = MessageEditor::new(
                 workspace.clone(),
                 project.clone(),
                 history_store.clone(),
@@ -177,7 +178,11 @@ impl AcpThreadView {
                 },
                 window,
                 cx,
-            )
+            );
+            if let Some(entry) = summarize_thread {
+                editor.insert_thread_summary(entry, window, cx);
+            }
+            editor
         });
 
         let list_state = ListState::new(0, gpui::ListAlignment::Bottom, px(2048.0));
@@ -3636,8 +3641,18 @@ impl AcpThreadView {
                         .child(
                             Button::new("start-new-thread", "Start New Thread")
                                 .label_size(LabelSize::Small)
-                                .on_click(cx.listener(|_this, _, _window, _cx| {
-                                    // todo: Once thread summarization is implemented, start a new thread from a summary.
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    let Some(thread) = this.thread() else {
+                                        return;
+                                    };
+                                    let session_id = thread.read(cx).session_id().clone();
+                                    window.dispatch_action(
+                                        crate::NewNativeAgentThreadFromSummary {
+                                            from_session_id: session_id,
+                                        }
+                                        .boxed_clone(),
+                                        cx,
+                                    );
                                 })),
                         )
                         .when(burn_mode_available, |this| {
@@ -4320,6 +4335,7 @@ pub(crate) mod tests {
                 AcpThreadView::new(
                     Rc::new(agent),
                     None,
+                    None,
                     workspace.downgrade(),
                     project,
                     history_store,
@@ -4525,6 +4541,7 @@ pub(crate) mod tests {
             cx.new(|cx| {
                 AcpThreadView::new(
                     Rc::new(StubAgentServer::new(connection.as_ref().clone())),
+                    None,
                     None,
                     workspace.downgrade(),
                     project.clone(),

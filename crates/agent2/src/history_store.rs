@@ -111,6 +111,10 @@ impl HistoryStore {
         }
     }
 
+    pub fn thread_from_session_id(&self, session_id: &acp::SessionId) -> Option<&DbThreadMetadata> {
+        self.threads.iter().find(|thread| &thread.id == session_id)
+    }
+
     pub fn delete_thread(
         &mut self,
         id: acp::SessionId,
