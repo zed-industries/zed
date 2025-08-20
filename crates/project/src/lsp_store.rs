@@ -8715,7 +8715,7 @@ impl LspStore {
             (root_path.join(&old_path), root_path.join(&new_path))
         };
 
-        let _transactions = Self::will_rename_entry(
+        let _transaction = Self::will_rename_entry(
             this.downgrade(),
             worktree_id,
             &old_abs_path,
@@ -9177,12 +9177,11 @@ impl LspStore {
         new_path: &Path,
         is_dir: bool,
         cx: AsyncApp,
-    ) -> Task<Vec<ProjectTransaction>> {
+    ) -> Task<ProjectTransaction> {
         let old_uri = lsp::Url::from_file_path(old_path).ok().map(String::from);
         let new_uri = lsp::Url::from_file_path(new_path).ok().map(String::from);
         cx.spawn(async move |cx| {
             let mut tasks = vec![];
-            let mut transactions = Vec::new();
             this.update(cx, |this, cx| {
                 let local_store = this.as_local()?;
                 let old_uri = old_uri?;
@@ -9230,14 +9229,17 @@ impl LspStore {
             })
             .ok()
             .flatten();
+            let mut merged_transaction = ProjectTransaction::default();
             for task in tasks {
                 // Await on tasks sequentially so that the order of application of edits is deterministic
                 // (at least with regards to the order of registration of language servers)
                 if let Some(transaction) = task.await {
-                    transactions.push(transaction);
+                    for (buffer, buffer_transaction) in transaction.0 {
+                        merged_transaction.0.insert(buffer, buffer_transaction);
+                    }
                 }
             }
-            transactions
+            merged_transaction
         })
     }
 
