@@ -280,7 +280,7 @@ impl ProjectDiff {
     fn button_states(&self, cx: &App) -> ButtonStates {
         let editor = self.editor.read(cx);
         let snapshot = self.multibuffer.read(cx).snapshot(cx);
-        let prev_next = snapshot.diff_hunks().skip(1).next().is_some();
+        let prev_next = snapshot.diff_hunks().nth(1).is_some();
         let mut selection = true;
 
         let mut ranges = editor
@@ -329,14 +329,14 @@ impl ProjectDiff {
             })
             .ok();
 
-        return ButtonStates {
+        ButtonStates {
             stage: has_unstaged_hunks,
             unstage: has_staged_hunks,
             prev_next,
             selection,
             stage_all,
             unstage_all,
-        };
+        }
     }
 
     fn handle_editor_event(
@@ -346,27 +346,24 @@ impl ProjectDiff {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        match event {
-            EditorEvent::SelectionsChanged { local: true } => {
-                let Some(project_path) = self.active_path(cx) else {
-                    return;
-                };
-                self.workspace
-                    .update(cx, |workspace, cx| {
-                        if let Some(git_panel) = workspace.panel::<GitPanel>(cx) {
-                            git_panel.update(cx, |git_panel, cx| {
-                                git_panel.select_entry_by_path(project_path, window, cx)
-                            })
-                        }
-                    })
-                    .ok();
-            }
-            _ => {}
+        if let EditorEvent::SelectionsChanged { local: true } = event {
+            let Some(project_path) = self.active_path(cx) else {
+                return;
+            };
+            self.workspace
+                .update(cx, |workspace, cx| {
+                    if let Some(git_panel) = workspace.panel::<GitPanel>(cx) {
+                        git_panel.update(cx, |git_panel, cx| {
+                            git_panel.select_entry_by_path(project_path, window, cx)
+                        })
+                    }
+                })
+                .ok();
         }
-        if editor.focus_handle(cx).contains_focused(window, cx) {
-            if self.multibuffer.read(cx).is_empty() {
-                self.focus_handle.focus(window)
-            }
+        if editor.focus_handle(cx).contains_focused(window, cx)
+            && self.multibuffer.read(cx).is_empty()
+        {
+            self.focus_handle.focus(window)
         }
     }
 
@@ -513,7 +510,7 @@ impl ProjectDiff {
         mut recv: postage::watch::Receiver<()>,
         cx: &mut AsyncWindowContext,
     ) -> Result<()> {
-        while let Some(_) = recv.next().await {
+        while (recv.next().await).is_some() {
             let buffers_to_load = this.update(cx, |this, cx| this.load_buffers(cx))?;
             for buffer_to_load in buffers_to_load {
                 if let Some(buffer) = buffer_to_load.await.log_err() {
@@ -1173,7 +1170,7 @@ impl RenderOnce for ProjectDiffEmptyState {
                             .child(Label::new("No Changes").color(Color::Muted))
                     } else {
                         this.when_some(self.current_branch.as_ref(), |this, branch| {
-                            this.child(has_branch_container(&branch))
+                            this.child(has_branch_container(branch))
                         })
                     }
                 }),
@@ -1332,14 +1329,14 @@ fn merge_anchor_ranges<'a>(
         loop {
             if let Some(left_range) = left
                 .peek()
-                .filter(|range| range.start.cmp(&next_range.end, &snapshot).is_le())
+                .filter(|range| range.start.cmp(&next_range.end, snapshot).is_le())
                 .cloned()
             {
                 left.next();
                 next_range.end = left_range.end;
             } else if let Some(right_range) = right
                 .peek()
-                .filter(|range| range.start.cmp(&next_range.end, &snapshot).is_le())
+                .filter(|range| range.start.cmp(&next_range.end, snapshot).is_le())
                 .cloned()
             {
                 right.next();

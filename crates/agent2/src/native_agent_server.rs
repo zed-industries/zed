@@ -1,4 +1,4 @@
-use std::{path::Path, rc::Rc, sync::Arc};
+use std::{any::Any, path::Path, rc::Rc, sync::Arc};
 
 use agent_servers::AgentServer;
 use anyhow::Result;
@@ -7,16 +7,17 @@ use gpui::{App, Entity, Task};
 use project::Project;
 use prompt_store::PromptStore;
 
-use crate::{NativeAgent, NativeAgentConnection, templates::Templates};
+use crate::{HistoryStore, NativeAgent, NativeAgentConnection, templates::Templates};
 
 #[derive(Clone)]
 pub struct NativeAgentServer {
     fs: Arc<dyn Fs>,
+    history: Entity<HistoryStore>,
 }
 
 impl NativeAgentServer {
-    pub fn new(fs: Arc<dyn Fs>) -> Self {
-        Self { fs }
+    pub fn new(fs: Arc<dyn Fs>, history: Entity<HistoryStore>) -> Self {
+        Self { fs, history }
     }
 }
 
@@ -26,16 +27,15 @@ impl AgentServer for NativeAgentServer {
     }
 
     fn empty_state_headline(&self) -> &'static str {
-        "Native Agent"
+        ""
     }
 
     fn empty_state_message(&self) -> &'static str {
-        "How can I help you today?"
+        ""
     }
 
     fn logo(&self) -> ui::IconName {
-        // Using the ZedAssistant icon as it's the native built-in agent
-        ui::IconName::ZedAssistant
+        ui::IconName::ZedAgent
     }
 
     fn connect(
@@ -50,6 +50,7 @@ impl AgentServer for NativeAgentServer {
         );
         let project = project.clone();
         let fs = self.fs.clone();
+        let history = self.history.clone();
         let prompt_store = PromptStore::global(cx);
         cx.spawn(async move |cx| {
             log::debug!("Creating templates for native agent");
@@ -57,7 +58,8 @@ impl AgentServer for NativeAgentServer {
             let prompt_store = prompt_store.await?;
 
             log::debug!("Creating native agent entity");
-            let agent = NativeAgent::new(project, templates, Some(prompt_store), fs, cx).await?;
+            let agent =
+                NativeAgent::new(project, history, templates, Some(prompt_store), fs, cx).await?;
 
             // Create the connection wrapper
             let connection = NativeAgentConnection(agent);
@@ -65,5 +67,9 @@ impl AgentServer for NativeAgentServer {
 
             Ok(Rc::new(connection) as Rc<dyn acp_thread::AgentConnection>)
         })
+    }
+
+    fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
+        self
     }
 }

@@ -64,7 +64,7 @@ impl ExampleMetadata {
         self.url
             .split('/')
             .next_back()
-            .unwrap_or(&"")
+            .unwrap_or("")
             .trim_end_matches(".git")
             .into()
     }
@@ -255,7 +255,7 @@ impl ExampleContext {
                     thread.update(cx, |thread, _cx| {
                         if let Some(tool_use) = pending_tool_use {
                             let mut tool_metrics = tool_metrics.lock().unwrap();
-                            if let Some(tool_result) = thread.tool_result(&tool_use_id) {
+                            if let Some(tool_result) = thread.tool_result(tool_use_id) {
                                 let message = if tool_result.is_error {
                                     format!("✖︎ {}", tool_use.name)
                                 } else {

@@ -41,12 +41,7 @@ use worktree_settings_file::LocalSettingsKind;
 pub use tests::TestDb;
 
 pub use ids::*;
-pub use queries::billing_customers::{CreateBillingCustomerParams, UpdateBillingCustomerParams};
-pub use queries::billing_subscriptions::{
-    CreateBillingSubscriptionParams, UpdateBillingSubscriptionParams,
-};
 pub use queries::contributors::ContributorSelector;
-pub use queries::processed_stripe_events::CreateProcessedStripeEventParams;
 pub use sea_orm::ConnectOptions;
 pub use tables::user::Model as User;
 pub use tables::*;

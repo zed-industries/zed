@@ -103,12 +103,11 @@ impl SyntaxTreeView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(item) = active_item {
-            if item.item_id() != cx.entity_id() {
-                if let Some(editor) = item.act_as::<Editor>(cx) {
-                    self.set_editor(editor, window, cx);
-                }
-            }
+        if let Some(item) = active_item
+            && item.item_id() != cx.entity_id()
+            && let Some(editor) = item.act_as::<Editor>(cx)
+        {
+            self.set_editor(editor, window, cx);
         }
     }
 
@@ -456,7 +455,7 @@ impl SyntaxTreeToolbarItemView {
         let active_layer = buffer_state.active_layer.clone()?;
         let active_buffer = buffer_state.buffer.read(cx).snapshot();
 
-        let view = cx.entity().clone();
+        let view = cx.entity();
         Some(
             PopoverMenu::new("Syntax Tree")
                 .trigger(Self::render_header(&active_layer))
@@ -537,12 +536,12 @@ impl ToolbarItemView for SyntaxTreeToolbarItemView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> ToolbarItemLocation {
-        if let Some(item) = active_pane_item {
-            if let Some(view) = item.downcast::<SyntaxTreeView>() {
-                self.tree_view = Some(view.clone());
-                self.subscription = Some(cx.observe_in(&view, window, |_, _, _, cx| cx.notify()));
-                return ToolbarItemLocation::PrimaryLeft;
-            }
+        if let Some(item) = active_pane_item
+            && let Some(view) = item.downcast::<SyntaxTreeView>()
+        {
+            self.tree_view = Some(view.clone());
+            self.subscription = Some(cx.observe_in(&view, window, |_, _, _, cx| cx.notify()));
+            return ToolbarItemLocation::PrimaryLeft;
         }
         self.tree_view = None;
         self.subscription = None;

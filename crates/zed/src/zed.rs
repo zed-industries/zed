@@ -31,6 +31,7 @@ use gpui::{
     px, retain_all,
 };
 use image_viewer::ImageInfo;
+use language::Capability;
 use language_tools::lsp_tool::{self, LspTool};
 use migrate::{MigrationBanner, MigrationEvent, MigrationNotification, MigrationType};
 use migrator::{migrate_keymap, migrate_settings};
@@ -319,14 +320,14 @@ pub fn initialize_workspace(
             return;
         };
 
-        let workspace_handle = cx.entity().clone();
+        let workspace_handle = cx.entity();
         let center_pane = workspace.active_pane().clone();
         initialize_pane(workspace, &center_pane, window, cx);
 
         cx.subscribe_in(&workspace_handle, window, {
             move |workspace, _, event, window, cx| match event {
                 workspace::Event::PaneAdded(pane) => {
-                    initialize_pane(workspace, &pane, window, cx);
+                    initialize_pane(workspace, pane, window, cx);
                 }
                 workspace::Event::OpenBundledFile {
                     text,
@@ -644,6 +645,7 @@ fn register_actions(
                     files: true,
                     directories: true,
                     multiple: true,
+                    prompt: None,
                 },
                 DirectoryLister::Local(
                     workspace.project().clone(),
@@ -684,6 +686,7 @@ fn register_actions(
                     files: true,
                     directories: true,
                     multiple: true,
+                    prompt: None,
                 },
                 DirectoryLister::Project(workspace.project().clone()),
                 window,
@@ -715,9 +718,7 @@ fn register_actions(
                             .insert(theme::clamp_font_size(ui_font_size).0);
                     });
                 } else {
-                    theme::adjust_ui_font_size(cx, |size| {
-                        *size += px(1.0);
-                    });
+                    theme::adjust_ui_font_size(cx, |size| size + px(1.0));
                 }
             }
         })
@@ -732,9 +733,7 @@ fn register_actions(
                             .insert(theme::clamp_font_size(ui_font_size).0);
                     });
                 } else {
-                    theme::adjust_ui_font_size(cx, |size| {
-                        *size -= px(1.0);
-                    });
+                    theme::adjust_ui_font_size(cx, |size| size - px(1.0));
                 }
             }
         })
@@ -762,9 +761,7 @@ fn register_actions(
                             .insert(theme::clamp_font_size(buffer_font_size).0);
                     });
                 } else {
-                    theme::adjust_buffer_font_size(cx, |size| {
-                        *size += px(1.0);
-                    });
+                    theme::adjust_buffer_font_size(cx, |size| size + px(1.0));
                 }
             }
         })
@@ -780,9 +777,7 @@ fn register_actions(
                             .insert(theme::clamp_font_size(buffer_font_size).0);
                     });
                 } else {
-                    theme::adjust_buffer_font_size(cx, |size| {
-                        *size -= px(1.0);
-                    });
+                    theme::adjust_buffer_font_size(cx, |size| size - px(1.0));
                 }
             }
         })
@@ -801,7 +796,7 @@ fn register_actions(
         .register_action(install_cli)
         .register_action(|_, _: &install_cli::RegisterZedScheme, window, cx| {
             cx.spawn_in(window, async move |workspace, cx| {
-                install_cli::register_zed_scheme(&cx).await?;
+                install_cli::register_zed_scheme(cx).await?;
                 workspace.update_in(cx, |workspace, _, cx| {
                     struct RegisterZedScheme;
 
@@ -1059,27 +1054,25 @@ fn quit(_: &Quit, cx: &mut App) {
         })
         .log_err();
 
-        if should_confirm {
-            if let Some(workspace) = workspace_windows.first() {
-                let answer = workspace
-                    .update(cx, |_, window, cx| {
-                        window.prompt(
-                            PromptLevel::Info,
-                            "Are you sure you want to quit?",
-                            None,
-                            &["Quit", "Cancel"],
-                            cx,
-                        )
-                    })
-                    .log_err();
+        if should_confirm && let Some(workspace) = workspace_windows.first() {
+            let answer = workspace
+                .update(cx, |_, window, cx| {
+                    window.prompt(
+                        PromptLevel::Info,
+                        "Are you sure you want to quit?",
+                        None,
+                        &["Quit", "Cancel"],
+                        cx,
+                    )
+                })
+                .log_err();
 
-                if let Some(answer) = answer {
-                    WAITING_QUIT_CONFIRMATION.store(true, atomic::Ordering::Release);
-                    let answer = answer.await.ok();
-                    WAITING_QUIT_CONFIRMATION.store(false, atomic::Ordering::Release);
-                    if answer != Some(0) {
-                        return Ok(());
-                    }
+            if let Some(answer) = answer {
+                WAITING_QUIT_CONFIRMATION.store(true, atomic::Ordering::Release);
+                let answer = answer.await.ok();
+                WAITING_QUIT_CONFIRMATION.store(false, atomic::Ordering::Release);
+                if answer != Some(0) {
+                    return Ok(());
                 }
             }
         }
@@ -1091,10 +1084,9 @@ fn quit(_: &Quit, cx: &mut App) {
                     workspace.prepare_to_close(CloseIntent::Quit, window, cx)
                 })
                 .log_err()
+                && !should_close.await?
             {
-                if !should_close.await? {
-                    return Ok(());
-                }
+                return Ok(());
             }
         }
         cx.update(|cx| cx.quit())?;
@@ -1628,25 +1620,24 @@ fn open_local_file(
                     .read_with(cx, |tree, _| tree.abs_path().join(settings_relative_path))?;
 
                 let fs = project.read_with(cx, |project, _| project.fs().clone())?;
-                let file_exists = fs
-                    .metadata(&full_path)
+
+                fs.metadata(&full_path)
                     .await
                     .ok()
                     .flatten()
-                    .map_or(false, |metadata| !metadata.is_dir && !metadata.is_fifo);
-                file_exists
+                    .is_some_and(|metadata| !metadata.is_dir && !metadata.is_fifo)
             };
 
             if !file_exists {
-                if let Some(dir_path) = settings_relative_path.parent() {
-                    if worktree.read_with(cx, |tree, _| tree.entry_for_path(dir_path).is_none())? {
-                        project
-                            .update(cx, |project, cx| {
-                                project.create_entry((tree_id, dir_path), true, cx)
-                            })?
-                            .await
-                            .context("worktree was removed")?;
-                    }
+                if let Some(dir_path) = settings_relative_path.parent()
+                    && worktree.read_with(cx, |tree, _| tree.entry_for_path(dir_path).is_none())?
+                {
+                    project
+                        .update(cx, |project, cx| {
+                            project.create_entry((tree_id, dir_path), true, cx)
+                        })?
+                        .await
+                        .context("worktree was removed")?;
                 }
 
                 if worktree.read_with(cx, |tree, _| {
@@ -1672,12 +1663,12 @@ fn open_local_file(
             editor
                 .downgrade()
                 .update(cx, |editor, cx| {
-                    if let Some(buffer) = editor.buffer().read(cx).as_singleton() {
-                        if buffer.read(cx).is_empty() {
-                            buffer.update(cx, |buffer, cx| {
-                                buffer.edit([(0..0, initial_contents)], None, cx)
-                            });
-                        }
+                    if let Some(buffer) = editor.buffer().read(cx).as_singleton()
+                        && buffer.read(cx).is_empty()
+                    {
+                        buffer.update(cx, |buffer, cx| {
+                            buffer.edit([(0..0, initial_contents)], None, cx)
+                        });
                     }
                 })
                 .ok();
@@ -1764,7 +1755,11 @@ fn open_bundled_file(
                 workspace.with_local_workspace(window, cx, |workspace, window, cx| {
                     let project = workspace.project();
                     let buffer = project.update(cx, move |project, cx| {
-                        project.create_local_buffer(text.as_ref(), language, cx)
+                        let buffer = project.create_local_buffer(text.as_ref(), language, cx);
+                        buffer.update(cx, |buffer, cx| {
+                            buffer.set_capability(Capability::ReadOnly, cx);
+                        });
+                        buffer
                     });
                     let buffer =
                         cx.new(|cx| MultiBuffer::singleton(buffer, cx).with_title(title.into()));
@@ -4541,6 +4536,43 @@ mod tests {
             }
         }
         assert!(has_default_theme);
+    }
+
+    #[gpui::test]
+    async fn test_bundled_files_editor(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+        cx.update(init);
+
+        let project = Project::test(app_state.fs.clone(), [], cx).await;
+        let _window = cx.add_window(|window, cx| Workspace::test_new(project, window, cx));
+
+        cx.update(|cx| {
+            cx.dispatch_action(&OpenDefaultSettings);
+        });
+        cx.run_until_parked();
+
+        assert_eq!(cx.read(|cx| cx.windows().len()), 1);
+
+        let workspace = cx.windows()[0].downcast::<Workspace>().unwrap();
+        let active_editor = workspace
+            .update(cx, |workspace, _, cx| {
+                workspace.active_item_as::<Editor>(cx)
+            })
+            .unwrap();
+        assert!(
+            active_editor.is_some(),
+            "Settings action should have opened an editor with the default file contents"
+        );
+
+        let active_editor = active_editor.unwrap();
+        assert!(
+            active_editor.read_with(cx, |editor, cx| editor.read_only(cx)),
+            "Default settings should be readonly"
+        );
+        assert!(
+            active_editor.read_with(cx, |editor, cx| editor.buffer().read(cx).read_only()),
+            "The underlying buffer should also be readonly for the shipped default settings"
+        );
     }
 
     #[gpui::test]

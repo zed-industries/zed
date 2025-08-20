@@ -76,7 +76,7 @@ pub static ZED_APP_PATH: LazyLock<Option<PathBuf>> =
     LazyLock::new(|| std::env::var("ZED_APP_PATH").ok().map(PathBuf::from));
 
 pub static ZED_ALWAYS_ACTIVE: LazyLock<bool> =
-    LazyLock::new(|| std::env::var("ZED_ALWAYS_ACTIVE").map_or(false, |e| !e.is_empty()));
+    LazyLock::new(|| std::env::var("ZED_ALWAYS_ACTIVE").is_ok_and(|e| !e.is_empty()));
 
 pub const INITIAL_RECONNECTION_DELAY: Duration = Duration::from_millis(500);
 pub const MAX_RECONNECTION_DELAY: Duration = Duration::from_secs(30);
@@ -162,7 +162,7 @@ pub fn init(client: &Arc<Client>, cx: &mut App) {
         let client = client.clone();
         move |_: &SignIn, cx| {
             if let Some(client) = client.upgrade() {
-                cx.spawn(async move |cx| client.sign_in_with_optional_connect(true, &cx).await)
+                cx.spawn(async move |cx| client.sign_in_with_optional_connect(true, cx).await)
                     .detach_and_log_err(cx);
             }
         }
@@ -173,7 +173,7 @@ pub fn init(client: &Arc<Client>, cx: &mut App) {
         move |_: &SignOut, cx| {
             if let Some(client) = client.upgrade() {
                 cx.spawn(async move |cx| {
-                    client.sign_out(&cx).await;
+                    client.sign_out(cx).await;
                 })
                 .detach();
             }
@@ -185,7 +185,7 @@ pub fn init(client: &Arc<Client>, cx: &mut App) {
         move |_: &Reconnect, cx| {
             if let Some(client) = client.upgrade() {
                 cx.spawn(async move |cx| {
-                    client.reconnect(&cx);
+                    client.reconnect(cx);
                 })
                 .detach();
             }
@@ -677,7 +677,7 @@ impl Client {
 
                     let mut delay = INITIAL_RECONNECTION_DELAY;
                     loop {
-                        match client.connect(true, &cx).await {
+                        match client.connect(true, cx).await {
                             ConnectionResult::Timeout => {
                                 log::error!("client connect attempt timed out")
                             }
@@ -701,7 +701,7 @@ impl Client {
                                 Status::ReconnectionError {
                                     next_reconnection: Instant::now() + delay,
                                 },
-                                &cx,
+                                cx,
                             );
                             let jitter =
                                 Duration::from_millis(rng.gen_range(0..delay.as_millis() as u64));
@@ -864,22 +864,23 @@ impl Client {
         let mut credentials = None;
 
         let old_credentials = self.state.read().credentials.clone();
-        if let Some(old_credentials) = old_credentials {
-            if self.validate_credentials(&old_credentials, cx).await? {
-                credentials = Some(old_credentials);
-            }
+        if let Some(old_credentials) = old_credentials
+            && self.validate_credentials(&old_credentials, cx).await?
+        {
+            credentials = Some(old_credentials);
         }
 
-        if credentials.is_none() && try_provider {
-            if let Some(stored_credentials) = self.credentials_provider.read_credentials(cx).await {
-                if self.validate_credentials(&stored_credentials, cx).await? {
-                    credentials = Some(stored_credentials);
-                } else {
-                    self.credentials_provider
-                        .delete_credentials(cx)
-                        .await
-                        .log_err();
-                }
+        if credentials.is_none()
+            && try_provider
+            && let Some(stored_credentials) = self.credentials_provider.read_credentials(cx).await
+        {
+            if self.validate_credentials(&stored_credentials, cx).await? {
+                credentials = Some(stored_credentials);
+            } else {
+                self.credentials_provider
+                    .delete_credentials(cx)
+                    .await
+                    .log_err();
             }
         }
 
@@ -973,6 +974,11 @@ impl Client {
         try_provider: bool,
         cx: &AsyncApp,
     ) -> Result<()> {
+        // Don't try to sign in again if we're already connected to Collab, as it will temporarily disconnect us.
+        if self.status().borrow().is_connected() {
+            return Ok(());
+        }
+
         let (is_staff_tx, is_staff_rx) = oneshot::channel::<bool>();
         let mut is_staff_tx = Some(is_staff_tx);
         cx.update(|cx| {
@@ -1151,7 +1157,7 @@ impl Client {
             let this = self.clone();
             async move |cx| {
                 while let Some(message) = incoming.next().await {
-                    this.handle_message(message, &cx);
+                    this.handle_message(message, cx);
                     // Don't starve the main thread when receiving lots of messages at once.
                     smol::future::yield_now().await;
                 }
@@ -1169,12 +1175,12 @@ impl Client {
                             peer_id,
                         })
                     {
-                        this.set_status(Status::SignedOut, &cx);
+                        this.set_status(Status::SignedOut, cx);
                     }
                 }
                 Err(err) => {
                     log::error!("connection error: {:?}", err);
-                    this.set_status(Status::ConnectionLost, &cx);
+                    this.set_status(Status::ConnectionLost, cx);
                 }
             }
         })
@@ -1410,6 +1416,12 @@ impl Client {
 
                     open_url_tx.send(url).log_err();
 
+                    #[derive(Deserialize)]
+                    struct CallbackParams {
+                        pub user_id: String,
+                        pub access_token: String,
+                    }
+
                     // Receive the HTTP request from the user's browser. Retrieve the user id and encrypted
                     // access token from the query params.
                     //
@@ -1420,17 +1432,13 @@ impl Client {
                             for _ in 0..100 {
                                 if let Some(req) = server.recv_timeout(Duration::from_secs(1))? {
                                     let path = req.url();
-                                    let mut user_id = None;
-                                    let mut access_token = None;
                                     let url = Url::parse(&format!("http://example.com{}", path))
                                         .context("failed to parse login notification url")?;
-                                    for (key, value) in url.query_pairs() {
-                                        if key == "access_token" {
-                                            access_token = Some(value.to_string());
-                                        } else if key == "user_id" {
-                                            user_id = Some(value.to_string());
-                                        }
-                                    }
+                                    let callback_params: CallbackParams =
+                                        serde_urlencoded::from_str(url.query().unwrap_or_default())
+                                            .context(
+                                                "failed to parse sign-in callback query parameters",
+                                            )?;
 
                                     let post_auth_url =
                                         http.build_url("/native_app_signin_succeeded");
@@ -1445,8 +1453,8 @@ impl Client {
                                     )
                                     .context("failed to respond to login http request")?;
                                     return Ok((
-                                        user_id.context("missing user_id parameter")?,
-                                        access_token.context("missing access_token parameter")?,
+                                        callback_params.user_id,
+                                        callback_params.access_token,
                                     ));
                                 }
                             }
@@ -2065,8 +2073,8 @@ mod tests {
         let (done_tx1, done_rx1) = smol::channel::unbounded();
         let (done_tx2, done_rx2) = smol::channel::unbounded();
         AnyProtoClient::from(client.clone()).add_entity_message_handler(
-            move |entity: Entity<TestEntity>, _: TypedEnvelope<proto::JoinProject>, mut cx| {
-                match entity.read_with(&mut cx, |entity, _| entity.id).unwrap() {
+            move |entity: Entity<TestEntity>, _: TypedEnvelope<proto::JoinProject>, cx| {
+                match entity.read_with(&cx, |entity, _| entity.id).unwrap() {
                     1 => done_tx1.try_send(()).unwrap(),
                     2 => done_tx2.try_send(()).unwrap(),
                     _ => unreachable!(),
@@ -2090,17 +2098,17 @@ mod tests {
         let _subscription1 = client
             .subscribe_to_entity(1)
             .unwrap()
-            .set_entity(&entity1, &mut cx.to_async());
+            .set_entity(&entity1, &cx.to_async());
         let _subscription2 = client
             .subscribe_to_entity(2)
             .unwrap()
-            .set_entity(&entity2, &mut cx.to_async());
+            .set_entity(&entity2, &cx.to_async());
         // Ensure dropping a subscription for the same entity type still allows receiving of
         // messages for other entity IDs of the same type.
         let subscription3 = client
             .subscribe_to_entity(3)
             .unwrap()
-            .set_entity(&entity3, &mut cx.to_async());
+            .set_entity(&entity3, &cx.to_async());
         drop(subscription3);
 
         server.send(proto::JoinProject {

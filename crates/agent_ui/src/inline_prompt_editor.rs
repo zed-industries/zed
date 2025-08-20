@@ -75,7 +75,7 @@ impl<T: 'static> Render for PromptEditor<T> {
                 let codegen = codegen.read(cx);
 
                 if codegen.alternative_count(cx) > 1 {
-                    buttons.push(self.render_cycle_controls(&codegen, cx));
+                    buttons.push(self.render_cycle_controls(codegen, cx));
                 }
 
                 let editor_margins = editor_margins.lock();
@@ -345,7 +345,7 @@ impl<T: 'static> PromptEditor<T> {
                 let prompt = self.editor.read(cx).text(cx);
                 if self
                     .prompt_history_ix
-                    .map_or(true, |ix| self.prompt_history[ix] != prompt)
+                    .is_none_or(|ix| self.prompt_history[ix] != prompt)
                 {
                     self.prompt_history_ix.take();
                     self.pending_prompt = prompt;

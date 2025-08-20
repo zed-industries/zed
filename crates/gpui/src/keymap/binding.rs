@@ -53,10 +53,10 @@ impl KeyBinding {
 
         if let Some(equivalents) = key_equivalents {
             for keystroke in keystrokes.iter_mut() {
-                if keystroke.key.chars().count() == 1 {
-                    if let Some(key) = equivalents.get(&keystroke.key.chars().next().unwrap()) {
-                        keystroke.key = key.to_string();
-                    }
+                if keystroke.key.chars().count() == 1
+                    && let Some(key) = equivalents.get(&keystroke.key.chars().next().unwrap())
+                {
+                    keystroke.key = key.to_string();
                 }
             }
         }

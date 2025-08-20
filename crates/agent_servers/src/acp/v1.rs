@@ -1,3 +1,4 @@
+use action_log::ActionLog;
 use agent_client_protocol::{self as acp, Agent as _};
 use anyhow::anyhow;
 use collections::HashMap;
@@ -13,7 +14,7 @@ use anyhow::{Context as _, Result};
 use gpui::{App, AppContext as _, AsyncApp, Entity, Task, WeakEntity};
 
 use crate::{AgentServerCommand, acp::UnsupportedVersion};
-use acp_thread::{AcpThread, AgentConnection, AuthRequired};
+use acp_thread::{AcpThread, AgentConnection, AuthRequired, LoadError};
 
 pub struct AcpConnection {
     server_name: &'static str,
@@ -86,7 +87,9 @@ impl AcpConnection {
                 for session in sessions.borrow().values() {
                     session
                         .thread
-                        .update(cx, |thread, cx| thread.emit_server_exited(status, cx))
+                        .update(cx, |thread, cx| {
+                            thread.emit_load_error(LoadError::Exited { status }, cx)
+                        })
                         .ok();
                 }
 
@@ -140,21 +143,27 @@ impl AgentConnection for AcpConnection {
                 .await
                 .map_err(|err| {
                     if err.code == acp::ErrorCode::AUTH_REQUIRED.code {
-                        anyhow!(AuthRequired)
+                        let mut error = AuthRequired::new();
+
+                        if err.message != acp::ErrorCode::AUTH_REQUIRED.message {
+                            error = error.with_description(err.message);
+                        }
+
+                        anyhow!(error)
                     } else {
                         anyhow!(err)
                     }
                 })?;
 
             let session_id = response.session_id;
-
-            let thread = cx.new(|cx| {
+            let action_log = cx.new(|_| ActionLog::new(project.clone()))?;
+            let thread = cx.new(|_cx| {
                 AcpThread::new(
                     self.server_name,
                     self.clone(),
                     project,
+                    action_log,
                     session_id.clone(),
-                    cx,
                 )
             })?;
 
@@ -233,11 +242,11 @@ impl acp::Client for ClientDelegate {
                 thread.request_tool_call_authorization(arguments.tool_call, arguments.options, cx)
             })?;
 
-        let result = rx.await;
+        let result = rx?.await;
 
         let outcome = match result {
             Ok(option) => acp::RequestPermissionOutcome::Selected { option_id: option },
-            Err(oneshot::Canceled) => acp::RequestPermissionOutcome::Cancelled,
+            Err(oneshot::Canceled) => acp::RequestPermissionOutcome::Canceled,
         };
 
         Ok(acp::RequestPermissionResponse { outcome })

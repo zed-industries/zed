@@ -243,7 +243,7 @@ fn find_relevant_completion<'a>(
                 None => continue 'completions,
             };
 
-        if best_completion.map_or(false, |best| best.len() > trimmed_completion.len()) {
+        if best_completion.is_some_and(|best| best.len() > trimmed_completion.len()) {
             continue;
         }
 

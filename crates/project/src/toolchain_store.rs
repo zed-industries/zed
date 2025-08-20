@@ -11,7 +11,10 @@ use collections::BTreeMap;
 use gpui::{
     App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, Subscription, Task, WeakEntity,
 };
-use language::{LanguageName, LanguageRegistry, LanguageToolchainStore, Toolchain, ToolchainList};
+use language::{
+    LanguageName, LanguageRegistry, LanguageToolchainStore, ManifestDelegate, Toolchain,
+    ToolchainList,
+};
 use rpc::{
     AnyProtoClient, TypedEnvelope,
     proto::{self, FromProto, ToProto},
@@ -104,9 +107,11 @@ impl ToolchainStore {
         cx: &App,
     ) -> Task<Option<Toolchain>> {
         match &self.0 {
-            ToolchainStoreInner::Local(local, _) => {
-                local.read(cx).active_toolchain(path, language_name, cx)
-            }
+            ToolchainStoreInner::Local(local, _) => Task::ready(local.read(cx).active_toolchain(
+                path.worktree_id,
+                &path.path,
+                language_name,
+            )),
             ToolchainStoreInner::Remote(remote) => {
                 remote.read(cx).active_toolchain(path, language_name, cx)
             }
@@ -232,9 +237,15 @@ impl ToolchainStore {
             ToolchainStoreInner::Remote(remote) => Arc::new(RemoteStore(remote.downgrade())),
         }
     }
+    pub fn as_local_store(&self) -> Option<&Entity<LocalToolchainStore>> {
+        match &self.0 {
+            ToolchainStoreInner::Local(local, _) => Some(local),
+            ToolchainStoreInner::Remote(_) => None,
+        }
+    }
 }
 
-struct LocalToolchainStore {
+pub struct LocalToolchainStore {
     languages: Arc<LanguageRegistry>,
     worktree_store: Entity<WorktreeStore>,
     project_environment: Entity<ProjectEnvironment>,
@@ -243,20 +254,19 @@ struct LocalToolchainStore {
 }
 
 #[async_trait(?Send)]
-impl language::LanguageToolchainStore for LocalStore {
-    async fn active_toolchain(
+impl language::LocalLanguageToolchainStore for LocalStore {
+    fn active_toolchain(
         self: Arc<Self>,
         worktree_id: WorktreeId,
-        path: Arc<Path>,
+        path: &Arc<Path>,
         language_name: LanguageName,
         cx: &mut AsyncApp,
     ) -> Option<Toolchain> {
         self.0
-            .update(cx, |this, cx| {
-                this.active_toolchain(ProjectPath { worktree_id, path }, language_name, cx)
+            .update(cx, |this, _| {
+                this.active_toolchain(worktree_id, path, language_name)
             })
             .ok()?
-            .await
     }
 }
 
@@ -279,19 +289,18 @@ impl language::LanguageToolchainStore for RemoteStore {
 }
 
 pub struct EmptyToolchainStore;
-#[async_trait(?Send)]
-impl language::LanguageToolchainStore for EmptyToolchainStore {
-    async fn active_toolchain(
+impl language::LocalLanguageToolchainStore for EmptyToolchainStore {
+    fn active_toolchain(
         self: Arc<Self>,
         _: WorktreeId,
-        _: Arc<Path>,
+        _: &Arc<Path>,
         _: LanguageName,
         _: &mut AsyncApp,
     ) -> Option<Toolchain> {
         None
     }
 }
-struct LocalStore(WeakEntity<LocalToolchainStore>);
+pub(crate) struct LocalStore(WeakEntity<LocalToolchainStore>);
 struct RemoteStore(WeakEntity<RemoteToolchainStore>);
 
 #[derive(Clone)]
@@ -349,17 +358,13 @@ impl LocalToolchainStore {
                 .flatten()?;
             let worktree_id = snapshot.id();
             let worktree_root = snapshot.abs_path().to_path_buf();
+            let delegate =
+                Arc::from(ManifestQueryDelegate::new(snapshot)) as Arc<dyn ManifestDelegate>;
             let relative_path = manifest_tree
                 .update(cx, |this, cx| {
-                    this.root_for_path(
-                        path,
-                        &mut std::iter::once(manifest_name.clone()),
-                        Arc::new(ManifestQueryDelegate::new(snapshot)),
-                        cx,
-                    )
+                    this.root_for_path(&path, &manifest_name, &delegate, cx)
                 })
                 .ok()?
-                .remove(&manifest_name)
                 .unwrap_or_else(|| ProjectPath {
                     path: Arc::from(Path::new("")),
                     worktree_id,
@@ -394,21 +399,20 @@ impl LocalToolchainStore {
     }
     pub(crate) fn active_toolchain(
         &self,
-        path: ProjectPath,
+        worktree_id: WorktreeId,
+        relative_path: &Arc<Path>,
         language_name: LanguageName,
-        _: &App,
-    ) -> Task<Option<Toolchain>> {
-        let ancestors = path.path.ancestors();
-        Task::ready(
-            self.active_toolchains
-                .get(&(path.worktree_id, language_name))
-                .and_then(|paths| {
-                    ancestors
-                        .into_iter()
-                        .find_map(|root_path| paths.get(root_path))
-                })
-                .cloned(),
-        )
+    ) -> Option<Toolchain> {
+        let ancestors = relative_path.ancestors();
+
+        self.active_toolchains
+            .get(&(worktree_id, language_name))
+            .and_then(|paths| {
+                ancestors
+                    .into_iter()
+                    .find_map(|root_path| paths.get(root_path))
+            })
+            .cloned()
     }
 }
 struct RemoteToolchainStore {

@@ -605,7 +605,7 @@ fn render_popular_settings_section(
     window: &mut Window,
     cx: &mut App,
 ) -> impl IntoElement {
-    const LIGATURE_TOOLTIP: &'static str =
+    const LIGATURE_TOOLTIP: &str =
         "Font ligatures combine two characters into one. For example, turning =/= into ≠.";
 
     v_flex()

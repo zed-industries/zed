@@ -262,7 +262,7 @@ impl MemoryView {
         cx: &mut Context<Self>,
     ) {
         use parse_int::parse;
-        let Ok(as_address) = parse::<u64>(&memory_reference) else {
+        let Ok(as_address) = parse::<u64>(memory_reference) else {
             return;
         };
         let access_size = evaluate_name
@@ -931,7 +931,7 @@ impl Render for MemoryView {
                 v_flex()
                     .size_full()
                     .on_drag_move(cx.listener(|this, evt, _, _| {
-                        this.handle_memory_drag(&evt);
+                        this.handle_memory_drag(evt);
                     }))
                     .child(self.render_memory(cx).size_full())
                     .children(self.open_context_menu.as_ref().map(|(menu, position, _)| {

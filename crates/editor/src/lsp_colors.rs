@@ -207,7 +207,7 @@ impl Editor {
                             .entry(buffer_snapshot.remote_id())
                             .or_insert_with(Vec::new);
                         let excerpt_point_range =
-                            excerpt_range.context.to_point_utf16(&buffer_snapshot);
+                            excerpt_range.context.to_point_utf16(buffer_snapshot);
                         excerpt_data.push((
                             excerpt_id,
                             buffer_snapshot.clone(),

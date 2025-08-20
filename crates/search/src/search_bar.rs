@@ -5,10 +5,15 @@ use theme::ThemeSettings;
 use ui::{IconButton, IconButtonShape};
 use ui::{Tooltip, prelude::*};
 
+pub(super) enum ActionButtonState {
+    Disabled,
+    Toggled,
+}
+
 pub(super) fn render_action_button(
     id_prefix: &'static str,
     icon: ui::IconName,
-    active: bool,
+    button_state: Option<ActionButtonState>,
     tooltip: &'static str,
     action: &'static dyn Action,
     focus_handle: FocusHandle,
@@ -21,14 +26,17 @@ pub(super) fn render_action_button(
     .on_click({
         let focus_handle = focus_handle.clone();
         move |_, window, cx| {
-            if !focus_handle.is_focused(&window) {
+            if !focus_handle.is_focused(window) {
                 window.focus(&focus_handle);
             }
             window.dispatch_action(action.boxed_clone(), cx)
         }
     })
     .tooltip(move |window, cx| Tooltip::for_action_in(tooltip, action, &focus_handle, window, cx))
-    .disabled(!active)
+    .when_some(button_state, |this, state| match state {
+        ActionButtonState::Toggled => this.toggle_state(true),
+        ActionButtonState::Disabled => this.disabled(true),
+    })
 }
 
 pub(crate) fn input_base_styles(border_color: Hsla, map: impl FnOnce(Div) -> Div) -> Div {

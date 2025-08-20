@@ -270,7 +270,7 @@ impl ConflictState {
 
             for origin in indices.iter() {
                 conflicts[origin.index] =
-                    origin.get_conflict_with(if origin == fst { &snd } else { &fst })
+                    origin.get_conflict_with(if origin == fst { snd } else { fst })
             }
 
             has_user_conflicts |= fst.override_source == KeybindSource::User
@@ -472,13 +472,7 @@ impl KeymapEditor {
 
     fn current_keystroke_query(&self, cx: &App) -> Vec<Keystroke> {
         match self.search_mode {
-            SearchMode::KeyStroke { .. } => self
-                .keystroke_editor
-                .read(cx)
-                .keystrokes()
-                .iter()
-                .cloned()
-                .collect(),
+            SearchMode::KeyStroke { .. } => self.keystroke_editor.read(cx).keystrokes().to_vec(),
             SearchMode::Normal => Default::default(),
         }
     }
@@ -559,7 +553,7 @@ impl KeymapEditor {
                                 if exact_match {
                                     keystrokes_match_exactly(&keystroke_query, keystrokes)
                                 } else if keystroke_query.len() > keystrokes.len() {
-                                    return false;
+                                    false
                                 } else {
                                     for keystroke_offset in 0..keystrokes.len() {
                                         let mut found_count = 0;
@@ -574,12 +568,9 @@ impl KeymapEditor {
                                                 query.modifiers.is_subset_of(&keystroke.modifiers)
                                                     && ((query.key.is_empty()
                                                         || query.key == keystroke.key)
-                                                        && query
-                                                            .key_char
-                                                            .as_ref()
-                                                            .map_or(true, |q_kc| {
-                                                                q_kc == &keystroke.key
-                                                            }));
+                                                        && query.key_char.as_ref().is_none_or(
+                                                            |q_kc| q_kc == &keystroke.key,
+                                                        ));
                                             if matches {
                                                 found_count += 1;
                                                 query_cursor += 1;
@@ -591,7 +582,7 @@ impl KeymapEditor {
                                             return true;
                                         }
                                     }
-                                    return false;
+                                    false
                                 }
                             })
                     });
@@ -630,8 +621,7 @@ impl KeymapEditor {
         let key_bindings_ptr = cx.key_bindings();
         let lock = key_bindings_ptr.borrow();
         let key_bindings = lock.bindings();
-        let mut unmapped_action_names =
-            HashSet::from_iter(cx.all_action_names().into_iter().copied());
+        let mut unmapped_action_names = HashSet::from_iter(cx.all_action_names().iter().copied());
         let action_documentation = cx.action_documentation();
         let mut generator = KeymapFile::action_schema_generator();
         let actions_with_schemas = HashSet::from_iter(
@@ -673,8 +663,8 @@ impl KeymapEditor {
                 action_name,
                 action_arguments,
                 &actions_with_schemas,
-                &action_documentation,
-                &humanized_action_names,
+                action_documentation,
+                humanized_action_names,
             );
 
             let index = processed_bindings.len();
@@ -696,8 +686,8 @@ impl KeymapEditor {
                 action_name,
                 None,
                 &actions_with_schemas,
-                &action_documentation,
-                &humanized_action_names,
+                action_documentation,
+                humanized_action_names,
             );
             let string_match_candidate =
                 StringMatchCandidate::new(index, &action_information.humanized_name);
@@ -1298,7 +1288,7 @@ struct HumanizedActionNameCache {
 
 impl HumanizedActionNameCache {
     fn new(cx: &App) -> Self {
-        let cache = HashMap::from_iter(cx.all_action_names().into_iter().map(|&action_name| {
+        let cache = HashMap::from_iter(cx.all_action_names().iter().map(|&action_name| {
             (
                 action_name,
                 command_palette::humanize_action_name(action_name).into(),
@@ -1866,18 +1856,15 @@ impl Render for KeymapEditor {
                                                   mouse_down_event: &gpui::MouseDownEvent,
                                                   window,
                                                   cx| {
-                                                match mouse_down_event.button {
-                                                    MouseButton::Right => {
-                                                        this.select_index(
-                                                            row_index, None, window, cx,
-                                                        );
-                                                        this.create_context_menu(
-                                                            mouse_down_event.position,
-                                                            window,
-                                                            cx,
-                                                        );
-                                                    }
-                                                    _ => {}
+                                                if mouse_down_event.button == MouseButton::Right {
+                                                    this.select_index(
+                                                        row_index, None, window, cx,
+                                                    );
+                                                    this.create_context_menu(
+                                                        mouse_down_event.position,
+                                                        window,
+                                                        cx,
+                                                    );
                                                 }
                                             },
                                         ))
@@ -2021,21 +2008,21 @@ impl RenderOnce for SyntaxHighlightedText {
 
 #[derive(PartialEq)]
 struct InputError {
-    severity: ui::Severity,
+    severity: Severity,
     content: SharedString,
 }
 
 impl InputError {
     fn warning(message: impl Into<SharedString>) -> Self {
         Self {
-            severity: ui::Severity::Warning,
+            severity: Severity::Warning,
             content: message.into(),
         }
     }
 
     fn error(message: anyhow::Error) -> Self {
         Self {
-            severity: ui::Severity::Error,
+            severity: Severity::Error,
             content: message.to_string().into(),
         }
     }
@@ -2162,9 +2149,11 @@ impl KeybindingEditorModal {
     }
 
     fn set_error(&mut self, error: InputError, cx: &mut Context<Self>) -> bool {
-        if self.error.as_ref().is_some_and(|old_error| {
-            old_error.severity == ui::Severity::Warning && *old_error == error
-        }) {
+        if self
+            .error
+            .as_ref()
+            .is_some_and(|old_error| old_error.severity == Severity::Warning && *old_error == error)
+        {
             false
         } else {
             self.error = Some(error);
@@ -2177,7 +2166,8 @@ impl KeybindingEditorModal {
         let action_arguments = self
             .action_arguments_editor
             .as_ref()
-            .map(|editor| editor.read(cx).editor.read(cx).text(cx));
+            .map(|arguments_editor| arguments_editor.read(cx).editor.read(cx).text(cx))
+            .filter(|args| !args.is_empty());
 
         let value = action_arguments
             .as_ref()
@@ -2186,7 +2176,7 @@ impl KeybindingEditorModal {
             })
             .transpose()?;
 
-        cx.build_action(&self.editing_keybind.action().name, value)
+        cx.build_action(self.editing_keybind.action().name, value)
             .context("Failed to validate action arguments")?;
         Ok(action_arguments)
     }
@@ -2288,29 +2278,11 @@ impl KeybindingEditorModal {
 
         let create = self.creating;
 
-        let status_toast = StatusToast::new(
-            format!(
-                "Saved edits to the {} action.",
-                &self.editing_keybind.action().humanized_name
-            ),
-            cx,
-            move |this, _cx| {
-                this.icon(ToastIcon::new(IconName::Check).color(Color::Success))
-                    .dismiss_button(true)
-                // .action("Undo", f) todo: wire the undo functionality
-            },
-        );
-
-        self.workspace
-            .update(cx, |workspace, cx| {
-                workspace.toggle_status_toast(status_toast, cx);
-            })
-            .log_err();
-
         cx.spawn(async move |this, cx| {
             let action_name = existing_keybind.action().name;
+            let humanized_action_name = existing_keybind.action().humanized_name.clone();
 
-            if let Err(err) = save_keybinding_update(
+            match save_keybinding_update(
                 create,
                 existing_keybind,
                 &action_mapping,
@@ -2320,25 +2292,43 @@ impl KeybindingEditorModal {
             )
             .await
             {
-                this.update(cx, |this, cx| {
-                    this.set_error(InputError::error(err), cx);
-                })
-                .log_err();
-            } else {
-                this.update(cx, |this, cx| {
-                    this.keymap_editor.update(cx, |keymap, cx| {
-                        keymap.previous_edit = Some(PreviousEdit::Keybinding {
-                            action_mapping,
-                            action_name,
-                            fallback: keymap
-                                .table_interaction_state
-                                .read(cx)
-                                .get_scrollbar_offset(Axis::Vertical),
-                        })
-                    });
-                    cx.emit(DismissEvent);
-                })
-                .ok();
+                Ok(_) => {
+                    this.update(cx, |this, cx| {
+                        this.keymap_editor.update(cx, |keymap, cx| {
+                            keymap.previous_edit = Some(PreviousEdit::Keybinding {
+                                action_mapping,
+                                action_name,
+                                fallback: keymap
+                                    .table_interaction_state
+                                    .read(cx)
+                                    .get_scrollbar_offset(Axis::Vertical),
+                            });
+                            let status_toast = StatusToast::new(
+                                format!("Saved edits to the {} action.", humanized_action_name),
+                                cx,
+                                move |this, _cx| {
+                                    this.icon(ToastIcon::new(IconName::Check).color(Color::Success))
+                                        .dismiss_button(true)
+                                    // .action("Undo", f) todo: wire the undo functionality
+                                },
+                            );
+
+                            this.workspace
+                                .update(cx, |workspace, cx| {
+                                    workspace.toggle_status_toast(status_toast, cx);
+                                })
+                                .log_err();
+                        });
+                        cx.emit(DismissEvent);
+                    })
+                    .ok();
+                }
+                Err(err) => {
+                    this.update(cx, |this, cx| {
+                        this.set_error(InputError::error(err), cx);
+                    })
+                    .log_err();
+                }
             }
         })
         .detach();
@@ -2718,7 +2708,7 @@ impl ActionArgumentsEditor {
                 })
                 .ok();
             }
-            return result;
+            result
         })
         .detach_and_log_err(cx);
         Self {
@@ -2821,7 +2811,7 @@ impl Render for ActionArgumentsEditor {
         self.editor
             .update(cx, |editor, _| editor.set_text_style_refinement(text_style));
 
-        return v_flex().w_full().child(
+        v_flex().w_full().child(
             h_flex()
                 .min_h_8()
                 .min_w_48()
@@ -2834,7 +2824,7 @@ impl Render for ActionArgumentsEditor {
                 .border_color(border_color)
                 .track_focus(&self.focus_handle)
                 .child(self.editor.clone()),
-        );
+        )
     }
 }
 
@@ -2861,11 +2851,8 @@ impl CompletionProvider for KeyContextCompletionProvider {
                 break;
             }
         }
-        let start_anchor = buffer.anchor_before(
-            buffer_position
-                .to_offset(&buffer)
-                .saturating_sub(count_back),
-        );
+        let start_anchor =
+            buffer.anchor_before(buffer_position.to_offset(buffer).saturating_sub(count_back));
         let replace_range = start_anchor..buffer_position;
         gpui::Task::ready(Ok(vec![project::CompletionResponse {
             completions: self
@@ -2895,9 +2882,9 @@ impl CompletionProvider for KeyContextCompletionProvider {
         _menu_is_open: bool,
         _cx: &mut Context<Editor>,
     ) -> bool {
-        text.chars().last().map_or(false, |last_char| {
-            last_char.is_ascii_alphanumeric() || last_char == '_'
-        })
+        text.chars()
+            .last()
+            .is_some_and(|last_char| last_char.is_ascii_alphanumeric() || last_char == '_')
     }
 }
 
@@ -2916,7 +2903,7 @@ async fn load_json_language(workspace: WeakEntity<Workspace>, cx: &mut AsyncApp)
         Some(task) => task.await.context("Failed to load JSON language").log_err(),
         None => None,
     };
-    return json_language.unwrap_or_else(|| {
+    json_language.unwrap_or_else(|| {
         Arc::new(Language::new(
             LanguageConfig {
                 name: "JSON".into(),
@@ -2924,7 +2911,7 @@ async fn load_json_language(workspace: WeakEntity<Workspace>, cx: &mut AsyncApp)
             },
             Some(tree_sitter_json::LANGUAGE.into()),
         ))
-    });
+    })
 }
 
 async fn load_keybind_context_language(
@@ -2948,7 +2935,7 @@ async fn load_keybind_context_language(
             .log_err(),
         None => None,
     };
-    return language.unwrap_or_else(|| {
+    language.unwrap_or_else(|| {
         Arc::new(Language::new(
             LanguageConfig {
                 name: "Zed Keybind Context".into(),
@@ -2956,7 +2943,7 @@ async fn load_keybind_context_language(
             },
             Some(tree_sitter_rust::LANGUAGE.into()),
         ))
-    });
+    })
 }
 
 async fn save_keybinding_update(
@@ -2982,14 +2969,14 @@ async fn save_keybinding_update(
     let target = settings::KeybindUpdateTarget {
         context: existing_context,
         keystrokes: existing_keystrokes,
-        action_name: &existing.action().name,
+        action_name: existing.action().name,
         action_arguments: existing_args,
     };
 
     let source = settings::KeybindUpdateTarget {
         context: action_mapping.context.as_ref().map(|a| &***a),
         keystrokes: &action_mapping.keystrokes,
-        action_name: &existing.action().name,
+        action_name: existing.action().name,
         action_arguments: new_args,
     };
 
@@ -3010,7 +2997,7 @@ async fn save_keybinding_update(
 
     let updated_keymap_contents =
         settings::KeymapFile::update_keybinding(operation, keymap_contents, tab_size)
-            .context("Failed to update keybinding")?;
+            .map_err(|err| anyhow::anyhow!("Could not save updated keybinding: {}", err))?;
     fs.write(
         paths::keymap_file().as_path(),
         updated_keymap_contents.as_bytes(),
@@ -3043,7 +3030,7 @@ async fn remove_keybinding(
         target: settings::KeybindUpdateTarget {
             context: existing.context().and_then(KeybindContextString::local_str),
             keystrokes,
-            action_name: &existing.action().name,
+            action_name: existing.action().name,
             action_arguments: existing
                 .action()
                 .arguments
@@ -3136,7 +3123,7 @@ fn collect_contexts_from_assets() -> Vec<SharedString> {
     let mut contexts = contexts.into_iter().collect::<Vec<_>>();
     contexts.sort();
 
-    return contexts;
+    contexts
 }
 
 impl SerializableItem for KeymapEditor {

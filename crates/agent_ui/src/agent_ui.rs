@@ -146,7 +146,7 @@ pub struct NewExternalAgentThread {
     agent: Option<ExternalAgent>,
 }
 
-#[derive(Default, Clone, Copy, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Default, Debug, Clone, Copy, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 enum ExternalAgent {
     #[default]
@@ -156,11 +156,15 @@ enum ExternalAgent {
 }
 
 impl ExternalAgent {
-    pub fn server(&self, fs: Arc<dyn fs::Fs>) -> Rc<dyn agent_servers::AgentServer> {
+    pub fn server(
+        &self,
+        fs: Arc<dyn fs::Fs>,
+        history: Entity<agent2::HistoryStore>,
+    ) -> Rc<dyn agent_servers::AgentServer> {
         match self {
             ExternalAgent::Gemini => Rc::new(agent_servers::Gemini),
             ExternalAgent::ClaudeCode => Rc::new(agent_servers::ClaudeCode),
-            ExternalAgent::NativeAgent => Rc::new(agent2::NativeAgentServer::new(fs)),
+            ExternalAgent::NativeAgent => Rc::new(agent2::NativeAgentServer::new(fs, history)),
         }
     }
 }
@@ -242,7 +246,6 @@ pub fn init(
         client.telemetry().clone(),
         cx,
     );
-    indexed_docs::init(cx);
     cx.observe_new(move |workspace, window, cx| {
         ConfigureContextServerModal::register(workspace, language_registry.clone(), window, cx)
     })
@@ -321,7 +324,7 @@ fn init_language_model_settings(cx: &mut App) {
     cx.subscribe(
         &LanguageModelRegistry::global(cx),
         |_, event: &language_model::Event, cx| match event {
-            language_model::Event::ProviderStateChanged
+            language_model::Event::ProviderStateChanged(_)
             | language_model::Event::AddedProvider(_)
             | language_model::Event::RemovedProvider(_) => {
                 update_active_language_model_from_settings(cx);
@@ -408,12 +411,6 @@ fn register_slash_commands(cx: &mut App) {
 fn update_slash_commands_from_settings(cx: &mut App) {
     let slash_command_registry = SlashCommandRegistry::global(cx);
     let settings = SlashCommandSettings::get_global(cx);
-
-    if settings.docs.enabled {
-        slash_command_registry.register_command(assistant_slash_commands::DocsSlashCommand, true);
-    } else {
-        slash_command_registry.unregister_command(assistant_slash_commands::DocsSlashCommand);
-    }
 
     if settings.cargo_workspace.enabled {
         slash_command_registry
