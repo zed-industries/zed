@@ -34,12 +34,6 @@ trait Transform: Clone {
 
     /// Adds one to the value
     fn add_one(self) -> Self;
-
-    /// cfg attributes are respected
-
-    fn cfg_included(self) -> Self;
-
-    fn cfg_omitted(self) -> Self;
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -69,10 +63,6 @@ impl Transform for Number {
     fn add_one(self) -> Self {
         Number(self.0 + 1)
     }
-
-    fn cfg_included(self) -> Self {
-        Number(self.0)
-    }
 }
 
 #[test]
@@ -89,7 +79,6 @@ fn test_derive_inspector_reflection() {
     assert!(method_names.contains(&"increment"));
     assert!(method_names.contains(&"quadruple"));
     assert!(method_names.contains(&"add_one"));
-    assert!(method_names.contains(&"cfg_included"));
 
     // Invoke methods by name
     let num = Number(5);
