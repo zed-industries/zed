@@ -456,7 +456,7 @@ impl X11Client {
                 move |event, _, client| match event {
                     XDPEvent::WindowAppearance(appearance) => {
                         client.with_common(|common| common.appearance = appearance);
-                        for (_, window) in &mut client.0.borrow_mut().windows {
+                        for window in client.0.borrow_mut().windows.values_mut() {
                             window.window.set_appearance(appearance);
                         }
                     }

@@ -5338,7 +5338,7 @@ fn subscribe_for_editor_events(
                 }
                 EditorEvent::Reparsed(buffer_id) => {
                     if let Some(excerpts) = outline_panel.excerpts.get_mut(buffer_id) {
-                        for (_, excerpt) in excerpts {
+                        for excerpt in excerpts.values_mut() {
                             excerpt.invalidate_outlines();
                         }
                     }

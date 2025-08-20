@@ -10883,7 +10883,7 @@ impl LspStore {
             // Find all worktrees that have this server in their language server tree
             for (worktree_id, servers) in &local.lsp_tree.instances {
                 if *worktree_id != key.worktree_id {
-                    for (_, server_map) in &servers.roots {
+                    for server_map in servers.roots.values() {
                         if server_map.contains_key(&key.name) {
                             worktrees_using_server.push(*worktree_id);
                         }
