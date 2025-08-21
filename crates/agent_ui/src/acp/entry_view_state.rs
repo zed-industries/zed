@@ -121,14 +121,19 @@ impl EntryViewState {
 
                 for terminal in terminals {
                     views.entry(terminal.entity_id()).or_insert_with(|| {
-                        create_terminal(
+                        let element = create_terminal(
                             self.workspace.clone(),
                             self.project.clone(),
                             terminal.clone(),
                             window,
                             cx,
                         )
-                        .into_any()
+                        .into_any();
+                        cx.emit(EntryViewEvent {
+                            entry_index: index,
+                            view_event: ViewEvent::NewTerminal(terminal.entity_id()),
+                        });
+                        element
                     });
                 }
 
@@ -187,6 +192,7 @@ pub struct EntryViewEvent {
 }
 
 pub enum ViewEvent {
+    NewTerminal(EntityId),
     MessageEditorEvent(Entity<MessageEditor>, MessageEditorEvent),
 }
 

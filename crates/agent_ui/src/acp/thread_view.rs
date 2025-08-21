@@ -677,6 +677,11 @@ impl AcpThreadView {
         cx: &mut Context<Self>,
     ) {
         match &event.view_event {
+            ViewEvent::NewTerminal(terminal_id) => {
+                if AgentSettings::get_global(cx).expand_terminal_card {
+                    self.expanded_terminals.insert(*terminal_id);
+                }
+            }
             ViewEvent::MessageEditorEvent(_editor, MessageEditorEvent::Focus) => {
                 if let Some(thread) = self.thread()
                     && let Some(AgentThreadEntry::UserMessage(user_message)) =
