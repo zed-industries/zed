@@ -1782,7 +1782,7 @@ impl AcpThreadView {
             .text_color(cx.theme().colors().text_muted)
             .child(self.render_markdown(markdown, default_markdown_style(false, false, window, cx)))
             .child(
-                Button::new(button_id, "Collapse Output")
+                Button::new(button_id, "Collapse")
                     .full_width()
                     .style(ButtonStyle::Outlined)
                     .label_size(LabelSize::Small)
