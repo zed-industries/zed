@@ -770,6 +770,33 @@ mod tests {
         // https://github.com/zed-industries/zed/issues/34027
         #[gpui::test]
         #[should_panic(expected = "Tooltip mismatch")]
+        async fn issue_34027(cx: &mut TestAppContext) {
+            test_path_likes!(
+                cx,
+                vec![(
+                    path!("/tmp/issue34027"),
+                    json!({
+                        "test.txt": "",
+                        "foo": {
+                            "test.txt": "",
+                        }
+                    }),
+                ),],
+                vec![path!("/tmp/issue34027")],
+                {
+                    test!("test.txt", "/tmp/issue34027/test.txt", "/tmp/issue34027");
+                    test!(
+                        "test.txt",
+                        "/tmp/issue34027/foo/test.txt",
+                        "/tmp/issue34027/foo"
+                    );
+                }
+            )
+        }
+
+        // https://github.com/zed-industries/zed/issues/34027
+        #[gpui::test]
+        #[should_panic(expected = "Tooltip mismatch")]
         async fn issue_34027_non_worktree_file(cx: &mut TestAppContext) {
             test_path_likes!(
                 cx,
@@ -790,6 +817,7 @@ mod tests {
                 vec![path!("/test")],
                 {
                     test!("file.txt", "/file.txt", "/");
+                    test!("file.txt", "/test/file.txt", "/test");
                 }
             )
         }
