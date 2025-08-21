@@ -225,7 +225,9 @@ impl UserMessage {
                             write!(&mut directory_context, "\n{}\n", content).ok();
                         }
                         MentionUri::Symbol {
-                            path, line_range, ..
+                            abs_path: path,
+                            line_range,
+                            ..
                         } => {
                             write!(
                                 &mut symbol_context,
@@ -238,7 +240,9 @@ impl UserMessage {
                             .ok();
                         }
                         MentionUri::Selection {
-                            path, line_range, ..
+                            abs_path: path,
+                            line_range,
+                            ..
                         } => {
                             write!(
                                 &mut selection_context,

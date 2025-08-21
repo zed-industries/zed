@@ -21,7 +21,7 @@ pub enum MentionUri {
         abs_path: PathBuf,
     },
     Symbol {
-        path: PathBuf,
+        abs_path: PathBuf,
         name: String,
         line_range: Range<u32>,
     },
@@ -39,7 +39,7 @@ pub enum MentionUri {
     },
     Selection {
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        path: Option<PathBuf>,
+        abs_path: Option<PathBuf>,
         line_range: Range<u32>,
     },
     Fetch {
@@ -74,12 +74,12 @@ impl MentionUri {
                     if let Some(name) = single_query_param(&url, "symbol")? {
                         Ok(Self::Symbol {
                             name,
-                            path,
+                            abs_path: path,
                             line_range,
                         })
                     } else {
                         Ok(Self::Selection {
-                            path: Some(path),
+                            abs_path: Some(path),
                             line_range,
                         })
                     }
@@ -130,7 +130,9 @@ impl MentionUri {
             MentionUri::TextThread { name, .. } => name.clone(),
             MentionUri::Rule { name, .. } => name.clone(),
             MentionUri::Selection {
-                path, line_range, ..
+                abs_path: path,
+                line_range,
+                ..
             } => selection_name(path.as_deref(), line_range),
             MentionUri::Fetch { url } => url.to_string(),
         }
@@ -166,7 +168,7 @@ impl MentionUri {
                 Url::from_directory_path(abs_path).expect("mention path should be absolute")
             }
             MentionUri::Symbol {
-                path,
+                abs_path: path,
                 name,
                 line_range,
             } => {
@@ -179,7 +181,10 @@ impl MentionUri {
                 )));
                 url
             }
-            MentionUri::Selection { path, line_range } => {
+            MentionUri::Selection {
+                abs_path: path,
+                line_range,
+            } => {
                 if let Some(path) = path {
                     let mut url =
                         Url::from_file_path(path).expect("mention path should be absolute");
@@ -316,7 +321,7 @@ mod tests {
         let parsed = MentionUri::parse(symbol_uri).unwrap();
         match &parsed {
             MentionUri::Symbol {
-                path,
+                abs_path: path,
                 name,
                 line_range,
             } => {
@@ -335,7 +340,10 @@ mod tests {
         let selection_uri = uri!("file:///path/to/file.rs#L5:15");
         let parsed = MentionUri::parse(selection_uri).unwrap();
         match &parsed {
-            MentionUri::Selection { path, line_range } => {
+            MentionUri::Selection {
+                abs_path: path,
+                line_range,
+            } => {
                 assert_eq!(
                     path.as_ref().unwrap().to_str().unwrap(),
                     path!("/path/to/file.rs")

@@ -571,7 +571,7 @@ impl MessageEditor {
             let line_range = point_range.start.row..point_range.end.row;
 
             let uri = MentionUri::Selection {
-                path: abs_path.clone(),
+                abs_path: abs_path.clone(),
                 line_range: line_range.clone(),
             };
             let crease = crate::context_picker::crease_for_mention(
@@ -1539,10 +1539,12 @@ impl MentionSet {
                         })
                     }
                     MentionUri::Symbol {
-                        path, line_range, ..
+                        abs_path: path,
+                        line_range,
+                        ..
                     }
                     | MentionUri::Selection {
-                        path: Some(path),
+                        abs_path: Some(path),
                         line_range,
                         ..
                     } => {
@@ -1581,7 +1583,7 @@ impl MentionSet {
                             ))
                         })
                     }
-                    MentionUri::Selection { path: None, .. } => cx.spawn({
+                    MentionUri::Selection { abs_path: None, .. } => cx.spawn({
                         // FIXME
                         let uri = uri.clone();
                         async move |_| {

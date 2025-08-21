@@ -3567,10 +3567,12 @@ impl AcpThreadView {
                     });
                 }
                 MentionUri::Symbol {
-                    path, line_range, ..
+                    abs_path: path,
+                    line_range,
+                    ..
                 }
                 | MentionUri::Selection {
-                    path: Some(path),
+                    abs_path: Some(path),
                     line_range,
                 } => {
                     let project = workspace.project();
@@ -3604,7 +3606,7 @@ impl AcpThreadView {
                         })
                         .detach_and_log_err(cx);
                 }
-                MentionUri::Selection { path: None, .. } => {}
+                MentionUri::Selection { abs_path: None, .. } => {}
                 MentionUri::Thread { id, name } => {
                     if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
                         panel.update(cx, |panel, cx| {
