@@ -36,6 +36,14 @@ pub enum StatusStyle {
     LabelColor,
 }
 
+#[derive(Default, Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum DisplayMode {
+    #[default]
+    TrackedUntracked,
+    StagedUnstaged,
+}
+
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema, Debug)]
 pub struct GitPanelSettingsContent {
     /// Whether to show the panel button in the status bar.
@@ -75,6 +83,13 @@ pub struct GitPanelSettingsContent {
     ///
     /// Default: false
     pub collapse_untracked_diff: Option<bool>,
+
+    /// How to group files in the git panel.
+    /// - `tracked_untracked`: Groups files by tracked vs untracked status (default)
+    /// - `staged_unstaged`: Groups files by staged vs unstaged status (like VSCode)
+    ///
+    /// Default: tracked_untracked
+    pub display_mode: Option<DisplayMode>,
 }
 
 #[derive(Deserialize, Debug, Clone, PartialEq)]
@@ -87,6 +102,7 @@ pub struct GitPanelSettings {
     pub fallback_branch_name: String,
     pub sort_by_path: bool,
     pub collapse_untracked_diff: bool,
+    pub display_mode: DisplayMode,
 }
 
 impl Settings for GitPanelSettings {
