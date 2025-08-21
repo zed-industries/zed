@@ -2113,7 +2113,7 @@ impl AcpThreadView {
                             .to_string()
                     } else {
                         format!(
-                            "Output is {} long—to avoid unexpected token usage, \
+                            "Output is {} long, and to avoid unexpected token usage, \
                                 only 16 KB was sent back to the model.",
                             format_file_size(output.original_content_len as u64, true),
                         )
