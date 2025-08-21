@@ -2404,16 +2404,18 @@ impl AcpThreadView {
 
     fn render_empty_state(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let loading = matches!(&self.thread_state, ThreadState::Loading { .. });
-        let recent_history = self
-            .history_store
-            .update(cx, |history_store, cx| history_store.recent_entries(3, cx));
-        let no_history = self
-            .history_store
-            .update(cx, |history_store, cx| history_store.is_empty(cx));
+        let render_history = self
+            .agent
+            .clone()
+            .downcast::<agent2::NativeAgentServer>()
+            .is_some()
+            && self
+                .history_store
+                .update(cx, |history_store, cx| !history_store.is_empty(cx));
 
         v_flex()
             .size_full()
-            .when(no_history, |this| {
+            .when(!render_history, |this| {
                 this.child(
                     v_flex()
                         .size_full()
@@ -2445,7 +2447,10 @@ impl AcpThreadView {
                         })),
                 )
             })
-            .when(!no_history, |this| {
+            .when(render_history, |this| {
+                let recent_history = self
+                    .history_store
+                    .update(cx, |history_store, cx| history_store.recent_entries(3, cx));
                 this.justify_end().child(
                     v_flex()
                         .child(
