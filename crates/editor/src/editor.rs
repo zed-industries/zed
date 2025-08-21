@@ -1912,21 +1912,23 @@ impl Editor {
                         else {
                             return;
                         };
-                        if &active_editor.read(cx).buffer == editor.buffer() {
+                        if active_editor.entity_id() == cx.entity_id() {
                             let workspace = workspace.downgrade();
                             let transaction = transaction.clone();
-                            cx.spawn_in(window, async move |editor, mut cx| {
-                                Self::open_project_transaction(
-                                    &editor,
-                                    workspace,
-                                    transaction,
-                                    "Rename".to_string(),
-                                    &mut cx,
-                                )
-                                .await
-                                .ok()
-                            })
-                            .detach();
+                            cx.defer_in(window, move |_, window, cx| {
+                                cx.spawn_in(window, async move |editor, cx| {
+                                    Self::open_project_transaction(
+                                        &editor,
+                                        workspace,
+                                        transaction,
+                                        "Rename".to_string(),
+                                        cx,
+                                    )
+                                    .await
+                                    .ok()
+                                })
+                                .detach();
+                            });
                         }
                     }
 
