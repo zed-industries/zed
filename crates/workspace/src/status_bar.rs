@@ -35,13 +35,16 @@ pub struct StatusBar {
     _observe_active_pane: Subscription,
 }
 
+use log::{info, warn};
+
+
 impl Render for StatusBar {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         h_flex()
             .w_full()
             .justify_between()
             .gap(DynamicSpacing::Base08.rems(cx))
-            .py(DynamicSpacing::Base04.rems(cx))
+            // .py(DynamicSpacing::Base04.rems(cx))
             .px(DynamicSpacing::Base06.rems(cx))
             .bg(cx.theme().colors().status_bar_background)
             .map(|el| match window.window_decorations() {
@@ -60,6 +63,12 @@ impl Render for StatusBar {
             })
             .child(self.render_left_tools())
             .child(self.render_right_tools())
+            .on_children_prepainted(|bounds, _, _| {
+                if bounds.iter().any(|&b| b.size.height > px(0.0)) {
+                  warn!("bar, this is hit.");
+                }
+                warn!("foo: {bounds:?}");
+            })
     }
 }
 
