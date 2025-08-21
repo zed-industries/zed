@@ -1269,18 +1269,12 @@ mod tests {
         let model = Arc::new(FakeLanguageModel::default());
         let summary_model = Arc::new(FakeLanguageModel::default());
         thread.update(cx, |thread, cx| {
-            thread.set_model(model, cx);
-            thread.set_summarization_model(Some(summary_model), cx);
+            thread.set_model(model.clone(), cx);
+            thread.set_summarization_model(Some(summary_model.clone()), cx);
         });
         cx.run_until_parked();
         assert_eq!(history_entries(&history_store, cx), vec![]);
 
-        let model = thread.read_with(cx, |thread, _| thread.model().unwrap().clone());
-        let model = model.as_fake();
-        let summary_model = thread.read_with(cx, |thread, _| {
-            thread.summarization_model().unwrap().clone()
-        });
-        let summary_model = summary_model.as_fake();
         let send = acp_thread.update(cx, |thread, cx| {
             thread.send(
                 vec![
