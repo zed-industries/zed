@@ -11,7 +11,7 @@ use assistant_slash_commands::codeblock_fence_for_path;
 use collections::{HashMap, HashSet};
 use editor::{
     Addon, Anchor, AnchorRangeExt, ContextMenuOptions, ContextMenuPlacement, Editor, EditorElement,
-    EditorEvent, EditorMode, EditorStyle, ExcerptId, FoldPlaceholder, MultiBuffer,
+    EditorEvent, EditorMode, EditorSnapshot, EditorStyle, ExcerptId, FoldPlaceholder, MultiBuffer,
     SemanticsProvider, ToOffset,
     actions::Paste,
     display_map::{Crease, CreaseId, FoldId},
@@ -140,11 +140,11 @@ impl MessageEditor {
         .detach();
 
         let mut subscriptions = Vec::new();
-        if prevent_slash_commands {
-            subscriptions.push(cx.subscribe_in(&editor, window, {
-                let semantics_provider = semantics_provider.clone();
-                move |this, editor, event, window, cx| {
-                    if let EditorEvent::Edited { .. } = event {
+        subscriptions.push(cx.subscribe_in(&editor, window, {
+            let semantics_provider = semantics_provider.clone();
+            move |this, editor, event, window, cx| {
+                if let EditorEvent::Edited { .. } = event {
+                    if prevent_slash_commands {
                         this.highlight_slash_command(
                             semantics_provider.clone(),
                             editor.clone(),
@@ -152,9 +152,12 @@ impl MessageEditor {
                             cx,
                         );
                     }
+                    let snapshot = editor.update(cx, |editor, cx| editor.snapshot(window, cx));
+                    this.mention_set.remove_invalid(snapshot);
+                    cx.notify();
                 }
-            }));
-        }
+            }
+        }));
 
         Self {
             editor,
@@ -730,11 +733,6 @@ impl MessageEditor {
                 editor.display_map.update(cx, |map, cx| {
                     let snapshot = map.snapshot(cx);
                     for (crease_id, crease) in snapshot.crease_snapshot.creases() {
-                        // Skip creases that have been edited out of the message buffer.
-                        if !crease.range().start.is_valid(&snapshot.buffer_snapshot) {
-                            continue;
-                        }
-
                         let Some(mention) = contents.get(&crease_id) else {
                             continue;
                         };
@@ -1482,17 +1480,6 @@ impl MentionSet {
         self.text_thread_summaries.insert(path, task);
     }
 
-    pub fn drain(&mut self) -> impl Iterator<Item = CreaseId> {
-        self.fetch_results.clear();
-        self.thread_summaries.clear();
-        self.text_thread_summaries.clear();
-        self.directories.clear();
-        self.uri_by_crease_id
-            .drain()
-            .map(|(id, _)| id)
-            .chain(self.images.drain().map(|(id, _)| id))
-    }
-
     pub fn contents(
         &self,
         project: &Entity<Project>,
@@ -1702,6 +1689,25 @@ impl MentionSet {
             let contents = try_join_all(contents).await?.into_iter().collect();
             anyhow::Ok(contents)
         })
+    }
+
+    pub fn drain(&mut self) -> impl Iterator<Item = CreaseId> {
+        self.fetch_results.clear();
+        self.thread_summaries.clear();
+        self.text_thread_summaries.clear();
+        self.directories.clear();
+        self.uri_by_crease_id
+            .drain()
+            .map(|(id, _)| id)
+            .chain(self.images.drain().map(|(id, _)| id))
+    }
+
+    pub fn remove_invalid(&mut self, snapshot: EditorSnapshot) {
+        for (crease_id, crease) in snapshot.crease_snapshot.creases() {
+            if !crease.range().start.is_valid(&snapshot.buffer_snapshot) {
+                self.uri_by_crease_id.remove(&crease_id);
+            }
+        }
     }
 }
 
