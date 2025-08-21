@@ -61,6 +61,7 @@ sqlez.workspace = true
 task.workspace = true
 telemetry.workspace = true
 terminal.workspace = true
+thiserror.workspace = true
 text.workspace = true
 ui.workspace = true
 util.workspace = true
