@@ -42,6 +42,8 @@ pub(crate) struct RenderImageParams {
 pub struct RenderImage {
     /// The ID associated with this image
     pub id: ImageId,
+    /// The scale factor of the image, used for high-DPI displays.
+    pub scale_factor: f32,
     data: SmallVec<[Frame; 1]>,
 }
 
@@ -60,6 +62,7 @@ impl RenderImage {
 
         Self {
             id: ImageId(NEXT_ID.fetch_add(1, SeqCst)),
+            scale_factor: 1.0,
             data: data.into(),
         }
     }
