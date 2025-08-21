@@ -158,7 +158,6 @@ impl MentionUri {
         MentionLink(self)
     }
 
-    // FIXME return a result
     pub fn to_uri(&self) -> Url {
         match self {
             MentionUri::File { abs_path } => {
@@ -208,7 +207,10 @@ impl MentionUri {
             }
             MentionUri::TextThread { path, name } => {
                 let mut url = Url::parse("zed:///").unwrap();
-                url.set_path(&format!("/agent/text-thread/{}", path.to_string_lossy()));
+                url.set_path(&format!(
+                    "/agent/text-thread/{}",
+                    path.to_string_lossy().trim_start_matches('/')
+                ));
                 url.query_pairs_mut().append_pair("name", name);
                 url
             }
