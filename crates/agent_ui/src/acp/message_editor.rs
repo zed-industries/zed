@@ -2093,7 +2093,7 @@ mod tests {
                     project.clone(),
                     history_store.clone(),
                     None,
-                    Default::default(),
+                    prompt_capabilities.clone(),
                     "Test",
                     false,
                     EditorMode::AutoHeight {
