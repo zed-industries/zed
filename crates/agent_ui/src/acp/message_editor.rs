@@ -1505,7 +1505,7 @@ impl MentionSet {
             let mentions = self
                 .uri_by_crease_id
                 .iter()
-                .map(|(crease_id, uri)| (crease_id.clone(), Mention::UriOnly(uri.clone())))
+                .map(|(crease_id, uri)| (*crease_id, Mention::UriOnly(uri.clone())))
                 .collect();
 
             return Task::ready(Ok(mentions));
