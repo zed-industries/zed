@@ -18,6 +18,7 @@ mod workspace_settings;
 
 pub use crate::notifications::NotificationFrame;
 pub use dock::Panel;
+pub use path_list::PathList;
 pub use toast_layer::{ToastAction, ToastLayer, ToastView};
 
 use anyhow::{Context as _, Result, anyhow};
@@ -1014,7 +1015,7 @@ pub enum OpenVisible {
 
 enum WorkspaceLocation {
     // Valid local paths or SSH project to serialize
-    Location(SerializedWorkspaceLocation),
+    Location(SerializedWorkspaceLocation, PathList),
     // No valid location found hence clear session id
     DetachFromSession,
     // No valid location found to serialize
@@ -1473,20 +1474,9 @@ impl Workspace {
             let serialized_workspace =
                 persistence::DB.workspace_for_roots(paths_to_open.as_slice());
 
-            let workspace_location = serialized_workspace
-                .as_ref()
-                .map(|ws| &ws.location)
-                .and_then(|loc| match loc {
-                    SerializedWorkspaceLocation::Local(_, order) => {
-                        Some((loc.sorted_paths(), order.order()))
-                    }
-                    _ => None,
-                });
-
-            if let Some((paths, order)) = workspace_location {
-                paths_to_open = paths.iter().cloned().collect();
-
-                if order.iter().enumerate().any(|(i, &j)| i != j) {
+            if let Some(paths) = serialized_workspace.as_ref().map(|ws| &ws.paths) {
+                paths_to_open = paths.paths().to_vec();
+                if !paths.is_lexicographically_ordered() {
                     project_handle
                         .update(cx, |project, cx| {
                             project.set_worktrees_reordered(true, cx);
@@ -5045,19 +5035,12 @@ impl Workspace {
         self.session_id.clone()
     }
 
-    fn local_paths(&self, cx: &App) -> Option<Vec<Arc<Path>>> {
+    fn local_paths(&self, cx: &App) -> Vec<Arc<Path>> {
         let project = self.project().read(cx);
-
-        if project.is_local() {
-            Some(
-                project
-                    .visible_worktrees(cx)
-                    .map(|worktree| worktree.read(cx).abs_path())
-                    .collect::<Vec<_>>(),
-            )
-        } else {
-            None
-        }
+        project
+            .visible_worktrees(cx)
+            .map(|worktree| worktree.read(cx).abs_path())
+            .collect::<Vec<_>>()
     }
 
     fn update_ssh_paths(&mut self, cx: &App) {
@@ -5270,7 +5253,7 @@ impl Workspace {
         }
 
         match self.serialize_workspace_location(cx) {
-            WorkspaceLocation::Location(location) => {
+            WorkspaceLocation::Location(location, paths) => {
                 let breakpoints = self.project.update(cx, |project, cx| {
                     project
                         .breakpoint_store()
@@ -5284,6 +5267,7 @@ impl Workspace {
                 let serialized_workspace = SerializedWorkspace {
                     id: database_id,
                     location,
+                    paths,
                     center_group,
                     window_bounds,
                     display: Default::default(),
@@ -5309,13 +5293,15 @@ impl Workspace {
     }
 
     fn serialize_workspace_location(&self, cx: &App) -> WorkspaceLocation {
+        let paths = PathList::new(&self.local_paths(cx));
         if let Some(ssh_project) = &self.serialized_ssh_project {
-            WorkspaceLocation::Location(SerializedWorkspaceLocation::Ssh(ssh_project.clone()))
-        } else if let Some(local_paths) = self.local_paths(cx) {
-            if !local_paths.is_empty() {
-                WorkspaceLocation::Location(SerializedWorkspaceLocation::from_local_paths(
-                    local_paths,
-                ))
+            WorkspaceLocation::Location(
+                SerializedWorkspaceLocation::Ssh(ssh_project.clone()),
+                paths,
+            )
+        } else if self.project.read(cx).is_local() {
+            if !paths.is_empty() {
+                WorkspaceLocation::Location(SerializedWorkspaceLocation::Local, paths)
             } else {
                 WorkspaceLocation::DetachFromSession
             }
@@ -5328,13 +5314,13 @@ impl Workspace {
         let Some(id) = self.database_id() else {
             return;
         };
-        let location = match self.serialize_workspace_location(cx) {
-            WorkspaceLocation::Location(location) => location,
+        let (location, paths) = match self.serialize_workspace_location(cx) {
+            WorkspaceLocation::Location(location, paths) => (location, paths),
             _ => return,
         };
         if let Some(manager) = HistoryManager::global(cx) {
             manager.update(cx, |this, cx| {
-                this.update_history(id, HistoryManagerEntry::new(id, &location), cx);
+                this.update_history(id, HistoryManagerEntry::new(id, &location, &paths), cx);
             });
         }
     }
@@ -6800,14 +6786,14 @@ impl WorkspaceHandle for Entity<Workspace> {
     }
 }
 
-pub async fn last_opened_workspace_location() -> Option<SerializedWorkspaceLocation> {
+pub async fn last_opened_workspace_location() -> Option<(SerializedWorkspaceLocation, PathList)> {
     DB.last_workspace().await.log_err().flatten()
 }
 
 pub fn last_session_workspace_locations(
     last_session_id: &str,
     last_session_window_stack: Option<Vec<WindowId>>,
-) -> Option<Vec<SerializedWorkspaceLocation>> {
+) -> Option<Vec<(SerializedWorkspaceLocation, PathList)>> {
     DB.last_session_workspace_locations(last_session_id, last_session_window_stack)
         .log_err()
 }
@@ -7486,16 +7472,12 @@ fn serialize_ssh_project(
             .get_or_create_ssh_project(
                 connection_options.host.clone(),
                 connection_options.port,
-                paths
-                    .iter()
-                    .map(|path| path.to_string_lossy().to_string())
-                    .collect::<Vec<_>>(),
                 connection_options.username.clone(),
             )
             .await?;
 
         let serialized_workspace =
-            persistence::DB.workspace_for_ssh_project(&serialized_ssh_project);
+            persistence::DB.ssh_workspace_for_roots(&paths, serialized_ssh_project.id);
 
         let workspace_id = if let Some(workspace_id) =
             serialized_workspace.as_ref().map(|workspace| workspace.id)
@@ -8052,18 +8034,15 @@ pub fn ssh_workspace_position_from_db(
     paths_to_open: &[PathBuf],
     cx: &App,
 ) -> Task<Result<WorkspacePosition>> {
-    let paths = paths_to_open
-        .iter()
-        .map(|path| path.to_string_lossy().to_string())
-        .collect::<Vec<_>>();
+    let paths = paths_to_open.to_vec();
 
     cx.background_spawn(async move {
         let serialized_ssh_project = persistence::DB
-            .get_or_create_ssh_project(host, port, paths, user)
+            .get_or_create_ssh_project(host, port, user)
             .await
             .context("fetching serialized ssh project")?;
         let serialized_workspace =
-            persistence::DB.workspace_for_ssh_project(&serialized_ssh_project);
+            persistence::DB.ssh_workspace_for_roots(&paths, serialized_ssh_project.id);
 
         let (window_bounds, display) = if let Some(bounds) = window_bounds_env_override() {
             (Some(WindowBounds::Windowed(bounds)), None)

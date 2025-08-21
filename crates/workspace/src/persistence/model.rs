@@ -1,6 +1,7 @@
 use super::{SerializedAxis, SerializedWindowBounds};
 use crate::{
     Member, Pane, PaneAxis, SerializableItemRegistry, Workspace, WorkspaceId, item::ItemHandle,
+    path_list::PathList,
 };
 use anyhow::{Context as _, Result};
 use async_recursion::async_recursion;
@@ -9,7 +10,7 @@ use db::sqlez::{
     statement::Statement,
 };
 use gpui::{AsyncWindowContext, Entity, WeakEntity};
-use itertools::Itertools as _;
+
 use project::{Project, debugger::breakpoint_store::SourceBreakpoint};
 use remote::ssh_session::SshProjectId;
 use serde::{Deserialize, Serialize};
@@ -171,86 +172,14 @@ impl Column for LocalPathsOrder {
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum SerializedWorkspaceLocation {
-    Local(LocalPaths, LocalPathsOrder),
+    Local,
     Ssh(SerializedSshProject),
 }
 
 impl SerializedWorkspaceLocation {
-    /// Create a new `SerializedWorkspaceLocation` from a list of local paths.
-    ///
-    /// The paths will be sorted and the order will be stored in the `LocalPathsOrder` struct.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use std::path::Path;
-    /// use zed_workspace::SerializedWorkspaceLocation;
-    ///
-    /// let location = SerializedWorkspaceLocation::from_local_paths(vec![
-    ///     Path::new("path/to/workspace1"),
-    ///     Path::new("path/to/workspace2"),
-    /// ]);
-    /// assert_eq!(location, SerializedWorkspaceLocation::Local(
-    ///    LocalPaths::new(vec![
-    ///         Path::new("path/to/workspace1"),
-    ///         Path::new("path/to/workspace2"),
-    ///    ]),
-    ///   LocalPathsOrder::new(vec![0, 1]),
-    /// ));
-    /// ```
-    ///
-    /// ```
-    /// use std::path::Path;
-    /// use zed_workspace::SerializedWorkspaceLocation;
-    ///
-    /// let location = SerializedWorkspaceLocation::from_local_paths(vec![
-    ///     Path::new("path/to/workspace2"),
-    ///     Path::new("path/to/workspace1"),
-    /// ]);
-    ///
-    /// assert_eq!(location, SerializedWorkspaceLocation::Local(
-    ///    LocalPaths::new(vec![
-    ///         Path::new("path/to/workspace1"),
-    ///         Path::new("path/to/workspace2"),
-    ///   ]),
-    ///  LocalPathsOrder::new(vec![1, 0]),
-    /// ));
-    /// ```
-    pub fn from_local_paths<P: AsRef<Path>>(paths: impl IntoIterator<Item = P>) -> Self {
-        let mut indexed_paths: Vec<_> = paths
-            .into_iter()
-            .map(|p| p.as_ref().to_path_buf())
-            .enumerate()
-            .collect();
-
-        indexed_paths.sort_by(|(_, a), (_, b)| a.cmp(b));
-
-        let sorted_paths: Vec<_> = indexed_paths.iter().map(|(_, path)| path.clone()).collect();
-        let order: Vec<_> = indexed_paths.iter().map(|(index, _)| *index).collect();
-
-        Self::Local(LocalPaths::new(sorted_paths), LocalPathsOrder::new(order))
-    }
-
     /// Get sorted paths
     pub fn sorted_paths(&self) -> Arc<Vec<PathBuf>> {
-        match self {
-            SerializedWorkspaceLocation::Local(paths, order) => {
-                if order.order().is_empty() {
-                    paths.paths().clone()
-                } else {
-                    Arc::new(
-                        order
-                            .order()
-                            .iter()
-                            .zip(paths.paths().iter())
-                            .sorted_by_key(|(i, _)| **i)
-                            .map(|(_, p)| p.clone())
-                            .collect(),
-                    )
-                }
-            }
-            SerializedWorkspaceLocation::Ssh(ssh_project) => Arc::new(ssh_project.ssh_urls()),
-        }
+        unimplemented!()
     }
 }
 
@@ -258,6 +187,7 @@ impl SerializedWorkspaceLocation {
 pub(crate) struct SerializedWorkspace {
     pub(crate) id: WorkspaceId,
     pub(crate) location: SerializedWorkspaceLocation,
+    pub(crate) paths: PathList,
     pub(crate) center_group: SerializedPaneGroup,
     pub(crate) window_bounds: Option<SerializedWindowBounds>,
     pub(crate) centered_layout: bool,
@@ -579,82 +509,5 @@ impl Column for SerializedItem {
             },
             next_index,
         ))
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_serialize_local_paths() {
-        let paths = vec!["b", "a", "c"];
-        let serialized = SerializedWorkspaceLocation::from_local_paths(paths);
-
-        assert_eq!(
-            serialized,
-            SerializedWorkspaceLocation::Local(
-                LocalPaths::new(vec!["a", "b", "c"]),
-                LocalPathsOrder::new(vec![1, 0, 2])
-            )
-        );
-    }
-
-    #[test]
-    fn test_sorted_paths() {
-        let paths = vec!["b", "a", "c"];
-        let serialized = SerializedWorkspaceLocation::from_local_paths(paths);
-        assert_eq!(
-            serialized.sorted_paths(),
-            Arc::new(vec![
-                PathBuf::from("b"),
-                PathBuf::from("a"),
-                PathBuf::from("c"),
-            ])
-        );
-
-        let paths = Arc::new(vec![
-            PathBuf::from("a"),
-            PathBuf::from("b"),
-            PathBuf::from("c"),
-        ]);
-        let order = vec![2, 0, 1];
-        let serialized =
-            SerializedWorkspaceLocation::Local(LocalPaths(paths), LocalPathsOrder(order));
-        assert_eq!(
-            serialized.sorted_paths(),
-            Arc::new(vec![
-                PathBuf::from("b"),
-                PathBuf::from("c"),
-                PathBuf::from("a"),
-            ])
-        );
-
-        let paths = Arc::new(vec![
-            PathBuf::from("a"),
-            PathBuf::from("b"),
-            PathBuf::from("c"),
-        ]);
-        let order = vec![];
-        let serialized =
-            SerializedWorkspaceLocation::Local(LocalPaths(paths.clone()), LocalPathsOrder(order));
-        assert_eq!(serialized.sorted_paths(), paths);
-
-        let urls = ["/a", "/b", "/c"];
-        let serialized = SerializedWorkspaceLocation::Ssh(SerializedSshProject {
-            id: SshProjectId(0),
-            host: "host".to_string(),
-            port: Some(22),
-            paths: urls.iter().map(|s| s.to_string()).collect(),
-            user: Some("user".to_string()),
-        });
-        assert_eq!(
-            serialized.sorted_paths(),
-            Arc::new(
-                urls.iter()
-                    .map(|p| PathBuf::from(format!("user@host:22{}", p)))
-                    .collect()
-            )
-        );
     }
 }

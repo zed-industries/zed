@@ -7,10 +7,15 @@ use util::paths::SanitizedPath;
 
 use crate::persistence::model::{LocalPaths, SerializedSshProject};
 
-#[derive(PartialEq, Eq, Debug, Clone)]
+#[derive(Default, PartialEq, Eq, Debug, Clone)]
 pub struct PathList {
     paths: Arc<[PathBuf]>,
-    path_order: Arc<[usize]>,
+    order: Arc<[usize]>,
+}
+
+pub struct SerializedPathList {
+    pub paths: String,
+    pub order: String,
 }
 
 impl PathList {
@@ -21,39 +26,17 @@ impl PathList {
             .map(|(ix, path)| (ix, SanitizedPath::from(path).into()))
             .collect();
         indexed_paths.sort_by(|(_, a), (_, b)| a.cmp(b));
-        let path_order = indexed_paths.iter().map(|e| e.0).collect::<Vec<_>>().into();
+        let order = indexed_paths.iter().map(|e| e.0).collect::<Vec<_>>().into();
         let paths = indexed_paths
             .into_iter()
             .map(|e| e.1)
             .collect::<Vec<_>>()
             .into();
-        Self { path_order, paths }
+        Self { order, paths }
     }
 
-    pub fn from_strings((paths_string, order_string): &(String, String)) -> Self {
-        let mut paths: Vec<PathBuf> = if paths_string.is_empty() {
-            Vec::new()
-        } else {
-            paths_string
-                .split(',')
-                .map(|s| SanitizedPath::from(s).into())
-                .collect()
-        };
-
-        let mut path_order: Vec<usize> = order_string
-            .split(',')
-            .filter_map(|s| s.parse().ok())
-            .collect();
-
-        if !paths.is_sorted() || path_order.len() != paths.len() {
-            path_order = (0..paths.len()).collect();
-            paths.sort();
-        }
-
-        Self {
-            paths: paths.into(),
-            path_order: path_order.into(),
-        }
+    pub fn is_empty(&self) -> bool {
+        self.paths.is_empty()
     }
 
     pub fn paths(&self) -> &[PathBuf] {
@@ -61,27 +44,59 @@ impl PathList {
     }
 
     pub fn order(&self) -> &[usize] {
-        self.path_order.as_ref()
+        self.order.as_ref()
     }
 
-    pub fn to_strings(&self) -> (String, String) {
+    pub fn is_lexicographically_ordered(&self) -> bool {
+        self.order.iter().enumerate().all(|(i, &j)| i == j)
+    }
+
+    pub fn deserialize(serialized: &SerializedPathList) -> Self {
+        let mut paths: Vec<PathBuf> = if serialized.paths.is_empty() {
+            Vec::new()
+        } else {
+            serialized
+                .paths
+                .split(',')
+                .map(|s| SanitizedPath::from(s).into())
+                .collect()
+        };
+
+        let mut order: Vec<usize> = serialized
+            .order
+            .split(',')
+            .filter_map(|s| s.parse().ok())
+            .collect();
+
+        if !paths.is_sorted() || order.len() != paths.len() {
+            order = (0..paths.len()).collect();
+            paths.sort();
+        }
+
+        Self {
+            paths: paths.into(),
+            order: order.into(),
+        }
+    }
+
+    pub fn serialize(&self) -> SerializedPathList {
         use std::fmt::Write as _;
 
         let mut paths = String::new();
-        let mut path_order = String::new();
+        let mut order = String::new();
         for path in self.paths.iter() {
             if !paths.is_empty() {
                 paths.push(',');
             }
             write!(&mut paths, "{}", path.display()).unwrap();
         }
-        for ix in self.path_order.iter() {
-            if !path_order.is_empty() {
-                path_order.push(',');
+        for ix in self.order.iter() {
+            if !order.is_empty() {
+                order.push(',');
             }
-            write!(&mut path_order, "{}", *ix).unwrap();
+            write!(&mut order, "{}", *ix).unwrap();
         }
-        (paths, path_order)
+        SerializedPathList { paths, order }
     }
 
     pub fn from_local(local_paths: LocalPaths) -> Self {
@@ -109,10 +124,10 @@ mod tests {
         assert_eq!(list1.order(), &[1, 0]);
         assert_eq!(list2.order(), &[0, 1]);
 
-        let list1_deserialized = PathList::from_strings(&list1.to_strings());
+        let list1_deserialized = PathList::deserialize(&list1.serialize());
         assert_eq!(list1_deserialized, list1);
 
-        let list2_deserialized = PathList::from_strings(&list2.to_strings());
+        let list2_deserialized = PathList::deserialize(&list2.serialize());
         assert_eq!(list2_deserialized, list2);
     }
 }

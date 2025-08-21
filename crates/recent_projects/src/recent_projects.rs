@@ -26,8 +26,8 @@ use std::{
 use ui::{KeyBinding, ListItem, ListItemSpacing, Tooltip, prelude::*, tooltip_container};
 use util::{ResultExt, paths::PathExt};
 use workspace::{
-    CloseIntent, HistoryManager, ModalView, OpenOptions, SerializedWorkspaceLocation, WORKSPACE_DB,
-    Workspace, WorkspaceId, with_active_or_new_workspace,
+    CloseIntent, HistoryManager, ModalView, OpenOptions, PathList, SerializedWorkspaceLocation,
+    WORKSPACE_DB, Workspace, WorkspaceId, with_active_or_new_workspace,
 };
 use zed_actions::{OpenRecent, OpenRemote};
 
@@ -154,7 +154,7 @@ impl Render for RecentProjects {
 
 pub struct RecentProjectsDelegate {
     workspace: WeakEntity<Workspace>,
-    workspaces: Vec<(WorkspaceId, SerializedWorkspaceLocation)>,
+    workspaces: Vec<(WorkspaceId, SerializedWorkspaceLocation, PathList)>,
     selected_match_index: usize,
     matches: Vec<StringMatch>,
     render_paths: bool,
@@ -178,12 +178,15 @@ impl RecentProjectsDelegate {
         }
     }
 
-    pub fn set_workspaces(&mut self, workspaces: Vec<(WorkspaceId, SerializedWorkspaceLocation)>) {
+    pub fn set_workspaces(
+        &mut self,
+        workspaces: Vec<(WorkspaceId, SerializedWorkspaceLocation, PathList)>,
+    ) {
         self.workspaces = workspaces;
         self.has_any_non_local_projects = !self
             .workspaces
             .iter()
-            .all(|(_, location)| matches!(location, SerializedWorkspaceLocation::Local(_, _)));
+            .all(|(_, location, _)| matches!(location, SerializedWorkspaceLocation::Local));
     }
 }
 impl EventEmitter<DismissEvent> for RecentProjectsDelegate {}
@@ -236,15 +239,14 @@ impl PickerDelegate for RecentProjectsDelegate {
             .workspaces
             .iter()
             .enumerate()
-            .filter(|(_, (id, _))| !self.is_current_workspace(*id, cx))
-            .map(|(id, (_, location))| {
-                let combined_string = location
-                    .sorted_paths()
+            .filter(|(_, (id, _, _))| !self.is_current_workspace(*id, cx))
+            .map(|(id, (_, _, paths))| {
+                let combined_string = paths
+                    .paths()
                     .iter()
                     .map(|path| path.compact().to_string_lossy().into_owned())
                     .collect::<Vec<_>>()
                     .join("");
-
                 StringMatchCandidate::new(id, &combined_string)
             })
             .collect::<Vec<_>>();
@@ -279,7 +281,7 @@ impl PickerDelegate for RecentProjectsDelegate {
             .get(self.selected_index())
             .zip(self.workspace.upgrade())
         {
-            let (candidate_workspace_id, candidate_workspace_location) =
+            let (candidate_workspace_id, candidate_workspace_location, candidate_workspace_paths) =
                 &self.workspaces[selected_match.candidate_id];
             let replace_current_window = if self.create_new_window {
                 secondary
@@ -292,8 +294,8 @@ impl PickerDelegate for RecentProjectsDelegate {
                         Task::ready(Ok(()))
                     } else {
                         match candidate_workspace_location {
-                            SerializedWorkspaceLocation::Local(paths, _) => {
-                                let paths = paths.paths().to_vec();
+                            SerializedWorkspaceLocation::Local => {
+                                let paths = candidate_workspace_paths.paths().to_vec();
                                 if replace_current_window {
                                     cx.spawn_in(window, async move |workspace, cx| {
                                         let continue_replacing = workspace
@@ -383,12 +385,12 @@ impl PickerDelegate for RecentProjectsDelegate {
     ) -> Option<Self::ListItem> {
         let hit = self.matches.get(ix)?;
 
-        let (_, location) = self.workspaces.get(hit.candidate_id)?;
+        let (_, location, paths) = self.workspaces.get(hit.candidate_id)?;
 
         let mut path_start_offset = 0;
 
-        let (match_labels, paths): (Vec<_>, Vec<_>) = location
-            .sorted_paths()
+        let (match_labels, paths): (Vec<_>, Vec<_>) = paths
+            .paths()
             .iter()
             .map(|p| p.compact())
             .map(|path| {
@@ -416,11 +418,9 @@ impl PickerDelegate for RecentProjectsDelegate {
                         .gap_3()
                         .when(self.has_any_non_local_projects, |this| {
                             this.child(match location {
-                                SerializedWorkspaceLocation::Local(_, _) => {
-                                    Icon::new(IconName::Screen)
-                                        .color(Color::Muted)
-                                        .into_any_element()
-                                }
+                                SerializedWorkspaceLocation::Local => Icon::new(IconName::Screen)
+                                    .color(Color::Muted)
+                                    .into_any_element(),
                                 SerializedWorkspaceLocation::Ssh(_) => Icon::new(IconName::Server)
                                     .color(Color::Muted)
                                     .into_any_element(),
@@ -568,7 +568,7 @@ impl RecentProjectsDelegate {
         cx: &mut Context<Picker<Self>>,
     ) {
         if let Some(selected_match) = self.matches.get(ix) {
-            let (workspace_id, _) = self.workspaces[selected_match.candidate_id];
+            let (workspace_id, _, _) = self.workspaces[selected_match.candidate_id];
             cx.spawn_in(window, async move |this, cx| {
                 let _ = WORKSPACE_DB.delete_workspace_by_id(workspace_id).await;
                 let workspaces = WORKSPACE_DB
@@ -707,7 +707,8 @@ mod tests {
                     }];
                     delegate.set_workspaces(vec![(
                         WorkspaceId::default(),
-                        SerializedWorkspaceLocation::from_local_paths(vec![path!("/test/path/")]),
+                        SerializedWorkspaceLocation::Local,
+                        PathList::new(&[path!("/test/path")]),
                     )]);
                 });
             })
