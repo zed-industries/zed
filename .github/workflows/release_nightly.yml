@@ -290,7 +290,7 @@ jobs:
   update-nightly-tag:
     name: Update nightly tag
     if: github.repository_owner == 'zed-industries'
-    runs-on: ubuntu-latest
+    runs-on: namespace-profile-2x4-ubuntu-2404
     needs:
       - bundle-mac
       - bundle-linux-x86
