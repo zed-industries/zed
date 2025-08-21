@@ -1,7 +1,7 @@
 use text::SelectionGoal;
 use ui::{Context, Window};
 
-use crate::{Vim, object::Object};
+use crate::{Vim, helix::object::cursor_range, object::Object};
 
 impl Vim {
     /// Selects the object each cursor is over.
@@ -17,7 +17,13 @@ impl Vim {
         self.update_editor(cx, |_, editor, cx| {
             editor.change_selections(Default::default(), window, cx, |s| {
                 s.move_with(|map, selection| {
-                    let Some(range) = object.helix_range(map, selection.clone(), around) else {
+                    let Some(range) = object
+                        .helix_range(map, selection.clone(), around)
+                        .unwrap_or({
+                            let vim_range = object.range(map, selection.clone(), around, None);
+                            vim_range.filter(|r| r.start <= cursor_range(selection, map).start)
+                        })
+                    else {
                         return;
                     };
 
@@ -40,7 +46,7 @@ impl Vim {
         self.update_editor(cx, |_, editor, cx| {
             editor.change_selections(Default::default(), window, cx, |s| {
                 s.move_with(|map, selection| {
-                    let Some(range) = object.helix_next_range(map, selection.clone(), around)
+                    let Ok(Some(range)) = object.helix_next_range(map, selection.clone(), around)
                     else {
                         return;
                     };
@@ -64,7 +70,8 @@ impl Vim {
         self.update_editor(cx, |_, editor, cx| {
             editor.change_selections(Default::default(), window, cx, |s| {
                 s.move_with(|map, selection| {
-                    let Some(range) = object.helix_previous_range(map, selection.clone(), around)
+                    let Ok(Some(range)) =
+                        object.helix_previous_range(map, selection.clone(), around)
                     else {
                         return;
                     };

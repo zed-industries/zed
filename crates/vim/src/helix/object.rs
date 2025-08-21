@@ -1,4 +1,8 @@
-use std::ops::Range;
+use std::{
+    error::Error,
+    fmt::{self, Display},
+    ops::Range,
+};
 
 use editor::{DisplayPoint, display_map::DisplaySnapshot, movement};
 use text::Selection;
@@ -40,18 +44,12 @@ impl VimObject {
         map: &DisplaySnapshot,
         selection: Selection<DisplayPoint>,
         around: bool,
-    ) -> Option<Range<DisplayPoint>> {
+    ) -> Result<Option<Range<DisplayPoint>>, VimToHelixError> {
         let cursor = cursor_range(&selection, map);
         if let Some(helix_object) = self.to_helix_object() {
-            helix_object.range(map, cursor, around)
+            Ok(helix_object.range(map, cursor, around))
         } else {
-            let range = self.range(map, selection, around, None)?;
-
-            if range.start > cursor.start {
-                None
-            } else {
-                Some(range)
-            }
+            Err(VimToHelixError)
         }
     }
     /// Returns the range of the next object the cursor is not over.
@@ -61,10 +59,13 @@ impl VimObject {
         map: &DisplaySnapshot,
         selection: Selection<DisplayPoint>,
         around: bool,
-    ) -> Option<Range<DisplayPoint>> {
+    ) -> Result<Option<Range<DisplayPoint>>, VimToHelixError> {
         let cursor = cursor_range(&selection, map);
-        let helix_object = self.to_helix_object()?;
-        helix_object.next_range(map, cursor, around)
+        if let Some(helix_object) = self.to_helix_object() {
+            Ok(helix_object.next_range(map, cursor, around))
+        } else {
+            Err(VimToHelixError)
+        }
     }
     /// Returns the range of the previous object the cursor is not over.
     /// Follows helix convention.
@@ -73,12 +74,27 @@ impl VimObject {
         map: &DisplaySnapshot,
         selection: Selection<DisplayPoint>,
         around: bool,
-    ) -> Option<Range<DisplayPoint>> {
+    ) -> Result<Option<Range<DisplayPoint>>, VimToHelixError> {
         let cursor = cursor_range(&selection, map);
-        let helix_object = self.to_helix_object()?;
-        helix_object.previous_range(map, cursor, around)
+        if let Some(helix_object) = self.to_helix_object() {
+            Ok(helix_object.previous_range(map, cursor, around))
+        } else {
+            Err(VimToHelixError)
+        }
     }
 }
+
+#[derive(Debug)]
+pub struct VimToHelixError;
+impl Display for VimToHelixError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "Not all vim text objects have an implemented helix equivalent"
+        )
+    }
+}
+impl Error for VimToHelixError {}
 
 impl VimObject {
     fn to_helix_object(self) -> Option<Box<dyn HelixTextObject>> {
@@ -105,7 +121,10 @@ impl VimObject {
 }
 
 /// Returns the start of the cursor of a selection, whether that is collapsed or not.
-fn cursor_range(selection: &Selection<DisplayPoint>, map: &DisplaySnapshot) -> Range<DisplayPoint> {
+pub(crate) fn cursor_range(
+    selection: &Selection<DisplayPoint>,
+    map: &DisplaySnapshot,
+) -> Range<DisplayPoint> {
     if selection.is_empty() | selection.reversed {
         selection.head()..movement::right(map, selection.head())
     } else {
