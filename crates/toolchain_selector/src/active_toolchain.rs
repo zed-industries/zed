@@ -38,7 +38,6 @@ impl ActiveToolchain {
                         .ok()
                         .flatten();
                     if let Some(editor) = editor {
-                        this.active_toolchain.take();
                         this.update_lister(editor, window, cx);
                     }
                 },
@@ -124,16 +123,6 @@ impl ActiveToolchain {
         if let Some((_, buffer, _)) = editor.active_excerpt(cx)
             && let Some(worktree_id) = buffer.read(cx).file().map(|file| file.worktree_id(cx))
         {
-            if self
-                .active_buffer
-                .as_ref()
-                .is_some_and(|(old_worktree_id, old_buffer, _)| {
-                    (old_worktree_id, old_buffer.entity_id()) == (&worktree_id, buffer.entity_id())
-                })
-            {
-                return;
-            }
-
             let subscription = cx.subscribe_in(
                 &buffer,
                 window,
