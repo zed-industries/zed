@@ -1913,22 +1913,47 @@ impl Editor {
                             return;
                         };
                         if active_editor.entity_id() == cx.entity_id() {
-                            let workspace = workspace.downgrade();
-                            let transaction = transaction.clone();
-                            cx.defer_in(window, move |_, window, cx| {
-                                cx.spawn_in(window, async move |editor, cx| {
-                                    Self::open_project_transaction(
-                                        &editor,
-                                        workspace,
-                                        transaction,
-                                        "Rename".to_string(),
-                                        cx,
-                                    )
-                                    .await
-                                    .ok()
+                            let edited_buffers_already_open = {
+                                let other_editors: Vec<Entity<Editor>> = workspace
+                                    .read(cx)
+                                    .panes()
+                                    .iter()
+                                    .flat_map(|pane| pane.read(cx).items_of_type::<Editor>())
+                                    .filter(|editor| editor.entity_id() != cx.entity_id())
+                                    .collect();
+
+                                transaction.0.keys().all(|buffer| {
+                                    other_editors.iter().any(|editor| {
+                                        let multi_buffer = editor.read(cx).buffer();
+                                        multi_buffer.read(cx).is_singleton()
+                                            && multi_buffer.read(cx).as_singleton().map_or(
+                                                false,
+                                                |singleton| {
+                                                    singleton.entity_id() == buffer.entity_id()
+                                                },
+                                            )
+                                    })
                                 })
-                                .detach();
-                            });
+                            };
+
+                            if !edited_buffers_already_open {
+                                let workspace = workspace.downgrade();
+                                let transaction = transaction.clone();
+                                cx.defer_in(window, move |_, window, cx| {
+                                    cx.spawn_in(window, async move |editor, cx| {
+                                        Self::open_project_transaction(
+                                            &editor,
+                                            workspace,
+                                            transaction,
+                                            "Rename".to_string(),
+                                            cx,
+                                        )
+                                        .await
+                                        .ok()
+                                    })
+                                    .detach();
+                                });
+                            }
                         }
                     }
 
