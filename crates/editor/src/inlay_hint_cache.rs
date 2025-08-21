@@ -475,10 +475,7 @@ impl InlayHintCache {
             let excerpt_cached_hints = excerpt_cached_hints.read();
             let mut excerpt_cache = excerpt_cached_hints.ordered_hints.iter().fuse().peekable();
             shown_excerpt_hints_to_remove.retain(|(shown_anchor, shown_hint_id)| {
-                let Some(buffer) = shown_anchor
-                    .buffer_id
-                    .and_then(|buffer_id| multi_buffer.buffer(buffer_id))
-                else {
+                let Some(buffer) = multi_buffer.buffer_for_anchor(*shown_anchor, cx) else {
                     return false;
                 };
                 let buffer_snapshot = buffer.read(cx).snapshot();
