@@ -3,7 +3,7 @@ use crate::{
     UserMessageContent, templates::Templates,
 };
 use crate::{HistoryStore, TitleUpdated, TokenUsageUpdated};
-use acp_thread::{AcpThread, AcpThreadEvent, AgentModelSelector};
+use acp_thread::{AcpThread, AgentModelSelector};
 use action_log::ActionLog;
 use agent_client_protocol as acp;
 use agent_settings::AgentSettings;
@@ -250,7 +250,6 @@ impl NativeAgent {
             )
         });
         let subscriptions = vec![
-            cx.subscribe(&acp_thread, Self::handle_acp_thread_event),
             cx.observe_release(&acp_thread, |this, acp_thread, _cx| {
                 this.sessions.remove(acp_thread.session_id());
             }),
@@ -443,23 +442,6 @@ impl NativeAgent {
         })
     }
 
-    fn handle_acp_thread_event(
-        &mut self,
-        thread: Entity<AcpThread>,
-        event: &AcpThreadEvent,
-        cx: &mut Context<Self>,
-    ) {
-        if let AcpThreadEvent::TitleUpdated = event {
-            let title = thread.read(cx).title();
-            let Some(session) = self.sessions.get(thread.read(cx).session_id()) else {
-                return;
-            };
-            session
-                .thread
-                .update(cx, |thread, cx| thread.set_title(title, cx));
-        }
-    }
-
     fn handle_thread_title_updated(
         &mut self,
         thread: Entity<Thread>,
@@ -470,10 +452,12 @@ impl NativeAgent {
             return;
         };
         let title = session.thread.read(cx).title();
-        session
+        if let Ok(task) = session
             .acp_thread
             .update(cx, |acp_thread, cx| acp_thread.set_title(title, cx))
-            .ok();
+        {
+            task.detach_and_log_err(cx);
+        }
     }
 
     fn handle_thread_token_usage_updated(
@@ -969,11 +953,11 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
         });
     }
 
-    fn session_editor(
+    fn truncate(
         &self,
         session_id: &agent_client_protocol::SessionId,
         cx: &mut App,
-    ) -> Option<Rc<dyn acp_thread::AgentSessionEditor>> {
+    ) -> Option<Rc<dyn acp_thread::AgentSessionTruncate>> {
         self.0.update(cx, |agent, _cx| {
             agent.sessions.get(session_id).map(|session| {
                 Rc::new(NativeAgentSessionEditor {
@@ -982,6 +966,17 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
                 }) as _
             })
         })
+    }
+
+    fn set_title(
+        &self,
+        session_id: &acp::SessionId,
+        _cx: &mut App,
+    ) -> Option<Rc<dyn acp_thread::AgentSessionSetTitle>> {
+        Some(Rc::new(NativeAgentSessionSetTitle {
+            connection: self.clone(),
+            session_id: session_id.clone(),
+        }) as _)
     }
 
     fn telemetry(&self) -> Option<Rc<dyn acp_thread::AgentTelemetry>> {
@@ -1019,8 +1014,8 @@ struct NativeAgentSessionEditor {
     acp_thread: WeakEntity<AcpThread>,
 }
 
-impl acp_thread::AgentSessionEditor for NativeAgentSessionEditor {
-    fn truncate(&self, message_id: acp_thread::UserMessageId, cx: &mut App) -> Task<Result<()>> {
+impl acp_thread::AgentSessionTruncate for NativeAgentSessionEditor {
+    fn run(&self, message_id: acp_thread::UserMessageId, cx: &mut App) -> Task<Result<()>> {
         match self.thread.update(cx, |thread, cx| {
             thread.truncate(message_id.clone(), cx)?;
             Ok(thread.latest_token_usage())
@@ -1049,6 +1044,22 @@ impl acp_thread::AgentSessionResume for NativeAgentSessionResume {
             .run_turn(self.session_id.clone(), cx, |thread, cx| {
                 thread.update(cx, |thread, cx| thread.resume(cx))
             })
+    }
+}
+
+struct NativeAgentSessionSetTitle {
+    connection: NativeAgentConnection,
+    session_id: acp::SessionId,
+}
+
+impl acp_thread::AgentSessionSetTitle for NativeAgentSessionSetTitle {
+    fn run(&self, title: SharedString, cx: &mut App) -> Task<Result<()>> {
+        let Some(session) = self.connection.0.read(cx).sessions.get(&self.session_id) else {
+            return Task::ready(Err(anyhow!("session not found")));
+        };
+        let thread = session.thread.clone();
+        thread.update(cx, |thread, cx| thread.set_title(title, cx));
+        Task::ready(Ok(()))
     }
 }
 
