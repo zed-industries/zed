@@ -295,7 +295,7 @@ impl NotebookEditor {
         _cx: &mut Context<Self>,
     ) -> IconButton {
         let id: ElementId = ElementId::Name(id.into());
-        IconButton::new(id, icon).width(px(CONTROL_SIZE).into())
+        IconButton::new(id, icon).width(px(CONTROL_SIZE))
     }
 
     fn render_notebook_controls(
@@ -321,7 +321,7 @@ impl NotebookEditor {
                             .child(
                                 Self::render_notebook_control(
                                     "run-all-cells",
-                                    IconName::PlayOutlined,
+                                    IconName::PlayFilled,
                                     window,
                                     cx,
                                 )

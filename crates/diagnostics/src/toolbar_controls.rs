@@ -54,7 +54,7 @@ impl Render for ToolbarControls {
             .map(|div| {
                 if is_updating {
                     div.child(
-                        IconButton::new("stop-updating", IconName::StopFilled)
+                        IconButton::new("stop-updating", IconName::Stop)
                             .icon_color(Color::Info)
                             .shape(IconButtonShape::Square)
                             .tooltip(Tooltip::for_action_title(
@@ -73,7 +73,7 @@ impl Render for ToolbarControls {
                     )
                 } else {
                     div.child(
-                        IconButton::new("refresh-diagnostics", IconName::Update)
+                        IconButton::new("refresh-diagnostics", IconName::ArrowCircle)
                             .icon_color(Color::Info)
                             .shape(IconButtonShape::Square)
                             .disabled(!has_stale_excerpts && !fetch_cargo_diagnostics)

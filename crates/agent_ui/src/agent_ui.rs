@@ -64,6 +64,8 @@ actions!(
         NewTextThread,
         /// Toggles the context picker interface for adding files, symbols, or other context.
         ToggleContextPicker,
+        /// Toggles the menu to create new agent threads.
+        ToggleNewThreadMenu,
         /// Toggles the navigation menu for switching between threads and views.
         ToggleNavigationMenu,
         /// Toggles the options menu for agent settings and preferences.
@@ -155,11 +157,11 @@ enum ExternalAgent {
 }
 
 impl ExternalAgent {
-    pub fn server(&self) -> Rc<dyn agent_servers::AgentServer> {
+    pub fn server(&self, fs: Arc<dyn fs::Fs>) -> Rc<dyn agent_servers::AgentServer> {
         match self {
             ExternalAgent::Gemini => Rc::new(agent_servers::Gemini),
             ExternalAgent::ClaudeCode => Rc::new(agent_servers::ClaudeCode),
-            ExternalAgent::NativeAgent => Rc::new(agent2::NativeAgentServer),
+            ExternalAgent::NativeAgent => Rc::new(agent2::NativeAgentServer::new(fs)),
         }
     }
 }

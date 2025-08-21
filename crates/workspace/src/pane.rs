@@ -62,7 +62,7 @@ pub struct SelectedEntry {
 #[derive(Debug)]
 pub struct DraggedSelection {
     pub active_selection: SelectedEntry,
-    pub marked_selections: Arc<BTreeSet<SelectedEntry>>,
+    pub marked_selections: Arc<[SelectedEntry]>,
 }
 
 impl DraggedSelection {
@@ -1829,6 +1829,7 @@ impl Pane {
         let mode = self.nav_history.mode();
         self.nav_history.set_mode(NavigationMode::ClosingItem);
         item.deactivated(window, cx);
+        item.on_removed(cx);
         self.nav_history.set_mode(mode);
 
         if self.is_active_preview_item(item.item_id()) {
@@ -2519,7 +2520,7 @@ impl Pane {
                         .shape(IconButtonShape::Square)
                         .icon_color(Color::Muted)
                         .size(ButtonSize::None)
-                        .icon_size(IconSize::XSmall)
+                        .icon_size(IconSize::Small)
                         .on_click(cx.listener(move |pane, _, window, cx| {
                             pane.unpin_tab_at(ix, window, cx);
                         }))
@@ -2539,7 +2540,7 @@ impl Pane {
                     .shape(IconButtonShape::Square)
                     .icon_color(Color::Muted)
                     .size(ButtonSize::None)
-                    .icon_size(IconSize::XSmall)
+                    .icon_size(IconSize::Small)
                     .on_click(cx.listener(move |pane, _, window, cx| {
                         pane.close_item_by_id(item_id, SaveIntent::Close, window, cx)
                             .detach_and_log_err(cx);

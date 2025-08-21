@@ -32,7 +32,7 @@ jobs:
       github.repository_owner == 'zed-industries' &&
       (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'run-eval'))
     runs-on:
-      - buildjet-16vcpu-ubuntu-2204
+      - namespace-profile-16x32-ubuntu-2204
     steps:
       - name: Add Rust to the PATH
         run: echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
@@ -46,7 +46,7 @@ jobs:
         uses: swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
-          cache-provider: "buildjet"
+          # cache-provider: "buildjet"
 
       - name: Install Linux dependencies
         run: ./script/linux

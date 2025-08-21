@@ -46,6 +46,7 @@ impl<T> MessageHistory<T> {
         })
     }
 }
+
 #[cfg(test)]
 mod tests {
     use super::*;

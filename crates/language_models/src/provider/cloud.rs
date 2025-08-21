@@ -437,7 +437,7 @@ fn render_accept_terms(
         .style(ButtonStyle::Subtle)
         .icon(IconName::ArrowUpRight)
         .icon_color(Color::Muted)
-        .icon_size(IconSize::XSmall)
+        .icon_size(IconSize::Small)
         .when(thread_empty_state, |this| this.label_size(LabelSize::Small))
         .on_click(move |_, _window, cx| cx.open_url("https://zed.dev/terms-of-service"));
 
@@ -941,6 +941,7 @@ impl LanguageModel for CloudLanguageModel {
                     request,
                     model.id(),
                     model.supports_parallel_tool_calls(),
+                    None,
                     None,
                 );
                 let llm_api_token = self.llm_api_token.clone();

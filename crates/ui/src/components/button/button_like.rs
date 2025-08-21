@@ -499,8 +499,8 @@ impl Clickable for ButtonLike {
 }
 
 impl FixedWidth for ButtonLike {
-    fn width(mut self, width: DefiniteLength) -> Self {
-        self.width = Some(width);
+    fn width(mut self, width: impl Into<DefiniteLength>) -> Self {
+        self.width = Some(width.into());
         self
     }
 

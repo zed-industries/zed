@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "crates/acp_thread",
+    "crates/action_log",
     "crates/activity_indicator",
     "crates/agent",
     "crates/agent2",
@@ -184,7 +185,6 @@ members = [
     "crates/watch",
     "crates/web_search",
     "crates/web_search_providers",
-    "crates/welcome",
     "crates/workspace",
     "crates/worktree",
     "crates/x_ai",
@@ -229,6 +229,7 @@ edition = "2024"
 #
 
 acp_thread = { path = "crates/acp_thread" }
+action_log = { path = "crates/action_log" }
 agent = { path = "crates/agent" }
 agent2 = { path = "crates/agent2" }
 activity_indicator = { path = "crates/activity_indicator" }
@@ -410,7 +411,6 @@ vim_mode_setting = { path = "crates/vim_mode_setting" }
 watch = { path = "crates/watch" }
 web_search = { path = "crates/web_search" }
 web_search_providers = { path = "crates/web_search_providers" }
-welcome = { path = "crates/welcome" }
 workspace = { path = "crates/workspace" }
 worktree = { path = "crates/worktree" }
 x_ai = { path = "crates/x_ai" }
@@ -425,7 +425,7 @@ zlog_settings = { path = "crates/zlog_settings" }
 #
 
 agentic-coding-protocol = "0.0.10"
-agent-client-protocol = "0.0.20"
+agent-client-protocol = "0.0.23"
 aho-corasick = "1.1"
 alacritty_terminal = { git = "https://github.com/zed-industries/alacritty.git", branch = "add-hush-login-flag" }
 any_vec = "0.14"
@@ -461,6 +461,7 @@ bytes = "1.0"
 cargo_metadata = "0.19"
 cargo_toml = "0.21"
 chrono = { version = "0.4", features = ["serde"] }
+ciborium = "0.2"
 circular-buffer = "1.0"
 clap = { version = "4.4", features = ["derive"] }
 cocoa = "0.26"
@@ -563,6 +564,7 @@ reqwest = { git = "https://github.com/zed-industries/reqwest.git", rev = "951c77
     "socks",
     "stream",
 ] }
+rodio = { version = "0.21.1", default-features = false }
 rsa = "0.9.6"
 runtimelib = {  git = "https://github.com/ConradIrwin/runtimed", rev = "7130c804216b6914355d15d0b91ea91f6babd734", default-features = false, features = [
     "async-dispatcher-runtime",
@@ -600,7 +602,7 @@ sysinfo = "0.31.0"
 take-until = "0.2.0"
 tempfile = "3.20.0"
 thiserror = "2.0.12"
-tiktoken-rs = "0.7.0"
+tiktoken-rs = { git = "https://github.com/zed-industries/tiktoken-rs", rev = "30c32a4522751699adeda0d5840c71c3b75ae73d" }
 time = { version = "0.3", features = [
     "macros",
     "parsing",
@@ -660,6 +662,9 @@ which = "6.0.0"
 windows-core = "0.61"
 wit-component = "0.221"
 workspace-hack = "0.1.0"
+# We can switch back to the published version once https://github.com/infinitefield/yawc/pull/16 is merged and a new
+# version is released.
+yawc = { git = "https://github.com/deviant-forks/yawc", rev = "1899688f3e69ace4545aceb97b2a13881cf26142" }
 zstd = "0.11"
 
 [workspace.dependencies.async-stripe]
@@ -708,6 +713,7 @@ features = [
     "Win32_System_LibraryLoader",
     "Win32_System_Memory",
     "Win32_System_Ole",
+    "Win32_System_Performance",
     "Win32_System_Pipes",
     "Win32_System_SystemInformation",
     "Win32_System_SystemServices",
@@ -835,6 +841,7 @@ style = { level = "allow", priority = -1 }
 module_inception = { level = "deny" }
 question_mark = { level = "deny" }
 redundant_closure = { level = "deny" }
+declare_interior_mutable_const = { level = "deny" }
 # Individual rules that have violations in the codebase:
 type_complexity = "allow"
 # We often return trait objects from `new` functions.

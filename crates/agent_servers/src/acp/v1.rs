@@ -171,6 +171,7 @@ impl AgentConnection for AcpConnection {
 
     fn prompt(
         &self,
+        _id: Option<acp_thread::UserMessageId>,
         params: acp::PromptRequest,
         cx: &mut App,
     ) -> Task<Result<acp::PromptResponse>> {
@@ -210,7 +211,7 @@ impl acp::Client for ClientDelegate {
             .context("Failed to get session")?
             .thread
             .update(cx, |thread, cx| {
-                thread.request_tool_call_permission(arguments.tool_call, arguments.options, cx)
+                thread.request_tool_call_authorization(arguments.tool_call, arguments.options, cx)
             })?;
 
         let result = rx.await;

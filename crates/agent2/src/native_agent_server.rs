@@ -1,15 +1,24 @@
-use std::path::Path;
-use std::rc::Rc;
+use std::{path::Path, rc::Rc, sync::Arc};
 
 use agent_servers::AgentServer;
 use anyhow::Result;
-use gpui::{App, AppContext, Entity, Task};
+use fs::Fs;
+use gpui::{App, Entity, Task};
 use project::Project;
+use prompt_store::PromptStore;
 
-use crate::{templates::Templates, NativeAgent, NativeAgentConnection};
+use crate::{NativeAgent, NativeAgentConnection, templates::Templates};
 
 #[derive(Clone)]
-pub struct NativeAgentServer;
+pub struct NativeAgentServer {
+    fs: Arc<dyn Fs>,
+}
+
+impl NativeAgentServer {
+    pub fn new(fs: Arc<dyn Fs>) -> Self {
+        Self { fs }
+    }
+}
 
 impl AgentServer for NativeAgentServer {
     fn name(&self) -> &'static str {
@@ -32,21 +41,23 @@ impl AgentServer for NativeAgentServer {
     fn connect(
         &self,
         _root_dir: &Path,
-        _project: &Entity<Project>,
+        project: &Entity<Project>,
         cx: &mut App,
     ) -> Task<Result<Rc<dyn acp_thread::AgentConnection>>> {
         log::info!(
             "NativeAgentServer::connect called for path: {:?}",
             _root_dir
         );
+        let project = project.clone();
+        let fs = self.fs.clone();
+        let prompt_store = PromptStore::global(cx);
         cx.spawn(async move |cx| {
             log::debug!("Creating templates for native agent");
-            // Create templates (you might want to load these from files or resources)
             let templates = Templates::new();
+            let prompt_store = prompt_store.await?;
 
-            // Create the native agent
             log::debug!("Creating native agent entity");
-            let agent = cx.update(|cx| cx.new(|_| NativeAgent::new(templates)))?;
+            let agent = NativeAgent::new(project, templates, Some(prompt_store), fs, cx).await?;
 
             // Create the connection wrapper
             let connection = NativeAgentConnection(agent);

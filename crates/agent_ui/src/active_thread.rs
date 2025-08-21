@@ -434,7 +434,7 @@ fn render_markdown_code_block(
                             .child(content)
                             .child(
                                 Icon::new(IconName::ArrowUpRight)
-                                    .size(IconSize::XSmall)
+                                    .size(IconSize::Small)
                                     .color(Color::Ignored),
                             ),
                     )
@@ -1896,8 +1896,9 @@ impl ActiveThread {
             (colors.editor_background, colors.panel_background)
         };
 
-        let open_as_markdown = IconButton::new(("open-as-markdown", ix), IconName::DocumentText)
-            .icon_size(IconSize::XSmall)
+        let open_as_markdown = IconButton::new(("open-as-markdown", ix), IconName::FileMarkdown)
+            .shape(ui::IconButtonShape::Square)
+            .icon_size(IconSize::Small)
             .icon_color(Color::Ignored)
             .tooltip(Tooltip::text("Open Thread as Markdown"))
             .on_click({
@@ -1911,8 +1912,9 @@ impl ActiveThread {
                 }
             });
 
-        let scroll_to_top = IconButton::new(("scroll_to_top", ix), IconName::ArrowUpAlt)
-            .icon_size(IconSize::XSmall)
+        let scroll_to_top = IconButton::new(("scroll_to_top", ix), IconName::ArrowUp)
+            .shape(ui::IconButtonShape::Square)
+            .icon_size(IconSize::Small)
             .icon_color(Color::Ignored)
             .tooltip(Tooltip::text("Scroll To Top"))
             .on_click(cx.listener(move |this, _, _, cx| {
@@ -1926,6 +1928,7 @@ impl ActiveThread {
             .py_2()
             .px(RESPONSE_PADDING_X)
             .mr_1()
+            .gap_1()
             .opacity(0.4)
             .hover(|style| style.opacity(1.))
             .gap_1p5()
@@ -1949,7 +1952,8 @@ impl ActiveThread {
                     h_flex()
                         .child(
                             IconButton::new(("feedback-thumbs-up", ix), IconName::ThumbsUp)
-                                .icon_size(IconSize::XSmall)
+                                .shape(ui::IconButtonShape::Square)
+                                .icon_size(IconSize::Small)
                                 .icon_color(match feedback {
                                     ThreadFeedback::Positive => Color::Accent,
                                     ThreadFeedback::Negative => Color::Ignored,
@@ -1966,7 +1970,8 @@ impl ActiveThread {
                         )
                         .child(
                             IconButton::new(("feedback-thumbs-down", ix), IconName::ThumbsDown)
-                                .icon_size(IconSize::XSmall)
+                                .shape(ui::IconButtonShape::Square)
+                                .icon_size(IconSize::Small)
                                 .icon_color(match feedback {
                                     ThreadFeedback::Positive => Color::Ignored,
                                     ThreadFeedback::Negative => Color::Accent,
@@ -1999,7 +2004,8 @@ impl ActiveThread {
                     h_flex()
                         .child(
                             IconButton::new(("feedback-thumbs-up", ix), IconName::ThumbsUp)
-                                .icon_size(IconSize::XSmall)
+                                .shape(ui::IconButtonShape::Square)
+                                .icon_size(IconSize::Small)
                                 .icon_color(Color::Ignored)
                                 .tooltip(Tooltip::text("Helpful Response"))
                                 .on_click(cx.listener(move |this, _, window, cx| {
@@ -2013,7 +2019,8 @@ impl ActiveThread {
                         )
                         .child(
                             IconButton::new(("feedback-thumbs-down", ix), IconName::ThumbsDown)
-                                .icon_size(IconSize::XSmall)
+                                .shape(ui::IconButtonShape::Square)
+                                .icon_size(IconSize::Small)
                                 .icon_color(Color::Ignored)
                                 .tooltip(Tooltip::text("Not Helpful"))
                                 .on_click(cx.listener(move |this, _, window, cx| {
@@ -2624,7 +2631,7 @@ impl ActiveThread {
                                 h_flex()
                                     .gap_1p5()
                                     .child(
-                                        Icon::new(IconName::ToolBulb)
+                                        Icon::new(IconName::ToolThink)
                                             .size(IconSize::Small)
                                             .color(Color::Muted),
                                     )
@@ -2750,7 +2757,7 @@ impl ActiveThread {
                                 h_flex()
                                     .gap_1p5()
                                     .child(
-                                        Icon::new(IconName::LightBulb)
+                                        Icon::new(IconName::ToolThink)
                                             .size(IconSize::XSmall)
                                             .color(Color::Muted),
                                     )
@@ -3362,7 +3369,7 @@ impl ActiveThread {
                                 .mr_0p5(),
                         )
                         .child(
-                            IconButton::new("open-prompt-library", IconName::ArrowUpRightAlt)
+                            IconButton::new("open-prompt-library", IconName::ArrowUpRight)
                                 .shape(ui::IconButtonShape::Square)
                                 .icon_size(IconSize::XSmall)
                                 .icon_color(Color::Ignored)
@@ -3397,7 +3404,7 @@ impl ActiveThread {
                                 .mr_0p5(),
                         )
                         .child(
-                            IconButton::new("open-rule", IconName::ArrowUpRightAlt)
+                            IconButton::new("open-rule", IconName::ArrowUpRight)
                                 .shape(ui::IconButtonShape::Square)
                                 .icon_size(IconSize::XSmall)
                                 .icon_color(Color::Ignored)
