@@ -181,7 +181,6 @@ impl TerminalPanel {
                             .anchor(Corner::TopRight)
                             .with_handle(pane.split_item_context_menu_handle.clone())
                             .menu({
-                                let split_context = split_context.clone();
                                 move |window, cx| {
                                     ContextMenu::build(window, cx, |menu, _, _| {
                                         menu.when_some(
@@ -236,7 +235,7 @@ impl TerminalPanel {
     ) -> Result<Entity<Self>> {
         let mut terminal_panel = None;
 
-        match workspace
+        if let Some((database_id, serialization_key)) = workspace
             .read_with(&cx, |workspace, _| {
                 workspace
                     .database_id()
@@ -244,36 +243,29 @@ impl TerminalPanel {
             })
             .ok()
             .flatten()
+            && let Some(serialized_panel) = cx
+                .background_spawn(async move { KEY_VALUE_STORE.read_kvp(&serialization_key) })
+                .await
+                .log_err()
+                .flatten()
+                .map(|panel| serde_json::from_str::<SerializedTerminalPanel>(&panel))
+                .transpose()
+                .log_err()
+                .flatten()
+            && let Ok(serialized) = workspace
+                .update_in(&mut cx, |workspace, window, cx| {
+                    deserialize_terminal_panel(
+                        workspace.weak_handle(),
+                        workspace.project().clone(),
+                        database_id,
+                        serialized_panel,
+                        window,
+                        cx,
+                    )
+                })?
+                .await
         {
-            Some((database_id, serialization_key)) => {
-                if let Some(serialized_panel) = cx
-                    .background_spawn(async move { KEY_VALUE_STORE.read_kvp(&serialization_key) })
-                    .await
-                    .log_err()
-                    .flatten()
-                    .map(|panel| serde_json::from_str::<SerializedTerminalPanel>(&panel))
-                    .transpose()
-                    .log_err()
-                    .flatten()
-                {
-                    if let Ok(serialized) = workspace
-                        .update_in(&mut cx, |workspace, window, cx| {
-                            deserialize_terminal_panel(
-                                workspace.weak_handle(),
-                                workspace.project().clone(),
-                                database_id,
-                                serialized_panel,
-                                window,
-                                cx,
-                            )
-                        })?
-                        .await
-                    {
-                        terminal_panel = Some(serialized);
-                    }
-                }
-            }
-            _ => {}
+            terminal_panel = Some(serialized);
         }
 
         let terminal_panel = if let Some(panel) = terminal_panel {
@@ -346,18 +338,16 @@ impl TerminalPanel {
             pane::Event::RemovedItem { .. } => self.serialize(cx),
             pane::Event::Remove { focus_on_pane } => {
                 let pane_count_before_removal = self.center.panes().len();
-                let _removal_result = self.center.remove(&pane);
+                let _removal_result = self.center.remove(pane);
                 if pane_count_before_removal == 1 {
                     self.center.first_pane().update(cx, |pane, cx| {
                         pane.set_zoomed(false, cx);
                     });
                     cx.emit(PanelEvent::Close);
-                } else {
-                    if let Some(focus_on_pane) =
-                        focus_on_pane.as_ref().or_else(|| self.center.panes().pop())
-                    {
-                        focus_on_pane.focus_handle(cx).focus(window);
-                    }
+                } else if let Some(focus_on_pane) =
+                    focus_on_pane.as_ref().or_else(|| self.center.panes().pop())
+                {
+                    focus_on_pane.focus_handle(cx).focus(window);
                 }
             }
             pane::Event::ZoomIn => {
@@ -633,7 +623,7 @@ impl TerminalPanel {
                 workspace
                     .read(cx)
                     .panes()
-                    .into_iter()
+                    .iter()
                     .cloned()
                     .flat_map(pane_terminal_views),
             )
@@ -898,9 +888,9 @@ impl TerminalPanel {
     }
 
     fn is_enabled(&self, cx: &App) -> bool {
-        self.workspace.upgrade().map_or(false, |workspace| {
-            is_enabled_in_workspace(workspace.read(cx), cx)
-        })
+        self.workspace
+            .upgrade()
+            .is_some_and(|workspace| is_enabled_in_workspace(workspace.read(cx), cx))
     }
 
     fn activate_pane_in_direction(
@@ -947,7 +937,7 @@ pub fn new_terminal_pane(
     cx: &mut Context<TerminalPanel>,
 ) -> Entity<Pane> {
     let is_local = project.read(cx).is_local();
-    let terminal_panel = cx.entity().clone();
+    let terminal_panel = cx.entity();
     let pane = cx.new(|cx| {
         let mut pane = Pane::new(
             workspace.clone(),
@@ -1009,7 +999,7 @@ pub fn new_terminal_pane(
                 return ControlFlow::Break(());
             };
             if let Some(tab) = dropped_item.downcast_ref::<DraggedTab>() {
-                let this_pane = cx.entity().clone();
+                let this_pane = cx.entity();
                 let item = if tab.pane == this_pane {
                     pane.item_for_index(tab.ix)
                 } else {
@@ -1077,11 +1067,10 @@ pub fn new_terminal_pane(
                                 return ControlFlow::Break(());
                             }
                         };
-                    } else if let Some(project_path) = item.project_path(cx) {
-                        if let Some(entry_path) = project.read(cx).absolute_path(&project_path, cx)
-                        {
-                            add_paths_to_terminal(pane, &[entry_path], window, cx);
-                        }
+                    } else if let Some(project_path) = item.project_path(cx)
+                        && let Some(entry_path) = project.read(cx).absolute_path(&project_path, cx)
+                    {
+                        add_paths_to_terminal(pane, &[entry_path], window, cx);
                     }
                 }
             } else if let Some(selection) = dropped_item.downcast_ref::<DraggedSelection>() {
@@ -1103,10 +1092,8 @@ pub fn new_terminal_pane(
                 {
                     add_paths_to_terminal(pane, &[entry_path], window, cx);
                 }
-            } else if is_local {
-                if let Some(paths) = dropped_item.downcast_ref::<ExternalPaths>() {
-                    add_paths_to_terminal(pane, paths.paths(), window, cx);
-                }
+            } else if is_local && let Some(paths) = dropped_item.downcast_ref::<ExternalPaths>() {
+                add_paths_to_terminal(pane, paths.paths(), window, cx);
             }
 
             ControlFlow::Break(())
@@ -1181,10 +1168,10 @@ impl Render for TerminalPanel {
                 registrar.size_full().child(self.center.render(
                     workspace.zoomed_item(),
                     &workspace::PaneRenderContext {
-                        follower_states: &&HashMap::default(),
+                        follower_states: &HashMap::default(),
                         active_call: workspace.active_call(),
                         active_pane: &self.active_pane,
-                        app_state: &workspace.app_state(),
+                        app_state: workspace.app_state(),
                         project: workspace.project(),
                         workspace: &workspace.weak_handle(),
                     },
@@ -1247,20 +1234,18 @@ impl Render for TerminalPanel {
                         let panes = terminal_panel.center.panes();
                         if let Some(&pane) = panes.get(action.0) {
                             window.focus(&pane.read(cx).focus_handle(cx));
-                        } else {
-                            if let Some(new_pane) =
-                                terminal_panel.new_pane_with_cloned_active_terminal(window, cx)
-                            {
-                                terminal_panel
-                                    .center
-                                    .split(
-                                        &terminal_panel.active_pane,
-                                        &new_pane,
-                                        SplitDirection::Right,
-                                    )
-                                    .log_err();
-                                window.focus(&new_pane.focus_handle(cx));
-                            }
+                        } else if let Some(new_pane) =
+                            terminal_panel.new_pane_with_cloned_active_terminal(window, cx)
+                        {
+                            terminal_panel
+                                .center
+                                .split(
+                                    &terminal_panel.active_pane,
+                                    &new_pane,
+                                    SplitDirection::Right,
+                                )
+                                .log_err();
+                            window.focus(&new_pane.focus_handle(cx));
                         }
                     }),
                 )

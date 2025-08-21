@@ -163,7 +163,7 @@ pub fn render_keystroke(
     let size = size.into();
 
     if use_text {
-        let element = Key::new(keystroke_text(&keystroke, platform_style, vim_mode), color)
+        let element = Key::new(keystroke_text(keystroke, platform_style, vim_mode), color)
             .size(size)
             .into_any_element();
         vec![element]
@@ -176,7 +176,7 @@ pub fn render_keystroke(
             size,
             true,
         ));
-        elements.push(render_key(&keystroke, color, platform_style, size));
+        elements.push(render_key(keystroke, color, platform_style, size));
         elements
     }
 }
@@ -325,7 +325,7 @@ impl RenderOnce for Key {
             .text_size(size)
             .line_height(relative(1.))
             .text_color(self.color.unwrap_or(Color::Muted).color(cx))
-            .child(self.key.clone())
+            .child(self.key)
     }
 }
 

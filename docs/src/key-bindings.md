@@ -225,12 +225,14 @@ A common request is to be able to map from a single keystroke to a sequence. You
 [
   {
     "bindings": {
+      // Move down four times
       "alt-down": ["workspace::SendKeystrokes", "down down down down"],
+      // Expand the selection (editor::SelectLargerSyntaxNode);
+      // copy to the clipboard; and then undo the selection expansion.
       "cmd-alt-c": [
         "workspace::SendKeystrokes",
-        "cmd-shift-p copy relative path enter"
-      ],
-      "cmd-alt-r": ["workspace::SendKeystrokes", "cmd-p README enter"]
+        "ctrl-shift-right ctrl-shift-right ctrl-shift-right cmd-c ctrl-shift-left ctrl-shift-left ctrl-shift-left"
+      ]
     }
   },
   {

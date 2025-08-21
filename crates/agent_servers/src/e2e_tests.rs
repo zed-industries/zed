@@ -4,21 +4,30 @@ use std::{
     time::Duration,
 };
 
-use crate::{AgentServer, AgentServerSettings, AllAgentServersSettings};
+use crate::AgentServer;
 use acp_thread::{AcpThread, AgentThreadEntry, ToolCall, ToolCallStatus};
 use agent_client_protocol as acp;
 
 use futures::{FutureExt, StreamExt, channel::mpsc, select};
-use gpui::{Entity, TestAppContext};
+use gpui::{AppContext, Entity, TestAppContext};
 use indoc::indoc;
 use project::{FakeFs, Project};
-use settings::{Settings, SettingsStore};
 use util::path;
 
-pub async fn test_basic(server: impl AgentServer + 'static, cx: &mut TestAppContext) {
-    let fs = init_test(cx).await;
-    let project = Project::test(fs, [], cx).await;
-    let thread = new_test_thread(server, project.clone(), "/private/tmp", cx).await;
+pub async fn test_basic<T, F>(server: F, cx: &mut TestAppContext)
+where
+    T: AgentServer + 'static,
+    F: AsyncFn(&Arc<dyn fs::Fs>, &Entity<Project>, &mut TestAppContext) -> T,
+{
+    let fs = init_test(cx).await as Arc<dyn fs::Fs>;
+    let project = Project::test(fs.clone(), [], cx).await;
+    let thread = new_test_thread(
+        server(&fs, &project, cx).await,
+        project.clone(),
+        "/private/tmp",
+        cx,
+    )
+    .await;
 
     thread
         .update(cx, |thread, cx| thread.send_raw("Hello from Zed!", cx))
@@ -42,8 +51,12 @@ pub async fn test_basic(server: impl AgentServer + 'static, cx: &mut TestAppCont
     });
 }
 
-pub async fn test_path_mentions(server: impl AgentServer + 'static, cx: &mut TestAppContext) {
-    let _fs = init_test(cx).await;
+pub async fn test_path_mentions<T, F>(server: F, cx: &mut TestAppContext)
+where
+    T: AgentServer + 'static,
+    F: AsyncFn(&Arc<dyn fs::Fs>, &Entity<Project>, &mut TestAppContext) -> T,
+{
+    let fs = init_test(cx).await as _;
 
     let tempdir = tempfile::tempdir().unwrap();
     std::fs::write(
@@ -56,7 +69,13 @@ pub async fn test_path_mentions(server: impl AgentServer + 'static, cx: &mut Tes
     )
     .expect("failed to write file");
     let project = Project::example([tempdir.path()], &mut cx.to_async()).await;
-    let thread = new_test_thread(server, project.clone(), tempdir.path(), cx).await;
+    let thread = new_test_thread(
+        server(&fs, &project, cx).await,
+        project.clone(),
+        tempdir.path(),
+        cx,
+    )
+    .await;
     thread
         .update(cx, |thread, cx| {
             thread.send(
@@ -110,15 +129,25 @@ pub async fn test_path_mentions(server: impl AgentServer + 'static, cx: &mut Tes
     drop(tempdir);
 }
 
-pub async fn test_tool_call(server: impl AgentServer + 'static, cx: &mut TestAppContext) {
-    let _fs = init_test(cx).await;
+pub async fn test_tool_call<T, F>(server: F, cx: &mut TestAppContext)
+where
+    T: AgentServer + 'static,
+    F: AsyncFn(&Arc<dyn fs::Fs>, &Entity<Project>, &mut TestAppContext) -> T,
+{
+    let fs = init_test(cx).await as _;
 
     let tempdir = tempfile::tempdir().unwrap();
     let foo_path = tempdir.path().join("foo");
     std::fs::write(&foo_path, "Lorem ipsum dolor").expect("failed to write file");
 
     let project = Project::example([tempdir.path()], &mut cx.to_async()).await;
-    let thread = new_test_thread(server, project.clone(), "/private/tmp", cx).await;
+    let thread = new_test_thread(
+        server(&fs, &project, cx).await,
+        project.clone(),
+        "/private/tmp",
+        cx,
+    )
+    .await;
 
     thread
         .update(cx, |thread, cx| {
@@ -134,7 +163,9 @@ pub async fn test_tool_call(server: impl AgentServer + 'static, cx: &mut TestApp
             matches!(
                 entry,
                 AgentThreadEntry::ToolCall(ToolCall {
-                    status: ToolCallStatus::Allowed { .. },
+                    status: ToolCallStatus::Pending
+                        | ToolCallStatus::InProgress
+                        | ToolCallStatus::Completed,
                     ..
                 })
             )
@@ -150,14 +181,23 @@ pub async fn test_tool_call(server: impl AgentServer + 'static, cx: &mut TestApp
     drop(tempdir);
 }
 
-pub async fn test_tool_call_with_permission(
-    server: impl AgentServer + 'static,
+pub async fn test_tool_call_with_permission<T, F>(
+    server: F,
     allow_option_id: acp::PermissionOptionId,
     cx: &mut TestAppContext,
-) {
-    let fs = init_test(cx).await;
-    let project = Project::test(fs, [path!("/private/tmp").as_ref()], cx).await;
-    let thread = new_test_thread(server, project.clone(), "/private/tmp", cx).await;
+) where
+    T: AgentServer + 'static,
+    F: AsyncFn(&Arc<dyn fs::Fs>, &Entity<Project>, &mut TestAppContext) -> T,
+{
+    let fs = init_test(cx).await as Arc<dyn fs::Fs>;
+    let project = Project::test(fs.clone(), [path!("/private/tmp").as_ref()], cx).await;
+    let thread = new_test_thread(
+        server(&fs, &project, cx).await,
+        project.clone(),
+        "/private/tmp",
+        cx,
+    )
+    .await;
     let full_turn = thread.update(cx, |thread, cx| {
         thread.send_raw(
             r#"Run exactly `touch hello.txt && echo "Hello, world!" | tee hello.txt` in the terminal."#,
@@ -212,7 +252,9 @@ pub async fn test_tool_call_with_permission(
         assert!(thread.entries().iter().any(|entry| matches!(
             entry,
             AgentThreadEntry::ToolCall(ToolCall {
-                status: ToolCallStatus::Allowed { .. },
+                status: ToolCallStatus::Pending
+                    | ToolCallStatus::InProgress
+                    | ToolCallStatus::Completed,
                 ..
             })
         )));
@@ -223,7 +265,9 @@ pub async fn test_tool_call_with_permission(
     thread.read_with(cx, |thread, cx| {
         let AgentThreadEntry::ToolCall(ToolCall {
             content,
-            status: ToolCallStatus::Allowed { .. },
+            status: ToolCallStatus::Pending
+                | ToolCallStatus::InProgress
+                | ToolCallStatus::Completed,
             ..
         }) = thread
             .entries()
@@ -241,11 +285,21 @@ pub async fn test_tool_call_with_permission(
     });
 }
 
-pub async fn test_cancel(server: impl AgentServer + 'static, cx: &mut TestAppContext) {
-    let fs = init_test(cx).await;
+pub async fn test_cancel<T, F>(server: F, cx: &mut TestAppContext)
+where
+    T: AgentServer + 'static,
+    F: AsyncFn(&Arc<dyn fs::Fs>, &Entity<Project>, &mut TestAppContext) -> T,
+{
+    let fs = init_test(cx).await as Arc<dyn fs::Fs>;
 
-    let project = Project::test(fs, [path!("/private/tmp").as_ref()], cx).await;
-    let thread = new_test_thread(server, project.clone(), "/private/tmp", cx).await;
+    let project = Project::test(fs.clone(), [path!("/private/tmp").as_ref()], cx).await;
+    let thread = new_test_thread(
+        server(&fs, &project, cx).await,
+        project.clone(),
+        "/private/tmp",
+        cx,
+    )
+    .await;
     let _ = thread.update(cx, |thread, cx| {
         thread.send_raw(
             r#"Run exactly `touch hello.txt && echo "Hello, world!" | tee hello.txt` in the terminal."#,
@@ -310,10 +364,20 @@ pub async fn test_cancel(server: impl AgentServer + 'static, cx: &mut TestAppCon
     });
 }
 
-pub async fn test_thread_drop(server: impl AgentServer + 'static, cx: &mut TestAppContext) {
-    let fs = init_test(cx).await;
-    let project = Project::test(fs, [], cx).await;
-    let thread = new_test_thread(server, project.clone(), "/private/tmp", cx).await;
+pub async fn test_thread_drop<T, F>(server: F, cx: &mut TestAppContext)
+where
+    T: AgentServer + 'static,
+    F: AsyncFn(&Arc<dyn fs::Fs>, &Entity<Project>, &mut TestAppContext) -> T,
+{
+    let fs = init_test(cx).await as Arc<dyn fs::Fs>;
+    let project = Project::test(fs.clone(), [], cx).await;
+    let thread = new_test_thread(
+        server(&fs, &project, cx).await,
+        project.clone(),
+        "/private/tmp",
+        cx,
+    )
+    .await;
 
     thread
         .update(cx, |thread, cx| thread.send_raw("Hello from test!", cx))
@@ -380,25 +444,39 @@ macro_rules! common_e2e_tests {
         }
     };
 }
+pub use common_e2e_tests;
 
 // Helpers
 
 pub async fn init_test(cx: &mut TestAppContext) -> Arc<FakeFs> {
+    #[cfg(test)]
+    use settings::Settings;
+
     env_logger::try_init().ok();
 
     cx.update(|cx| {
-        let settings_store = SettingsStore::test(cx);
+        let settings_store = settings::SettingsStore::test(cx);
         cx.set_global(settings_store);
         Project::init_settings(cx);
         language::init(cx);
+        gpui_tokio::init(cx);
+        let http_client = reqwest_client::ReqwestClient::user_agent("agent tests").unwrap();
+        cx.set_http_client(Arc::new(http_client));
+        client::init_settings(cx);
+        let client = client::Client::production(cx);
+        let user_store = cx.new(|cx| client::UserStore::new(client.clone(), cx));
+        language_model::init(client.clone(), cx);
+        language_models::init(user_store, client, cx);
+        agent_settings::init(cx);
         crate::settings::init(cx);
 
+        #[cfg(test)]
         crate::AllAgentServersSettings::override_global(
-            AllAgentServersSettings {
-                claude: Some(AgentServerSettings {
+            crate::AllAgentServersSettings {
+                claude: Some(crate::AgentServerSettings {
                     command: crate::claude::tests::local_command(),
                 }),
-                gemini: Some(AgentServerSettings {
+                gemini: Some(crate::AgentServerSettings {
                     command: crate::gemini::tests::local_command(),
                 }),
             },
@@ -422,12 +500,9 @@ pub async fn new_test_thread(
         .await
         .unwrap();
 
-    let thread = connection
-        .new_thread(project.clone(), current_dir.as_ref(), &mut cx.to_async())
+    cx.update(|cx| connection.new_thread(project.clone(), current_dir.as_ref(), cx))
         .await
-        .unwrap();
-
-    thread
+        .unwrap()
 }
 
 pub async fn run_until_first_tool_call(
@@ -465,7 +540,7 @@ pub fn get_zed_path() -> PathBuf {
 
     while zed_path
         .file_name()
-        .map_or(true, |name| name.to_string_lossy() != "debug")
+        .is_none_or(|name| name.to_string_lossy() != "debug")
     {
         if !zed_path.pop() {
             panic!("Could not find target directory");

@@ -37,7 +37,7 @@ const CONTENT: (Section<4>, Section<3>) = (
             },
             SectionEntry {
                 icon: IconName::CloudDownload,
-                title: "Clone a Repo",
+                title: "Clone Repository",
                 action: &git::Clone,
             },
             SectionEntry {
@@ -104,7 +104,7 @@ impl<const COLS: usize> Section<COLS> {
                 self.entries
                     .iter()
                     .enumerate()
-                    .map(|(index, entry)| entry.render(index_offset + index, &focus, window, cx)),
+                    .map(|(index, entry)| entry.render(index_offset + index, focus, window, cx)),
             )
     }
 }

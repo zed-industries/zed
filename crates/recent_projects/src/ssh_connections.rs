@@ -436,7 +436,7 @@ impl ModalView for SshConnectionModal {
         _window: &mut Window,
         _: &mut Context<Self>,
     ) -> workspace::DismissDecision {
-        return workspace::DismissDecision::Dismiss(self.finished);
+        workspace::DismissDecision::Dismiss(self.finished)
     }
 
     fn fade_out_background(&self) -> bool {
@@ -681,7 +681,7 @@ pub async fn open_ssh_project(
 
         window
             .update(cx, |workspace, _, cx| {
-                if let Some(client) = workspace.project().read(cx).ssh_client().clone() {
+                if let Some(client) = workspace.project().read(cx).ssh_client() {
                     ExtensionStore::global(cx)
                         .update(cx, |store, cx| store.register_ssh_client(client, cx));
                 }

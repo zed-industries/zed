@@ -157,7 +157,7 @@ pub use taffy::{AvailableSpace, LayoutId};
 #[cfg(any(test, feature = "test-support"))]
 pub use test::*;
 pub use text_system::*;
-pub use util::arc_cow::ArcCow;
+pub use util::{FutureExt, Timeout, arc_cow::ArcCow};
 pub use view::*;
 pub use window::*;
 
@@ -172,6 +172,10 @@ pub trait AppContext {
     type Result<T>;
 
     /// Create a new entity in the app context.
+    #[expect(
+        clippy::wrong_self_convention,
+        reason = "`App::new` is an ubiquitous function for creating entities"
+    )]
     fn new<T: 'static>(
         &mut self,
         build_entity: impl FnOnce(&mut Context<T>) -> T,

@@ -169,7 +169,7 @@ impl Editor {
         else {
             return;
         };
-        let Some(lsp_store) = self.project.as_ref().map(|p| p.read(cx).lsp_store()) else {
+        let Some(lsp_store) = self.project().map(|p| p.read(cx).lsp_store()) else {
             return;
         };
         let task = lsp_store.update(cx, |lsp_store, cx| {
@@ -196,7 +196,7 @@ impl Editor {
                                     .highlight_text(&text, 0..signature.label.len())
                                     .into_iter()
                                     .flat_map(|(range, highlight_id)| {
-                                        Some((range, highlight_id.style(&cx.theme().syntax())?))
+                                        Some((range, highlight_id.style(cx.theme().syntax())?))
                                     });
                                 signature.highlights =
                                     combine_highlights(signature.highlights.clone(), highlights)

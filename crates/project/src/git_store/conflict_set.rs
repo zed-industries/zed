@@ -369,7 +369,7 @@ mod tests {
         .unindent();
 
         let buffer_id = BufferId::new(1).unwrap();
-        let buffer = Buffer::new(0, buffer_id, test_content.to_string());
+        let buffer = Buffer::new(0, buffer_id, test_content);
         let snapshot = buffer.snapshot();
 
         let conflict_snapshot = ConflictSet::parse(&snapshot);
@@ -400,7 +400,7 @@ mod tests {
             >>>>>>> "#
             .unindent();
         let buffer_id = BufferId::new(1).unwrap();
-        let buffer = Buffer::new(0, buffer_id, test_content.to_string());
+        let buffer = Buffer::new(0, buffer_id, test_content);
         let snapshot = buffer.snapshot();
 
         let conflict_snapshot = ConflictSet::parse(&snapshot);
@@ -653,7 +653,7 @@ mod tests {
 
         cx.run_until_parked();
         conflict_set.update(cx, |conflict_set, _| {
-            assert_eq!(conflict_set.has_conflict, false);
+            assert!(!conflict_set.has_conflict);
             assert_eq!(conflict_set.snapshot.conflicts.len(), 0);
         });
 

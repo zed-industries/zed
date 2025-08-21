@@ -1,23 +1,32 @@
-use agent::ThreadId;
+use agent_client_protocol as acp;
 use anyhow::{Context as _, Result, bail};
+use file_icons::FileIcons;
 use prompt_store::{PromptId, UserPromptId};
+use serde::{Deserialize, Serialize};
 use std::{
     fmt,
     ops::Range,
     path::{Path, PathBuf},
+    str::FromStr,
 };
+use ui::{App, IconName, SharedString};
 use url::Url;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Hash)]
 pub enum MentionUri {
-    File(PathBuf),
+    File {
+        abs_path: PathBuf,
+    },
+    Directory {
+        abs_path: PathBuf,
+    },
     Symbol {
         path: PathBuf,
         name: String,
         line_range: Range<u32>,
     },
     Thread {
-        id: ThreadId,
+        id: acp::SessionId,
         name: String,
     },
     TextThread {
@@ -43,6 +52,7 @@ impl MentionUri {
         let path = url.path();
         match url.scheme() {
             "file" => {
+                let path = url.to_file_path().ok().context("Extracting file path")?;
                 if let Some(fragment) = url.fragment() {
                     let range = fragment
                         .strip_prefix("L")
@@ -63,27 +73,23 @@ impl MentionUri {
                     if let Some(name) = single_query_param(&url, "symbol")? {
                         Ok(Self::Symbol {
                             name,
-                            path: path.into(),
+                            path,
                             line_range,
                         })
                     } else {
-                        Ok(Self::Selection {
-                            path: path.into(),
-                            line_range,
-                        })
+                        Ok(Self::Selection { path, line_range })
                     }
+                } else if input.ends_with("/") {
+                    Ok(Self::Directory { abs_path: path })
                 } else {
-                    let file_path =
-                        PathBuf::from(format!("{}{}", url.host_str().unwrap_or(""), path));
-
-                    Ok(Self::File(file_path))
+                    Ok(Self::File { abs_path: path })
                 }
             }
             "zed" => {
                 if let Some(thread_id) = path.strip_prefix("/agent/thread/") {
                     let name = single_query_param(&url, "name")?.context("Missing thread name")?;
                     Ok(Self::Thread {
-                        id: thread_id.into(),
+                        id: acp::SessionId(thread_id.into()),
                         name,
                     })
                 } else if let Some(path) = path.strip_prefix("/agent/text-thread/") {
@@ -108,9 +114,9 @@ impl MentionUri {
         }
     }
 
-    fn name(&self) -> String {
+    pub fn name(&self) -> String {
         match self {
-            MentionUri::File(path) => path
+            MentionUri::File { abs_path, .. } | MentionUri::Directory { abs_path, .. } => abs_path
                 .file_name()
                 .unwrap_or_default()
                 .to_string_lossy()
@@ -126,24 +132,40 @@ impl MentionUri {
         }
     }
 
+    pub fn icon_path(&self, cx: &mut App) -> SharedString {
+        match self {
+            MentionUri::File { abs_path } => {
+                FileIcons::get_icon(abs_path, cx).unwrap_or_else(|| IconName::File.path().into())
+            }
+            MentionUri::Directory { .. } => FileIcons::get_folder_icon(false, cx)
+                .unwrap_or_else(|| IconName::Folder.path().into()),
+            MentionUri::Symbol { .. } => IconName::Code.path().into(),
+            MentionUri::Thread { .. } => IconName::Thread.path().into(),
+            MentionUri::TextThread { .. } => IconName::Thread.path().into(),
+            MentionUri::Rule { .. } => IconName::Reader.path().into(),
+            MentionUri::Selection { .. } => IconName::Reader.path().into(),
+            MentionUri::Fetch { .. } => IconName::ToolWeb.path().into(),
+        }
+    }
+
     pub fn as_link<'a>(&'a self) -> MentionLink<'a> {
         MentionLink(self)
     }
 
     pub fn to_uri(&self) -> Url {
         match self {
-            MentionUri::File(path) => {
-                let mut url = Url::parse("file:///").unwrap();
-                url.set_path(&path.to_string_lossy());
-                url
+            MentionUri::File { abs_path } => {
+                Url::from_file_path(abs_path).expect("mention path should be absolute")
+            }
+            MentionUri::Directory { abs_path } => {
+                Url::from_directory_path(abs_path).expect("mention path should be absolute")
             }
             MentionUri::Symbol {
                 path,
                 name,
                 line_range,
             } => {
-                let mut url = Url::parse("file:///").unwrap();
-                url.set_path(&path.to_string_lossy());
+                let mut url = Url::from_file_path(path).expect("mention path should be absolute");
                 url.query_pairs_mut().append_pair("symbol", name);
                 url.set_fragment(Some(&format!(
                     "L{}:{}",
@@ -153,8 +175,7 @@ impl MentionUri {
                 url
             }
             MentionUri::Selection { path, line_range } => {
-                let mut url = Url::parse("file:///").unwrap();
-                url.set_path(&path.to_string_lossy());
+                let mut url = Url::from_file_path(path).expect("mention path should be absolute");
                 url.set_fragment(Some(&format!(
                     "L{}:{}",
                     line_range.start + 1,
@@ -182,6 +203,14 @@ impl MentionUri {
             }
             MentionUri::Fetch { url } => url.clone(),
         }
+    }
+}
+
+impl FromStr for MentionUri {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> anyhow::Result<Self> {
+        Self::parse(s)
     }
 }
 
@@ -219,22 +248,57 @@ pub fn selection_name(path: &Path, line_range: &Range<u32>) -> String {
 
 #[cfg(test)]
 mod tests {
+    use util::{path, uri};
+
     use super::*;
 
     #[test]
     fn test_parse_file_uri() {
-        let file_uri = "file:///path/to/file.rs";
+        let file_uri = uri!("file:///path/to/file.rs");
         let parsed = MentionUri::parse(file_uri).unwrap();
         match &parsed {
-            MentionUri::File(path) => assert_eq!(path.to_str().unwrap(), "/path/to/file.rs"),
+            MentionUri::File { abs_path } => {
+                assert_eq!(abs_path.to_str().unwrap(), path!("/path/to/file.rs"));
+            }
             _ => panic!("Expected File variant"),
         }
         assert_eq!(parsed.to_uri().to_string(), file_uri);
     }
 
     #[test]
+    fn test_parse_directory_uri() {
+        let file_uri = uri!("file:///path/to/dir/");
+        let parsed = MentionUri::parse(file_uri).unwrap();
+        match &parsed {
+            MentionUri::Directory { abs_path } => {
+                assert_eq!(abs_path.to_str().unwrap(), path!("/path/to/dir/"));
+            }
+            _ => panic!("Expected Directory variant"),
+        }
+        assert_eq!(parsed.to_uri().to_string(), file_uri);
+    }
+
+    #[test]
+    fn test_to_directory_uri_with_slash() {
+        let uri = MentionUri::Directory {
+            abs_path: PathBuf::from(path!("/path/to/dir/")),
+        };
+        let expected = uri!("file:///path/to/dir/");
+        assert_eq!(uri.to_uri().to_string(), expected);
+    }
+
+    #[test]
+    fn test_to_directory_uri_without_slash() {
+        let uri = MentionUri::Directory {
+            abs_path: PathBuf::from(path!("/path/to/dir")),
+        };
+        let expected = uri!("file:///path/to/dir/");
+        assert_eq!(uri.to_uri().to_string(), expected);
+    }
+
+    #[test]
     fn test_parse_symbol_uri() {
-        let symbol_uri = "file:///path/to/file.rs?symbol=MySymbol#L10:20";
+        let symbol_uri = uri!("file:///path/to/file.rs?symbol=MySymbol#L10:20");
         let parsed = MentionUri::parse(symbol_uri).unwrap();
         match &parsed {
             MentionUri::Symbol {
@@ -242,7 +306,7 @@ mod tests {
                 name,
                 line_range,
             } => {
-                assert_eq!(path.to_str().unwrap(), "/path/to/file.rs");
+                assert_eq!(path.to_str().unwrap(), path!("/path/to/file.rs"));
                 assert_eq!(name, "MySymbol");
                 assert_eq!(line_range.start, 9);
                 assert_eq!(line_range.end, 19);
@@ -254,11 +318,11 @@ mod tests {
 
     #[test]
     fn test_parse_selection_uri() {
-        let selection_uri = "file:///path/to/file.rs#L5:15";
+        let selection_uri = uri!("file:///path/to/file.rs#L5:15");
         let parsed = MentionUri::parse(selection_uri).unwrap();
         match &parsed {
             MentionUri::Selection { path, line_range } => {
-                assert_eq!(path.to_str().unwrap(), "/path/to/file.rs");
+                assert_eq!(path.to_str().unwrap(), path!("/path/to/file.rs"));
                 assert_eq!(line_range.start, 4);
                 assert_eq!(line_range.end, 14);
             }
@@ -340,32 +404,35 @@ mod tests {
     #[test]
     fn test_invalid_line_range_format() {
         // Missing L prefix
-        assert!(MentionUri::parse("file:///path/to/file.rs#10:20").is_err());
+        assert!(MentionUri::parse(uri!("file:///path/to/file.rs#10:20")).is_err());
 
         // Missing colon separator
-        assert!(MentionUri::parse("file:///path/to/file.rs#L1020").is_err());
+        assert!(MentionUri::parse(uri!("file:///path/to/file.rs#L1020")).is_err());
 
         // Invalid numbers
-        assert!(MentionUri::parse("file:///path/to/file.rs#L10:abc").is_err());
-        assert!(MentionUri::parse("file:///path/to/file.rs#Labc:20").is_err());
+        assert!(MentionUri::parse(uri!("file:///path/to/file.rs#L10:abc")).is_err());
+        assert!(MentionUri::parse(uri!("file:///path/to/file.rs#Labc:20")).is_err());
     }
 
     #[test]
     fn test_invalid_query_parameters() {
         // Invalid query parameter name
-        assert!(MentionUri::parse("file:///path/to/file.rs#L10:20?invalid=test").is_err());
+        assert!(MentionUri::parse(uri!("file:///path/to/file.rs#L10:20?invalid=test")).is_err());
 
         // Too many query parameters
         assert!(
-            MentionUri::parse("file:///path/to/file.rs#L10:20?symbol=test&another=param").is_err()
+            MentionUri::parse(uri!(
+                "file:///path/to/file.rs#L10:20?symbol=test&another=param"
+            ))
+            .is_err()
         );
     }
 
     #[test]
     fn test_zero_based_line_numbers() {
         // Test that 0-based line numbers are rejected (should be 1-based)
-        assert!(MentionUri::parse("file:///path/to/file.rs#L0:10").is_err());
-        assert!(MentionUri::parse("file:///path/to/file.rs#L1:0").is_err());
-        assert!(MentionUri::parse("file:///path/to/file.rs#L0:0").is_err());
+        assert!(MentionUri::parse(uri!("file:///path/to/file.rs#L0:10")).is_err());
+        assert!(MentionUri::parse(uri!("file:///path/to/file.rs#L1:0")).is_err());
+        assert!(MentionUri::parse(uri!("file:///path/to/file.rs#L0:0")).is_err());
     }
 }

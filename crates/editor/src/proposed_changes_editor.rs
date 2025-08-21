@@ -241,24 +241,13 @@ impl ProposedChangesEditor {
         event: &BufferEvent,
         _cx: &mut Context<Self>,
     ) {
-        match event {
-            BufferEvent::Operation { .. } => {
-                self.recalculate_diffs_tx
-                    .unbounded_send(RecalculateDiff {
-                        buffer,
-                        debounce: true,
-                    })
-                    .ok();
-            }
-            // BufferEvent::DiffBaseChanged => {
-            //     self.recalculate_diffs_tx
-            //         .unbounded_send(RecalculateDiff {
-            //             buffer,
-            //             debounce: false,
-            //         })
-            //         .ok();
-            // }
-            _ => (),
+        if let BufferEvent::Operation { .. } = event {
+            self.recalculate_diffs_tx
+                .unbounded_send(RecalculateDiff {
+                    buffer,
+                    debounce: true,
+                })
+                .ok();
         }
     }
 }
@@ -478,7 +467,7 @@ impl SemanticsProvider for BranchBufferSemanticsProvider {
     }
 
     fn supports_inlay_hints(&self, buffer: &Entity<Buffer>, cx: &mut App) -> bool {
-        if let Some(buffer) = self.to_base(&buffer, &[], cx) {
+        if let Some(buffer) = self.to_base(buffer, &[], cx) {
             self.0.supports_inlay_hints(&buffer, cx)
         } else {
             false
@@ -491,7 +480,7 @@ impl SemanticsProvider for BranchBufferSemanticsProvider {
         position: text::Anchor,
         cx: &mut App,
     ) -> Option<Task<anyhow::Result<Vec<project::DocumentHighlight>>>> {
-        let buffer = self.to_base(&buffer, &[position], cx)?;
+        let buffer = self.to_base(buffer, &[position], cx)?;
         self.0.document_highlights(&buffer, position, cx)
     }
 
@@ -502,7 +491,7 @@ impl SemanticsProvider for BranchBufferSemanticsProvider {
         kind: crate::GotoDefinitionKind,
         cx: &mut App,
     ) -> Option<Task<anyhow::Result<Vec<project::LocationLink>>>> {
-        let buffer = self.to_base(&buffer, &[position], cx)?;
+        let buffer = self.to_base(buffer, &[position], cx)?;
         self.0.definitions(&buffer, position, kind, cx)
     }
 

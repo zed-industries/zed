@@ -44,7 +44,7 @@ impl DiagnosticsSlashCommand {
                         score: 0.,
                         positions: Vec::new(),
                         worktree_id: entry.worktree_id.to_usize(),
-                        path: entry.path.clone(),
+                        path: entry.path,
                         path_prefix: path_prefix.clone(),
                         is_dir: false, // Diagnostics can't be produced for directories
                         distance_to_relative_ancestor: 0,
@@ -61,7 +61,7 @@ impl DiagnosticsSlashCommand {
                         snapshot: worktree.snapshot(),
                         include_ignored: worktree
                             .root_entry()
-                            .map_or(false, |entry| entry.is_ignored),
+                            .is_some_and(|entry| entry.is_ignored),
                         include_root_name: true,
                         candidates: project::Candidates::Entries,
                     }
@@ -189,7 +189,7 @@ impl SlashCommand for DiagnosticsSlashCommand {
 
         window.spawn(cx, async move |_| {
             task.await?
-                .map(|output| output.to_event_stream())
+                .map(|output| output.into_event_stream())
                 .context("No diagnostics found")
         })
     }
@@ -249,7 +249,7 @@ fn collect_diagnostics(
                     let worktree = worktree.read(cx);
                     let worktree_root_path = Path::new(worktree.root_name());
                     let relative_path = path.strip_prefix(worktree_root_path).ok()?;
-                    worktree.absolutize(&relative_path).ok()
+                    worktree.absolutize(relative_path).ok()
                 })
             })
             .is_some()
@@ -280,10 +280,10 @@ fn collect_diagnostics(
 
         let mut project_summary = DiagnosticSummary::default();
         for (project_path, path, summary) in diagnostic_summaries {
-            if let Some(path_matcher) = &options.path_matcher {
-                if !path_matcher.is_match(&path) {
-                    continue;
-                }
+            if let Some(path_matcher) = &options.path_matcher
+                && !path_matcher.is_match(&path)
+            {
+                continue;
             }
 
             project_summary.error_count += summary.error_count;
@@ -365,7 +365,7 @@ pub fn collect_buffer_diagnostics(
 ) {
     for (_, group) in snapshot.diagnostic_groups(None) {
         let entry = &group.entries[group.primary_ix];
-        collect_diagnostic(output, entry, &snapshot, include_warnings)
+        collect_diagnostic(output, entry, snapshot, include_warnings)
     }
 }
 
@@ -396,7 +396,7 @@ fn collect_diagnostic(
     let start_row = range.start.row.saturating_sub(EXCERPT_EXPANSION_SIZE);
     let end_row = (range.end.row + EXCERPT_EXPANSION_SIZE).min(snapshot.max_point().row) + 1;
     let excerpt_range =
-        Point::new(start_row, 0).to_offset(&snapshot)..Point::new(end_row, 0).to_offset(&snapshot);
+        Point::new(start_row, 0).to_offset(snapshot)..Point::new(end_row, 0).to_offset(snapshot);
 
     output.text.push_str("```");
     if let Some(language_name) = snapshot.language().map(|l| l.code_fence_block_name()) {

@@ -474,7 +474,7 @@ mod tests {
 
         assert_eq!(
             github
-                .extract_pull_request(&remote, &message)
+                .extract_pull_request(&remote, message)
                 .unwrap()
                 .url
                 .as_str(),
@@ -488,6 +488,6 @@ mod tests {
             See the original PR, this is a fix.
             "#
         };
-        assert_eq!(github.extract_pull_request(&remote, &message), None);
+        assert_eq!(github.extract_pull_request(&remote, message), None);
     }
 }

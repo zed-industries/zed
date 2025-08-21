@@ -905,9 +905,9 @@ mod tests {
         assert_eq!(background.solid, color);
 
         assert_eq!(background.opacity(0.5).solid, color.opacity(0.5));
-        assert_eq!(background.is_transparent(), false);
+        assert!(!background.is_transparent());
         background.solid = hsla(0.0, 0.0, 0.0, 0.0);
-        assert_eq!(background.is_transparent(), true);
+        assert!(background.is_transparent());
     }
 
     #[test]
@@ -921,7 +921,7 @@ mod tests {
 
         assert_eq!(background.opacity(0.5).colors[0], from.opacity(0.5));
         assert_eq!(background.opacity(0.5).colors[1], to.opacity(0.5));
-        assert_eq!(background.is_transparent(), false);
-        assert_eq!(background.opacity(0.0).is_transparent(), true);
+        assert!(!background.is_transparent());
+        assert!(background.opacity(0.0).is_transparent());
     }
 }

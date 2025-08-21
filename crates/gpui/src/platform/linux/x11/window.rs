@@ -95,7 +95,7 @@ fn query_render_extent(
 }
 
 impl ResizeEdge {
-    fn to_moveresize(&self) -> u32 {
+    fn to_moveresize(self) -> u32 {
         match self {
             ResizeEdge::TopLeft => 0,
             ResizeEdge::Top => 1,
@@ -397,7 +397,7 @@ impl X11WindowState {
             .display_id
             .map_or(x_main_screen_index, |did| did.0 as usize);
 
-        let visual_set = find_visuals(&xcb, x_screen_index);
+        let visual_set = find_visuals(xcb, x_screen_index);
 
         let visual = match visual_set.transparent {
             Some(visual) => visual,
@@ -515,19 +515,19 @@ impl X11WindowState {
                     xcb.configure_window(x_window, &xproto::ConfigureWindowAux::new().x(x).y(y)),
                 )?;
             }
-            if let Some(titlebar) = params.titlebar {
-                if let Some(title) = titlebar.title {
-                    check_reply(
-                        || "X11 ChangeProperty8 on window title failed.",
-                        xcb.change_property8(
-                            xproto::PropMode::REPLACE,
-                            x_window,
-                            xproto::AtomEnum::WM_NAME,
-                            xproto::AtomEnum::STRING,
-                            title.as_bytes(),
-                        ),
-                    )?;
-                }
+            if let Some(titlebar) = params.titlebar
+                && let Some(title) = titlebar.title
+            {
+                check_reply(
+                    || "X11 ChangeProperty8 on window title failed.",
+                    xcb.change_property8(
+                        xproto::PropMode::REPLACE,
+                        x_window,
+                        xproto::AtomEnum::WM_NAME,
+                        xproto::AtomEnum::STRING,
+                        title.as_bytes(),
+                    ),
+                )?;
             }
             if params.kind == WindowKind::PopUp {
                 check_reply(
@@ -604,7 +604,7 @@ impl X11WindowState {
                 ),
             )?;
 
-            xcb_flush(&xcb);
+            xcb_flush(xcb);
 
             let renderer = {
                 let raw_window = RawWindow {
@@ -664,7 +664,7 @@ impl X11WindowState {
                 || "X11 DestroyWindow failed while cleaning it up after setup failure.",
                 xcb.destroy_window(x_window),
             )?;
-            xcb_flush(&xcb);
+            xcb_flush(xcb);
         }
 
         setup_result
@@ -956,10 +956,10 @@ impl X11WindowStatePtr {
     }
 
     pub fn handle_input(&self, input: PlatformInput) {
-        if let Some(ref mut fun) = self.callbacks.borrow_mut().input {
-            if !fun(input.clone()).propagate {
-                return;
-            }
+        if let Some(ref mut fun) = self.callbacks.borrow_mut().input
+            && !fun(input.clone()).propagate
+        {
+            return;
         }
         if let PlatformInput::KeyDown(event) = input {
             // only allow shift modifier when inserting text
@@ -1068,15 +1068,14 @@ impl X11WindowStatePtr {
         }
 
         let mut callbacks = self.callbacks.borrow_mut();
-        if let Some((content_size, scale_factor)) = resize_args {
-            if let Some(ref mut fun) = callbacks.resize {
-                fun(content_size, scale_factor)
-            }
+        if let Some((content_size, scale_factor)) = resize_args
+            && let Some(ref mut fun) = callbacks.resize
+        {
+            fun(content_size, scale_factor)
         }
-        if !is_resize {
-            if let Some(ref mut fun) = callbacks.moved {
-                fun();
-            }
+
+        if !is_resize && let Some(ref mut fun) = callbacks.moved {
+            fun();
         }
 
         Ok(())

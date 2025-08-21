@@ -316,6 +316,16 @@ TBD: Centered layout related settings
     // Clicking the button brings up the language selector.
     // Defaults to true.
     "active_language_button": true,
+    // Show/hide a button that displays the cursor's position.
+    // Clicking the button brings up an input for jumping to a line and column.
+    // Defaults to true.
+    "cursor_position_button": true,
+  },
+  "global_lsp_settings": {
+    // Show/hide the LSP button in the status bar.
+    // Activity from the LSP is still shown.
+    // Button is not shown if "enable_language_server" if false.
+    "button": true
   },
 ```
 

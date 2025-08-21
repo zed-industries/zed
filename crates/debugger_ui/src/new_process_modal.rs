@@ -343,10 +343,10 @@ impl NewProcessModal {
             return;
         }
 
-        if let NewProcessMode::Launch = &self.mode {
-            if self.configure_mode.read(cx).save_to_debug_json.selected() {
-                self.save_debug_scenario(window, cx);
-            }
+        if let NewProcessMode::Launch = &self.mode
+            && self.configure_mode.read(cx).save_to_debug_json.selected()
+        {
+            self.save_debug_scenario(window, cx);
         }
 
         let Some(debugger) = self.debugger.clone() else {
@@ -413,7 +413,7 @@ impl NewProcessModal {
         let Some(adapter) = self.debugger.as_ref() else {
             return;
         };
-        let scenario = self.debug_scenario(&adapter, cx);
+        let scenario = self.debug_scenario(adapter, cx);
         cx.spawn_in(window, async move |this, cx| {
             let scenario = scenario.await.context("no scenario to save")?;
             let worktree_id = task_contexts
@@ -659,12 +659,7 @@ impl Render for NewProcessModal {
                             this.mode = NewProcessMode::Attach;
 
                             if let Some(debugger) = this.debugger.as_ref() {
-                                Self::update_attach_picker(
-                                    &this.attach_mode,
-                                    &debugger,
-                                    window,
-                                    cx,
-                                );
+                                Self::update_attach_picker(&this.attach_mode, debugger, window, cx);
                             }
                             this.mode_focus_handle(cx).focus(window);
                             cx.notify();
@@ -790,7 +785,7 @@ impl RenderOnce for AttachMode {
         v_flex()
             .w_full()
             .track_focus(&self.attach_picker.focus_handle(cx))
-            .child(self.attach_picker.clone())
+            .child(self.attach_picker)
     }
 }
 
@@ -1083,7 +1078,7 @@ impl DebugDelegate {
                     .into_iter()
                     .map(|(scenario, context)| {
                         let (kind, scenario) =
-                            Self::get_scenario_kind(&languages, &dap_registry, scenario);
+                            Self::get_scenario_kind(&languages, dap_registry, scenario);
                         (kind, scenario, Some(context))
                     })
                     .chain(
@@ -1100,7 +1095,7 @@ impl DebugDelegate {
                             .filter(|(_, scenario)| valid_adapters.contains(&scenario.adapter))
                             .map(|(kind, scenario)| {
                                 let (language, scenario) =
-                                    Self::get_scenario_kind(&languages, &dap_registry, scenario);
+                                    Self::get_scenario_kind(&languages, dap_registry, scenario);
                                 (language.or(Some(kind)), scenario, None)
                             }),
                     )

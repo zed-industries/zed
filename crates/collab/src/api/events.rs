@@ -149,35 +149,35 @@ pub async fn post_crash(
         "crash report"
     );
 
-    if let Some(kinesis_client) = app.kinesis_client.clone() {
-        if let Some(stream) = app.config.kinesis_stream.clone() {
-            let properties = json!({
-                "app_version": report.header.app_version,
-                "os_version": report.header.os_version,
-                "os_name": "macOS",
-                "bundle_id": report.header.bundle_id,
-                "incident_id": report.header.incident_id,
-                "installation_id": installation_id,
-                "description": description,
-                "backtrace": summary,
-            });
-            let row = SnowflakeRow::new(
-                "Crash Reported",
-                None,
-                false,
-                Some(installation_id),
-                properties,
-            );
-            let data = serde_json::to_vec(&row)?;
-            kinesis_client
-                .put_record()
-                .stream_name(stream)
-                .partition_key(row.insert_id.unwrap_or_default())
-                .data(data.into())
-                .send()
-                .await
-                .log_err();
-        }
+    if let Some(kinesis_client) = app.kinesis_client.clone()
+        && let Some(stream) = app.config.kinesis_stream.clone()
+    {
+        let properties = json!({
+            "app_version": report.header.app_version,
+            "os_version": report.header.os_version,
+            "os_name": "macOS",
+            "bundle_id": report.header.bundle_id,
+            "incident_id": report.header.incident_id,
+            "installation_id": installation_id,
+            "description": description,
+            "backtrace": summary,
+        });
+        let row = SnowflakeRow::new(
+            "Crash Reported",
+            None,
+            false,
+            Some(installation_id),
+            properties,
+        );
+        let data = serde_json::to_vec(&row)?;
+        kinesis_client
+            .put_record()
+            .stream_name(stream)
+            .partition_key(row.insert_id.unwrap_or_default())
+            .data(data.into())
+            .send()
+            .await
+            .log_err();
     }
 
     if let Some(slack_panics_webhook) = app.config.slack_panics_webhook.clone() {
@@ -280,7 +280,7 @@ pub async fn post_hang(
         service = "client",
         version = %report.app_version.unwrap_or_default().to_string(),
         os_name = %report.os_name,
-        os_version = report.os_version.unwrap_or_default().to_string(),
+        os_version = report.os_version.unwrap_or_default(),
         incident_id = %incident_id,
         installation_id = %report.installation_id.unwrap_or_default(),
         backtrace = %backtrace,
@@ -359,34 +359,34 @@ pub async fn post_panic(
         "panic report"
     );
 
-    if let Some(kinesis_client) = app.kinesis_client.clone() {
-        if let Some(stream) = app.config.kinesis_stream.clone() {
-            let properties = json!({
-                "app_version": panic.app_version,
-                "os_name": panic.os_name,
-                "os_version": panic.os_version,
-                "incident_id": incident_id,
-                "installation_id": panic.installation_id,
-                "description": panic.payload,
-                "backtrace": backtrace,
-            });
-            let row = SnowflakeRow::new(
-                "Panic Reported",
-                None,
-                false,
-                panic.installation_id.clone(),
-                properties,
-            );
-            let data = serde_json::to_vec(&row)?;
-            kinesis_client
-                .put_record()
-                .stream_name(stream)
-                .partition_key(row.insert_id.unwrap_or_default())
-                .data(data.into())
-                .send()
-                .await
-                .log_err();
-        }
+    if let Some(kinesis_client) = app.kinesis_client.clone()
+        && let Some(stream) = app.config.kinesis_stream.clone()
+    {
+        let properties = json!({
+            "app_version": panic.app_version,
+            "os_name": panic.os_name,
+            "os_version": panic.os_version,
+            "incident_id": incident_id,
+            "installation_id": panic.installation_id,
+            "description": panic.payload,
+            "backtrace": backtrace,
+        });
+        let row = SnowflakeRow::new(
+            "Panic Reported",
+            None,
+            false,
+            panic.installation_id.clone(),
+            properties,
+        );
+        let data = serde_json::to_vec(&row)?;
+        kinesis_client
+            .put_record()
+            .stream_name(stream)
+            .partition_key(row.insert_id.unwrap_or_default())
+            .data(data.into())
+            .send()
+            .await
+            .log_err();
     }
 
     if !report_to_slack(&panic) {
@@ -518,30 +518,30 @@ pub async fn post_events(
     let first_event_at = chrono::Utc::now()
         - chrono::Duration::milliseconds(last_event.milliseconds_since_first_event);
 
-    if let Some(kinesis_client) = app.kinesis_client.clone() {
-        if let Some(stream) = app.config.kinesis_stream.clone() {
-            let mut request = kinesis_client.put_records().stream_name(stream);
-            let mut has_records = false;
-            for row in for_snowflake(
-                request_body.clone(),
-                first_event_at,
-                country_code.clone(),
-                checksum_matched,
-            ) {
-                if let Some(data) = serde_json::to_vec(&row).log_err() {
-                    request = request.records(
-                        aws_sdk_kinesis::types::PutRecordsRequestEntry::builder()
-                            .partition_key(request_body.system_id.clone().unwrap_or_default())
-                            .data(data.into())
-                            .build()
-                            .unwrap(),
-                    );
-                    has_records = true;
-                }
+    if let Some(kinesis_client) = app.kinesis_client.clone()
+        && let Some(stream) = app.config.kinesis_stream.clone()
+    {
+        let mut request = kinesis_client.put_records().stream_name(stream);
+        let mut has_records = false;
+        for row in for_snowflake(
+            request_body.clone(),
+            first_event_at,
+            country_code.clone(),
+            checksum_matched,
+        ) {
+            if let Some(data) = serde_json::to_vec(&row).log_err() {
+                request = request.records(
+                    aws_sdk_kinesis::types::PutRecordsRequestEntry::builder()
+                        .partition_key(request_body.system_id.clone().unwrap_or_default())
+                        .data(data.into())
+                        .build()
+                        .unwrap(),
+                );
+                has_records = true;
             }
-            if has_records {
-                request.send().await.log_err();
-            }
+        }
+        if has_records {
+            request.send().await.log_err();
         }
     };
 
@@ -564,170 +564,10 @@ fn for_snowflake(
     country_code: Option<String>,
     checksum_matched: bool,
 ) -> impl Iterator<Item = SnowflakeRow> {
-    body.events.into_iter().filter_map(move |event| {
+    body.events.into_iter().map(move |event| {
         let timestamp =
             first_event_at + Duration::milliseconds(event.milliseconds_since_first_event);
-        // We will need to double check, but I believe all of the events that
-        // are being transformed here are now migrated over to use the
-        // telemetry::event! macro, as of this commit so this code can go away
-        // when we feel enough users have upgraded past this point.
         let (event_type, mut event_properties) = match &event.event {
-            Event::Editor(e) => (
-                match e.operation.as_str() {
-                    "open" => "Editor Opened".to_string(),
-                    "save" => "Editor Saved".to_string(),
-                    _ => format!("Unknown Editor Event: {}", e.operation),
-                },
-                serde_json::to_value(e).unwrap(),
-            ),
-            Event::EditPrediction(e) => (
-                format!(
-                    "Edit Prediction {}",
-                    if e.suggestion_accepted {
-                        "Accepted"
-                    } else {
-                        "Discarded"
-                    }
-                ),
-                serde_json::to_value(e).unwrap(),
-            ),
-            Event::EditPredictionRating(e) => (
-                "Edit Prediction Rated".to_string(),
-                serde_json::to_value(e).unwrap(),
-            ),
-            Event::Call(e) => {
-                let event_type = match e.operation.trim() {
-                    "unshare project" => "Project Unshared".to_string(),
-                    "open channel notes" => "Channel Notes Opened".to_string(),
-                    "share project" => "Project Shared".to_string(),
-                    "join channel" => "Channel Joined".to_string(),
-                    "hang up" => "Call Ended".to_string(),
-                    "accept incoming" => "Incoming Call Accepted".to_string(),
-                    "invite" => "Participant Invited".to_string(),
-                    "disable microphone" => "Microphone Disabled".to_string(),
-                    "enable microphone" => "Microphone Enabled".to_string(),
-                    "enable screen share" => "Screen Share Enabled".to_string(),
-                    "disable screen share" => "Screen Share Disabled".to_string(),
-                    "decline incoming" => "Incoming Call Declined".to_string(),
-                    _ => format!("Unknown Call Event: {}", e.operation),
-                };
-
-                (event_type, serde_json::to_value(e).unwrap())
-            }
-            Event::Assistant(e) => (
-                match e.phase {
-                    telemetry_events::AssistantPhase::Response => "Assistant Responded".to_string(),
-                    telemetry_events::AssistantPhase::Invoked => "Assistant Invoked".to_string(),
-                    telemetry_events::AssistantPhase::Accepted => {
-                        "Assistant Response Accepted".to_string()
-                    }
-                    telemetry_events::AssistantPhase::Rejected => {
-                        "Assistant Response Rejected".to_string()
-                    }
-                },
-                serde_json::to_value(e).unwrap(),
-            ),
-            Event::Cpu(_) | Event::Memory(_) => return None,
-            Event::App(e) => {
-                let mut properties = json!({});
-                let event_type = match e.operation.trim() {
-                    // App
-                    "open" => "App Opened".to_string(),
-                    "first open" => "App First Opened".to_string(),
-                    "first open for release channel" => {
-                        "App First Opened For Release Channel".to_string()
-                    }
-                    "close" => "App Closed".to_string(),
-
-                    // Project
-                    "open project" => "Project Opened".to_string(),
-                    "open node project" => {
-                        properties["project_type"] = json!("node");
-                        "Project Opened".to_string()
-                    }
-                    "open pnpm project" => {
-                        properties["project_type"] = json!("pnpm");
-                        "Project Opened".to_string()
-                    }
-                    "open yarn project" => {
-                        properties["project_type"] = json!("yarn");
-                        "Project Opened".to_string()
-                    }
-
-                    // SSH
-                    "create ssh server" => "SSH Server Created".to_string(),
-                    "create ssh project" => "SSH Project Created".to_string(),
-                    "open ssh project" => "SSH Project Opened".to_string(),
-
-                    // Welcome Page
-                    "welcome page: change keymap" => "Welcome Keymap Changed".to_string(),
-                    "welcome page: change theme" => "Welcome Theme Changed".to_string(),
-                    "welcome page: close" => "Welcome Page Closed".to_string(),
-                    "welcome page: edit settings" => "Welcome Settings Edited".to_string(),
-                    "welcome page: install cli" => "Welcome CLI Installed".to_string(),
-                    "welcome page: open" => "Welcome Page Opened".to_string(),
-                    "welcome page: open extensions" => "Welcome Extensions Page Opened".to_string(),
-                    "welcome page: sign in to copilot" => "Welcome Copilot Signed In".to_string(),
-                    "welcome page: toggle diagnostic telemetry" => {
-                        "Welcome Diagnostic Telemetry Toggled".to_string()
-                    }
-                    "welcome page: toggle metric telemetry" => {
-                        "Welcome Metric Telemetry Toggled".to_string()
-                    }
-                    "welcome page: toggle vim" => "Welcome Vim Mode Toggled".to_string(),
-                    "welcome page: view docs" => "Welcome Documentation Viewed".to_string(),
-
-                    // Extensions
-                    "extensions page: open" => "Extensions Page Opened".to_string(),
-                    "extensions: install extension" => "Extension Installed".to_string(),
-                    "extensions: uninstall extension" => "Extension Uninstalled".to_string(),
-
-                    // Misc
-                    "markdown preview: open" => "Markdown Preview Opened".to_string(),
-                    "project diagnostics: open" => "Project Diagnostics Opened".to_string(),
-                    "project search: open" => "Project Search Opened".to_string(),
-                    "repl sessions: open" => "REPL Session Started".to_string(),
-
-                    // Feature Upsell
-                    "feature upsell: toggle vim" => {
-                        properties["source"] = json!("Feature Upsell");
-                        "Vim Mode Toggled".to_string()
-                    }
-                    _ => e
-                        .operation
-                        .strip_prefix("feature upsell: viewed docs (")
-                        .and_then(|s| s.strip_suffix(')'))
-                        .map_or_else(
-                            || format!("Unknown App Event: {}", e.operation),
-                            |docs_url| {
-                                properties["url"] = json!(docs_url);
-                                properties["source"] = json!("Feature Upsell");
-                                "Documentation Viewed".to_string()
-                            },
-                        ),
-                };
-                (event_type, properties)
-            }
-            Event::Setting(e) => (
-                "Settings Changed".to_string(),
-                serde_json::to_value(e).unwrap(),
-            ),
-            Event::Extension(e) => (
-                "Extension Loaded".to_string(),
-                serde_json::to_value(e).unwrap(),
-            ),
-            Event::Edit(e) => (
-                "Editor Edited".to_string(),
-                serde_json::to_value(e).unwrap(),
-            ),
-            Event::Action(e) => (
-                "Action Invoked".to_string(),
-                serde_json::to_value(e).unwrap(),
-            ),
-            Event::Repl(e) => (
-                "Kernel Status Changed".to_string(),
-                serde_json::to_value(e).unwrap(),
-            ),
             Event::Flexible(e) => (
                 e.event_type.clone(),
                 serde_json::to_value(&e.event_properties).unwrap(),
@@ -759,7 +599,7 @@ fn for_snowflake(
             })
         });
 
-        Some(SnowflakeRow {
+        SnowflakeRow {
             time: timestamp,
             user_id: body.metrics_id.clone(),
             device_id: body.system_id.clone(),
@@ -767,7 +607,7 @@ fn for_snowflake(
             event_properties,
             user_properties,
             insert_id: Some(Uuid::new_v4().to_string()),
-        })
+        }
     })
 }
 

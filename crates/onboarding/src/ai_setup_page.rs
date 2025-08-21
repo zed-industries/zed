@@ -19,7 +19,7 @@ use util::ResultExt;
 use workspace::{ModalView, Workspace};
 use zed_actions::agent::OpenSettings;
 
-const FEATURED_PROVIDERS: [&'static str; 4] = ["anthropic", "google", "openai", "ollama"];
+const FEATURED_PROVIDERS: [&str; 4] = ["anthropic", "google", "openai", "ollama"];
 
 fn render_llm_provider_section(
     tab_index: &mut isize,
@@ -329,7 +329,11 @@ impl AiConfigurationModal {
         cx: &mut Context<Self>,
     ) -> Self {
         let focus_handle = cx.focus_handle();
-        let configuration_view = selected_provider.configuration_view(window, cx);
+        let configuration_view = selected_provider.configuration_view(
+            language_model::ConfigurationViewTargetAgent::ZedAgent,
+            window,
+            cx,
+        );
 
         Self {
             focus_handle,
@@ -406,7 +410,7 @@ impl AiPrivacyTooltip {
 
 impl Render for AiPrivacyTooltip {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        const DESCRIPTION: &'static str = "We believe in opt-in data sharing as the default for building AI products, rather than opt-out. We'll only use or store your data if you affirmatively send it to us. ";
+        const DESCRIPTION: &str = "We believe in opt-in data sharing as the default for building AI products, rather than opt-out. We'll only use or store your data if you affirmatively send it to us. ";
 
         tooltip_container(window, cx, move |this, _, _| {
             this.child(

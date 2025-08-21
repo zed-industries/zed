@@ -719,21 +719,14 @@ impl Vim {
                         target: Some(SurroundsType::Motion(motion)),
                     });
                 } else {
-                    self.normal_motion(
-                        motion.clone(),
-                        active_operator.clone(),
-                        count,
-                        forced_motion,
-                        window,
-                        cx,
-                    )
+                    self.normal_motion(motion, active_operator, count, forced_motion, window, cx)
                 }
             }
             Mode::Visual | Mode::VisualLine | Mode::VisualBlock => {
-                self.visual_motion(motion.clone(), count, window, cx)
+                self.visual_motion(motion, count, window, cx)
             }
 
-            Mode::HelixNormal => self.helix_normal_motion(motion.clone(), count, window, cx),
+            Mode::HelixNormal => self.helix_normal_motion(motion, count, window, cx),
         }
         self.clear_operator(window, cx);
         if let Some(operator) = waiting_operator {
@@ -816,10 +809,7 @@ impl Motion {
     }
 
     fn skip_exclusive_special_case(&self) -> bool {
-        match self {
-            Motion::WrappingLeft | Motion::WrappingRight => true,
-            _ => false,
-        }
+        matches!(self, Motion::WrappingLeft | Motion::WrappingRight)
     }
 
     pub(crate) fn push_to_jump_list(&self) -> bool {
@@ -1330,7 +1320,7 @@ impl Motion {
     pub fn range(
         &self,
         map: &DisplaySnapshot,
-        selection: Selection<DisplayPoint>,
+        mut selection: Selection<DisplayPoint>,
         times: Option<usize>,
         text_layout_details: &TextLayoutDetails,
         forced_motion: bool,
@@ -1375,7 +1365,6 @@ impl Motion {
             (None, true) => Some((selection.head(), selection.goal)),
         }?;
 
-        let mut selection = selection.clone();
         selection.set_head(new_head, goal);
 
         let mut kind = match (self.default_kind(), forced_motion) {
@@ -1821,10 +1810,10 @@ fn previous_word_end(
         .ignore_punctuation(ignore_punctuation);
     let mut point = point.to_point(map);
 
-    if point.column < map.buffer_snapshot.line_len(MultiBufferRow(point.row)) {
-        if let Some(ch) = map.buffer_snapshot.chars_at(point).next() {
-            point.column += ch.len_utf8() as u32;
-        }
+    if point.column < map.buffer_snapshot.line_len(MultiBufferRow(point.row))
+        && let Some(ch) = map.buffer_snapshot.chars_at(point).next()
+    {
+        point.column += ch.len_utf8() as u32;
     }
     for _ in 0..times {
         let new_point = movement::find_preceding_boundary_point(
@@ -1996,10 +1985,10 @@ fn previous_subword_end(
         .ignore_punctuation(ignore_punctuation);
     let mut point = point.to_point(map);
 
-    if point.column < map.buffer_snapshot.line_len(MultiBufferRow(point.row)) {
-        if let Some(ch) = map.buffer_snapshot.chars_at(point).next() {
-            point.column += ch.len_utf8() as u32;
-        }
+    if point.column < map.buffer_snapshot.line_len(MultiBufferRow(point.row))
+        && let Some(ch) = map.buffer_snapshot.chars_at(point).next()
+    {
+        point.column += ch.len_utf8() as u32;
     }
     for _ in 0..times {
         let new_point = movement::find_preceding_boundary_point(
@@ -2064,10 +2053,10 @@ pub(crate) fn last_non_whitespace(
     let classifier = map.buffer_snapshot.char_classifier_at(from.to_point(map));
 
     // NOTE: depending on clip_at_line_end we may already be one char back from the end.
-    if let Some((ch, _)) = map.buffer_chars_at(end_of_line).next() {
-        if classifier.kind(ch) != CharKind::Whitespace {
-            return end_of_line.to_display_point(map);
-        }
+    if let Some((ch, _)) = map.buffer_chars_at(end_of_line).next()
+        && classifier.kind(ch) != CharKind::Whitespace
+    {
+        return end_of_line.to_display_point(map);
     }
 
     for (ch, offset) in map.reverse_buffer_chars_at(end_of_line) {
@@ -2290,8 +2279,8 @@ fn go_to_line(map: &DisplaySnapshot, display_point: DisplayPoint, line: usize) -
     }
     let mut last_position = None;
     for (excerpt, buffer, range) in map.buffer_snapshot.excerpts() {
-        let excerpt_range = language::ToOffset::to_offset(&range.context.start, &buffer)
-            ..language::ToOffset::to_offset(&range.context.end, &buffer);
+        let excerpt_range = language::ToOffset::to_offset(&range.context.start, buffer)
+            ..language::ToOffset::to_offset(&range.context.end, buffer);
         if offset >= excerpt_range.start && offset <= excerpt_range.end {
             let text_anchor = buffer.anchor_after(offset);
             let anchor = Anchor::in_buffer(excerpt, buffer.remote_id(), text_anchor);
@@ -2385,7 +2374,7 @@ fn matching_tag(map: &DisplaySnapshot, head: DisplayPoint) -> Option<DisplayPoin
         }
     }
 
-    return None;
+    None
 }
 
 fn matching(map: &DisplaySnapshot, display_point: DisplayPoint) -> DisplayPoint {
@@ -2414,9 +2403,7 @@ fn matching(map: &DisplaySnapshot, display_point: DisplayPoint) -> DisplayPoint 
     let line_range = map.prev_line_boundary(point).0..line_end;
     let visible_line_range =
         line_range.start..Point::new(line_range.end.row, line_range.end.column.saturating_sub(1));
-    let ranges = map
-        .buffer_snapshot
-        .bracket_ranges(visible_line_range.clone());
+    let ranges = map.buffer_snapshot.bracket_ranges(visible_line_range);
     if let Some(ranges) = ranges {
         let line_range = line_range.start.to_offset(&map.buffer_snapshot)
             ..line_range.end.to_offset(&map.buffer_snapshot);
@@ -2527,7 +2514,7 @@ fn unmatched_forward(
         }
         display_point = new_point;
     }
-    return display_point;
+    display_point
 }
 
 fn unmatched_backward(
@@ -2649,7 +2636,8 @@ fn find_backward(
     }
 }
 
-fn is_character_match(target: char, other: char, smartcase: bool) -> bool {
+/// Returns true if one char is equal to the other or its uppercase variant (if smartcase is true).
+pub fn is_character_match(target: char, other: char, smartcase: bool) -> bool {
     if smartcase {
         if target.is_uppercase() {
             target == other
@@ -2891,7 +2879,7 @@ fn method_motion(
         } else {
             possibilities.min().unwrap_or(offset)
         };
-        let new_point = map.clip_point(dest.to_display_point(&map), Bias::Left);
+        let new_point = map.clip_point(dest.to_display_point(map), Bias::Left);
         if new_point == display_point {
             break;
         }
@@ -2945,7 +2933,7 @@ fn comment_motion(
         } else {
             possibilities.min().unwrap_or(offset)
         };
-        let new_point = map.clip_point(dest.to_display_point(&map), Bias::Left);
+        let new_point = map.clip_point(dest.to_display_point(map), Bias::Left);
         if new_point == display_point {
             break;
         }
@@ -3012,7 +3000,7 @@ fn section_motion(
                 possibilities.min().unwrap_or(map.buffer_snapshot.len())
             };
 
-            let new_point = map.clip_point(offset.to_display_point(&map), Bias::Left);
+            let new_point = map.clip_point(offset.to_display_point(map), Bias::Left);
             if new_point == display_point {
                 break;
             }
@@ -4186,7 +4174,7 @@ mod test {
         cx.shared_state().await.assert_eq(indoc! {"
              ˇhe quick brown fox
              jumped over the lazy dog"});
-        assert_eq!(cx.cx.forced_motion(), false);
+        assert!(!cx.cx.forced_motion());
 
         cx.set_shared_state(indoc! {"
             the quick bˇrown fox
@@ -4196,7 +4184,7 @@ mod test {
         cx.shared_state().await.assert_eq(indoc! {"
             ˇown fox
             jumped over the lazy dog"});
-        assert_eq!(cx.cx.forced_motion(), false);
+        assert!(!cx.cx.forced_motion());
 
         cx.set_shared_state(indoc! {"
             the quick brown foˇx
@@ -4206,7 +4194,7 @@ mod test {
         cx.shared_state().await.assert_eq(indoc! {"
             ˇ
             jumped over the lazy dog"});
-        assert_eq!(cx.cx.forced_motion(), false);
+        assert!(!cx.cx.forced_motion());
     }
 
     #[gpui::test]
@@ -4221,7 +4209,7 @@ mod test {
         cx.shared_state().await.assert_eq(indoc! {"
              ˇbrown fox
              jumped over the lazy dog"});
-        assert_eq!(cx.cx.forced_motion(), false);
+        assert!(!cx.cx.forced_motion());
 
         cx.set_shared_state(indoc! {"
             the quick bˇrown fox
@@ -4231,7 +4219,7 @@ mod test {
         cx.shared_state().await.assert_eq(indoc! {"
             the quickˇown fox
             jumped over the lazy dog"});
-        assert_eq!(cx.cx.forced_motion(), false);
+        assert!(!cx.cx.forced_motion());
 
         cx.set_shared_state(indoc! {"
             the quick brown foˇx
@@ -4241,7 +4229,7 @@ mod test {
         cx.shared_state().await.assert_eq(indoc! {"
             the quicˇk
             jumped over the lazy dog"});
-        assert_eq!(cx.cx.forced_motion(), false);
+        assert!(!cx.cx.forced_motion());
 
         cx.set_shared_state(indoc! {"
             ˇthe quick brown fox
@@ -4251,7 +4239,7 @@ mod test {
         cx.shared_state().await.assert_eq(indoc! {"
             ˇ fox
             jumped over the lazy dog"});
-        assert_eq!(cx.cx.forced_motion(), false);
+        assert!(!cx.cx.forced_motion());
 
         cx.set_shared_state(indoc! {"
             ˇthe quick brown fox
@@ -4261,7 +4249,7 @@ mod test {
         cx.shared_state().await.assert_eq(indoc! {"
             ˇuick brown fox
             jumped over the lazy dog"});
-        assert_eq!(cx.cx.forced_motion(), false);
+        assert!(!cx.cx.forced_motion());
     }
 
     #[gpui::test]
@@ -4276,7 +4264,7 @@ mod test {
         cx.shared_state().await.assert_eq(indoc! {"
              the quick brown foˇx
              jumped over the lazy dog"});
-        assert_eq!(cx.cx.forced_motion(), false);
+        assert!(!cx.cx.forced_motion());
 
         cx.set_shared_state(indoc! {"
              ˇthe quick brown fox
@@ -4286,7 +4274,7 @@ mod test {
         cx.shared_state().await.assert_eq(indoc! {"
              ˇx
              jumped over the lazy dog"});
-        assert_eq!(cx.cx.forced_motion(), false);
+        assert!(!cx.cx.forced_motion());
     }
 
     #[gpui::test]
@@ -4302,7 +4290,7 @@ mod test {
                the quick brown fox
                ˇthe quick brown fox
                jumped over the lazy dog"});
-        assert_eq!(cx.cx.forced_motion(), false);
+        assert!(!cx.cx.forced_motion());
 
         cx.set_shared_state(indoc! {"
               the quick bˇrown fox
@@ -4313,7 +4301,7 @@ mod test {
               the quick brˇrown fox
               jumped overown fox
               jumped over the lazy dog"});
-        assert_eq!(cx.cx.forced_motion(), false);
+        assert!(!cx.cx.forced_motion());
 
         cx.set_shared_state(indoc! {"
              the quick brown foˇx
@@ -4324,7 +4312,7 @@ mod test {
              the quick brown foxˇx
              jumped over the la
              jumped over the lazy dog"});
-        assert_eq!(cx.cx.forced_motion(), false);
+        assert!(!cx.cx.forced_motion());
 
         cx.set_shared_state(indoc! {"
              the quick brown fox
@@ -4335,7 +4323,7 @@ mod test {
             thˇhe quick brown fox
             je quick brown fox
             jumped over the lazy dog"});
-        assert_eq!(cx.cx.forced_motion(), false);
+        assert!(!cx.cx.forced_motion());
     }
 
     #[gpui::test]
@@ -4350,7 +4338,7 @@ mod test {
         cx.shared_state().await.assert_eq(indoc! {"
               ˇe quick brown fox
               jumped over the lazy dog"});
-        assert_eq!(cx.cx.forced_motion(), false);
+        assert!(!cx.cx.forced_motion());
 
         cx.set_shared_state(indoc! {"
               the quick bˇrown fox
@@ -4360,7 +4348,7 @@ mod test {
         cx.shared_state().await.assert_eq(indoc! {"
               the quick bˇn fox
               jumped over the lazy dog"});
-        assert_eq!(cx.cx.forced_motion(), false);
+        assert!(!cx.cx.forced_motion());
 
         cx.set_shared_state(indoc! {"
              the quick brown foˇx
@@ -4369,6 +4357,6 @@ mod test {
         cx.simulate_shared_keystrokes("d v e").await;
         cx.shared_state().await.assert_eq(indoc! {"
         the quick brown foˇd over the lazy dog"});
-        assert_eq!(cx.cx.forced_motion(), false);
+        assert!(!cx.cx.forced_motion());
     }
 }

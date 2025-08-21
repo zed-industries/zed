@@ -19,11 +19,11 @@ use project::project_settings::ProjectSettings;
 
 use proto::CrashReport;
 use release_channel::{AppVersion, RELEASE_CHANNEL, ReleaseChannel};
-use remote::proxy::ProxyLaunchError;
-use remote::ssh_session::ChannelClient;
+use remote::SshRemoteClient;
 use remote::{
     json_log::LogRecord,
     protocol::{read_message, write_message},
+    proxy::ProxyLaunchError,
 };
 use reqwest_client::ReqwestClient;
 use rpc::proto::{self, Envelope, SSH_PROJECT_ID};
@@ -34,10 +34,10 @@ use smol::io::AsyncReadExt;
 
 use smol::Async;
 use smol::{net::unix::UnixListener, stream::StreamExt as _};
-use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::ops::ControlFlow;
 use std::str::FromStr;
+use std::sync::LazyLock;
 use std::{env, thread};
 use std::{
     io::Write,
@@ -47,6 +47,13 @@ use std::{
 };
 use telemetry_events::LocationData;
 use util::ResultExt;
+
+pub static VERSION: LazyLock<&str> = LazyLock::new(|| match *RELEASE_CHANNEL {
+    ReleaseChannel::Stable | ReleaseChannel::Preview => env!("ZED_PKG_VERSION"),
+    ReleaseChannel::Nightly | ReleaseChannel::Dev => {
+        option_env!("ZED_COMMIT_SHA").unwrap_or("missing-zed-commit-sha")
+    }
+});
 
 fn init_logging_proxy() {
     env_logger::builder()
@@ -77,7 +84,7 @@ fn init_logging_server(log_file_path: PathBuf) -> Result<Receiver<Vec<u8>>> {
         fn flush(&mut self) -> std::io::Result<()> {
             self.channel
                 .send_blocking(self.buffer.clone())
-                .map_err(|error| std::io::Error::new(std::io::ErrorKind::Other, error))?;
+                .map_err(std::io::Error::other)?;
             self.buffer.clear();
             self.file.flush()
         }
@@ -113,13 +120,14 @@ fn init_logging_server(log_file_path: PathBuf) -> Result<Receiver<Vec<u8>>> {
 
 fn init_panic_hook(session_id: String) {
     std::panic::set_hook(Box::new(move |info| {
-        crashes::handle_panic();
         let payload = info
             .payload()
             .downcast_ref::<&str>()
             .map(|s| s.to_string())
             .or_else(|| info.payload().downcast_ref::<String>().cloned())
             .unwrap_or_else(|| "Box<Any>".to_string());
+
+        crashes::handle_panic(payload.clone(), info.location());
 
         let backtrace = backtrace::Backtrace::new();
         let mut backtrace = backtrace
@@ -147,27 +155,19 @@ fn init_panic_hook(session_id: String) {
         log::error!(
             "panic occurred: {}\nBacktrace:\n{}",
             &payload,
-            (&backtrace).join("\n")
+            backtrace.join("\n")
         );
-
-        let release_channel = *RELEASE_CHANNEL;
-        let version = match release_channel {
-            ReleaseChannel::Stable | ReleaseChannel::Preview => env!("ZED_PKG_VERSION"),
-            ReleaseChannel::Nightly | ReleaseChannel::Dev => {
-                option_env!("ZED_COMMIT_SHA").unwrap_or("missing-zed-commit-sha")
-            }
-        };
 
         let panic_data = telemetry_events::Panic {
             thread: thread_name.into(),
-            payload: payload.clone(),
+            payload,
             location_data: info.location().map(|location| LocationData {
                 file: location.file().into(),
                 line: location.line(),
             }),
-            app_version: format!("remote-server-{version}"),
+            app_version: format!("remote-server-{}", *VERSION),
             app_commit_sha: option_env!("ZED_COMMIT_SHA").map(|sha| sha.into()),
-            release_channel: release_channel.dev_name().into(),
+            release_channel: RELEASE_CHANNEL.dev_name().into(),
             target: env!("TARGET").to_owned().into(),
             os_name: telemetry::os_name(),
             os_version: Some(telemetry::os_version()),
@@ -199,13 +199,12 @@ fn init_panic_hook(session_id: String) {
     }));
 }
 
-fn handle_crash_files_requests(project: &Entity<HeadlessProject>, client: &Arc<ChannelClient>) {
-    let client: AnyProtoClient = client.clone().into();
+fn handle_crash_files_requests(project: &Entity<HeadlessProject>, client: &AnyProtoClient) {
     client.add_request_handler(
         project.downgrade(),
         |_, _: TypedEnvelope<proto::GetCrashFiles>, _cx| async move {
+            let mut legacy_panics = Vec::new();
             let mut crashes = Vec::new();
-            let mut minidumps_by_session_id = HashMap::new();
             let mut children = smol::fs::read_dir(paths::logs_dir()).await?;
             while let Some(child) = children.next().await {
                 let child = child?;
@@ -227,41 +226,31 @@ fn handle_crash_files_requests(project: &Entity<HeadlessProject>, client: &Arc<C
                         .await
                         .context("error reading panic file")?;
 
-                    crashes.push(proto::CrashReport {
-                        panic_contents: Some(file_contents),
-                        minidump_contents: None,
-                    });
+                    legacy_panics.push(file_contents);
+                    smol::fs::remove_file(&child_path)
+                        .await
+                        .context("error removing panic")
+                        .log_err();
                 } else if extension == Some(OsStr::new("dmp")) {
-                    let session_id = child_path.file_stem().unwrap().to_string_lossy();
-                    minidumps_by_session_id
-                        .insert(session_id.to_string(), smol::fs::read(&child_path).await?);
-                }
-
-                // We've done what we can, delete the file
-                smol::fs::remove_file(&child_path)
-                    .await
-                    .context("error removing panic")
-                    .log_err();
-            }
-
-            for crash in &mut crashes {
-                let panic: telemetry_events::Panic =
-                    serde_json::from_str(crash.panic_contents.as_ref().unwrap())?;
-                if let dump @ Some(_) = minidumps_by_session_id.remove(&panic.session_id) {
-                    crash.minidump_contents = dump;
+                    let mut json_path = child_path.clone();
+                    json_path.set_extension("json");
+                    if let Ok(json_content) = smol::fs::read_to_string(&json_path).await {
+                        crashes.push(CrashReport {
+                            metadata: json_content,
+                            minidump_contents: smol::fs::read(&child_path).await?,
+                        });
+                        smol::fs::remove_file(&child_path).await.log_err();
+                        smol::fs::remove_file(&json_path).await.log_err();
+                    } else {
+                        log::error!("Couldn't find json metadata for crash: {child_path:?}");
+                    }
                 }
             }
 
-            crashes.extend(
-                minidumps_by_session_id
-                    .into_values()
-                    .map(|dmp| CrashReport {
-                        panic_contents: None,
-                        minidump_contents: Some(dmp),
-                    }),
-            );
-
-            anyhow::Ok(proto::GetCrashFilesResponse { crashes })
+            anyhow::Ok(proto::GetCrashFilesResponse {
+                crashes,
+                legacy_panics,
+            })
         },
     );
 }
@@ -286,7 +275,7 @@ fn start_server(
     listeners: ServerListeners,
     log_rx: Receiver<Vec<u8>>,
     cx: &mut App,
-) -> Arc<ChannelClient> {
+) -> AnyProtoClient {
     // This is the server idle timeout. If no connection comes in this timeout, the server will shut down.
     const IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10 * 60);
 
@@ -344,7 +333,7 @@ fn start_server(
             let (mut stdin_msg_tx, mut stdin_msg_rx) = mpsc::unbounded::<Envelope>();
             cx.background_spawn(async move {
                 while let Ok(msg) = read_message(&mut stdin_stream, &mut input_buffer).await {
-                    if let Err(_) = stdin_msg_tx.send(msg).await {
+                    if (stdin_msg_tx.send(msg).await).is_err() {
                         break;
                     }
                 }
@@ -405,7 +394,7 @@ fn start_server(
     })
     .detach();
 
-    ChannelClient::new(incoming_rx, outgoing_tx, cx, "server")
+    SshRemoteClient::proto_client_from_channels(incoming_rx, outgoing_tx, cx, "server")
 }
 
 fn init_paths() -> anyhow::Result<()> {
@@ -442,7 +431,12 @@ pub fn execute_run(
     let app = gpui::Application::headless();
     let id = std::process::id().to_string();
     app.background_executor()
-        .spawn(crashes::init(id.clone()))
+        .spawn(crashes::init(crashes::InitCrashHandler {
+            session_id: id.clone(),
+            zed_version: VERSION.to_owned(),
+            release_channel: release_channel::RELEASE_CHANNEL_NAME.clone(),
+            commit_sha: option_env!("ZED_COMMIT_SHA").unwrap_or("no_sha").to_owned(),
+        }))
         .detach();
     init_panic_hook(id);
     let log_rx = init_logging_server(log_file)?;
@@ -569,7 +563,13 @@ pub fn execute_proxy(identifier: String, is_reconnecting: bool) -> Result<()> {
     let server_paths = ServerPaths::new(&identifier)?;
 
     let id = std::process::id().to_string();
-    smol::spawn(crashes::init(id.clone())).detach();
+    smol::spawn(crashes::init(crashes::InitCrashHandler {
+        session_id: id.clone(),
+        zed_version: VERSION.to_owned(),
+        release_channel: release_channel::RELEASE_CHANNEL_NAME.clone(),
+        commit_sha: option_env!("ZED_COMMIT_SHA").unwrap_or("no_sha").to_owned(),
+    }))
+    .detach();
     init_panic_hook(id);
 
     log::info!("starting proxy process. PID: {}", std::process::id());
@@ -621,7 +621,7 @@ pub fn execute_proxy(identifier: String, is_reconnecting: bool) -> Result<()> {
                     Err(anyhow!(error))?;
                 }
                 n => {
-                    stderr.write_all(&mut stderr_buffer[..n]).await?;
+                    stderr.write_all(&stderr_buffer[..n]).await?;
                     stderr.flush().await?;
                 }
             }
@@ -791,18 +791,14 @@ async fn write_size_prefixed_buffer<S: AsyncWrite + Unpin>(
 }
 
 fn initialize_settings(
-    session: Arc<ChannelClient>,
+    session: AnyProtoClient,
     fs: Arc<dyn Fs>,
     cx: &mut App,
 ) -> watch::Receiver<Option<NodeBinaryOptions>> {
-    let user_settings_file_rx = watch_config_file(
-        &cx.background_executor(),
-        fs,
-        paths::settings_file().clone(),
-    );
+    let user_settings_file_rx =
+        watch_config_file(cx.background_executor(), fs, paths::settings_file().clone());
 
     handle_settings_file_changes(user_settings_file_rx, cx, {
-        let session = session.clone();
         move |err, _cx| {
             if let Some(e) = err {
                 log::info!("Server settings failed to change: {}", e);
@@ -893,7 +889,8 @@ pub fn handle_settings_file_changes(
 
 fn read_proxy_settings(cx: &mut Context<HeadlessProject>) -> Option<Url> {
     let proxy_str = ProxySettings::get_global(cx).proxy.to_owned();
-    let proxy_url = proxy_str
+
+    proxy_str
         .as_ref()
         .and_then(|input: &String| {
             input
@@ -901,8 +898,7 @@ fn read_proxy_settings(cx: &mut Context<HeadlessProject>) -> Option<Url> {
                 .inspect_err(|e| log::error!("Error parsing proxy settings: {}", e))
                 .ok()
         })
-        .or_else(read_proxy_from_env);
-    proxy_url
+        .or_else(read_proxy_from_env)
 }
 
 fn daemonize() -> Result<ControlFlow<()>> {
@@ -953,13 +949,13 @@ fn cleanup_old_binaries() -> Result<()> {
     for entry in std::fs::read_dir(server_dir)? {
         let path = entry?.path();
 
-        if let Some(file_name) = path.file_name() {
-            if let Some(version) = file_name.to_string_lossy().strip_prefix(&prefix) {
-                if !is_new_version(version) && !is_file_in_use(file_name) {
-                    log::info!("removing old remote server binary: {:?}", path);
-                    std::fs::remove_file(&path)?;
-                }
-            }
+        if let Some(file_name) = path.file_name()
+            && let Some(version) = file_name.to_string_lossy().strip_prefix(&prefix)
+            && !is_new_version(version)
+            && !is_file_in_use(file_name)
+        {
+            log::info!("removing old remote server binary: {:?}", path);
+            std::fs::remove_file(&path)?;
         }
     }
 
