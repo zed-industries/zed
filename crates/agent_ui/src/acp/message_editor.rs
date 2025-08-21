@@ -709,9 +709,13 @@ impl MessageEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<(Vec<acp::ContentBlock>, Vec<Entity<Buffer>>)>> {
-        let contents =
-            self.mention_set
-                .contents(&self.project, self.prompt_store.as_ref(), window, cx);
+        let contents = self.mention_set.contents(
+            &self.project,
+            self.prompt_store.as_ref(),
+            &self.prompt_capabilities.get(),
+            window,
+            cx,
+        );
         let editor = self.editor.clone();
         let prevent_slash_commands = self.prevent_slash_commands;
 
@@ -774,6 +778,17 @@ impl MessageEditor {
                                         .abs_path
                                         .as_ref()
                                         .map(|path| format!("file://{}", path.display())),
+                                })
+                            }
+                            Mention::UriOnly(uri) => {
+                                acp::ContentBlock::ResourceLink(acp::ResourceLink {
+                                    name: uri.name(),
+                                    uri: uri.to_uri().to_string(),
+                                    annotations: None,
+                                    description: None,
+                                    mime_type: None,
+                                    size: None,
+                                    title: None,
                                 })
                             }
                         };
@@ -1418,6 +1433,7 @@ pub enum Mention {
         tracked_buffers: Vec<Entity<Buffer>>,
     },
     Image(MentionImage),
+    UriOnly(MentionUri),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1481,9 +1497,20 @@ impl MentionSet {
         &self,
         project: &Entity<Project>,
         prompt_store: Option<&Entity<PromptStore>>,
+        prompt_capabilities: &acp::PromptCapabilities,
         _window: &mut Window,
         cx: &mut App,
     ) -> Task<Result<HashMap<CreaseId, Mention>>> {
+        if !prompt_capabilities.embedded_context {
+            let mentions = self
+                .uri_by_crease_id
+                .iter()
+                .map(|(crease_id, uri)| (*crease_id, Mention::UriOnly(uri.clone())))
+                .collect();
+
+            return Task::ready(Ok(mentions));
+        }
+
         let mut processed_image_creases = HashSet::default();
 
         let mut contents = self
@@ -2180,11 +2207,21 @@ mod tests {
             assert_eq!(fold_ranges(editor, cx).len(), 1);
         });
 
+        let all_prompt_capabilities = acp::PromptCapabilities {
+            image: true,
+            audio: true,
+            embedded_context: true,
+        };
+
         let contents = message_editor
             .update_in(&mut cx, |message_editor, window, cx| {
-                message_editor
-                    .mention_set()
-                    .contents(&project, None, window, cx)
+                message_editor.mention_set().contents(
+                    &project,
+                    None,
+                    &all_prompt_capabilities,
+                    window,
+                    cx,
+                )
             })
             .await
             .unwrap()
@@ -2196,6 +2233,28 @@ mod tests {
                 panic!("Unexpected mentions");
             };
             pretty_assertions::assert_eq!(content, "1");
+            pretty_assertions::assert_eq!(uri, &url_one.parse::<MentionUri>().unwrap());
+        }
+
+        let contents = message_editor
+            .update_in(&mut cx, |message_editor, window, cx| {
+                message_editor.mention_set().contents(
+                    &project,
+                    None,
+                    &acp::PromptCapabilities::default(),
+                    window,
+                    cx,
+                )
+            })
+            .await
+            .unwrap()
+            .into_values()
+            .collect::<Vec<_>>();
+
+        {
+            let [Mention::UriOnly(uri)] = contents.as_slice() else {
+                panic!("Unexpected mentions");
+            };
             pretty_assertions::assert_eq!(uri, &url_one.parse::<MentionUri>().unwrap());
         }
 
@@ -2234,9 +2293,13 @@ mod tests {
 
         let contents = message_editor
             .update_in(&mut cx, |message_editor, window, cx| {
-                message_editor
-                    .mention_set()
-                    .contents(&project, None, window, cx)
+                message_editor.mention_set().contents(
+                    &project,
+                    None,
+                    &all_prompt_capabilities,
+                    window,
+                    cx,
+                )
             })
             .await
             .unwrap()
@@ -2344,9 +2407,13 @@ mod tests {
 
         let contents = message_editor
             .update_in(&mut cx, |message_editor, window, cx| {
-                message_editor
-                    .mention_set()
-                    .contents(&project, None, window, cx)
+                message_editor.mention_set().contents(
+                    &project,
+                    None,
+                    &all_prompt_capabilities,
+                    window,
+                    cx,
+                )
             })
             .await
             .unwrap()
