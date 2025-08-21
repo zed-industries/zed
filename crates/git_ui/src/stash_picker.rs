@@ -37,7 +37,7 @@ pub fn open(
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
-    let repository = workspace.project().read(cx).active_repository(cx).clone();
+    let repository = workspace.project().read(cx).active_repository(cx);
     workspace.toggle_modal(window, cx, |window, cx| {
         StashList::new(repository, rems(34.), window, cx)
     })
@@ -98,7 +98,7 @@ impl StashList {
         })
         .detach_and_log_err(cx);
 
-        let delegate = StashListDelegate::new(repository.clone(), window, cx);
+        let delegate = StashListDelegate::new(repository, window, cx);
         let picker = cx.new(|cx| Picker::uniform_list(delegate, window, cx));
         let picker_focus_handle = picker.focus_handle(cx);
         picker.update(cx, |picker, _| {
