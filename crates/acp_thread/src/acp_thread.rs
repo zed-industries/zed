@@ -238,10 +238,21 @@ impl ToolCall {
         }
 
         if let Some(content) = content {
-            self.content = content
-                .into_iter()
-                .map(|chunk| ToolCallContent::from_acp(chunk, language_registry.clone(), cx))
-                .collect();
+            let new_content_len = content.len();
+            let mut content = content.into_iter();
+
+            // Reuse existing content if we can
+            for (old, new) in self.content.iter_mut().zip(content.by_ref()) {
+                old.update_from_acp(new, language_registry.clone(), cx);
+            }
+            for new in content {
+                self.content.push(ToolCallContent::from_acp(
+                    new,
+                    language_registry.clone(),
+                    cx,
+                ))
+            }
+            self.content.truncate(new_content_len);
         }
 
         if let Some(locations) = locations {
@@ -548,6 +559,28 @@ impl ToolCallContent {
                     cx,
                 )
             })),
+        }
+    }
+
+    pub fn update_from_acp(
+        &mut self,
+        new: acp::ToolCallContent,
+        language_registry: Arc<LanguageRegistry>,
+        cx: &mut App,
+    ) {
+        let needs_update = match (&self, &new) {
+            (Self::Diff(old_diff), acp::ToolCallContent::Diff { diff: new_diff }) => {
+                old_diff.read(cx).needs_update(
+                    new_diff.old_text.as_deref().unwrap_or(""),
+                    &new_diff.new_text,
+                    cx,
+                )
+            }
+            _ => true,
+        };
+
+        if needs_update {
+            *self = Self::from_acp(new, language_registry, cx);
         }
     }
 
