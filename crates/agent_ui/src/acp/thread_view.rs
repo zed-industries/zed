@@ -1194,7 +1194,7 @@ impl AcpThreadView {
                                 div()
                                     .py_3()
                                     .px_2()
-                                    .rounded_lg()
+                                    .rounded_md()
                                     .shadow_md()
                                     .bg(cx.theme().colors().editor_background)
                                     .border_1()
@@ -1636,7 +1636,7 @@ impl AcpThreadView {
 
         v_flex()
             .when(use_card_layout, |this| {
-                this.rounded_lg()
+                this.rounded_md()
                     .border_1()
                     .border_color(self.tool_card_border_color(cx))
                     .bg(cx.theme().colors().editor_background)
@@ -2175,7 +2175,7 @@ impl AcpThreadView {
             .border_1()
             .when(tool_failed || command_failed, |card| card.border_dashed())
             .border_color(border_color)
-            .rounded_lg()
+            .rounded_md()
             .overflow_hidden()
             .child(
                 v_flex()
