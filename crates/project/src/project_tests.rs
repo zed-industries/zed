@@ -4916,7 +4916,6 @@ async fn test_lsp_rename_with_imports_update(cx: &mut gpui::TestAppContext) {
     let language_registry = project.read_with(cx, |project, _| project.languages().clone());
     language_registry.add(rust_lang());
 
-    // Register fake LSP with will_rename support
     let watched_paths = lsp::FileOperationRegistrationOptions {
         filters: vec![FileOperationFilter {
             scheme: Some("file".to_owned()),
@@ -4946,7 +4945,6 @@ async fn test_lsp_rename_with_imports_update(cx: &mut gpui::TestAppContext) {
         },
     );
 
-    // Open the utils.rs file
     let (_utils_buffer, _utils_lsp_handle) = project
         .update(cx, |project, cx| {
             project.open_local_buffer_with_lsp(path!("/project/src/utils.rs"), cx)
@@ -4954,7 +4952,6 @@ async fn test_lsp_rename_with_imports_update(cx: &mut gpui::TestAppContext) {
         .await
         .unwrap();
 
-    // Open main.rs to verify imports get updated
     let (main_buffer, _main_lsp_handle) = project
         .update(cx, |project, cx| {
             project.open_local_buffer_with_lsp(path!("/project/src/main.rs"), cx)
@@ -4962,7 +4959,6 @@ async fn test_lsp_rename_with_imports_update(cx: &mut gpui::TestAppContext) {
         .await
         .unwrap();
 
-    // Open lib.rs to verify imports get updated there too
     let (lib_buffer, _lib_lsp_handle) = project
         .update(cx, |project, cx| {
             project.open_local_buffer_with_lsp(path!("/project/src/lib.rs"), cx)
@@ -4972,7 +4968,6 @@ async fn test_lsp_rename_with_imports_update(cx: &mut gpui::TestAppContext) {
 
     let fake_server = fake_servers.next().await.unwrap();
 
-    // Create the workspace edit that will update imports
     let workspace_edit = lsp::WorkspaceEdit {
         changes: None,
         document_changes: Some(DocumentChanges::Edits(vec![
@@ -4982,11 +4977,11 @@ async fn test_lsp_rename_with_imports_update(cx: &mut gpui::TestAppContext) {
                     range: lsp::Range {
                         start: lsp::Position {
                             line: 0,
-                            character: 10,
+                            character: 11,
                         },
                         end: lsp::Position {
                             line: 0,
-                            character: 15,
+                            character: 16,
                         },
                     },
                     new_text: "helpers".to_owned(),
@@ -4996,7 +4991,6 @@ async fn test_lsp_rename_with_imports_update(cx: &mut gpui::TestAppContext) {
                     version: None,
                 },
             },
-            // Update import in lib.rs
             TextDocumentEdit {
                 edits: vec![
                     lsp::Edit::Plain(lsp::TextEdit {
@@ -5016,11 +5010,11 @@ async fn test_lsp_rename_with_imports_update(cx: &mut gpui::TestAppContext) {
                         range: lsp::Range {
                             start: lsp::Position {
                                 line: 2,
-                                character: 10,
+                                character: 11,
                             },
                             end: lsp::Position {
                                 line: 2,
-                                character: 15,
+                                character: 16,
                             },
                         },
                         new_text: "helpers".to_owned(),
@@ -5031,17 +5025,16 @@ async fn test_lsp_rename_with_imports_update(cx: &mut gpui::TestAppContext) {
                     version: None,
                 },
             },
-            // Update import in tests.rs
             TextDocumentEdit {
                 edits: vec![lsp::Edit::Plain(lsp::TextEdit {
                     range: lsp::Range {
                         start: lsp::Position {
                             line: 0,
-                            character: 10,
+                            character: 11,
                         },
                         end: lsp::Position {
                             line: 0,
-                            character: 15,
+                            character: 16,
                         },
                     },
                     new_text: "helpers".to_owned(),
@@ -5055,61 +5048,47 @@ async fn test_lsp_rename_with_imports_update(cx: &mut gpui::TestAppContext) {
         change_annotations: None,
     };
 
-    // Set up the WillRenameFiles handler
-    fake_server
-        .set_request_handler::<WillRenameFiles, _, _>({
+    fake_server.set_request_handler::<WillRenameFiles, _, _>({
+        let workspace_edit = workspace_edit.clone();
+        move |params, _| {
             let workspace_edit = workspace_edit.clone();
-            move |params, _| {
-                let workspace_edit = workspace_edit.clone();
-                async move {
-                    assert_eq!(params.files.len(), 1);
-                    assert_eq!(
-                        params.files[0].old_uri,
-                        uri!("file:///project/src/utils.rs")
-                    );
-                    assert_eq!(
-                        params.files[0].new_uri,
-                        uri!("file:///project/src/helpers.rs")
-                    );
-                    Ok(Some(workspace_edit))
-                }
+            async move {
+                assert_eq!(params.files.len(), 1);
+                assert_eq!(
+                    params.files[0].old_uri,
+                    uri!("file:///project/src/utils.rs")
+                );
+                assert_eq!(
+                    params.files[0].new_uri,
+                    uri!("file:///project/src/helpers.rs")
+                );
+                Ok(Some(workspace_edit))
             }
-        })
-        .next()
-        .await
-        .unwrap();
+        }
+    });
 
-    // Perform the rename
     let rename_task = project.update(cx, |project, cx| {
         let worktree = project.worktrees(cx).next().unwrap();
         let entry = worktree.read(cx).entry_for_path("src/utils.rs").unwrap();
         project.rename_entry(entry.id, "src/helpers.rs".as_ref(), cx)
     });
 
-    // Wait for rename to complete
     let _ = rename_task.await.unwrap();
 
-    // Handle the DidRenameFiles notification
-    fake_server
-        .handle_notification::<DidRenameFiles, _>(|params, _| {
-            assert_eq!(params.files.len(), 1);
-            assert_eq!(
-                params.files[0].old_uri,
-                uri!("file:///project/src/utils.rs")
-            );
-            assert_eq!(
-                params.files[0].new_uri,
-                uri!("file:///project/src/helpers.rs")
-            );
-        })
-        .next()
-        .await
-        .unwrap();
+    fake_server.handle_notification::<DidRenameFiles, _>(|params, _| {
+        assert_eq!(params.files.len(), 1);
+        assert_eq!(
+            params.files[0].old_uri,
+            uri!("file:///project/src/utils.rs")
+        );
+        assert_eq!(
+            params.files[0].new_uri,
+            uri!("file:///project/src/helpers.rs")
+        );
+    });
 
-    // Wait for all async operations including buffer updates to complete
     cx.executor().run_until_parked();
 
-    // Verify imports were updated in main.rs
     cx.update(|cx| {
         let content = main_buffer.read(cx).text();
         assert!(
@@ -5119,7 +5098,6 @@ async fn test_lsp_rename_with_imports_update(cx: &mut gpui::TestAppContext) {
         );
     });
 
-    // Verify imports were updated in lib.rs
     cx.update(|cx| {
         let content = lib_buffer.read(cx).text();
         assert!(
@@ -5129,7 +5107,6 @@ async fn test_lsp_rename_with_imports_update(cx: &mut gpui::TestAppContext) {
         );
     });
 
-    // Verify the file was actually renamed
     assert!(fs.is_file(&path!("/project/src/helpers.rs").as_ref()).await);
     assert!(!fs.is_file(&path!("/project/src/utils.rs").as_ref()).await);
 }
