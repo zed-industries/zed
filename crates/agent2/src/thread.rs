@@ -186,6 +186,7 @@ impl UserMessage {
         const OPEN_FILES_TAG: &str = "<files>";
         const OPEN_DIRECTORIES_TAG: &str = "<directories>";
         const OPEN_SYMBOLS_TAG: &str = "<symbols>";
+        const OPEN_SELECTIONS_TAG: &str = "<selections>";
         const OPEN_THREADS_TAG: &str = "<threads>";
         const OPEN_FETCH_TAG: &str = "<fetched_urls>";
         const OPEN_RULES_TAG: &str =
@@ -194,6 +195,7 @@ impl UserMessage {
         let mut file_context = OPEN_FILES_TAG.to_string();
         let mut directory_context = OPEN_DIRECTORIES_TAG.to_string();
         let mut symbol_context = OPEN_SYMBOLS_TAG.to_string();
+        let mut selection_context = OPEN_SELECTIONS_TAG.to_string();
         let mut thread_context = OPEN_THREADS_TAG.to_string();
         let mut fetch_context = OPEN_FETCH_TAG.to_string();
         let mut rules_context = OPEN_RULES_TAG.to_string();
@@ -210,7 +212,7 @@ impl UserMessage {
                     match uri {
                         MentionUri::File { abs_path } => {
                             write!(
-                                &mut symbol_context,
+                                &mut file_context,
                                 "\n{}",
                                 MarkdownCodeBlock {
                                     tag: &codeblock_tag(abs_path, None),
@@ -224,15 +226,28 @@ impl UserMessage {
                         }
                         MentionUri::Symbol {
                             path, line_range, ..
-                        }
-                        | MentionUri::Selection {
-                            path, line_range, ..
                         } => {
                             write!(
-                                &mut rules_context,
+                                &mut symbol_context,
                                 "\n{}",
                                 MarkdownCodeBlock {
                                     tag: &codeblock_tag(path, Some(line_range)),
+                                    text: content
+                                }
+                            )
+                            .ok();
+                        }
+                        MentionUri::Selection {
+                            path, line_range, ..
+                        } => {
+                            write!(
+                                &mut selection_context,
+                                "\n{}",
+                                MarkdownCodeBlock {
+                                    tag: &codeblock_tag(
+                                        path.as_deref().unwrap_or("Untitled".as_ref()),
+                                        Some(line_range)
+                                    ),
                                     text: content
                                 }
                             )
@@ -288,6 +303,13 @@ impl UserMessage {
             message
                 .content
                 .push(language_model::MessageContent::Text(symbol_context));
+        }
+
+        if selection_context.len() > OPEN_SELECTIONS_TAG.len() {
+            selection_context.push_str("</selections>\n");
+            message
+                .content
+                .push(language_model::MessageContent::Text(selection_context));
         }
 
         if thread_context.len() > OPEN_THREADS_TAG.len() {

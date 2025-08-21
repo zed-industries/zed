@@ -561,13 +561,10 @@ impl MessageEditor {
             let range = snapshot.anchor_after(offset + range_to_fold.start)
                 ..snapshot.anchor_after(offset + range_to_fold.end);
 
-            // TODO support selections from buffers with no path
-            let Some(project_path) = buffer.read(cx).project_path(cx) else {
-                continue;
-            };
-            let Some(abs_path) = self.project.read(cx).absolute_path(&project_path, cx) else {
-                continue;
-            };
+            let abs_path = buffer
+                .read(cx)
+                .project_path(cx)
+                .and_then(|project_path| self.project.read(cx).absolute_path(&project_path, cx));
             let snapshot = buffer.read(cx).snapshot();
 
             let point_range = selection_range.to_point(&snapshot);
@@ -578,7 +575,7 @@ impl MessageEditor {
                 line_range: line_range.clone(),
             };
             let crease = crate::context_picker::crease_for_mention(
-                selection_name(&abs_path, &line_range).into(),
+                selection_name(abs_path.as_deref(), &line_range).into(),
                 uri.icon_path(cx),
                 range,
                 self.editor.downgrade(),
@@ -1545,7 +1542,9 @@ impl MentionSet {
                         path, line_range, ..
                     }
                     | MentionUri::Selection {
-                        path, line_range, ..
+                        path: Some(path),
+                        line_range,
+                        ..
                     } => {
                         let uri = uri.clone();
                         let path_buf = path.clone();
@@ -1582,6 +1581,20 @@ impl MentionSet {
                             ))
                         })
                     }
+                    MentionUri::Selection { path: None, .. } => cx.spawn({
+                        // FIXME
+                        let uri = uri.clone();
+                        async move |_| {
+                            anyhow::Ok((
+                                crease_id,
+                                Mention::Text {
+                                    uri,
+                                    content: String::new(),
+                                    tracked_buffers: Vec::new(),
+                                },
+                            ))
+                        }
+                    }),
                     MentionUri::Thread { id, .. } => {
                         let Some(content) = self.thread_summaries.get(id).cloned() else {
                             return Task::ready(Err(anyhow!("missing thread summary")));

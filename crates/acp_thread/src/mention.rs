@@ -38,7 +38,8 @@ pub enum MentionUri {
         name: String,
     },
     Selection {
-        path: PathBuf,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        path: Option<PathBuf>,
         line_range: Range<u32>,
     },
     Fetch {
@@ -77,7 +78,10 @@ impl MentionUri {
                             line_range,
                         })
                     } else {
-                        Ok(Self::Selection { path, line_range })
+                        Ok(Self::Selection {
+                            path: Some(path),
+                            line_range,
+                        })
                     }
                 } else if input.ends_with("/") {
                     Ok(Self::Directory { abs_path: path })
@@ -127,7 +131,7 @@ impl MentionUri {
             MentionUri::Rule { name, .. } => name.clone(),
             MentionUri::Selection {
                 path, line_range, ..
-            } => selection_name(path, line_range),
+            } => selection_name(path.as_deref(), line_range),
             MentionUri::Fetch { url } => url.to_string(),
         }
     }
@@ -152,6 +156,7 @@ impl MentionUri {
         MentionLink(self)
     }
 
+    // FIXME return a result
     pub fn to_uri(&self) -> Url {
         match self {
             MentionUri::File { abs_path } => {
@@ -175,13 +180,20 @@ impl MentionUri {
                 url
             }
             MentionUri::Selection { path, line_range } => {
-                let mut url = Url::from_file_path(path).expect("mention path should be absolute");
-                url.set_fragment(Some(&format!(
-                    "L{}:{}",
-                    line_range.start + 1,
-                    line_range.end + 1
-                )));
-                url
+                if let Some(path) = path {
+                    let mut url =
+                        Url::from_file_path(path).expect("mention path should be absolute");
+                    url.set_fragment(Some(&format!(
+                        "L{}:{}",
+                        line_range.start + 1,
+                        line_range.end + 1
+                    )));
+                    url
+                } else {
+                    let mut url = Url::parse("zed:///").unwrap();
+                    url.set_path("/agent/selection");
+                    url
+                }
             }
             MentionUri::Thread { name, id } => {
                 let mut url = Url::parse("zed:///").unwrap();
@@ -237,10 +249,12 @@ fn single_query_param(url: &Url, name: &'static str) -> Result<Option<String>> {
     }
 }
 
-pub fn selection_name(path: &Path, line_range: &Range<u32>) -> String {
+pub fn selection_name(path: Option<&Path>, line_range: &Range<u32>) -> String {
     format!(
         "{} ({}:{})",
-        path.file_name().unwrap_or_default().display(),
+        path.and_then(|path| path.file_name())
+            .unwrap_or("Untitled".as_ref())
+            .display(),
         line_range.start + 1,
         line_range.end + 1
     )
@@ -322,7 +336,10 @@ mod tests {
         let parsed = MentionUri::parse(selection_uri).unwrap();
         match &parsed {
             MentionUri::Selection { path, line_range } => {
-                assert_eq!(path.to_str().unwrap(), path!("/path/to/file.rs"));
+                assert_eq!(
+                    path.as_ref().unwrap().to_str().unwrap(),
+                    path!("/path/to/file.rs")
+                );
                 assert_eq!(line_range.start, 4);
                 assert_eq!(line_range.end, 14);
             }
