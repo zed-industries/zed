@@ -10,7 +10,7 @@ pub fn refresh_matching_bracket_highlights(
     window: &mut Window,
     cx: &mut Context<Editor>,
 ) {
-    editor.clear_background_highlights::<MatchingBracketHighlight>(cx);
+    editor.clear_highlights::<MatchingBracketHighlight>(cx);
 
     let newest_selection = editor.selections.newest::<usize>(cx);
     // Don't highlight brackets if the selection isn't empty
@@ -112,7 +112,7 @@ mod tests {
                 another_test(1, 2, 3);
             }
         "#});
-        cx.assert_editor_background_highlights::<MatchingBracketHighlight>(indoc! {r#"
+        cx.assert_editor_text_highlights::<MatchingBracketHighlight>(indoc! {r#"
             pub fn test«(»"Test argument"«)» {
                 another_test(1, 2, 3);
             }
@@ -123,7 +123,7 @@ mod tests {
                 another_test(1, ˇ2, 3);
             }
         "#});
-        cx.assert_editor_background_highlights::<MatchingBracketHighlight>(indoc! {r#"
+        cx.assert_editor_text_highlights::<MatchingBracketHighlight>(indoc! {r#"
             pub fn test("Test argument") {
                 another_test«(»1, 2, 3«)»;
             }
@@ -134,7 +134,7 @@ mod tests {
                 anotherˇ_test(1, 2, 3);
             }
         "#});
-        cx.assert_editor_background_highlights::<MatchingBracketHighlight>(indoc! {r#"
+        cx.assert_editor_text_highlights::<MatchingBracketHighlight>(indoc! {r#"
             pub fn test("Test argument") «{»
                 another_test(1, 2, 3);
             «}»
@@ -146,7 +146,7 @@ mod tests {
                 another_test(1, 2, 3);
             }
         "#});
-        cx.assert_editor_background_highlights::<MatchingBracketHighlight>(indoc! {r#"
+        cx.assert_editor_text_highlights::<MatchingBracketHighlight>(indoc! {r#"
             pub fn test("Test argument") {
                 another_test(1, 2, 3);
             }
@@ -158,8 +158,8 @@ mod tests {
                 another_test(1, 2, 3);
             }
         "#});
-        cx.assert_editor_background_highlights::<MatchingBracketHighlight>(indoc! {r#"
-            pub fn test("Test argument") {
+        cx.assert_editor_text_highlights::<MatchingBracketHighlight>(indoc! {r#"
+            pub fn test«("Test argument") {
                 another_test(1, 2, 3);
             }
         "#});
