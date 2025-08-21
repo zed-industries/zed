@@ -122,8 +122,7 @@ impl LanguageServerState {
         let lsp_logs = cx
             .try_global::<GlobalLogStore>()
             .and_then(|lsp_logs| lsp_logs.0.upgrade());
-        let lsp_store = self.lsp_store.upgrade();
-        let Some((lsp_logs, lsp_store)) = lsp_logs.zip(lsp_store) else {
+        let Some(lsp_logs) = lsp_logs else {
             return menu;
         };
 
@@ -210,10 +209,7 @@ impl LanguageServerState {
             };
 
             let server_selector = server_info.server_selector();
-            // TODO currently, Zed remote does not work well with the LSP logs
-            // https://github.com/zed-industries/zed/issues/28557
-            let has_logs = lsp_store.read(cx).as_local().is_some()
-                && lsp_logs.read(cx).has_server_logs(&server_selector);
+            let has_logs = lsp_logs.read(cx).has_server_logs(&server_selector);
 
             let status_color = server_info
                 .binary_status

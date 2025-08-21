@@ -610,11 +610,42 @@ message ServerMetadataUpdated {
 message LanguageServerLog {
     uint64 project_id = 1;
     uint64 language_server_id = 2;
+    string message = 3;
     oneof log_type {
-        uint32 log_message_type = 3;
-        LspLogTrace log_trace = 4;
+        LogMessage log = 4;
+        TraceMessage trace = 5;
+        RpcMessage rpc = 6;
     }
-    string message = 5;
+}
+
+message LogMessage {
+    LogLevel level = 1;
+
+    enum LogLevel {
+        LOG = 0;
+        INFO = 1;
+        WARNING = 2;
+        ERROR = 3;
+    }
+}
+
+message TraceMessage {
+    TraceLevel level = 1;
+
+    enum TraceLevel {
+        OFF = 0;
+        MESSAGES = 1;
+        VERBOSE = 2;
+    }
+}
+
+message RpcMessage {
+    Kind kind = 1;
+
+    enum Kind {
+        RECEIVED = 0;
+        SENT = 1;
+    }
 }
 
 message LspLogTrace {

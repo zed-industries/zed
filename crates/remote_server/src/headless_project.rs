@@ -65,6 +65,13 @@ impl HeadlessProject {
         settings::init(cx);
         language::init(cx);
         project::Project::init_settings(cx);
+        // todo! what to do with the RPC log spam?
+        // if we have not enabled RPC logging on the remote client, we do not need these
+        //
+        // Maybe, add another RPC message, proto::ToggleRpcLogging(bool)
+        // and send it into the upstream client from the remotes, so that the local/headless counterpart
+        // can access this Global<LspLog> and toggle the spam send
+        language_tools::lsp_log::init(cx);
     }
 
     pub fn new(

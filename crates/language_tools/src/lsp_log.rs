@@ -12,9 +12,10 @@ use lsp::{
     IoKind, LanguageServer, LanguageServerName, LanguageServerSelector, MessageType,
     SetTraceParams, TraceValue, notification::SetTrace,
 };
-use project::{Project, WorktreeId, search::SearchQuery};
+use project::{Project, WorktreeId, lsp_store::LanguageServerLogType, search::SearchQuery};
 use std::{any::TypeId, borrow::Cow, sync::Arc};
 use ui::{Button, Checkbox, ContextMenu, Label, PopoverMenu, ToggleState, prelude::*};
+use util::ResultExt as _;
 use workspace::{
     SplitDirection, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace, WorkspaceId,
     item::{Item, ItemHandle},
@@ -36,7 +37,7 @@ pub struct LogStore {
 }
 
 struct ProjectState {
-    _subscriptions: [gpui::Subscription; 2],
+    _subscriptions: [gpui::Subscription; 3],
 }
 
 trait Message: AsRef<str> {
@@ -102,6 +103,7 @@ impl Message for RpcMessage {
 }
 
 pub(super) struct LanguageServerState {
+    project: WeakEntity<Project>,
     name: Option<LanguageServerName>,
     worktree_id: Option<WorktreeId>,
     kind: LanguageServerKind,
@@ -183,6 +185,13 @@ pub enum LogKind {
 }
 
 impl LogKind {
+    fn from_server_log_type(log_type: &LanguageServerLogType) -> Self {
+        match log_type {
+            LanguageServerLogType::Log(_) => Self::Logs,
+            LanguageServerLogType::Trace(_) => Self::Trace,
+            LanguageServerLogType::Rpc { .. } => Self::Rpc,
+        }
+    }
     fn label(&self) -> &'static str {
         match self {
             LogKind::Rpc => RPC_MESSAGES,
@@ -212,10 +221,11 @@ actions!(
     ]
 );
 
-pub(super) struct GlobalLogStore(pub WeakEntity<LogStore>);
+pub struct GlobalLogStore(pub WeakEntity<LogStore>);
 
 impl Global for GlobalLogStore {}
 
+// todo! do separate headless and local cases here: headless cares only about the downstream_client() part, NO log storage is needed
 pub fn init(cx: &mut App) {
     let log_store = cx.new(LogStore::new);
     cx.set_global(GlobalLogStore(log_store.downgrade()));
@@ -311,6 +321,7 @@ impl LogStore {
 
     pub fn add_project(&mut self, project: &Entity<Project>, cx: &mut Context<Self>) {
         let weak_project = project.downgrade();
+        let subscription_weak_project = weak_project.clone();
         self.projects.insert(
             project.downgrade(),
             ProjectState {
@@ -356,11 +367,40 @@ impl LogStore {
                                         this.add_language_server_log(*id, *typ, message, cx);
                                     }
                                     project::LanguageServerLogType::Trace(_) => {
+                                        // todo! do something with trace level
                                         this.add_language_server_trace(*id, message, cx);
+                                    }
+                                    project::LanguageServerLogType::Rpc { received } => {
+                                        let kind = if *received {
+                                            MessageKind::Receive
+                                        } else {
+                                            MessageKind::Send
+                                        };
+                                        this.add_language_server_rpc(*id, kind, message, cx);
                                     }
                                 }
                             }
                             _ => {}
+                        }
+                    }),
+                    cx.subscribe_self(move |_, e, cx| match e {
+                        Event::NewServerLogEntry { id, kind, text } => {
+                            subscription_weak_project
+                                .update(cx, |project, cx| {
+                                    if let Some((client, project_id)) =
+                                        project.lsp_store().read(cx).downstream_client()
+                                    {
+                                        client
+                                            .send(proto::LanguageServerLog {
+                                                project_id,
+                                                language_server_id: id.to_proto(),
+                                                message: text.clone(),
+                                                log_type: Some(kind.to_proto()),
+                                            })
+                                            .log_err();
+                                    };
+                                })
+                                .ok();
                         }
                     }),
                 ],
@@ -382,6 +422,7 @@ impl LogStore {
         name: Option<LanguageServerName>,
         worktree_id: Option<WorktreeId>,
         server: Option<Arc<LanguageServer>>,
+        project: WeakEntity<Project>,
         cx: &mut Context<Self>,
     ) -> Option<&mut LanguageServerState> {
         let server_state = self.language_servers.entry(server_id).or_insert_with(|| {
@@ -390,6 +431,7 @@ impl LogStore {
                 name: None,
                 worktree_id: None,
                 kind,
+                project,
                 rpc_state: None,
                 log_messages: VecDeque::with_capacity(MAX_STORED_LOG_ENTRIES),
                 trace_messages: VecDeque::with_capacity(MAX_STORED_LOG_ENTRIES),
@@ -429,17 +471,21 @@ impl LogStore {
         let language_server_state = self.get_language_server_state(id)?;
 
         let log_lines = &mut language_server_state.log_messages;
-        Self::add_language_server_message(
+        if let Some(new_message) = Self::push_new_message(
             log_lines,
-            id,
             LogMessage {
                 message: message.trim_end().to_string(),
                 typ,
             },
             language_server_state.log_level,
-            LogKind::Logs,
-            cx,
-        );
+        ) {
+            cx.emit(Event::NewServerLogEntry {
+                id,
+                kind: LanguageServerLogType::Log(typ),
+                text: new_message,
+            });
+        }
+
         Some(())
     }
 
@@ -452,38 +498,81 @@ impl LogStore {
         let language_server_state = self.get_language_server_state(id)?;
 
         let log_lines = &mut language_server_state.trace_messages;
-        Self::add_language_server_message(
+        if let Some(new_message) = Self::push_new_message(
             log_lines,
-            id,
             TraceMessage {
                 message: message.trim().to_string(),
             },
             (),
-            LogKind::Trace,
-            cx,
-        );
+        ) {
+            cx.emit(Event::NewServerLogEntry {
+                id,
+                // todo! Ben, fix this here too!
+                kind: LanguageServerLogType::Trace(project::lsp_store::TraceLevel::Verbose),
+                text: new_message,
+            });
+        }
+
         Some(())
     }
 
-    fn add_language_server_message<T: Message>(
+    fn push_new_message<T: Message>(
         log_lines: &mut VecDeque<T>,
-        id: LanguageServerId,
         message: T,
         current_severity: <T as Message>::Level,
-        kind: LogKind,
-        cx: &mut Context<Self>,
-    ) {
+    ) -> Option<String> {
         while log_lines.len() + 1 >= MAX_STORED_LOG_ENTRIES {
             log_lines.pop_front();
         }
-        let text = message.as_ref().to_string();
         let visible = message.should_include(current_severity);
-        log_lines.push_back(message);
 
-        if visible {
-            cx.emit(Event::NewServerLogEntry { id, kind, text });
-            cx.notify();
+        let re = visible.then(|| message.as_ref().to_string());
+        log_lines.push_back(message);
+        re
+    }
+
+    fn add_language_server_rpc(
+        &mut self,
+        language_server_id: LanguageServerId,
+        kind: MessageKind,
+        message: &str,
+        cx: &mut Context<'_, LogStore>,
+    ) {
+        let Some(state) = self
+            .get_language_server_state(language_server_id)
+            .and_then(|state| state.rpc_state.as_mut())
+        else {
+            return;
+        };
+
+        let rpc_log_lines = &mut state.rpc_messages;
+        if state.last_message_kind != Some(kind) {
+            while rpc_log_lines.len() + 1 >= MAX_STORED_LOG_ENTRIES {
+                rpc_log_lines.pop_front();
+            }
+            let line_before_message = match kind {
+                MessageKind::Send => SEND_LINE,
+                MessageKind::Receive => RECEIVE_LINE,
+            };
+            rpc_log_lines.push_back(RpcMessage {
+                message: line_before_message.to_string(),
+            });
+            cx.emit(Event::NewServerLogEntry {
+                id: language_server_id,
+                kind: LanguageServerLogType::Rpc {
+                    received: kind == MessageKind::Receive,
+                },
+                text: line_before_message.to_string(),
+            });
         }
+
+        while rpc_log_lines.len() + 1 >= MAX_STORED_LOG_ENTRIES {
+            rpc_log_lines.pop_front();
+        }
+
+        rpc_log_lines.push_back(RpcMessage {
+            message: message.trim().to_owned(),
+        });
     }
 
     fn remove_language_server(&mut self, id: LanguageServerId, cx: &mut Context<Self>) {
@@ -520,7 +609,7 @@ impl LogStore {
             })
     }
 
-    fn enable_rpc_trace_for_language_server(
+    pub fn enable_rpc_trace_for_language_server(
         &mut self,
         server_id: LanguageServerId,
     ) -> Option<&mut LanguageServerRpcState> {
@@ -663,47 +752,19 @@ impl LogStore {
             }
         };
 
-        let state = self
-            .get_language_server_state(language_server_id)?
-            .rpc_state
-            .as_mut()?;
         let kind = if is_received {
             MessageKind::Receive
         } else {
             MessageKind::Send
         };
 
-        let rpc_log_lines = &mut state.rpc_messages;
-        if state.last_message_kind != Some(kind) {
-            while rpc_log_lines.len() + 1 >= MAX_STORED_LOG_ENTRIES {
-                rpc_log_lines.pop_front();
-            }
-            let line_before_message = match kind {
-                MessageKind::Send => SEND_LINE,
-                MessageKind::Receive => RECEIVE_LINE,
-            };
-            rpc_log_lines.push_back(RpcMessage {
-                message: line_before_message.to_string(),
-            });
-            cx.emit(Event::NewServerLogEntry {
-                id: language_server_id,
-                kind: LogKind::Rpc,
-                text: line_before_message.to_string(),
-            });
-        }
-
-        while rpc_log_lines.len() + 1 >= MAX_STORED_LOG_ENTRIES {
-            rpc_log_lines.pop_front();
-        }
-
-        let message = message.trim();
-        rpc_log_lines.push_back(RpcMessage {
-            message: message.to_string(),
-        });
+        self.add_language_server_rpc(language_server_id, kind, message, cx);
         cx.emit(Event::NewServerLogEntry {
             id: language_server_id,
-            kind: LogKind::Rpc,
-            text: message.to_string(),
+            kind: LanguageServerLogType::Rpc {
+                received: is_received,
+            },
+            text: message.to_owned(),
         });
         cx.notify();
         Some(())
@@ -757,7 +818,7 @@ impl LspLogView {
             move |log_view, _, e, window, cx| match e {
                 Event::NewServerLogEntry { id, kind, text } => {
                     if log_view.current_server_id == Some(*id)
-                        && *kind == log_view.active_entry_kind
+                        && LogKind::from_server_log_type(kind) == log_view.active_entry_kind
                     {
                         log_view.editor.update(cx, |editor, cx| {
                             editor.set_read_only(false);
@@ -1075,6 +1136,21 @@ impl LspLogView {
             } else {
                 log_store.disable_rpc_trace_for_language_server(server_id);
             }
+
+            if let Some(server_state) = log_store.language_servers.get(server_id) {
+                server_state
+                    .project
+                    .update(cx, |project, cx| {
+                        if let Some((client, project)) =
+                            project.lsp_store().read(cx).upstream_client()
+                        {
+                            // todo! client.send a new proto message to propagate the enabled
+                            // !!!! we have to have a handler on both headless and normal projects
+                            // that handler has to touch the Global<LspLog> and amend the sending bit
+                        }
+                    })
+                    .ok();
+            };
         });
         if !enabled && Some(server_id) == self.current_server_id {
             self.show_logs_for_server(server_id, window, cx);
@@ -1113,6 +1189,8 @@ impl LspLogView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // todo! there's no language server for the remote case, hence no server info!
+        // BUT we do have the capabilities info within the LspStore.lsp_server_capabilities
         let lsp_store = self.project.read(cx).lsp_store();
         let Some(server) = lsp_store.read(cx).language_server_for_id(server_id) else {
             return;
@@ -1737,7 +1815,7 @@ impl LspLogToolbarItemView {
 pub enum Event {
     NewServerLogEntry {
         id: LanguageServerId,
-        kind: LogKind,
+        kind: LanguageServerLogType,
         text: String,
     },
 }

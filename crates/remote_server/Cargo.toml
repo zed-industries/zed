@@ -43,6 +43,7 @@ gpui_tokio.workspace = true
 http_client.workspace = true
 language.workspace = true
 language_extension.workspace = true
+language_tools.workspace = true
 languages.workspace = true
 log.workspace = true
 lsp.workspace = true
