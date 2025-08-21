@@ -3354,7 +3354,7 @@ impl AcpThreadView {
                                         "used-tokens-label",
                                         Animation::new(Duration::from_secs(2))
                                             .repeat()
-                                            .with_easing(pulsating_between(0.6, 1.)),
+                                            .with_easing(pulsating_between(0.3, 0.8)),
                                         |label, delta| label.alpha(delta),
                                     )
                                     .into_any()
