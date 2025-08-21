@@ -5693,13 +5693,13 @@ impl LspStore {
                         let lsp_data = lsp_store.lsp_code_lens.entry(buffer_id).or_default();
                         if let Some(fetched_lens) = fetched_lens {
                             if lsp_data.lens_for_version == query_version_queried_for {
-                                lsp_data.lens.extend(fetched_lens.clone());
+                                lsp_data.lens.extend(fetched_lens);
                             } else if !lsp_data
                                 .lens_for_version
                                 .changed_since(&query_version_queried_for)
                             {
                                 lsp_data.lens_for_version = query_version_queried_for;
-                                lsp_data.lens = fetched_lens.clone();
+                                lsp_data.lens = fetched_lens;
                             }
                         }
                         lsp_data.update = None;
@@ -6694,14 +6694,14 @@ impl LspStore {
 
                         if let Some(fetched_colors) = fetched_colors {
                             if lsp_data.colors_for_version == query_version_queried_for {
-                                lsp_data.colors.extend(fetched_colors.clone());
+                                lsp_data.colors.extend(fetched_colors);
                                 lsp_data.cache_version += 1;
                             } else if !lsp_data
                                 .colors_for_version
                                 .changed_since(&query_version_queried_for)
                             {
                                 lsp_data.colors_for_version = query_version_queried_for;
-                                lsp_data.colors = fetched_colors.clone();
+                                lsp_data.colors = fetched_colors;
                                 lsp_data.cache_version += 1;
                             }
                         }
