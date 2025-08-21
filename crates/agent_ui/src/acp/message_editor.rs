@@ -629,15 +629,11 @@ impl MessageEditor {
             .shared();
 
         self.mention_set.insert_thread(id.clone(), task.clone());
+        self.mention_set.insert_uri(crease_id, uri);
 
         let editor = self.editor.clone();
         cx.spawn_in(window, async move |this, cx| {
-            if task.await.notify_async_err(cx).is_some() {
-                this.update(cx, |this, _| {
-                    this.mention_set.insert_uri(crease_id, uri);
-                })
-                .ok();
-            } else {
+            if task.await.notify_async_err(cx).is_none() {
                 editor
                     .update(cx, |editor, cx| {
                         editor.display_map.update(cx, |display_map, cx| {
@@ -648,6 +644,7 @@ impl MessageEditor {
                     .ok();
                 this.update(cx, |this, _| {
                     this.mention_set.thread_summaries.remove(&id);
+                    this.mention_set.uri_by_crease_id.remove(&crease_id);
                 })
                 .ok();
             }
