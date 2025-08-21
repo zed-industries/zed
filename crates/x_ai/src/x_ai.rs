@@ -105,6 +105,10 @@ impl Model {
         }
     }
 
+    pub fn supports_prompt_cache_key(&self) -> bool {
+        false
+    }
+
     pub fn supports_tool(&self) -> bool {
         match self {
             Self::Grok2Vision
@@ -118,9 +122,6 @@ impl Model {
     }
 
     pub fn supports_images(&self) -> bool {
-        match self {
-            Self::Grok2Vision => true,
-            _ => false,
-        }
+        matches!(self, Self::Grok2Vision)
     }
 }

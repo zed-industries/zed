@@ -140,8 +140,10 @@ async fn test_editorconfig_support(cx: &mut gpui::TestAppContext) {
             end_of_line = lf
             insert_final_newline = true
             trim_trailing_whitespace = true
+            max_line_length = 120
         [*.js]
             tab_width = 10
+            max_line_length = off
         "#,
         ".zed": {
             "settings.json": r#"{
@@ -149,7 +151,8 @@ async fn test_editorconfig_support(cx: &mut gpui::TestAppContext) {
                 "hard_tabs": false,
                 "ensure_final_newline_on_save": false,
                 "remove_trailing_whitespace_on_save": false,
-                "soft_wrap": "editor_width"
+                "preferred_line_length": 64,
+                "soft_wrap": "editor_width",
             }"#,
         },
         "a.rs": "fn a() {\n    A\n}",
@@ -157,6 +160,7 @@ async fn test_editorconfig_support(cx: &mut gpui::TestAppContext) {
             ".editorconfig": r#"
             [*.rs]
                 indent_size = 2
+                max_line_length = off,
             "#,
             "b.rs": "fn b() {\n    B\n}",
         },
@@ -205,12 +209,17 @@ async fn test_editorconfig_support(cx: &mut gpui::TestAppContext) {
         assert_eq!(settings_a.hard_tabs, true);
         assert_eq!(settings_a.ensure_final_newline_on_save, true);
         assert_eq!(settings_a.remove_trailing_whitespace_on_save, true);
+        assert_eq!(settings_a.preferred_line_length, 120);
 
         // .editorconfig in b/ overrides .editorconfig in root
         assert_eq!(Some(settings_b.tab_size), NonZeroU32::new(2));
 
         // "indent_size" is not set, so "tab_width" is used
         assert_eq!(Some(settings_c.tab_size), NonZeroU32::new(10));
+
+        // When max_line_length is "off", default to .zed/settings.json
+        assert_eq!(settings_b.preferred_line_length, 64);
+        assert_eq!(settings_c.preferred_line_length, 64);
 
         // README.md should not be affected by .editorconfig's globe "*.rs"
         assert_eq!(Some(settings_readme.tab_size), NonZeroU32::new(8));
@@ -695,7 +704,7 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
         assert_eq!(
             buffer
                 .completion_triggers()
-                .into_iter()
+                .iter()
                 .cloned()
                 .collect::<Vec<_>>(),
             &[".".to_string(), "::".to_string()]
@@ -747,7 +756,7 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
         assert_eq!(
             buffer
                 .completion_triggers()
-                .into_iter()
+                .iter()
                 .cloned()
                 .collect::<Vec<_>>(),
             &[":".to_string()]
@@ -766,7 +775,7 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
         assert_eq!(
             buffer
                 .completion_triggers()
-                .into_iter()
+                .iter()
                 .cloned()
                 .collect::<Vec<_>>(),
             &[".".to_string(), "::".to_string()]
@@ -1099,9 +1108,9 @@ async fn test_reporting_fs_changes_to_language_servers(cx: &mut gpui::TestAppCon
     let prev_read_dir_count = fs.read_dir_call_count();
 
     let fake_server = fake_servers.next().await.unwrap();
-    let (server_id, server_name) = lsp_store.read_with(cx, |lsp_store, _| {
-        let (id, status) = lsp_store.language_server_statuses().next().unwrap();
-        (id, status.name.clone())
+    let server_id = lsp_store.read_with(cx, |lsp_store, _| {
+        let (id, _) = lsp_store.language_server_statuses().next().unwrap();
+        id
     });
 
     // Simulate jumping to a definition in a dependency outside of the worktree.
@@ -1110,7 +1119,6 @@ async fn test_reporting_fs_changes_to_language_servers(cx: &mut gpui::TestAppCon
             project.open_local_buffer_via_lsp(
                 lsp::Url::from_file_path(path!("/the-registry/dep1/src/dep1.rs")).unwrap(),
                 server_id,
-                server_name.clone(),
                 cx,
             )
         })
@@ -1819,7 +1827,7 @@ async fn test_restarting_server_with_diagnostics_published(cx: &mut gpui::TestAp
             buffer
                 .snapshot()
                 .diagnostics_in_range::<_, usize>(0..1, false)
-                .map(|entry| entry.diagnostic.message.clone())
+                .map(|entry| entry.diagnostic.message)
                 .collect::<Vec<_>>(),
             ["the message".to_string()]
         );
@@ -1845,7 +1853,7 @@ async fn test_restarting_server_with_diagnostics_published(cx: &mut gpui::TestAp
             buffer
                 .snapshot()
                 .diagnostics_in_range::<_, usize>(0..1, false)
-                .map(|entry| entry.diagnostic.message.clone())
+                .map(|entry| entry.diagnostic.message)
                 .collect::<Vec<_>>(),
             Vec::<String>::new(),
         );
@@ -2948,9 +2956,10 @@ fn chunks_with_diagnostics<T: ToOffset + ToPoint>(
 ) -> Vec<(String, Option<DiagnosticSeverity>)> {
     let mut chunks: Vec<(String, Option<DiagnosticSeverity>)> = Vec::new();
     for chunk in buffer.snapshot().chunks(range, true) {
-        if chunks.last().map_or(false, |prev_chunk| {
-            prev_chunk.1 == chunk.diagnostic_severity
-        }) {
+        if chunks
+            .last()
+            .is_some_and(|prev_chunk| prev_chunk.1 == chunk.diagnostic_severity)
+        {
             chunks.last_mut().unwrap().0.push_str(chunk.text);
         } else {
             chunks.push((chunk.text.to_string(), chunk.diagnostic_severity));
@@ -3005,6 +3014,7 @@ async fn test_definition(cx: &mut gpui::TestAppContext) {
     let mut definitions = project
         .update(cx, |project, cx| project.definitions(&buffer, 22, cx))
         .await
+        .unwrap()
         .unwrap();
 
     // Assert no new language server started
@@ -3519,7 +3529,7 @@ async fn test_apply_code_actions_with_commands(cx: &mut gpui::TestAppContext) {
         .next()
         .await;
 
-    let action = actions.await.unwrap()[0].clone();
+    let action = actions.await.unwrap().unwrap()[0].clone();
     let apply = project.update(cx, |project, cx| {
         project.apply_code_action(buffer.clone(), action, true, cx)
     });
@@ -3712,7 +3722,7 @@ async fn test_save_file_spawns_language_server(cx: &mut gpui::TestAppContext) {
 async fn test_file_changes_multiple_times_on_disk(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
-    let fs = FakeFs::new(cx.executor().clone());
+    let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         path!("/dir"),
         json!({
@@ -3767,7 +3777,7 @@ async fn test_file_changes_multiple_times_on_disk(cx: &mut gpui::TestAppContext)
 async fn test_edit_buffer_while_it_reloads(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
-    let fs = FakeFs::new(cx.executor().clone());
+    let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         path!("/dir"),
         json!({
@@ -4123,7 +4133,7 @@ async fn test_buffer_identity_across_renames(cx: &mut gpui::TestAppContext) {
         })
         .unwrap()
         .await
-        .to_included()
+        .into_included()
         .unwrap();
     cx.executor().run_until_parked();
 
@@ -5897,7 +5907,7 @@ async fn test_search_with_unicode(cx: &mut gpui::TestAppContext) {
 async fn test_create_entry(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
-    let fs = FakeFs::new(cx.executor().clone());
+    let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         "/one/two",
         json!({
@@ -5918,7 +5928,7 @@ async fn test_create_entry(cx: &mut gpui::TestAppContext) {
         })
         .await
         .unwrap()
-        .to_included()
+        .into_included()
         .unwrap();
 
     // Can't create paths outside the project
@@ -6110,6 +6120,7 @@ async fn test_multiple_language_server_hovers(cx: &mut gpui::TestAppContext) {
         hover_task
             .await
             .into_iter()
+            .flatten()
             .map(|hover| hover.contents.iter().map(|block| &block.text).join("|"))
             .sorted()
             .collect::<Vec<_>>(),
@@ -6183,6 +6194,7 @@ async fn test_hovers_with_empty_parts(cx: &mut gpui::TestAppContext) {
         hover_task
             .await
             .into_iter()
+            .flatten()
             .map(|hover| hover.contents.iter().map(|block| &block.text).join("|"))
             .sorted()
             .collect::<Vec<_>>(),
@@ -6261,7 +6273,7 @@ async fn test_code_actions_only_kinds(cx: &mut gpui::TestAppContext) {
         .await
         .expect("The code action request should have been triggered");
 
-    let code_actions = code_actions_task.await.unwrap();
+    let code_actions = code_actions_task.await.unwrap().unwrap();
     assert_eq!(code_actions.len(), 1);
     assert_eq!(
         code_actions[0].lsp_action.action_kind(),
@@ -6419,6 +6431,7 @@ async fn test_multiple_language_server_actions(cx: &mut gpui::TestAppContext) {
         vec!["TailwindServer code action", "TypeScriptServer code action"],
         code_actions_task
             .await
+            .unwrap()
             .unwrap()
             .into_iter()
             .map(|code_action| code_action.lsp_action.title().to_owned())

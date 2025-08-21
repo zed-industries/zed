@@ -123,7 +123,7 @@ pub fn new_journal_entry(workspace: &Workspace, window: &mut Window, cx: &mut Ap
     }
 
     let app_state = workspace.app_state().clone();
-    let view_snapshot = workspace.weak_handle().clone();
+    let view_snapshot = workspace.weak_handle();
 
     window
         .spawn(cx, async move |cx| {
@@ -170,23 +170,23 @@ pub fn new_journal_entry(workspace: &Workspace, window: &mut Window, cx: &mut Ap
                     .await
             };
 
-            if let Some(Some(Ok(item))) = opened.first() {
-                if let Some(editor) = item.downcast::<Editor>().map(|editor| editor.downgrade()) {
-                    editor.update_in(cx, |editor, window, cx| {
-                        let len = editor.buffer().read(cx).len(cx);
-                        editor.change_selections(
-                            SelectionEffects::scroll(Autoscroll::center()),
-                            window,
-                            cx,
-                            |s| s.select_ranges([len..len]),
-                        );
-                        if len > 0 {
-                            editor.insert("\n\n", window, cx);
-                        }
-                        editor.insert(&entry_heading, window, cx);
+            if let Some(Some(Ok(item))) = opened.first()
+                && let Some(editor) = item.downcast::<Editor>().map(|editor| editor.downgrade())
+            {
+                editor.update_in(cx, |editor, window, cx| {
+                    let len = editor.buffer().read(cx).len(cx);
+                    editor.change_selections(
+                        SelectionEffects::scroll(Autoscroll::center()),
+                        window,
+                        cx,
+                        |s| s.select_ranges([len..len]),
+                    );
+                    if len > 0 {
                         editor.insert("\n\n", window, cx);
-                    })?;
-                }
+                    }
+                    editor.insert(&entry_heading, window, cx);
+                    editor.insert("\n\n", window, cx);
+                })?;
             }
 
             anyhow::Ok(())
@@ -195,11 +195,9 @@ pub fn new_journal_entry(workspace: &Workspace, window: &mut Window, cx: &mut Ap
 }
 
 fn journal_dir(path: &str) -> Option<PathBuf> {
-    let expanded_journal_dir = shellexpand::full(path) //TODO handle this better
+    shellexpand::full(path) //TODO handle this better
         .ok()
-        .map(|dir| Path::new(&dir.to_string()).to_path_buf().join("journal"));
-
-    expanded_journal_dir
+        .map(|dir| Path::new(&dir.to_string()).to_path_buf().join("journal"))
 }
 
 fn heading_entry(now: NaiveTime, hour_format: &Option<HourFormat>) -> String {

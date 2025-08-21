@@ -1,11 +1,12 @@
 // Translates old acp agents into the new schema
+use action_log::ActionLog;
 use agent_client_protocol as acp;
 use agentic_coding_protocol::{self as acp_old, AgentRequest as _};
 use anyhow::{Context as _, Result, anyhow};
 use futures::channel::oneshot;
 use gpui::{AppContext as _, AsyncApp, Entity, Task, WeakEntity};
 use project::Project;
-use std::{cell::RefCell, path::Path, rc::Rc};
+use std::{any::Any, cell::RefCell, path::Path, rc::Rc};
 use ui::App;
 use util::ResultExt as _;
 
@@ -135,9 +136,9 @@ impl acp_old::Client for OldAcpClientDelegate {
         let response = cx
             .update(|cx| {
                 self.thread.borrow().update(cx, |thread, cx| {
-                    thread.request_tool_call_authorization(tool_call, acp_options, cx)
+                    thread.request_tool_call_authorization(tool_call.into(), acp_options, cx)
                 })
-            })?
+            })??
             .context("Failed to update thread")?
             .await;
 
@@ -148,7 +149,7 @@ impl acp_old::Client for OldAcpClientDelegate {
 
         Ok(acp_old::RequestToolCallConfirmationResponse {
             id: acp_old::ToolCallId(old_acp_id),
-            outcome: outcome,
+            outcome,
         })
     }
 
@@ -168,7 +169,7 @@ impl acp_old::Client for OldAcpClientDelegate {
                     cx,
                 )
             })
-        })?
+        })??
         .context("Failed to update thread")?;
 
         Ok(acp_old::PushToolCallResponse {
@@ -265,7 +266,7 @@ impl acp_old::Client for OldAcpClientDelegate {
 
 fn into_new_tool_call(id: acp::ToolCallId, request: acp_old::PushToolCallParams) -> acp::ToolCall {
     acp::ToolCall {
-        id: id,
+        id,
         title: request.label,
         kind: acp_kind_from_old_icon(request.icon),
         status: acp::ToolCallStatus::InProgress,
@@ -423,7 +424,7 @@ impl AgentConnection for AcpConnection {
         self: Rc<Self>,
         project: Entity<Project>,
         _cwd: &Path,
-        cx: &mut AsyncApp,
+        cx: &mut App,
     ) -> Task<Result<Entity<AcpThread>>> {
         let task = self.connection.request_any(
             acp_old::InitializeParams {
@@ -437,13 +438,14 @@ impl AgentConnection for AcpConnection {
             let result = acp_old::InitializeParams::response_from_any(result)?;
 
             if !result.is_authenticated {
-                anyhow::bail!(AuthRequired)
+                anyhow::bail!(AuthRequired::new())
             }
 
             cx.update(|cx| {
                 let thread = cx.new(|cx| {
                     let session_id = acp::SessionId("acp-old-no-id".into());
-                    AcpThread::new(self.name, self.clone(), project, session_id, cx)
+                    let action_log = cx.new(|_| ActionLog::new(project.clone()));
+                    AcpThread::new(self.name, self.clone(), project, action_log, session_id)
                 });
                 current_thread.replace(thread.downgrade());
                 thread
@@ -467,6 +469,7 @@ impl AgentConnection for AcpConnection {
 
     fn prompt(
         &self,
+        _id: Option<acp_thread::UserMessageId>,
         params: acp::PromptRequest,
         cx: &mut App,
     ) -> Task<Result<acp::PromptResponse>> {
@@ -495,6 +498,14 @@ impl AgentConnection for AcpConnection {
         })
     }
 
+    fn prompt_capabilities(&self) -> acp::PromptCapabilities {
+        acp::PromptCapabilities {
+            image: false,
+            audio: false,
+            embedded_context: false,
+        }
+    }
+
     fn cancel(&self, _session_id: &acp::SessionId, cx: &mut App) {
         let task = self
             .connection
@@ -505,5 +516,9 @@ impl AgentConnection for AcpConnection {
                 anyhow::Ok(())
             })
             .detach_and_log_err(cx)
+    }
+
+    fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
+        self
     }
 }

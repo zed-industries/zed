@@ -294,11 +294,11 @@ Define extensions which should be installed (`true`) or never installed (`false`
 
 - Description: The name of a font to use for rendering text in the editor.
 - Setting: `buffer_font_family`
-- Default: `Zed Plex Mono`
+- Default: `.ZedMono`. This currently aliases to [Lilex](https://lilex.myrt.co).
 
 **Options**
 
-The name of any font family installed on the user's system
+The name of any font family installed on the user's system, or `".ZedMono"`.
 
 ## Buffer Font Features
 
@@ -538,12 +538,6 @@ List of `string` values
 - Description: Whether to highlight all occurrences of the selected text in an editor.
 - Setting: `selection_highlight`
 - Default: `true`
-
-## LSP Highlight Debounce
-
-- Description: The debounce delay before querying highlights from the language server based on the current cursor location.
-- Setting: `lsp_highlight_debounce`
-- Default: `75`
 
 ## Cursor Blink
 
@@ -1284,6 +1278,7 @@ Each option controls displaying of a particular toolbar element. If all elements
 ```json
 "status_bar": {
   "active_language_button": true,
+  "cursor_position_button": true
 },
 ```
 
@@ -1337,6 +1332,18 @@ While other options may be changed at a runtime and should be placed under `sett
 - Description: The debounce delay in milliseconds before querying highlights from the language server based on the current cursor location.
 - Setting: `lsp_highlight_debounce`
 - Default: `75`
+
+## Global LSP Settings
+
+- Description: Common language server settings.
+- Setting: `global_lsp_settings`
+- Default:
+
+```json
+"global_lsp_settings": {
+  "button": true
+}
+```
 
 **Options**
 
@@ -3195,8 +3202,14 @@ Run the `theme selector: toggle` action in the command palette to see a current 
 
 ## Vim
 
-- Description: Whether or not to enable vim mode (work in progress).
+- Description: Whether or not to enable vim mode. See the [Vim documentation](./vim.md) for more details on configuration.
 - Setting: `vim_mode`
+- Default: `false`
+
+## Helix Mode
+
+- Description: Whether or not to enable Helix mode. Enabling `helix_mode` also enables `vim_mode`. See the [Helix documentation](./helix.md) for more details.
+- Setting: `helix_mode`
 - Default: `false`
 
 ## Project Panel
@@ -3505,11 +3518,11 @@ Float values between `0.0` and `0.9`, where:
 
 - Description: The name of the font to use for text in the UI.
 - Setting: `ui_font_family`
-- Default: `Zed Plex Sans`
+- Default: `.ZedSans`. This currently aliases to [IBM Plex](https://www.ibm.com/plex/).
 
 **Options**
 
-The name of any font family installed on the system.
+The name of any font family installed on the system, `".ZedSans"` to use the Zed-provided default, or `".SystemUIFont"` to use the system's default UI font (on macOS and Windows).
 
 ## UI Font Features
 
@@ -3597,7 +3610,7 @@ For example, to use `Nerd Font` as a fallback, add the following to your setting
   "soft_wrap": "none",
 
   "buffer_font_size": 18,
-  "buffer_font_family": "Zed Plex Mono",
+  "buffer_font_family": ".ZedMono",
 
   "autosave": "on_focus_change",
   "format_on_save": "off",

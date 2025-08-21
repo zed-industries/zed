@@ -1,6 +1,6 @@
 use gpui::{
     Action, App, Context, Entity, EventEmitter, FocusHandle, Focusable, InteractiveElement,
-    NoAction, ParentElement, Render, Styled, Window, actions,
+    ParentElement, Render, Styled, Task, Window, actions,
 };
 use menu::{SelectNext, SelectPrevious};
 use ui::{ButtonLike, Divider, DividerColor, KeyBinding, Vector, VectorName, prelude::*};
@@ -37,9 +37,8 @@ const CONTENT: (Section<4>, Section<3>) = (
             },
             SectionEntry {
                 icon: IconName::CloudDownload,
-                title: "Clone a Repo",
-                // TODO: use proper action
-                action: &NoAction,
+                title: "Clone Repository",
+                action: &git::Clone,
             },
             SectionEntry {
                 icon: IconName::ListCollapse,
@@ -105,7 +104,7 @@ impl<const COLS: usize> Section<COLS> {
                 self.entries
                     .iter()
                     .enumerate()
-                    .map(|(index, entry)| entry.render(index_offset + index, &focus, window, cx)),
+                    .map(|(index, entry)| entry.render(index_offset + index, focus, window, cx)),
             )
     }
 }
@@ -351,5 +350,111 @@ impl Item for WelcomePage {
 
     fn to_item_events(event: &Self::Event, mut f: impl FnMut(workspace::item::ItemEvent)) {
         f(*event)
+    }
+}
+
+impl workspace::SerializableItem for WelcomePage {
+    fn serialized_item_kind() -> &'static str {
+        "WelcomePage"
+    }
+
+    fn cleanup(
+        workspace_id: workspace::WorkspaceId,
+        alive_items: Vec<workspace::ItemId>,
+        _window: &mut Window,
+        cx: &mut App,
+    ) -> Task<gpui::Result<()>> {
+        workspace::delete_unloaded_items(
+            alive_items,
+            workspace_id,
+            "welcome_pages",
+            &persistence::WELCOME_PAGES,
+            cx,
+        )
+    }
+
+    fn deserialize(
+        _project: Entity<project::Project>,
+        _workspace: gpui::WeakEntity<workspace::Workspace>,
+        workspace_id: workspace::WorkspaceId,
+        item_id: workspace::ItemId,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Task<gpui::Result<Entity<Self>>> {
+        if persistence::WELCOME_PAGES
+            .get_welcome_page(item_id, workspace_id)
+            .ok()
+            .is_some_and(|is_open| is_open)
+        {
+            window.spawn(cx, async move |cx| cx.update(WelcomePage::new))
+        } else {
+            Task::ready(Err(anyhow::anyhow!("No welcome page to deserialize")))
+        }
+    }
+
+    fn serialize(
+        &mut self,
+        workspace: &mut workspace::Workspace,
+        item_id: workspace::ItemId,
+        _closing: bool,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<Task<gpui::Result<()>>> {
+        let workspace_id = workspace.database_id()?;
+        Some(cx.background_spawn(async move {
+            persistence::WELCOME_PAGES
+                .save_welcome_page(item_id, workspace_id, true)
+                .await
+        }))
+    }
+
+    fn should_serialize(&self, event: &Self::Event) -> bool {
+        event == &ItemEvent::UpdateTab
+    }
+}
+
+mod persistence {
+    use db::{define_connection, query, sqlez_macros::sql};
+    use workspace::WorkspaceDb;
+
+    define_connection! {
+        pub static ref WELCOME_PAGES: WelcomePagesDb<WorkspaceDb> =
+            &[
+                sql!(
+                    CREATE TABLE welcome_pages (
+                        workspace_id INTEGER,
+                        item_id INTEGER UNIQUE,
+                        is_open INTEGER DEFAULT FALSE,
+
+                        PRIMARY KEY(workspace_id, item_id),
+                        FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id)
+                        ON DELETE CASCADE
+                    ) STRICT;
+                ),
+            ];
+    }
+
+    impl WelcomePagesDb {
+        query! {
+            pub async fn save_welcome_page(
+                item_id: workspace::ItemId,
+                workspace_id: workspace::WorkspaceId,
+                is_open: bool
+            ) -> Result<()> {
+                INSERT OR REPLACE INTO welcome_pages(item_id, workspace_id, is_open)
+                VALUES (?, ?, ?)
+            }
+        }
+
+        query! {
+            pub fn get_welcome_page(
+                item_id: workspace::ItemId,
+                workspace_id: workspace::WorkspaceId
+            ) -> Result<bool> {
+                SELECT is_open
+                FROM welcome_pages
+                WHERE item_id = ? AND workspace_id = ?
+            }
+        }
     }
 }

@@ -31,7 +31,7 @@ impl Vim {
     ) {
         let count = Vim::take_count(cx).unwrap_or(1);
         Vim::take_forced_motion(cx);
-        self.update_editor(window, cx, |_, editor, window, cx| {
+        self.update_editor(cx, |_, editor, cx| {
             if let Some(selections) = editor
                 .change_list
                 .next_change(count, direction)
@@ -49,7 +49,7 @@ impl Vim {
     }
 
     pub(crate) fn push_to_change_list(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some((new_positions, buffer)) = self.update_editor(window, cx, |vim, editor, _, cx| {
+        let Some((new_positions, buffer)) = self.update_editor(cx, |vim, editor, cx| {
             let (map, selections) = editor.selections.all_adjusted_display(cx);
             let buffer = editor.buffer().clone();
 

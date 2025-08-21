@@ -24,6 +24,7 @@ use util::{ResultExt, maybe};
 
 #[derive(Default)]
 pub(crate) struct PythonDebugAdapter {
+    base_venv_path: OnceCell<Result<Arc<Path>, String>>,
     debugpy_whl_base_path: OnceCell<Result<Arc<Path>, String>>,
 }
 
@@ -91,14 +92,12 @@ impl PythonDebugAdapter {
         })
     }
 
-    async fn fetch_wheel(delegate: &Arc<dyn DapDelegate>) -> Result<Arc<Path>, String> {
-        let system_python = Self::system_python_name(delegate)
-            .await
-            .ok_or_else(|| String::from("Could not find a Python installation"))?;
-        let command: &OsStr = system_python.as_ref();
+    async fn fetch_wheel(&self, delegate: &Arc<dyn DapDelegate>) -> Result<Arc<Path>, String> {
         let download_dir = debug_adapters_dir().join(Self::ADAPTER_NAME).join("wheels");
         std::fs::create_dir_all(&download_dir).map_err(|e| e.to_string())?;
-        let installation_succeeded = util::command::new_smol_command(command)
+        let system_python = self.base_venv_path(delegate).await?;
+
+        let installation_succeeded = util::command::new_smol_command(system_python.as_ref())
             .args([
                 "-m",
                 "pip",
@@ -114,7 +113,7 @@ impl PythonDebugAdapter {
             .status
             .success();
         if !installation_succeeded {
-            return Err("debugpy installation failed".into());
+            return Err("debugpy installation failed (could not fetch Debugpy's wheel)".into());
         }
 
         let wheel_path = std::fs::read_dir(&download_dir)
@@ -139,7 +138,7 @@ impl PythonDebugAdapter {
         Ok(Arc::from(wheel_path.path()))
     }
 
-    async fn maybe_fetch_new_wheel(delegate: &Arc<dyn DapDelegate>) {
+    async fn maybe_fetch_new_wheel(&self, delegate: &Arc<dyn DapDelegate>) {
         let latest_release = delegate
             .http_client()
             .get(
@@ -151,6 +150,9 @@ impl PythonDebugAdapter {
             .log_err();
         maybe!(async move {
             let response = latest_release.filter(|response| response.status().is_success())?;
+
+            let download_dir = debug_adapters_dir().join(Self::ADAPTER_NAME);
+            std::fs::create_dir_all(&download_dir).ok()?;
 
             let mut output = String::new();
             response
@@ -188,7 +190,7 @@ impl PythonDebugAdapter {
                     )
                     .await
                     .ok()?;
-                Self::fetch_wheel(delegate).await.ok()?;
+                self.fetch_wheel(delegate).await.ok()?;
             }
             Some(())
         })
@@ -201,7 +203,7 @@ impl PythonDebugAdapter {
     ) -> Result<Arc<Path>, String> {
         self.debugpy_whl_base_path
             .get_or_init(|| async move {
-                Self::maybe_fetch_new_wheel(delegate).await;
+                self.maybe_fetch_new_wheel(delegate).await;
                 Ok(Arc::from(
                     debug_adapters_dir()
                         .join(Self::ADAPTER_NAME)
@@ -214,6 +216,45 @@ impl PythonDebugAdapter {
             .clone()
     }
 
+    async fn base_venv_path(&self, delegate: &Arc<dyn DapDelegate>) -> Result<Arc<Path>, String> {
+        self.base_venv_path
+            .get_or_init(|| async {
+                let base_python = Self::system_python_name(delegate)
+                    .await
+                    .ok_or_else(|| String::from("Could not find a Python installation"))?;
+
+                let did_succeed = util::command::new_smol_command(base_python)
+                    .args(["-m", "venv", "zed_base_venv"])
+                    .current_dir(
+                        paths::debug_adapters_dir().join(Self::DEBUG_ADAPTER_NAME.as_ref()),
+                    )
+                    .spawn()
+                    .map_err(|e| format!("{e:#?}"))?
+                    .status()
+                    .await
+                    .map_err(|e| format!("{e:#?}"))?
+                    .success();
+                if !did_succeed {
+                    return Err("Failed to create base virtual environment".into());
+                }
+
+                const DIR: &str = if cfg!(target_os = "windows") {
+                    "Scripts"
+                } else {
+                    "bin"
+                };
+                Ok(Arc::from(
+                    paths::debug_adapters_dir()
+                        .join(Self::DEBUG_ADAPTER_NAME.as_ref())
+                        .join("zed_base_venv")
+                        .join(DIR)
+                        .join("python3")
+                        .as_ref(),
+                ))
+            })
+            .await
+            .clone()
+    }
     async fn system_python_name(delegate: &Arc<dyn DapDelegate>) -> Option<String> {
         const BINARY_NAMES: [&str; 3] = ["python3", "python", "py"];
         let mut name = None;
@@ -676,7 +717,7 @@ impl DebugAdapter for PythonDebugAdapter {
                 local_path.display()
             );
             return self
-                .get_installed_binary(delegate, &config, Some(local_path.clone()), user_args, None)
+                .get_installed_binary(delegate, config, Some(local_path.clone()), user_args, None)
                 .await;
         }
 
@@ -713,7 +754,7 @@ impl DebugAdapter for PythonDebugAdapter {
             return self
                 .get_installed_binary(
                     delegate,
-                    &config,
+                    config,
                     None,
                     user_args,
                     Some(toolchain.path.to_string()),
@@ -721,7 +762,7 @@ impl DebugAdapter for PythonDebugAdapter {
                 .await;
         }
 
-        self.get_installed_binary(delegate, &config, None, user_args, None)
+        self.get_installed_binary(delegate, config, None, user_args, None)
             .await
     }
 

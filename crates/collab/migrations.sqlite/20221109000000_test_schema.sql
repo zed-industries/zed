@@ -116,6 +116,7 @@ CREATE TABLE "project_repositories" (
     "scan_id" INTEGER NOT NULL,
     "is_deleted" BOOL NOT NULL,
     "current_merge_conflicts" VARCHAR,
+    "merge_message" VARCHAR,
     "branch_summary" VARCHAR,
     "head_commit_details" VARCHAR,
     PRIMARY KEY (project_id, id)
@@ -473,67 +474,6 @@ CREATE TABLE extension_versions (
 CREATE UNIQUE INDEX "index_extensions_external_id" ON "extensions" ("external_id");
 
 CREATE INDEX "index_extensions_total_download_count" ON "extensions" ("total_download_count");
-
-CREATE TABLE rate_buckets (
-    user_id INT NOT NULL,
-    rate_limit_name VARCHAR(255) NOT NULL,
-    token_count INT NOT NULL,
-    last_refill TIMESTAMP WITHOUT TIME ZONE NOT NULL,
-    PRIMARY KEY (user_id, rate_limit_name),
-    FOREIGN KEY (user_id) REFERENCES users (id)
-);
-
-CREATE INDEX idx_user_id_rate_limit ON rate_buckets (user_id, rate_limit_name);
-
-CREATE TABLE IF NOT EXISTS billing_preferences (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    user_id INTEGER NOT NULL REFERENCES users (id),
-    max_monthly_llm_usage_spending_in_cents INTEGER NOT NULL,
-    model_request_overages_enabled bool NOT NULL DEFAULT FALSE,
-    model_request_overages_spend_limit_in_cents integer NOT NULL DEFAULT 0
-);
-
-CREATE UNIQUE INDEX "uix_billing_preferences_on_user_id" ON billing_preferences (user_id);
-
-CREATE TABLE IF NOT EXISTS billing_customers (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    user_id INTEGER NOT NULL REFERENCES users (id),
-    has_overdue_invoices BOOLEAN NOT NULL DEFAULT FALSE,
-    stripe_customer_id TEXT NOT NULL,
-    trial_started_at TIMESTAMP
-);
-
-CREATE UNIQUE INDEX "uix_billing_customers_on_user_id" ON billing_customers (user_id);
-
-CREATE UNIQUE INDEX "uix_billing_customers_on_stripe_customer_id" ON billing_customers (stripe_customer_id);
-
-CREATE TABLE IF NOT EXISTS billing_subscriptions (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    billing_customer_id INTEGER NOT NULL REFERENCES billing_customers (id),
-    stripe_subscription_id TEXT NOT NULL,
-    stripe_subscription_status TEXT NOT NULL,
-    stripe_cancel_at TIMESTAMP,
-    stripe_cancellation_reason TEXT,
-    kind TEXT,
-    stripe_current_period_start BIGINT,
-    stripe_current_period_end BIGINT
-);
-
-CREATE INDEX "ix_billing_subscriptions_on_billing_customer_id" ON billing_subscriptions (billing_customer_id);
-
-CREATE UNIQUE INDEX "uix_billing_subscriptions_on_stripe_subscription_id" ON billing_subscriptions (stripe_subscription_id);
-
-CREATE TABLE IF NOT EXISTS processed_stripe_events (
-    stripe_event_id TEXT PRIMARY KEY,
-    stripe_event_type TEXT NOT NULL,
-    stripe_event_created_timestamp INTEGER NOT NULL,
-    processed_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE INDEX "ix_processed_stripe_events_on_stripe_event_created_timestamp" ON processed_stripe_events (stripe_event_created_timestamp);
 
 CREATE TABLE IF NOT EXISTS "breakpoints" (
     "id" INTEGER PRIMARY KEY AUTOINCREMENT,

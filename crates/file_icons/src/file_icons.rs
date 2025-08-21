@@ -33,12 +33,22 @@ impl FileIcons {
         // TODO: Associate a type with the languages and have the file's language
         //       override these associations
 
-        // check if file name is in suffixes
-        // e.g. catch file named `eslint.config.js` instead of `.eslint.config.js`
-        if let Some(typ) = path.file_name().and_then(|typ| typ.to_str()) {
+        if let Some(mut typ) = path.file_name().and_then(|typ| typ.to_str()) {
+            // check if file name is in suffixes
+            // e.g. catch file named `eslint.config.js` instead of `.eslint.config.js`
             let maybe_path = get_icon_from_suffix(typ);
             if maybe_path.is_some() {
                 return maybe_path;
+            }
+
+            // check if suffix based on first dot is in suffixes
+            // e.g. consider `module.js` as suffix to angular's module file named `auth.module.js`
+            while let Some((_, suffix)) = typ.split_once('.') {
+                let maybe_path = get_icon_from_suffix(suffix);
+                if maybe_path.is_some() {
+                    return maybe_path;
+                }
+                typ = suffix;
             }
         }
 
@@ -62,7 +72,7 @@ impl FileIcons {
                 return maybe_path;
             }
         }
-        return this.get_icon_for_type("default", cx);
+        this.get_icon_for_type("default", cx)
     }
 
     fn default_icon_theme(cx: &App) -> Option<Arc<IconTheme>> {

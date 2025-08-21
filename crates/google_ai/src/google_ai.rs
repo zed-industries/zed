@@ -106,10 +106,9 @@ pub fn validate_generate_content_request(request: &GenerateContentRequest) -> Re
         .contents
         .iter()
         .find(|content| content.role == Role::User)
+        && user_content.parts.is_empty()
     {
-        if user_content.parts.is_empty() {
-            bail!("User content must contain at least one part");
-        }
+        bail!("User content must contain at least one part");
     }
 
     Ok(())
@@ -267,7 +266,7 @@ pub struct CitationMetadata {
 pub struct PromptFeedback {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub block_reason: Option<String>,
-    pub safety_ratings: Vec<SafetyRating>,
+    pub safety_ratings: Option<Vec<SafetyRating>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub block_reason_message: Option<String>,
 }
@@ -478,10 +477,10 @@ impl<'de> Deserialize<'de> for ModelName {
                 model_id: id.to_string(),
             })
         } else {
-            return Err(serde::de::Error::custom(format!(
+            Err(serde::de::Error::custom(format!(
                 "Expected model name to begin with {}, got: {}",
                 MODEL_NAME_PREFIX, string
-            )));
+            )))
         }
     }
 }

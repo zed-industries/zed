@@ -46,7 +46,7 @@ impl ZedPredictModal {
                         user_store.clone(),
                         client.clone(),
                         copilot::Copilot::global(cx)
-                            .map_or(false, |copilot| copilot.read(cx).status().is_configured()),
+                            .is_some_and(|copilot| copilot.read(cx).status().is_configured()),
                         Arc::new({
                             let this = weak_entity.clone();
                             move |_window, cx| {
@@ -141,7 +141,7 @@ impl Render for ZedPredictModal {
                     )),
             )
             .child(h_flex().absolute().top_2().right_2().child(
-                IconButton::new("cancel", IconName::X).on_click(cx.listener(
+                IconButton::new("cancel", IconName::Close).on_click(cx.listener(
                     |_, _: &ClickEvent, _window, cx| {
                         onboarding_event!("Cancelled", trigger = "X click");
                         cx.emit(DismissEvent);

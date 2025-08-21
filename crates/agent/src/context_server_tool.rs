@@ -1,7 +1,8 @@
 use std::sync::Arc;
 
+use action_log::ActionLog;
 use anyhow::{Result, anyhow, bail};
-use assistant_tool::{ActionLog, Tool, ToolResult, ToolSource};
+use assistant_tool::{Tool, ToolResult, ToolSource};
 use context_server::{ContextServerId, types};
 use gpui::{AnyWindowHandle, App, Entity, Task};
 use icons::IconName;
@@ -85,15 +86,13 @@ impl Tool for ContextServerTool {
     ) -> ToolResult {
         if let Some(server) = self.store.read(cx).get_running_server(&self.server_id) {
             let tool_name = self.tool.name.clone();
-            let server_clone = server.clone();
-            let input_clone = input.clone();
 
             cx.spawn(async move |_cx| {
-                let Some(protocol) = server_clone.client() else {
+                let Some(protocol) = server.client() else {
                     bail!("Context server not initialized");
                 };
 
-                let arguments = if let serde_json::Value::Object(map) = input_clone {
+                let arguments = if let serde_json::Value::Object(map) = input {
                     Some(map.into_iter().collect())
                 } else {
                     None

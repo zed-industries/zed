@@ -3,8 +3,9 @@ use std::sync::Arc;
 use std::{borrow::Cow, cell::RefCell};
 
 use crate::schema::json_schema_for;
+use action_log::ActionLog;
 use anyhow::{Context as _, Result, anyhow, bail};
-use assistant_tool::{ActionLog, Tool, ToolResult};
+use assistant_tool::{Tool, ToolResult};
 use futures::AsyncReadExt as _;
 use gpui::{AnyWindowHandle, App, AppContext as _, Entity, Task};
 use html_to_markdown::{TagHandler, convert_html_to_markdown, markdown};

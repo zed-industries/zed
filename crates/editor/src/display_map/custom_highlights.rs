@@ -77,7 +77,7 @@ fn create_highlight_endpoints(
             let ranges = &text_highlights.1;
 
             let start_ix = match ranges.binary_search_by(|probe| {
-                let cmp = probe.end.cmp(&start, &buffer);
+                let cmp = probe.end.cmp(&start, buffer);
                 if cmp.is_gt() {
                     cmp::Ordering::Greater
                 } else {
@@ -88,18 +88,18 @@ fn create_highlight_endpoints(
             };
 
             for range in &ranges[start_ix..] {
-                if range.start.cmp(&end, &buffer).is_ge() {
+                if range.start.cmp(&end, buffer).is_ge() {
                     break;
                 }
 
                 highlight_endpoints.push(HighlightEndpoint {
-                    offset: range.start.to_offset(&buffer),
+                    offset: range.start.to_offset(buffer),
                     is_start: true,
                     tag,
                     style,
                 });
                 highlight_endpoints.push(HighlightEndpoint {
-                    offset: range.end.to_offset(&buffer),
+                    offset: range.end.to_offset(buffer),
                     is_start: false,
                     tag,
                     style,

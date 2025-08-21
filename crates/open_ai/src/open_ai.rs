@@ -9,7 +9,7 @@ use strum::EnumIter;
 pub const OPEN_AI_API_URL: &str = "https://api.openai.com/v1";
 
 fn is_none_or_empty<T: AsRef<[U]>, U>(opt: &Option<T>) -> bool {
-    opt.as_ref().map_or(true, |v| v.as_ref().is_empty())
+    opt.as_ref().is_none_or(|v| v.as_ref().is_empty())
 }
 
 #[derive(Clone, Copy, Serialize, Deserialize, Debug, Eq, PartialEq)]
@@ -89,11 +89,13 @@ pub enum Model {
         max_tokens: u64,
         max_output_tokens: Option<u64>,
         max_completion_tokens: Option<u64>,
+        reasoning_effort: Option<ReasoningEffort>,
     },
 }
 
 impl Model {
     pub fn default_fast() -> Self {
+        // TODO: Replace with FiveMini since all other models are deprecated
         Self::FourPointOneMini
     }
 
@@ -206,6 +208,15 @@ impl Model {
         }
     }
 
+    pub fn reasoning_effort(&self) -> Option<ReasoningEffort> {
+        match self {
+            Self::Custom {
+                reasoning_effort, ..
+            } => reasoning_effort.to_owned(),
+            _ => None,
+        }
+    }
+
     /// Returns whether the given model supports the `parallel_tool_calls` parameter.
     ///
     /// If the model does not support the parameter, do not pass it up, or the API will return an error.
@@ -224,6 +235,13 @@ impl Model {
             | Self::FiveNano => true,
             Self::O1 | Self::O3 | Self::O3Mini | Self::O4Mini | Model::Custom { .. } => false,
         }
+    }
+
+    /// Returns whether the given model supports the `prompt_cache_key` parameter.
+    ///
+    /// If the model does not support the parameter, do not pass it up.
+    pub fn supports_prompt_cache_key(&self) -> bool {
+        true
     }
 }
 
@@ -244,6 +262,10 @@ pub struct Request {
     pub parallel_tool_calls: Option<bool>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tools: Vec<ToolDefinition>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompt_cache_key: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_effort: Option<ReasoningEffort>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -253,6 +275,16 @@ pub enum ToolChoice {
     Required,
     None,
     Other(ToolDefinition),
+}
+
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
+#[serde(rename_all = "lowercase")]
+pub enum ReasoningEffort {
+    Minimal,
+    Low,
+    Medium,
+    High,
 }
 
 #[derive(Clone, Deserialize, Serialize, Debug)]
@@ -401,10 +433,15 @@ pub struct ChoiceDelta {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
+pub struct OpenAiError {
+    message: String,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
 #[serde(untagged)]
 pub enum ResponseStreamResult {
     Ok(ResponseStreamEvent),
-    Err { error: String },
+    Err { error: OpenAiError },
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -443,9 +480,17 @@ pub async fn stream_completion(
                             match serde_json::from_str(line) {
                                 Ok(ResponseStreamResult::Ok(response)) => Some(Ok(response)),
                                 Ok(ResponseStreamResult::Err { error }) => {
+                                    Some(Err(anyhow!(error.message)))
+                                }
+                                Err(error) => {
+                                    log::error!(
+                                        "Failed to parse OpenAI response into ResponseStreamResult: `{}`\n\
+                                        Response: `{}`",
+                                        error,
+                                        line,
+                                    );
                                     Some(Err(anyhow!(error)))
                                 }
-                                Err(error) => Some(Err(anyhow!(error))),
                             }
                         }
                     }
@@ -460,11 +505,6 @@ pub async fn stream_completion(
         #[derive(Deserialize)]
         struct OpenAiResponse {
             error: OpenAiError,
-        }
-
-        #[derive(Deserialize)]
-        struct OpenAiError {
-            message: String,
         }
 
         match serde_json::from_str::<OpenAiResponse>(&body) {

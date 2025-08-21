@@ -9,7 +9,6 @@ use std::{fmt::Write, ops::Range};
 pub struct InputExcerpt {
     pub editable_range: Range<Point>,
     pub prompt: String,
-    pub speculated_output: String,
 }
 
 pub fn excerpt_for_cursor_position(
@@ -46,7 +45,6 @@ pub fn excerpt_for_cursor_position(
     let context_range = expand_range(snapshot, editable_range.clone(), context_token_limit);
 
     let mut prompt = String::new();
-    let mut speculated_output = String::new();
 
     writeln!(&mut prompt, "```{path}").unwrap();
     if context_range.start == Point::zero() {
@@ -58,12 +56,6 @@ pub fn excerpt_for_cursor_position(
     }
 
     push_editable_range(position, snapshot, editable_range.clone(), &mut prompt);
-    push_editable_range(
-        position,
-        snapshot,
-        editable_range.clone(),
-        &mut speculated_output,
-    );
 
     for chunk in snapshot.chunks(editable_range.end..context_range.end, false) {
         prompt.push_str(chunk.text);
@@ -73,7 +65,6 @@ pub fn excerpt_for_cursor_position(
     InputExcerpt {
         editable_range,
         prompt,
-        speculated_output,
     }
 }
 
@@ -99,7 +90,7 @@ fn expand_range(
     range: Range<Point>,
     mut remaining_tokens: usize,
 ) -> Range<Point> {
-    let mut expanded_range = range.clone();
+    let mut expanded_range = range;
     expanded_range.start.column = 0;
     expanded_range.end.column = snapshot.line_len(expanded_range.end.row);
     loop {

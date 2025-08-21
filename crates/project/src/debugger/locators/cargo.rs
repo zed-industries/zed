@@ -146,7 +146,7 @@ impl DapLocator for CargoLocator {
         let is_test = build_config
             .args
             .first()
-            .map_or(false, |arg| arg == "test" || arg == "t");
+            .is_some_and(|arg| arg == "test" || arg == "t");
 
         let executables = output
             .lines()
@@ -187,12 +187,12 @@ impl DapLocator for CargoLocator {
                 .cloned();
         }
         let executable = {
-            if let Some(ref name) = test_name.as_ref().and_then(|name| {
+            if let Some(name) = test_name.as_ref().and_then(|name| {
                 name.strip_prefix('$')
                     .map(|name| build_config.env.get(name))
                     .unwrap_or(Some(name))
             }) {
-                find_best_executable(&executables, &name).await
+                find_best_executable(&executables, name).await
             } else {
                 None
             }

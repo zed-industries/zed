@@ -1,8 +1,8 @@
 <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
-<path d="M6.00005 4.76556L4.76569 2.74996M6.00005 4.76556L3.75 4.76563M6.00005 4.76556L7.25006 4.7656" stroke="black" stroke-width="1.5" stroke-linecap="round"/>
-<path d="M10.0232 11.2311L11.2675 13.2406M10.0232 11.2311L12.2732 11.2199M10.0232 11.2311L8.7732 11.2373" stroke="black" stroke-opacity="0.5" stroke-width="1.5" stroke-linecap="round"/>
-<path d="M9.99025 4.91551L10.9985 2.77781M9.99025 4.91551L8.75599 3.03419M9.99025 4.91551L10.6759 5.9607" stroke="black" stroke-opacity="0.5" stroke-width="1.5" stroke-linecap="round"/>
-<path d="M6.0323 11.1009L5.03465 13.2436M6.0323 11.1009L7.27585 12.9761M6.0323 11.1009L5.34151 10.0592" stroke="black" stroke-width="1.5" stroke-linecap="round"/>
-<path d="M11.883 8.19023L14.2466 8.19287M11.883 8.19023L13.0602 6.27268M11.883 8.19023L11.229 9.25547" stroke="black" stroke-width="1.5" stroke-linecap="round"/>
-<path d="M4.12354 7.8356L1.76002 7.84465M4.12354 7.8356L2.95585 9.75894M4.12354 7.8356L4.7723 6.76713" stroke="black" stroke-opacity="0.5" stroke-width="1.5" stroke-linecap="round"/>
+<path d="M6.00005 4.76556L4.76569 2.74996M6.00005 4.76556L3.75 4.76563M6.00005 4.76556L7.25006 4.7656" stroke="black" stroke-width="1.2" stroke-linecap="round"/>
+<path d="M10.0232 11.2311L11.2675 13.2406M10.0232 11.2311L12.2732 11.2199M10.0232 11.2311L8.7732 11.2373" stroke="black" stroke-opacity="0.5" stroke-width="1.2" stroke-linecap="round"/>
+<path d="M9.99025 4.91551L10.9985 2.77781M9.99025 4.91551L8.75599 3.03419M9.99025 4.91551L10.6759 5.9607" stroke="black" stroke-opacity="0.5" stroke-width="1.2" stroke-linecap="round"/>
+<path d="M6.0323 11.1009L5.03465 13.2436M6.0323 11.1009L7.27585 12.9761M6.0323 11.1009L5.34151 10.0592" stroke="black" stroke-width="1.2" stroke-linecap="round"/>
+<path d="M11.883 8.19023L14.2466 8.19287M11.883 8.19023L13.0602 6.27268M11.883 8.19023L11.229 9.25547" stroke="black" stroke-width="1.2" stroke-linecap="round"/>
+<path d="M4.12354 7.8356L1.76002 7.84465M4.12354 7.8356L2.95585 9.75894M4.12354 7.8356L4.7723 6.76713" stroke="black" stroke-opacity="0.5" stroke-width="1.2" stroke-linecap="round"/>
 </svg>

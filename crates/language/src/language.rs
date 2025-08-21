@@ -44,6 +44,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use serde_json::Value;
 use settings::WorktreeId;
 use smol::future::FutureExt as _;
+use std::num::NonZeroU32;
 use std::{
     any::Any,
     ffi::OsStr,
@@ -59,7 +60,6 @@ use std::{
         atomic::{AtomicU64, AtomicUsize, Ordering::SeqCst},
     },
 };
-use std::{num::NonZeroU32, sync::OnceLock};
 use syntax_map::{QueryCursorHandle, SyntaxSnapshot};
 use task::RunnableTag;
 pub use task_context::{ContextLocation, ContextProvider, RunnableRange};
@@ -67,7 +67,9 @@ pub use text_diff::{
     DiffOptions, apply_diff_patch, line_diff, text_diff, text_diff_with_options, unified_diff,
 };
 use theme::SyntaxTheme;
-pub use toolchain::{LanguageToolchainStore, Toolchain, ToolchainList, ToolchainLister};
+pub use toolchain::{
+    LanguageToolchainStore, LocalLanguageToolchainStore, Toolchain, ToolchainList, ToolchainLister,
+};
 use tree_sitter::{self, Query, QueryCursor, WasmStore, wasmtime};
 use util::serde::default_true;
 
@@ -119,8 +121,8 @@ where
     func(cursor.deref_mut())
 }
 
-static NEXT_LANGUAGE_ID: LazyLock<AtomicUsize> = LazyLock::new(Default::default);
-static NEXT_GRAMMAR_ID: LazyLock<AtomicUsize> = LazyLock::new(Default::default);
+static NEXT_LANGUAGE_ID: AtomicUsize = AtomicUsize::new(0);
+static NEXT_GRAMMAR_ID: AtomicUsize = AtomicUsize::new(0);
 static WASM_ENGINE: LazyLock<wasmtime::Engine> = LazyLock::new(|| {
     wasmtime::Engine::new(&wasmtime::Config::new()).expect("Failed to create Wasmtime engine")
 });
@@ -165,7 +167,6 @@ pub struct CachedLspAdapter {
     pub adapter: Arc<dyn LspAdapter>,
     pub reinstall_attempt_count: AtomicU64,
     cached_binary: futures::lock::Mutex<Option<LanguageServerBinary>>,
-    manifest_name: OnceLock<Option<ManifestName>>,
 }
 
 impl Debug for CachedLspAdapter {
@@ -201,18 +202,17 @@ impl CachedLspAdapter {
             adapter,
             cached_binary: Default::default(),
             reinstall_attempt_count: AtomicU64::new(0),
-            manifest_name: Default::default(),
         })
     }
 
     pub fn name(&self) -> LanguageServerName {
-        self.adapter.name().clone()
+        self.adapter.name()
     }
 
     pub async fn get_language_server_command(
         self: Arc<Self>,
         delegate: Arc<dyn LspAdapterDelegate>,
-        toolchains: Arc<dyn LanguageToolchainStore>,
+        toolchains: Option<Toolchain>,
         binary_options: LanguageServerBinaryOptions,
         cx: &mut AsyncApp,
     ) -> Result<LanguageServerBinary> {
@@ -281,21 +281,6 @@ impl CachedLspAdapter {
             .cloned()
             .unwrap_or_else(|| language_name.lsp_id())
     }
-
-    pub fn manifest_name(&self) -> Option<ManifestName> {
-        self.manifest_name
-            .get_or_init(|| self.adapter.manifest_name())
-            .clone()
-    }
-}
-
-/// Determines what gets sent out as a workspace folders content
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub enum WorkspaceFoldersContent {
-    /// Send out a single entry with the root of the workspace.
-    WorktreeRoot,
-    /// Send out a list of subproject roots.
-    SubprojectRoots,
 }
 
 /// [`LspAdapterDelegate`] allows [`LspAdapter]` implementations to interface with the application
@@ -327,7 +312,7 @@ pub trait LspAdapter: 'static + Send + Sync {
     fn get_language_server_command<'a>(
         self: Arc<Self>,
         delegate: Arc<dyn LspAdapterDelegate>,
-        toolchains: Arc<dyn LanguageToolchainStore>,
+        toolchains: Option<Toolchain>,
         binary_options: LanguageServerBinaryOptions,
         mut cached_binary: futures::lock::MutexGuard<'a, Option<LanguageServerBinary>>,
         cx: &'a mut AsyncApp,
@@ -344,9 +329,9 @@ pub trait LspAdapter: 'static + Send + Sync {
             // We only want to cache when we fall back to the global one,
             // because we don't want to download and overwrite our global one
             // for each worktree we might have open.
-            if binary_options.allow_path_lookup {
-                if let Some(binary) = self.check_if_user_installed(delegate.as_ref(), toolchains, cx).await {
-                    log::info!(
+            if binary_options.allow_path_lookup
+                && let Some(binary) = self.check_if_user_installed(delegate.as_ref(), toolchains, cx).await {
+                    log::debug!(
                         "found user-installed language server for {}. path: {:?}, arguments: {:?}",
                         self.name().0,
                         binary.path,
@@ -354,7 +339,6 @@ pub trait LspAdapter: 'static + Send + Sync {
                     );
                     return Ok(binary);
                 }
-            }
 
             anyhow::ensure!(binary_options.allow_binary_download, "downloading language servers disabled");
 
@@ -402,7 +386,7 @@ pub trait LspAdapter: 'static + Send + Sync {
     async fn check_if_user_installed(
         &self,
         _: &dyn LspAdapterDelegate,
-        _: Arc<dyn LanguageToolchainStore>,
+        _: Option<Toolchain>,
         _: &AsyncApp,
     ) -> Option<LanguageServerBinary> {
         None
@@ -535,7 +519,7 @@ pub trait LspAdapter: 'static + Send + Sync {
         self: Arc<Self>,
         _: &dyn Fs,
         _: &Arc<dyn LspAdapterDelegate>,
-        _: Arc<dyn LanguageToolchainStore>,
+        _: Option<Toolchain>,
         _cx: &mut AsyncApp,
     ) -> Result<Value> {
         Ok(serde_json::json!({}))
@@ -555,7 +539,6 @@ pub trait LspAdapter: 'static + Send + Sync {
         _target_language_server_id: LanguageServerName,
         _: &dyn Fs,
         _: &Arc<dyn LspAdapterDelegate>,
-        _: Arc<dyn LanguageToolchainStore>,
         _cx: &mut AsyncApp,
     ) -> Result<Option<Value>> {
         Ok(None)
@@ -585,17 +568,6 @@ pub trait LspAdapter: 'static + Send + Sync {
         _: &App,
     ) -> Result<InitializeParams> {
         Ok(original)
-    }
-
-    /// Determines whether a language server supports workspace folders.
-    ///
-    /// And does not trip over itself in the process.
-    fn workspace_folders_content(&self) -> WorkspaceFoldersContent {
-        WorkspaceFoldersContent::SubprojectRoots
-    }
-
-    fn manifest_name(&self) -> Option<ManifestName> {
-        None
     }
 
     /// Method only implemented by the default JSON language server adapter.
@@ -629,7 +601,7 @@ async fn try_fetch_server_binary<L: LspAdapter + 'static + Send + Sync + ?Sized>
     }
 
     let name = adapter.name();
-    log::info!("fetching latest version of language server {:?}", name.0);
+    log::debug!("fetching latest version of language server {:?}", name.0);
     delegate.update_status(name.clone(), BinaryStatus::CheckingForUpdate);
 
     let latest_version = adapter
@@ -640,7 +612,7 @@ async fn try_fetch_server_binary<L: LspAdapter + 'static + Send + Sync + ?Sized>
         .check_if_version_installed(latest_version.as_ref(), &container_dir, delegate.as_ref())
         .await
     {
-        log::info!("language server {:?} is already installed", name.0);
+        log::debug!("language server {:?} is already installed", name.0);
         delegate.update_status(name.clone(), BinaryStatus::None);
         Ok(binary)
     } else {
@@ -991,11 +963,11 @@ where
 
 fn deserialize_regex_vec<'de, D: Deserializer<'de>>(d: D) -> Result<Vec<Regex>, D::Error> {
     let sources = Vec::<String>::deserialize(d)?;
-    let mut regexes = Vec::new();
-    for source in sources {
-        regexes.push(regex::Regex::new(&source).map_err(de::Error::custom)?);
-    }
-    Ok(regexes)
+    sources
+        .into_iter()
+        .map(|source| regex::Regex::new(&source))
+        .collect::<Result<_, _>>()
+        .map_err(de::Error::custom)
 }
 
 fn regex_vec_json_schema(_: &mut SchemaGenerator) -> schemars::Schema {
@@ -1061,12 +1033,10 @@ impl<'de> Deserialize<'de> for BracketPairConfig {
         D: Deserializer<'de>,
     {
         let result = Vec::<BracketPairContent>::deserialize(deserializer)?;
-        let mut brackets = Vec::with_capacity(result.len());
-        let mut disabled_scopes_by_bracket_ix = Vec::with_capacity(result.len());
-        for entry in result {
-            brackets.push(entry.bracket_pair);
-            disabled_scopes_by_bracket_ix.push(entry.not_in);
-        }
+        let (brackets, disabled_scopes_by_bracket_ix) = result
+            .into_iter()
+            .map(|entry| (entry.bracket_pair, entry.not_in))
+            .unzip();
 
         Ok(BracketPairConfig {
             pairs: brackets,
@@ -1108,6 +1078,7 @@ pub struct Language {
     pub(crate) grammar: Option<Arc<Grammar>>,
     pub(crate) context_provider: Option<Arc<dyn ContextProvider>>,
     pub(crate) toolchain: Option<Arc<dyn ToolchainLister>>,
+    pub(crate) manifest_name: Option<ManifestName>,
 }
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
@@ -1318,6 +1289,7 @@ impl Language {
             }),
             context_provider: None,
             toolchain: None,
+            manifest_name: None,
         }
     }
 
@@ -1331,6 +1303,10 @@ impl Language {
         self
     }
 
+    pub fn with_manifest(mut self, name: Option<ManifestName>) -> Self {
+        self.manifest_name = name;
+        self
+    }
     pub fn with_queries(mut self, queries: LanguageQueries) -> Result<Self> {
         if let Some(query) = queries.highlights {
             self = self
@@ -1400,16 +1376,14 @@ impl Language {
         let grammar = self.grammar_mut().context("cannot mutate grammar")?;
 
         let query = Query::new(&grammar.ts_language, source)?;
-        let mut extra_captures = Vec::with_capacity(query.capture_names().len());
-
-        for name in query.capture_names().iter() {
-            let kind = if *name == "run" {
-                RunnableCapture::Run
-            } else {
-                RunnableCapture::Named(name.to_string().into())
-            };
-            extra_captures.push(kind);
-        }
+        let extra_captures: Vec<_> = query
+            .capture_names()
+            .iter()
+            .map(|&name| match name {
+                "run" => RunnableCapture::Run,
+                name => RunnableCapture::Named(name.to_string().into()),
+            })
+            .collect();
 
         grammar.runnable_config = Some(RunnableConfig {
             extra_captures,
@@ -1539,9 +1513,8 @@ impl Language {
             .map(|ix| {
                 let mut config = BracketsPatternConfig::default();
                 for setting in query.property_settings(ix) {
-                    match setting.key.as_ref() {
-                        "newline.only" => config.newline_only = true,
-                        _ => {}
+                    if setting.key.as_ref() == "newline.only" {
+                        config.newline_only = true
                     }
                 }
                 config
@@ -1764,6 +1737,9 @@ impl Language {
     pub fn name(&self) -> LanguageName {
         self.config.name.clone()
     }
+    pub fn manifest(&self) -> Option<&ManifestName> {
+        self.manifest_name.as_ref()
+    }
 
     pub fn code_fence_block_name(&self) -> Arc<str> {
         self.config
@@ -1798,10 +1774,10 @@ impl Language {
                 BufferChunks::new(text, range, Some((captures, highlight_maps)), false, None)
             {
                 let end_offset = offset + chunk.text.len();
-                if let Some(highlight_id) = chunk.syntax_highlight_id {
-                    if !highlight_id.is_default() {
-                        result.push((offset..end_offset, highlight_id));
-                    }
+                if let Some(highlight_id) = chunk.syntax_highlight_id
+                    && !highlight_id.is_default()
+                {
+                    result.push((offset..end_offset, highlight_id));
                 }
                 offset = end_offset;
             }
@@ -1818,11 +1794,11 @@ impl Language {
     }
 
     pub fn set_theme(&self, theme: &SyntaxTheme) {
-        if let Some(grammar) = self.grammar.as_ref() {
-            if let Some(highlights_query) = &grammar.highlights_query {
-                *grammar.highlight_map.lock() =
-                    HighlightMap::new(highlights_query.capture_names(), theme);
-            }
+        if let Some(grammar) = self.grammar.as_ref()
+            && let Some(highlights_query) = &grammar.highlights_query
+        {
+            *grammar.highlight_map.lock() =
+                HighlightMap::new(highlights_query.capture_names(), theme);
         }
     }
 
@@ -1852,7 +1828,7 @@ impl Language {
 
 impl LanguageScope {
     pub fn path_suffixes(&self) -> &[String] {
-        &self.language.path_suffixes()
+        self.language.path_suffixes()
     }
 
     pub fn language_name(&self) -> LanguageName {
@@ -1942,11 +1918,11 @@ impl LanguageScope {
             .enumerate()
             .map(move |(ix, bracket)| {
                 let mut is_enabled = true;
-                if let Some(next_disabled_ix) = disabled_ids.first() {
-                    if ix == *next_disabled_ix as usize {
-                        disabled_ids = &disabled_ids[1..];
-                        is_enabled = false;
-                    }
+                if let Some(next_disabled_ix) = disabled_ids.first()
+                    && ix == *next_disabled_ix as usize
+                {
+                    disabled_ids = &disabled_ids[1..];
+                    is_enabled = false;
                 }
                 (bracket, is_enabled)
             })
@@ -2209,7 +2185,7 @@ impl LspAdapter for FakeLspAdapter {
     async fn check_if_user_installed(
         &self,
         _: &dyn LspAdapterDelegate,
-        _: Arc<dyn LanguageToolchainStore>,
+        _: Option<Toolchain>,
         _: &AsyncApp,
     ) -> Option<LanguageServerBinary> {
         Some(self.language_server_binary.clone())
@@ -2218,7 +2194,7 @@ impl LspAdapter for FakeLspAdapter {
     fn get_language_server_command<'a>(
         self: Arc<Self>,
         _: Arc<dyn LspAdapterDelegate>,
-        _: Arc<dyn LanguageToolchainStore>,
+        _: Option<Toolchain>,
         _: LanguageServerBinaryOptions,
         _: futures::lock::MutexGuard<'a, Option<LanguageServerBinary>>,
         _: &'a mut AsyncApp,

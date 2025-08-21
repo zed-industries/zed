@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use ai_onboarding::AiUpsellCard;
-use client::{Client, UserStore};
+use client::{Client, UserStore, zed_urls};
 use fs::Fs;
 use gpui::{
     Action, AnyView, App, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, WeakEntity,
@@ -19,7 +19,7 @@ use util::ResultExt;
 use workspace::{ModalView, Workspace};
 use zed_actions::agent::OpenSettings;
 
-const FEATURED_PROVIDERS: [&'static str; 4] = ["anthropic", "google", "openai", "ollama"];
+const FEATURED_PROVIDERS: [&str; 4] = ["anthropic", "google", "openai", "ollama"];
 
 fn render_llm_provider_section(
     tab_index: &mut isize,
@@ -42,10 +42,16 @@ fn render_llm_provider_section(
 }
 
 fn render_privacy_card(tab_index: &mut isize, disabled: bool, cx: &mut App) -> impl IntoElement {
-    let privacy_badge = || {
-        Badge::new("Privacy")
-            .icon(IconName::ShieldCheck)
-            .tooltip(move |_, cx| cx.new(|_| AiPrivacyTooltip::new()).into())
+    let (title, description) = if disabled {
+        (
+            "AI is disabled across Zed",
+            "Re-enable it any time in Settings.",
+        )
+    } else {
+        (
+            "Privacy is the default for Zed",
+            "Any use or storage of your data is with your explicit, single-use, opt-in consent.",
+        )
     };
 
     v_flex()
@@ -60,62 +66,41 @@ fn render_privacy_card(tab_index: &mut isize, disabled: bool, cx: &mut App) -> i
         .bg(cx.theme().colors().surface_background.opacity(0.3))
         .rounded_lg()
         .overflow_hidden()
-        .map(|this| {
-            if disabled {
-                this.child(
+        .child(
+            h_flex()
+                .gap_2()
+                .justify_between()
+                .child(Label::new(title))
+                .child(
                     h_flex()
-                        .gap_2()
-                        .justify_between()
+                        .gap_1()
                         .child(
-                            h_flex()
-                                .gap_1()
-                                .child(Label::new("AI is disabled across Zed"))
-                                .child(
-                                    Icon::new(IconName::Check)
-                                        .color(Color::Success)
-                                        .size(IconSize::XSmall),
-                                ),
+                            Badge::new("Privacy")
+                                .icon(IconName::ShieldCheck)
+                                .tooltip(move |_, cx| cx.new(|_| AiPrivacyTooltip::new()).into()),
                         )
-                        .child(privacy_badge()),
-                )
-                .child(
-                    Label::new("Re-enable it any time in Settings.")
-                        .size(LabelSize::Small)
-                        .color(Color::Muted),
-                )
-            } else {
-                this.child(
-                    h_flex()
-                        .gap_2()
-                        .justify_between()
-                        .child(Label::new("Privacy is the default for Zed"))
                         .child(
-                            h_flex().gap_1().child(privacy_badge()).child(
-                                Button::new("learn_more", "Learn More")
-                                    .style(ButtonStyle::Outlined)
-                                    .label_size(LabelSize::Small)
-                                    .icon(IconName::ArrowUpRight)
-                                    .icon_size(IconSize::XSmall)
-                                    .icon_color(Color::Muted)
-                                    .on_click(|_, _, cx| {
-                                        cx.open_url("https://zed.dev/docs/ai/privacy-and-security");
-                                    })
-                                    .tab_index({
-                                        *tab_index += 1;
-                                        *tab_index - 1
-                                    }),
-                            ),
+                            Button::new("learn_more", "Learn More")
+                                .style(ButtonStyle::Outlined)
+                                .label_size(LabelSize::Small)
+                                .icon(IconName::ArrowUpRight)
+                                .icon_size(IconSize::XSmall)
+                                .icon_color(Color::Muted)
+                                .on_click(|_, _, cx| {
+                                    cx.open_url(&zed_urls::ai_privacy_and_security(cx))
+                                })
+                                .tab_index({
+                                    *tab_index += 1;
+                                    *tab_index - 1
+                                }),
                         ),
-                )
-                .child(
-                    Label::new(
-                        "Any use or storage of your data is with your explicit, single-use, opt-in consent.",
-                    )
-                    .size(LabelSize::Small)
-                    .color(Color::Muted),
-                )
-            }
-        })
+                ),
+        )
+        .child(
+            Label::new(description)
+                .size(LabelSize::Small)
+                .color(Color::Muted),
+        )
 }
 
 fn render_llm_provider_card(
@@ -203,6 +188,11 @@ fn render_llm_provider_card(
                                 workspace
                                     .update(cx, |workspace, cx| {
                                         workspace.toggle_modal(window, cx, |window, cx| {
+                                            telemetry::event!(
+                                                "Welcome AI Modal Opened",
+                                                provider = provider.name().0,
+                                            );
+
                                             let modal = AiConfigurationModal::new(
                                                 provider.clone(),
                                                 window,
@@ -260,16 +250,25 @@ pub(crate) fn render_ai_setup_page(
                     ToggleState::Selected
                 },
                 |&toggle_state, _, cx| {
+                    let enabled = match toggle_state {
+                        ToggleState::Indeterminate => {
+                            return;
+                        }
+                        ToggleState::Unselected => true,
+                        ToggleState::Selected => false,
+                    };
+
+                    telemetry::event!(
+                        "Welcome AI Enabled",
+                        toggle = if enabled { "on" } else { "off" },
+                    );
+
                     let fs = <dyn Fs>::global(cx);
                     update_settings_file::<DisableAiSettings>(
                         fs,
                         cx,
                         move |ai_settings: &mut Option<bool>, _| {
-                            *ai_settings = match toggle_state {
-                                ToggleState::Indeterminate => None,
-                                ToggleState::Unselected => Some(true),
-                                ToggleState::Selected => Some(false),
-                            };
+                            *ai_settings = Some(enabled);
                         },
                     );
                 },
@@ -330,7 +329,11 @@ impl AiConfigurationModal {
         cx: &mut Context<Self>,
     ) -> Self {
         let focus_handle = cx.focus_handle();
-        let configuration_view = selected_provider.configuration_view(window, cx);
+        let configuration_view = selected_provider.configuration_view(
+            language_model::ConfigurationViewTargetAgent::ZedAgent,
+            window,
+            cx,
+        );
 
         Self {
             focus_handle,
@@ -407,7 +410,7 @@ impl AiPrivacyTooltip {
 
 impl Render for AiPrivacyTooltip {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        const DESCRIPTION: &'static str = "We believe in opt-in data sharing as the default for building AI products, rather than opt-out. We'll only use or store your data if you affirmatively send it to us. ";
+        const DESCRIPTION: &str = "We believe in opt-in data sharing as the default for building AI products, rather than opt-out. We'll only use or store your data if you affirmatively send it to us. ";
 
         tooltip_container(window, cx, move |this, _, _| {
             this.child(

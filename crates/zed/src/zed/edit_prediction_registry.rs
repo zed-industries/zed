@@ -5,11 +5,9 @@ use editor::Editor;
 use gpui::{AnyWindowHandle, App, AppContext as _, Context, Entity, WeakEntity};
 use language::language_settings::{EditPredictionProvider, all_language_settings};
 use settings::SettingsStore;
-use smol::stream::StreamExt;
 use std::{cell::RefCell, rc::Rc, sync::Arc};
 use supermaven::{Supermaven, SupermavenCompletionProvider};
 use ui::Window;
-use util::ResultExt;
 use workspace::Workspace;
 use zeta::{ProviderDataCollection, ZetaEditPredictionProvider};
 
@@ -59,32 +57,19 @@ pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
     cx.on_action(clear_zeta_edit_history);
 
     let mut provider = all_language_settings(None, cx).edit_predictions.provider;
-    cx.spawn({
-        let user_store = user_store.clone();
+    cx.subscribe(&user_store, {
         let editors = editors.clone();
         let client = client.clone();
 
-        async move |cx| {
-            let mut status = client.status();
-            while let Some(_status) = status.next().await {
-                cx.update(|cx| {
-                    assign_edit_prediction_providers(
-                        &editors,
-                        provider,
-                        &client,
-                        user_store.clone(),
-                        cx,
-                    );
-                })
-                .log_err();
+        move |user_store, event, cx| {
+            if let client::user::Event::PrivateUserInfoUpdated = event {
+                assign_edit_prediction_providers(&editors, provider, &client, user_store, cx);
             }
         }
     })
     .detach();
 
     cx.observe_global::<SettingsStore>({
-        let editors = editors.clone();
-        let client = client.clone();
         let user_store = user_store.clone();
         move |cx| {
             let new_provider = all_language_settings(None, cx).edit_predictions.provider;
@@ -154,7 +139,7 @@ fn assign_edit_prediction_providers(
                 assign_edit_prediction_provider(
                     editor,
                     provider,
-                    &client,
+                    client,
                     user_store.clone(),
                     window,
                     cx,
@@ -211,12 +196,12 @@ fn assign_edit_prediction_provider(
         }
         EditPredictionProvider::Copilot => {
             if let Some(copilot) = Copilot::global(cx) {
-                if let Some(buffer) = singleton_buffer {
-                    if buffer.read(cx).file().is_some() {
-                        copilot.update(cx, |copilot, cx| {
-                            copilot.register_buffer(&buffer, cx);
-                        });
-                    }
+                if let Some(buffer) = singleton_buffer
+                    && buffer.read(cx).file().is_some()
+                {
+                    copilot.update(cx, |copilot, cx| {
+                        copilot.register_buffer(&buffer, cx);
+                    });
                 }
                 let provider = cx.new(|_| CopilotCompletionProvider::new(copilot));
                 editor.set_edit_prediction_provider(Some(provider), window, cx);
@@ -232,16 +217,15 @@ fn assign_edit_prediction_provider(
             if user_store.read(cx).current_user().is_some() {
                 let mut worktree = None;
 
-                if let Some(buffer) = &singleton_buffer {
-                    if let Some(file) = buffer.read(cx).file() {
-                        let id = file.worktree_id(cx);
-                        if let Some(inner_worktree) = editor
-                            .project
-                            .as_ref()
-                            .and_then(|project| project.read(cx).worktree_for_id(id, cx))
-                        {
-                            worktree = Some(inner_worktree);
-                        }
+                if let Some(buffer) = &singleton_buffer
+                    && let Some(file) = buffer.read(cx).file()
+                {
+                    let id = file.worktree_id(cx);
+                    if let Some(inner_worktree) = editor
+                        .project()
+                        .and_then(|project| project.read(cx).worktree_for_id(id, cx))
+                    {
+                        worktree = Some(inner_worktree);
                     }
                 }
 
@@ -253,12 +237,12 @@ fn assign_edit_prediction_provider(
                 let zeta =
                     zeta::Zeta::register(workspace, worktree, client.clone(), user_store, cx);
 
-                if let Some(buffer) = &singleton_buffer {
-                    if buffer.read(cx).file().is_some() {
-                        zeta.update(cx, |zeta, cx| {
-                            zeta.register_buffer(&buffer, cx);
-                        });
-                    }
+                if let Some(buffer) = &singleton_buffer
+                    && buffer.read(cx).file().is_some()
+                {
+                    zeta.update(cx, |zeta, cx| {
+                        zeta.register_buffer(buffer, cx);
+                    });
                 }
 
                 let data_collection =
