@@ -4,6 +4,8 @@ use minidumper::{Client, LoopAction, MinidumpBinary};
 use release_channel::{RELEASE_CHANNEL, ReleaseChannel};
 use serde::{Deserialize, Serialize};
 
+#[cfg(target_os = "macos")]
+use std::sync::atomic::AtomicU32;
 use std::{
     env,
     fs::{self, File},
@@ -25,6 +27,9 @@ pub static CRASH_HANDLER: OnceLock<Arc<Client>> = OnceLock::new();
 pub static REQUESTED_MINIDUMP: AtomicBool = AtomicBool::new(false);
 const CRASH_HANDLER_PING_TIMEOUT: Duration = Duration::from_secs(60);
 const CRASH_HANDLER_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+
+#[cfg(target_os = "macos")]
+static PANIC_THREAD_ID: AtomicU32 = AtomicU32::new(0);
 
 pub async fn init(crash_init: InitCrashHandler) {
     if *RELEASE_CHANNEL == ReleaseChannel::Dev && env::var("ZED_GENERATE_MINIDUMPS").is_err() {
@@ -110,9 +115,10 @@ unsafe fn suspend_all_other_threads() {
         mach2::task::task_threads(task, &raw mut threads, &raw mut count);
     }
     let current = unsafe { mach2::mach_init::mach_thread_self() };
+    let panic_thread = PANIC_THREAD_ID.load(Ordering::SeqCst);
     for i in 0..count {
         let t = unsafe { *threads.add(i as usize) };
-        if t != current {
+        if t != current && t != panic_thread {
             unsafe { mach2::thread_act::thread_suspend(t) };
         }
     }
@@ -238,6 +244,13 @@ pub fn handle_panic(message: String, span: Option<&Location>) {
                 )
                 .ok();
             log::error!("triggering a crash to generate a minidump...");
+
+            #[cfg(target_os = "macos")]
+            PANIC_THREAD_ID.store(
+                unsafe { mach2::mach_init::mach_thread_self() },
+                Ordering::SeqCst,
+            );
+
             #[cfg(target_os = "linux")]
             CrashHandler.simulate_signal(crash_handler::Signal::Trap as u32);
             #[cfg(not(target_os = "linux"))]
