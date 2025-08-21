@@ -1089,7 +1089,7 @@ impl Element for MarkdownElement {
                                         .absolute()
                                         .top_1()
                                         .right_1()
-                                        .justify_center()
+                                        .justify_end()
                                         .child(codeblock),
                                 )
                             });
@@ -1320,6 +1320,7 @@ fn render_copy_code_block_button(
     )
     .icon_color(Color::Muted)
     .icon_size(IconSize::Small)
+    .style(ButtonStyle::Filled)
     .shape(ui::IconButtonShape::Square)
     .tooltip(Tooltip::text("Copy Code"))
     .on_click({
