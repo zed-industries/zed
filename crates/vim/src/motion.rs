@@ -1616,40 +1616,25 @@ fn up_down_buffer_rows(
     }
 
     let new_col = if i == goal_wrap {
-        let calculated_col =
-            map.display_column_for_x(begin_folded_line.row(), px(goal_x), text_layout_details);
-
-        // When navigating vertically in vim mode with inlay hints present,
-        // we need to be careful about bias direction. Using Bias::Right when
-        // moving down can cause the cursor to jump past inlay hints, leading
-        // to unexpected cursor positions. This is especially problematic in
-        // visual mode where precise selection is important.
-        //
-        // See: https://github.com/zed-industries/zed/issues/29134
-        if bias == Bias::Right {
-            // Check if we're about to clip into an inlay hint position
-            let test_point = DisplayPoint::new(begin_folded_line.row(), calculated_col);
-            let buffer_point = map.display_point_to_point(test_point, bias);
-            let redisplay_point = map.point_to_display_point(buffer_point, bias);
-
-            // If the round-trip changed our column, we likely hit an inlay hint
-            // Use the buffer column to avoid jumping past the hint
-            if redisplay_point.column() != test_point.column() {
-                buffer_point.column
-            } else {
-                calculated_col
-            }
-        } else {
-            calculated_col
-        }
+        map.display_column_for_x(begin_folded_line.row(), px(goal_x), text_layout_details)
     } else {
         map.line_len(begin_folded_line.row())
     };
 
-    (
-        map.clip_point(DisplayPoint::new(begin_folded_line.row(), new_col), bias),
-        goal,
-    )
+    let point = DisplayPoint::new(begin_folded_line.row(), new_col);
+    let mut clipped_point = map.clip_point(point, bias);
+    
+    // When navigating vertically in vim mode with inlay hints present,
+    // we need to handle the case where clipping moves us to a different row.
+    // This can happen when moving down (Bias::Right) and hitting an inlay hint.
+    // Re-clip with opposite bias to stay on the intended line.
+    //
+    // See: https://github.com/zed-industries/zed/issues/29134
+    if clipped_point.row() > point.row() {
+        clipped_point = map.clip_point(point, Bias::Left);
+    }
+
+    (clipped_point, goal)
 }
 
 fn down_display(
