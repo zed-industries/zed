@@ -102,13 +102,7 @@ impl CloudApiClient {
         let credentials = credentials.as_ref().context("no credentials provided")?;
         let authorization_header = format!("{} {}", credentials.user_id, credentials.access_token);
 
-        Ok(cx.spawn(async move |cx| {
-            let handle = cx
-                .update(|cx| Tokio::handle(cx))
-                .ok()
-                .context("failed to get Tokio handle")?;
-            let _guard = handle.enter();
-
+        Ok(Tokio::spawn_result(cx, async move {
             let ws = WebSocket::connect(connect_url)
                 .with_request(
                     request::Builder::new()
