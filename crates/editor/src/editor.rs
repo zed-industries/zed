@@ -6697,7 +6697,6 @@ impl Editor {
                         return;
                     }
 
-                    let buffer_id = cursor_position.buffer_id;
                     let buffer = this.buffer.read(cx);
                     if buffer
                         .text_anchor_for_position(cursor_position, cx)
@@ -6710,8 +6709,8 @@ impl Editor {
                     let mut write_ranges = Vec::new();
                     let mut read_ranges = Vec::new();
                     for highlight in highlights {
-                        for (excerpt_id, excerpt_range) in
-                            buffer.excerpts_for_buffer(cursor_buffer.read(cx).remote_id(), cx)
+                        let buffer_id = cursor_buffer.read(cx).remote_id();
+                        for (excerpt_id, excerpt_range) in buffer.excerpts_for_buffer(buffer_id, cx)
                         {
                             let start = highlight
                                 .range
@@ -6726,12 +6725,12 @@ impl Editor {
                             }
 
                             let range = Anchor {
-                                buffer_id,
+                                buffer_id: Some(buffer_id),
                                 excerpt_id,
                                 text_anchor: start,
                                 diff_base_anchor: None,
                             }..Anchor {
-                                buffer_id,
+                                buffer_id: Some(buffer_id),
                                 excerpt_id,
                                 text_anchor: end,
                                 diff_base_anchor: None,
@@ -9496,17 +9495,21 @@ impl Editor {
         selection: Range<Anchor>,
         cx: &mut Context<Self>,
     ) {
-        let buffer_id = match (&selection.start.buffer_id, &selection.end.buffer_id) {
-            (Some(a), Some(b)) if a == b => a,
-            _ => {
-                log::error!("expected anchor range to have matching buffer IDs");
-                return;
-            }
-        };
-        let multi_buffer = self.buffer().read(cx);
-        let Some(buffer) = multi_buffer.buffer(*buffer_id) else {
+        let Some((_, buffer, _)) = self
+            .buffer()
+            .read(cx)
+            .excerpt_containing(selection.start, cx)
+        else {
             return;
         };
+        let Some((_, end_buffer, _)) = self.buffer().read(cx).excerpt_containing(selection.end, cx)
+        else {
+            return;
+        };
+        if buffer != end_buffer {
+            log::error!("expected anchor range to have matching buffer IDs");
+            return;
+        }
 
         let id = post_inc(&mut self.next_completion_id);
         let snippet_sort_order = EditorSettings::get_global(cx).snippet_sort_order;
@@ -10593,16 +10596,12 @@ impl Editor {
         snapshot: &EditorSnapshot,
         cx: &mut Context<Self>,
     ) -> Option<(Anchor, Breakpoint)> {
-        let project = self.project.clone()?;
-
-        let buffer_id = breakpoint_position.buffer_id.or_else(|| {
-            snapshot
-                .buffer_snapshot
-                .buffer_id_for_excerpt(breakpoint_position.excerpt_id)
-        })?;
+        let buffer = self
+            .buffer
+            .read(cx)
+            .buffer_for_anchor(breakpoint_position, cx)?;
 
         let enclosing_excerpt = breakpoint_position.excerpt_id;
-        let buffer = project.read(cx).buffer_for_id(buffer_id, cx)?;
         let buffer_snapshot = buffer.read(cx).snapshot();
 
         let row = buffer_snapshot
@@ -10775,21 +10774,11 @@ impl Editor {
             return;
         };
 
-        let Some(buffer_id) = breakpoint_position.buffer_id.or_else(|| {
-            if breakpoint_position == Anchor::min() {
-                self.buffer()
-                    .read(cx)
-                    .excerpt_buffer_ids()
-                    .into_iter()
-                    .next()
-            } else {
-                None
-            }
-        }) else {
-            return;
-        };
-
-        let Some(buffer) = self.buffer().read(cx).buffer(buffer_id) else {
+        let Some(buffer) = self
+            .buffer
+            .read(cx)
+            .buffer_for_anchor(breakpoint_position, cx)
+        else {
             return;
         };
 
@@ -15432,7 +15421,8 @@ impl Editor {
             return;
         };
 
-        let Some(buffer_id) = buffer.anchor_after(next_diagnostic.range.start).buffer_id else {
+        let next_diagnostic_start = buffer.anchor_after(next_diagnostic.range.start);
+        let Some(buffer_id) = buffer.buffer_id_for_anchor(next_diagnostic_start) else {
             return;
         };
         self.change_selections(Default::default(), window, cx, |s| {
@@ -20425,11 +20415,8 @@ impl Editor {
                         .range_to_buffer_ranges_with_deleted_hunks(selection.range())
                     {
                         if let Some(anchor) = anchor {
-                            // selection is in a deleted hunk
-                            let Some(buffer_id) = anchor.buffer_id else {
-                                continue;
-                            };
-                            let Some(buffer_handle) = multi_buffer.buffer(buffer_id) else {
+                            let Some(buffer_handle) = multi_buffer.buffer_for_anchor(anchor, cx)
+                            else {
                                 continue;
                             };
                             let offset = text::ToOffset::to_offset(
