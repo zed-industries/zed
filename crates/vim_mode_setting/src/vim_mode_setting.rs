@@ -6,23 +6,32 @@
 
 use anyhow::Result;
 use gpui::App;
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources};
 
 /// Initializes the `vim_mode_setting` crate.
 pub fn init(cx: &mut App) {
-    VimModeSetting::register(cx);
-    HelixModeSetting::register(cx);
+    EditorModeSetting::register(cx);
 }
 
 /// Whether or not to enable Vim mode.
 ///
-/// Default: false
-pub struct VimModeSetting(pub bool);
+/// Default: `EditMode::Default`
+pub struct EditorModeSetting(pub EditorMode);
 
-impl Settings for VimModeSetting {
-    const KEY: Option<&'static str> = Some("vim_mode");
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Default)]
+pub enum EditorMode {
+    Vim,
+    Helix,
+    #[default]
+    Default,
+}
 
-    type FileContent = Option<bool>;
+impl Settings for EditorModeSetting {
+    const KEY: Option<&'static str> = Some("editor_mode");
+
+    type FileContent = Option<EditorMode>;
 
     fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {
         Ok(Self(
@@ -37,31 +46,5 @@ impl Settings for VimModeSetting {
 
     fn import_from_vscode(_vscode: &settings::VsCodeSettings, _current: &mut Self::FileContent) {
         // TODO: could possibly check if any of the `vim.<foo>` keys are set?
-    }
-}
-
-/// Whether or not to enable Helix mode.
-///
-/// Default: false
-pub struct HelixModeSetting(pub bool);
-
-impl Settings for HelixModeSetting {
-    const KEY: Option<&'static str> = Some("helix_mode");
-
-    type FileContent = Option<bool>;
-
-    fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {
-        Ok(Self(
-            sources
-                .user
-                .or(sources.server)
-                .copied()
-                .flatten()
-                .unwrap_or(sources.default.ok_or_else(Self::missing_default)?),
-        ))
-    }
-
-    fn import_from_vscode(_vscode: &settings::VsCodeSettings, _current: &mut Self::FileContent) {
-        // TODO: could possibly check if any of the `helix.<foo>` keys are set?
     }
 }

@@ -12,7 +12,7 @@ use ui::{
     ParentElement as _, StatefulInteractiveElement, SwitchField, ToggleButtonGroup,
     ToggleButtonSimple, ToggleButtonWithIcon, prelude::*, rems_from_px,
 };
-use vim_mode_setting::VimModeSetting;
+use vim_mode_setting::{EditorMode, EditorModeSetting};
 
 use crate::theme_preview::{ThemePreviewStyle, ThemePreviewTile};
 
@@ -331,11 +331,13 @@ fn render_base_keymap_section(tab_index: &mut isize, cx: &mut App) -> impl IntoE
 }
 
 fn render_vim_mode_switch(tab_index: &mut isize, cx: &mut App) -> impl IntoElement {
-    let toggle_state = if VimModeSetting::get_global(cx).0 {
+    let editor_mode = EditorModeSetting::get_global(cx).0;
+    let toggle_state = if matches!(editor_mode, EditorMode::Vim | EditorMode::Helix) {
         ui::ToggleState::Selected
     } else {
         ui::ToggleState::Unselected
     };
+
     SwitchField::new(
         "onboarding-vim-mode",
         "Vim Mode",
@@ -344,10 +346,10 @@ fn render_vim_mode_switch(tab_index: &mut isize, cx: &mut App) -> impl IntoEleme
         {
             let fs = <dyn Fs>::global(cx);
             move |&selection, _, cx| {
-                update_settings_file::<VimModeSetting>(fs.clone(), cx, move |setting, _| {
+                update_settings_file::<EditorModeSetting>(fs.clone(), cx, move |setting, _| {
                     *setting = match selection {
-                        ToggleState::Selected => Some(true),
-                        ToggleState::Unselected => Some(false),
+                        ToggleState::Selected => Some(EditorMode::Vim),
+                        ToggleState::Unselected => Some(EditorMode::Default),
                         ToggleState::Indeterminate => None,
                     }
                 });

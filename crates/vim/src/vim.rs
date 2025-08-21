@@ -45,8 +45,7 @@ use std::{mem, ops::Range, sync::Arc};
 use surrounds::SurroundsType;
 use theme::ThemeSettings;
 use ui::{IntoElement, SharedString, px};
-use vim_mode_setting::HelixModeSetting;
-use vim_mode_setting::VimModeSetting;
+use vim_mode_setting::{EditorMode, EditorModeSetting};
 use workspace::{self, Pane, Workspace};
 
 use crate::state::ReplayableAction;
@@ -246,8 +245,12 @@ pub fn init(cx: &mut App) {
         workspace.register_action(|workspace, _: &ToggleVimMode, _, cx| {
             let fs = workspace.app_state().fs.clone();
             let currently_enabled = Vim::enabled(cx);
-            update_settings_file::<VimModeSetting>(fs, cx, move |setting, _| {
-                *setting = Some(!currently_enabled)
+            update_settings_file::<EditorModeSetting>(fs, cx, move |setting, _| {
+                *setting = Some(if currently_enabled {
+                    EditorMode::Default
+                } else {
+                    EditorMode::Vim
+                });
             })
         });
 
@@ -405,7 +408,9 @@ impl Vim {
         let editor = cx.entity();
 
         let mut initial_mode = VimSettings::get_global(cx).default_mode;
-        if initial_mode == Mode::Normal && HelixModeSetting::get_global(cx).0 {
+        if initial_mode == Mode::Normal
+            && matches!(EditorModeSetting::get_global(cx).0, EditorMode::Helix)
+        {
             initial_mode = Mode::HelixNormal;
         }
 
@@ -496,7 +501,7 @@ impl Vim {
 
         vim.update(cx, |_, cx| {
             Vim::action(editor, cx, |vim, _: &SwitchToNormalMode, window, cx| {
-                if HelixModeSetting::get_global(cx).0 {
+                if matches!(EditorModeSetting::get_global(cx).0, EditorMode::Helix) {
                     vim.switch_mode(Mode::HelixNormal, false, window, cx)
                 } else {
                     vim.switch_mode(Mode::Normal, false, window, cx)
@@ -819,7 +824,11 @@ impl Vim {
     }
 
     pub fn enabled(cx: &mut App) -> bool {
-        VimModeSetting::get_global(cx).0 || HelixModeSetting::get_global(cx).0
+        if EditorModeSetting::get_global(cx).0 == EditorMode::Default {
+            return false;
+        }
+        return true;
+        // VimModeSetting::get_global(cx).0 || HelixModeSetting::get_global(cx).0
     }
 
     /// Called whenever an keystroke is typed so vim can observe all actions

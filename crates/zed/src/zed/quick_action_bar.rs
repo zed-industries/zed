@@ -23,7 +23,7 @@ use ui::{
     ButtonStyle, ContextMenu, ContextMenuEntry, DocumentationSide, IconButton, IconName, IconSize,
     PopoverMenu, PopoverMenuHandle, Tooltip, prelude::*,
 };
-use vim_mode_setting::VimModeSetting;
+use vim_mode_setting::{EditorMode, EditorModeSetting};
 use workspace::{
     ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace, item::ItemHandle,
 };
@@ -301,7 +301,8 @@ impl Render for QuickActionBar {
         let editor_focus_handle = editor.focus_handle(cx);
         let editor = editor.downgrade();
         let editor_settings_dropdown = {
-            let vim_mode_enabled = VimModeSetting::get_global(cx).0;
+            let editor_mode = EditorModeSetting::get_global(cx).0;
+            let vim_mode_enabled = matches!(editor_mode, EditorMode::Vim | EditorMode::Helix);
 
             PopoverMenu::new("editor-settings")
                 .trigger_with_tooltip(
@@ -576,8 +577,12 @@ impl Render for QuickActionBar {
                                 None,
                                 {
                                     move |window, cx| {
-                                        let new_value = !vim_mode_enabled;
-                                        VimModeSetting::override_global(VimModeSetting(new_value), cx);
+                                        let new_value = if vim_mode_enabled {
+                                            EditorMode::Default
+                                        } else {
+                                            EditorMode::Vim
+                                        };
+                                        EditorModeSetting::override_global(EditorModeSetting(new_value), cx);
                                         window.refresh();
                                     }
                                 },
