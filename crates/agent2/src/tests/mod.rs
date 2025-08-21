@@ -32,17 +32,22 @@ mod test_tools;
 use test_tools::*;
 
 #[gpui::test]
-#[ignore = "can't run on CI yet"]
 async fn test_echo(cx: &mut TestAppContext) {
-    let ThreadTest { thread, .. } = setup(cx, TestModel::Sonnet4).await;
+    let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
+    let fake_model = model.as_fake();
 
     let events = thread
         .update(cx, |thread, cx| {
             thread.send(UserMessageId::new(), ["Testing: Reply with 'Hello'"], cx)
         })
-        .unwrap()
-        .collect()
-        .await;
+        .unwrap();
+    cx.run_until_parked();
+    fake_model.send_last_completion_stream_text_chunk("Hello");
+    fake_model
+        .send_last_completion_stream_event(LanguageModelCompletionEvent::Stop(StopReason::EndTurn));
+    fake_model.end_last_completion_stream();
+
+    let events = events.collect().await;
     thread.update(cx, |thread, _cx| {
         assert_eq!(
             thread.last_message().unwrap().to_markdown(),
@@ -57,9 +62,9 @@ async fn test_echo(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-#[ignore = "can't run on CI yet"]
 async fn test_thinking(cx: &mut TestAppContext) {
-    let ThreadTest { thread, .. } = setup(cx, TestModel::Sonnet4Thinking).await;
+    let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
+    let fake_model = model.as_fake();
 
     let events = thread
         .update(cx, |thread, cx| {
@@ -74,9 +79,18 @@ async fn test_thinking(cx: &mut TestAppContext) {
                 cx,
             )
         })
-        .unwrap()
-        .collect()
-        .await;
+        .unwrap();
+    cx.run_until_parked();
+    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::Thinking {
+        text: "Think".to_string(),
+        signature: None,
+    });
+    fake_model.send_last_completion_stream_text_chunk("Hello");
+    fake_model
+        .send_last_completion_stream_event(LanguageModelCompletionEvent::Stop(StopReason::EndTurn));
+    fake_model.end_last_completion_stream();
+
+    let events = events.collect().await;
     thread.update(cx, |thread, _cx| {
         assert_eq!(
             thread.last_message().unwrap().to_markdown(),
@@ -271,7 +285,7 @@ async fn test_prompt_caching(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-#[ignore = "can't run on CI yet"]
+#[cfg_attr(not(feature = "e2e"), ignore)]
 async fn test_basic_tool_calls(cx: &mut TestAppContext) {
     let ThreadTest { thread, .. } = setup(cx, TestModel::Sonnet4).await;
 
@@ -331,7 +345,7 @@ async fn test_basic_tool_calls(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-#[ignore = "can't run on CI yet"]
+#[cfg_attr(not(feature = "e2e"), ignore)]
 async fn test_streaming_tool_calls(cx: &mut TestAppContext) {
     let ThreadTest { thread, .. } = setup(cx, TestModel::Sonnet4).await;
 
@@ -794,7 +808,7 @@ async fn next_tool_call_authorization(
 }
 
 #[gpui::test]
-#[ignore = "can't run on CI yet"]
+#[cfg_attr(not(feature = "e2e"), ignore)]
 async fn test_concurrent_tool_calls(cx: &mut TestAppContext) {
     let ThreadTest { thread, .. } = setup(cx, TestModel::Sonnet4).await;
 
@@ -919,7 +933,7 @@ async fn test_profiles(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-#[ignore = "can't run on CI yet"]
+#[cfg_attr(not(feature = "e2e"), ignore)]
 async fn test_cancellation(cx: &mut TestAppContext) {
     let ThreadTest { thread, .. } = setup(cx, TestModel::Sonnet4).await;
 
@@ -1797,7 +1811,6 @@ struct ThreadTest {
 
 enum TestModel {
     Sonnet4,
-    Sonnet4Thinking,
     Fake,
 }
 
@@ -1805,7 +1818,6 @@ impl TestModel {
     fn id(&self) -> LanguageModelId {
         match self {
             TestModel::Sonnet4 => LanguageModelId("claude-sonnet-4-latest".into()),
-            TestModel::Sonnet4Thinking => LanguageModelId("claude-sonnet-4-thinking-latest".into()),
             TestModel::Fake => unreachable!(),
         }
     }
