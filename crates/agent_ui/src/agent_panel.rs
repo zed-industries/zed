@@ -2088,7 +2088,7 @@ impl AgentPanel {
                         })
                         .on_action({
                             let thread_view = thread_view.downgrade();
-                            move |_: &menu::Cancel, window, cx| {
+                            move |_: &editor::actions::Cancel, window, cx| {
                                 if let Some(thread_view) = thread_view.upgrade() {
                                     thread_view.focus_handle(cx).focus(window);
                                 }

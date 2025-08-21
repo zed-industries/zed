@@ -448,16 +448,18 @@ impl NativeAgent {
         _: &TitleUpdated,
         cx: &mut Context<Self>,
     ) {
-        let Some(session) = self.sessions.get(thread.read(cx).id()) else {
+        let session_id = thread.read(cx).id();
+        let Some(session) = self.sessions.get(session_id) else {
             return;
         };
-        let title = session.thread.read(cx).title();
-        if let Ok(task) = session
-            .acp_thread
-            .update(cx, |acp_thread, cx| acp_thread.set_title(title, cx))
-        {
-            task.detach_and_log_err(cx);
-        }
+        let thread = thread.downgrade();
+        let acp_thread = session.acp_thread.clone();
+        cx.spawn(async move |_, cx| {
+            let title = thread.read_with(cx, |thread, _| thread.title())?;
+            let task = acp_thread.update(cx, |acp_thread, cx| acp_thread.set_title(title, cx))?;
+            task.await
+        })
+        .detach_and_log_err(cx);
     }
 
     fn handle_thread_token_usage_updated(
