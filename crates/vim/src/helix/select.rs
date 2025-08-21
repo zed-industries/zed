@@ -76,7 +76,7 @@ impl Vim {
                         return;
                     };
 
-                    selection.set_head_tail(range.end, range.start, SelectionGoal::None);
+                    selection.set_head_tail(range.start, range.end, SelectionGoal::None);
                 });
             });
         });
