@@ -133,7 +133,7 @@ impl EntryViewState {
                         .into_any();
                         cx.emit(EntryViewEvent {
                             entry_index: index,
-                            view_event: ViewEvent::NewTerminal(id.clone(), terminal.entity_id()),
+                            view_event: ViewEvent::NewTerminal(id.clone()),
                         });
                         element
                     });
@@ -144,7 +144,7 @@ impl EntryViewState {
                         let element = create_editor_diff(diff.clone(), window, cx).into_any();
                         cx.emit(EntryViewEvent {
                             entry_index: index,
-                            view_event: ViewEvent::NewDiff(id.clone(), diff.entity_id()),
+                            view_event: ViewEvent::NewDiff(id.clone()),
                         });
                         element
                     });
@@ -199,8 +199,8 @@ pub struct EntryViewEvent {
 }
 
 pub enum ViewEvent {
-    NewDiff(ToolCallId, EntityId),
-    NewTerminal(ToolCallId, EntityId),
+    NewDiff(ToolCallId),
+    NewTerminal(ToolCallId),
     MessageEditorEvent(Entity<MessageEditor>, MessageEditorEvent),
 }
 
