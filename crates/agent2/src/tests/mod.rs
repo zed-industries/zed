@@ -1383,6 +1383,7 @@ async fn test_title_generation(cx: &mut TestAppContext) {
     summary_model.send_last_completion_stream_text_chunk("oodnight Moon");
     summary_model.end_last_completion_stream();
     send.collect::<Vec<_>>().await;
+    cx.run_until_parked();
     thread.read_with(cx, |thread, _| assert_eq!(thread.title(), "Hello world"));
 
     // Send another message, ensuring no title is generated this time.
