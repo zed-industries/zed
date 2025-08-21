@@ -60,7 +60,9 @@ pub fn init_panic_hook(
             .or_else(|| info.payload().downcast_ref::<String>().cloned())
             .unwrap_or_else(|| "Box<Any>".to_string());
 
-        crashes::handle_panic(payload.clone(), info.location());
+        if *release_channel::RELEASE_CHANNEL != ReleaseChannel::Dev {
+            crashes::handle_panic(payload.clone(), info.location());
+        }
 
         let thread = thread::current();
         let thread_name = thread.name().unwrap_or("<unnamed>");
