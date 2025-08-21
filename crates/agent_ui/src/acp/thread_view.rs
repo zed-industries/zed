@@ -1537,11 +1537,11 @@ impl AcpThreadView {
             | ToolCallStatus::Completed => None,
             ToolCallStatus::InProgress => Some(
                 Icon::new(IconName::ArrowCircle)
-                    .color(Color::Accent)
+                    .color(Color::Muted)
                     .size(IconSize::Small)
                     .with_animation(
                         "running",
-                        Animation::new(Duration::from_secs(2)).repeat(),
+                        Animation::new(Duration::from_secs(3)).repeat(),
                         |icon, delta| icon.transform(Transformation::rotate(percentage(delta))),
                     )
                     .into_any(),
@@ -1692,6 +1692,13 @@ impl AcpThreadView {
                                     .hover(|label| {
                                         label.bg(cx.theme().colors().element_hover.opacity(0.5))
                                     })
+                                    .map(|this| {
+                                        if use_card_layout {
+                                            this.text_color(cx.theme().colors().text)
+                                        } else {
+                                            this.text_color(cx.theme().colors().text_muted)
+                                        }
+                                    })
                                     .child(name)
                                     .tooltip(Tooltip::text("Jump to File"))
                                     .on_click(cx.listener(move |this, _, window, cx| {
@@ -1729,8 +1736,7 @@ impl AcpThreadView {
                                         }
                                     }))
                                     .into_any()
-                            })
-                            .text_color(cx.theme().colors().text_muted),
+                            }),
                     )
                     .children(status_icon),
             )
