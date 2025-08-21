@@ -6,13 +6,10 @@ use feature_flags::ZedProFeatureFlag;
 use fuzzy::{StringMatch, StringMatchCandidate, match_strings};
 use gpui::{Action, AnyElement, App, BackgroundExecutor, DismissEvent, Subscription, Task};
 use language_model::{
-    AuthenticateError, ConfiguredModel, LanguageModel, LanguageModelName, LanguageModelProviderId,
-    LanguageModelRegistry,
+    ConfiguredModel, LanguageModel, LanguageModelProviderId, LanguageModelRegistry,
 };
 use ordered_float::OrderedFloat;
 use picker::{Picker, PickerDelegate};
-use project::DisableAiSettings;
-use settings::Settings;
 use ui::{ListItem, ListItemSpacing, prelude::*};
 
 const TRY_ZED_PRO_URL: &str = "https://zed.dev/pro";

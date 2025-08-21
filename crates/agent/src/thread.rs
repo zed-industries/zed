@@ -2097,7 +2097,7 @@ impl Thread {
     }
 
     pub fn summarize(&mut self, cx: &mut Context<Self>) {
-        let Some(model) = LanguageModelRegistry::read_global(cx).thread_summary_model() else {
+        let Some(model) = LanguageModelRegistry::read_global(cx).thread_summary_model(cx) else {
             println!("No thread summary model");
             return;
         };
@@ -2416,7 +2416,7 @@ impl Thread {
         }
 
         let Some(ConfiguredModel { model, provider }) =
-            LanguageModelRegistry::read_global(cx).thread_summary_model()
+            LanguageModelRegistry::read_global(cx).thread_summary_model(cx)
         else {
             return;
         };
@@ -5410,13 +5410,10 @@ fn main() {{
                     }),
                     cx,
                 );
-                registry.set_thread_summary_model(
-                    Some(ConfiguredModel {
-                        provider,
-                        model: model.clone(),
-                    }),
-                    cx,
-                );
+                registry.set_thread_summary_model(Some(ConfiguredModel {
+                    provider,
+                    model: model.clone(),
+                }));
             })
         });
 

@@ -3,8 +3,11 @@ use std::sync::Arc;
 use ::settings::{Settings, SettingsStore};
 use client::{Client, UserStore};
 use collections::HashSet;
+use futures::future;
 use gpui::{App, AppContext as _, Context, Entity};
-use language_model::{AuthenticateError, LanguageModelProviderId, LanguageModelRegistry};
+use language_model::{
+    AuthenticateError, ConfiguredModel, LanguageModelProviderId, LanguageModelRegistry,
+};
 use project::DisableAiSettings;
 use provider::deepseek::DeepSeekLanguageModelProvider;
 
@@ -14,7 +17,7 @@ pub mod ui;
 
 use crate::provider::anthropic::AnthropicLanguageModelProvider;
 use crate::provider::bedrock::BedrockLanguageModelProvider;
-use crate::provider::cloud::CloudLanguageModelProvider;
+use crate::provider::cloud::{self, CloudLanguageModelProvider};
 use crate::provider::copilot_chat::CopilotChatLanguageModelProvider;
 use crate::provider::google::GoogleLanguageModelProvider;
 use crate::provider::lmstudio::LmStudioLanguageModelProvider;
@@ -52,7 +55,7 @@ pub fn init(user_store: Entity<UserStore>, client: Arc<Client>, cx: &mut App) {
 
     let mut already_authenticated = false;
     if !DisableAiSettings::get_global(cx).disable_ai {
-        authenticate_all_providers(cx);
+        authenticate_all_providers(registry.clone(), cx);
         already_authenticated = true;
     }
 
@@ -77,7 +80,7 @@ pub fn init(user_store: Entity<UserStore>, client: Arc<Client>, cx: &mut App) {
         }
 
         if !DisableAiSettings::get_global(cx).disable_ai && !already_authenticated {
-            authenticate_all_providers(cx);
+            authenticate_all_providers(registry.clone(), cx);
             already_authenticated = true;
         }
     })
@@ -172,16 +175,18 @@ fn register_language_model_providers(
 /// models from the configured providers.
 ///
 /// This function won't do anything if AI is disabled.
-fn authenticate_all_providers(cx: &mut App) {
-    let providers_to_authenticate = LanguageModelRegistry::global(cx)
+fn authenticate_all_providers(registry: Entity<LanguageModelRegistry>, cx: &mut App) {
+    let providers_to_authenticate = registry
         .read(cx)
         .providers()
         .iter()
         .map(|provider| (provider.id(), provider.name(), provider.authenticate(cx)))
         .collect::<Vec<_>>();
 
+    let mut tasks = Vec::with_capacity(providers_to_authenticate.len());
+
     for (provider_id, provider_name, authenticate_task) in providers_to_authenticate {
-        cx.background_spawn(async move {
+        tasks.push(cx.background_spawn(async move {
             if let Err(err) = authenticate_task.await {
                 if matches!(err, AuthenticateError::CredentialsNotFound) {
                     // Since we're authenticating these providers in the
@@ -214,7 +219,32 @@ fn authenticate_all_providers(cx: &mut App) {
                     }
                 }
             }
-        })
-        .detach();
+        }));
     }
+
+    let all_authenticated_future = future::join_all(tasks);
+
+    cx.spawn(async move |cx| {
+        all_authenticated_future.await;
+
+        registry
+            .update(cx, |registry, cx| {
+                let cloud_provider = registry.provider(&cloud::PROVIDER_ID);
+                let fallback_model = cloud_provider
+                    .iter()
+                    .chain(registry.providers().iter())
+                    .find(|provider| provider.is_authenticated(cx))
+                    .and_then(|provider| {
+                        Some(ConfiguredModel {
+                            provider: provider.clone(),
+                            model: provider
+                                .default_model(cx)
+                                .or_else(|| provider.recommended_models(cx).first().cloned())?,
+                        })
+                    });
+                registry.set_environment_fallback_model(fallback_model, cx);
+            })
+            .ok();
+    })
+    .detach();
 }
