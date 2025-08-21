@@ -2249,27 +2249,43 @@ impl Workspace {
             })?;
 
             if let Some(active_call) = active_call
-                && close_intent != CloseIntent::Quit
                 && workspace_count == 1
                 && active_call.read_with(cx, |call, _| call.room().is_some())?
             {
-                let answer = cx.update(|window, cx| {
-                    window.prompt(
-                        PromptLevel::Warning,
-                        "Do you want to leave the current call?",
-                        None,
-                        &["Close window and hang up", "Cancel"],
-                        cx,
-                    )
-                })?;
+                if close_intent == CloseIntent::CloseWindow {
+                    let answer = cx.update(|window, cx| {
+                        window.prompt(
+                            PromptLevel::Warning,
+                            "Do you want to leave the current call?",
+                            None,
+                            &["Close window and hang up", "Cancel"],
+                            cx,
+                        )
+                    })?;
 
-                if answer.await.log_err() == Some(1) {
-                    return anyhow::Ok(false);
-                } else {
-                    active_call
-                        .update(cx, |call, cx| call.hang_up(cx))?
-                        .await
-                        .log_err();
+                    if answer.await.log_err() == Some(1) {
+                        return anyhow::Ok(false);
+                    } else {
+                        active_call
+                            .update(cx, |call, cx| call.hang_up(cx))?
+                            .await
+                            .log_err();
+                    }
+                }
+                if close_intent == CloseIntent::ReplaceWindow {
+                    _ = active_call.update(cx, |this, cx| {
+                        let workspace = cx
+                            .windows()
+                            .iter()
+                            .filter_map(|window| window.downcast::<Workspace>())
+                            .next()
+                            .unwrap();
+                        let project = workspace.read(cx)?.project.clone();
+                        if project.read(cx).is_shared() {
+                            this.unshare_project(project, cx)?;
+                        }
+                        Ok::<_, anyhow::Error>(())
+                    })?;
                 }
             }
 
