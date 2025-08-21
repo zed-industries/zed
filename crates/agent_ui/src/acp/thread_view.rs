@@ -677,7 +677,12 @@ impl AcpThreadView {
         cx: &mut Context<Self>,
     ) {
         match &event.view_event {
-            ViewEvent::NewTerminal(terminal_id) => {
+            ViewEvent::NewDiff(tool_call_id, _) => {
+                if AgentSettings::get_global(cx).expand_edit_card {
+                    self.expanded_tool_calls.insert(tool_call_id.clone());
+                }
+            }
+            ViewEvent::NewTerminal(_, terminal_id) => {
                 if AgentSettings::get_global(cx).expand_terminal_card {
                     self.expanded_terminals.insert(*terminal_id);
                 }
@@ -1559,10 +1564,9 @@ impl AcpThreadView {
             matches!(tool_call.kind, acp::ToolKind::Edit) || tool_call.diffs().next().is_some();
         let use_card_layout = needs_confirmation || is_edit;
 
-        let is_collapsible = !tool_call.content.is_empty() && !use_card_layout;
+        let is_collapsible = !tool_call.content.is_empty() && !needs_confirmation;
 
-        let is_open =
-            needs_confirmation || is_edit || self.expanded_tool_calls.contains(&tool_call.id);
+        let is_open = needs_confirmation || self.expanded_tool_calls.contains(&tool_call.id);
 
         let gradient_overlay = |color: Hsla| {
             div()

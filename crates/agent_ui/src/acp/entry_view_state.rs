@@ -1,6 +1,7 @@
 use std::ops::Range;
 
 use acp_thread::{AcpThread, AgentThreadEntry};
+use agent_client_protocol::ToolCallId;
 use agent2::HistoryStore;
 use collections::HashMap;
 use editor::{Editor, EditorMode, MinimapVisibility};
@@ -106,6 +107,7 @@ impl EntryViewState {
                 }
             }
             AgentThreadEntry::ToolCall(tool_call) => {
+                let id = tool_call.id.clone();
                 let terminals = tool_call.terminals().cloned().collect::<Vec<_>>();
                 let diffs = tool_call.diffs().cloned().collect::<Vec<_>>();
 
@@ -131,16 +133,21 @@ impl EntryViewState {
                         .into_any();
                         cx.emit(EntryViewEvent {
                             entry_index: index,
-                            view_event: ViewEvent::NewTerminal(terminal.entity_id()),
+                            view_event: ViewEvent::NewTerminal(id.clone(), terminal.entity_id()),
                         });
                         element
                     });
                 }
 
                 for diff in diffs {
-                    views
-                        .entry(diff.entity_id())
-                        .or_insert_with(|| create_editor_diff(diff.clone(), window, cx).into_any());
+                    views.entry(diff.entity_id()).or_insert_with(|| {
+                        let element = create_editor_diff(diff.clone(), window, cx).into_any();
+                        cx.emit(EntryViewEvent {
+                            entry_index: index,
+                            view_event: ViewEvent::NewDiff(id.clone(), diff.entity_id()),
+                        });
+                        element
+                    });
                 }
             }
             AgentThreadEntry::AssistantMessage(_) => {
@@ -192,7 +199,8 @@ pub struct EntryViewEvent {
 }
 
 pub enum ViewEvent {
-    NewTerminal(EntityId),
+    NewDiff(ToolCallId, EntityId),
+    NewTerminal(ToolCallId, EntityId),
     MessageEditorEvent(Entity<MessageEditor>, MessageEditorEvent),
 }
 
