@@ -3,8 +3,9 @@ use std::sync::Arc;
 use ::settings::{Settings, SettingsStore};
 use client::{Client, UserStore};
 use collections::HashSet;
-use gpui::{App, Context, Entity};
-use language_model::{LanguageModelProviderId, LanguageModelRegistry};
+use gpui::{App, AppContext as _, Context, Entity};
+use language_model::{AuthenticateError, LanguageModelProviderId, LanguageModelRegistry};
+use project::DisableAiSettings;
 use provider::deepseek::DeepSeekLanguageModelProvider;
 
 pub mod provider;
@@ -48,6 +49,13 @@ pub fn init(user_store: Entity<UserStore>, client: Arc<Client>, cx: &mut App) {
             cx,
         );
     });
+
+    let mut already_authenticated = false;
+    if !DisableAiSettings::get_global(cx).disable_ai {
+        authenticate_all_providers(cx);
+        already_authenticated = true;
+    }
+
     cx.observe_global::<SettingsStore>(move |cx| {
         let openai_compatible_providers_new = AllLanguageModelSettings::get_global(cx)
             .openai_compatible
@@ -65,6 +73,12 @@ pub fn init(user_store: Entity<UserStore>, client: Arc<Client>, cx: &mut App) {
                 );
             });
             openai_compatible_providers = openai_compatible_providers_new;
+            already_authenticated = false;
+        }
+
+        if !DisableAiSettings::get_global(cx).disable_ai && !already_authenticated {
+            authenticate_all_providers(cx);
+            already_authenticated = true;
         }
     })
     .detach();
@@ -150,4 +164,57 @@ fn register_language_model_providers(
     );
     registry.register_provider(XAiLanguageModelProvider::new(client.http_client(), cx), cx);
     registry.register_provider(CopilotChatLanguageModelProvider::new(cx), cx);
+}
+
+/// Authenticates all providers in the [`LanguageModelRegistry`].
+///
+/// We do this so that we can populate the language selector with all of the
+/// models from the configured providers.
+///
+/// This function won't do anything if AI is disabled.
+fn authenticate_all_providers(cx: &mut App) {
+    let providers_to_authenticate = LanguageModelRegistry::global(cx)
+        .read(cx)
+        .providers()
+        .iter()
+        .map(|provider| (provider.id(), provider.name(), provider.authenticate(cx)))
+        .collect::<Vec<_>>();
+
+    for (provider_id, provider_name, authenticate_task) in providers_to_authenticate {
+        cx.background_spawn(async move {
+            if let Err(err) = authenticate_task.await {
+                if matches!(err, AuthenticateError::CredentialsNotFound) {
+                    // Since we're authenticating these providers in the
+                    // background for the purposes of populating the
+                    // language selector, we don't care about providers
+                    // where the credentials are not found.
+                } else {
+                    // Some providers have noisy failure states that we
+                    // don't want to spam the logs with every time the
+                    // language model selector is initialized.
+                    //
+                    // Ideally these should have more clear failure modes
+                    // that we know are safe to ignore here, like what we do
+                    // with `CredentialsNotFound` above.
+                    match provider_id.0.as_ref() {
+                        "lmstudio" | "ollama" => {
+                            // LM Studio and Ollama both make fetch requests to the local APIs to determine if they are "authenticated".
+                            //
+                            // These fail noisily, so we don't log them.
+                        }
+                        "copilot_chat" => {
+                            // Copilot Chat returns an error if Copilot is not enabled, so we don't log those errors.
+                        }
+                        _ => {
+                            log::error!(
+                                "Failed to authenticate provider: {}: {err}",
+                                provider_name.0
+                            );
+                        }
+                    }
+                }
+            }
+        })
+        .detach();
+    }
 }
