@@ -230,26 +230,23 @@ pub fn editor_content_with_blocks(editor: &Entity<Editor>, cx: &mut VisualTestCo
                     lines[row as usize].push_str("§ -----");
                 }
             }
-            Block::ExcerptBoundary {
-                excerpt,
-                height,
-                starts_new_buffer,
-            } => {
-                if starts_new_buffer {
-                    lines[row.0 as usize].push_str(&cx.update(|_, cx| {
-                        format!(
-                            "§ {}",
-                            excerpt
-                                .buffer
-                                .file()
-                                .unwrap()
-                                .file_name(cx)
-                                .to_string_lossy()
-                        )
-                    }));
-                } else {
-                    lines[row.0 as usize].push_str("§ -----")
+            Block::ExcerptBoundary { height, .. } => {
+                for row in row.0..row.0 + height {
+                    lines[row as usize].push_str("§ -----");
                 }
+            }
+            Block::BufferHeader { excerpt, height } => {
+                lines[row.0 as usize].push_str(&cx.update(|_, cx| {
+                    format!(
+                        "§ {}",
+                        excerpt
+                            .buffer
+                            .file()
+                            .unwrap()
+                            .file_name(cx)
+                            .to_string_lossy()
+                    )
+                }));
                 for row in row.0 + 1..row.0 + height {
                     lines[row as usize].push_str("§ -----");
                 }
