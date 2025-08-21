@@ -688,7 +688,8 @@ pub fn wrap_for_ssh(
     } else {
         format!("cd; {env_changes} {to_run}")
     };
-    let shell_invocation = format!("sh -c {}", shlex::try_quote(&commands).unwrap());
+    let shell_invocation =
+        quote_shell_invocation(format!("sh -c {}", shlex::try_quote(&commands).unwrap()));
 
     let program = "ssh".to_string();
     let mut args = ssh_command.arguments.clone();
@@ -696,6 +697,45 @@ pub fn wrap_for_ssh(
     args.push("-t".to_string());
     args.push(shell_invocation);
     (program, args)
+}
+
+#[cfg(not(target_os = "windows"))]
+fn quote_shell_invocation(shell_invocation: String) -> String {
+    shell_invocation
+}
+
+#[cfg(target_os = "windows")]
+fn quote_shell_invocation(shell_invocation: String) -> String {
+    fn need_quote(arg_bytes: &[u8]) -> bool {
+        arg_bytes.iter().any(|c| *c == b' ' || *c == b'\t') || arg_bytes.is_empty()
+    }
+
+    let mut result = Vec::new();
+    let arg_bytes = shell_invocation.as_bytes();
+    let quote = need_quote(arg_bytes);
+    if quote {
+        result.push('"' as u16);
+    }
+    let mut backslashes = 0;
+    for x in shell_invocation.encode_utf16() {
+        if x == '\\' as u16 {
+            backslashes += 1;
+        } else {
+            if x == '"' as u16 {
+                // Add n+1 backslashes to total 2n+1 before internal '"'.
+                result.extend((0..=backslashes).map(|_| '\\' as u16));
+            }
+            backslashes = 0;
+        }
+        result.push(x);
+    }
+
+    if quote {
+        // Add n backslashes to total 2n before ending '"'.
+        result.extend((0..backslashes).map(|_| '\\' as u16));
+        result.push('"' as u16);
+    }
+    String::from_utf16(&result).unwrap()
 }
 
 fn add_environment_path(env: &mut HashMap<String, String>, new_path: &Path) -> Result<()> {
