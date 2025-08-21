@@ -7539,6 +7539,7 @@ dependencies = [
 name = "gpui_tokio"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "gpui",
  "tokio",
  "util",
