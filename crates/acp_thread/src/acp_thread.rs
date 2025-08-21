@@ -1020,10 +1020,19 @@ impl AcpThread {
         cx.emit(AcpThreadEvent::NewEntry);
     }
 
-    pub fn update_title(&mut self, title: SharedString, cx: &mut Context<Self>) -> Result<()> {
-        self.title = title;
-        cx.emit(AcpThreadEvent::TitleUpdated);
-        Ok(())
+    pub fn can_set_title(&mut self, cx: &mut Context<Self>) -> bool {
+        self.connection.set_title(&self.session_id, cx).is_some()
+    }
+
+    pub fn set_title(&mut self, title: SharedString, cx: &mut Context<Self>) -> Task<Result<()>> {
+        if title != self.title {
+            self.title = title.clone();
+            cx.emit(AcpThreadEvent::TitleUpdated);
+            if let Some(set_title) = self.connection.set_title(&self.session_id, cx) {
+                return set_title.run(title, cx);
+            }
+        }
+        Task::ready(Ok(()))
     }
 
     pub fn update_token_usage(&mut self, usage: Option<TokenUsage>, cx: &mut Context<Self>) {
@@ -1326,11 +1335,7 @@ impl AcpThread {
         };
         let git_store = self.project.read(cx).git_store().clone();
 
-        let message_id = if self
-            .connection
-            .session_editor(&self.session_id, cx)
-            .is_some()
-        {
+        let message_id = if self.connection.truncate(&self.session_id, cx).is_some() {
             Some(UserMessageId::new())
         } else {
             None
@@ -1476,7 +1481,7 @@ impl AcpThread {
     /// Rewinds this thread to before the entry at `index`, removing it and all
     /// subsequent entries while reverting any changes made from that point.
     pub fn rewind(&mut self, id: UserMessageId, cx: &mut Context<Self>) -> Task<Result<()>> {
-        let Some(session_editor) = self.connection.session_editor(&self.session_id, cx) else {
+        let Some(truncate) = self.connection.truncate(&self.session_id, cx) else {
             return Task::ready(Err(anyhow!("not supported")));
         };
         let Some(message) = self.user_message(&id) else {
@@ -1496,8 +1501,7 @@ impl AcpThread {
                     .await?;
             }
 
-            cx.update(|cx| session_editor.truncate(id.clone(), cx))?
-                .await?;
+            cx.update(|cx| truncate.run(id.clone(), cx))?.await?;
             this.update(cx, |this, cx| {
                 if let Some((ix, _)) = this.user_message_mut(&id) {
                     let range = ix..this.entries.len();
@@ -2652,11 +2656,11 @@ mod tests {
             .detach();
         }
 
-        fn session_editor(
+        fn truncate(
             &self,
             session_id: &acp::SessionId,
             _cx: &mut App,
-        ) -> Option<Rc<dyn AgentSessionEditor>> {
+        ) -> Option<Rc<dyn AgentSessionTruncate>> {
             Some(Rc::new(FakeAgentSessionEditor {
                 _session_id: session_id.clone(),
             }))
@@ -2671,8 +2675,8 @@ mod tests {
         _session_id: acp::SessionId,
     }
 
-    impl AgentSessionEditor for FakeAgentSessionEditor {
-        fn truncate(&self, _message_id: UserMessageId, _cx: &mut App) -> Task<Result<()>> {
+    impl AgentSessionTruncate for FakeAgentSessionEditor {
+        fn run(&self, _message_id: UserMessageId, _cx: &mut App) -> Task<Result<()>> {
             Task::ready(Ok(()))
         }
     }

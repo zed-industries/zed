@@ -905,7 +905,7 @@ impl AgentPanel {
 
     fn active_thread_view(&self) -> Option<&Entity<AcpThreadView>> {
         match &self.active_view {
-            ActiveView::ExternalAgentThread { thread_view } => Some(thread_view),
+            ActiveView::ExternalAgentThread { thread_view, .. } => Some(thread_view),
             ActiveView::Thread { .. }
             | ActiveView::TextThread { .. }
             | ActiveView::History
@@ -2075,9 +2075,32 @@ impl AgentPanel {
                 }
             }
             ActiveView::ExternalAgentThread { thread_view } => {
-                Label::new(thread_view.read(cx).title(cx))
-                    .truncate()
-                    .into_any_element()
+                if let Some(title_editor) = thread_view.read(cx).title_editor() {
+                    div()
+                        .w_full()
+                        .on_action({
+                            let thread_view = thread_view.downgrade();
+                            move |_: &menu::Confirm, window, cx| {
+                                if let Some(thread_view) = thread_view.upgrade() {
+                                    thread_view.focus_handle(cx).focus(window);
+                                }
+                            }
+                        })
+                        .on_action({
+                            let thread_view = thread_view.downgrade();
+                            move |_: &editor::actions::Cancel, window, cx| {
+                                if let Some(thread_view) = thread_view.upgrade() {
+                                    thread_view.focus_handle(cx).focus(window);
+                                }
+                            }
+                        })
+                        .child(title_editor)
+                        .into_any_element()
+                } else {
+                    Label::new(thread_view.read(cx).title(cx))
+                        .truncate()
+                        .into_any_element()
+                }
             }
             ActiveView::TextThread {
                 title_editor,

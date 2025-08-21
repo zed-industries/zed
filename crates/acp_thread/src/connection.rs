@@ -50,11 +50,19 @@ pub trait AgentConnection {
 
     fn cancel(&self, session_id: &acp::SessionId, cx: &mut App);
 
-    fn session_editor(
+    fn truncate(
         &self,
         _session_id: &acp::SessionId,
         _cx: &mut App,
-    ) -> Option<Rc<dyn AgentSessionEditor>> {
+    ) -> Option<Rc<dyn AgentSessionTruncate>> {
+        None
+    }
+
+    fn set_title(
+        &self,
+        _session_id: &acp::SessionId,
+        _cx: &mut App,
+    ) -> Option<Rc<dyn AgentSessionSetTitle>> {
         None
     }
 
@@ -79,12 +87,16 @@ impl dyn AgentConnection {
     }
 }
 
-pub trait AgentSessionEditor {
-    fn truncate(&self, message_id: UserMessageId, cx: &mut App) -> Task<Result<()>>;
+pub trait AgentSessionTruncate {
+    fn run(&self, message_id: UserMessageId, cx: &mut App) -> Task<Result<()>>;
 }
 
 pub trait AgentSessionResume {
     fn run(&self, cx: &mut App) -> Task<Result<acp::PromptResponse>>;
+}
+
+pub trait AgentSessionSetTitle {
+    fn run(&self, title: SharedString, cx: &mut App) -> Task<Result<()>>;
 }
 
 pub trait AgentTelemetry {
@@ -424,11 +436,11 @@ mod test_support {
             }
         }
 
-        fn session_editor(
+        fn truncate(
             &self,
             _session_id: &agent_client_protocol::SessionId,
             _cx: &mut App,
-        ) -> Option<Rc<dyn AgentSessionEditor>> {
+        ) -> Option<Rc<dyn AgentSessionTruncate>> {
             Some(Rc::new(StubAgentSessionEditor))
         }
 
@@ -439,8 +451,8 @@ mod test_support {
 
     struct StubAgentSessionEditor;
 
-    impl AgentSessionEditor for StubAgentSessionEditor {
-        fn truncate(&self, _: UserMessageId, _: &mut App) -> Task<Result<()>> {
+    impl AgentSessionTruncate for StubAgentSessionEditor {
+        fn run(&self, _: UserMessageId, _: &mut App) -> Task<Result<()>> {
             Task::ready(Ok(()))
         }
     }

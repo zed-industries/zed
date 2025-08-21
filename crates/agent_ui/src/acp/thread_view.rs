@@ -15,7 +15,7 @@ use buffer_diff::BufferDiff;
 use client::zed_urls;
 use collections::{HashMap, HashSet};
 use editor::scroll::Autoscroll;
-use editor::{Editor, EditorMode, MultiBuffer, PathKey, SelectionEffects};
+use editor::{Editor, EditorEvent, EditorMode, MultiBuffer, PathKey, SelectionEffects};
 use file_icons::FileIcons;
 use fs::Fs;
 use gpui::{
@@ -281,7 +281,8 @@ enum ThreadState {
     },
     Ready {
         thread: Entity<AcpThread>,
-        _subscription: [Subscription; 2],
+        title_editor: Option<Entity<Editor>>,
+        _subscriptions: Vec<Subscription>,
     },
     LoadError(LoadError),
     Unauthenticated {
@@ -445,12 +446,7 @@ impl AcpThreadView {
             this.update_in(cx, |this, window, cx| {
                 match result {
                     Ok(thread) => {
-                        let thread_subscription =
-                            cx.subscribe_in(&thread, window, Self::handle_thread_event);
-
                         let action_log = thread.read(cx).action_log().clone();
-                        let action_log_subscription =
-                            cx.observe(&action_log, |_, _, cx| cx.notify());
 
                         let count = thread.read(cx).entries().len();
                         this.list_state.splice(0..0, count);
@@ -489,9 +485,31 @@ impl AcpThreadView {
                                     })
                                 });
 
+                        let mut subscriptions = vec![
+                            cx.subscribe_in(&thread, window, Self::handle_thread_event),
+                            cx.observe(&action_log, |_, _, cx| cx.notify()),
+                        ];
+
+                        let title_editor =
+                            if thread.update(cx, |thread, cx| thread.can_set_title(cx)) {
+                                let editor = cx.new(|cx| {
+                                    let mut editor = Editor::single_line(window, cx);
+                                    editor.set_text(thread.read(cx).title(), window, cx);
+                                    editor
+                                });
+                                subscriptions.push(cx.subscribe_in(
+                                    &editor,
+                                    window,
+                                    Self::handle_title_editor_event,
+                                ));
+                                Some(editor)
+                            } else {
+                                None
+                            };
                         this.thread_state = ThreadState::Ready {
                             thread,
-                            _subscription: [thread_subscription, action_log_subscription],
+                            title_editor,
+                            _subscriptions: subscriptions,
                         };
 
                         this.profile_selector = this.as_native_thread(cx).map(|thread| {
@@ -618,6 +636,14 @@ impl AcpThreadView {
         }
     }
 
+    pub fn title_editor(&self) -> Option<Entity<Editor>> {
+        if let ThreadState::Ready { title_editor, .. } = &self.thread_state {
+            title_editor.clone()
+        } else {
+            None
+        }
+    }
+
     pub fn cancel_generation(&mut self, cx: &mut Context<Self>) {
         self.thread_error.take();
         self.thread_retry_status.take();
@@ -660,6 +686,35 @@ impl AcpThreadView {
             }
         });
         cx.notify();
+    }
+
+    pub fn handle_title_editor_event(
+        &mut self,
+        title_editor: &Entity<Editor>,
+        event: &EditorEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(thread) = self.thread() else { return };
+
+        match event {
+            EditorEvent::BufferEdited => {
+                let new_title = title_editor.read(cx).text(cx);
+                thread.update(cx, |thread, cx| {
+                    thread
+                        .set_title(new_title.into(), cx)
+                        .detach_and_log_err(cx);
+                })
+            }
+            EditorEvent::Blurred => {
+                if title_editor.read(cx).text(cx).is_empty() {
+                    title_editor.update(cx, |editor, cx| {
+                        editor.set_text("New Thread", window, cx);
+                    });
+                }
+            }
+            _ => {}
+        }
     }
 
     pub fn handle_message_editor_event(
@@ -1009,7 +1064,17 @@ impl AcpThreadView {
                 self.thread_retry_status.take();
                 self.thread_state = ThreadState::LoadError(error.clone());
             }
-            AcpThreadEvent::TitleUpdated | AcpThreadEvent::TokenUsageUpdated => {}
+            AcpThreadEvent::TitleUpdated => {
+                let title = thread.read(cx).title();
+                if let Some(title_editor) = self.title_editor() {
+                    title_editor.update(cx, |editor, cx| {
+                        if editor.text(cx) != title {
+                            editor.set_text(title, window, cx);
+                        }
+                    });
+                }
+            }
+            AcpThreadEvent::TokenUsageUpdated => {}
         }
         cx.notify();
     }

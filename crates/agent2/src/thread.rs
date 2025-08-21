@@ -487,7 +487,6 @@ pub enum ThreadEvent {
     ToolCall(acp::ToolCall),
     ToolCallUpdate(acp_thread::ToolCallUpdate),
     ToolCallAuthorization(ToolCallAuthorization),
-    TitleUpdate(SharedString),
     Retry(acp_thread::RetryStatus),
     Stop(acp::StopReason),
 }
@@ -514,6 +513,7 @@ pub struct Thread {
     prompt_id: PromptId,
     updated_at: DateTime<Utc>,
     title: Option<SharedString>,
+    pending_title_generation: Option<Task<()>>,
     summary: Option<SharedString>,
     messages: Vec<Message>,
     completion_mode: CompletionMode,
@@ -555,6 +555,7 @@ impl Thread {
             prompt_id: PromptId::new(),
             updated_at: Utc::now(),
             title: None,
+            pending_title_generation: None,
             summary: None,
             messages: Vec::new(),
             completion_mode: AgentSettings::get_global(cx).preferred_completion_mode,
@@ -705,6 +706,7 @@ impl Thread {
             } else {
                 Some(db_thread.title.clone())
             },
+            pending_title_generation: None,
             summary: db_thread.detailed_summary,
             messages: db_thread.messages,
             completion_mode: db_thread.completion_mode.unwrap_or_default(),
@@ -1086,7 +1088,7 @@ impl Thread {
             event_stream: event_stream.clone(),
             _task: cx.spawn(async move |this, cx| {
                 log::info!("Starting agent turn execution");
-                let mut update_title = None;
+
                 let turn_result: Result<()> = async {
                     let mut intent = CompletionIntent::UserPrompt;
                     loop {
@@ -1095,8 +1097,8 @@ impl Thread {
                         let mut end_turn = true;
                         this.update(cx, |this, cx| {
                             // Generate title if needed.
-                            if this.title.is_none() && update_title.is_none() {
-                                update_title = Some(this.update_title(&event_stream, cx));
+                            if this.title.is_none() && this.pending_title_generation.is_none() {
+                                this.generate_title(cx);
                             }
 
                             // End the turn if the model didn't use tools.
@@ -1119,10 +1121,6 @@ impl Thread {
                 }
                 .await;
                 _ = this.update(cx, |this, cx| this.flush_pending_message(cx));
-
-                if let Some(update_title) = update_title {
-                    update_title.await.context("update title failed").log_err();
-                }
 
                 match turn_result {
                     Ok(()) => {
@@ -1607,19 +1605,15 @@ impl Thread {
         })
     }
 
-    fn update_title(
-        &mut self,
-        event_stream: &ThreadEventStream,
-        cx: &mut Context<Self>,
-    ) -> Task<Result<()>> {
+    fn generate_title(&mut self, cx: &mut Context<Self>) {
+        let Some(model) = self.summarization_model.clone() else {
+            return;
+        };
+
         log::info!(
             "Generating title with model: {:?}",
             self.summarization_model.as_ref().map(|model| model.name())
         );
-        let Some(model) = self.summarization_model.clone() else {
-            return Task::ready(Ok(()));
-        };
-        let event_stream = event_stream.clone();
         let mut request = LanguageModelRequest {
             intent: Some(CompletionIntent::ThreadSummarization),
             temperature: AgentSettings::temperature_for_model(&model, cx),
@@ -1635,42 +1629,51 @@ impl Thread {
             content: vec![SUMMARIZE_THREAD_PROMPT.into()],
             cache: false,
         });
-        cx.spawn(async move |this, cx| {
+        self.pending_title_generation = Some(cx.spawn(async move |this, cx| {
             let mut title = String::new();
-            let mut messages = model.stream_completion(request, cx).await?;
-            while let Some(event) = messages.next().await {
-                let event = event?;
-                let text = match event {
-                    LanguageModelCompletionEvent::Text(text) => text,
-                    LanguageModelCompletionEvent::StatusUpdate(
-                        CompletionRequestStatus::UsageUpdated { amount, limit },
-                    ) => {
-                        this.update(cx, |thread, cx| {
-                            thread.update_model_request_usage(amount, limit, cx);
-                        })?;
-                        continue;
+
+            let generate = async {
+                let mut messages = model.stream_completion(request, cx).await?;
+                while let Some(event) = messages.next().await {
+                    let event = event?;
+                    let text = match event {
+                        LanguageModelCompletionEvent::Text(text) => text,
+                        LanguageModelCompletionEvent::StatusUpdate(
+                            CompletionRequestStatus::UsageUpdated { amount, limit },
+                        ) => {
+                            this.update(cx, |thread, cx| {
+                                thread.update_model_request_usage(amount, limit, cx);
+                            })?;
+                            continue;
+                        }
+                        _ => continue,
+                    };
+
+                    let mut lines = text.lines();
+                    title.extend(lines.next());
+
+                    // Stop if the LLM generated multiple lines.
+                    if lines.next().is_some() {
+                        break;
                     }
-                    _ => continue,
-                };
-
-                let mut lines = text.lines();
-                title.extend(lines.next());
-
-                // Stop if the LLM generated multiple lines.
-                if lines.next().is_some() {
-                    break;
                 }
+                anyhow::Ok(())
+            };
+
+            if generate.await.context("failed to generate title").is_ok() {
+                _ = this.update(cx, |this, cx| this.set_title(title.into(), cx));
             }
+            _ = this.update(cx, |this, _| this.pending_title_generation = None);
+        }));
+    }
 
-            log::info!("Setting title: {}", title);
-
-            this.update(cx, |this, cx| {
-                let title = SharedString::from(title);
-                event_stream.send_title_update(title.clone());
-                this.title = Some(title);
-                cx.notify();
-            })
-        })
+    pub fn set_title(&mut self, title: SharedString, cx: &mut Context<Self>) {
+        self.pending_title_generation = None;
+        if Some(&title) != self.title.as_ref() {
+            self.title = Some(title);
+            cx.emit(TitleUpdated);
+            cx.notify();
+        }
     }
 
     fn last_user_message(&self) -> Option<&UserMessage> {
@@ -1975,6 +1978,10 @@ pub struct TokenUsageUpdated(pub Option<acp_thread::TokenUsage>);
 
 impl EventEmitter<TokenUsageUpdated> for Thread {}
 
+pub struct TitleUpdated;
+
+impl EventEmitter<TitleUpdated> for Thread {}
+
 pub trait AgentTool
 where
     Self: 'static + Sized,
@@ -2132,12 +2139,6 @@ where
 struct ThreadEventStream(mpsc::UnboundedSender<Result<ThreadEvent>>);
 
 impl ThreadEventStream {
-    fn send_title_update(&self, text: SharedString) {
-        self.0
-            .unbounded_send(Ok(ThreadEvent::TitleUpdate(text)))
-            .ok();
-    }
-
     fn send_user_message(&self, message: &UserMessage) {
         self.0
             .unbounded_send(Ok(ThreadEvent::UserMessage(message.clone())))
