@@ -802,6 +802,9 @@ unexpected_cfgs = { level = "allow" }
 dbg_macro = "deny"
 todo = "deny"
 
+# trying this out
+redundant_clone = "deny"
+
 # We currently do not restrict any style rules
 # as it slows down shipping code to Zed.
 #
