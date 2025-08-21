@@ -87,6 +87,7 @@ impl MessageEditor {
         project: Entity<Project>,
         history_store: Entity<HistoryStore>,
         prompt_store: Option<Entity<PromptStore>>,
+        prompt_capabilities: Rc<Cell<acp::PromptCapabilities>>,
         placeholder: impl Into<Arc<str>>,
         prevent_slash_commands: bool,
         mode: EditorMode,
@@ -100,7 +101,6 @@ impl MessageEditor {
             },
             None,
         );
-        let prompt_capabilities = Rc::new(Cell::new(acp::PromptCapabilities::default()));
         let completion_provider = ContextPickerCompletionProvider::new(
             cx.weak_entity(),
             workspace.clone(),
@@ -198,10 +198,6 @@ impl MessageEditor {
             cx,
         )
         .detach();
-    }
-
-    pub fn set_prompt_capabilities(&mut self, capabilities: acp::PromptCapabilities) {
-        self.prompt_capabilities.set(capabilities);
     }
 
     #[cfg(test)]
@@ -1097,15 +1093,21 @@ impl MessageEditor {
                         mentions.push((start..end, mention_uri, resource.text));
                     }
                 }
+                acp::ContentBlock::ResourceLink(resource) => {
+                    if let Some(mention_uri) = MentionUri::parse(&resource.uri).log_err() {
+                        let start = text.len();
+                        write!(&mut text, "{}", mention_uri.as_link()).ok();
+                        let end = text.len();
+                        mentions.push((start..end, mention_uri, resource.uri));
+                    }
+                }
                 acp::ContentBlock::Image(content) => {
                     let start = text.len();
                     text.push_str("image");
                     let end = text.len();
                     images.push((start..end, content));
                 }
-                acp::ContentBlock::Audio(_)
-                | acp::ContentBlock::Resource(_)
-                | acp::ContentBlock::ResourceLink(_) => {}
+                acp::ContentBlock::Audio(_) | acp::ContentBlock::Resource(_) => {}
             }
         }
 
@@ -1844,7 +1846,7 @@ impl Addon for MessageEditorAddon {
 
 #[cfg(test)]
 mod tests {
-    use std::{ops::Range, path::Path, sync::Arc};
+    use std::{cell::Cell, ops::Range, path::Path, rc::Rc, sync::Arc};
 
     use acp_thread::MentionUri;
     use agent_client_protocol as acp;
@@ -1890,6 +1892,7 @@ mod tests {
                     project.clone(),
                     history_store.clone(),
                     None,
+                    Default::default(),
                     "Test",
                     false,
                     EditorMode::AutoHeight {
@@ -2080,6 +2083,7 @@ mod tests {
 
         let context_store = cx.new(|cx| ContextStore::fake(project.clone(), cx));
         let history_store = cx.new(|cx| HistoryStore::new(context_store, cx));
+        let prompt_capabilities = Rc::new(Cell::new(acp::PromptCapabilities::default()));
 
         let (message_editor, editor) = workspace.update_in(&mut cx, |workspace, window, cx| {
             let workspace_handle = cx.weak_entity();
@@ -2089,6 +2093,7 @@ mod tests {
                     project.clone(),
                     history_store.clone(),
                     None,
+                    Default::default(),
                     "Test",
                     false,
                     EditorMode::AutoHeight {
@@ -2133,13 +2138,10 @@ mod tests {
             editor.set_text("", window, cx);
         });
 
-        message_editor.update(&mut cx, |editor, _cx| {
-            // Enable all prompt capabilities
-            editor.set_prompt_capabilities(acp::PromptCapabilities {
-                image: true,
-                audio: true,
-                embedded_context: true,
-            });
+        prompt_capabilities.set(acp::PromptCapabilities {
+            image: true,
+            audio: true,
+            embedded_context: true,
         });
 
         cx.simulate_input("Lorem ");

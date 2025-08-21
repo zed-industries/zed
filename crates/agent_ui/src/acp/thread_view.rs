@@ -5,7 +5,7 @@ use acp_thread::{
 };
 use acp_thread::{AgentConnection, Plan};
 use action_log::ActionLog;
-use agent_client_protocol::{self as acp};
+use agent_client_protocol::{self as acp, PromptCapabilities};
 use agent_servers::{AgentServer, ClaudeCode};
 use agent_settings::{AgentProfileId, AgentSettings, CompletionMode, NotifyWhenAgentWaiting};
 use agent2::{DbThreadMetadata, HistoryEntry, HistoryEntryId, HistoryStore};
@@ -34,6 +34,7 @@ use project::{Project, ProjectEntryId};
 use prompt_store::{PromptId, PromptStore};
 use rope::Point;
 use settings::{Settings as _, SettingsStore};
+use std::cell::Cell;
 use std::sync::Arc;
 use std::time::Instant;
 use std::{collections::BTreeMap, rc::Rc, time::Duration};
@@ -271,6 +272,7 @@ pub struct AcpThreadView {
     plan_expanded: bool,
     editor_expanded: bool,
     editing_message: Option<usize>,
+    prompt_capabilities: Rc<Cell<PromptCapabilities>>,
     _cancel_task: Option<Task<()>>,
     _subscriptions: [Subscription; 3],
 }
@@ -305,6 +307,7 @@ impl AcpThreadView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        let prompt_capabilities = Rc::new(Cell::new(acp::PromptCapabilities::default()));
         let prevent_slash_commands = agent.clone().downcast::<ClaudeCode>().is_some();
         let message_editor = cx.new(|cx| {
             let mut editor = MessageEditor::new(
@@ -312,6 +315,7 @@ impl AcpThreadView {
                 project.clone(),
                 history_store.clone(),
                 prompt_store.clone(),
+                prompt_capabilities.clone(),
                 "Message the agent — @ to include context",
                 prevent_slash_commands,
                 editor::EditorMode::AutoHeight {
@@ -335,6 +339,7 @@ impl AcpThreadView {
                 project.clone(),
                 history_store.clone(),
                 prompt_store.clone(),
+                prompt_capabilities.clone(),
                 prevent_slash_commands,
             )
         });
@@ -370,6 +375,7 @@ impl AcpThreadView {
             editor_expanded: false,
             history_store,
             hovered_recent_history_item: None,
+            prompt_capabilities,
             _subscriptions: subscriptions,
             _cancel_task: None,
         }
@@ -452,6 +458,9 @@ impl AcpThreadView {
                         let action_log_subscription =
                             cx.observe(&action_log, |_, _, cx| cx.notify());
 
+                        this.prompt_capabilities
+                            .set(connection.prompt_capabilities());
+
                         let count = thread.read(cx).entries().len();
                         this.list_state.splice(0..0, count);
                         this.entry_view_state.update(cx, |view_state, cx| {
@@ -503,11 +512,6 @@ impl AcpThreadView {
                                     cx,
                                 )
                             })
-                        });
-
-                        this.message_editor.update(cx, |message_editor, _cx| {
-                            message_editor
-                                .set_prompt_capabilities(connection.prompt_capabilities());
                         });
 
                         cx.notify();
