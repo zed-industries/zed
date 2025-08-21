@@ -400,6 +400,8 @@ impl Server {
             .add_request_handler(forward_mutating_project_request::<proto::SaveBuffer>)
             .add_request_handler(forward_mutating_project_request::<proto::BlameBuffer>)
             .add_request_handler(multi_lsp_query)
+            .add_request_handler(lsp_query)
+            .add_message_handler(broadcast_project_message_from_host::<proto::LspQueryResponse>)
             .add_request_handler(forward_mutating_project_request::<proto::RestartLanguageServers>)
             .add_request_handler(forward_mutating_project_request::<proto::StopLanguageServers>)
             .add_request_handler(forward_mutating_project_request::<proto::LinkedEditingRange>)
@@ -910,7 +912,9 @@ impl Server {
                                 user_id=field::Empty,
                                 login=field::Empty,
                                 impersonator=field::Empty,
+                                // todo(lsp) remove after Zed Stable hits v0.204.x
                                 multi_lsp_query_request=field::Empty,
+                                lsp_query_request=field::Empty,
                                 release_channel=field::Empty,
                                 { TOTAL_DURATION_MS }=field::Empty,
                                 { PROCESSING_DURATION_MS }=field::Empty,
@@ -2356,6 +2360,7 @@ where
     Ok(())
 }
 
+// todo(lsp) remove after Zed Stable hits v0.204.x
 async fn multi_lsp_query(
     request: MultiLspQuery,
     response: Response<MultiLspQuery>,
@@ -2364,6 +2369,21 @@ async fn multi_lsp_query(
     tracing::Span::current().record("multi_lsp_query_request", request.request_str());
     tracing::info!("multi_lsp_query message received");
     forward_mutating_project_request(request, response, session).await
+}
+
+async fn lsp_query(
+    request: proto::LspQuery,
+    response: Response<proto::LspQuery>,
+    session: MessageContext,
+) -> Result<()> {
+    let (name, should_write) = request.query_name_and_write_permissions();
+    tracing::Span::current().record("lsp_query_request", name);
+    tracing::info!("lsp_query message received");
+    if should_write {
+        forward_mutating_project_request(request, response, session).await
+    } else {
+        forward_read_only_project_request(request, response, session).await
+    }
 }
 
 /// Notify other participants that a new buffer has been created

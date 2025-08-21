@@ -1691,7 +1691,7 @@ impl SemanticsProvider for SlashCommandSemanticsProvider {
         buffer: &Entity<Buffer>,
         position: text::Anchor,
         cx: &mut App,
-    ) -> Option<Task<Vec<project::Hover>>> {
+    ) -> Option<Task<Option<Vec<project::Hover>>>> {
         let snapshot = buffer.read(cx).snapshot();
         let offset = position.to_offset(&snapshot);
         let (start, end) = self.range.get()?;
@@ -1699,14 +1699,14 @@ impl SemanticsProvider for SlashCommandSemanticsProvider {
             return None;
         }
         let range = snapshot.anchor_after(start)..snapshot.anchor_after(end);
-        Some(Task::ready(vec![project::Hover {
+        Some(Task::ready(Some(vec![project::Hover {
             contents: vec![project::HoverBlock {
                 text: "Slash commands are not supported".into(),
                 kind: project::HoverBlockKind::PlainText,
             }],
             range: Some(range),
             language: None,
-        }]))
+        }])))
     }
 
     fn inline_values(
@@ -1756,7 +1756,7 @@ impl SemanticsProvider for SlashCommandSemanticsProvider {
         _position: text::Anchor,
         _kind: editor::GotoDefinitionKind,
         _cx: &mut App,
-    ) -> Option<Task<Result<Vec<project::LocationLink>>>> {
+    ) -> Option<Task<Result<Option<Vec<project::LocationLink>>>>> {
         None
     }
 

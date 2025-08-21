@@ -3444,8 +3444,7 @@ impl LspCommand for GetCodeLens {
         capabilities
             .server_capabilities
             .code_lens_provider
-            .as_ref()
-            .is_some_and(|code_lens_options| code_lens_options.resolve_provider.unwrap_or(false))
+            .is_some()
     }
 
     fn to_lsp(
