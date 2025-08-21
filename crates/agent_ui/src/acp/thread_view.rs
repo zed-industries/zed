@@ -41,7 +41,7 @@ use text::Anchor;
 use theme::ThemeSettings;
 use ui::{
     Callout, Disclosure, Divider, DividerColor, ElevationIndex, KeyBinding, PopoverMenuHandle,
-    Scrollbar, ScrollbarState, Tooltip, prelude::*,
+    Scrollbar, ScrollbarState, SpinnerLabel, Tooltip, prelude::*,
 };
 use util::{ResultExt, size::format_file_size, time::duration_alt_display};
 use workspace::{CollaboratorId, Workspace};
@@ -4565,9 +4565,9 @@ impl Render for AcpThreadView {
                                     ThreadStatus::Idle
                                     | ThreadStatus::WaitingForToolConfirmation => None,
                                     ThreadStatus::Generating => div()
-                                        .px_5()
                                         .py_2()
-                                        .child(LoadingLabel::new("").size(LabelSize::Small))
+                                        .px(rems_from_px(22.))
+                                        .child(SpinnerLabel::new().size(LabelSize::Small))
                                         .into(),
                                 },
                             )
