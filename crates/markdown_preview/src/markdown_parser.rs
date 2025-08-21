@@ -782,7 +782,7 @@ impl<'a> MarkdownParser<'a> {
         let mut images = Vec::new();
         let selector = scraper::Selector::parse("img").unwrap();
 
-        for element in html.select(&selector).into_iter() {
+        for element in html.select(&selector) {
             let Some(src) = element.attr("src") else {
                 continue;
             };

@@ -746,7 +746,7 @@ fn render_markdown_image(image: &Image, cx: &mut RenderContext) -> AnyElement {
     };
 
     let element_id = cx.next_id(&image.source_range);
-    let workspace_clone = cx.workspace.clone();
+    let workspace = cx.workspace.clone();
 
     div()
         .id(element_id)
@@ -774,7 +774,6 @@ fn render_markdown_image(image: &Image, cx: &mut RenderContext) -> AnyElement {
             }
         })
         .on_click({
-            let workspace = workspace_clone.clone();
             let link = image.link.clone();
             move |_, window, cx| {
                 if window.modifiers().secondary() {
