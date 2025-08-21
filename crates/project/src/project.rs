@@ -327,6 +327,7 @@ pub enum Event {
     RevealInProjectPanel(ProjectEntryId),
     SnippetEdit(BufferId, Vec<(lsp::Range, Snippet)>),
     ExpandedAllForEntry(WorktreeId, ProjectEntryId),
+    EntryRenamed(ProjectTransaction),
     AgentLocationChanged,
 }
 
@@ -2119,7 +2120,7 @@ impl Project {
         let is_root_entry = self.entry_is_worktree_root(entry_id, cx);
 
         let lsp_store = self.lsp_store().downgrade();
-        cx.spawn(async move |_, cx| {
+        cx.spawn(async move |project, cx| {
             let (old_abs_path, new_abs_path) = {
                 let root_path = worktree.read_with(cx, |this, _| this.abs_path())?;
                 let new_abs_path = if is_root_entry {
@@ -2129,7 +2130,7 @@ impl Project {
                 };
                 (root_path.join(&old_path), new_abs_path)
             };
-            LspStore::will_rename_entry(
+            let transaction = LspStore::will_rename_entry(
                 lsp_store.clone(),
                 worktree_id,
                 &old_abs_path,
@@ -2144,6 +2145,12 @@ impl Project {
                     worktree.rename_entry(entry_id, new_path.clone(), cx)
                 })?
                 .await?;
+
+            project
+                .update(cx, |_, cx| {
+                    cx.emit(Event::EntryRenamed(transaction));
+                })
+                .ok();
 
             lsp_store
                 .read_with(cx, |this, _| {
