@@ -45,7 +45,7 @@ use util::{ConnectionResult, ResultExt, TryFutureExt, redact};
 const JSON_RPC_VERSION: &str = "2.0";
 const CONTENT_LEN_HEADER: &str = "Content-Length: ";
 
-const LSP_REQUEST_TIMEOUT: Duration = Duration::from_secs(60 * 2);
+pub const LSP_REQUEST_TIMEOUT: Duration = Duration::from_secs(60 * 2);
 const SERVER_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 
 type NotificationHandler = Box<dyn Send + FnMut(Option<RequestId>, Value, &mut AsyncApp)>;
