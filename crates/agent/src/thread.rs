@@ -451,6 +451,7 @@ impl Thread {
     ) -> Self {
         let (detailed_summary_tx, detailed_summary_rx) = postage::watch::channel();
         let configured_model = LanguageModelRegistry::read_global(cx).default_model();
+        configured_model.as_ref().map(|model| model.model.name());
         let profile_id = AgentSettings::get_global(cx).default_profile.clone();
 
         Self {
@@ -664,7 +665,7 @@ impl Thread {
     }
 
     pub fn get_or_init_configured_model(&mut self, cx: &App) -> Option<ConfiguredModel> {
-        if self.configured_model.is_none() {
+        if self.configured_model.is_none() || self.messages.is_empty() {
             self.configured_model = LanguageModelRegistry::read_global(cx).default_model();
         }
         self.configured_model.clone()

@@ -148,7 +148,7 @@ impl State {
             default_fast_model: None,
             recommended_models: Vec::new(),
             _fetch_models_task: cx.spawn(async move |this, cx| {
-                maybe!(async move {
+                maybe!(async {
                     let (client, llm_api_token) = this
                         .read_with(cx, |this, _cx| (client.clone(), this.llm_api_token.clone()))?;
 

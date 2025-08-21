@@ -373,7 +373,6 @@ fn update_active_language_model_from_settings(cx: &mut App) {
         .collect::<Vec<_>>();
 
     LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
-        dbg!(&default);
         registry.select_default_model(default.as_ref(), cx);
         registry.select_inline_assistant_model(inline_assistant.as_ref(), cx);
         registry.select_commit_message_model(commit_message.as_ref(), cx);

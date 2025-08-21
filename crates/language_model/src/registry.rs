@@ -4,7 +4,7 @@ use crate::{
 };
 use collections::BTreeMap;
 use gpui::{App, Context, Entity, EventEmitter, Global, prelude::*};
-use std::{panic::Location, str::FromStr, sync::Arc};
+use std::{str::FromStr, sync::Arc};
 use thiserror::Error;
 
 pub fn init(cx: &mut App) {
@@ -301,11 +301,6 @@ impl LanguageModelRegistry {
         model: Option<ConfiguredModel>,
         cx: &mut Context<Self>,
     ) {
-        // todo! Why is environment fallback taking precedence when cloud model is in the settings?
-        dbg!(
-            "Setting environment fallback",
-            model.clone().map(|m| m.model.id())
-        );
         if self.default_model.is_none() {
             match (self.environment_fallback_model.as_ref(), model.as_ref()) {
                 (Some(old), Some(new)) if old.is_same_as(new) => {}
