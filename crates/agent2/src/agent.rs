@@ -2,8 +2,8 @@ use crate::{
     ContextServerRegistry, Thread, ThreadEvent, ThreadsDatabase, ToolCallAuthorization,
     UserMessageContent, templates::Templates,
 };
-use crate::{HistoryStore, TokenUsageUpdated};
-use acp_thread::{AcpThread, AgentModelSelector};
+use crate::{HistoryStore, TitleUpdated, TokenUsageUpdated};
+use acp_thread::{AcpThread, AcpThreadEvent, AgentModelSelector};
 use action_log::ActionLog;
 use agent_client_protocol as acp;
 use agent_settings::AgentSettings;
@@ -250,9 +250,11 @@ impl NativeAgent {
             )
         });
         let subscriptions = vec![
+            cx.subscribe(&acp_thread, Self::handle_acp_thread_event),
             cx.observe_release(&acp_thread, |this, acp_thread, _cx| {
                 this.sessions.remove(acp_thread.session_id());
             }),
+            cx.subscribe(&thread_handle, Self::handle_thread_title_updated),
             cx.subscribe(&thread_handle, Self::handle_thread_token_usage_updated),
             cx.observe(&thread_handle, move |this, thread, cx| {
                 this.save_thread(thread, cx)
@@ -439,6 +441,39 @@ impl NativeAgent {
                 })
             })
         })
+    }
+
+    fn handle_acp_thread_event(
+        &mut self,
+        thread: Entity<AcpThread>,
+        event: &AcpThreadEvent,
+        cx: &mut Context<Self>,
+    ) {
+        if let AcpThreadEvent::TitleUpdated = event {
+            let title = thread.read(cx).title();
+            let Some(session) = self.sessions.get(thread.read(cx).session_id()) else {
+                return;
+            };
+            session
+                .thread
+                .update(cx, |thread, cx| thread.set_title(title, cx));
+        }
+    }
+
+    fn handle_thread_title_updated(
+        &mut self,
+        thread: Entity<Thread>,
+        _: &TitleUpdated,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(session) = self.sessions.get(thread.read(cx).id()) else {
+            return;
+        };
+        let title = session.thread.read(cx).title();
+        session
+            .acp_thread
+            .update(cx, |acp_thread, cx| acp_thread.update_title(title, cx))
+            .ok();
     }
 
     fn handle_thread_token_usage_updated(
@@ -717,10 +752,6 @@ impl NativeAgentConnection {
                                     thread.update_tool_call(update, cx)
                                 })??;
                             }
-                            ThreadEvent::TitleUpdate(title) => {
-                                acp_thread
-                                    .update(cx, |thread, cx| thread.update_title(title, cx))??;
-                            }
                             ThreadEvent::Retry(status) => {
                                 acp_thread.update(cx, |thread, cx| {
                                     thread.update_retry_status(status, cx)
@@ -856,8 +887,7 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
                             .models
                             .model_from_id(&LanguageModels::model_id(&default_model.model))
                     });
-
-                    let thread = cx.new(|cx| {
+                    Ok(cx.new(|cx| {
                         Thread::new(
                             project.clone(),
                             agent.project_context.clone(),
@@ -867,9 +897,7 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
                             default_model,
                             cx,
                         )
-                    });
-
-                    Ok(thread)
+                    }))
                 },
             )??;
             agent.update(cx, |agent, cx| agent.register_session(thread, cx))
