@@ -44,7 +44,7 @@ pub struct ClaudeCode;
 
 impl AgentServer for ClaudeCode {
     fn name(&self) -> &'static str {
-        "Claude Code"
+        "Welcome to Claude Code"
     }
 
     fn empty_state_headline(&self) -> &'static str {
