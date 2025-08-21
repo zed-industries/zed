@@ -2248,7 +2248,7 @@ impl ThreadEventStream {
 
     fn send_canceled(&self) {
         self.0
-            .unbounded_send(Ok(ThreadEvent::Stop(acp::StopReason::Canceled)))
+            .unbounded_send(Ok(ThreadEvent::Stop(acp::StopReason::Cancelled)))
             .ok();
     }
 

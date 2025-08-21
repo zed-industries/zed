@@ -420,7 +420,7 @@ mod test_support {
                 .response_tx
                 .take()
             {
-                end_turn_tx.send(acp::StopReason::Canceled).unwrap();
+                end_turn_tx.send(acp::StopReason::Cancelled).unwrap();
             }
         }
 
