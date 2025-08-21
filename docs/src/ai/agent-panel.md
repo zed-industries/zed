@@ -8,7 +8,8 @@ If you're using the Agent Panel for the first time, you need to have at least on
 You can do that by:
 
 1. [subscribing to our Pro plan](https://zed.dev/pricing), so you have access to our hosted models
-2. or by [bringing your own API keys](./llm-providers.md#use-your-own-keys) for your desired provider
+2. [bringing your own API keys](./llm-providers.md#use-your-own-keys) for your desired provider
+3. Using [Gemini CLI](./gemini-cli.md) through the Zed Agent Panel.
 
 ## Overview {#overview}
 
@@ -71,9 +72,9 @@ So, if your active tab had edits made by the AI, you'll see diffs with the same 
 Although Zed's agent is very efficient at reading through your code base to autonomously pick up relevant files, directories, and other context, manually adding context is still encouraged as a way to speed up and improve the AI's response quality.
 
 If you have a tab open while using the Agent Panel, that tab appears as a suggested context in form of a dashed button.
-You can also add other forms of context by either mentioning them with `@` or hitting the `+` icon button.
+You can also add other forms of context by mentioning them by typing `@` in the editor.
 
-You can even add previous threads as context by mentioning them with `@thread`, or by selecting the "New From Summary" option from the `+` menu to continue a longer conversation, keeping it within the context window.
+You can include files with `@files`, symbols with `@symbol`, previous Agent Panel threads with `@thread` or fetch from the web with `@fetch`.
 
 Pasting images as context is also supported by the Agent Panel.
 

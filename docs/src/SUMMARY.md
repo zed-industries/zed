@@ -47,6 +47,7 @@
 - [Overview](./ai/overview.md)
 - [Agent Panel](./ai/agent-panel.md)
   - [Tools](./ai/tools.md)
+  - [Gemini CLI](./ai/gemini-cli.md)
 - [Inline Assistant](./ai/inline-assistant.md)
 - [Edit Prediction](./ai/edit-prediction.md)
 - [Text Threads](./ai/text-threads.md)
