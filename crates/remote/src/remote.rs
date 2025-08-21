@@ -4,6 +4,6 @@ pub mod proxy;
 pub mod ssh_session;
 
 pub use ssh_session::{
-    ConnectionState, SshClientDelegate, SshConnectionOptions, SshPlatform, SshRemoteClient,
-    SshRemoteEvent,
+    ConnectionState, SshClientDelegate, SshConnectionOptions, SshInfo, SshPlatform,
+    SshRemoteClient, SshRemoteEvent,
 };

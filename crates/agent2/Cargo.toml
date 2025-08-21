@@ -10,6 +10,7 @@ path = "src/agent2.rs"
 
 [features]
 test-support = ["db/test-support"]
+e2e = []
 
 [lints]
 workspace = true
@@ -60,6 +61,7 @@ sqlez.workspace = true
 task.workspace = true
 telemetry.workspace = true
 terminal.workspace = true
+thiserror.workspace = true
 text.workspace = true
 ui.workspace = true
 util.workspace = true
@@ -72,6 +74,7 @@ zstd.workspace = true
 
 [dev-dependencies]
 agent = { workspace = true, "features" = ["test-support"] }
+agent_servers = { workspace = true, "features" = ["test-support"] }
 assistant_context = { workspace = true, "features" = ["test-support"] }
 ctor.workspace = true
 client = { workspace = true, "features" = ["test-support"] }
