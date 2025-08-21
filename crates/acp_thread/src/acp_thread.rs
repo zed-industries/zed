@@ -987,6 +987,10 @@ impl AcpThread {
         cx.emit(AcpThreadEvent::NewEntry);
     }
 
+    pub fn can_set_title(&mut self, cx: &mut Context<Self>) -> bool {
+        self.connection.set_title(&self.session_id, cx).is_some()
+    }
+
     pub fn set_title(&mut self, title: SharedString, cx: &mut Context<Self>) -> Task<Result<()>> {
         if title != self.title {
             self.title = title.clone();
