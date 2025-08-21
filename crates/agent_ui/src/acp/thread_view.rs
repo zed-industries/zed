@@ -2637,7 +2637,7 @@ impl AcpThreadView {
     }
 
     fn render_load_error(&self, e: &LoadError, cx: &Context<Self>) -> AnyElement {
-        let mut container = v_flex()
+        let container = v_flex()
             .items_center()
             .justify_center()
             .child(self.render_error_agent_logo())
@@ -2656,7 +2656,9 @@ impl AcpThreadView {
                     ),
             );
 
-        if let LoadError::Unsupported {
+        let button = if !self.project.read(cx).is_local() {
+            None
+        } else if let LoadError::Unsupported {
             upgrade_message,
             upgrade_command,
             ..
@@ -2664,7 +2666,7 @@ impl AcpThreadView {
         {
             let upgrade_message = upgrade_message.clone();
             let upgrade_command = upgrade_command.clone();
-            container = container.child(
+            Some(
                 Button::new("upgrade", upgrade_message)
                     .tooltip(Tooltip::text(upgrade_command.clone()))
                     .on_click(cx.listener(move |this, _, window, cx| {
@@ -2707,7 +2709,7 @@ impl AcpThreadView {
                         })
                         .detach()
                     })),
-            );
+            )
         } else if let LoadError::NotInstalled {
             install_message,
             install_command,
@@ -2716,7 +2718,7 @@ impl AcpThreadView {
         {
             let install_message = install_message.clone();
             let install_command = install_command.clone();
-            container = container.child(
+            Some(
                 Button::new("install", install_message)
                     .style(ButtonStyle::Tinted(ui::TintColor::Accent))
                     .size(ButtonSize::Medium)
@@ -2761,10 +2763,12 @@ impl AcpThreadView {
                         })
                         .detach()
                     })),
-            );
-        }
+            )
+        } else {
+            None
+        };
 
-        container.into_any()
+        container.children(button).into_any()
     }
 
     fn render_activity_bar(
