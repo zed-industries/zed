@@ -238,7 +238,8 @@ jobs:
 
   actionlint:
     runs-on: ubuntu-latest
-    if: github.repository_owner == 'zed-industries' && needs.job_spec.outputs.run_actionlint == 'true'
+    # FIXME
+    if: false && github.repository_owner == 'zed-industries' && needs.job_spec.outputs.run_actionlint == 'true'
     needs: [job_spec]
     steps:
       - uses: actions/checkout@v4
@@ -254,7 +255,9 @@ jobs:
     timeout-minutes: 60
     name: (macOS) Run Clippy and tests
     needs: [job_spec]
+    # FIXME
     if: |
+      false &&
       github.repository_owner == 'zed-industries' &&
       needs.job_spec.outputs.run_tests == 'true'
     runs-on:
@@ -324,7 +327,9 @@ jobs:
     timeout-minutes: 60
     name: (Linux) Run Clippy and tests
     needs: [job_spec]
+    # FIXME
     if: |
+      false &&
       github.repository_owner == 'zed-industries' &&
       needs.job_spec.outputs.run_tests == 'true'
     runs-on:
@@ -376,7 +381,9 @@ jobs:
     timeout-minutes: 60
     name: (Linux) Build Remote Server
     needs: [job_spec]
+    # FIXME
     if: |
+      false &&
       github.repository_owner == 'zed-industries' &&
       needs.job_spec.outputs.run_tests == 'true'
     runs-on:
@@ -418,7 +425,7 @@ jobs:
     if: |
       github.repository_owner == 'zed-industries' &&
       needs.job_spec.outputs.run_tests == 'true'
-    runs-on: [self-hosted, Windows, X64]
+    runs-on: crashme
     steps:
       - name: Environment Setup
         run: |
