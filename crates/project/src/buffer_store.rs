@@ -95,10 +95,7 @@ impl PartialEq for ProjectTransaction {
     fn eq(&self, other: &Self) -> bool {
         self.0.len() == other.0.len()
             && self.0.iter().all(|(buffer, transaction)| {
-                other
-                    .0
-                    .get(buffer)
-                    .map_or(false, |t| t.id == transaction.id)
+                other.0.get(buffer).is_some_and(|t| t.id == transaction.id)
             })
     }
 }
