@@ -5,6 +5,7 @@ mod modal_layer;
 pub mod notifications;
 pub mod pane;
 pub mod pane_group;
+mod path_list;
 mod persistence;
 pub mod searchable;
 pub mod shared_screen;
