@@ -9,6 +9,7 @@ use util::paths::PathMatcher;
 
 #[derive(Clone, PartialEq, Eq, SettingsUi)]
 pub struct WorktreeSettings {
+    pub project_name: Option<String>,
     pub file_scan_inclusions: PathMatcher,
     pub file_scan_exclusions: PathMatcher,
     pub private_files: PathMatcher,
@@ -33,6 +34,13 @@ impl WorktreeSettings {
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
 pub struct WorktreeSettingsContent {
+    /// The displayed name of this project. If not set, the root directory name
+    /// will be displayed.
+    ///
+    /// Default: none
+    #[serde(default)]
+    pub project_name: Option<String>,
+
     /// Completely ignore files matching globs from `file_scan_exclusions`. Overrides
     /// `file_scan_inclusions`.
     ///
@@ -94,6 +102,7 @@ impl Settings for WorktreeSettings {
                 &parsed_file_scan_inclusions,
                 "file_scan_inclusions",
             )?,
+            project_name: result.project_name,
         })
     }
 
