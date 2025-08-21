@@ -662,13 +662,11 @@ impl BlockMap {
                     }),
             );
 
-            if buffer.show_headers() {
-                blocks_in_edit.extend(self.header_and_footer_blocks(
-                    buffer,
-                    (start_bound, end_bound),
-                    wrap_snapshot,
-                ));
-            }
+            blocks_in_edit.extend(self.header_and_footer_blocks(
+                buffer,
+                (start_bound, end_bound),
+                wrap_snapshot,
+            ));
 
             BlockMap::sort_blocks(&mut blocks_in_edit);
 
@@ -804,7 +802,12 @@ impl BlockMap {
                     }
                 }
 
-                if new_buffer_id.is_some() {
+                let starts_new_buffer = new_buffer_id.is_some();
+                if starts_new_buffer && !buffer.show_headers() {
+                    continue;
+                }
+
+                if starts_new_buffer {
                     height += self.buffer_header_height;
                 } else {
                     height += self.excerpt_header_height;
