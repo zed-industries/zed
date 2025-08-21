@@ -104,9 +104,6 @@ impl ConfiguredModel {
 
 pub enum Event {
     DefaultModelChanged,
-    InlineAssistantModelChanged,
-    CommitMessageModelChanged,
-    ThreadSummaryModelChanged,
     ProviderStateChanged(LanguageModelProviderId),
     AddedProvider(LanguageModelProviderId),
     RemovedProvider(LanguageModelProviderId),
@@ -306,42 +303,15 @@ impl LanguageModelRegistry {
         self.default_model = model;
     }
 
-    pub fn set_inline_assistant_model(
-        &mut self,
-        model: Option<ConfiguredModel>,
-        cx: &mut Context<Self>,
-    ) {
-        match (self.inline_assistant_model.as_ref(), model.as_ref()) {
-            (Some(old), Some(new)) if old.is_same_as(new) => {}
-            (None, None) => {}
-            _ => cx.emit(Event::InlineAssistantModelChanged),
-        }
+    pub fn set_inline_assistant_model(&mut self, model: Option<ConfiguredModel>) {
         self.inline_assistant_model = model;
     }
 
-    pub fn set_commit_message_model(
-        &mut self,
-        model: Option<ConfiguredModel>,
-        cx: &mut Context<Self>,
-    ) {
-        match (self.commit_message_model.as_ref(), model.as_ref()) {
-            (Some(old), Some(new)) if old.is_same_as(new) => {}
-            (None, None) => {}
-            _ => cx.emit(Event::CommitMessageModelChanged),
-        }
+    pub fn set_commit_message_model(&mut self, model: Option<ConfiguredModel>) {
         self.commit_message_model = model;
     }
 
-    pub fn set_thread_summary_model(
-        &mut self,
-        model: Option<ConfiguredModel>,
-        cx: &mut Context<Self>,
-    ) {
-        match (self.thread_summary_model.as_ref(), model.as_ref()) {
-            (Some(old), Some(new)) if old.is_same_as(new) => {}
-            (None, None) => {}
-            _ => cx.emit(Event::ThreadSummaryModelChanged),
-        }
+    pub fn set_thread_summary_model(&mut self, model: Option<ConfiguredModel>) {
         self.thread_summary_model = model;
     }
 
