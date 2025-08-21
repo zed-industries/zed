@@ -48,6 +48,16 @@ pub enum NotifyWhenAgentWaiting {
     Never,
 }
 
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Default)]
+pub enum AgentEditorMode {
+    Vim,
+    VimInsert,
+    Helix,
+    Default,
+    #[default]
+    Inherit,
+}
+
 #[derive(Default, Clone, Debug)]
 pub struct AgentSettings {
     pub enabled: bool,
@@ -75,6 +85,7 @@ pub struct AgentSettings {
     pub expand_edit_card: bool,
     pub expand_terminal_card: bool,
     pub use_modifier_to_send: bool,
+    pub editor_mode: AgentEditorMode,
 }
 
 impl AgentSettings {
@@ -315,6 +326,10 @@ pub struct AgentSettingsContent {
     ///
     /// Default: false
     use_modifier_to_send: Option<bool>,
+    /// Weather to inherit or override the editor mode for the agent panel.
+    ///
+    /// Default: inherit
+    editor_mode: Option<AgentEditorMode>,
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Default)]

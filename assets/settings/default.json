@@ -885,7 +885,11 @@
     /// Whether to have terminal cards in the agent panel expanded, showing the whole command output.
     ///
     /// Default: true
-    "expand_terminal_card": true
+    "expand_terminal_card": true,
+    /// Weather to inherit or override the editor mode for the agent panel.
+    ///
+    /// Default: inherit
+    "editor_mode": "inherit"
   },
   // The settings for slash commands.
   "slash_commands": {
