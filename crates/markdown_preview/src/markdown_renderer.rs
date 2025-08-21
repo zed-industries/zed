@@ -1,5 +1,5 @@
 use crate::markdown_elements::{
-    HeadingLevel, Link, MarkdownParagraph, MarkdownParagraphChunk, ParsedMarkdown,
+    HeadingLevel, Image, Link, MarkdownParagraph, MarkdownParagraphChunk, ParsedMarkdown,
     ParsedMarkdownBlockQuote, ParsedMarkdownCodeBlock, ParsedMarkdownElement,
     ParsedMarkdownHeading, ParsedMarkdownListItem, ParsedMarkdownListItemType, ParsedMarkdownTable,
     ParsedMarkdownTableAlignment, ParsedMarkdownTableRow,
@@ -22,9 +22,12 @@ use ui::{
     ButtonCommon, Clickable, Color, FluentBuilder, IconButton, IconName, IconSize,
     InteractiveElement, Label, LabelCommon, LabelSize, LinkPreview, Pixels, Rems,
     StatefulInteractiveElement, StyledExt, StyledImage, ToggleState, Tooltip, VisibleOnHover,
-    h_flex, relative, tooltip_container, v_flex,
+    h_flex, px, relative, tooltip_container, v_flex,
 };
 use workspace::{OpenOptions, OpenVisible, Workspace};
+
+const OPEN_IMAGE_TOOLTIP: SharedString = SharedString::new_static("open image");
+const TOGGLE_CHECKBOX_TOOLTIP: SharedString = SharedString::new_static("toggle checkbox");
 
 pub struct CheckboxClickedEvent {
     pub checked: bool,
@@ -164,6 +167,7 @@ pub fn render_markdown_block(block: &ParsedMarkdownElement, cx: &mut RenderConte
         BlockQuote(block_quote) => render_markdown_block_quote(block_quote, cx),
         CodeBlock(code_block) => render_markdown_code_block(code_block, cx),
         HorizontalRule(_) => render_markdown_rule(cx),
+        Image(image) => render_markdown_image(image, cx),
     }
 }
 
@@ -259,7 +263,7 @@ fn render_markdown_list_item(
             )
             .hover(|s| s.cursor_pointer())
             .tooltip(|_, cx| {
-                InteractiveMarkdownElementTooltip::new(None, "toggle checkbox", cx).into()
+                InteractiveMarkdownElementTooltip::new(None, TOGGLE_CHECKBOX_TOOLTIP, cx).into()
             })
             .into_any_element(),
     };
@@ -722,65 +726,7 @@ fn render_markdown_text(parsed_new: &MarkdownParagraph, cx: &mut RenderContext) 
             }
 
             MarkdownParagraphChunk::Image(image) => {
-                let image_resource = match image.link.clone() {
-                    Link::Web { url } => Resource::Uri(url.into()),
-                    Link::Path { path, .. } => Resource::Path(Arc::from(path)),
-                };
-
-                let element_id = cx.next_id(&image.source_range);
-
-                let image_element = div()
-                    .id(element_id)
-                    .cursor_pointer()
-                    .child(
-                        img(ImageSource::Resource(image_resource))
-                            .max_w_full()
-                            .with_fallback({
-                                let alt_text = image.alt_text.clone();
-                                move || div().children(alt_text.clone()).into_any_element()
-                            }),
-                    )
-                    .tooltip({
-                        let link = image.link.clone();
-                        move |_, cx| {
-                            InteractiveMarkdownElementTooltip::new(
-                                Some(link.to_string()),
-                                "open image",
-                                cx,
-                            )
-                            .into()
-                        }
-                    })
-                    .on_click({
-                        let workspace = workspace_clone.clone();
-                        let link = image.link.clone();
-                        move |_, window, cx| {
-                            if window.modifiers().secondary() {
-                                match &link {
-                                    Link::Web { url } => cx.open_url(url),
-                                    Link::Path { path, .. } => {
-                                        if let Some(workspace) = &workspace {
-                                            _ = workspace.update(cx, |workspace, cx| {
-                                                workspace
-                                                    .open_abs_path(
-                                                        path.clone(),
-                                                        OpenOptions {
-                                                            visible: Some(OpenVisible::None),
-                                                            ..Default::default()
-                                                        },
-                                                        window,
-                                                        cx,
-                                                    )
-                                                    .detach();
-                                            });
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    })
-                    .into_any();
-                any_element.push(image_element);
+                any_element.push(render_markdown_image(image, cx));
             }
         }
     }
@@ -793,18 +739,87 @@ fn render_markdown_rule(cx: &mut RenderContext) -> AnyElement {
     div().py(cx.scaled_rems(0.5)).child(rule).into_any()
 }
 
+fn render_markdown_image(image: &Image, cx: &mut RenderContext) -> AnyElement {
+    let image_resource = match image.link.clone() {
+        Link::Web { url } => Resource::Uri(url.into()),
+        Link::Path { path, .. } => Resource::Path(Arc::from(path)),
+    };
+
+    let element_id = cx.next_id(&image.source_range);
+    let workspace_clone = cx.workspace.clone();
+
+    div()
+        .id(element_id)
+        .cursor_pointer()
+        .child(
+            img(ImageSource::Resource(image_resource))
+                .max_w_full()
+                .with_fallback({
+                    let alt_text = image.alt_text.clone();
+                    move || div().children(alt_text.clone()).into_any_element()
+                })
+                .when_some(image.height, |this, height| this.h(px(height as f32)))
+                .when_some(image.width, |this, width| this.w(px(width as f32))),
+        )
+        .tooltip({
+            let link = image.link.clone();
+            let alt_text = image.alt_text.clone();
+            move |_, cx| {
+                InteractiveMarkdownElementTooltip::new(
+                    Some(alt_text.clone().unwrap_or(link.to_string().into())),
+                    OPEN_IMAGE_TOOLTIP,
+                    cx,
+                )
+                .into()
+            }
+        })
+        .on_click({
+            let workspace = workspace_clone.clone();
+            let link = image.link.clone();
+            move |_, window, cx| {
+                if window.modifiers().secondary() {
+                    match &link {
+                        Link::Web { url } => cx.open_url(url),
+                        Link::Path { path, .. } => {
+                            if let Some(workspace) = &workspace {
+                                _ = workspace.update(cx, |workspace, cx| {
+                                    workspace
+                                        .open_abs_path(
+                                            path.clone(),
+                                            OpenOptions {
+                                                visible: Some(OpenVisible::None),
+                                                ..Default::default()
+                                            },
+                                            window,
+                                            cx,
+                                        )
+                                        .detach();
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+        })
+        .into_any()
+}
+
 struct InteractiveMarkdownElementTooltip {
     tooltip_text: Option<SharedString>,
-    action_text: String,
+    action_text: SharedString,
 }
 
 impl InteractiveMarkdownElementTooltip {
-    pub fn new(tooltip_text: Option<String>, action_text: &str, cx: &mut App) -> Entity<Self> {
+    pub fn new(
+        tooltip_text: Option<SharedString>,
+        action_text: SharedString,
+        cx: &mut App,
+    ) -> Entity<Self> {
         let tooltip_text = tooltip_text.map(|t| util::truncate_and_trailoff(&t, 50).into());
 
         cx.new(|_cx| Self {
             tooltip_text,
-            action_text: action_text.to_string(),
+            action_text,
         })
     }
 }

@@ -175,6 +175,11 @@ impl<'a> MarkdownParser<'a> {
                     let code_block = self.parse_code_block(language).await;
                     Some(vec![ParsedMarkdownElement::CodeBlock(code_block)])
                 }
+                Tag::HtmlBlock => {
+                    self.cursor += 1;
+
+                    Some(self.parse_html_block().await)
+                }
                 _ => None,
             },
             Event::Rule => {
@@ -378,7 +383,7 @@ impl<'a> MarkdownParser<'a> {
                     TagEnd::Image => {
                         if let Some(mut image) = image.take() {
                             if !text.is_empty() {
-                                image.alt_text = Some(std::mem::take(&mut text).into());
+                                image.set_alt_text(std::mem::take(&mut text).into());
                             }
                             markdown_text_like.push(MarkdownParagraphChunk::Image(image));
                         }
@@ -741,6 +746,78 @@ impl<'a> MarkdownParser<'a> {
             highlights,
         }
     }
+
+    async fn parse_html_block(&mut self) -> Vec<ParsedMarkdownElement> {
+        let (_event, _source_range) = self.previous().unwrap();
+        let mut elements = Vec::new();
+
+        while !self.eof() {
+            let (current, source_range) = self.current().unwrap();
+            let source_range = source_range.clone();
+            match current {
+                Event::Html(html) => {
+                    let fragment = scraper::Html::parse_fragment(html);
+                    self.cursor += 1;
+
+                    elements.extend(self.parse_html_image(fragment, source_range));
+                }
+                Event::End(TagEnd::CodeBlock) => {
+                    self.cursor += 1;
+                    break;
+                }
+                _ => {
+                    break;
+                }
+            }
+        }
+
+        elements
+    }
+
+    fn parse_html_image(
+        &self,
+        html: scraper::Html,
+        source_range: Range<usize>,
+    ) -> Vec<ParsedMarkdownElement> {
+        let mut images = Vec::new();
+        let selector = scraper::Selector::parse("img").unwrap();
+
+        for element in html.select(&selector).into_iter() {
+            let Some(src) = element.attr("src") else {
+                continue;
+            };
+
+            let Some(mut image) = Image::identify(
+                src.to_string(),
+                source_range.clone(),
+                self.file_location_directory.clone(),
+            ) else {
+                continue;
+            };
+
+            if let Some(alt) = element.attr("alt") {
+                image.set_alt_text(alt.to_string().into());
+            }
+
+            if let Some(width) = element
+                .attr("width")
+                .and_then(|width| width.parse::<u32>().ok())
+            {
+                image.set_width(width);
+            }
+
+            if let Some(height) = element
+                .attr("height")
+                .and_then(|height| height.parse::<u32>().ok())
+            {
+                image.set_height(height);
+            }
+
+            images.push(ParsedMarkdownElement::Image(image));
+        }
+
+        images
+    }
 }
 
 #[cfg(test)]
@@ -925,6 +1002,8 @@ mod tests {
                     url: "https://blog.logrocket.com/wp-content/uploads/2024/04/exploring-zed-open-source-code-editor-rust-2.png".to_string(),
                 },
                 alt_text: Some("test".into()),
+                height: None,
+                width: None,
             },)
         );
     }
@@ -946,6 +1025,8 @@ mod tests {
                     url: "http://example.com/foo.png".to_string(),
                 },
                 alt_text: None,
+                height: None,
+                width: None,
             },)
         );
     }
@@ -965,6 +1046,8 @@ mod tests {
                     url: "http://example.com/foo.png".to_string(),
                 },
                 alt_text: Some("foo bar baz".into()),
+                height: None,
+                width: None,
             }),],
         );
     }
@@ -990,6 +1073,8 @@ mod tests {
                         url: "http://example.com/foo.png".to_string(),
                     },
                     alt_text: Some("foo".into()),
+                    height: None,
+                    width: None,
                 }),
                 MarkdownParagraphChunk::Text(ParsedMarkdownText {
                     source_range: 0..81,
@@ -1004,6 +1089,8 @@ mod tests {
                         url: "http://example.com/bar.png".to_string(),
                     },
                     alt_text: Some("bar".into()),
+                    height: None,
+                    width: None,
                 })
             ]
         );
