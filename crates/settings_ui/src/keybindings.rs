@@ -231,21 +231,21 @@ impl ConflictOrigin {
 #[derive(Default)]
 struct ConflictState {
     conflicts: Vec<Option<ConflictOrigin>>,
-    keybind_mapping:
-        HashMap<Vec<Keystroke>, Vec<(gpui::KeyBindingContextPredicate, Vec<ConflictOrigin>)>>,
+    keybind_mapping: ConflictKeybindMapping,
     has_user_conflicts: bool,
 }
 
-impl ConflictState {
-    /// A technically invalid predicate we use to represent lack of context. Unifies search codepaths
-    const PREDICATE_DEFAULT: gpui::KeyBindingContextPredicate =
-        gpui::KeyBindingContextPredicate::Identifier(SharedString::new_static(""));
+type ConflictKeybindMapping = HashMap<
+    Vec<Keystroke>,
+    Vec<(
+        Option<gpui::KeyBindingContextPredicate>,
+        Vec<ConflictOrigin>,
+    )>,
+>;
 
+impl ConflictState {
     fn new(key_bindings: &[ProcessedBinding]) -> Self {
-        let mut action_keybind_mapping: HashMap<
-            Vec<Keystroke>,
-            Vec<(gpui::KeyBindingContextPredicate, Vec<ConflictOrigin>)>,
-        > = HashMap::default();
+        let mut action_keybind_mapping = ConflictKeybindMapping::default();
 
         let mut largest_index = 0;
         for (index, binding) in key_bindings
@@ -254,18 +254,21 @@ impl ConflictState {
             .flat_map(|(index, binding)| Some(index).zip(binding.keybind_information()))
         {
             let mapping = binding.get_action_mapping();
-            let Ok(predicate) = mapping.context.map_or(Ok(Self::PREDICATE_DEFAULT), |ctx| {
-                gpui::KeyBindingContextPredicate::parse(&ctx)
-            }) else {
-                continue;
-            };
+            let predicate = mapping
+                .context
+                .and_then(|ctx| gpui::KeyBindingContextPredicate::parse(&ctx).ok());
             let entry = action_keybind_mapping
                 .entry(mapping.keystrokes)
                 .or_default();
             let origin = ConflictOrigin::new(binding.source, index);
-            if let Some((_, origins)) = entry
-                .iter_mut()
-                .find(|(other_predicate, _)| normalized_ctx_eq(&predicate, other_predicate))
+            if let Some((_, origins)) =
+                entry
+                    .iter_mut()
+                    .find(|(other_predicate, _)| match (&predicate, other_predicate) {
+                        (None, None) => true,
+                        (Some(a), Some(b)) => normalized_ctx_eq(a, b),
+                        _ => false,
+                    })
             {
                 origins.push(origin);
             } else {
@@ -312,15 +315,17 @@ impl ConflictState {
         } = action_mapping;
         let predicate = context
             .as_deref()
-            .map_or(Ok(Self::PREDICATE_DEFAULT), |ctx| {
-                gpui::KeyBindingContextPredicate::parse(&ctx)
-            })
-            .ok()?;
+            .and_then(|ctx| gpui::KeyBindingContextPredicate::parse(&ctx).ok());
         self.keybind_mapping.get(keystrokes).and_then(|entries| {
             entries
                 .iter()
                 .find_map(|(other_predicate, indices)| {
-                    normalized_ctx_eq(&predicate, other_predicate).then_some(indices)
+                    match (&predicate, other_predicate) {
+                        (None, None) => true,
+                        (Some(pred), Some(other)) => normalized_ctx_eq(pred, other),
+                        _ => false,
+                    }
+                    .then_some(indices)
                 })
                 .and_then(|indices| {
                     let mut indices = indices
