@@ -3234,6 +3234,7 @@ Run the `theme selector: toggle` action in the command palette to see a current 
     "scrollbar": {
       "show": null
     },
+    "sticky_scroll": true,
     "show_diagnostics": "all",
     "indent_guides": {
       "show": "always"
