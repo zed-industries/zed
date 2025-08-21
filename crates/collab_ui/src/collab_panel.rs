@@ -2905,6 +2905,8 @@ impl CollabPanel {
                 h_flex().absolute().right(rems(0.)).h_full().child(
                     h_flex()
                         .h_full()
+                        .bg(cx.theme().colors().background)
+                        .rounded_l_sm()
                         .gap_1()
                         .px_1()
                         .child(
@@ -2920,8 +2922,7 @@ impl CollabPanel {
                                 .on_click(cx.listener(move |this, _, window, cx| {
                                     this.join_channel_chat(channel_id, window, cx)
                                 }))
-                                .tooltip(Tooltip::text("Open channel chat"))
-                                .visible_on_hover(""),
+                                .tooltip(Tooltip::text("Open channel chat")),
                         )
                         .child(
                             IconButton::new("channel_notes", IconName::Reader)
@@ -2936,9 +2937,9 @@ impl CollabPanel {
                                 .on_click(cx.listener(move |this, _, window, cx| {
                                     this.open_channel_notes(channel_id, window, cx)
                                 }))
-                                .tooltip(Tooltip::text("Open channel notes"))
-                                .visible_on_hover(""),
-                        ),
+                                .tooltip(Tooltip::text("Open channel notes")),
+                        )
+                        .visible_on_hover(""),
                 ),
             )
             .tooltip({
