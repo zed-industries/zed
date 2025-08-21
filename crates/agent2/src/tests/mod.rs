@@ -1,6 +1,5 @@
 use super::*;
 use acp_thread::{AgentConnection, AgentModelGroupName, AgentModelList, UserMessageId};
-use action_log::ActionLog;
 use agent_client_protocol::{self as acp};
 use agent_settings::AgentProfileId;
 use anyhow::Result;
@@ -1903,13 +1902,11 @@ async fn setup(cx: &mut TestAppContext, model: TestModel) -> ThreadTest {
     let project_context = cx.new(|_cx| ProjectContext::default());
     let context_server_registry =
         cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
-    let action_log = cx.new(|_| ActionLog::new(project.clone()));
     let thread = cx.new(|cx| {
         Thread::new(
             project,
             project_context.clone(),
             context_server_registry,
-            action_log,
             templates,
             Some(model.clone()),
             cx,

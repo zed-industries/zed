@@ -544,12 +544,12 @@ impl Thread {
         project: Entity<Project>,
         project_context: Entity<ProjectContext>,
         context_server_registry: Entity<ContextServerRegistry>,
-        action_log: Entity<ActionLog>,
         templates: Arc<Templates>,
         model: Option<Arc<dyn LanguageModel>>,
         cx: &mut Context<Self>,
     ) -> Self {
         let profile_id = AgentSettings::get_global(cx).default_profile.clone();
+        let action_log = cx.new(|_cx| ActionLog::new(project.clone()));
         Self {
             id: acp::SessionId(uuid::Uuid::new_v4().to_string().into()),
             prompt_id: PromptId::new(),
@@ -959,7 +959,7 @@ impl Thread {
         ));
         self.add_tool(TerminalTool::new(self.project.clone(), cx));
         self.add_tool(ThinkingTool);
-        self.add_tool(WebSearchTool); // TODO: Enable this only if it's a zed model.
+        self.add_tool(WebSearchTool);
     }
 
     pub fn add_tool(&mut self, tool: impl AgentTool) {
