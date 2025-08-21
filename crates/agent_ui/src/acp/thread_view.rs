@@ -1625,7 +1625,9 @@ impl AcpThreadView {
                         .into_any()
                 }
                 ToolCallStatus::Pending | ToolCallStatus::InProgress
-                    if is_edit && tool_call.content.is_empty() =>
+                    if is_edit
+                        && tool_call.content.is_empty()
+                        && self.as_native_connection(cx).is_some() =>
                 {
                     self.render_diff_loading(cx).into_any()
                 }
@@ -1981,7 +1983,7 @@ impl AcpThreadView {
                     && diff.read(cx).has_revealed_range(cx)
                 {
                     editor.into_any_element()
-                } else if tool_progress {
+                } else if tool_progress && self.as_native_connection(cx).is_some() {
                     self.render_diff_loading(cx)
                 } else {
                     Empty.into_any()
