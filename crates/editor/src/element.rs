@@ -2749,7 +2749,10 @@ impl EditorElement {
         let mut block_offset = 0;
         let mut found_excerpt_header = false;
         for (_, block) in snapshot.blocks_in_range(prev_line..row_range.start) {
-            if matches!(block, Block::ExcerptBoundary { .. }) {
+            if matches!(
+                block,
+                Block::ExcerptBoundary { .. } | Block::BufferHeader { .. }
+            ) {
                 found_excerpt_header = true;
                 break;
             }
@@ -2766,7 +2769,10 @@ impl EditorElement {
         let mut block_height = 0;
         let mut found_excerpt_header = false;
         for (_, block) in snapshot.blocks_in_range(row_range.end..cons_line) {
-            if matches!(block, Block::ExcerptBoundary { .. }) {
+            if matches!(
+                block,
+                Block::ExcerptBoundary { .. } | Block::BufferHeader { .. }
+            ) {
                 found_excerpt_header = true;
             }
             block_height += block.height();
@@ -3452,42 +3458,41 @@ impl EditorElement {
                     .into_any_element()
             }
 
-            Block::ExcerptBoundary {
-                excerpt,
-                height,
-                starts_new_buffer,
-                ..
-            } => {
+            Block::ExcerptBoundary { .. } => {
                 let color = cx.theme().colors().clone();
+                let mut result = v_flex().id(block_id).w_full();
+
+                result = result.child(
+                    h_flex().relative().child(
+                        div()
+                            .top(line_height / 2.)
+                            .absolute()
+                            .w_full()
+                            .h_px()
+                            .bg(color.border_variant),
+                    ),
+                );
+
+                result.into_any()
+            }
+
+            Block::BufferHeader { excerpt, height } => {
                 let mut result = v_flex().id(block_id).w_full();
 
                 let jump_data = header_jump_data(snapshot, block_row_start, *height, excerpt);
 
-                if *starts_new_buffer {
-                    if sticky_header_excerpt_id != Some(excerpt.id) {
-                        let selected = selected_buffer_ids.contains(&excerpt.buffer_id);
+                if sticky_header_excerpt_id != Some(excerpt.id) {
+                    let selected = selected_buffer_ids.contains(&excerpt.buffer_id);
 
-                        result = result.child(div().pr(editor_margins.right).child(
-                            self.render_buffer_header(
-                                excerpt, false, selected, false, jump_data, window, cx,
-                            ),
-                        ));
-                    } else {
-                        result =
-                            result.child(div().h(FILE_HEADER_HEIGHT as f32 * window.line_height()));
-                    }
-                } else {
-                    result = result.child(
-                        h_flex().relative().child(
-                            div()
-                                .top(line_height / 2.)
-                                .absolute()
-                                .w_full()
-                                .h_px()
-                                .bg(color.border_variant),
+                    result = result.child(div().pr(editor_margins.right).child(
+                        self.render_buffer_header(
+                            excerpt, false, selected, false, jump_data, window, cx,
                         ),
-                    );
-                };
+                    ));
+                } else {
+                    result =
+                        result.child(div().h(FILE_HEADER_HEIGHT as f32 * window.line_height()));
+                }
 
                 result.into_any()
             }
@@ -5708,7 +5713,10 @@ impl EditorElement {
                     let end_row_in_current_excerpt = snapshot
                         .blocks_in_range(start_row..end_row)
                         .find_map(|(start_row, block)| {
-                            if matches!(block, Block::ExcerptBoundary { .. }) {
+                            if matches!(
+                                block,
+                                Block::ExcerptBoundary { .. } | Block::BufferHeader { .. }
+                            ) {
                                 Some(start_row)
                             } else {
                                 None
