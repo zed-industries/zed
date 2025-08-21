@@ -248,7 +248,7 @@ impl AnyProtoClient {
         let query = proto::LspQuery {
             project_id,
             lsp_request_id: new_id.0,
-            request: Some(request.clone().to_proto_query()),
+            request: Some(request.to_proto_query()),
         };
         let request = self.request(query);
         let request_ids = self.0.request_ids.clone();
