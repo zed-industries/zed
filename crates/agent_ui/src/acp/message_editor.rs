@@ -2236,6 +2236,28 @@ mod tests {
             pretty_assertions::assert_eq!(uri, &url_one.parse::<MentionUri>().unwrap());
         }
 
+        let contents = message_editor
+            .update_in(&mut cx, |message_editor, window, cx| {
+                message_editor.mention_set().contents(
+                    &project,
+                    None,
+                    &acp::PromptCapabilities::default(),
+                    window,
+                    cx,
+                )
+            })
+            .await
+            .unwrap()
+            .into_values()
+            .collect::<Vec<_>>();
+
+        {
+            let [Mention::UriOnly(uri)] = contents.as_slice() else {
+                panic!("Unexpected mentions");
+            };
+            pretty_assertions::assert_eq!(uri, &url_one.parse::<MentionUri>().unwrap());
+        }
+
         cx.simulate_input(" ");
 
         editor.update(&mut cx, |editor, cx| {
