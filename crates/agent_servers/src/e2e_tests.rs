@@ -9,7 +9,7 @@ use acp_thread::{AcpThread, AgentThreadEntry, ToolCall, ToolCallStatus};
 use agent_client_protocol as acp;
 
 use futures::{FutureExt, StreamExt, channel::mpsc, select};
-use gpui::{Entity, TestAppContext};
+use gpui::{AppContext, Entity, TestAppContext};
 use indoc::indoc;
 use project::{FakeFs, Project};
 use util::path;
@@ -455,13 +455,19 @@ pub async fn init_test(cx: &mut TestAppContext) -> Arc<FakeFs> {
     env_logger::try_init().ok();
 
     cx.update(|cx| {
-        let mut settings_store = settings::SettingsStore::new(cx);
-        settings_store
-            .set_default_settings(settings::default_settings().as_ref(), cx)
-            .unwrap();
+        let settings_store = settings::SettingsStore::test(cx);
         cx.set_global(settings_store);
         Project::init_settings(cx);
         language::init(cx);
+        gpui_tokio::init(cx);
+        let http_client = reqwest_client::ReqwestClient::user_agent("agent tests").unwrap();
+        cx.set_http_client(Arc::new(http_client));
+        client::init_settings(cx);
+        let client = client::Client::production(cx);
+        let user_store = cx.new(|cx| client::UserStore::new(client.clone(), cx));
+        language_model::init(client.clone(), cx);
+        language_models::init(user_store, client, cx);
+        agent_settings::init(cx);
         crate::settings::init(cx);
 
         #[cfg(test)]

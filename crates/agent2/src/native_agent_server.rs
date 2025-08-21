@@ -84,16 +84,7 @@ mod tests {
     agent_servers::e2e_tests::common_e2e_tests!(
         async |fs, project, cx| {
             let auth = cx.update(|cx| {
-                gpui_tokio::init(cx);
-                let http_client = reqwest_client::ReqwestClient::user_agent("agent tests").unwrap();
-                cx.set_http_client(Arc::new(http_client));
-                client::init_settings(cx);
-                let client = client::Client::production(cx);
-                let user_store = cx.new(|cx| client::UserStore::new(client.clone(), cx));
-                language_model::init(client.clone(), cx);
-                language_models::init(user_store, client, cx);
                 prompt_store::init(cx);
-                agent_settings::init(cx);
                 terminal::init(cx);
 
                 let registry = language_model::LanguageModelRegistry::read_global(cx);
