@@ -987,10 +987,11 @@ impl AcpThread {
         cx.emit(AcpThreadEvent::NewEntry);
     }
 
-    pub fn update_title(&mut self, title: SharedString, cx: &mut Context<Self>) -> Result<()> {
-        self.title = title;
-        cx.emit(AcpThreadEvent::TitleUpdated);
-        Ok(())
+    pub fn set_title(&mut self, title: SharedString, cx: &mut Context<Self>) {
+        if title != self.title {
+            self.title = title;
+            cx.emit(AcpThreadEvent::TitleUpdated);
+        }
     }
 
     pub fn update_token_usage(&mut self, usage: Option<TokenUsage>, cx: &mut Context<Self>) {

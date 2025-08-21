@@ -472,7 +472,7 @@ impl NativeAgent {
         let title = session.thread.read(cx).title();
         session
             .acp_thread
-            .update(cx, |acp_thread, cx| acp_thread.update_title(title, cx))
+            .update(cx, |acp_thread, cx| acp_thread.set_title(title, cx))
             .ok();
     }
 
