@@ -89,7 +89,7 @@ impl AgentServer for Gemini {
                             current_version
                         ).into(),
                         upgrade_message: "Upgrade Gemini CLI to latest".into(),
-                        upgrade_command: "npm install -g @google/gemini-cli@latest".into(),
+                        upgrade_command: "npm install -g @google/gemini-cli@preview".into(),
                     }.into())
                 }
             }
