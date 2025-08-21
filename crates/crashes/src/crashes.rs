@@ -181,7 +181,7 @@ impl minidumper::ServerHandler for CrashServer {
         };
 
         #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
-        let mut gpus = vec![];
+        let gpus = vec![];
 
         #[cfg(any(target_os = "linux", target_os = "freebsd"))]
         let gpus = match system_specs::read_gpu_info_from_sys_class_drm() {
