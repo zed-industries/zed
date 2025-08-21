@@ -3,9 +3,12 @@ use async_recursion::async_recursion;
 use collections::HashSet;
 use futures::{StreamExt as _, stream::FuturesUnordered};
 use gpui::{AppContext as _, AsyncWindowContext, Axis, Entity, Task, WeakEntity};
-use project::Project;
+use project::{Project, ProjectPath};
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 use ui::{App, Context, Pixels, Window};
 use util::ResultExt as _;
 
@@ -246,8 +249,19 @@ async fn deserialize_pane_group(
                             .update(cx, |workspace, cx| default_working_directory(workspace, cx))
                             .ok()
                             .flatten();
+                        let p = workspace
+                            .update(cx, |workspace, cx| {
+                                let worktree = workspace.worktrees(cx).next()?.read(cx);
+                                worktree.root_dir()?;
+                                Some(ProjectPath {
+                                    worktree_id: worktree.id(),
+                                    path: Arc::from(Path::new("")),
+                                })
+                            })
+                            .ok()
+                            .flatten();
                         let terminal = project.update(cx, |project, cx| {
-                            project.create_terminal_shell(working_directory, cx, None)
+                            project.create_terminal_shell(working_directory, cx, p)
                         });
                         Some(Some(terminal))
                     } else {

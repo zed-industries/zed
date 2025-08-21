@@ -22,7 +22,7 @@ pub use debug_format::{
     AttachRequest, BuildTaskDefinition, DebugRequest, DebugScenario, DebugTaskFile, LaunchRequest,
     Request, TcpArgumentsTemplate, ZedDebugConfig,
 };
-pub use shell_builder::{ShellBuilder, ShellKind, system_shell};
+pub use shell_builder::{ShellBuilder, ShellKind};
 pub use task_template::{
     DebugArgsRequest, HideStrategy, RevealStrategy, TaskTemplate, TaskTemplates,
     substitute_variables_in_map, substitute_variables_in_str,

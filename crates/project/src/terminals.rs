@@ -9,11 +9,11 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use task::{Shell, ShellBuilder, ShellKind, SpawnInTerminal, system_shell};
+use task::{Shell, ShellBuilder, ShellKind, SpawnInTerminal};
 use terminal::{
     TaskState, TaskStatus, Terminal, TerminalBuilder, terminal_settings::TerminalSettings,
 };
-use util::maybe;
+use util::{get_system_shell, maybe};
 
 use crate::{Project, ProjectPath};
 
@@ -209,9 +209,10 @@ impl Project {
                     args: _,
                     title_override: _,
                 } => program.clone(),
-                Shell::System => system_shell(),
+                Shell::System => get_system_shell(),
             },
         };
+        let shell_kind = ShellKind::new(&shell);
 
         cx.spawn(async move |project, cx| {
             let scripts = maybe!(async {
@@ -219,9 +220,7 @@ impl Project {
                 Some(toolchain.activation_script)
             })
             .await;
-            let activation_script = scripts
-                .as_ref()
-                .and_then(|it| it.get(&ShellKind::new(&shell)));
+            let activation_script = scripts.as_ref().and_then(|it| it.get(&shell_kind));
             project.update(cx, move |this, cx| {
                 let shell = {
                     match remote_client {
@@ -233,19 +232,17 @@ impl Project {
                             activation_script.cloned(),
                             cx,
                         )?,
-                        None if activation_script.is_some() => Shell::WithArguments {
-                            program: shell.clone(),
-                            args: vec![
-                                "-c".to_owned(),
-                                format!(
-                                    "{}; exec {} -l",
-                                    activation_script.unwrap().to_string(),
-                                    shell
-                                ),
-                            ],
-                            title_override: None,
+                        None => match activation_script {
+                            Some(activation_script) => Shell::WithArguments {
+                                program: shell.clone(),
+                                args: vec![
+                                    "-c".to_owned(),
+                                    format!("{activation_script}; exec {shell} -l",),
+                                ],
+                                title_override: None,
+                            },
+                            None => settings.shell,
                         },
-                        None => settings.shell,
                     }
                 };
                 TerminalBuilder::new(
