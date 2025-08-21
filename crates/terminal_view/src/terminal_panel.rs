@@ -481,14 +481,17 @@ impl TerminalPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<WeakEntity<Terminal>>> {
-        let Ok(is_local) = self
-            .workspace
-            .update(cx, |workspace, cx| workspace.project().read(cx).is_local())
-        else {
+        let Ok((ssh_client, false)) = self.workspace.update(cx, |workspace, cx| {
+            let project = workspace.project().read(cx);
+            (
+                project.ssh_client().and_then(|it| it.read(cx).ssh_info()),
+                project.is_via_collab(),
+            )
+        }) else {
             return Task::ready(Err(anyhow!("Project is not local")));
         };
 
-        let builder = ShellBuilder::new(is_local, &task.shell);
+        let builder = ShellBuilder::new(ssh_client.as_ref().map(|info| &*info.shell), &task.shell);
         let command_label = builder.command_label(&task.command_label);
         let (command, args) = builder.build(task.command.clone(), &task.args);
 

@@ -34,7 +34,7 @@ use http_client::HttpClient;
 use language::{Buffer, LanguageToolchainStore, language_settings::InlayHintKind};
 use node_runtime::NodeRuntime;
 
-use remote::{SshRemoteClient, ssh_session::SshArgs};
+use remote::{SshInfo, SshRemoteClient, ssh_session::SshArgs};
 use rpc::{
     AnyProtoClient, TypedEnvelope,
     proto::{self},
@@ -254,14 +254,18 @@ impl DapStore {
                 cx.spawn(async move |_, cx| {
                     let response = request.await?;
                     let binary = DebugAdapterBinary::from_proto(response)?;
-                    let (mut ssh_command, envs, path_style) =
+                    let (mut ssh_command, envs, path_style, ssh_shell) =
                         ssh_client.read_with(cx, |ssh, _| {
-                            let (SshArgs { arguments, envs }, path_style) =
-                                ssh.ssh_info().context("SSH arguments not found")?;
+                            let SshInfo {
+                                args: SshArgs { arguments, envs },
+                                path_style,
+                                shell,
+                            } = ssh.ssh_info().context("SSH arguments not found")?;
                             anyhow::Ok((
                                 SshCommand { arguments },
                                 envs.unwrap_or_default(),
                                 path_style,
+                                shell,
                             ))
                         })??;
 
@@ -280,6 +284,7 @@ impl DapStore {
                     }
 
                     let (program, args) = wrap_for_ssh(
+                        &ssh_shell,
                         &ssh_command,
                         binary
                             .command
