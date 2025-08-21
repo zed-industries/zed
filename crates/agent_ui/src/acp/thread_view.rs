@@ -76,11 +76,12 @@ enum ThreadError {
     PaymentRequired,
     ModelRequestLimitReached(cloud_llm_client::Plan),
     ToolUseLimitReached,
+    AuthenticationRequired(SharedString),
     Other(SharedString),
 }
 
 impl ThreadError {
-    fn from_err(error: anyhow::Error) -> Self {
+    fn from_err(error: anyhow::Error, agent: &Rc<dyn AgentServer>) -> Self {
         if error.is::<language_model::PaymentRequiredError>() {
             Self::PaymentRequired
         } else if error.is::<language_model::ToolUseLimitReachedError>() {
@@ -90,7 +91,17 @@ impl ThreadError {
         {
             Self::ModelRequestLimitReached(error.plan)
         } else {
-            Self::Other(error.to_string().into())
+            let string = error.to_string();
+            // TODO: we should have Gemini return better errors here.
+            if agent.clone().downcast::<agent_servers::Gemini>().is_some()
+                && string.contains("Could not load the default credentials")
+                || string.contains("API key not valid")
+                || string.contains("Request had invalid authentication credentials")
+            {
+                Self::AuthenticationRequired(string.into())
+            } else {
+                Self::Other(error.to_string().into())
+            }
         }
     }
 }
@@ -930,7 +941,7 @@ impl AcpThreadView {
     }
 
     fn handle_thread_error(&mut self, error: anyhow::Error, cx: &mut Context<Self>) {
-        self.thread_error = Some(ThreadError::from_err(error));
+        self.thread_error = Some(ThreadError::from_err(error, &self.agent));
         cx.notify();
     }
 
@@ -4310,6 +4321,9 @@ impl AcpThreadView {
     fn render_thread_error(&self, window: &mut Window, cx: &mut Context<Self>) -> Option<Div> {
         let content = match self.thread_error.as_ref()? {
             ThreadError::Other(error) => self.render_any_thread_error(error.clone(), cx),
+            ThreadError::AuthenticationRequired(error) => {
+                self.render_authentication_required_error(error.clone(), cx)
+            }
             ThreadError::PaymentRequired => self.render_payment_required_error(cx),
             ThreadError::ModelRequestLimitReached(plan) => {
                 self.render_model_request_limit_reached_error(*plan, cx)
@@ -4344,6 +4358,24 @@ impl AcpThreadView {
                     .gap_0p5()
                     .child(self.upgrade_button(cx))
                     .child(self.create_copy_button(ERROR_MESSAGE)),
+            )
+            .dismiss_action(self.dismiss_error_button(cx))
+    }
+
+    fn render_authentication_required_error(
+        &self,
+        error: SharedString,
+        cx: &mut Context<Self>,
+    ) -> Callout {
+        Callout::new()
+            .severity(Severity::Error)
+            .title("Authentication Required")
+            .description(error.clone())
+            .actions_slot(
+                h_flex()
+                    .gap_0p5()
+                    .child(self.authenticate_button(cx))
+                    .child(self.create_copy_button(error)),
             )
             .dismiss_action(self.dismiss_error_button(cx))
     }
@@ -4465,6 +4497,31 @@ impl AcpThreadView {
                 move |this, _, _, cx| {
                     this.clear_thread_error(cx);
                     cx.notify();
+                }
+            }))
+    }
+
+    fn authenticate_button(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        Button::new("authenticate", "Authenticate")
+            .label_size(LabelSize::Small)
+            .style(ButtonStyle::Filled)
+            .on_click(cx.listener({
+                move |this, _, window, cx| {
+                    let agent = this.agent.clone();
+                    let ThreadState::Ready { thread, .. } = &this.thread_state else {
+                        return;
+                    };
+
+                    let connection = thread.read(cx).connection().clone();
+                    let err = AuthRequired {
+                        description: None,
+                        provider_id: None,
+                    };
+                    this.clear_thread_error(cx);
+                    let this = cx.weak_entity();
+                    window.defer(cx, |window, cx| {
+                        Self::handle_auth_required(this, err, agent, connection, window, cx);
+                    })
                 }
             }))
     }
