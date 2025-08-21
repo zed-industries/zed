@@ -32,11 +32,10 @@ pub struct StatusBar {
     left_items: Vec<Box<dyn StatusItemViewHandle>>,
     right_items: Vec<Box<dyn StatusItemViewHandle>>,
     active_pane: Entity<Pane>,
+    has_active_left_children: bool,
+    has_active_right_children: bool,
     _observe_active_pane: Subscription,
 }
-
-use log::{info, warn};
-
 
 impl Render for StatusBar {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -44,7 +43,10 @@ impl Render for StatusBar {
             .w_full()
             .justify_between()
             .gap(DynamicSpacing::Base08.rems(cx))
-            // .py(DynamicSpacing::Base04.rems(cx))
+            .when(
+                self.has_active_left_children || self.has_active_right_children,
+                |this| this.py(DynamicSpacing::Base04.rems(cx)),
+            )
             .px(DynamicSpacing::Base06.rems(cx))
             .bg(cx.theme().colors().status_bar_background)
             .map(|el| match window.window_decorations() {
@@ -61,30 +63,52 @@ impl Render for StatusBar {
                     .border_b(px(1.0))
                     .border_color(cx.theme().colors().status_bar_background),
             })
-            .child(self.render_left_tools())
-            .child(self.render_right_tools())
-            .on_children_prepainted(|bounds, _, _| {
-                if bounds.iter().any(|&b| b.size.height > px(0.0)) {
-                  warn!("bar, this is hit.");
-                }
-                warn!("foo: {bounds:?}");
-            })
+            .child(self.render_left_tools(cx))
+            .child(self.render_right_tools(cx))
     }
 }
 
 impl StatusBar {
-    fn render_left_tools(&self) -> impl IntoElement {
+    fn render_left_tools(&self, parent_cx: &mut Context<Self>) -> impl IntoElement {
         h_flex()
             .gap_1()
             .overflow_x_hidden()
             .children(self.left_items.iter().map(|item| item.to_any()))
+            .on_children_prepainted({
+                let entity = parent_cx.entity().downgrade();
+                let old_y_pad = self.has_active_left_children;
+                move |bounds, _window, cx| {
+                    let new_y_pad = bounds.iter().any(|&b| b.size.height > px(0.0));
+                    if new_y_pad != old_y_pad {
+                        entity
+                            .update(cx, |this, _| {
+                                this.has_active_left_children = new_y_pad;
+                            })
+                            .ok();
+                    }
+                }
+            })
     }
 
-    fn render_right_tools(&self) -> impl IntoElement {
+    fn render_right_tools(&self, parent_cx: &mut Context<Self>) -> impl IntoElement {
         h_flex()
             .gap_1()
             .overflow_x_hidden()
             .children(self.right_items.iter().rev().map(|item| item.to_any()))
+            .on_children_prepainted({
+                let entity = parent_cx.entity().downgrade();
+                let old_y_pad = self.has_active_right_children;
+                move |bounds, _window, cx| {
+                    let new_y_pad = bounds.iter().any(|&b| b.size.height > px(0.0));
+                    if new_y_pad != old_y_pad {
+                        entity
+                            .update(cx, |this, _| {
+                                this.has_active_right_children = new_y_pad;
+                            })
+                            .ok();
+                    }
+                }
+            })
     }
 }
 
@@ -94,6 +118,8 @@ impl StatusBar {
             left_items: Default::default(),
             right_items: Default::default(),
             active_pane: active_pane.clone(),
+            has_active_left_children: true,
+            has_active_right_children: true,
             _observe_active_pane: cx.observe_in(active_pane, window, |this, _, window, cx| {
                 this.update_active_pane_item(window, cx)
             }),
