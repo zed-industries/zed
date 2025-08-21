@@ -20,11 +20,11 @@ use file_icons::FileIcons;
 use fs::Fs;
 use gpui::{
     Action, Animation, AnimationExt, AnyView, App, BorderStyle, ClickEvent, ClipboardItem,
-    EdgesRefinement, ElementId, Empty, Entity, FocusHandle, Focusable, Hsla, Length, ListOffset,
-    ListState, MouseButton, PlatformDisplay, SharedString, Stateful, StyleRefinement, Subscription,
-    Task, TextStyle, TextStyleRefinement, Transformation, UnderlineStyle, WeakEntity, Window,
-    WindowHandle, div, ease_in_out, linear_color_stop, linear_gradient, list, percentage, point,
-    prelude::*, pulsating_between,
+    EdgesRefinement, ElementId, Empty, Entity, EntityId, FocusHandle, Focusable, Hsla, Length,
+    ListOffset, ListState, MouseButton, PlatformDisplay, SharedString, Stateful, StyleRefinement,
+    Subscription, Task, TextStyle, TextStyleRefinement, Transformation, UnderlineStyle, WeakEntity,
+    Window, WindowHandle, div, ease_in_out, linear_color_stop, linear_gradient, list, percentage,
+    point, prelude::*, pulsating_between,
 };
 use language::Buffer;
 
@@ -256,10 +256,10 @@ pub struct AcpThreadView {
     auth_task: Option<Task<()>>,
     expanded_tool_calls: HashSet<acp::ToolCallId>,
     expanded_thinking_blocks: HashSet<(usize, usize)>,
+    expanded_terminals: HashSet<EntityId>,
     edits_expanded: bool,
     plan_expanded: bool,
     editor_expanded: bool,
-    terminal_expanded: bool,
     editing_message: Option<usize>,
     _cancel_task: Option<Task<()>>,
     _subscriptions: [Subscription; 3],
@@ -354,11 +354,11 @@ impl AcpThreadView {
             auth_task: None,
             expanded_tool_calls: HashSet::default(),
             expanded_thinking_blocks: HashSet::default(),
+            expanded_terminals: HashSet::default(),
             editing_message: None,
             edits_expanded: false,
             plan_expanded: false,
             editor_expanded: false,
-            terminal_expanded: true,
             history_store,
             hovered_recent_history_item: None,
             _subscriptions: subscriptions,
@@ -677,6 +677,11 @@ impl AcpThreadView {
         cx: &mut Context<Self>,
     ) {
         match &event.view_event {
+            ViewEvent::NewTerminal(terminal_id) => {
+                if AgentSettings::get_global(cx).expand_terminal_card {
+                    self.expanded_terminals.insert(*terminal_id);
+                }
+            }
             ViewEvent::MessageEditorEvent(_editor, MessageEditorEvent::Focus) => {
                 if let Some(thread) = self.thread()
                     && let Some(AgentThreadEntry::UserMessage(user_message)) =
@@ -2009,6 +2014,8 @@ impl AcpThreadView {
             .map(|path| format!("{}", path.display()))
             .unwrap_or_else(|| "current directory".to_string());
 
+        let is_expanded = self.expanded_terminals.contains(&terminal.entity_id());
+
         let header = h_flex()
             .id(SharedString::from(format!(
                 "terminal-tool-header-{}",
@@ -2142,12 +2149,19 @@ impl AcpThreadView {
                         "terminal-tool-disclosure-{}",
                         terminal.entity_id()
                     )),
-                    self.terminal_expanded,
+                    is_expanded,
                 )
                 .opened_icon(IconName::ChevronUp)
                 .closed_icon(IconName::ChevronDown)
-                .on_click(cx.listener(move |this, _event, _window, _cx| {
-                    this.terminal_expanded = !this.terminal_expanded;
+                .on_click(cx.listener({
+                    let terminal_id = terminal.entity_id();
+                    move |this, _event, _window, _cx| {
+                        if is_expanded {
+                            this.expanded_terminals.remove(&terminal_id);
+                        } else {
+                            this.expanded_terminals.insert(terminal_id);
+                        }
+                    }
                 })),
             );
 
@@ -2156,7 +2170,7 @@ impl AcpThreadView {
             .read(cx)
             .entry(entry_ix)
             .and_then(|entry| entry.terminal(terminal));
-        let show_output = self.terminal_expanded && terminal_view.is_some();
+        let show_output = is_expanded && terminal_view.is_some();
 
         v_flex()
             .mb_2()
