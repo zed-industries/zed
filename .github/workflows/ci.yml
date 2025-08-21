@@ -37,7 +37,7 @@ jobs:
       run_nix: ${{ steps.filter.outputs.run_nix }}
       run_actionlint: ${{ steps.filter.outputs.run_actionlint }}
     runs-on:
-      - ubuntu-latest
+      - namespace-profile-2x4-ubuntu-2404
     steps:
       - name: Checkout repo
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
@@ -237,7 +237,7 @@ jobs:
         uses: ./.github/actions/build_docs
 
   actionlint:
-    runs-on: ubuntu-latest
+    runs-on: namespace-profile-2x4-ubuntu-2404
     if: github.repository_owner == 'zed-industries' && needs.job_spec.outputs.run_actionlint == 'true'
     needs: [job_spec]
     steps:
@@ -458,7 +458,7 @@ jobs:
 
   tests_pass:
     name: Tests Pass
-    runs-on: ubuntu-latest
+    runs-on: namespace-profile-2x4-ubuntu-2404
     needs:
       - job_spec
       - style
