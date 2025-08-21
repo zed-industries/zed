@@ -1554,6 +1554,10 @@ impl AcpThreadView {
             ),
         };
 
+        let failed_tool_call = matches!(
+            tool_call.status,
+            ToolCallStatus::Rejected | ToolCallStatus::Canceled | ToolCallStatus::Failed
+        );
         let needs_confirmation = matches!(
             tool_call.status,
             ToolCallStatus::WaitingForConfirmation { .. }
@@ -1644,20 +1648,16 @@ impl AcpThreadView {
                     .w_full()
                     .gap_1()
                     .justify_between()
-                    .map(|this| {
-                        if use_card_layout {
-                            this.pl_2()
-                                .pr_1p5()
-                                .py_1()
-                                .rounded_t_md()
-                                .when(is_open, |this| {
-                                    this.border_b_1()
-                                        .border_color(self.tool_card_border_color(cx))
-                                })
-                                .bg(self.tool_card_header_bg(cx))
-                        } else {
-                            this.opacity(0.8).hover(|style| style.opacity(1.))
-                        }
+                    .when(use_card_layout, |this| {
+                        this.pl_2()
+                            .pr_1p5()
+                            .py_1()
+                            .rounded_t_md()
+                            .when(is_open && !failed_tool_call, |this| {
+                                this.border_b_1()
+                                    .border_color(self.tool_card_border_color(cx))
+                            })
+                            .bg(self.tool_card_header_bg(cx))
                     })
                     .child(
                         h_flex()
