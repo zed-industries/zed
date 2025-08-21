@@ -4,7 +4,7 @@ use collections::HashMap;
 use gpui::{App, AppContext as _, Context, Entity, Task, WeakEntity};
 use itertools::Itertools;
 use language::LanguageName;
-use remote::ssh_session::SshArgs;
+use remote::{SshInfo, ssh_session::SshArgs};
 use settings::{Settings, SettingsLocation};
 use smol::channel::bounded;
 use std::{
@@ -13,7 +13,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use task::{DEFAULT_REMOTE_SHELL, Shell, ShellBuilder, SpawnInTerminal};
+use task::{Shell, ShellBuilder, SpawnInTerminal};
 use terminal::{
     TaskState, TaskStatus, Terminal, TerminalBuilder,
     terminal_settings::{self, ActivateScript, TerminalSettings, VenvSettings},
@@ -58,11 +58,13 @@ impl SshCommand {
     }
 }
 
+#[derive(Debug)]
 pub struct SshDetails {
     pub host: String,
     pub ssh_command: SshCommand,
     pub envs: Option<HashMap<String, String>>,
     pub path_style: PathStyle,
+    pub shell: String,
 }
 
 impl Project {
@@ -87,12 +89,18 @@ impl Project {
     pub fn ssh_details(&self, cx: &App) -> Option<SshDetails> {
         if let Some(ssh_client) = &self.ssh_client {
             let ssh_client = ssh_client.read(cx);
-            if let Some((SshArgs { arguments, envs }, path_style)) = ssh_client.ssh_info() {
+            if let Some(SshInfo {
+                args: SshArgs { arguments, envs },
+                path_style,
+                shell,
+            }) = ssh_client.ssh_info()
+            {
                 return Some(SshDetails {
                     host: ssh_client.connection_options().host,
                     ssh_command: SshCommand { arguments },
                     envs,
                     path_style,
+                    shell,
                 });
             }
         }
@@ -165,7 +173,9 @@ impl Project {
         let ssh_details = self.ssh_details(cx);
         let settings = self.terminal_settings(&path, cx).clone();
 
-        let builder = ShellBuilder::new(ssh_details.is_none(), &settings.shell).non_interactive();
+        let builder =
+            ShellBuilder::new(ssh_details.as_ref().map(|ssh| &*ssh.shell), &settings.shell)
+                .non_interactive();
         let (command, args) = builder.build(Some(command), &Vec::new());
 
         let mut env = self
@@ -180,9 +190,11 @@ impl Project {
                 ssh_command,
                 envs,
                 path_style,
+                shell,
                 ..
             }) => {
                 let (command, args) = wrap_for_ssh(
+                    &shell,
                     &ssh_command,
                     Some((&command, &args)),
                     path.as_deref(),
@@ -280,6 +292,7 @@ impl Project {
                         ssh_command,
                         envs,
                         path_style,
+                        shell,
                     }) => {
                         log::debug!("Connecting to a remote server: {ssh_command:?}");
 
@@ -291,6 +304,7 @@ impl Project {
                             .or_insert_with(|| "xterm-256color".to_string());
 
                         let (program, args) = wrap_for_ssh(
+                            &shell,
                             &ssh_command,
                             None,
                             path.as_deref(),
@@ -343,11 +357,13 @@ impl Project {
                         ssh_command,
                         envs,
                         path_style,
+                        shell,
                     }) => {
                         log::debug!("Connecting to a remote server: {ssh_command:?}");
                         env.entry("TERM".to_string())
                             .or_insert_with(|| "xterm-256color".to_string());
                         let (program, args) = wrap_for_ssh(
+                            &shell,
                             &ssh_command,
                             spawn_task
                                 .command
@@ -637,6 +653,7 @@ impl Project {
 }
 
 pub fn wrap_for_ssh(
+    shell: &str,
     ssh_command: &SshCommand,
     command: Option<(&String, &Vec<String>)>,
     path: Option<&Path>,
@@ -645,16 +662,11 @@ pub fn wrap_for_ssh(
     path_style: PathStyle,
 ) -> (String, Vec<String>) {
     let to_run = if let Some((command, args)) = command {
-        // DEFAULT_REMOTE_SHELL is '"${SHELL:-sh}"' so must not be escaped
-        let command: Option<Cow<str>> = if command == DEFAULT_REMOTE_SHELL {
-            Some(command.into())
-        } else {
-            shlex::try_quote(command).ok()
-        };
+        let command: Option<Cow<str>> = shlex::try_quote(command).ok();
         let args = args.iter().filter_map(|arg| shlex::try_quote(arg).ok());
         command.into_iter().chain(args).join(" ")
     } else {
-        "exec ${SHELL:-sh} -l".to_string()
+        format!("exec {shell} -l")
     };
 
     let mut env_changes = String::new();
@@ -688,7 +700,7 @@ pub fn wrap_for_ssh(
     } else {
         format!("cd; {env_changes} {to_run}")
     };
-    let shell_invocation = format!("sh -c {}", shlex::try_quote(&commands).unwrap());
+    let shell_invocation = format!("{shell} -c {}", shlex::try_quote(&commands).unwrap());
 
     let program = "ssh".to_string();
     let mut args = ssh_command.arguments.clone();
