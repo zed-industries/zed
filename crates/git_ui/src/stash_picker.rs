@@ -5,7 +5,7 @@ use git::stash::StashEntry;
 use gpui::{
     Action, AnyElement, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
     InteractiveElement, IntoElement, Modifiers, ModifiersChangedEvent, ParentElement, Render,
-    SharedString, Styled, Subscription, Task, Window, actions, px, rems,
+    SharedString, Styled, Subscription, Task, Window, actions, rems,
 };
 use picker::{Picker, PickerDelegate};
 use project::git_store::{Repository, RepositoryEvent};
@@ -98,7 +98,7 @@ impl StashList {
         })
         .detach_and_log_err(cx);
 
-        let delegate = StashListDelegate::new(repository.clone(), width, window, cx);
+        let delegate = StashListDelegate::new(repository.clone(), window, cx);
         let picker = cx.new(|cx| Picker::uniform_list(delegate, window, cx));
         let picker_focus_handle = picker.focus_handle(cx);
         picker.update(cx, |picker, _| {
@@ -175,7 +175,6 @@ pub struct StashListDelegate {
     selected_index: usize,
     last_query: String,
     modifiers: Modifiers,
-    max_width: Rems,
     focus_handle: FocusHandle,
     timezone: UtcOffset,
 }
@@ -183,7 +182,6 @@ pub struct StashListDelegate {
 impl StashListDelegate {
     fn new(
         repo: Option<Entity<Repository>>,
-        max_width: Rems,
         _window: &mut Window,
         cx: &mut Context<StashList>,
     ) -> Self {
@@ -198,7 +196,6 @@ impl StashListDelegate {
             selected_index: 0,
             last_query: Default::default(),
             modifiers: Default::default(),
-            max_width,
             focus_handle: cx.focus_handle(),
             timezone,
         }
@@ -392,48 +389,16 @@ impl PickerDelegate for StashListDelegate {
         &self,
         ix: usize,
         selected: bool,
-        window: &mut Window,
-        cx: &mut Context<Picker<Self>>,
+        _window: &mut Window,
+        _cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let entry_match = &self.matches[ix];
 
-        let mut stash_message =
+        let stash_message =
             Self::format_message(entry_match.entry.index, &entry_match.entry.message);
-        let mut positions = entry_match.positions.clone();
-
-        let max_chars_msg = {
-            let style = window.text_style();
-            let font_id = window.text_system().resolve_font(&style.font());
-            let font_size = ui::TextSize::Default.rems(cx).to_pixels(window.rem_size());
-            let normal = cx
-                .text_system()
-                .em_width(font_id, font_size)
-                .unwrap_or(px(16.));
-            let max_width = (self.max_width - rems(2.)).to_pixels(window.rem_size());
-            (max_width / normal) as usize
-        };
-        if max_chars_msg > 5 {
-            stash_message = util::truncate_and_trailoff(&stash_message, max_chars_msg);
-            positions.retain(|&pos| pos < max_chars_msg);
-        }
+        let positions = entry_match.positions.clone();
         let stash_label = HighlightedLabel::new(stash_message, positions).into_any_element();
-
-        let max_chars_branch = {
-            let style = window.text_style();
-            let font_id = window.text_system().resolve_font(&style.font());
-            let font_size = ui::TextSize::Small.rems(cx).to_pixels(window.rem_size());
-            let small = cx
-                .text_system()
-                .em_width(font_id, font_size)
-                .unwrap_or(px(10.));
-            let max_width =
-                (self.max_width - rems(3.) - IconSize::Small.rems()).to_pixels(window.rem_size());
-            (max_width / small) as usize
-        };
-        let mut branch_name = entry_match.entry.branch.clone().unwrap_or_default();
-        if max_chars_branch > 5 {
-            branch_name = util::truncate_and_trailoff(&branch_name, max_chars_branch);
-        }
+        let branch_name = entry_match.entry.branch.clone().unwrap_or_default();
         let branch_label = h_flex()
             .gap_1()
             .child(
