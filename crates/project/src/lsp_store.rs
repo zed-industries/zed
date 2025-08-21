@@ -4643,7 +4643,6 @@ impl LspStore {
                     Some((file, language, raw_buffer.remote_id()))
                 })
                 .sorted_by_key(|(file, _, _)| Reverse(file.worktree.read(cx).is_visible()));
-
             for (file, language, buffer_id) in buffers {
                 let worktree_id = file.worktree_id(cx);
                 let Some(worktree) = local
@@ -4685,7 +4684,6 @@ impl LspStore {
                             cx,
                         )
                         .collect::<Vec<_>>();
-
                     for node in nodes {
                         let server_id = node.server_id_or_init(|disposition| {
                             let path = &disposition.path;

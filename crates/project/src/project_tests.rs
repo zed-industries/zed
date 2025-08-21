@@ -4,6 +4,7 @@ use crate::{
     Event, git_store::StatusEntry, task_inventory::TaskContexts, task_store::TaskSettingsLocation,
     *,
 };
+use async_trait::async_trait;
 use buffer_diff::{
     BufferDiffEvent, CALCULATE_DIFF_TASK, DiffHunkSecondaryStatus, DiffHunkStatus,
     DiffHunkStatusKind, assert_hunks,
@@ -21,7 +22,8 @@ use http_client::Url;
 use itertools::Itertools;
 use language::{
     Diagnostic, DiagnosticEntry, DiagnosticSet, DiagnosticSourceKind, DiskState, FakeLspAdapter,
-    LanguageConfig, LanguageMatcher, LanguageName, LineEnding, OffsetRangeExt, Point, ToPoint,
+    LanguageConfig, LanguageMatcher, LanguageName, LineEnding, ManifestName, ManifestProvider,
+    ManifestQuery, OffsetRangeExt, Point, ToPoint, ToolchainLister,
     language_settings::{AllLanguageSettings, LanguageSettingsContent, language_settings},
     tree_sitter_rust, tree_sitter_typescript,
 };
@@ -594,6 +596,203 @@ async fn test_fallback_to_single_worktree_tasks(cx: &mut gpui::TestAppContext) {
             "echo /dir".to_string(),
         )]
     );
+}
+
+#[gpui::test]
+async fn test_running_multiple_instances_of_a_single_server_in_one_worktree(
+    cx: &mut gpui::TestAppContext,
+) {
+    pub(crate) struct PyprojectTomlManifestProvider;
+
+    impl ManifestProvider for PyprojectTomlManifestProvider {
+        fn name(&self) -> ManifestName {
+            SharedString::new_static("pyproject.toml").into()
+        }
+
+        fn search(
+            &self,
+            ManifestQuery {
+                path,
+                depth,
+                delegate,
+            }: ManifestQuery,
+        ) -> Option<Arc<Path>> {
+            for path in path.ancestors().take(depth) {
+                let p = path.join("pyproject.toml");
+                if delegate.exists(&p, Some(false)) {
+                    return Some(path.into());
+                }
+            }
+
+            None
+        }
+    }
+
+    init_test(cx);
+    let fs = FakeFs::new(cx.executor());
+
+    fs.insert_tree(
+        path!("/the-root"),
+        json!({
+            ".zed": {
+                "settings.json": r#"
+                {
+                    "languages": {
+                        "Python": {
+                            "language_servers": ["ty"]
+                        }
+                    }
+                }"#
+            },
+            "project-a": {
+                ".venv": {},
+                "file.py": "",
+                "pyproject.toml": ""
+            },
+            "project-b": {
+                ".venv": {},
+                "source_file.py":"",
+                "another_file.py": "",
+                "pyproject.toml": ""
+            }
+        }),
+    )
+    .await;
+    cx.update(|cx| {
+        ManifestProvidersStore::global(cx).register(Arc::new(PyprojectTomlManifestProvider))
+    });
+
+    let project = Project::test(fs.clone(), [path!("/the-root").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    let _fake_python_server = language_registry.register_fake_lsp(
+        "Python",
+        FakeLspAdapter {
+            name: "ty",
+            capabilities: lsp::ServerCapabilities {
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+    );
+
+    language_registry.add(python_lang(fs.clone()));
+    let (first_buffer, _handle) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/the-root/project-a/file.py"), cx)
+        })
+        .await
+        .unwrap();
+    cx.executor().run_until_parked();
+    let servers = project.update(cx, |project, cx| {
+        project.lsp_store.update(cx, |this, cx| {
+            first_buffer.update(cx, |buffer, cx| {
+                this.language_servers_for_local_buffer(buffer, cx)
+                    .map(|(adapter, server)| (adapter.clone(), server.clone()))
+                    .collect::<Vec<_>>()
+            })
+        })
+    });
+    cx.executor().run_until_parked();
+    assert_eq!(servers.len(), 1);
+    let (adapter, server) = servers.into_iter().next().unwrap();
+    assert_eq!(adapter.name(), LanguageServerName::new_static("ty"));
+    assert_eq!(server.server_id(), LanguageServerId(0));
+    // `workspace_folders` are set to the rooting point.
+    assert_eq!(
+        server.workspace_folders(),
+        BTreeSet::from_iter(
+            [Url::from_file_path(path!("/the-root/project-a")).unwrap()].into_iter()
+        )
+    );
+
+    let (second_project_buffer, _other_handle) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/the-root/project-b/source_file.py"), cx)
+        })
+        .await
+        .unwrap();
+    cx.executor().run_until_parked();
+    let servers = project.update(cx, |project, cx| {
+        project.lsp_store.update(cx, |this, cx| {
+            second_project_buffer.update(cx, |buffer, cx| {
+                this.language_servers_for_local_buffer(buffer, cx)
+                    .map(|(adapter, server)| (adapter.clone(), server.clone()))
+                    .collect::<Vec<_>>()
+            })
+        })
+    });
+    cx.executor().run_until_parked();
+    assert_eq!(servers.len(), 1);
+    let (adapter, server) = servers.into_iter().next().unwrap();
+    assert_eq!(adapter.name(), LanguageServerName::new_static("ty"));
+    // We're not using venvs at all here, so both folders should fall under the same root.
+    assert_eq!(server.server_id(), LanguageServerId(0));
+    // Now, let's select a different toolchain for one of subprojects.
+    let (available_toolchains_for_b, root_path) = project
+        .update(cx, |this, cx| {
+            let worktree_id = this.worktrees(cx).next().unwrap().read(cx).id();
+            this.available_toolchains(
+                ProjectPath {
+                    worktree_id,
+                    path: Arc::from("project-b/source_file.py".as_ref()),
+                },
+                LanguageName::new("Python"),
+                cx,
+            )
+        })
+        .await
+        .expect("A toolchain to be discovered");
+    assert_eq!(root_path.as_ref(), Path::new("project-b"));
+    assert_eq!(available_toolchains_for_b.toolchains().len(), 1);
+    let currently_active_toolchain = project
+        .update(cx, |this, cx| {
+            let worktree_id = this.worktrees(cx).next().unwrap().read(cx).id();
+            this.active_toolchain(
+                ProjectPath {
+                    worktree_id,
+                    path: Arc::from("project-b/source_file.py".as_ref()),
+                },
+                LanguageName::new("Python"),
+                cx,
+            )
+        })
+        .await;
+
+    assert!(currently_active_toolchain.is_none());
+    let _ = project
+        .update(cx, |this, cx| {
+            let worktree_id = this.worktrees(cx).next().unwrap().read(cx).id();
+            this.activate_toolchain(
+                ProjectPath {
+                    worktree_id,
+                    path: root_path,
+                },
+                available_toolchains_for_b
+                    .toolchains
+                    .into_iter()
+                    .next()
+                    .unwrap(),
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+    cx.run_until_parked();
+    let servers = project.update(cx, |project, cx| {
+        project.lsp_store.update(cx, |this, cx| {
+            second_project_buffer.update(cx, |buffer, cx| {
+                this.language_servers_for_local_buffer(buffer, cx)
+                    .map(|(adapter, server)| (adapter.clone(), server.clone()))
+                    .collect::<Vec<_>>()
+            })
+        })
+    });
+    cx.executor().run_until_parked();
+    assert_eq!(servers.len(), 1);
+    let (adapter, server) = servers.into_iter().next().unwrap();
+    assert_eq!(adapter.name(), LanguageServerName::new_static("ty"));
+    // There's a new language server in town.
+    assert_eq!(server.server_id(), LanguageServerId(1));
 }
 
 #[gpui::test]
@@ -8980,6 +9179,65 @@ fn rust_lang() -> Arc<Language> {
         },
         Some(tree_sitter_rust::LANGUAGE.into()),
     ))
+}
+
+fn python_lang(fs: Arc<FakeFs>) -> Arc<Language> {
+    struct PythonMootToolchainLister(Arc<FakeFs>);
+    #[async_trait]
+    impl ToolchainLister for PythonMootToolchainLister {
+        async fn list(
+            &self,
+            worktree_root: PathBuf,
+            subroot_relative_path: Option<Arc<Path>>,
+            _: Option<HashMap<String, String>>,
+        ) -> ToolchainList {
+            // This lister will always return a path .venv directories within ancestors
+            let ancestors = subroot_relative_path
+                .into_iter()
+                .flat_map(|path| path.ancestors().map(ToOwned::to_owned).collect::<Vec<_>>());
+            let mut toolchains = vec![];
+            for ancestor in ancestors {
+                let venv_path = worktree_root.join(ancestor).join(".venv");
+                if self.0.is_dir(&venv_path).await {
+                    toolchains.push(Toolchain {
+                        name: SharedString::new("Python Venv"),
+                        path: venv_path.to_string_lossy().into_owned().into(),
+                        language_name: LanguageName(SharedString::new_static("Python")),
+                        as_json: serde_json::Value::Null,
+                    })
+                }
+            }
+            ToolchainList {
+                toolchains,
+                ..Default::default()
+            }
+        }
+        // Returns a term which we should use in UI to refer to a toolchain.
+        fn term(&self) -> SharedString {
+            SharedString::new_static("virtual environment")
+        }
+        /// Returns the name of the manifest file for this toolchain.
+        fn manifest_name(&self) -> ManifestName {
+            SharedString::new_static("pyproject.toml").into()
+        }
+    }
+    Arc::new(
+        Language::new(
+            LanguageConfig {
+                name: "Python".into(),
+                matcher: LanguageMatcher {
+                    path_suffixes: vec!["py".to_string()],
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            None, // We're not testing Python parsing with this language.
+        )
+        .with_manifest(Some(ManifestName::from(SharedString::new_static(
+            "pyproject.toml",
+        ))))
+        .with_toolchain_lister(Some(Arc::new(PythonMootToolchainLister(fs)))),
+    )
 }
 
 fn typescript_lang() -> Arc<Language> {
