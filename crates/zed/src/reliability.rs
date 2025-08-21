@@ -251,6 +251,7 @@ pub fn init(
                             endpoint,
                             minidump_contents,
                             &metadata,
+                            installation_id.clone(),
                         )
                         .await
                         .log_err();
@@ -478,7 +479,9 @@ fn upload_panics_and_crashes(
         return;
     }
     cx.background_spawn(async move {
-        upload_previous_minidumps(http.clone()).await.warn_on_err();
+        upload_previous_minidumps(http.clone(), installation_id.clone())
+            .await
+            .warn_on_err();
         let most_recent_panic = upload_previous_panics(http.clone(), &panic_report_url)
             .await
             .log_err()
@@ -546,7 +549,10 @@ async fn upload_previous_panics(
     Ok(most_recent_panic)
 }
 
-pub async fn upload_previous_minidumps(http: Arc<HttpClientWithUrl>) -> anyhow::Result<()> {
+pub async fn upload_previous_minidumps(
+    http: Arc<HttpClientWithUrl>,
+    installation_id: Option<String>,
+) -> anyhow::Result<()> {
     let Some(minidump_endpoint) = MINIDUMP_ENDPOINT.as_ref() else {
         log::warn!("Minidump endpoint not set");
         return Ok(());
@@ -569,6 +575,7 @@ pub async fn upload_previous_minidumps(http: Arc<HttpClientWithUrl>) -> anyhow::
                     .await
                     .context("Failed to read minidump")?,
                 &metadata,
+                installation_id.clone(),
             )
             .await
             .log_err()
@@ -586,6 +593,7 @@ async fn upload_minidump(
     endpoint: &str,
     minidump: Vec<u8>,
     metadata: &crashes::CrashInfo,
+    installation_id: Option<String>,
 ) -> Result<()> {
     let mut form = Form::new()
         .part(
@@ -601,7 +609,9 @@ async fn upload_minidump(
         .text("sentry[tags][version]", metadata.init.zed_version.clone())
         .text("sentry[release]", metadata.init.commit_sha.clone())
         .text("platform", "rust");
+    let mut panic_message = "".to_owned();
     if let Some(panic_info) = metadata.panic.as_ref() {
+        panic_message = panic_info.message.clone();
         form = form.text("sentry[logentry][formatted]", panic_info.message.clone());
         form = form.text("span", panic_info.span.clone());
         // TODO: add gpu-context, feature-flag-context, and more of device-context like gpu
@@ -610,6 +620,16 @@ async fn upload_minidump(
     if let Some(minidump_error) = metadata.minidump_error.clone() {
         form = form.text("minidump_error", minidump_error);
     }
+    if let Some(id) = installation_id.clone() {
+        form = form.text("sentry[user][id]", id)
+    }
+
+    ::telemetry::event!(
+        "Minidump Uploaded",
+        panic_message = panic_message,
+        crashed_version = metadata.init.zed_version.clone(),
+        commit_sha = metadata.init.commit_sha.clone(),
+    );
 
     let mut response_text = String::new();
     let mut response = http.send_multipart_form(endpoint, form).await?;
