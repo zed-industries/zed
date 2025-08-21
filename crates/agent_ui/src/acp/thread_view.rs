@@ -1252,7 +1252,7 @@ impl AcpThreadView {
                     .into_any()
             }
             AgentThreadEntry::AssistantMessage(AssistantMessage { chunks }) => {
-                let style = default_markdown_style(false, window, cx);
+                let style = default_markdown_style(false, false, window, cx);
                 let message_body = v_flex()
                     .w_full()
                     .gap_2p5()
@@ -1387,8 +1387,6 @@ impl AcpThreadView {
                     .relative()
                     .w_full()
                     .gap_1p5()
-                    .opacity(0.8)
-                    .hover(|style| style.opacity(1.))
                     .child(
                         h_flex()
                             .size_4()
@@ -1429,6 +1427,7 @@ impl AcpThreadView {
                     .child(
                         div()
                             .text_size(self.tool_name_font_size())
+                            .text_color(cx.theme().colors().text_muted)
                             .child("Thinking"),
                     )
                     .on_click(cx.listener({
@@ -1452,9 +1451,10 @@ impl AcpThreadView {
                         .border_l_1()
                         .border_color(self.tool_card_border_color(cx))
                         .text_ui_sm(cx)
-                        .child(
-                            self.render_markdown(chunk, default_markdown_style(false, window, cx)),
-                        ),
+                        .child(self.render_markdown(
+                            chunk,
+                            default_markdown_style(false, false, window, cx),
+                        )),
                 )
             })
             .into_any_element()
@@ -1689,13 +1689,8 @@ impl AcpThreadView {
                                     .px_1p5()
                                     .rounded_sm()
                                     .overflow_x_scroll()
-                                    .opacity(0.8)
                                     .hover(|label| {
-                                        label.opacity(1.).bg(cx
-                                            .theme()
-                                            .colors()
-                                            .element_hover
-                                            .opacity(0.5))
+                                        label.bg(cx.theme().colors().element_hover.opacity(0.5))
                                     })
                                     .child(name)
                                     .tooltip(Tooltip::text("Jump to File"))
@@ -1718,7 +1713,7 @@ impl AcpThreadView {
                                             .overflow_x_scroll()
                                             .child(self.render_markdown(
                                                 tool_call.label.clone(),
-                                                default_markdown_style(false, window, cx),
+                                                default_markdown_style(false, true, window, cx),
                                             )),
                                     )
                                     .child(gradient_overlay(gradient_color))
@@ -1734,7 +1729,8 @@ impl AcpThreadView {
                                         }
                                     }))
                                     .into_any()
-                            }),
+                            })
+                            .text_color(cx.theme().colors().text_muted),
                     )
                     .children(status_icon),
             )
@@ -1784,7 +1780,7 @@ impl AcpThreadView {
             .border_color(self.tool_card_border_color(cx))
             .text_sm()
             .text_color(cx.theme().colors().text_muted)
-            .child(self.render_markdown(markdown, default_markdown_style(false, window, cx)))
+            .child(self.render_markdown(markdown, default_markdown_style(false, false, window, cx)))
             .child(
                 Button::new(button_id, "Collapse Output")
                     .full_width()
@@ -2528,9 +2524,10 @@ impl AcpThreadView {
                     .into_any(),
             )
             .children(description.map(|desc| {
-                div().text_ui(cx).text_center().child(
-                    self.render_markdown(desc.clone(), default_markdown_style(false, window, cx)),
-                )
+                div().text_ui(cx).text_center().child(self.render_markdown(
+                    desc.clone(),
+                    default_markdown_style(false, false, window, cx),
+                ))
             }))
             .children(
                 configuration_view
@@ -4600,7 +4597,12 @@ impl Render for AcpThreadView {
     }
 }
 
-fn default_markdown_style(buffer_font: bool, window: &Window, cx: &App) -> MarkdownStyle {
+fn default_markdown_style(
+    buffer_font: bool,
+    muted_text: bool,
+    window: &Window,
+    cx: &App,
+) -> MarkdownStyle {
     let theme_settings = ThemeSettings::get_global(cx);
     let colors = cx.theme().colors();
 
@@ -4621,20 +4623,26 @@ fn default_markdown_style(buffer_font: bool, window: &Window, cx: &App) -> Markd
         TextSize::Default.rems(cx)
     };
 
+    let text_color = if muted_text {
+        colors.text_muted
+    } else {
+        colors.text
+    };
+
     text_style.refine(&TextStyleRefinement {
         font_family: Some(font_family),
         font_fallbacks: theme_settings.ui_font.fallbacks.clone(),
         font_features: Some(theme_settings.ui_font.features.clone()),
         font_size: Some(font_size.into()),
         line_height: Some(line_height.into()),
-        color: Some(cx.theme().colors().text),
+        color: Some(text_color),
         ..Default::default()
     });
 
     MarkdownStyle {
         base_text_style: text_style.clone(),
         syntax: cx.theme().syntax().clone(),
-        selection_background_color: cx.theme().colors().element_selection_background,
+        selection_background_color: colors.element_selection_background,
         code_block_overflow_x_scroll: true,
         table_overflow_x_scroll: true,
         heading_level_styles: Some(HeadingLevelStyles {
@@ -4720,7 +4728,7 @@ fn plan_label_markdown_style(
     window: &Window,
     cx: &App,
 ) -> MarkdownStyle {
-    let default_md_style = default_markdown_style(false, window, cx);
+    let default_md_style = default_markdown_style(false, false, window, cx);
 
     MarkdownStyle {
         base_text_style: TextStyle {
@@ -4740,7 +4748,7 @@ fn plan_label_markdown_style(
 }
 
 fn terminal_command_markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
-    let default_md_style = default_markdown_style(true, window, cx);
+    let default_md_style = default_markdown_style(true, false, window, cx);
 
     MarkdownStyle {
         base_text_style: TextStyle {
