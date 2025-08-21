@@ -56,24 +56,22 @@ impl Vim {
 
         self.pop_operator(window, cx);
         if self.editor_input_enabled() {
-            self.update_editor(window, cx, |_, editor, window, cx| {
-                editor.insert(&text, window, cx)
-            });
+            self.update_editor(cx, |_, editor, cx| editor.insert(&text, window, cx));
         } else {
             self.input_ignored(text, window, cx);
         }
     }
 
     fn literal(&mut self, action: &Literal, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(Operator::Literal { prefix }) = self.active_operator() {
-            if let Some(prefix) = prefix {
-                if let Some(keystroke) = Keystroke::parse(&action.0).ok() {
-                    window.defer(cx, |window, cx| {
-                        window.dispatch_keystroke(keystroke, cx);
-                    });
-                }
-                return self.handle_literal_input(prefix, "", window, cx);
+        if let Some(Operator::Literal { prefix }) = self.active_operator()
+            && let Some(prefix) = prefix
+        {
+            if let Some(keystroke) = Keystroke::parse(&action.0).ok() {
+                window.defer(cx, |window, cx| {
+                    window.dispatch_keystroke(keystroke, cx);
+                });
             }
+            return self.handle_literal_input(prefix, "", window, cx);
         }
 
         self.insert_literal(Some(action.1), "", window, cx);
@@ -91,7 +89,7 @@ impl Vim {
             return;
         };
 
-        if prefix.len() > 0 {
+        if !prefix.is_empty() {
             self.handle_literal_input(prefix, "", window, cx);
         } else {
             self.pop_operator(window, cx);
@@ -105,7 +103,6 @@ impl Vim {
                 window.dispatch_keystroke(keystroke, cx);
             });
         }
-        return;
     }
 
     pub fn handle_literal_input(
@@ -214,9 +211,7 @@ impl Vim {
         text.push_str(suffix);
 
         if self.editor_input_enabled() {
-            self.update_editor(window, cx, |_, editor, window, cx| {
-                editor.insert(&text, window, cx)
-            });
+            self.update_editor(cx, |_, editor, cx| editor.insert(&text, window, cx));
         } else {
             self.input_ignored(text.into(), window, cx);
         }

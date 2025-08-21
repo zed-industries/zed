@@ -135,12 +135,7 @@ message Envelope {
         FollowResponse follow_response = 99;
         UpdateFollowers update_followers = 100;
         Unfollow unfollow = 101;
-        GetPrivateUserInfo get_private_user_info = 102;
-        GetPrivateUserInfoResponse get_private_user_info_response = 103;
-        UpdateUserPlan update_user_plan = 234;
         UpdateDiffBases update_diff_bases = 104;
-        AcceptTermsOfService accept_terms_of_service = 239;
-        AcceptTermsOfServiceResponse accept_terms_of_service_response = 240;
 
         OnTypeFormatting on_type_formatting = 105;
         OnTypeFormattingResponse on_type_formatting_response = 106;
@@ -249,10 +244,6 @@ message Envelope {
         ListRemoteDirectoryResponse list_remote_directory_response = 220;
         AddWorktree add_worktree = 222;
         AddWorktreeResponse add_worktree_response = 223;
-
-        GetLlmToken get_llm_token = 235;
-        GetLlmTokenResponse get_llm_token_response = 236;
-        RefreshLlmToken refresh_llm_token = 259;
 
         LspExtSwitchSourceHeader lsp_ext_switch_source_header = 241;
         LspExtSwitchSourceHeaderResponse lsp_ext_switch_source_header_response = 242;
@@ -399,10 +390,17 @@ message Envelope {
         GetDefaultBranchResponse get_default_branch_response = 360;
 
         GetCrashFiles get_crash_files = 361;
-        GetCrashFilesResponse get_crash_files_response = 362; // current max
+        GetCrashFilesResponse get_crash_files_response = 362;
+
+        GitClone git_clone = 363;
+        GitCloneResponse git_clone_response = 364;
+
+        LspQuery lsp_query = 365;
+        LspQueryResponse lsp_query_response = 366; // current max
     }
 
     reserved 87 to 88;
+    reserved 102 to 103;
     reserved 158 to 161;
     reserved 164;
     reserved 166 to 169;
@@ -416,10 +414,13 @@ message Envelope {
     reserved 221;
     reserved 224 to 229;
     reserved 230 to 231;
+    reserved 234 to 236;
+    reserved 239 to 240;
     reserved 246;
-    reserved 270;
     reserved 247 to 254;
     reserved 255 to 256;
+    reserved 259;
+    reserved 270;
     reserved 280 to 281;
     reserved 332 to 333;
 }

@@ -97,7 +97,7 @@ impl Vim {
         let amount = by(Vim::take_count(cx).map(|c| c as f32));
         Vim::take_forced_motion(cx);
         self.exit_temporary_normal(window, cx);
-        self.update_editor(window, cx, |_, editor, window, cx| {
+        self.update_editor(cx, |_, editor, cx| {
             scroll_editor(editor, move_cursor, &amount, window, cx)
         });
     }
@@ -549,7 +549,7 @@ mod test {
         cx.set_neovim_option("nowrap").await;
 
         let content = "ˇ01234567890123456789";
-        cx.set_shared_state(&content).await;
+        cx.set_shared_state(content).await;
 
         cx.simulate_shared_keystrokes("z shift-l").await;
         cx.shared_state().await.assert_eq("012345ˇ67890123456789");
@@ -560,7 +560,7 @@ mod test {
         cx.shared_state().await.assert_eq("012345ˇ67890123456789");
 
         let content = "ˇ01234567890123456789";
-        cx.set_shared_state(&content).await;
+        cx.set_shared_state(content).await;
 
         cx.simulate_shared_keystrokes("z l").await;
         cx.shared_state().await.assert_eq("0ˇ1234567890123456789");

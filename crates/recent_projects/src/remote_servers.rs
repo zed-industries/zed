@@ -119,7 +119,7 @@ impl EditNicknameState {
         let starting_text = SshSettings::get_global(cx)
             .ssh_connections()
             .nth(index)
-            .and_then(|state| state.nickname.clone())
+            .and_then(|state| state.nickname)
             .filter(|text| !text.is_empty());
         this.editor.update(cx, |this, cx| {
             this.set_placeholder_text("Add a nickname for this server", cx);
@@ -165,7 +165,7 @@ impl ProjectPicker {
         let nickname = connection.nickname.clone().map(|nick| nick.into());
         let _path_task = cx
             .spawn_in(window, {
-                let workspace = workspace.clone();
+                let workspace = workspace;
                 async move |this, cx| {
                     let Ok(Some(paths)) = rx.await else {
                         workspace
@@ -520,7 +520,7 @@ impl RemoteServerProjects {
         self.mode = Mode::CreateRemoteServer(CreateRemoteServer {
             address_editor: editor,
             address_error: None,
-            ssh_prompt: Some(ssh_prompt.clone()),
+            ssh_prompt: Some(ssh_prompt),
             _creating: Some(creating),
         });
     }
@@ -664,10 +664,10 @@ impl RemoteServerProjects {
                 let text = Some(state.editor.read(cx).text(cx)).filter(|text| !text.is_empty());
                 let index = state.index;
                 self.update_settings_file(cx, move |setting, _| {
-                    if let Some(connections) = setting.ssh_connections.as_mut() {
-                        if let Some(connection) = connections.get_mut(index) {
-                            connection.nickname = text;
-                        }
+                    if let Some(connections) = setting.ssh_connections.as_mut()
+                        && let Some(connection) = connections.get_mut(index)
+                    {
+                        connection.nickname = text;
                     }
                 });
                 self.mode = Mode::default_mode(&self.ssh_config_servers, cx);
@@ -843,7 +843,7 @@ impl RemoteServerProjects {
                                 .start_slot(Icon::new(IconName::Plus).color(Color::Muted))
                                 .child(Label::new("Open Folder"))
                                 .on_click(cx.listener({
-                                    let ssh_connection = connection.clone();
+                                    let ssh_connection = connection;
                                     let host = host.clone();
                                     move |this, _, window, cx| {
                                         let new_ix = this.create_host_from_ssh_config(&host, cx);
@@ -1094,11 +1094,10 @@ impl RemoteServerProjects {
                                         .size(LabelSize::Small),
                                     )
                                     .child(
-                                        Button::new("learn-more", "Learn more…")
+                                        Button::new("learn-more", "Learn More")
                                             .label_size(LabelSize::Small)
-                                            .size(ButtonSize::None)
-                                            .color(Color::Accent)
-                                            .style(ButtonStyle::Transparent)
+                                            .icon(IconName::ArrowUpRight)
+                                            .icon_size(IconSize::XSmall)
                                             .on_click(|_, _, cx| {
                                                 cx.open_url(
                                                     "https://zed.dev/docs/remote-development",
@@ -1292,7 +1291,7 @@ impl RemoteServerProjects {
                                     let connection_string = connection_string.clone();
                                     move |_, _: &menu::Confirm, window, cx| {
                                         remove_ssh_server(
-                                            cx.entity().clone(),
+                                            cx.entity(),
                                             server_index,
                                             connection_string.clone(),
                                             window,
@@ -1312,7 +1311,7 @@ impl RemoteServerProjects {
                                         .child(Label::new("Remove Server").color(Color::Error))
                                         .on_click(cx.listener(move |_, _, window, cx| {
                                             remove_ssh_server(
-                                                cx.entity().clone(),
+                                                cx.entity(),
                                                 server_index,
                                                 connection_string.clone(),
                                                 window,
@@ -1377,7 +1376,7 @@ impl RemoteServerProjects {
         };
 
         let connection_string = connection.host.clone();
-        let nickname = connection.nickname.clone().map(|s| s.into());
+        let nickname = connection.nickname.map(|s| s.into());
 
         v_flex()
             .id("ssh-edit-nickname")
@@ -1411,7 +1410,7 @@ impl RemoteServerProjects {
         if ssh_settings
             .ssh_connections
             .as_ref()
-            .map_or(false, |connections| {
+            .is_some_and(|connections| {
                 state
                     .servers
                     .iter()
@@ -1491,7 +1490,7 @@ impl RemoteServerProjects {
                 .track_focus(&self.focus_handle(cx))
                 .id("ssh-server-list")
                 .overflow_y_scroll()
-                .track_scroll(&scroll_handle)
+                .track_scroll(scroll_handle)
                 .size_full()
                 .child(connect_button)
                 .child(

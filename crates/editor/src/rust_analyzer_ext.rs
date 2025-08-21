@@ -35,12 +35,12 @@ pub fn apply_related_actions(editor: &Entity<Editor>, window: &mut Window, cx: &
         .filter_map(|buffer| buffer.read(cx).language())
         .any(|language| is_rust_language(language))
     {
-        register_action(&editor, window, go_to_parent_module);
-        register_action(&editor, window, expand_macro_recursively);
-        register_action(&editor, window, open_docs);
-        register_action(&editor, window, cancel_flycheck_action);
-        register_action(&editor, window, run_flycheck_action);
-        register_action(&editor, window, clear_flycheck_action);
+        register_action(editor, window, go_to_parent_module);
+        register_action(editor, window, expand_macro_recursively);
+        register_action(editor, window, open_docs);
+        register_action(editor, window, cancel_flycheck_action);
+        register_action(editor, window, run_flycheck_action);
+        register_action(editor, window, clear_flycheck_action);
     }
 }
 
@@ -285,11 +285,11 @@ pub fn open_docs(editor: &mut Editor, _: &OpenDocs, window: &mut Window, cx: &mu
         workspace.update(cx, |_workspace, cx| {
             // Check if the local document exists, otherwise fallback to the online document.
             // Open with the default browser.
-            if let Some(local_url) = docs_urls.local {
-                if fs::metadata(Path::new(&local_url[8..])).is_ok() {
-                    cx.open_url(&local_url);
-                    return;
-                }
+            if let Some(local_url) = docs_urls.local
+                && fs::metadata(Path::new(&local_url[8..])).is_ok()
+            {
+                cx.open_url(&local_url);
+                return;
             }
 
             if let Some(web_url) = docs_urls.web {

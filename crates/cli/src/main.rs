@@ -363,7 +363,7 @@ fn anonymous_fd(path: &str) -> Option<fs::File> {
 
         let fd: fd::RawFd = fd_str.parse().ok()?;
         let file = unsafe { fs::File::from_raw_fd(fd) };
-        return Some(file);
+        Some(file)
     }
     #[cfg(any(target_os = "macos", target_os = "freebsd"))]
     {
@@ -381,13 +381,13 @@ fn anonymous_fd(path: &str) -> Option<fs::File> {
         }
         let fd: fd::RawFd = fd_str.parse().ok()?;
         let file = unsafe { fs::File::from_raw_fd(fd) };
-        return Some(file);
+        Some(file)
     }
     #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "freebsd")))]
     {
         _ = path;
         // not implemented for bsd, windows. Could be, but isn't yet
-        return None;
+        None
     }
 }
 
@@ -494,11 +494,11 @@ mod linux {
                 Ok(Fork::Parent(_)) => Ok(()),
                 Ok(Fork::Child) => {
                     unsafe { std::env::set_var(FORCE_CLI_MODE_ENV_VAR_NAME, "") };
-                    if let Err(_) = fork::setsid() {
+                    if fork::setsid().is_err() {
                         eprintln!("failed to setsid: {}", std::io::Error::last_os_error());
                         process::exit(1);
                     }
-                    if let Err(_) = fork::close_fd() {
+                    if fork::close_fd().is_err() {
                         eprintln!("failed to close_fd: {}", std::io::Error::last_os_error());
                     }
                     let error =
@@ -518,11 +518,11 @@ mod linux {
         ) -> Result<(), std::io::Error> {
             for _ in 0..100 {
                 thread::sleep(Duration::from_millis(10));
-                if sock.connect_addr(&sock_addr).is_ok() {
+                if sock.connect_addr(sock_addr).is_ok() {
                     return Ok(());
                 }
             }
-            sock.connect_addr(&sock_addr)
+            sock.connect_addr(sock_addr)
         }
     }
 }
@@ -534,8 +534,8 @@ mod flatpak {
     use std::process::Command;
     use std::{env, process};
 
-    const EXTRA_LIB_ENV_NAME: &'static str = "ZED_FLATPAK_LIB_PATH";
-    const NO_ESCAPE_ENV_NAME: &'static str = "ZED_FLATPAK_NO_ESCAPE";
+    const EXTRA_LIB_ENV_NAME: &str = "ZED_FLATPAK_LIB_PATH";
+    const NO_ESCAPE_ENV_NAME: &str = "ZED_FLATPAK_NO_ESCAPE";
 
     /// Adds bundled libraries to LD_LIBRARY_PATH if running under flatpak
     pub fn ld_extra_libs() {
@@ -586,14 +586,11 @@ mod flatpak {
 
     pub fn set_bin_if_no_escape(mut args: super::Args) -> super::Args {
         if env::var(NO_ESCAPE_ENV_NAME).is_ok()
-            && env::var("FLATPAK_ID").map_or(false, |id| id.starts_with("dev.zed.Zed"))
+            && env::var("FLATPAK_ID").is_ok_and(|id| id.starts_with("dev.zed.Zed"))
+            && args.zed.is_none()
         {
-            if args.zed.is_none() {
-                args.zed = Some("/app/libexec/zed-editor".into());
-                unsafe {
-                    env::set_var("ZED_UPDATE_EXPLANATION", "Please use flatpak to update zed")
-                };
-            }
+            args.zed = Some("/app/libexec/zed-editor".into());
+            unsafe { env::set_var("ZED_UPDATE_EXPLANATION", "Please use flatpak to update zed") };
         }
         args
     }
@@ -929,7 +926,7 @@ mod mac_os {
 
         fn path(&self) -> PathBuf {
             match self {
-                Bundle::App { app_bundle, .. } => app_bundle.join("Contents/MacOS/zed").clone(),
+                Bundle::App { app_bundle, .. } => app_bundle.join("Contents/MacOS/zed"),
                 Bundle::LocalPath { executable, .. } => executable.clone(),
             }
         }
@@ -957,17 +954,14 @@ mod mac_os {
     ) -> Result<()> {
         use anyhow::bail;
 
-        let app_id_prompt = format!("id of app \"{}\"", channel.display_name());
-        let app_id_output = Command::new("osascript")
+        let app_path_prompt = format!(
+            "POSIX path of (path to application \"{}\")",
+            channel.display_name()
+        );
+        let app_path_output = Command::new("osascript")
             .arg("-e")
-            .arg(&app_id_prompt)
+            .arg(&app_path_prompt)
             .output()?;
-        if !app_id_output.status.success() {
-            bail!("Could not determine app id for {}", channel.display_name());
-        }
-        let app_name = String::from_utf8(app_id_output.stdout)?.trim().to_owned();
-        let app_path_prompt = format!("kMDItemCFBundleIdentifier == '{app_name}'");
-        let app_path_output = Command::new("mdfind").arg(app_path_prompt).output()?;
         if !app_path_output.status.success() {
             bail!(
                 "Could not determine app path for {}",

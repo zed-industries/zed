@@ -239,9 +239,7 @@ pub(crate) fn search_files(
 
                 PathMatchCandidateSet {
                     snapshot: worktree.snapshot(),
-                    include_ignored: worktree
-                        .root_entry()
-                        .map_or(false, |entry| entry.is_ignored),
+                    include_ignored: worktree.root_entry().is_some_and(|entry| entry.is_ignored),
                     include_root_name: true,
                     candidates: project::Candidates::Entries,
                 }
@@ -315,7 +313,7 @@ pub fn render_file_context_entry(
     context_store: WeakEntity<ContextStore>,
     cx: &App,
 ) -> Stateful<Div> {
-    let (file_name, directory) = extract_file_name_and_directory(&path, path_prefix);
+    let (file_name, directory) = extract_file_name_and_directory(path, path_prefix);
 
     let added = context_store.upgrade().and_then(|context_store| {
         let project_path = ProjectPath {
@@ -334,7 +332,7 @@ pub fn render_file_context_entry(
     let file_icon = if is_directory {
         FileIcons::get_folder_icon(false, cx)
     } else {
-        FileIcons::get_icon(&path, cx)
+        FileIcons::get_icon(path, cx)
     }
     .map(Icon::from_path)
     .unwrap_or_else(|| Icon::new(IconName::File));

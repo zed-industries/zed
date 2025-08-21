@@ -6,6 +6,7 @@ use gpui::{
     Task, svg,
 };
 use parking_lot::Mutex;
+
 use std::ops::Deref;
 use std::sync::{Arc, LazyLock};
 use std::{any::TypeId, time::Duration};
@@ -189,6 +190,7 @@ impl Workspace {
         cx.notify();
     }
 
+    /// Hide all notifications matching the given ID
     pub fn suppress_notification(&mut self, id: &NotificationId, cx: &mut Context<Self>) {
         self.dismiss_notification(id, cx);
         self.suppressed_notifications.insert(id.clone());
@@ -344,7 +346,7 @@ impl Render for LanguageServerPrompt {
                     )
                     .child(Label::new(request.message.to_string()).size(LabelSize::Small))
                     .children(request.actions.iter().enumerate().map(|(ix, action)| {
-                        let this_handle = cx.entity().clone();
+                        let this_handle = cx.entity();
                         Button::new(ix, action.title.clone())
                             .size(ButtonSize::Large)
                             .on_click(move |_, window, cx| {
@@ -462,16 +464,144 @@ impl EventEmitter<SuppressEvent> for ErrorMessagePrompt {}
 
 impl Notification for ErrorMessagePrompt {}
 
+#[derive(IntoElement, RegisterComponent)]
+pub struct NotificationFrame {
+    title: Option<SharedString>,
+    show_suppress_button: bool,
+    show_close_button: bool,
+    close: Option<Box<dyn Fn(&bool, &mut Window, &mut App) + 'static>>,
+    contents: Option<AnyElement>,
+    suffix: Option<AnyElement>,
+}
+
+impl NotificationFrame {
+    pub fn new() -> Self {
+        Self {
+            title: None,
+            contents: None,
+            suffix: None,
+            show_suppress_button: true,
+            show_close_button: true,
+            close: None,
+        }
+    }
+
+    pub fn with_title(mut self, title: Option<impl Into<SharedString>>) -> Self {
+        self.title = title.map(Into::into);
+        self
+    }
+
+    pub fn with_content(self, content: impl IntoElement) -> Self {
+        Self {
+            contents: Some(content.into_any_element()),
+            ..self
+        }
+    }
+
+    /// Determines whether the given notification ID should be suppressible
+    /// Suppressed motifications will not be shown anymore
+    pub fn show_suppress_button(mut self, show: bool) -> Self {
+        self.show_suppress_button = show;
+        self
+    }
+
+    pub fn show_close_button(mut self, show: bool) -> Self {
+        self.show_close_button = show;
+        self
+    }
+
+    pub fn on_close(self, on_close: impl Fn(&bool, &mut Window, &mut App) + 'static) -> Self {
+        Self {
+            close: Some(Box::new(on_close)),
+            ..self
+        }
+    }
+
+    pub fn with_suffix(mut self, suffix: impl IntoElement) -> Self {
+        self.suffix = Some(suffix.into_any_element());
+        self
+    }
+}
+
+impl RenderOnce for NotificationFrame {
+    fn render(mut self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let entity = window.current_view();
+        let show_suppress_button = self.show_suppress_button;
+        let suppress = show_suppress_button && window.modifiers().shift;
+        let (close_id, close_icon) = if suppress {
+            ("suppress", IconName::Minimize)
+        } else {
+            ("close", IconName::Close)
+        };
+
+        v_flex()
+            .occlude()
+            .p_3()
+            .gap_2()
+            .elevation_3(cx)
+            .child(
+                h_flex()
+                    .gap_4()
+                    .justify_between()
+                    .items_start()
+                    .child(
+                        v_flex()
+                            .gap_0p5()
+                            .when_some(self.title.clone(), |div, title| {
+                                div.child(Label::new(title))
+                            })
+                            .child(div().max_w_96().children(self.contents)),
+                    )
+                    .when(self.show_close_button, |this| {
+                        this.on_modifiers_changed(move |_, _, cx| cx.notify(entity))
+                            .child(
+                                IconButton::new(close_id, close_icon)
+                                    .tooltip(move |window, cx| {
+                                        if suppress {
+                                            Tooltip::for_action(
+                                                "Suppress.\nClose with click.",
+                                                &SuppressNotification,
+                                                window,
+                                                cx,
+                                            )
+                                        } else if show_suppress_button {
+                                            Tooltip::for_action(
+                                                "Close.\nSuppress with shift-click.",
+                                                &menu::Cancel,
+                                                window,
+                                                cx,
+                                            )
+                                        } else {
+                                            Tooltip::for_action("Close", &menu::Cancel, window, cx)
+                                        }
+                                    })
+                                    .on_click({
+                                        let close = self.close.take();
+                                        move |_, window, cx| {
+                                            if let Some(close) = &close {
+                                                close(&suppress, window, cx)
+                                            }
+                                        }
+                                    }),
+                            )
+                    }),
+            )
+            .children(self.suffix)
+    }
+}
+
+impl Component for NotificationFrame {}
+
 pub mod simple_message_notification {
     use std::sync::Arc;
 
     use gpui::{
-        AnyElement, ClickEvent, DismissEvent, EventEmitter, FocusHandle, Focusable, ParentElement,
-        Render, SharedString, Styled, div,
+        AnyElement, DismissEvent, EventEmitter, FocusHandle, Focusable, ParentElement, Render,
+        SharedString, Styled,
     };
-    use ui::{Tooltip, prelude::*};
+    use ui::prelude::*;
 
-    use crate::SuppressNotification;
+    use crate::notifications::NotificationFrame;
 
     use super::{Notification, SuppressEvent};
 
@@ -631,6 +761,8 @@ pub mod simple_message_notification {
             self
         }
 
+        /// Determines whether the given notification ID should be supressable
+        /// Suppressed motifications will not be shown anymor
         pub fn show_suppress_button(mut self, show: bool) -> Self {
             self.show_suppress_button = show;
             self
@@ -647,71 +779,19 @@ pub mod simple_message_notification {
 
     impl Render for MessageNotification {
         fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-            let show_suppress_button = self.show_suppress_button;
-            let suppress = show_suppress_button && window.modifiers().shift;
-            let (close_id, close_icon) = if suppress {
-                ("suppress", IconName::Minimize)
-            } else {
-                ("close", IconName::Close)
-            };
-
-            v_flex()
-                .occlude()
-                .p_3()
-                .gap_2()
-                .elevation_3(cx)
-                .child(
-                    h_flex()
-                        .gap_4()
-                        .justify_between()
-                        .items_start()
-                        .child(
-                            v_flex()
-                                .gap_0p5()
-                                .when_some(self.title.clone(), |element, title| {
-                                    element.child(Label::new(title))
-                                })
-                                .child(div().max_w_96().child((self.build_content)(window, cx))),
-                        )
-                        .when(self.show_close_button, |this| {
-                            this.on_modifiers_changed(cx.listener(|_, _, _, cx| cx.notify()))
-                                .child(
-                                    IconButton::new(close_id, close_icon)
-                                        .tooltip(move |window, cx| {
-                                            if suppress {
-                                                Tooltip::for_action(
-                                                    "Suppress.\nClose with click.",
-                                                    &SuppressNotification,
-                                                    window,
-                                                    cx,
-                                                )
-                                            } else if show_suppress_button {
-                                                Tooltip::for_action(
-                                                    "Close.\nSuppress with shift-click.",
-                                                    &menu::Cancel,
-                                                    window,
-                                                    cx,
-                                                )
-                                            } else {
-                                                Tooltip::for_action(
-                                                    "Close",
-                                                    &menu::Cancel,
-                                                    window,
-                                                    cx,
-                                                )
-                                            }
-                                        })
-                                        .on_click(cx.listener(move |_, _: &ClickEvent, _, cx| {
-                                            if suppress {
-                                                cx.emit(SuppressEvent);
-                                            } else {
-                                                cx.emit(DismissEvent);
-                                            }
-                                        })),
-                                )
-                        }),
-                )
-                .child(
+            NotificationFrame::new()
+                .with_title(self.title.clone())
+                .with_content((self.build_content)(window, cx))
+                .show_close_button(self.show_close_button)
+                .show_suppress_button(self.show_suppress_button)
+                .on_close(cx.listener(|_, suppress, _, cx| {
+                    if *suppress {
+                        cx.emit(SuppressEvent);
+                    } else {
+                        cx.emit(DismissEvent);
+                    }
+                }))
+                .with_suffix(
                     h_flex()
                         .gap_1()
                         .children(self.primary_message.iter().map(|message| {
@@ -932,7 +1012,6 @@ where
                 let message: SharedString = format!("Error: {err}").into();
                 log::error!("Showing error notification in app: {message}");
                 show_app_notification(workspace_error_notification_id(), cx, {
-                    let message = message.clone();
                     move |cx| {
                         cx.new({
                             let message = message.clone();
@@ -958,7 +1037,7 @@ where
 {
     fn detach_and_notify_err(self, window: &mut Window, cx: &mut App) {
         window
-            .spawn(cx, async move |mut cx| self.await.notify_async_err(&mut cx))
+            .spawn(cx, async move |cx| self.await.notify_async_err(cx))
             .detach();
     }
 }

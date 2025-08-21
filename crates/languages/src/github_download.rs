@@ -18,9 +18,8 @@ impl GithubBinaryMetadata {
         let metadata_content = async_fs::read_to_string(metadata_path)
             .await
             .with_context(|| format!("reading metadata file at {metadata_path:?}"))?;
-        let metadata: GithubBinaryMetadata = serde_json::from_str(&metadata_content)
-            .with_context(|| format!("parsing metadata file at {metadata_path:?}"))?;
-        Ok(metadata)
+        serde_json::from_str(&metadata_content)
+            .with_context(|| format!("parsing metadata file at {metadata_path:?}"))
     }
 
     pub(crate) async fn write_to_file(&self, metadata_path: &Path) -> Result<()> {
@@ -62,6 +61,7 @@ pub(crate) async fn download_server_binary(
                     format!("saving archive contents into the temporary file for {url}",)
                 })?;
             let asset_sha_256 = format!("{:x}", writer.hasher.finalize());
+
             anyhow::ensure!(
                 asset_sha_256 == expected_sha_256,
                 "{url} asset got SHA-256 mismatch. Expected: {expected_sha_256}, Got: {asset_sha_256}",
@@ -96,7 +96,7 @@ async fn stream_response_archive(
         AssetKind::TarGz => extract_tar_gz(destination_path, url, response).await?,
         AssetKind::Gz => extract_gz(destination_path, url, response).await?,
         AssetKind::Zip => {
-            util::archive::extract_zip(&destination_path, response).await?;
+            util::archive::extract_zip(destination_path, response).await?;
         }
     };
     Ok(())
@@ -113,11 +113,11 @@ async fn stream_file_archive(
         AssetKind::Gz => extract_gz(destination_path, url, file_archive).await?,
         #[cfg(not(windows))]
         AssetKind::Zip => {
-            util::archive::extract_seekable_zip(&destination_path, file_archive).await?;
+            util::archive::extract_seekable_zip(destination_path, file_archive).await?;
         }
         #[cfg(windows)]
         AssetKind::Zip => {
-            util::archive::extract_zip(&destination_path, file_archive).await?;
+            util::archive::extract_zip(destination_path, file_archive).await?;
         }
     };
     Ok(())

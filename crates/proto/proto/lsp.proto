@@ -753,26 +753,45 @@ message TextEdit {
     PointUtf16 lsp_range_end = 3;
 }
 
-message MultiLspQuery {
+message LspQuery {
     uint64 project_id = 1;
-    uint64 buffer_id = 2;
-    repeated VectorClockEntry version = 3;
-    oneof strategy {
-        AllLanguageServers all = 4;
-    }
+    uint64 lsp_request_id = 2;
     oneof request {
+        GetReferences get_references = 3;
+        GetDocumentColor get_document_color = 4;
         GetHover get_hover = 5;
         GetCodeActions get_code_actions = 6;
         GetSignatureHelp get_signature_help = 7;
         GetCodeLens get_code_lens = 8;
         GetDocumentDiagnostics get_document_diagnostics = 9;
-        GetDocumentColor get_document_color = 10;
-        GetDefinition get_definition = 11;
-        GetDeclaration get_declaration = 12;
-        GetTypeDefinition get_type_definition = 13;
-        GetImplementation get_implementation = 14;
-        GetReferences get_references = 15;
+        GetDefinition get_definition = 10;
+        GetDeclaration get_declaration = 11;
+        GetTypeDefinition get_type_definition = 12;
+        GetImplementation get_implementation = 13;
     }
+}
+
+message LspQueryResponse {
+    uint64 project_id = 1;
+    uint64 lsp_request_id = 2;
+    repeated LspResponse responses = 3;
+}
+
+message LspResponse {
+    oneof response {
+        GetHoverResponse get_hover_response = 1;
+        GetCodeActionsResponse get_code_actions_response = 2;
+        GetSignatureHelpResponse get_signature_help_response = 3;
+        GetCodeLensResponse get_code_lens_response = 4;
+        GetDocumentDiagnosticsResponse get_document_diagnostics_response = 5;
+        GetDocumentColorResponse get_document_color_response = 6;
+        GetDefinitionResponse get_definition_response = 8;
+        GetDeclarationResponse get_declaration_response = 9;
+        GetTypeDefinitionResponse get_type_definition_response = 10;
+        GetImplementationResponse get_implementation_response = 11;
+        GetReferencesResponse get_references_response = 12;
+    }
+    uint64 server_id = 7;
 }
 
 message AllLanguageServers {}
@@ -796,27 +815,6 @@ message StopLanguageServers {
     repeated uint64 buffer_ids = 2;
     repeated LanguageServerSelector also_servers = 3;
     bool all = 4;
-}
-
-message MultiLspQueryResponse {
-    repeated LspResponse responses = 1;
-}
-
-message LspResponse {
-    oneof response {
-        GetHoverResponse get_hover_response = 1;
-        GetCodeActionsResponse get_code_actions_response = 2;
-        GetSignatureHelpResponse get_signature_help_response = 3;
-        GetCodeLensResponse get_code_lens_response = 4;
-        GetDocumentDiagnosticsResponse get_document_diagnostics_response = 5;
-        GetDocumentColorResponse get_document_color_response = 6;
-        GetDefinitionResponse get_definition_response = 8;
-        GetDeclarationResponse get_declaration_response = 9;
-        GetTypeDefinitionResponse get_type_definition_response = 10;
-        GetImplementationResponse get_implementation_response = 11;
-        GetReferencesResponse get_references_response = 12;
-    }
-    uint64 server_id = 7;
 }
 
 message LspExtRunnables {
@@ -908,4 +906,31 @@ message PulledDiagnostics {
 message PullWorkspaceDiagnostics {
     uint64 project_id = 1;
     uint64 server_id = 2;
+}
+
+// todo(lsp) remove after Zed Stable hits v0.204.x
+message MultiLspQuery {
+    uint64 project_id = 1;
+    uint64 buffer_id = 2;
+    repeated VectorClockEntry version = 3;
+    oneof strategy {
+        AllLanguageServers all = 4;
+    }
+    oneof request {
+        GetHover get_hover = 5;
+        GetCodeActions get_code_actions = 6;
+        GetSignatureHelp get_signature_help = 7;
+        GetCodeLens get_code_lens = 8;
+        GetDocumentDiagnostics get_document_diagnostics = 9;
+        GetDocumentColor get_document_color = 10;
+        GetDefinition get_definition = 11;
+        GetDeclaration get_declaration = 12;
+        GetTypeDefinition get_type_definition = 13;
+        GetImplementation get_implementation = 14;
+        GetReferences get_references = 15;
+    }
+}
+
+message MultiLspQueryResponse {
+    repeated LspResponse responses = 1;
 }

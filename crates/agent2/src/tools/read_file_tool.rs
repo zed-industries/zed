@@ -1,16 +1,16 @@
-use agent_client_protocol::{self as acp};
-use anyhow::{anyhow, Context, Result};
-use assistant_tool::{outline, ActionLog};
-use gpui::{Entity, Task};
+use action_log::ActionLog;
+use agent_client_protocol::{self as acp, ToolCallUpdateFields};
+use anyhow::{Context as _, Result, anyhow};
+use assistant_tool::outline;
+use gpui::{App, Entity, SharedString, Task};
 use indoc::formatdoc;
-use language::{Anchor, Point};
+use language::Point;
 use language_model::{LanguageModelImage, LanguageModelToolResultContent};
-use project::{image_store, AgentLocation, ImageItem, Project, WorktreeSettings};
+use project::{AgentLocation, ImageItem, Project, WorktreeSettings, image_store};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
 use std::sync::Arc;
-use ui::{App, SharedString};
 
 use crate::{AgentTool, ToolCallEventStream};
 
@@ -21,8 +21,7 @@ use crate::{AgentTool, ToolCallEventStream};
 pub struct ReadFileToolInput {
     /// The relative path of the file to read.
     ///
-    /// This path should never be absolute, and the first component
-    /// of the path should always be a root directory in a project.
+    /// This path should never be absolute, and the first component of the path should always be a root directory in a project.
     ///
     /// <example>
     /// If the project has the following root directories:
@@ -34,11 +33,9 @@ pub struct ReadFileToolInput {
     /// If you want to access `file.txt` in `directory2`, you should use the path `directory2/file.txt`.
     /// </example>
     pub path: String,
-
     /// Optional line number to start reading on (1-based index)
     #[serde(default)]
     pub start_line: Option<u32>,
-
     /// Optional line number to end reading on (1-based index, inclusive)
     #[serde(default)]
     pub end_line: Option<u32>,
@@ -97,7 +94,7 @@ impl AgentTool for ReadFileTool {
     fn run(
         self: Arc<Self>,
         input: Self::Input,
-        _event_stream: ToolCallEventStream,
+        event_stream: ToolCallEventStream,
         cx: &mut App,
     ) -> Task<Result<LanguageModelToolResultContent>> {
         let Some(project_path) = self.project.read(cx).find_project_path(&input.path, cx) else {
@@ -166,31 +163,24 @@ impl AgentTool for ReadFileTool {
         cx.spawn(async move |cx| {
             let buffer = cx
                 .update(|cx| {
-                    project.update(cx, |project, cx| project.open_buffer(project_path, cx))
+                    project.update(cx, |project, cx| {
+                        project.open_buffer(project_path.clone(), cx)
+                    })
                 })?
                 .await?;
             if buffer.read_with(cx, |buffer, _| {
                 buffer
                     .file()
                     .as_ref()
-                    .map_or(true, |file| !file.disk_state().exists())
+                    .is_none_or(|file| !file.disk_state().exists())
             })? {
                 anyhow::bail!("{file_path} not found");
             }
 
-            project.update(cx, |project, cx| {
-                project.set_agent_location(
-                    Some(AgentLocation {
-                        buffer: buffer.downgrade(),
-                        position: Anchor::MIN,
-                    }),
-                    cx,
-                );
-            })?;
+            let mut anchor = None;
 
             // Check if specific line ranges are provided
-            if input.start_line.is_some() || input.end_line.is_some() {
-                let mut anchor = None;
+            let result = if input.start_line.is_some() || input.end_line.is_some() {
                 let result = buffer.read_with(cx, |buffer, _cx| {
                     let text = buffer.text();
                     // .max(1) because despite instructions to be 1-indexed, sometimes the model passes 0.
@@ -214,18 +204,6 @@ impl AgentTool for ReadFileTool {
                     log.buffer_read(buffer.clone(), cx);
                 })?;
 
-                if let Some(anchor) = anchor {
-                    project.update(cx, |project, cx| {
-                        project.set_agent_location(
-                            Some(AgentLocation {
-                                buffer: buffer.downgrade(),
-                                position: anchor,
-                            }),
-                            cx,
-                        );
-                    })?;
-                }
-
                 Ok(result.into())
             } else {
                 // No line ranges specified, so check file size to see if it's too big.
@@ -236,7 +214,7 @@ impl AgentTool for ReadFileTool {
                     let result = buffer.read_with(cx, |buffer, _cx| buffer.text())?;
 
                     action_log.update(cx, |log, cx| {
-                        log.buffer_read(buffer, cx);
+                        log.buffer_read(buffer.clone(), cx);
                     })?;
 
                     Ok(result.into())
@@ -244,7 +222,8 @@ impl AgentTool for ReadFileTool {
                     // File is too big, so return the outline
                     // and a suggestion to read again with line numbers.
                     let outline =
-                        outline::file_outline(project, file_path, action_log, None, cx).await?;
+                        outline::file_outline(project.clone(), file_path, action_log, None, cx)
+                            .await?;
                     Ok(formatdoc! {"
                         This file was too big to read all at once.
 
@@ -261,7 +240,28 @@ impl AgentTool for ReadFileTool {
                     }
                     .into())
                 }
-            }
+            };
+
+            project.update(cx, |project, cx| {
+                if let Some(abs_path) = project.absolute_path(&project_path, cx) {
+                    project.set_agent_location(
+                        Some(AgentLocation {
+                            buffer: buffer.downgrade(),
+                            position: anchor.unwrap_or(text::Anchor::MIN),
+                        }),
+                        cx,
+                    );
+                    event_stream.update_fields(ToolCallUpdateFields {
+                        locations: Some(vec![acp::ToolCallLocation {
+                            path: abs_path,
+                            line: input.start_line.map(|line| line.saturating_sub(1)),
+                        }]),
+                        ..Default::default()
+                    });
+                }
+            })?;
+
+            result
         })
     }
 }
@@ -270,7 +270,7 @@ impl AgentTool for ReadFileTool {
 mod test {
     use super::*;
     use gpui::{AppContext, TestAppContext, UpdateGlobal as _};
-    use language::{tree_sitter_rust, Language, LanguageConfig, LanguageMatcher};
+    use language::{Language, LanguageConfig, LanguageMatcher, tree_sitter_rust};
     use project::{FakeFs, Project};
     use serde_json::json;
     use settings::SettingsStore;

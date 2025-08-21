@@ -142,11 +142,11 @@ pub fn hover_at_inlay(
             .info_popovers
             .iter()
             .any(|InfoPopover { symbol_range, .. }| {
-                if let RangeInEditor::Inlay(range) = symbol_range {
-                    if range == &inlay_hover.range {
-                        // Hover triggered from same location as last time. Don't show again.
-                        return true;
-                    }
+                if let RangeInEditor::Inlay(range) = symbol_range
+                    && range == &inlay_hover.range
+                {
+                    // Hover triggered from same location as last time. Don't show again.
+                    return true;
                 }
                 false
             })
@@ -167,17 +167,16 @@ pub fn hover_at_inlay(
 
                 let language_registry = project.read_with(cx, |p, _| p.languages().clone())?;
                 let blocks = vec![inlay_hover.tooltip];
-                let parsed_content = parse_blocks(&blocks, &language_registry, None, cx).await;
+                let parsed_content =
+                    parse_blocks(&blocks, Some(&language_registry), None, cx).await;
 
                 let scroll_handle = ScrollHandle::new();
 
                 let subscription = this
                     .update(cx, |_, cx| {
-                        if let Some(parsed_content) = &parsed_content {
-                            Some(cx.observe(parsed_content, |_, _, cx| cx.notify()))
-                        } else {
-                            None
-                        }
+                        parsed_content.as_ref().map(|parsed_content| {
+                            cx.observe(parsed_content, |_, _, cx| cx.notify())
+                        })
                     })
                     .ok()
                     .flatten();
@@ -251,7 +250,9 @@ fn show_hover(
 
     let (excerpt_id, _, _) = editor.buffer().read(cx).excerpt_containing(anchor, cx)?;
 
-    let language_registry = editor.project.as_ref()?.read(cx).languages().clone();
+    let language_registry = editor
+        .project()
+        .map(|project| project.read(cx).languages().clone());
     let provider = editor.semantics_provider.clone()?;
 
     if !ignore_timeout {
@@ -267,13 +268,12 @@ fn show_hover(
     }
 
     // Don't request again if the location is the same as the previous request
-    if let Some(triggered_from) = &editor.hover_state.triggered_from {
-        if triggered_from
+    if let Some(triggered_from) = &editor.hover_state.triggered_from
+        && triggered_from
             .cmp(&anchor, &snapshot.buffer_snapshot)
             .is_eq()
-        {
-            return None;
-        }
+    {
+        return None;
     }
 
     let hover_popover_delay = EditorSettings::get_global(cx).hover_popover_delay;
@@ -428,7 +428,7 @@ fn show_hover(
             };
 
             let hovers_response = if let Some(hover_request) = hover_request {
-                hover_request.await
+                hover_request.await.unwrap_or_default()
             } else {
                 Vec::new()
             };
@@ -443,15 +443,14 @@ fn show_hover(
                     text: format!("Unicode character U+{:02X}", invisible as u32),
                     kind: HoverBlockKind::PlainText,
                 }];
-                let parsed_content = parse_blocks(&blocks, &language_registry, None, cx).await;
+                let parsed_content =
+                    parse_blocks(&blocks, language_registry.as_ref(), None, cx).await;
                 let scroll_handle = ScrollHandle::new();
                 let subscription = this
                     .update(cx, |_, cx| {
-                        if let Some(parsed_content) = &parsed_content {
-                            Some(cx.observe(parsed_content, |_, _, cx| cx.notify()))
-                        } else {
-                            None
-                        }
+                        parsed_content.as_ref().map(|parsed_content| {
+                            cx.observe(parsed_content, |_, _, cx| cx.notify())
+                        })
                     })
                     .ok()
                     .flatten();
@@ -493,16 +492,15 @@ fn show_hover(
 
                 let blocks = hover_result.contents;
                 let language = hover_result.language;
-                let parsed_content = parse_blocks(&blocks, &language_registry, language, cx).await;
+                let parsed_content =
+                    parse_blocks(&blocks, language_registry.as_ref(), language, cx).await;
                 let scroll_handle = ScrollHandle::new();
                 hover_highlights.push(range.clone());
                 let subscription = this
                     .update(cx, |_, cx| {
-                        if let Some(parsed_content) = &parsed_content {
-                            Some(cx.observe(parsed_content, |_, _, cx| cx.notify()))
-                        } else {
-                            None
-                        }
+                        parsed_content.as_ref().map(|parsed_content| {
+                            cx.observe(parsed_content, |_, _, cx| cx.notify())
+                        })
                     })
                     .ok()
                     .flatten();
@@ -583,7 +581,7 @@ fn same_diagnostic_hover(editor: &Editor, snapshot: &EditorSnapshot, anchor: Anc
 
 async fn parse_blocks(
     blocks: &[HoverBlock],
-    language_registry: &Arc<LanguageRegistry>,
+    language_registry: Option<&Arc<LanguageRegistry>>,
     language: Option<Arc<Language>>,
     cx: &mut AsyncWindowContext,
 ) -> Option<Entity<Markdown>> {
@@ -599,18 +597,15 @@ async fn parse_blocks(
         })
         .join("\n\n");
 
-    let rendered_block = cx
-        .new_window_entity(|_window, cx| {
-            Markdown::new(
-                combined_text.into(),
-                Some(language_registry.clone()),
-                language.map(|language| language.name()),
-                cx,
-            )
-        })
-        .ok();
-
-    rendered_block
+    cx.new_window_entity(|_window, cx| {
+        Markdown::new(
+            combined_text.into(),
+            language_registry.cloned(),
+            language.map(|language| language.name()),
+            cx,
+        )
+    })
+    .ok()
 }
 
 pub fn hover_markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
@@ -622,7 +617,7 @@ pub fn hover_markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
 
     let mut base_text_style = window.text_style();
     base_text_style.refine(&TextStyleRefinement {
-        font_family: Some(ui_font_family.clone()),
+        font_family: Some(ui_font_family),
         font_fallbacks: ui_font_fallbacks,
         color: Some(cx.theme().colors().editor_foreground),
         ..Default::default()
@@ -671,7 +666,7 @@ pub fn diagnostics_markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
 
     let mut base_text_style = window.text_style();
     base_text_style.refine(&TextStyleRefinement {
-        font_family: Some(ui_font_family.clone()),
+        font_family: Some(ui_font_family),
         font_fallbacks: ui_font_fallbacks,
         color: Some(cx.theme().colors().editor_foreground),
         ..Default::default()
@@ -712,59 +707,54 @@ pub fn diagnostics_markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
 }
 
 pub fn open_markdown_url(link: SharedString, window: &mut Window, cx: &mut App) {
-    if let Ok(uri) = Url::parse(&link) {
-        if uri.scheme() == "file" {
-            if let Some(workspace) = window.root::<Workspace>().flatten() {
-                workspace.update(cx, |workspace, cx| {
-                    let task = workspace.open_abs_path(
-                        PathBuf::from(uri.path()),
-                        OpenOptions {
-                            visible: Some(OpenVisible::None),
-                            ..Default::default()
-                        },
-                        window,
-                        cx,
-                    );
+    if let Ok(uri) = Url::parse(&link)
+        && uri.scheme() == "file"
+        && let Some(workspace) = window.root::<Workspace>().flatten()
+    {
+        workspace.update(cx, |workspace, cx| {
+            let task = workspace.open_abs_path(
+                PathBuf::from(uri.path()),
+                OpenOptions {
+                    visible: Some(OpenVisible::None),
+                    ..Default::default()
+                },
+                window,
+                cx,
+            );
 
-                    cx.spawn_in(window, async move |_, cx| {
-                        let item = task.await?;
-                        // Ruby LSP uses URLs with #L1,1-4,4
-                        // we'll just take the first number and assume it's a line number
-                        let Some(fragment) = uri.fragment() else {
-                            return anyhow::Ok(());
-                        };
-                        let mut accum = 0u32;
-                        for c in fragment.chars() {
-                            if c >= '0' && c <= '9' && accum < u32::MAX / 2 {
-                                accum *= 10;
-                                accum += c as u32 - '0' as u32;
-                            } else if accum > 0 {
-                                break;
-                            }
-                        }
-                        if accum == 0 {
-                            return Ok(());
-                        }
-                        let Some(editor) = cx.update(|_, cx| item.act_as::<Editor>(cx))? else {
-                            return Ok(());
-                        };
-                        editor.update_in(cx, |editor, window, cx| {
-                            editor.change_selections(
-                                Default::default(),
-                                window,
-                                cx,
-                                |selections| {
-                                    selections.select_ranges([text::Point::new(accum - 1, 0)
-                                        ..text::Point::new(accum - 1, 0)]);
-                                },
-                            );
-                        })
-                    })
-                    .detach_and_log_err(cx);
-                });
-                return;
-            }
-        }
+            cx.spawn_in(window, async move |_, cx| {
+                let item = task.await?;
+                // Ruby LSP uses URLs with #L1,1-4,4
+                // we'll just take the first number and assume it's a line number
+                let Some(fragment) = uri.fragment() else {
+                    return anyhow::Ok(());
+                };
+                let mut accum = 0u32;
+                for c in fragment.chars() {
+                    if c >= '0' && c <= '9' && accum < u32::MAX / 2 {
+                        accum *= 10;
+                        accum += c as u32 - '0' as u32;
+                    } else if accum > 0 {
+                        break;
+                    }
+                }
+                if accum == 0 {
+                    return Ok(());
+                }
+                let Some(editor) = cx.update(|_, cx| item.act_as::<Editor>(cx))? else {
+                    return Ok(());
+                };
+                editor.update_in(cx, |editor, window, cx| {
+                    editor.change_selections(Default::default(), window, cx, |selections| {
+                        selections.select_ranges([
+                            text::Point::new(accum - 1, 0)..text::Point::new(accum - 1, 0)
+                        ]);
+                    });
+                })
+            })
+            .detach_and_log_err(cx);
+        });
+        return;
     }
     cx.open_url(&link);
 }
@@ -834,20 +824,19 @@ impl HoverState {
     pub fn focused(&self, window: &mut Window, cx: &mut Context<Editor>) -> bool {
         let mut hover_popover_is_focused = false;
         for info_popover in &self.info_popovers {
-            if let Some(markdown_view) = &info_popover.parsed_content {
-                if markdown_view.focus_handle(cx).is_focused(window) {
-                    hover_popover_is_focused = true;
-                }
-            }
-        }
-        if let Some(diagnostic_popover) = &self.diagnostic_popover {
-            if diagnostic_popover
-                .markdown
-                .focus_handle(cx)
-                .is_focused(window)
+            if let Some(markdown_view) = &info_popover.parsed_content
+                && markdown_view.focus_handle(cx).is_focused(window)
             {
                 hover_popover_is_focused = true;
             }
+        }
+        if let Some(diagnostic_popover) = &self.diagnostic_popover
+            && diagnostic_popover
+                .markdown
+                .focus_handle(cx)
+                .is_focused(window)
+        {
+            hover_popover_is_focused = true;
         }
         hover_popover_is_focused
     }

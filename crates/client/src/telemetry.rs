@@ -340,22 +340,35 @@ impl Telemetry {
     }
 
     pub fn log_edit_event(self: &Arc<Self>, environment: &'static str, is_via_ssh: bool) {
+        static LAST_EVENT_TIME: Mutex<Option<Instant>> = Mutex::new(None);
+
         let mut state = self.state.lock();
         let period_data = state.event_coalescer.log_event(environment);
         drop(state);
 
-        if let Some((start, end, environment)) = period_data {
-            let duration = end
-                .saturating_duration_since(start)
-                .min(Duration::from_secs(60 * 60 * 24))
-                .as_millis() as i64;
+        if let Some(mut last_event) = LAST_EVENT_TIME.try_lock() {
+            let current_time = std::time::Instant::now();
+            let last_time = last_event.get_or_insert(current_time);
 
-            telemetry::event!(
-                "Editor Edited",
-                duration = duration,
-                environment = environment,
-                is_via_ssh = is_via_ssh
-            );
+            if current_time.duration_since(*last_time) > Duration::from_secs(60 * 10) {
+                *last_time = current_time;
+            } else {
+                return;
+            }
+
+            if let Some((start, end, environment)) = period_data {
+                let duration = end
+                    .saturating_duration_since(start)
+                    .min(Duration::from_secs(60 * 60 * 24))
+                    .as_millis() as i64;
+
+                telemetry::event!(
+                    "Editor Edited",
+                    duration = duration,
+                    environment = environment,
+                    is_via_ssh = is_via_ssh
+                );
+            }
         }
     }
 
@@ -726,7 +739,7 @@ mod tests {
         );
 
         // Third scan of worktree does not double report, as we already reported
-        test_project_discovery_helper(telemetry.clone(), vec!["package.json"], None, worktree_id);
+        test_project_discovery_helper(telemetry, vec!["package.json"], None, worktree_id);
     }
 
     #[gpui::test]
@@ -738,7 +751,7 @@ mod tests {
         let telemetry = cx.update(|cx| Telemetry::new(clock.clone(), http, cx));
 
         test_project_discovery_helper(
-            telemetry.clone(),
+            telemetry,
             vec!["package.json", "pnpm-lock.yaml"],
             Some(vec!["node", "pnpm"]),
             1,
@@ -754,7 +767,7 @@ mod tests {
         let telemetry = cx.update(|cx| Telemetry::new(clock.clone(), http, cx));
 
         test_project_discovery_helper(
-            telemetry.clone(),
+            telemetry,
             vec!["package.json", "yarn.lock"],
             Some(vec!["node", "yarn"]),
             1,
@@ -773,7 +786,7 @@ mod tests {
         // project type for the same worktree multiple times
 
         test_project_discovery_helper(
-            telemetry.clone().clone(),
+            telemetry.clone(),
             vec!["global.json"],
             Some(vec!["dotnet"]),
             1,

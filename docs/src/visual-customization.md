@@ -39,13 +39,15 @@ If you would like to use distinct themes for light mode/dark mode that can be se
 ## Fonts
 
 ```json
-  // UI Font. Use ".SystemUIFont" to use the default system font (SF Pro on macOS)
-  "ui_font_family": "Zed Plex Sans",
+  // UI Font. Use ".SystemUIFont" to use the default system font (SF Pro on macOS),
+  // or ".ZedSans" for the bundled default (currently IBM Plex)
+  "ui_font_family": ".SystemUIFont",
   "ui_font_weight": 400, // Font weight in standard CSS units from 100 to 900.
   "ui_font_size": 16,
 
   // Buffer Font - Used by editor buffers
-  "buffer_font_family": "Zed Plex Mono",  // Font name for editor buffers
+  // use ".ZedMono" for the bundled default monospace (currently Lilex)
+  "buffer_font_family": "Berkeley Mono", // Font name for editor buffers
   "buffer_font_size": 15,                 // Font size for editor buffers
   "buffer_font_weight": 400,              // Font weight in CSS units [100-900]
   // Line height "comfortable" (1.618), "standard" (1.3) or custom: `{ "custom": 2 }`
@@ -53,7 +55,7 @@ If you would like to use distinct themes for light mode/dark mode that can be se
 
   // Terminal Font Settings
   "terminal": {
-    "font_family": "Zed Plex Mono",
+    "font_family": "",
     "font_size": 15,
     // Terminal line height: comfortable (1.618), standard(1.3) or `{ "custom": 2 }`
     "line_height": "comfortable",
@@ -314,6 +316,16 @@ TBD: Centered layout related settings
     // Clicking the button brings up the language selector.
     // Defaults to true.
     "active_language_button": true,
+    // Show/hide a button that displays the cursor's position.
+    // Clicking the button brings up an input for jumping to a line and column.
+    // Defaults to true.
+    "cursor_position_button": true,
+  },
+  "global_lsp_settings": {
+    // Show/hide the LSP button in the status bar.
+    // Activity from the LSP is still shown.
+    // Button is not shown if "enable_language_server" if false.
+    "button": true
   },
 ```
 
@@ -473,7 +485,7 @@ See [Zed AI Documentation](./ai/overview.md) for additional non-visual AI settin
       "show": null                       // Show/hide: (auto, system, always, never)
     },
     // Terminal Font Settings
-    "font_family": "Zed Plex Mono",
+    "font_family": "Fira Code",
     "font_size": 15,
     "font_weight": 400,
     // Terminal line height: comfortable (1.618), standard(1.3) or `{ "custom": 2 }`

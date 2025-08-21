@@ -53,7 +53,7 @@ pub fn marked_display_snapshot(
     let (unmarked_text, markers) = marked_text_offsets(text);
 
     let font = Font {
-        family: "Zed Plex Mono".into(),
+        family: ".ZedMono".into(),
         features: FontFeatures::default(),
         fallbacks: None,
         weight: FontWeight::default(),
@@ -184,12 +184,12 @@ pub fn editor_content_with_blocks(editor: &Entity<Editor>, cx: &mut VisualTestCo
     for (row, block) in blocks {
         match block {
             Block::Custom(custom_block) => {
-                if let BlockPlacement::Near(x) = &custom_block.placement {
-                    if snapshot.intersects_fold(x.to_point(&snapshot.buffer_snapshot)) {
-                        continue;
-                    }
+                if let BlockPlacement::Near(x) = &custom_block.placement
+                    && snapshot.intersects_fold(x.to_point(&snapshot.buffer_snapshot))
+                {
+                    continue;
                 };
-                let content = block_content_for_tests(&editor, custom_block.id, cx)
+                let content = block_content_for_tests(editor, custom_block.id, cx)
                     .expect("block content not found");
                 // 2: "related info 1 for diagnostic 0"
                 if let Some(height) = custom_block.height {
@@ -230,26 +230,23 @@ pub fn editor_content_with_blocks(editor: &Entity<Editor>, cx: &mut VisualTestCo
                     lines[row as usize].push_str("§ -----");
                 }
             }
-            Block::ExcerptBoundary {
-                excerpt,
-                height,
-                starts_new_buffer,
-            } => {
-                if starts_new_buffer {
-                    lines[row.0 as usize].push_str(&cx.update(|_, cx| {
-                        format!(
-                            "§ {}",
-                            excerpt
-                                .buffer
-                                .file()
-                                .unwrap()
-                                .file_name(cx)
-                                .to_string_lossy()
-                        )
-                    }));
-                } else {
-                    lines[row.0 as usize].push_str("§ -----")
+            Block::ExcerptBoundary { height, .. } => {
+                for row in row.0..row.0 + height {
+                    lines[row as usize].push_str("§ -----");
                 }
+            }
+            Block::BufferHeader { excerpt, height } => {
+                lines[row.0 as usize].push_str(&cx.update(|_, cx| {
+                    format!(
+                        "§ {}",
+                        excerpt
+                            .buffer
+                            .file()
+                            .unwrap()
+                            .file_name(cx)
+                            .to_string_lossy()
+                    )
+                }));
                 for row in row.0 + 1..row.0 + height {
                     lines[row as usize].push_str("§ -----");
                 }

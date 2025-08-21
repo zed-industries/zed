@@ -7,7 +7,7 @@ use std::future;
 #[derive(JsonSchema, Serialize, Deserialize)]
 pub struct EchoToolInput {
     /// The text to echo.
-    text: String,
+    pub text: String,
 }
 
 pub struct EchoTool;
@@ -110,9 +110,9 @@ impl AgentTool for ToolRequiringPermission {
         event_stream: ToolCallEventStream,
         cx: &mut App,
     ) -> Task<Result<String>> {
-        let auth_check = event_stream.authorize("Authorize?".into());
+        let authorize = event_stream.authorize("Authorize?", cx);
         cx.foreground_executor().spawn(async move {
-            auth_check.await?;
+            authorize.await?;
             Ok("Allowed".to_string())
         })
     }

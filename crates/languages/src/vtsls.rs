@@ -2,9 +2,9 @@ use anyhow::Result;
 use async_trait::async_trait;
 use collections::HashMap;
 use gpui::AsyncApp;
-use language::{LanguageName, LanguageToolchainStore, LspAdapter, LspAdapterDelegate};
+use language::{LanguageName, LspAdapter, LspAdapterDelegate, Toolchain};
 use lsp::{CodeActionKind, LanguageServerBinary, LanguageServerName};
-use node_runtime::NodeRuntime;
+use node_runtime::{NodeRuntime, VersionStrategy};
 use project::{Fs, lsp_store::language_server_settings};
 use serde_json::Value;
 use std::{
@@ -67,7 +67,7 @@ const SERVER_NAME: LanguageServerName = LanguageServerName::new_static("vtsls");
 #[async_trait(?Send)]
 impl LspAdapter for VtslsLspAdapter {
     fn name(&self) -> LanguageServerName {
-        SERVER_NAME.clone()
+        SERVER_NAME
     }
 
     async fn fetch_latest_server_version(
@@ -86,7 +86,7 @@ impl LspAdapter for VtslsLspAdapter {
     async fn check_if_user_installed(
         &self,
         delegate: &dyn LspAdapterDelegate,
-        _: Arc<dyn LanguageToolchainStore>,
+        _: Option<Toolchain>,
         _: &AsyncApp,
     ) -> Option<LanguageServerBinary> {
         let env = delegate.shell_env().await;
@@ -115,7 +115,7 @@ impl LspAdapter for VtslsLspAdapter {
                 Self::PACKAGE_NAME,
                 &server_path,
                 &container_dir,
-                &latest_version.server_version,
+                VersionStrategy::Latest(&latest_version.server_version),
             )
             .await
         {
@@ -128,7 +128,7 @@ impl LspAdapter for VtslsLspAdapter {
                 Self::TYPESCRIPT_PACKAGE_NAME,
                 &container_dir.join(Self::TYPESCRIPT_TSDK_PATH),
                 &container_dir,
-                &latest_version.typescript_version,
+                VersionStrategy::Latest(&latest_version.typescript_version),
             )
             .await
         {
@@ -211,7 +211,7 @@ impl LspAdapter for VtslsLspAdapter {
         self: Arc<Self>,
         fs: &dyn Fs,
         delegate: &Arc<dyn LspAdapterDelegate>,
-        _: Arc<dyn LanguageToolchainStore>,
+        _: Option<Toolchain>,
         cx: &mut AsyncApp,
     ) -> Result<Value> {
         let tsdk_path = Self::tsdk_path(fs, delegate).await;

@@ -114,7 +114,7 @@ fn view_release_notes_locally(
                                     cx,
                                 );
                             workspace.add_item_to_active_pane(
-                                Box::new(markdown_preview.clone()),
+                                Box::new(markdown_preview),
                                 None,
                                 true,
                                 window,

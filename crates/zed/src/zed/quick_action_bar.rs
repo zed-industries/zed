@@ -140,7 +140,7 @@ impl Render for QuickActionBar {
         let search_button = editor.is_singleton(cx).then(|| {
             QuickActionBarButton::new(
                 "toggle buffer search",
-                IconName::MagnifyingGlass,
+                search::SEARCH_ICON,
                 !self.buffer_search_bar.read(cx).is_dismissed(),
                 Box::new(buffer_search::Deploy::find()),
                 focus_handle.clone(),
@@ -161,7 +161,7 @@ impl Render for QuickActionBar {
             IconName::ZedAssistant,
             false,
             Box::new(InlineAssist::default()),
-            focus_handle.clone(),
+            focus_handle,
             "Inline Assist",
             move |_, window, cx| {
                 window.dispatch_action(Box::new(InlineAssist::default()), cx);
@@ -175,14 +175,14 @@ impl Render for QuickActionBar {
                 let code_action_menu = menu_ref
                     .as_ref()
                     .filter(|menu| matches!(menu, CodeContextMenu::CodeActions(..)));
-                code_action_menu.as_ref().map_or(false, |menu| {
-                    matches!(menu.origin(), ContextMenuOrigin::QuickActionBar)
-                })
+                code_action_menu
+                    .as_ref()
+                    .is_some_and(|menu| matches!(menu.origin(), ContextMenuOrigin::QuickActionBar))
             };
             let code_action_element = if is_deployed {
                 editor.update(cx, |editor, cx| {
                     if let Some(style) = editor.style() {
-                        editor.render_context_menu(&style, MAX_CODE_ACTION_MENU_LINES, window, cx)
+                        editor.render_context_menu(style, MAX_CODE_ACTION_MENU_LINES, window, cx)
                     } else {
                         None
                     }
@@ -215,7 +215,7 @@ impl Render for QuickActionBar {
                             )
                         })
                         .on_click({
-                            let focus = focus.clone();
+                            let focus = focus;
                             move |_, window, cx| {
                                 focus.dispatch_action(
                                     &ToggleCodeActions {

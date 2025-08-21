@@ -1,5 +1,6 @@
 use std::{
     cell::RefCell,
+    ffi::OsStr,
     mem::ManuallyDrop,
     path::{Path, PathBuf},
     rc::Rc,
@@ -32,7 +33,7 @@ use crate::*;
 
 pub(crate) struct WindowsPlatform {
     state: RefCell<WindowsPlatformState>,
-    raw_window_handles: RwLock<SmallVec<[HWND; 4]>>,
+    raw_window_handles: Arc<RwLock<SmallVec<[SafeHwnd; 4]>>>,
     // The below members will never change throughout the entire lifecycle of the app.
     icon: HICON,
     main_receiver: flume::Receiver<Runnable>,
@@ -114,7 +115,7 @@ impl WindowsPlatform {
         };
         let icon = load_icon().unwrap_or_default();
         let state = RefCell::new(WindowsPlatformState::new());
-        let raw_window_handles = RwLock::new(SmallVec::new());
+        let raw_window_handles = Arc::new(RwLock::new(SmallVec::new()));
         let windows_version = WindowsVersion::new().context("Error retrieve windows version")?;
 
         Ok(Self {
@@ -134,22 +135,12 @@ impl WindowsPlatform {
         })
     }
 
-    fn redraw_all(&self) {
-        for handle in self.raw_window_handles.read().iter() {
-            unsafe {
-                RedrawWindow(Some(*handle), None, None, RDW_INVALIDATE | RDW_UPDATENOW)
-                    .ok()
-                    .log_err();
-            }
-        }
-    }
-
     pub fn window_from_hwnd(&self, hwnd: HWND) -> Option<Rc<WindowsWindowInner>> {
         self.raw_window_handles
             .read()
             .iter()
-            .find(|entry| *entry == &hwnd)
-            .and_then(|hwnd| window_from_hwnd(*hwnd))
+            .find(|entry| entry.as_raw() == hwnd)
+            .and_then(|hwnd| window_from_hwnd(hwnd.as_raw()))
     }
 
     #[inline]
@@ -158,7 +149,7 @@ impl WindowsPlatform {
             .read()
             .iter()
             .for_each(|handle| unsafe {
-                PostMessageW(Some(*handle), message, wparam, lparam).log_err();
+                PostMessageW(Some(handle.as_raw()), message, wparam, lparam).log_err();
             });
     }
 
@@ -166,7 +157,7 @@ impl WindowsPlatform {
         let mut lock = self.raw_window_handles.write();
         let index = lock
             .iter()
-            .position(|handle| *handle == target_window)
+            .position(|handle| handle.as_raw() == target_window)
             .unwrap();
         lock.remove(index);
 
@@ -226,19 +217,19 @@ impl WindowsPlatform {
         }
     }
 
-    // Returns true if the app should quit.
-    fn handle_events(&self) -> bool {
+    // Returns if the app should quit.
+    fn handle_events(&self) {
         let mut msg = MSG::default();
         unsafe {
-            while PeekMessageW(&mut msg, None, 0, 0, PM_REMOVE).as_bool() {
+            while GetMessageW(&mut msg, None, 0, 0).as_bool() {
                 match msg.message {
-                    WM_QUIT => return true,
+                    WM_QUIT => return,
                     WM_INPUTLANGCHANGE
                     | WM_GPUI_CLOSE_ONE_WINDOW
                     | WM_GPUI_TASK_DISPATCHED_ON_MAIN_THREAD
                     | WM_GPUI_DOCK_MENU_ACTION => {
-                        if self.handle_gpui_evnets(msg.message, msg.wParam, msg.lParam, &msg) {
-                            return true;
+                        if self.handle_gpui_events(msg.message, msg.wParam, msg.lParam, &msg) {
+                            return;
                         }
                     }
                     _ => {
@@ -247,11 +238,10 @@ impl WindowsPlatform {
                 }
             }
         }
-        false
     }
 
     // Returns true if the app should quit.
-    fn handle_gpui_evnets(
+    fn handle_gpui_events(
         &self,
         message: u32,
         wparam: WPARAM,
@@ -315,8 +305,28 @@ impl WindowsPlatform {
         self.raw_window_handles
             .read()
             .iter()
-            .find(|&&hwnd| hwnd == active_window_hwnd)
-            .copied()
+            .find(|hwnd| hwnd.as_raw() == active_window_hwnd)
+            .map(|hwnd| hwnd.as_raw())
+    }
+
+    fn begin_vsync_thread(&self) {
+        let all_windows = Arc::downgrade(&self.raw_window_handles);
+        std::thread::spawn(move || {
+            let vsync_provider = VSyncProvider::new();
+            loop {
+                vsync_provider.wait_for_vsync();
+                let Some(all_windows) = all_windows.upgrade() else {
+                    break;
+                };
+                for hwnd in all_windows.read().iter() {
+                    unsafe {
+                        RedrawWindow(Some(hwnd.as_raw()), None, None, RDW_INVALIDATE)
+                            .ok()
+                            .log_err();
+                    }
+                }
+            }
+        });
     }
 }
 
@@ -347,12 +357,8 @@ impl Platform for WindowsPlatform {
 
     fn run(&self, on_finish_launching: Box<dyn 'static + FnOnce()>) {
         on_finish_launching();
-        loop {
-            if self.handle_events() {
-                break;
-            }
-            self.redraw_all();
-        }
+        self.begin_vsync_thread();
+        self.handle_events();
 
         if let Some(ref mut callback) = self.state.borrow_mut().callbacks.quit {
             callback();
@@ -365,9 +371,9 @@ impl Platform for WindowsPlatform {
             .detach();
     }
 
-    fn restart(&self, _: Option<PathBuf>) {
+    fn restart(&self, binary_path: Option<PathBuf>) {
         let pid = std::process::id();
-        let Some(app_path) = self.app_path().log_err() else {
+        let Some(app_path) = binary_path.or(self.app_path().log_err()) else {
             return;
         };
         let script = format!(
@@ -445,7 +451,7 @@ impl Platform for WindowsPlatform {
     ) -> Result<Box<dyn PlatformWindow>> {
         let window = WindowsWindow::new(handle, options, self.generate_creation_info())?;
         let handle = window.get_raw_handle();
-        self.raw_window_handles.write().push(handle);
+        self.raw_window_handles.write().push(handle.into());
 
         Ok(Box::new(window))
     }
@@ -455,13 +461,15 @@ impl Platform for WindowsPlatform {
     }
 
     fn open_url(&self, url: &str) {
+        if url.is_empty() {
+            return;
+        }
         let url_string = url.to_string();
         self.background_executor()
             .spawn(async move {
-                if url_string.is_empty() {
-                    return;
-                }
-                open_target(url_string.as_str());
+                open_target(&url_string)
+                    .with_context(|| format!("Opening url: {}", url_string))
+                    .log_err();
             })
             .detach();
     }
@@ -485,13 +493,18 @@ impl Platform for WindowsPlatform {
         rx
     }
 
-    fn prompt_for_new_path(&self, directory: &Path) -> Receiver<Result<Option<PathBuf>>> {
+    fn prompt_for_new_path(
+        &self,
+        directory: &Path,
+        suggested_name: Option<&str>,
+    ) -> Receiver<Result<Option<PathBuf>>> {
         let directory = directory.to_owned();
+        let suggested_name = suggested_name.map(|s| s.to_owned());
         let (tx, rx) = oneshot::channel();
         let window = self.find_current_active_window();
         self.foreground_executor()
             .spawn(async move {
-                let _ = tx.send(file_save_dialog(directory, window));
+                let _ = tx.send(file_save_dialog(directory, suggested_name, window));
             })
             .detach();
 
@@ -504,37 +517,29 @@ impl Platform for WindowsPlatform {
     }
 
     fn reveal_path(&self, path: &Path) {
-        let Ok(file_full_path) = path.canonicalize() else {
-            log::error!("unable to parse file path");
+        if path.as_os_str().is_empty() {
             return;
-        };
+        }
+        let path = path.to_path_buf();
         self.background_executor()
             .spawn(async move {
-                let Some(path) = file_full_path.to_str() else {
-                    return;
-                };
-                if path.is_empty() {
-                    return;
-                }
-                open_target_in_explorer(path);
+                open_target_in_explorer(&path)
+                    .with_context(|| format!("Revealing path {} in explorer", path.display()))
+                    .log_err();
             })
             .detach();
     }
 
     fn open_with_system(&self, path: &Path) {
-        let Ok(full_path) = path.canonicalize() else {
-            log::error!("unable to parse file full path: {}", path.display());
+        if path.as_os_str().is_empty() {
             return;
-        };
+        }
+        let path = path.to_path_buf();
         self.background_executor()
             .spawn(async move {
-                let Some(full_path_str) = full_path.to_str() else {
-                    return;
-                };
-                if full_path_str.is_empty() {
-                    return;
-                };
-                open_target(full_path_str);
+                open_target(&path)
+                    .with_context(|| format!("Opening {} with system", path.display()))
+                    .log_err();
             })
             .detach();
     }
@@ -725,39 +730,67 @@ pub(crate) struct WindowCreationInfo {
     pub(crate) disable_direct_composition: bool,
 }
 
-fn open_target(target: &str) {
-    unsafe {
-        let ret = ShellExecuteW(
+fn open_target(target: impl AsRef<OsStr>) -> Result<()> {
+    let target = target.as_ref();
+    let ret = unsafe {
+        ShellExecuteW(
             None,
             windows::core::w!("open"),
             &HSTRING::from(target),
             None,
             None,
             SW_SHOWDEFAULT,
-        );
-        if ret.0 as isize <= 32 {
-            log::error!("Unable to open target: {}", std::io::Error::last_os_error());
-        }
+        )
+    };
+    if ret.0 as isize <= 32 {
+        Err(anyhow::anyhow!(
+            "Unable to open target: {}",
+            std::io::Error::last_os_error()
+        ))
+    } else {
+        Ok(())
     }
 }
 
-fn open_target_in_explorer(target: &str) {
+fn open_target_in_explorer(target: &Path) -> Result<()> {
+    let dir = target.parent().context("No parent folder found")?;
+    let desktop = unsafe { SHGetDesktopFolder()? };
+
+    let mut dir_item = std::ptr::null_mut();
     unsafe {
-        let ret = ShellExecuteW(
+        desktop.ParseDisplayName(
+            HWND::default(),
             None,
-            windows::core::w!("open"),
-            windows::core::w!("explorer.exe"),
-            &HSTRING::from(format!("/select,{}", target).as_str()),
+            &HSTRING::from(dir),
             None,
-            SW_SHOWDEFAULT,
-        );
-        if ret.0 as isize <= 32 {
-            log::error!(
-                "Unable to open target in explorer: {}",
-                std::io::Error::last_os_error()
-            );
-        }
+            &mut dir_item,
+            std::ptr::null_mut(),
+        )?;
     }
+
+    let mut file_item = std::ptr::null_mut();
+    unsafe {
+        desktop.ParseDisplayName(
+            HWND::default(),
+            None,
+            &HSTRING::from(target),
+            None,
+            &mut file_item,
+            std::ptr::null_mut(),
+        )?;
+    }
+
+    let highlight = [file_item as *const _];
+    unsafe { SHOpenFolderAndSelectItems(dir_item as _, Some(&highlight), 0) }.or_else(|err| {
+        if err.code().0 == ERROR_FILE_NOT_FOUND.0 as i32 {
+            // On some systems, the above call mysteriously fails with "file not
+            // found" even though the file is there.  In these cases, ShellExecute()
+            // seems to work as a fallback (although it won't select the file).
+            open_target(dir).context("Opening target parent folder")
+        } else {
+            Err(anyhow::anyhow!("Can not open target path: {}", err))
+        }
+    })
 }
 
 fn file_open_dialog(
@@ -777,6 +810,12 @@ fn file_open_dialog(
 
     unsafe {
         folder_dialog.SetOptions(dialog_options)?;
+
+        if let Some(prompt) = options.prompt {
+            let prompt: &str = &prompt;
+            folder_dialog.SetOkButtonLabel(&HSTRING::from(prompt))?;
+        }
+
         if folder_dialog.Show(window).is_err() {
             // User cancelled
             return Ok(None);
@@ -799,17 +838,26 @@ fn file_open_dialog(
     Ok(Some(paths))
 }
 
-fn file_save_dialog(directory: PathBuf, window: Option<HWND>) -> Result<Option<PathBuf>> {
+fn file_save_dialog(
+    directory: PathBuf,
+    suggested_name: Option<String>,
+    window: Option<HWND>,
+) -> Result<Option<PathBuf>> {
     let dialog: IFileSaveDialog = unsafe { CoCreateInstance(&FileSaveDialog, None, CLSCTX_ALL)? };
-    if !directory.to_string_lossy().is_empty() {
-        if let Some(full_path) = directory.canonicalize().log_err() {
-            let full_path = SanitizedPath::from(full_path);
-            let full_path_string = full_path.to_string();
-            let path_item: IShellItem =
-                unsafe { SHCreateItemFromParsingName(&HSTRING::from(full_path_string), None)? };
-            unsafe { dialog.SetFolder(&path_item).log_err() };
-        }
+    if !directory.to_string_lossy().is_empty()
+        && let Some(full_path) = directory.canonicalize().log_err()
+    {
+        let full_path = SanitizedPath::from(full_path);
+        let full_path_string = full_path.to_string();
+        let path_item: IShellItem =
+            unsafe { SHCreateItemFromParsingName(&HSTRING::from(full_path_string), None)? };
+        unsafe { dialog.SetFolder(&path_item).log_err() };
     }
+
+    if let Some(suggested_name) = suggested_name {
+        unsafe { dialog.SetFileName(&HSTRING::from(suggested_name)).log_err() };
+    }
+
     unsafe {
         dialog.SetFileTypes(&[Common::COMDLG_FILTERSPEC {
             pszName: windows::core::w!("All files"),

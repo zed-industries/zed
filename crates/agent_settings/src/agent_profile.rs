@@ -48,6 +48,20 @@ pub struct AgentProfileSettings {
     pub context_servers: IndexMap<Arc<str>, ContextServerPreset>,
 }
 
+impl AgentProfileSettings {
+    pub fn is_tool_enabled(&self, tool_name: &str) -> bool {
+        self.tools.get(tool_name) == Some(&true)
+    }
+
+    pub fn is_context_server_tool_enabled(&self, server_id: &str, tool_name: &str) -> bool {
+        self.enable_all_context_servers
+            || self
+                .context_servers
+                .get(server_id)
+                .is_some_and(|preset| preset.tools.get(tool_name) == Some(&true))
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct ContextServerPreset {
     pub tools: IndexMap<Arc<str>, bool>,

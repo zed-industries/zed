@@ -12,9 +12,9 @@ use gpui::{
 };
 use http_client::HttpClient;
 use language_model::{
-    AuthenticateError, LanguageModelCompletionError, LanguageModelCompletionEvent,
-    LanguageModelToolChoice, LanguageModelToolSchemaFormat, LanguageModelToolUse,
-    LanguageModelToolUseId, MessageContent, StopReason,
+    AuthenticateError, ConfigurationViewTargetAgent, LanguageModelCompletionError,
+    LanguageModelCompletionEvent, LanguageModelToolChoice, LanguageModelToolSchemaFormat,
+    LanguageModelToolUse, LanguageModelToolUseId, MessageContent, StopReason,
 };
 use language_model::{
     LanguageModel, LanguageModelId, LanguageModelName, LanguageModelProvider,
@@ -36,6 +36,8 @@ use util::ResultExt;
 
 use crate::AllLanguageModelSettings;
 use crate::ui::InstructionListItem;
+
+use super::anthropic::ApiKey;
 
 const PROVIDER_ID: LanguageModelProviderId = language_model::GOOGLE_PROVIDER_ID;
 const PROVIDER_NAME: LanguageModelProviderName = language_model::GOOGLE_PROVIDER_NAME;
@@ -110,7 +112,7 @@ impl State {
             .clone();
         cx.spawn(async move |this, cx| {
             credentials_provider
-                .delete_credentials(&api_url, &cx)
+                .delete_credentials(&api_url, cx)
                 .await
                 .log_err();
             this.update(cx, |this, cx| {
@@ -129,7 +131,7 @@ impl State {
             .clone();
         cx.spawn(async move |this, cx| {
             credentials_provider
-                .write_credentials(&api_url, "Bearer", api_key.as_bytes(), &cx)
+                .write_credentials(&api_url, "Bearer", api_key.as_bytes(), cx)
                 .await?;
             this.update(cx, |this, cx| {
                 this.api_key = Some(api_key);
@@ -156,7 +158,7 @@ impl State {
                 (api_key, true)
             } else {
                 let (_, api_key) = credentials_provider
-                    .read_credentials(&api_url, &cx)
+                    .read_credentials(&api_url, cx)
                     .await?
                     .ok_or(AuthenticateError::CredentialsNotFound)?;
                 (
@@ -197,6 +199,33 @@ impl GoogleLanguageModelProvider {
             http_client: self.http_client.clone(),
             request_limiter: RateLimiter::new(4),
         })
+    }
+
+    pub fn api_key(cx: &mut App) -> Task<Result<ApiKey>> {
+        let credentials_provider = <dyn CredentialsProvider>::global(cx);
+        let api_url = AllLanguageModelSettings::get_global(cx)
+            .google
+            .api_url
+            .clone();
+
+        if let Ok(key) = std::env::var(GEMINI_API_KEY_VAR) {
+            Task::ready(Ok(ApiKey {
+                key,
+                from_env: true,
+            }))
+        } else {
+            cx.spawn(async move |cx| {
+                let (_, api_key) = credentials_provider
+                    .read_credentials(&api_url, cx)
+                    .await?
+                    .ok_or(AuthenticateError::CredentialsNotFound)?;
+
+                Ok(ApiKey {
+                    key: String::from_utf8(api_key).context("invalid {PROVIDER_NAME} API key")?,
+                    from_env: false,
+                })
+            })
+        }
     }
 }
 
@@ -277,8 +306,13 @@ impl LanguageModelProvider for GoogleLanguageModelProvider {
         self.state.update(cx, |state, cx| state.authenticate(cx))
     }
 
-    fn configuration_view(&self, window: &mut Window, cx: &mut App) -> AnyView {
-        cx.new(|cx| ConfigurationView::new(self.state.clone(), window, cx))
+    fn configuration_view(
+        &self,
+        target_agent: language_model::ConfigurationViewTargetAgent,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> AnyView {
+        cx.new(|cx| ConfigurationView::new(self.state.clone(), target_agent, window, cx))
             .into()
     }
 
@@ -382,7 +416,7 @@ impl LanguageModel for GoogleLanguageModel {
         cx: &App,
     ) -> BoxFuture<'static, Result<u64>> {
         let model_id = self.model.request_id().to_string();
-        let request = into_google(request, model_id.clone(), self.model.mode());
+        let request = into_google(request, model_id, self.model.mode());
         let http_client = self.http_client.clone();
         let api_key = self.state.read(cx).api_key.clone();
 
@@ -525,7 +559,7 @@ pub fn into_google(
     let system_instructions = if request
         .messages
         .first()
-        .map_or(false, |msg| matches!(msg.role, Role::System))
+        .is_some_and(|msg| matches!(msg.role, Role::System))
     {
         let message = request.messages.remove(0);
         Some(SystemInstruction {
@@ -572,7 +606,7 @@ pub fn into_google(
             top_k: None,
         }),
         safety_settings: None,
-        tools: (request.tools.len() > 0).then(|| {
+        tools: (!request.tools.is_empty()).then(|| {
             vec![google_ai::Tool {
                 function_declarations: request
                     .tools
@@ -771,11 +805,17 @@ fn convert_usage(usage: &UsageMetadata) -> language_model::TokenUsage {
 struct ConfigurationView {
     api_key_editor: Entity<Editor>,
     state: gpui::Entity<State>,
+    target_agent: language_model::ConfigurationViewTargetAgent,
     load_credentials_task: Option<Task<()>>,
 }
 
 impl ConfigurationView {
-    fn new(state: gpui::Entity<State>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    fn new(
+        state: gpui::Entity<State>,
+        target_agent: language_model::ConfigurationViewTargetAgent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         cx.observe(&state, |_, _, cx| {
             cx.notify();
         })
@@ -805,6 +845,7 @@ impl ConfigurationView {
                 editor.set_placeholder_text("AIzaSy...", cx);
                 editor
             }),
+            target_agent,
             state,
             load_credentials_task,
         }
@@ -880,7 +921,10 @@ impl Render for ConfigurationView {
             v_flex()
                 .size_full()
                 .on_action(cx.listener(Self::save_api_key))
-                .child(Label::new("To use Zed's agent with Google AI, you need to add an API key. Follow these steps:"))
+                .child(Label::new(format!("To use {}, you need to add an API key. Follow these steps:", match self.target_agent {
+                    ConfigurationViewTargetAgent::ZedAgent => "Zed's agent with Google AI",
+                    ConfigurationViewTargetAgent::Other(agent) => agent,
+                })))
                 .child(
                     List::new()
                         .child(InstructionListItem::new(

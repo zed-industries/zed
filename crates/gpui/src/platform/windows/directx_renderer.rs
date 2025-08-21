@@ -4,16 +4,15 @@ use ::util::ResultExt;
 use anyhow::{Context, Result};
 use windows::{
     Win32::{
-        Foundation::{FreeLibrary, HMODULE, HWND},
+        Foundation::{HMODULE, HWND},
         Graphics::{
             Direct3D::*,
             Direct3D11::*,
             DirectComposition::*,
             Dxgi::{Common::*, *},
         },
-        System::LibraryLoader::LoadLibraryA,
     },
-    core::{Interface, PCSTR},
+    core::Interface,
 };
 
 use crate::{
@@ -208,7 +207,7 @@ impl DirectXRenderer {
 
     fn present(&mut self) -> Result<()> {
         unsafe {
-            let result = self.resources.swap_chain.Present(1, DXGI_PRESENT(0));
+            let result = self.resources.swap_chain.Present(0, DXGI_PRESENT(0));
             // Presenting the swap chain can fail if the DirectX device was removed or reset.
             if result == DXGI_ERROR_DEVICE_REMOVED || result == DXGI_ERROR_DEVICE_RESET {
                 let reason = self.devices.device.GetDeviceRemovedReason();
@@ -759,7 +758,7 @@ impl DirectXRenderPipelines {
 
 impl DirectComposition {
     pub fn new(dxgi_device: &IDXGIDevice, hwnd: HWND) -> Result<Self> {
-        let comp_device = get_comp_device(&dxgi_device)?;
+        let comp_device = get_comp_device(dxgi_device)?;
         let comp_target = unsafe { comp_device.CreateTargetForHwnd(hwnd, true) }?;
         let comp_visual = unsafe { comp_device.CreateVisual() }?;
 
@@ -1145,7 +1144,7 @@ fn create_resources(
     [D3D11_VIEWPORT; 1],
 )> {
     let (render_target, render_target_view) =
-        create_render_target_and_its_view(&swap_chain, &devices.device)?;
+        create_render_target_and_its_view(swap_chain, &devices.device)?;
     let (path_intermediate_texture, path_intermediate_srv) =
         create_path_intermediate_texture(&devices.device, width, height)?;
     let (path_intermediate_msaa_texture, path_intermediate_msaa_view) =
@@ -1619,22 +1618,6 @@ pub(crate) mod shader_resources {
     }
 }
 
-fn with_dll_library<R, F>(dll_name: PCSTR, f: F) -> Result<R>
-where
-    F: FnOnce(HMODULE) -> Result<R>,
-{
-    let library = unsafe {
-        LoadLibraryA(dll_name).with_context(|| format!("Loading dll: {}", dll_name.display()))?
-    };
-    let result = f(library);
-    unsafe {
-        FreeLibrary(library)
-            .with_context(|| format!("Freeing dll: {}", dll_name.display()))
-            .log_err();
-    }
-    result
-}
-
 mod nvidia {
     use std::{
         ffi::CStr,
@@ -1644,7 +1627,7 @@ mod nvidia {
     use anyhow::Result;
     use windows::{Win32::System::LibraryLoader::GetProcAddress, core::s};
 
-    use crate::platform::windows::directx_renderer::with_dll_library;
+    use crate::with_dll_library;
 
     // https://github.com/NVIDIA/nvapi/blob/7cb76fce2f52de818b3da497af646af1ec16ce27/nvapi_lite_common.h#L180
     const NVAPI_SHORT_STRING_MAX: usize = 64;
@@ -1711,7 +1694,7 @@ mod amd {
     use anyhow::Result;
     use windows::{Win32::System::LibraryLoader::GetProcAddress, core::s};
 
-    use crate::platform::windows::directx_renderer::with_dll_library;
+    use crate::with_dll_library;
 
     // https://github.com/GPUOpen-LibrariesAndSDKs/AGS_SDK/blob/5d8812d703d0335741b6f7ffc37838eeb8b967f7/ags_lib/inc/amd_ags.h#L145
     const AGS_CURRENT_VERSION: i32 = (6 << 22) | (3 << 12);

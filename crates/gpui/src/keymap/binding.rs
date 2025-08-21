@@ -30,11 +30,8 @@ impl Clone for KeyBinding {
 impl KeyBinding {
     /// Construct a new keybinding from the given data. Panics on parse error.
     pub fn new<A: Action>(keystrokes: &str, action: A, context: Option<&str>) -> Self {
-        let context_predicate = if let Some(context) = context {
-            Some(KeyBindingContextPredicate::parse(context).unwrap().into())
-        } else {
-            None
-        };
+        let context_predicate =
+            context.map(|context| KeyBindingContextPredicate::parse(context).unwrap().into());
         Self::load(keystrokes, Box::new(action), context_predicate, None, None).unwrap()
     }
 
@@ -53,10 +50,10 @@ impl KeyBinding {
 
         if let Some(equivalents) = key_equivalents {
             for keystroke in keystrokes.iter_mut() {
-                if keystroke.key.chars().count() == 1 {
-                    if let Some(key) = equivalents.get(&keystroke.key.chars().next().unwrap()) {
-                        keystroke.key = key.to_string();
-                    }
+                if keystroke.key.chars().count() == 1
+                    && let Some(key) = equivalents.get(&keystroke.key.chars().next().unwrap())
+                {
+                    keystroke.key = key.to_string();
                 }
             }
         }
