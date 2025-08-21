@@ -296,6 +296,7 @@ pub fn init(languages: Arc<LanguageRegistry>, node: NodeRuntime, cx: &mut App) {
         "Astro",
         "CSS",
         "ERB",
+        "HTML+ERB",
         "HTML/ERB",
         "HEEX",
         "HTML",
