@@ -42,8 +42,8 @@ pub(crate) struct RenderImageParams {
 pub struct RenderImage {
     /// The ID associated with this image
     pub id: ImageId,
-    /// The scale factor of the image, used for high-DPI displays.
-    pub scale_factor: f32,
+    /// The scale factor of this image on render.
+    pub(crate) scale_factor: f32,
     data: SmallVec<[Frame; 1]>,
 }
 
