@@ -1097,6 +1097,70 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_html_image_tag() {
+        let parsed = parse("<img src=\"http://example.com/foo.png\" />").await;
+
+        let ParsedMarkdownElement::Image(image) = &parsed.children[0] else {
+            panic!("Expected a image element");
+        };
+        assert_eq!(
+            image.clone(),
+            Image {
+                source_range: 0..40,
+                link: Link::Web {
+                    url: "http://example.com/foo.png".to_string(),
+                },
+                alt_text: None,
+                height: None,
+                width: None,
+            },
+        );
+    }
+
+    #[gpui::test]
+    async fn test_html_image_tag_with_alt_text() {
+        let parsed = parse("<img src=\"http://example.com/foo.png\" alt=\"Foo\" />").await;
+
+        let ParsedMarkdownElement::Image(image) = &parsed.children[0] else {
+            panic!("Expected a image element");
+        };
+        assert_eq!(
+            image.clone(),
+            Image {
+                source_range: 0..50,
+                link: Link::Web {
+                    url: "http://example.com/foo.png".to_string(),
+                },
+                alt_text: Some("Foo".into()),
+                height: None,
+                width: None,
+            },
+        );
+    }
+
+    #[gpui::test]
+    async fn test_html_image_tag_with_height_and_width() {
+        let parsed =
+            parse("<img src=\"http://example.com/foo.png\" height=\"100\" width=\"200\" />").await;
+
+        let ParsedMarkdownElement::Image(image) = &parsed.children[0] else {
+            panic!("Expected a image element");
+        };
+        assert_eq!(
+            image.clone(),
+            Image {
+                source_range: 0..65,
+                link: Link::Web {
+                    url: "http://example.com/foo.png".to_string(),
+                },
+                alt_text: None,
+                height: Some(100),
+                width: Some(200),
+            },
+        );
+    }
+
+    #[gpui::test]
     async fn test_header_only_table() {
         let markdown = "\
 | Header 1 | Header 2 |
