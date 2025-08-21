@@ -1471,7 +1471,7 @@ impl AcpThreadView {
     ) -> Div {
         let tool_icon =
             if tool_call.kind == acp::ToolKind::Edit && tool_call.locations.len() == 1 {
-                file_icons::FileIcons::get_icon(&tool_call.locations[0].path, cx)
+                FileIcons::get_icon(&tool_call.locations[0].path, cx)
                     .map(Icon::from_path)
                     .unwrap_or(Icon::new(IconName::ToolPencil))
             } else {
