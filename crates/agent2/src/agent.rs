@@ -1364,6 +1364,8 @@ mod tests {
             )
         });
 
+        cx.run_until_parked();
+
         // Drop the ACP thread, which should cause the session to be dropped as well.
         cx.update(|_| {
             drop(thread);
