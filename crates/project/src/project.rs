@@ -3415,7 +3415,7 @@ impl Project {
         buffer: &Entity<Buffer>,
         position: T,
         cx: &mut Context<Self>,
-    ) -> Task<Result<Vec<LocationLink>>> {
+    ) -> Task<Result<Option<Vec<LocationLink>>>> {
         let position = position.to_point_utf16(buffer.read(cx));
         let guard = self.retain_remotely_created_models(cx);
         let task = self.lsp_store.update(cx, |lsp_store, cx| {
@@ -3433,7 +3433,7 @@ impl Project {
         buffer: &Entity<Buffer>,
         position: T,
         cx: &mut Context<Self>,
-    ) -> Task<Result<Vec<LocationLink>>> {
+    ) -> Task<Result<Option<Vec<LocationLink>>>> {
         let position = position.to_point_utf16(buffer.read(cx));
         let guard = self.retain_remotely_created_models(cx);
         let task = self.lsp_store.update(cx, |lsp_store, cx| {
@@ -3451,7 +3451,7 @@ impl Project {
         buffer: &Entity<Buffer>,
         position: T,
         cx: &mut Context<Self>,
-    ) -> Task<Result<Vec<LocationLink>>> {
+    ) -> Task<Result<Option<Vec<LocationLink>>>> {
         let position = position.to_point_utf16(buffer.read(cx));
         let guard = self.retain_remotely_created_models(cx);
         let task = self.lsp_store.update(cx, |lsp_store, cx| {
@@ -3469,7 +3469,7 @@ impl Project {
         buffer: &Entity<Buffer>,
         position: T,
         cx: &mut Context<Self>,
-    ) -> Task<Result<Vec<LocationLink>>> {
+    ) -> Task<Result<Option<Vec<LocationLink>>>> {
         let position = position.to_point_utf16(buffer.read(cx));
         let guard = self.retain_remotely_created_models(cx);
         let task = self.lsp_store.update(cx, |lsp_store, cx| {
@@ -3487,7 +3487,7 @@ impl Project {
         buffer: &Entity<Buffer>,
         position: T,
         cx: &mut Context<Self>,
-    ) -> Task<Result<Vec<Location>>> {
+    ) -> Task<Result<Option<Vec<Location>>>> {
         let position = position.to_point_utf16(buffer.read(cx));
         let guard = self.retain_remotely_created_models(cx);
         let task = self.lsp_store.update(cx, |lsp_store, cx| {
@@ -3585,23 +3585,12 @@ impl Project {
         })
     }
 
-    pub fn signature_help<T: ToPointUtf16>(
-        &self,
-        buffer: &Entity<Buffer>,
-        position: T,
-        cx: &mut Context<Self>,
-    ) -> Task<Vec<SignatureHelp>> {
-        self.lsp_store.update(cx, |lsp_store, cx| {
-            lsp_store.signature_help(buffer, position, cx)
-        })
-    }
-
     pub fn hover<T: ToPointUtf16>(
         &self,
         buffer: &Entity<Buffer>,
         position: T,
         cx: &mut Context<Self>,
-    ) -> Task<Vec<Hover>> {
+    ) -> Task<Option<Vec<Hover>>> {
         let position = position.to_point_utf16(buffer.read(cx));
         self.lsp_store
             .update(cx, |lsp_store, cx| lsp_store.hover(buffer, position, cx))
@@ -3637,7 +3626,7 @@ impl Project {
         range: Range<T>,
         kinds: Option<Vec<CodeActionKind>>,
         cx: &mut Context<Self>,
-    ) -> Task<Result<Vec<CodeAction>>> {
+    ) -> Task<Result<Option<Vec<CodeAction>>>> {
         let buffer = buffer_handle.read(cx);
         let range = buffer.anchor_before(range.start)..buffer.anchor_before(range.end);
         self.lsp_store.update(cx, |lsp_store, cx| {
@@ -3650,7 +3639,7 @@ impl Project {
         buffer: &Entity<Buffer>,
         range: Range<T>,
         cx: &mut Context<Self>,
-    ) -> Task<Result<Vec<CodeAction>>> {
+    ) -> Task<Result<Option<Vec<CodeAction>>>> {
         let snapshot = buffer.read(cx).snapshot();
         let range = range.to_point(&snapshot);
         let range_start = snapshot.anchor_before(range.start);
@@ -3668,16 +3657,18 @@ impl Project {
             let mut code_lens_actions = code_lens_actions
                 .await
                 .map_err(|e| anyhow!("code lens fetch failed: {e:#}"))?;
-            code_lens_actions.retain(|code_lens_action| {
-                range
-                    .start
-                    .cmp(&code_lens_action.range.start, &snapshot)
-                    .is_ge()
-                    && range
-                        .end
-                        .cmp(&code_lens_action.range.end, &snapshot)
-                        .is_le()
-            });
+            if let Some(code_lens_actions) = &mut code_lens_actions {
+                code_lens_actions.retain(|code_lens_action| {
+                    range
+                        .start
+                        .cmp(&code_lens_action.range.start, &snapshot)
+                        .is_ge()
+                        && range
+                            .end
+                            .cmp(&code_lens_action.range.end, &snapshot)
+                            .is_le()
+                });
+            }
             Ok(code_lens_actions)
         })
     }

@@ -16,6 +16,7 @@
 - [Configuring Zed](./configuring-zed.md)
 - [Configuring Languages](./configuring-languages.md)
 - [Key bindings](./key-bindings.md)
+  - [All Actions](./all-actions.md)
 - [Snippets](./snippets.md)
 - [Themes](./themes.md)
 - [Icon Themes](./icon-themes.md)

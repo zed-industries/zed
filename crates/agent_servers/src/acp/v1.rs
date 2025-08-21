@@ -1,11 +1,12 @@
 use action_log::ActionLog;
-use agent_client_protocol::{self as acp, Agent as _};
+use agent_client_protocol::{self as acp, Agent as _, ErrorCode};
 use anyhow::anyhow;
 use collections::HashMap;
 use futures::AsyncBufReadExt as _;
 use futures::channel::oneshot;
 use futures::io::BufReader;
 use project::Project;
+use serde::Deserialize;
 use std::path::Path;
 use std::rc::Rc;
 use std::{any::Any, cell::RefCell};
@@ -27,6 +28,7 @@ pub struct AcpConnection {
 
 pub struct AcpSession {
     thread: WeakEntity<AcpThread>,
+    suppress_abort_err: bool,
 }
 
 const MINIMUM_SUPPORTED_VERSION: acp::ProtocolVersion = acp::V1;
@@ -171,6 +173,7 @@ impl AgentConnection for AcpConnection {
 
             let session = AcpSession {
                 thread: thread.downgrade(),
+                suppress_abort_err: false,
             };
             sessions.borrow_mut().insert(session_id, session);
 
@@ -202,9 +205,53 @@ impl AgentConnection for AcpConnection {
         cx: &mut App,
     ) -> Task<Result<acp::PromptResponse>> {
         let conn = self.connection.clone();
+        let sessions = self.sessions.clone();
+        let session_id = params.session_id.clone();
         cx.foreground_executor().spawn(async move {
-            let response = conn.prompt(params).await?;
-            Ok(response)
+            let result = conn.prompt(params).await;
+
+            let mut suppress_abort_err = false;
+
+            if let Some(session) = sessions.borrow_mut().get_mut(&session_id) {
+                suppress_abort_err = session.suppress_abort_err;
+                session.suppress_abort_err = false;
+            }
+
+            match result {
+                Ok(response) => Ok(response),
+                Err(err) => {
+                    if err.code != ErrorCode::INTERNAL_ERROR.code {
+                        anyhow::bail!(err)
+                    }
+
+                    let Some(data) = &err.data else {
+                        anyhow::bail!(err)
+                    };
+
+                    // Temporary workaround until the following PR is generally available:
+                    // https://github.com/google-gemini/gemini-cli/pull/6656
+
+                    #[derive(Deserialize)]
+                    #[serde(deny_unknown_fields)]
+                    struct ErrorDetails {
+                        details: Box<str>,
+                    }
+
+                    match serde_json::from_value(data.clone()) {
+                        Ok(ErrorDetails { details }) => {
+                            if suppress_abort_err && details.contains("This operation was aborted")
+                            {
+                                Ok(acp::PromptResponse {
+                                    stop_reason: acp::StopReason::Cancelled,
+                                })
+                            } else {
+                                Err(anyhow!(details))
+                            }
+                        }
+                        Err(_) => Err(anyhow!(err)),
+                    }
+                }
+            }
         })
     }
 
@@ -213,6 +260,9 @@ impl AgentConnection for AcpConnection {
     }
 
     fn cancel(&self, session_id: &acp::SessionId, cx: &mut App) {
+        if let Some(session) = self.sessions.borrow_mut().get_mut(session_id) {
+            session.suppress_abort_err = true;
+        }
         let conn = self.connection.clone();
         let params = acp::CancelNotification {
             session_id: session_id.clone(),
@@ -252,7 +302,7 @@ impl acp::Client for ClientDelegate {
 
         let outcome = match result {
             Ok(option) => acp::RequestPermissionOutcome::Selected { option_id: option },
-            Err(oneshot::Canceled) => acp::RequestPermissionOutcome::Canceled,
+            Err(oneshot::Canceled) => acp::RequestPermissionOutcome::Cancelled,
         };
 
         Ok(acp::RequestPermissionResponse { outcome })

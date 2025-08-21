@@ -705,7 +705,7 @@ impl ClaudeAgentSession {
                     let stop_reason = match subtype {
                         ResultErrorType::Success => acp::StopReason::EndTurn,
                         ResultErrorType::ErrorMaxTurns => acp::StopReason::MaxTurnRequests,
-                        ResultErrorType::ErrorDuringExecution => acp::StopReason::Canceled,
+                        ResultErrorType::ErrorDuringExecution => acp::StopReason::Cancelled,
                     };
                     end_turn_tx
                         .send(Ok(acp::PromptResponse { stop_reason }))
@@ -1093,7 +1093,7 @@ pub(crate) mod tests {
     use gpui::TestAppContext;
     use serde_json::json;
 
-    crate::common_e2e_tests!(ClaudeCode, allow_option_id = "allow");
+    crate::common_e2e_tests!(async |_, _, _| ClaudeCode, allow_option_id = "allow");
 
     pub fn local_command() -> AgentServerCommand {
         AgentServerCommand {

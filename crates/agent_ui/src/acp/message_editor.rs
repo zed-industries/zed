@@ -1,6 +1,6 @@
 use crate::{
     acp::completion_provider::ContextPickerCompletionProvider,
-    context_picker::fetch_context_picker::fetch_url_content,
+    context_picker::{ContextPickerAction, fetch_context_picker::fetch_url_content},
 };
 use acp_thread::{MentionUri, selection_name};
 use agent_client_protocol as acp;
@@ -27,7 +27,7 @@ use gpui::{
 };
 use language::{Buffer, Language};
 use language_model::LanguageModelImage;
-use project::{Project, ProjectPath, Worktree};
+use project::{CompletionIntent, Project, ProjectItem, ProjectPath, Worktree};
 use prompt_store::PromptStore;
 use rope::Point;
 use settings::Settings;
@@ -561,21 +561,24 @@ impl MessageEditor {
             let range = snapshot.anchor_after(offset + range_to_fold.start)
                 ..snapshot.anchor_after(offset + range_to_fold.end);
 
-            let path = buffer
-                .read(cx)
-                .file()
-                .map_or(PathBuf::from("untitled"), |file| file.path().to_path_buf());
+            // TODO support selections from buffers with no path
+            let Some(project_path) = buffer.read(cx).project_path(cx) else {
+                continue;
+            };
+            let Some(abs_path) = self.project.read(cx).absolute_path(&project_path, cx) else {
+                continue;
+            };
             let snapshot = buffer.read(cx).snapshot();
 
             let point_range = selection_range.to_point(&snapshot);
             let line_range = point_range.start.row..point_range.end.row;
 
             let uri = MentionUri::Selection {
-                path: path.clone(),
+                path: abs_path.clone(),
                 line_range: line_range.clone(),
             };
             let crease = crate::context_picker::crease_for_mention(
-                selection_name(&path, &line_range).into(),
+                selection_name(&abs_path, &line_range).into(),
                 uri.icon_path(cx),
                 range,
                 self.editor.downgrade(),
@@ -587,8 +590,7 @@ impl MessageEditor {
                 crease_ids.first().copied().unwrap()
             });
 
-            self.mention_set
-                .insert_uri(crease_id, MentionUri::Selection { path, line_range });
+            self.mention_set.insert_uri(crease_id, uri);
         }
     }
 
@@ -627,15 +629,11 @@ impl MessageEditor {
             .shared();
 
         self.mention_set.insert_thread(id.clone(), task.clone());
+        self.mention_set.insert_uri(crease_id, uri);
 
         let editor = self.editor.clone();
         cx.spawn_in(window, async move |this, cx| {
-            if task.await.notify_async_err(cx).is_some() {
-                this.update(cx, |this, _| {
-                    this.mention_set.insert_uri(crease_id, uri);
-                })
-                .ok();
-            } else {
+            if task.await.notify_async_err(cx).is_none() {
                 editor
                     .update(cx, |editor, cx| {
                         editor.display_map.update(cx, |display_map, cx| {
@@ -646,6 +644,7 @@ impl MessageEditor {
                     .ok();
                 this.update(cx, |this, _| {
                     this.mention_set.thread_summaries.remove(&id);
+                    this.mention_set.uri_by_crease_id.remove(&crease_id);
                 })
                 .ok();
             }
@@ -946,6 +945,38 @@ impl MessageEditor {
             drop(added_worktrees);
         })
         .detach();
+    }
+
+    pub fn insert_selections(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let buffer = self.editor.read(cx).buffer().clone();
+        let Some(buffer) = buffer.read(cx).as_singleton() else {
+            return;
+        };
+        let anchor = buffer.update(cx, |buffer, _cx| buffer.anchor_before(buffer.len()));
+        let Some(workspace) = self.workspace.upgrade() else {
+            return;
+        };
+        let Some(completion) = ContextPickerCompletionProvider::completion_for_action(
+            ContextPickerAction::AddSelections,
+            anchor..anchor,
+            cx.weak_entity(),
+            &workspace,
+            cx,
+        ) else {
+            return;
+        };
+        self.editor.update(cx, |message_editor, cx| {
+            message_editor.edit(
+                [(
+                    multi_buffer::Anchor::max()..multi_buffer::Anchor::max(),
+                    completion.new_text,
+                )],
+                cx,
+            );
+        });
+        if let Some(confirm) = completion.confirm {
+            confirm(CompletionIntent::Complete, window, cx);
+        }
     }
 
     pub fn set_read_only(&mut self, read_only: bool, cx: &mut Context<Self>) {
@@ -1657,7 +1688,7 @@ impl SemanticsProvider for SlashCommandSemanticsProvider {
         buffer: &Entity<Buffer>,
         position: text::Anchor,
         cx: &mut App,
-    ) -> Option<Task<Vec<project::Hover>>> {
+    ) -> Option<Task<Option<Vec<project::Hover>>>> {
         let snapshot = buffer.read(cx).snapshot();
         let offset = position.to_offset(&snapshot);
         let (start, end) = self.range.get()?;
@@ -1665,14 +1696,14 @@ impl SemanticsProvider for SlashCommandSemanticsProvider {
             return None;
         }
         let range = snapshot.anchor_after(start)..snapshot.anchor_after(end);
-        Some(Task::ready(vec![project::Hover {
+        Some(Task::ready(Some(vec![project::Hover {
             contents: vec![project::HoverBlock {
                 text: "Slash commands are not supported".into(),
                 kind: project::HoverBlockKind::PlainText,
             }],
             range: Some(range),
             language: None,
-        }]))
+        }])))
     }
 
     fn inline_values(
@@ -1722,7 +1753,7 @@ impl SemanticsProvider for SlashCommandSemanticsProvider {
         _position: text::Anchor,
         _kind: editor::GotoDefinitionKind,
         _cx: &mut App,
-    ) -> Option<Task<Result<Vec<project::LocationLink>>>> {
+    ) -> Option<Task<Result<Option<Vec<project::LocationLink>>>>> {
         None
     }
 

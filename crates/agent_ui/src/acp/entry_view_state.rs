@@ -1,6 +1,7 @@
 use std::ops::Range;
 
 use acp_thread::{AcpThread, AgentThreadEntry};
+use agent_client_protocol::ToolCallId;
 use agent2::HistoryStore;
 use collections::HashMap;
 use editor::{Editor, EditorMode, MinimapVisibility};
@@ -106,6 +107,7 @@ impl EntryViewState {
                 }
             }
             AgentThreadEntry::ToolCall(tool_call) => {
+                let id = tool_call.id.clone();
                 let terminals = tool_call.terminals().cloned().collect::<Vec<_>>();
                 let diffs = tool_call.diffs().cloned().collect::<Vec<_>>();
 
@@ -121,21 +123,31 @@ impl EntryViewState {
 
                 for terminal in terminals {
                     views.entry(terminal.entity_id()).or_insert_with(|| {
-                        create_terminal(
+                        let element = create_terminal(
                             self.workspace.clone(),
                             self.project.clone(),
                             terminal.clone(),
                             window,
                             cx,
                         )
-                        .into_any()
+                        .into_any();
+                        cx.emit(EntryViewEvent {
+                            entry_index: index,
+                            view_event: ViewEvent::NewTerminal(id.clone()),
+                        });
+                        element
                     });
                 }
 
                 for diff in diffs {
-                    views
-                        .entry(diff.entity_id())
-                        .or_insert_with(|| create_editor_diff(diff.clone(), window, cx).into_any());
+                    views.entry(diff.entity_id()).or_insert_with(|| {
+                        let element = create_editor_diff(diff.clone(), window, cx).into_any();
+                        cx.emit(EntryViewEvent {
+                            entry_index: index,
+                            view_event: ViewEvent::NewDiff(id.clone()),
+                        });
+                        element
+                    });
                 }
             }
             AgentThreadEntry::AssistantMessage(_) => {
@@ -187,6 +199,8 @@ pub struct EntryViewEvent {
 }
 
 pub enum ViewEvent {
+    NewDiff(ToolCallId),
+    NewTerminal(ToolCallId),
     MessageEditorEvent(Entity<MessageEditor>, MessageEditorEvent),
 }
 

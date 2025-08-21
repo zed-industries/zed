@@ -6998,20 +6998,19 @@ impl Excerpt {
     }
 
     fn contains(&self, anchor: &Anchor) -> bool {
-        anchor.buffer_id == None
-            || anchor.buffer_id == Some(self.buffer_id)
-                && self
-                    .range
-                    .context
-                    .start
-                    .cmp(&anchor.text_anchor, &self.buffer)
-                    .is_le()
-                && self
-                    .range
-                    .context
-                    .end
-                    .cmp(&anchor.text_anchor, &self.buffer)
-                    .is_ge()
+        (anchor.buffer_id == None || anchor.buffer_id == Some(self.buffer_id))
+            && self
+                .range
+                .context
+                .start
+                .cmp(&anchor.text_anchor, &self.buffer)
+                .is_le()
+            && self
+                .range
+                .context
+                .end
+                .cmp(&anchor.text_anchor, &self.buffer)
+                .is_ge()
     }
 
     /// The [`Excerpt`]'s start offset in its [`Buffer`]

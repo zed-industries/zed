@@ -3,8 +3,8 @@ mod claude;
 mod gemini;
 mod settings;
 
-#[cfg(test)]
-mod e2e_tests;
+#[cfg(any(test, feature = "test-support"))]
+pub mod e2e_tests;
 
 pub use claude::*;
 pub use gemini::*;
