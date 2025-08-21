@@ -89,7 +89,9 @@ pub fn init_panic_hook(
                 },
                 backtrace,
             );
-            std::process::exit(-1);
+            if MINIDUMP_ENDPOINT.is_none() {
+                std::process::exit(-1);
+            }
         }
         let main_module_base_address = get_main_module_base_address();
 
@@ -148,7 +150,9 @@ pub fn init_panic_hook(
         }
         zlog::flush();
 
-        if !is_pty && let Some(panic_data_json) = serde_json::to_string(&panic_data).log_err() {
+        if (!is_pty || MINIDUMP_ENDPOINT.is_some())
+            && let Some(panic_data_json) = serde_json::to_string(&panic_data).log_err()
+        {
             let timestamp = chrono::Utc::now().format("%Y_%m_%d %H_%M_%S").to_string();
             let panic_file_path = paths::logs_dir().join(format!("zed-{timestamp}.panic"));
             let panic_file = fs::OpenOptions::new()
@@ -614,10 +618,9 @@ async fn upload_minidump(
     let mut panic_message = "".to_owned();
     if let Some(panic_info) = metadata.panic.as_ref() {
         panic_message = panic_info.message.clone();
-        form = form.text("sentry[logentry][formatted]", panic_info.message.clone());
-        form = form.text("span", panic_info.span.clone());
-        // TODO: add gpu-context, feature-flag-context, and more of device-context like gpu
-        // name, screen resolution, available ram, device model, etc
+        form = form
+            .text("sentry[logentry][formatted]", panic_info.message.clone())
+            .text("span", panic_info.span.clone());
     }
     if let Some(minidump_error) = metadata.minidump_error.clone() {
         form = form.text("minidump_error", minidump_error);
@@ -633,6 +636,63 @@ async fn upload_minidump(
         commit_sha = metadata.init.commit_sha.clone(),
     );
 
+    let gpu_count = metadata.gpus.len();
+    for (index, gpu) in metadata.gpus.iter().cloned().enumerate() {
+        let system_specs::GpuInfo {
+            device_name,
+            device_pci_id,
+            vendor_name,
+            vendor_pci_id,
+            driver_version,
+            driver_name,
+        } = gpu;
+        let num = if gpu_count == 1 && metadata.active_gpu.is_none() {
+            String::new()
+        } else {
+            index.to_string()
+        };
+        let name = format!("gpu{num}");
+        let root = format!("sentry[contexts][{name}]");
+        form = form
+            .text(
+                format!("{root}[Description]"),
+                "A GPU found on the users system. May or may not be the GPU Zed is running on",
+            )
+            .text(format!("{root}[type]"), "gpu")
+            .text(format!("{root}[name]"), device_name.unwrap_or(name))
+            .text(format!("{root}[id]"), format!("{:#06x}", device_pci_id))
+            .text(
+                format!("{root}[vendor_id]"),
+                format!("{:#06x}", vendor_pci_id),
+            )
+            .text_if_some(format!("{root}[vendor_name]"), vendor_name)
+            .text_if_some(format!("{root}[driver_version]"), driver_version)
+            .text_if_some(format!("{root}[driver_name]"), driver_name);
+    }
+    if let Some(active_gpu) = metadata.active_gpu.clone() {
+        form = form
+            .text(
+                "sentry[contexts][Active_GPU][Description]",
+                "The GPU Zed is running on",
+            )
+            .text("sentry[contexts][Active_GPU][type]", "gpu")
+            .text("sentry[contexts][Active_GPU][name]", active_gpu.device_name)
+            .text(
+                "sentry[contexts][Active_GPU][driver_version]",
+                active_gpu.driver_info,
+            )
+            .text(
+                "sentry[contexts][Active_GPU][driver_name]",
+                active_gpu.driver_name,
+            )
+            .text(
+                "sentry[contexts][Active_GPU][is_software_emulated]",
+                active_gpu.is_software_emulated.to_string(),
+            );
+    }
+
+    // TODO: feature-flag-context, and more of device-context like screen resolution, available ram, device model, etc
+
     let mut response_text = String::new();
     let mut response = http.send_multipart_form(endpoint, form).await?;
     response
@@ -644,6 +704,27 @@ async fn upload_minidump(
     }
     log::info!("Uploaded minidump. event id: {response_text}");
     Ok(())
+}
+
+trait FormExt {
+    fn text_if_some(
+        self,
+        label: impl Into<std::borrow::Cow<'static, str>>,
+        value: Option<impl Into<std::borrow::Cow<'static, str>>>,
+    ) -> Self;
+}
+
+impl FormExt for Form {
+    fn text_if_some(
+        self,
+        label: impl Into<std::borrow::Cow<'static, str>>,
+        value: Option<impl Into<std::borrow::Cow<'static, str>>>,
+    ) -> Self {
+        match value {
+            Some(value) => self.text(label.into(), value.into()),
+            None => self,
+        }
+    }
 }
 
 async fn upload_panic(
