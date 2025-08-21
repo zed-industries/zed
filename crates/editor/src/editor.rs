@@ -165,6 +165,7 @@ use project::{
 };
 use rand::{seq::SliceRandom, thread_rng};
 use rpc::{ErrorCode, ErrorExt, proto::PeerId};
+use schemars::JsonSchema;
 use scroll::{Autoscroll, OngoingScroll, ScrollAnchor, ScrollManager, ScrollbarAutoHide};
 use selections_collection::{
     MutableSelectionsCollection, SelectionsCollection, resolve_selections,
@@ -201,6 +202,7 @@ use ui::{
     IconSize, Indicator, Key, Tooltip, h_flex, prelude::*,
 };
 use util::{RangeExt, ResultExt, TryFutureExt, maybe, post_inc};
+use vim_mode_setting::EditorModeSetting;
 use workspace::{
     CollaboratorId, Item as WorkspaceItem, ItemId, ItemNavHistory, OpenInTerminal, OpenTerminal,
     RestoreOnStartupBehavior, SERIALIZATION_THROTTLE_TIME, SplitDirection, TabBarSettings, Toast,
@@ -1092,7 +1094,6 @@ pub struct Editor {
     autoindent_mode: Option<AutoindentMode>,
     workspace: Option<(WeakEntity<Workspace>, Option<WorkspaceId>)>,
     input_enabled: bool,
-    use_modal_editing: bool,
     read_only: bool,
     leader_id: Option<CollaboratorId>,
     remote_id: Option<ViewId>,
@@ -1180,6 +1181,39 @@ pub struct Editor {
     next_color_inlay_id: usize,
     colors: Option<LspColorData>,
     folding_newlines: Task<()>,
+    default_editor_mode: vim_mode_setting::EditorMode,
+    // editor_mode: EditorMode, <-- while init define which editor,
+
+    // agenty subscribe to agen settings
+    //
+    // editor <- agent
+    //
+    // settings listent to event emitted by editor,
+    //
+
+    // agent will set_editor_mode(AgentPanelSettings::read("editor_mode")) on init
+    // vim.rs will get_editor_mode() on init / activate / register
+    //
+    // match editor_mode {
+    //      // which setting to use
+    // }
+    //
+    //
+
+    // editor_mode: EditorMode, <-- while init define which editor,
+    // pros -> jsut set enum
+    // cons -> actual setting check lives in either editor.rs or vim.rs??
+    //
+    // set_edutr();
+    //
+    // Fn () -> weather mode this editor is, and what;s the default value?
+    //  pros -> all setting lives in agent, git.
+    // cons -> if someone wants to use agent setting in their editor, they need to copy paste code
+    //
+    // // agent.rs
+    // set_vim_setting_fn(|| {
+    //     // edito seting agnet
+    // });
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Default)]
@@ -2258,6 +2292,7 @@ impl Editor {
             mode,
             selection_drag_state: SelectionDragState::None,
             folding_newlines: Task::ready(()),
+            default_editor_mode: vim_mode_setting::EditorMode::default(),
         };
 
         if is_minimap {
@@ -2994,12 +3029,12 @@ impl Editor {
         })
     }
 
-    pub fn set_use_modal_editing(&mut self, to: bool) {
-        self.use_modal_editing = to;
+    pub fn set_default_editor_mode(&mut self, to: vim_mode_setting::EditorMode) {
+        self.default_editor_mode = to;
     }
 
-    pub fn use_modal_editing(&self) -> bool {
-        self.use_modal_editing
+    pub fn default_editor_mode(&self) -> vim_mode_setting::EditorMode {
+        self.default_editor_mode
     }
 
     fn selections_did_change(

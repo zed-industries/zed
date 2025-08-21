@@ -23,6 +23,7 @@ pub struct EditorModeSetting(pub EditorMode);
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Default)]
 pub enum EditorMode {
     Vim,
+    VimInsert,
     Helix,
     #[default]
     Default,

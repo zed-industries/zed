@@ -454,6 +454,10 @@ impl Vim {
             return;
         }
 
+        if editor.default_editor_mode() == EditorMode::Default {
+            return;
+        }
+
         let mut was_enabled = Vim::enabled(cx);
         let mut was_toggle = VimSettings::get_global(cx).toggle_relative_line_numbers;
         cx.observe_global_in::<SettingsStore>(window, move |editor, window, cx| {
@@ -489,7 +493,9 @@ impl Vim {
     fn activate(editor: &mut Editor, window: &mut Window, cx: &mut Context<Editor>) {
         let vim = Vim::new(window, cx);
 
-        if !editor.mode().is_full() {
+        let default_editor_mode = editor.default_editor_mode();
+
+        if default_editor_mode == EditorMode::VimInsert {
             vim.update(cx, |vim, _| {
                 vim.mode = Mode::Insert;
             });
@@ -499,14 +505,18 @@ impl Vim {
             entity: vim.clone(),
         });
 
-        vim.update(cx, |_, cx| {
-            Vim::action(editor, cx, |vim, _: &SwitchToNormalMode, window, cx| {
-                if matches!(EditorModeSetting::get_global(cx).0, EditorMode::Helix) {
-                    vim.switch_mode(Mode::HelixNormal, false, window, cx)
-                } else {
-                    vim.switch_mode(Mode::Normal, false, window, cx)
-                }
-            });
+        vim.update(cx, move |_, cx| {
+            Vim::action(
+                editor,
+                cx,
+                move |vim, _: &SwitchToNormalMode, window, cx| {
+                    if matches!(default_editor_mode, EditorMode::Helix) {
+                        vim.switch_mode(Mode::HelixNormal, false, window, cx)
+                    } else {
+                        vim.switch_mode(Mode::Normal, false, window, cx)
+                    }
+                },
+            );
 
             Vim::action(editor, cx, |vim, _: &SwitchToInsertMode, window, cx| {
                 vim.switch_mode(Mode::Insert, false, window, cx)
@@ -827,8 +837,10 @@ impl Vim {
         if EditorModeSetting::get_global(cx).0 == EditorMode::Default {
             return false;
         }
+
+        // check for agent.editor_mode
+        //
         return true;
-        // VimModeSetting::get_global(cx).0 || HelixModeSetting::get_global(cx).0
     }
 
     /// Called whenever an keystroke is typed so vim can observe all actions

@@ -332,7 +332,10 @@ fn render_base_keymap_section(tab_index: &mut isize, cx: &mut App) -> impl IntoE
 
 fn render_vim_mode_switch(tab_index: &mut isize, cx: &mut App) -> impl IntoElement {
     let editor_mode = EditorModeSetting::get_global(cx).0;
-    let toggle_state = if matches!(editor_mode, EditorMode::Vim | EditorMode::Helix) {
+    let toggle_state = if matches!(
+        editor_mode,
+        EditorMode::Vim | EditorMode::Helix | EditorMode::VimInsert
+    ) {
         ui::ToggleState::Selected
     } else {
         ui::ToggleState::Unselected

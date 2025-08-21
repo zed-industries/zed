@@ -1495,7 +1495,7 @@ pub fn load_default_keymap(cx: &mut App) {
 
     if matches!(
         EditorModeSetting::get_global(cx).0,
-        EditorMode::Vim | EditorMode::Helix
+        EditorMode::Vim | EditorMode::Helix | EditorMode::VimInsert
     ) {
         cx.bind_keys(
             KeymapFile::load_asset(VIM_KEYMAP_PATH, Some(KeybindSource::Vim), cx).unwrap(),

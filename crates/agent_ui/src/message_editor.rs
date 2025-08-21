@@ -114,6 +114,18 @@ pub(crate) fn create_editor(
     let editor = cx.new(|cx| {
         let buffer = cx.new(|cx| Buffer::local("", cx).with_language(Arc::new(language), cx));
         let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+        let settings = agent_settings::AgentSettings::get_global(cx);
+
+        let editor_mode = match settings.editor_mode {
+            agent_settings::AgentEditorMode::Vim => vim_mode_setting::EditorMode::Vim,
+            agent_settings::AgentEditorMode::VimInsert => vim_mode_setting::EditorMode::VimInsert,
+            agent_settings::AgentEditorMode::Helix => vim_mode_setting::EditorMode::Helix,
+            agent_settings::AgentEditorMode::Default => vim_mode_setting::EditorMode::Default,
+            agent_settings::AgentEditorMode::Inherit => {
+                vim_mode_setting::EditorModeSetting::get_global(cx).0
+            }
+        };
+
         let mut editor = Editor::new(
             editor::EditorMode::AutoHeight {
                 min_lines,
@@ -128,6 +140,7 @@ pub(crate) fn create_editor(
         editor.set_show_indent_guides(false, cx);
         editor.set_soft_wrap();
         editor.set_use_modal_editing(true);
+        editor.set_default_editor_mode(editor_mode);
         editor.set_context_menu_options(ContextMenuOptions {
             min_entries_visible: 12,
             max_entries_visible: 12,
