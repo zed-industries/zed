@@ -1372,7 +1372,7 @@ impl AcpThreadView {
             AgentThreadEntry::ToolCall(tool_call) => {
                 let has_terminals = tool_call.terminals().next().is_some();
 
-                div().w_full().py_1p5().px_5().map(|this| {
+                div().w_full().py_1().px_5().map(|this| {
                     if has_terminals {
                         this.children(tool_call.terminals().map(|terminal| {
                             self.render_terminal_tool_call(
@@ -1570,7 +1570,7 @@ impl AcpThreadView {
             .size(IconSize::Small)
             .color(Color::Muted);
 
-        let base_container = h_flex().size_4().justify_center();
+        let base_container = h_flex().flex_shrink_0().size_4().justify_center();
 
         if is_collapsible {
             base_container
@@ -1623,20 +1623,32 @@ impl AcpThreadView {
             | ToolCallStatus::WaitingForConfirmation { .. }
             | ToolCallStatus::Completed => None,
             ToolCallStatus::InProgress => Some(
-                Icon::new(IconName::ArrowCircle)
-                    .color(Color::Muted)
-                    .size(IconSize::Small)
-                    .with_animation(
-                        "running",
-                        Animation::new(Duration::from_secs(3)).repeat(),
-                        |icon, delta| icon.transform(Transformation::rotate(percentage(delta))),
+                div()
+                    .absolute()
+                    .right_2()
+                    .child(
+                        Icon::new(IconName::ArrowCircle)
+                            .color(Color::Muted)
+                            .size(IconSize::Small)
+                            .with_animation(
+                                "running",
+                                Animation::new(Duration::from_secs(3)).repeat(),
+                                |icon, delta| {
+                                    icon.transform(Transformation::rotate(percentage(delta)))
+                                },
+                            ),
                     )
                     .into_any(),
             ),
             ToolCallStatus::Rejected | ToolCallStatus::Canceled | ToolCallStatus::Failed => Some(
-                Icon::new(IconName::Close)
-                    .color(Color::Error)
-                    .size(IconSize::Small)
+                div()
+                    .absolute()
+                    .right_2()
+                    .child(
+                        Icon::new(IconName::Close)
+                            .color(Color::Error)
+                            .size(IconSize::Small),
+                    )
                     .into_any_element(),
             ),
         };
@@ -1734,13 +1746,14 @@ impl AcpThreadView {
             .child(
                 h_flex()
                     .id(header_id)
+                    .relative()
                     .w_full()
+                    .max_w_full()
                     .gap_1()
-                    .justify_between()
                     .when(use_card_layout, |this| {
-                        this.pl_2()
-                            .pr_1p5()
-                            .py_1()
+                        this.pl_1p5()
+                            .pr_1()
+                            .py_0p5()
                             .rounded_t_md()
                             .when(is_open && !failed_tool_call, |this| {
                                 this.border_b_1()
@@ -1753,7 +1766,7 @@ impl AcpThreadView {
                             .group(&card_header_id)
                             .relative()
                             .w_full()
-                            .min_h_6()
+                            .h(window.line_height() - px(2.))
                             .text_size(self.tool_name_font_size())
                             .child(self.render_tool_call_icon(
                                 card_header_id,
@@ -1797,21 +1810,14 @@ impl AcpThreadView {
                             } else {
                                 h_flex()
                                     .id("non-card-label-container")
-                                    .w_full()
                                     .relative()
+                                    .w_full()
+                                    .max_w_full()
                                     .ml_1p5()
-                                    .overflow_hidden()
-                                    .child(
-                                        h_flex()
-                                            .id("non-card-label")
-                                            .pr_8()
-                                            .w_full()
-                                            .overflow_x_scroll()
-                                            .child(self.render_markdown(
-                                                tool_call.label.clone(),
-                                                default_markdown_style(false, true, window, cx),
-                                            )),
-                                    )
+                                    .child(h_flex().pr_8().child(self.render_markdown(
+                                        tool_call.label.clone(),
+                                        default_markdown_style(false, true, window, cx),
+                                    )))
                                     .child(gradient_overlay(gradient_color))
                                     .on_click(cx.listener({
                                         let id = tool_call.id.clone();
