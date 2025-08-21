@@ -75,64 +75,70 @@ impl Render for ImageShowcase {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         div()
             .id("main")
+            .bg(gpui::white())
             .overflow_y_scroll()
             .p_5()
             .size_full()
-            .flex()
-            .flex_col()
-            .justify_center()
-            .items_center()
-            .gap_8()
-            .bg(rgb(0xffffff))
-            .child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .justify_center()
-                    .items_center()
-                    .gap_8()
-                    .child(ImageContainer::new(
-                        "Image loaded from a local file",
-                        self.local_resource.clone(),
-                    ))
-                    .child(ImageContainer::new(
-                        "Image loaded from a remote resource",
-                        self.remote_resource.clone(),
-                    ))
-                    .child(ImageContainer::new(
-                        "Image loaded from an asset",
-                        self.asset_resource.clone(),
-                    )),
-            )
-            .child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .gap_8()
-                    .child(
-                        div()
-                            .flex_col()
-                            .child("Auto Width")
-                            .child(img("https://picsum.photos/800/400").h(px(180.))),
-                    )
-                    .child(
-                        div()
-                            .flex_col()
-                            .child("Auto Height")
-                            .child(img("https://picsum.photos/800/400").w(px(180.))),
-                    ),
-            )
             .child(
                 div()
                     .flex()
                     .flex_col()
                     .justify_center()
                     .items_center()
-                    .w_full()
-                    .border_1()
-                    .border_color(rgb(0xC0C0C0))
-                    .child("image with max width 100%")
-                    .child(img("https://picsum.photos/800/400").max_w_full()),
+                    .gap_8()
+                    .child(img(
+                        "https://github.com/zed-industries/zed/actions/workflows/ci.yml/badge.svg",
+                    ))
+                    .child(
+                        div()
+                            .flex()
+                            .flex_row()
+                            .justify_center()
+                            .items_center()
+                            .gap_8()
+                            .child(ImageContainer::new(
+                                "Image loaded from a local file",
+                                self.local_resource.clone(),
+                            ))
+                            .child(ImageContainer::new(
+                                "Image loaded from a remote resource",
+                                self.remote_resource.clone(),
+                            ))
+                            .child(ImageContainer::new(
+                                "Image loaded from an asset",
+                                self.asset_resource.clone(),
+                            )),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .flex_row()
+                            .gap_8()
+                            .child(
+                                div()
+                                    .flex_col()
+                                    .child("Auto Width")
+                                    .child(img("https://picsum.photos/800/400").h(px(180.))),
+                            )
+                            .child(
+                                div()
+                                    .flex_col()
+                                    .child("Auto Height")
+                                    .child(img("https://picsum.photos/800/400").w(px(180.))),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .justify_center()
+                            .items_center()
+                            .w_full()
+                            .border_1()
+                            .border_color(rgb(0xC0C0C0))
+                            .child("image with max width 100%")
+                            .child(img("https://picsum.photos/800/400").max_w_full()),
+                    ),
             )
     }
 }
