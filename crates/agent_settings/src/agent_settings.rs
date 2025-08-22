@@ -539,6 +539,7 @@ impl Settings for AgentSettings {
                 &mut settings.use_modifier_to_send,
                 value.use_modifier_to_send,
             );
+            merge(&mut settings.editor_mode, value.editor_mode);
 
             settings
                 .model_parameters
