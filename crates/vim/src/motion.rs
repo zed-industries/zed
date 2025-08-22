@@ -1612,7 +1612,7 @@ fn up_down_buffer_rows(
 
     let point = DisplayPoint::new(begin_folded_line.row(), new_col);
     let mut clipped_point = map.clip_point(point, bias);
-    
+
     // When navigating vertically in vim mode with inlay hints present,
     // we need to handle the case where clipping moves us to a different row.
     // This can happen when moving down (Bias::Right) and hitting an inlay hint.
