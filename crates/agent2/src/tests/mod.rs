@@ -1079,9 +1079,176 @@ async fn test_mcp_tools(cx: &mut TestAppContext) {
 
     // Ensure the tool results were inserted with the correct names.
     let completion = fake_model.pending_completions().pop().unwrap();
-    assert_eq!(completion.messages.last().unwrap().content, vec![]);
+    assert_eq!(
+        completion.messages.last().unwrap().content,
+        vec![
+            MessageContent::ToolResult(LanguageModelToolResult {
+                tool_use_id: "tool_3".into(),
+                tool_name: "echo".into(),
+                is_error: false,
+                content: "native".into(),
+                output: Some("native".into()),
+            },),
+            MessageContent::ToolResult(LanguageModelToolResult {
+                tool_use_id: "tool_2".into(),
+                tool_name: "test_server_echo".into(),
+                is_error: false,
+                content: "mcp".into(),
+                output: Some("mcp".into()),
+            },),
+        ]
+    );
     fake_model.end_last_completion_stream();
     events.collect::<Vec<_>>().await;
+}
+
+#[gpui::test]
+async fn test_mcp_tool_truncation(cx: &mut TestAppContext) {
+    let ThreadTest {
+        model,
+        thread,
+        context_server_store,
+        fs,
+        ..
+    } = setup(cx, TestModel::Fake).await;
+    let fake_model = model.as_fake();
+
+    // Set up a profile with all tools enabled
+    fs.insert_file(
+        paths::settings_file(),
+        json!({
+            "agent": {
+                "profiles": {
+                    "test": {
+                        "name": "Test Profile",
+                        "enable_all_context_servers": true,
+                        "tools": {
+                            EchoTool::name(): true,
+                            DelayTool::name(): true,
+                            WordListTool::name(): true,
+                            ToolRequiringPermission::name(): true,
+                            InfiniteTool::name(): true,
+                        }
+                    },
+                }
+            }
+        })
+        .to_string()
+        .into_bytes(),
+    )
+    .await;
+    cx.run_until_parked();
+
+    thread.update(cx, |thread, _| {
+        thread.set_profile(AgentProfileId("test".into()));
+        thread.add_tool(EchoTool);
+        thread.add_tool(DelayTool);
+        thread.add_tool(WordListTool);
+        thread.add_tool(ToolRequiringPermission);
+        thread.add_tool(InfiniteTool);
+    });
+
+    // Set up multiple context servers with some overlapping tool names
+    let _server1_calls = setup_context_server(
+        "xxx",
+        vec![
+            context_server::types::Tool {
+                name: "echo".into(), // Conflicts with native EchoTool
+                description: None,
+                input_schema: serde_json::to_value(
+                    EchoTool.input_schema(LanguageModelToolSchemaFormat::JsonSchema),
+                )
+                .unwrap(),
+                output_schema: None,
+                annotations: None,
+            },
+            context_server::types::Tool {
+                name: "unique_tool_1".into(),
+                description: None,
+                input_schema: json!({"type": "object", "properties": {}}),
+                output_schema: None,
+                annotations: None,
+            },
+        ],
+        &context_server_store,
+        cx,
+    );
+
+    let _server2_calls = setup_context_server(
+        "yyy",
+        vec![
+            context_server::types::Tool {
+                name: "echo".into(), // Also conflicts with native EchoTool
+                description: None,
+                input_schema: serde_json::to_value(
+                    EchoTool.input_schema(LanguageModelToolSchemaFormat::JsonSchema),
+                )
+                .unwrap(),
+                output_schema: None,
+                annotations: None,
+            },
+            context_server::types::Tool {
+                name: "unique_tool_2".into(),
+                description: None,
+                input_schema: json!({"type": "object", "properties": {}}),
+                output_schema: None,
+                annotations: None,
+            },
+            context_server::types::Tool {
+                name: "a".repeat(MAX_TOOL_NAME_LENGTH - 1),
+                description: None,
+                input_schema: json!({"type": "object", "properties": {}}),
+                output_schema: None,
+                annotations: None,
+            },
+            context_server::types::Tool {
+                name: "b".repeat(MAX_TOOL_NAME_LENGTH),
+                description: None,
+                input_schema: json!({"type": "object", "properties": {}}),
+                output_schema: None,
+                annotations: None,
+            },
+        ],
+        &context_server_store,
+        cx,
+    );
+    let _server3_calls = setup_context_server(
+        "zzz",
+        vec![
+            context_server::types::Tool {
+                name: "a".repeat(MAX_TOOL_NAME_LENGTH - 1),
+                description: None,
+                input_schema: json!({"type": "object", "properties": {}}),
+                output_schema: None,
+                annotations: None,
+            },
+            context_server::types::Tool {
+                name: "b".repeat(MAX_TOOL_NAME_LENGTH),
+                description: None,
+                input_schema: json!({"type": "object", "properties": {}}),
+                output_schema: None,
+                annotations: None,
+            },
+            context_server::types::Tool {
+                name: "c".repeat(MAX_TOOL_NAME_LENGTH + 1),
+                description: None,
+                input_schema: json!({"type": "object", "properties": {}}),
+                output_schema: None,
+                annotations: None,
+            },
+        ],
+        &context_server_store,
+        cx,
+    );
+
+    thread
+        .update(cx, |thread, cx| {
+            thread.send(UserMessageId::new(), ["Go"], cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+    let completion = fake_model.pending_completions().pop().unwrap();
+    assert_eq!(tool_names_for_completion(&completion), vec![""]);
 }
 
 #[gpui::test]
