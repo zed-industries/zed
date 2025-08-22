@@ -157,6 +157,7 @@ members = [
     "crates/supermaven",
     "crates/system_specs",
     "crates/supermaven_api",
+    "crates/ninetyfive",
     "crates/svg_preview",
     "crates/tab_switcher",
     "crates/task",
@@ -333,6 +334,7 @@ mistral = { path = "crates/mistral" }
 multi_buffer = { path = "crates/multi_buffer" }
 nc = { path = "crates/nc" }
 net = { path = "crates/net" }
+ninetyfive = { path = "crates/ninetyfive" }
 node_runtime = { path = "crates/node_runtime" }
 notifications = { path = "crates/notifications" }
 ollama = { path = "crates/ollama" }

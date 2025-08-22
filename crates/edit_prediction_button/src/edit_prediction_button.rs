@@ -15,6 +15,7 @@ use language::{
     EditPredictionsMode, File, Language,
     language_settings::{self, AllLanguageSettings, EditPredictionProvider, all_language_settings},
 };
+use ninetyfive::NinetyFive;
 use project::DisableAiSettings;
 use regex::Regex;
 use settings::{Settings, SettingsStore, update_settings_file};
@@ -361,6 +362,94 @@ impl Render for EditPredictionButton {
 
                 div().child(popover_menu.into_any_element())
             }
+
+            EditPredictionProvider::NinetyFive => {
+                let Some(ninetyfive) = NinetyFive::global(cx) else {
+                    return div();
+                };
+
+                let enabled = self.editor_enabled.unwrap_or(true);
+                let status = ninetyfive.read(cx);
+
+                let icon = match status {
+                    NinetyFive::Error { .. } => IconName::AiMistral,
+                    NinetyFive::Ready { .. } => {
+                        if enabled {
+                            IconName::AiMistral
+                        } else {
+                            IconName::AiMistral // No disabled variant, use same icon
+                        }
+                    }
+                    _ => IconName::AiMistral,
+                };
+
+                let tooltip_text = match status {
+                    NinetyFive::Starting => "NinetyFive is starting...",
+                    NinetyFive::Ready => "NinetyFive",
+                    NinetyFive::Error { .. } => "NinetyFive error",
+                };
+
+                let has_error = matches!(status, NinetyFive::Error { .. });
+                let is_ready = matches!(status, NinetyFive::Ready);
+
+                let fs = self.fs.clone();
+                let this = cx.entity().clone();
+
+                return div().child(
+                    PopoverMenu::new("ninetyfive")
+                        .menu(move |window, cx| {
+                            if is_ready {
+                                //TODO nothing???
+                                Some(ContextMenu::build(window, cx, |menu, _, _| {
+                                    let fs = fs.clone();
+                                    menu.entry("Use Copilot", None, move |_, cx| {
+                                        set_completion_provider(
+                                            fs.clone(),
+                                            cx,
+                                            EditPredictionProvider::Copilot,
+                                        )
+                                    })
+                                }))
+                            } else {
+                                Some(ContextMenu::build(window, cx, |menu, _, _| {
+                                    let fs = fs.clone();
+                                    menu.entry("Use Copilot", None, move |_, cx| {
+                                        set_completion_provider(
+                                            fs.clone(),
+                                            cx,
+                                            EditPredictionProvider::Copilot,
+                                        )
+                                    })
+                                }))
+                            }
+                        })
+                        .anchor(Corner::BottomRight)
+                        .trigger_with_tooltip(
+                            IconButton::new("codestral-icon", icon)
+                                .shape(IconButtonShape::Square)
+                                .when(has_error, |this| {
+                                    this.indicator(Indicator::dot().color(Color::Error))
+                                        .indicator_border_color(Some(
+                                            cx.theme().colors().status_bar_background,
+                                        ))
+                                })
+                                .when(enabled && !has_error && is_ready, |this| {
+                                    this.indicator(Indicator::dot().color(Color::Muted))
+                                        .indicator_border_color(Some(
+                                            cx.theme().colors().status_bar_background,
+                                        ))
+                                }),
+                            move |window, cx| {
+                                if is_ready {
+                                    Tooltip::for_action(tooltip_text, &ToggleMenu, window, cx)
+                                } else {
+                                    Tooltip::text(tooltip_text)(window, cx)
+                                }
+                            },
+                        )
+                        .with_handle(self.popover_menu_handle.clone()),
+                );
+            }
         }
     }
 }
@@ -496,6 +585,7 @@ impl EditPredictionButton {
             EditPredictionProvider::Zed
                 | EditPredictionProvider::Copilot
                 | EditPredictionProvider::Supermaven
+                | EditPredictionProvider::NinetyFive
         ) {
             menu = menu
                 .separator()

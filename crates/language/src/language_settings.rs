@@ -215,6 +215,7 @@ pub enum EditPredictionProvider {
     Copilot,
     Supermaven,
     Zed,
+    NinetyFive,
 }
 
 impl EditPredictionProvider {
@@ -223,7 +224,8 @@ impl EditPredictionProvider {
             EditPredictionProvider::Zed => true,
             EditPredictionProvider::None
             | EditPredictionProvider::Copilot
-            | EditPredictionProvider::Supermaven => false,
+            | EditPredictionProvider::Supermaven
+            | EditPredictionProvider::NinetyFive => false,
         }
     }
 }
