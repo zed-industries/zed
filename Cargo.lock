@@ -40,6 +40,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "acp_tools"
+version = "0.1.0"
+dependencies = [
+ "agent-client-protocol",
+ "collections",
+ "gpui",
+ "language",
+ "markdown",
+ "project",
+ "serde",
+ "serde_json",
+ "settings",
+ "theme",
+ "ui",
+ "util",
+ "workspace",
+ "workspace-hack",
+]
+
+[[package]]
 name = "action_log"
 version = "0.1.0"
 dependencies = [
@@ -171,11 +191,12 @@ dependencies = [
 
 [[package]]
 name = "agent-client-protocol"
-version = "0.0.30"
+version = "0.0.31"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5f792e009ba59b137ee1db560bc37e567887ad4b5af6f32181d381fff690e2d4"
+checksum = "289eb34ee17213dadcca47eedadd386a5e7678094095414e475965d1bcca2860"
 dependencies = [
  "anyhow",
+ "async-broadcast",
  "futures 0.3.31",
  "log",
  "parking_lot",
@@ -264,6 +285,7 @@ name = "agent_servers"
 version = "0.1.0"
 dependencies = [
  "acp_thread",
+ "acp_tools",
  "action_log",
  "agent-client-protocol",
  "agent_settings",
@@ -20417,6 +20439,7 @@ dependencies = [
 name = "zed"
 version = "0.202.0"
 dependencies = [
+ "acp_tools",
  "activity_indicator",
  "agent",
  "agent_servers",
