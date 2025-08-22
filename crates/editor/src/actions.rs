@@ -753,6 +753,8 @@ actions!(
         UniqueLinesCaseInsensitive,
         /// Removes duplicate lines (case-sensitive).
         UniqueLinesCaseSensitive,
-        UnwrapSyntaxNode
+        UnwrapSyntaxNode,
+        /// Wraps in an HTML tag.
+        WrapInTag
     ]
 );

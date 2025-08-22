@@ -4404,6 +4404,109 @@ async fn test_unique_lines_single_selection(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_wrap_in_tag_single_selection(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    let js_language = Arc::new(Language::new(
+        LanguageConfig {
+            name: "JavaScript".into(),
+            ..LanguageConfig::default()
+        },
+        None,
+    ));
+
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(js_language), cx));
+
+    cx.set_state(indoc! {"
+        «testˇ»
+    "});
+    cx.update_editor(|e, window, cx| e.wrap_in_tag(&WrapInTag, window, cx));
+    cx.assert_editor_state(indoc! {"
+        <«ˇ»>test</«ˇ»>
+    "});
+
+    cx.set_state(indoc! {"
+        «test
+         testˇ»
+    "});
+    cx.update_editor(|e, window, cx| e.wrap_in_tag(&WrapInTag, window, cx));
+    cx.assert_editor_state(indoc! {"
+        <«ˇ»>test
+         test</«ˇ»>
+    "});
+}
+
+#[gpui::test]
+async fn test_wrap_in_tag_multi_selection(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    let js_language = Arc::new(Language::new(
+        LanguageConfig {
+            name: "JavaScript".into(),
+            ..LanguageConfig::default()
+        },
+        None,
+    ));
+
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(js_language), cx));
+
+    cx.set_state(indoc! {"
+        «testˇ»
+        «testˇ» «testˇ»
+        «testˇ»
+    "});
+    cx.update_editor(|e, window, cx| e.wrap_in_tag(&WrapInTag, window, cx));
+    cx.assert_editor_state(indoc! {"
+        <«ˇ»>test</«ˇ»>
+        <«ˇ»>test</«ˇ»> <«ˇ»>test</«ˇ»>
+        <«ˇ»>test</«ˇ»>
+    "});
+
+    cx.set_state(indoc! {"
+        «test
+         testˇ»
+        «test
+         testˇ»
+    "});
+    cx.update_editor(|e, window, cx| e.wrap_in_tag(&WrapInTag, window, cx));
+    cx.assert_editor_state(indoc! {"
+        <«ˇ»>test
+         test</«ˇ»>
+        <«ˇ»>test
+         test</«ˇ»>
+    "});
+}
+
+#[gpui::test]
+async fn test_wrap_in_tag_does_nothing_in_unsupported_languages(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    let plaintext_language = Arc::new(Language::new(
+        LanguageConfig {
+            name: "Plain Text".into(),
+            ..LanguageConfig::default()
+        },
+        None,
+    ));
+
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(plaintext_language), cx));
+
+    cx.set_state(indoc! {"
+        «testˇ»
+    "});
+    cx.update_editor(|e, window, cx| e.wrap_in_tag(&WrapInTag, window, cx));
+    cx.assert_editor_state(indoc! {"
+      «testˇ»
+    "});
+}
+
+#[gpui::test]
 async fn test_manipulate_immutable_lines_with_multi_selection(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 

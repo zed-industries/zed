@@ -10447,6 +10447,132 @@ impl Editor {
         })
     }
 
+    pub fn supports_wrap_in_tag(&self, cx: &App) -> bool {
+        let Some((_, buffer, _)) = self.active_excerpt(cx) else {
+            return false;
+        };
+
+        let Some(language) = buffer.read(cx).language() else {
+            return false;
+        };
+
+        let tag_languages = vec![
+            "astro",
+            "html",
+            "javascript",
+            "typescript",
+            "svelte",
+            "tsx",
+            "vue.js",
+        ];
+
+        let lsp_id = language.lsp_id();
+
+        return tag_languages.into_iter().any(|s| s == lsp_id);
+    }
+
+    pub fn wrap_in_tag(&mut self, _: &WrapInTag, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.supports_wrap_in_tag(cx) {
+            return;
+        }
+
+        self.hide_mouse_cursor(HideMouseCursorOrigin::TypingAction, cx);
+
+        let buffer = self.buffer.read(cx).snapshot(cx);
+        let mut edits = Vec::new();
+
+        let selections = self.selections.all::<Point>(cx);
+        let mut selections = selections.iter();
+
+        let mut new_selections = Vec::new();
+        let mut selection_id = 0;
+        let mut last_row = 0;
+        let mut col_offset = 0;
+
+        while let Some(selection) = selections.next() {
+            let mut start_point = selection.start;
+            let mut end_point = selection.end;
+
+            let mut text = buffer
+                .text_for_range(start_point..end_point)
+                .collect::<String>();
+
+            text.insert_str(0, "<>");
+            text.push_str("</>");
+
+            edits.push((start_point..end_point, text));
+
+            // When this selection is on a different row than the previous one
+            // there's no need to offset subsequent selections
+            if end_point.row != last_row {
+                col_offset = 0;
+            }
+
+            start_point.column += col_offset;
+            end_point.column += col_offset;
+
+            // Put cursor into the opening tag
+            start_point.column += 1;
+            col_offset += 1;
+            new_selections.push(Selection {
+                id: selection_id,
+                start: start_point,
+                end: start_point,
+                goal: SelectionGoal::None,
+                reversed: false,
+            });
+
+            selection_id += 1;
+
+            // When start and end are on the same row then the column
+            // needs to be offset by two additional chars.
+            if start_point.row == end_point.row {
+                end_point.column += 2;
+                col_offset += 2;
+            }
+
+            // Put another cursor into the closing tag
+            end_point.column += 2;
+            col_offset += 2;
+
+            new_selections.push(Selection {
+                id: selection_id,
+                start: end_point,
+                end: end_point,
+                goal: SelectionGoal::None,
+                reversed: false,
+            });
+
+            selection_id += 1;
+            last_row = end_point.row;
+        }
+
+        self.transact(window, cx, |this, window, cx| {
+            let buffer = this.buffer.update(cx, |buffer, cx| {
+                buffer.edit(edits, None, cx);
+                buffer.snapshot(cx)
+            });
+
+            // Recalculate offsets on newly edited buffer
+            let new_selections = new_selections
+                .iter()
+                .map(|s| Selection {
+                    id: s.id,
+                    start: buffer.point_to_offset(s.start),
+                    end: buffer.point_to_offset(s.end),
+                    goal: s.goal,
+                    reversed: s.reversed,
+                })
+                .collect();
+
+            this.change_selections(Default::default(), window, cx, |s| {
+                s.select(new_selections);
+            });
+
+            this.request_autoscroll(Autoscroll::fit(), cx);
+        });
+    }
+
     pub fn reload_file(&mut self, _: &ReloadFile, window: &mut Window, cx: &mut Context<Self>) {
         let Some(project) = self.project.clone() else {
             return;
