@@ -2,9 +2,10 @@ use std::{path::PathBuf, sync::Arc};
 
 use gpui::{EventEmitter, FocusHandle, Focusable};
 use ui::{
-    App, Button, Clickable, Context, FluentBuilder, InteractiveElement, ParentElement, Render,
-    SharedString, Styled as _, Window, h_flex, v_flex,
+    App, Button, ButtonCommon, ButtonStyle, Clickable, Context, FluentBuilder, InteractiveElement,
+    KeyBinding, ParentElement, Render, SharedString, Styled as _, Window, h_flex, v_flex,
 };
+use zed_actions::workspace::OpenWithSystem;
 
 use crate::Item;
 
@@ -73,7 +74,7 @@ impl Focusable for InvalidBufferView {
 }
 
 impl Render for InvalidBufferView {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl gpui::IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl gpui::IntoElement {
         let abs_path = self.abs_path.clone();
         v_flex()
             .size_full()
@@ -89,13 +90,20 @@ impl Render for InvalidBufferView {
                         .gap_2()
                         .child("Cannot display the file contents in Zed")
                         .when(self.is_local, |contents| {
-                            contents.child(h_flex().justify_center().child(
-                                Button::new("open-with-system", "Open in Default App").on_click(
-                                    move |_, _, cx| {
-                                        cx.open_with_system(&abs_path);
-                                    },
+                            contents.child(
+                                h_flex().justify_center().child(
+                                    Button::new("open-with-system", "Open in Default App")
+                                        .on_click(move |_, _, cx| {
+                                            cx.open_with_system(&abs_path);
+                                        })
+                                        .style(ButtonStyle::Outlined)
+                                        .key_binding(KeyBinding::for_action(
+                                            &OpenWithSystem,
+                                            window,
+                                            cx,
+                                        )),
                                 ),
-                            ))
+                            )
                         }),
                 ),
             )
