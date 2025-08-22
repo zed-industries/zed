@@ -627,7 +627,7 @@ impl Thread {
         stream: &ThreadEventStream,
         cx: &mut Context<Self>,
     ) {
-        let Some(tool) = self.tools.get(tool_use.name.as_ref()) else {
+        let Some(tool) = self.tool(tool_use.name.as_ref(), cx) else {
             stream
                 .0
                 .unbounded_send(Ok(ThreadEvent::ToolCall(acp::ToolCall {
@@ -1417,7 +1417,7 @@ impl Thread {
     ) -> Option<Task<LanguageModelToolResult>> {
         cx.notify();
 
-        let tool = self.tools.get(tool_use.name.as_ref()).cloned();
+        let tool = self.tool(tool_use.name.as_ref(), cx);
         let mut title = SharedString::from(&tool_use.name);
         let mut kind = acp::ToolKind::Other;
         if let Some(tool) = tool.as_ref() {
@@ -1801,6 +1801,14 @@ impl Thread {
                     })
                 },
             )))
+    }
+
+    fn tool(&self, name: &str, cx: &App) -> Option<Arc<dyn AnyAgentTool>> {
+        if let Ok(mut tools) = self.tools(cx) {
+            tools.find(|tool| tool.name() == name).cloned()
+        } else {
+            None
+        }
     }
 
     fn build_request_messages(&self, cx: &App) -> Vec<LanguageModelRequestMessage> {
