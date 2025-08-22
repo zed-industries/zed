@@ -209,11 +209,11 @@ impl FileFinder {
         let Some(init_modifiers) = self.init_modifiers.take() else {
             return;
         };
-        if self.picker.read(cx).delegate.has_changed_selected_index {
-            if !event.modified() || !init_modifiers.is_subset_of(&event) {
-                self.init_modifiers = None;
-                window.dispatch_action(menu::Confirm.boxed_clone(), cx);
-            }
+        if self.picker.read(cx).delegate.has_changed_selected_index
+            && (!event.modified() || !init_modifiers.is_subset_of(event))
+        {
+            self.init_modifiers = None;
+            window.dispatch_action(menu::Confirm.boxed_clone(), cx);
         }
     }
 
@@ -267,10 +267,9 @@ impl FileFinder {
     ) {
         self.picker.update(cx, |picker, cx| {
             picker.delegate.include_ignored = match picker.delegate.include_ignored {
-                Some(true) => match FileFinderSettings::get_global(cx).include_ignored {
-                    Some(_) => Some(false),
-                    None => None,
-                },
+                Some(true) => FileFinderSettings::get_global(cx)
+                    .include_ignored
+                    .map(|_| false),
                 Some(false) => Some(true),
                 None => Some(true),
             };
@@ -323,27 +322,27 @@ impl FileFinder {
     ) {
         self.picker.update(cx, |picker, cx| {
             let delegate = &mut picker.delegate;
-            if let Some(workspace) = delegate.workspace.upgrade() {
-                if let Some(m) = delegate.matches.get(delegate.selected_index()) {
-                    let path = match &m {
-                        Match::History { path, .. } => {
-                            let worktree_id = path.project.worktree_id;
-                            ProjectPath {
-                                worktree_id,
-                                path: Arc::clone(&path.project.path),
-                            }
+            if let Some(workspace) = delegate.workspace.upgrade()
+                && let Some(m) = delegate.matches.get(delegate.selected_index())
+            {
+                let path = match &m {
+                    Match::History { path, .. } => {
+                        let worktree_id = path.project.worktree_id;
+                        ProjectPath {
+                            worktree_id,
+                            path: Arc::clone(&path.project.path),
                         }
-                        Match::Search(m) => ProjectPath {
-                            worktree_id: WorktreeId::from_usize(m.0.worktree_id),
-                            path: m.0.path.clone(),
-                        },
-                        Match::CreateNew(p) => p.clone(),
-                    };
-                    let open_task = workspace.update(cx, move |workspace, cx| {
-                        workspace.split_path_preview(path, false, Some(split_direction), window, cx)
-                    });
-                    open_task.detach_and_log_err(cx);
-                }
+                    }
+                    Match::Search(m) => ProjectPath {
+                        worktree_id: WorktreeId::from_usize(m.0.worktree_id),
+                        path: m.0.path.clone(),
+                    },
+                    Match::CreateNew(p) => p.clone(),
+                };
+                let open_task = workspace.update(cx, move |workspace, cx| {
+                    workspace.split_path_preview(path, false, Some(split_direction), window, cx)
+                });
+                open_task.detach_and_log_err(cx);
             }
         })
     }
@@ -497,7 +496,7 @@ impl Match {
     fn panel_match(&self) -> Option<&ProjectPanelOrdMatch> {
         match self {
             Match::History { panel_match, .. } => panel_match.as_ref(),
-            Match::Search(panel_match) => Some(&panel_match),
+            Match::Search(panel_match) => Some(panel_match),
             Match::CreateNew(_) => None,
         }
     }
@@ -537,7 +536,7 @@ impl Matches {
             self.matches.binary_search_by(|m| {
                 // `reverse()` since if cmp_matches(a, b) == Ordering::Greater, then a is better than b.
                 // And we want the better entries go first.
-                Self::cmp_matches(self.separate_history, currently_opened, &m, &entry).reverse()
+                Self::cmp_matches(self.separate_history, currently_opened, m, entry).reverse()
             })
         }
     }
@@ -675,17 +674,17 @@ impl Matches {
             let path_str = panel_match.0.path.to_string_lossy();
             let filename_str = filename.to_string_lossy();
 
-            if let Some(filename_pos) = path_str.rfind(&*filename_str) {
-                if panel_match.0.positions[0] >= filename_pos {
-                    let mut prev_position = panel_match.0.positions[0];
-                    for p in &panel_match.0.positions[1..] {
-                        if *p != prev_position + 1 {
-                            return false;
-                        }
-                        prev_position = *p;
+            if let Some(filename_pos) = path_str.rfind(&*filename_str)
+                && panel_match.0.positions[0] >= filename_pos
+            {
+                let mut prev_position = panel_match.0.positions[0];
+                for p in &panel_match.0.positions[1..] {
+                    if *p != prev_position + 1 {
+                        return false;
                     }
-                    return true;
+                    prev_position = *p;
                 }
+                return true;
             }
         }
 
@@ -878,9 +877,7 @@ impl FileFinderDelegate {
                 PathMatchCandidateSet {
                     snapshot: worktree.snapshot(),
                     include_ignored: self.include_ignored.unwrap_or_else(|| {
-                        worktree
-                            .root_entry()
-                            .map_or(false, |entry| entry.is_ignored)
+                        worktree.root_entry().is_some_and(|entry| entry.is_ignored)
                     }),
                     include_root_name,
                     candidates: project::Candidates::Files,
@@ -1045,10 +1042,10 @@ impl FileFinderDelegate {
                         )
                     } else {
                         let mut path = Arc::clone(project_relative_path);
-                        if project_relative_path.as_ref() == Path::new("") {
-                            if let Some(absolute_path) = &entry_path.absolute {
-                                path = Arc::from(absolute_path.as_path());
-                            }
+                        if project_relative_path.as_ref() == Path::new("")
+                            && let Some(absolute_path) = &entry_path.absolute
+                        {
+                            path = Arc::from(absolute_path.as_path());
                         }
 
                         let mut path_match = PathMatch {
@@ -1078,23 +1075,21 @@ impl FileFinderDelegate {
                 ),
             };
 
-        if file_name_positions.is_empty() {
-            if let Some(user_home_path) = std::env::var("HOME").ok() {
-                let user_home_path = user_home_path.trim();
-                if !user_home_path.is_empty() {
-                    if (&full_path).starts_with(user_home_path) {
-                        full_path.replace_range(0..user_home_path.len(), "~");
-                        full_path_positions.retain_mut(|pos| {
-                            if *pos >= user_home_path.len() {
-                                *pos -= user_home_path.len();
-                                *pos += 1;
-                                true
-                            } else {
-                                false
-                            }
-                        })
+        if file_name_positions.is_empty()
+            && let Some(user_home_path) = std::env::var("HOME").ok()
+        {
+            let user_home_path = user_home_path.trim();
+            if !user_home_path.is_empty() && full_path.starts_with(user_home_path) {
+                full_path.replace_range(0..user_home_path.len(), "~");
+                full_path_positions.retain_mut(|pos| {
+                    if *pos >= user_home_path.len() {
+                        *pos -= user_home_path.len();
+                        *pos += 1;
+                        true
+                    } else {
+                        false
                     }
-                }
+                })
             }
         }
 
@@ -1242,14 +1237,13 @@ impl FileFinderDelegate {
 
     /// Skips first history match (that is displayed topmost) if it's currently opened.
     fn calculate_selected_index(&self, cx: &mut Context<Picker<Self>>) -> usize {
-        if FileFinderSettings::get_global(cx).skip_focus_for_active_in_search {
-            if let Some(Match::History { path, .. }) = self.matches.get(0) {
-                if Some(path) == self.currently_opened_path.as_ref() {
-                    let elements_after_first = self.matches.len() - 1;
-                    if elements_after_first > 0 {
-                        return 1;
-                    }
-                }
+        if FileFinderSettings::get_global(cx).skip_focus_for_active_in_search
+            && let Some(Match::History { path, .. }) = self.matches.get(0)
+            && Some(path) == self.currently_opened_path.as_ref()
+        {
+            let elements_after_first = self.matches.len() - 1;
+            if elements_after_first > 0 {
+                return 1;
             }
         }
 
@@ -1310,10 +1304,10 @@ impl PickerDelegate for FileFinderDelegate {
                 .enumerate()
                 .find(|(_, m)| !matches!(m, Match::History { .. }))
                 .map(|(i, _)| i);
-            if let Some(first_non_history_index) = first_non_history_index {
-                if first_non_history_index > 0 {
-                    return vec![first_non_history_index - 1];
-                }
+            if let Some(first_non_history_index) = first_non_history_index
+                && first_non_history_index > 0
+            {
+                return vec![first_non_history_index - 1];
             }
         }
         Vec::new()
@@ -1402,7 +1396,7 @@ impl PickerDelegate for FileFinderDelegate {
             cx.notify();
             Task::ready(())
         } else {
-            let path_position = PathWithPosition::parse_str(&raw_query);
+            let path_position = PathWithPosition::parse_str(raw_query);
 
             #[cfg(windows)]
             let raw_query = raw_query.trim().to_owned().replace("/", "\\");
@@ -1436,69 +1430,101 @@ impl PickerDelegate for FileFinderDelegate {
         window: &mut Window,
         cx: &mut Context<Picker<FileFinderDelegate>>,
     ) {
-        if let Some(m) = self.matches.get(self.selected_index()) {
-            if let Some(workspace) = self.workspace.upgrade() {
-                let open_task = workspace.update(cx, |workspace, cx| {
-                    let split_or_open =
-                        |workspace: &mut Workspace,
-                         project_path,
-                         window: &mut Window,
-                         cx: &mut Context<Workspace>| {
-                            let allow_preview =
-                                PreviewTabsSettings::get_global(cx).enable_preview_from_file_finder;
-                            if secondary {
-                                workspace.split_path_preview(
-                                    project_path,
-                                    allow_preview,
-                                    None,
-                                    window,
-                                    cx,
-                                )
-                            } else {
-                                workspace.open_path_preview(
-                                    project_path,
-                                    None,
-                                    true,
-                                    allow_preview,
-                                    true,
-                                    window,
-                                    cx,
-                                )
-                            }
-                        };
-                    match &m {
-                        Match::CreateNew(project_path) => {
-                            // Create a new file with the given filename
-                            if secondary {
-                                workspace.split_path_preview(
-                                    project_path.clone(),
-                                    false,
-                                    None,
-                                    window,
-                                    cx,
-                                )
-                            } else {
-                                workspace.open_path_preview(
-                                    project_path.clone(),
-                                    None,
-                                    true,
-                                    false,
-                                    true,
-                                    window,
-                                    cx,
-                                )
-                            }
+        if let Some(m) = self.matches.get(self.selected_index())
+            && let Some(workspace) = self.workspace.upgrade()
+        {
+            let open_task = workspace.update(cx, |workspace, cx| {
+                let split_or_open =
+                    |workspace: &mut Workspace,
+                     project_path,
+                     window: &mut Window,
+                     cx: &mut Context<Workspace>| {
+                        let allow_preview =
+                            PreviewTabsSettings::get_global(cx).enable_preview_from_file_finder;
+                        if secondary {
+                            workspace.split_path_preview(
+                                project_path,
+                                allow_preview,
+                                None,
+                                window,
+                                cx,
+                            )
+                        } else {
+                            workspace.open_path_preview(
+                                project_path,
+                                None,
+                                true,
+                                allow_preview,
+                                true,
+                                window,
+                                cx,
+                            )
                         }
+                    };
+                match &m {
+                    Match::CreateNew(project_path) => {
+                        // Create a new file with the given filename
+                        if secondary {
+                            workspace.split_path_preview(
+                                project_path.clone(),
+                                false,
+                                None,
+                                window,
+                                cx,
+                            )
+                        } else {
+                            workspace.open_path_preview(
+                                project_path.clone(),
+                                None,
+                                true,
+                                false,
+                                true,
+                                window,
+                                cx,
+                            )
+                        }
+                    }
 
-                        Match::History { path, .. } => {
-                            let worktree_id = path.project.worktree_id;
-                            if workspace
-                                .project()
-                                .read(cx)
-                                .worktree_for_id(worktree_id, cx)
-                                .is_some()
-                            {
-                                split_or_open(
+                    Match::History { path, .. } => {
+                        let worktree_id = path.project.worktree_id;
+                        if workspace
+                            .project()
+                            .read(cx)
+                            .worktree_for_id(worktree_id, cx)
+                            .is_some()
+                        {
+                            split_or_open(
+                                workspace,
+                                ProjectPath {
+                                    worktree_id,
+                                    path: Arc::clone(&path.project.path),
+                                },
+                                window,
+                                cx,
+                            )
+                        } else {
+                            match path.absolute.as_ref() {
+                                Some(abs_path) => {
+                                    if secondary {
+                                        workspace.split_abs_path(
+                                            abs_path.to_path_buf(),
+                                            false,
+                                            window,
+                                            cx,
+                                        )
+                                    } else {
+                                        workspace.open_abs_path(
+                                            abs_path.to_path_buf(),
+                                            OpenOptions {
+                                                visible: Some(OpenVisible::None),
+                                                ..Default::default()
+                                            },
+                                            window,
+                                            cx,
+                                        )
+                                    }
+                                }
+                                None => split_or_open(
                                     workspace,
                                     ProjectPath {
                                         worktree_id,
@@ -1506,88 +1532,52 @@ impl PickerDelegate for FileFinderDelegate {
                                     },
                                     window,
                                     cx,
-                                )
-                            } else {
-                                match path.absolute.as_ref() {
-                                    Some(abs_path) => {
-                                        if secondary {
-                                            workspace.split_abs_path(
-                                                abs_path.to_path_buf(),
-                                                false,
-                                                window,
-                                                cx,
-                                            )
-                                        } else {
-                                            workspace.open_abs_path(
-                                                abs_path.to_path_buf(),
-                                                OpenOptions {
-                                                    visible: Some(OpenVisible::None),
-                                                    ..Default::default()
-                                                },
-                                                window,
-                                                cx,
-                                            )
-                                        }
-                                    }
-                                    None => split_or_open(
-                                        workspace,
-                                        ProjectPath {
-                                            worktree_id,
-                                            path: Arc::clone(&path.project.path),
-                                        },
-                                        window,
-                                        cx,
-                                    ),
-                                }
+                                ),
                             }
                         }
-                        Match::Search(m) => split_or_open(
-                            workspace,
-                            ProjectPath {
-                                worktree_id: WorktreeId::from_usize(m.0.worktree_id),
-                                path: m.0.path.clone(),
-                            },
-                            window,
-                            cx,
-                        ),
                     }
-                });
+                    Match::Search(m) => split_or_open(
+                        workspace,
+                        ProjectPath {
+                            worktree_id: WorktreeId::from_usize(m.0.worktree_id),
+                            path: m.0.path.clone(),
+                        },
+                        window,
+                        cx,
+                    ),
+                }
+            });
 
-                let row = self
-                    .latest_search_query
-                    .as_ref()
-                    .and_then(|query| query.path_position.row)
-                    .map(|row| row.saturating_sub(1));
-                let col = self
-                    .latest_search_query
-                    .as_ref()
-                    .and_then(|query| query.path_position.column)
-                    .unwrap_or(0)
-                    .saturating_sub(1);
-                let finder = self.file_finder.clone();
+            let row = self
+                .latest_search_query
+                .as_ref()
+                .and_then(|query| query.path_position.row)
+                .map(|row| row.saturating_sub(1));
+            let col = self
+                .latest_search_query
+                .as_ref()
+                .and_then(|query| query.path_position.column)
+                .unwrap_or(0)
+                .saturating_sub(1);
+            let finder = self.file_finder.clone();
 
-                cx.spawn_in(window, async move |_, cx| {
-                    let item = open_task.await.notify_async_err(cx)?;
-                    if let Some(row) = row {
-                        if let Some(active_editor) = item.downcast::<Editor>() {
-                            active_editor
-                                .downgrade()
-                                .update_in(cx, |editor, window, cx| {
-                                    editor.go_to_singleton_buffer_point(
-                                        Point::new(row, col),
-                                        window,
-                                        cx,
-                                    );
-                                })
-                                .log_err();
-                        }
-                    }
-                    finder.update(cx, |_, cx| cx.emit(DismissEvent)).ok()?;
+            cx.spawn_in(window, async move |_, cx| {
+                let item = open_task.await.notify_async_err(cx)?;
+                if let Some(row) = row
+                    && let Some(active_editor) = item.downcast::<Editor>()
+                {
+                    active_editor
+                        .downgrade()
+                        .update_in(cx, |editor, window, cx| {
+                            editor.go_to_singleton_buffer_point(Point::new(row, col), window, cx);
+                        })
+                        .log_err();
+                }
+                finder.update(cx, |_, cx| cx.emit(DismissEvent)).ok()?;
 
-                    Some(())
-                })
-                .detach();
-            }
+                Some(())
+            })
+            .detach();
         }
     }
 
@@ -1759,7 +1749,7 @@ impl PickerDelegate for FileFinderDelegate {
                                         Some(ContextMenu::build(window, cx, {
                                             let focus_handle = focus_handle.clone();
                                             move |menu, _, _| {
-                                                menu.context(focus_handle.clone())
+                                                menu.context(focus_handle)
                                                     .action(
                                                         "Split Left",
                                                         pane::SplitLeft.boxed_clone(),

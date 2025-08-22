@@ -262,13 +262,12 @@ impl ChannelStore {
                         }
                     }
                     status = status_receiver.next().fuse() => {
-                        if let Some(status) = status {
-                            if status.is_connected() {
+                        if let Some(status) = status
+                            && status.is_connected() {
                                 this.update(cx, |this, _cx| {
                                     this.initialize();
                                 }).ok();
                             }
-                        }
                         continue;
                     }
                     _ = timer => {
@@ -336,10 +335,10 @@ impl ChannelStore {
     }
 
     pub fn has_open_channel_buffer(&self, channel_id: ChannelId, _cx: &App) -> bool {
-        if let Some(buffer) = self.opened_buffers.get(&channel_id) {
-            if let OpenEntityHandle::Open(buffer) = buffer {
-                return buffer.upgrade().is_some();
-            }
+        if let Some(buffer) = self.opened_buffers.get(&channel_id)
+            && let OpenEntityHandle::Open(buffer) = buffer
+        {
+            return buffer.upgrade().is_some();
         }
         false
     }
@@ -408,13 +407,12 @@ impl ChannelStore {
 
     pub fn last_acknowledge_message_id(&self, channel_id: ChannelId) -> Option<u64> {
         self.channel_states.get(&channel_id).and_then(|state| {
-            if let Some(last_message_id) = state.latest_chat_message {
-                if state
+            if let Some(last_message_id) = state.latest_chat_message
+                && state
                     .last_acknowledged_message_id()
                     .is_some_and(|id| id < last_message_id)
-                {
-                    return state.last_acknowledged_message_id();
-                }
+            {
+                return state.last_acknowledged_message_id();
             }
 
             None
@@ -570,16 +568,14 @@ impl ChannelStore {
         self.channel_index
             .by_id()
             .get(&channel_id)
-            .map_or(false, |channel| channel.is_root_channel())
+            .is_some_and(|channel| channel.is_root_channel())
     }
 
     pub fn is_public_channel(&self, channel_id: ChannelId) -> bool {
         self.channel_index
             .by_id()
             .get(&channel_id)
-            .map_or(false, |channel| {
-                channel.visibility == ChannelVisibility::Public
-            })
+            .is_some_and(|channel| channel.visibility == ChannelVisibility::Public)
     }
 
     pub fn channel_capability(&self, channel_id: ChannelId) -> Capability {
@@ -910,9 +906,9 @@ impl ChannelStore {
     async fn handle_update_channels(
         this: Entity<Self>,
         message: TypedEnvelope<proto::UpdateChannels>,
-        mut cx: AsyncApp,
+        cx: AsyncApp,
     ) -> Result<()> {
-        this.read_with(&mut cx, |this, _| {
+        this.read_with(&cx, |this, _| {
             this.update_channels_tx
                 .unbounded_send(message.payload)
                 .unwrap();
@@ -962,27 +958,27 @@ impl ChannelStore {
         self.disconnect_channel_buffers_task.take();
 
         for chat in self.opened_chats.values() {
-            if let OpenEntityHandle::Open(chat) = chat {
-                if let Some(chat) = chat.upgrade() {
-                    chat.update(cx, |chat, cx| {
-                        chat.rejoin(cx);
-                    });
-                }
+            if let OpenEntityHandle::Open(chat) = chat
+                && let Some(chat) = chat.upgrade()
+            {
+                chat.update(cx, |chat, cx| {
+                    chat.rejoin(cx);
+                });
             }
         }
 
         let mut buffer_versions = Vec::new();
         for buffer in self.opened_buffers.values() {
-            if let OpenEntityHandle::Open(buffer) = buffer {
-                if let Some(buffer) = buffer.upgrade() {
-                    let channel_buffer = buffer.read(cx);
-                    let buffer = channel_buffer.buffer().read(cx);
-                    buffer_versions.push(proto::ChannelBufferVersion {
-                        channel_id: channel_buffer.channel_id.0,
-                        epoch: channel_buffer.epoch(),
-                        version: language::proto::serialize_version(&buffer.version()),
-                    });
-                }
+            if let OpenEntityHandle::Open(buffer) = buffer
+                && let Some(buffer) = buffer.upgrade()
+            {
+                let channel_buffer = buffer.read(cx);
+                let buffer = channel_buffer.buffer().read(cx);
+                buffer_versions.push(proto::ChannelBufferVersion {
+                    channel_id: channel_buffer.channel_id.0,
+                    epoch: channel_buffer.epoch(),
+                    version: language::proto::serialize_version(&buffer.version()),
+                });
             }
         }
 
@@ -1077,11 +1073,11 @@ impl ChannelStore {
 
                 if let Some(this) = this.upgrade() {
                     this.update(cx, |this, cx| {
-                        for (_, buffer) in &this.opened_buffers {
-                            if let OpenEntityHandle::Open(buffer) = &buffer {
-                                if let Some(buffer) = buffer.upgrade() {
-                                    buffer.update(cx, |buffer, cx| buffer.disconnect(cx));
-                                }
+                        for buffer in this.opened_buffers.values() {
+                            if let OpenEntityHandle::Open(buffer) = &buffer
+                                && let Some(buffer) = buffer.upgrade()
+                            {
+                                buffer.update(cx, |buffer, cx| buffer.disconnect(cx));
                             }
                         }
                     })
@@ -1157,10 +1153,9 @@ impl ChannelStore {
                     }
                     if let Some(OpenEntityHandle::Open(buffer)) =
                         self.opened_buffers.remove(&channel_id)
+                        && let Some(buffer) = buffer.upgrade()
                     {
-                        if let Some(buffer) = buffer.upgrade() {
-                            buffer.update(cx, ChannelBuffer::disconnect);
-                        }
+                        buffer.update(cx, ChannelBuffer::disconnect);
                     }
                 }
             }
@@ -1170,12 +1165,11 @@ impl ChannelStore {
                 let id = ChannelId(channel.id);
                 let channel_changed = index.insert(channel);
 
-                if channel_changed {
-                    if let Some(OpenEntityHandle::Open(buffer)) = self.opened_buffers.get(&id) {
-                        if let Some(buffer) = buffer.upgrade() {
-                            buffer.update(cx, ChannelBuffer::channel_changed);
-                        }
-                    }
+                if channel_changed
+                    && let Some(OpenEntityHandle::Open(buffer)) = self.opened_buffers.get(&id)
+                    && let Some(buffer) = buffer.upgrade()
+                {
+                    buffer.update(cx, ChannelBuffer::channel_changed);
                 }
             }
 

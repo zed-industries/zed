@@ -42,7 +42,7 @@ impl RenderOnce for ComponentExample {
                             div()
                                 .text_size(rems(0.875))
                                 .text_color(cx.theme().colors().text_muted)
-                                .child(description.clone()),
+                                .child(description),
                         )
                     }),
             )

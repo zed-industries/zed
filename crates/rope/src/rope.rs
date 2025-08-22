@@ -31,22 +31,21 @@ impl Rope {
     }
 
     pub fn append(&mut self, rope: Rope) {
-        if let Some(chunk) = rope.chunks.first() {
-            if self
+        if let Some(chunk) = rope.chunks.first()
+            && (self
                 .chunks
                 .last()
-                .map_or(false, |c| c.text.len() < chunk::MIN_BASE)
-                || chunk.text.len() < chunk::MIN_BASE
-            {
-                self.push_chunk(chunk.as_slice());
+                .is_some_and(|c| c.text.len() < chunk::MIN_BASE)
+                || chunk.text.len() < chunk::MIN_BASE)
+        {
+            self.push_chunk(chunk.as_slice());
 
-                let mut chunks = rope.chunks.cursor::<()>(&());
-                chunks.next();
-                chunks.next();
-                self.chunks.append(chunks.suffix(), &());
-                self.check_invariants();
-                return;
-            }
+            let mut chunks = rope.chunks.cursor::<()>(&());
+            chunks.next();
+            chunks.next();
+            self.chunks.append(chunks.suffix(), &());
+            self.check_invariants();
+            return;
         }
 
         self.chunks.append(rope.chunks.clone(), &());
@@ -735,16 +734,16 @@ impl<'a> Chunks<'a> {
         self.chunks
             .search_backward(|summary| summary.text.lines.row > 0);
         self.offset = *self.chunks.start();
-        if let Some(chunk) = self.chunks.item() {
-            if let Some(newline_ix) = chunk.text.rfind('\n') {
-                self.offset += newline_ix + 1;
-                if self.offset_is_valid() {
-                    if self.offset == self.chunks.end() {
-                        self.chunks.next();
-                    }
-
-                    return true;
+        if let Some(chunk) = self.chunks.item()
+            && let Some(newline_ix) = chunk.text.rfind('\n')
+        {
+            self.offset += newline_ix + 1;
+            if self.offset_is_valid() {
+                if self.offset == self.chunks.end() {
+                    self.chunks.next();
                 }
+
+                return true;
             }
         }
 
@@ -817,7 +816,7 @@ impl<'a> Chunks<'a> {
             }
         }
 
-        return true;
+        true
     }
 }
 

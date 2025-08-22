@@ -286,6 +286,8 @@
   // bracket, brace, single or double quote characters.
   // For example, when you select text and type (, Zed will surround the text with ().
   "use_auto_surround": true,
+  /// Whether indentation should be adjusted based on the context whilst typing.
+  "auto_indent": true,
   // Whether indentation of pasted content should be adjusted based on the context.
   "auto_indent_on_paste": true,
   // Controls how the editor handles the autoclosed characters.
@@ -715,7 +717,7 @@
     // Can be 'never', 'always', or 'when_in_call',
     // or a boolean (interpreted as 'never'/'always').
     "button": "when_in_call",
-    // Where to the chat panel. Can be 'left' or 'right'.
+    // Where to dock the chat panel. Can be 'left' or 'right'.
     "dock": "right",
     // Default width of the chat panel.
     "default_width": 240
@@ -723,7 +725,7 @@
   "git_panel": {
     // Whether to show the git panel button in the status bar.
     "button": true,
-    // Where to show the git panel. Can be 'left' or 'right'.
+    // Where to dock the git panel. Can be 'left' or 'right'.
     "dock": "left",
     // Default width of the git panel.
     "default_width": 360,

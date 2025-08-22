@@ -82,7 +82,7 @@ impl LlmApiToken {
 
         let response = client.cloud_client().create_llm_token(system_id).await?;
         *lock = Some(response.token.0.clone());
-        Ok(response.token.0.clone())
+        Ok(response.token.0)
     }
 }
 

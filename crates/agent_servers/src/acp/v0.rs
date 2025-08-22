@@ -1,4 +1,5 @@
 // Translates old acp agents into the new schema
+use action_log::ActionLog;
 use agent_client_protocol as acp;
 use agentic_coding_protocol::{self as acp_old, AgentRequest as _};
 use anyhow::{Context as _, Result, anyhow};
@@ -148,7 +149,7 @@ impl acp_old::Client for OldAcpClientDelegate {
 
         Ok(acp_old::RequestToolCallConfirmationResponse {
             id: acp_old::ToolCallId(old_acp_id),
-            outcome: outcome,
+            outcome,
         })
     }
 
@@ -265,7 +266,7 @@ impl acp_old::Client for OldAcpClientDelegate {
 
 fn into_new_tool_call(id: acp::ToolCallId, request: acp_old::PushToolCallParams) -> acp::ToolCall {
     acp::ToolCall {
-        id: id,
+        id,
         title: request.label,
         kind: acp_kind_from_old_icon(request.icon),
         status: acp::ToolCallStatus::InProgress,
@@ -437,13 +438,14 @@ impl AgentConnection for AcpConnection {
             let result = acp_old::InitializeParams::response_from_any(result)?;
 
             if !result.is_authenticated {
-                anyhow::bail!(AuthRequired)
+                anyhow::bail!(AuthRequired::new())
             }
 
             cx.update(|cx| {
                 let thread = cx.new(|cx| {
                     let session_id = acp::SessionId("acp-old-no-id".into());
-                    AcpThread::new(self.name, self.clone(), project, session_id, cx)
+                    let action_log = cx.new(|_| ActionLog::new(project.clone()));
+                    AcpThread::new(self.name, self.clone(), project, action_log, session_id)
                 });
                 current_thread.replace(thread.downgrade());
                 thread
@@ -494,6 +496,14 @@ impl AgentConnection for AcpConnection {
                 stop_reason: acp::StopReason::EndTurn,
             })
         })
+    }
+
+    fn prompt_capabilities(&self) -> acp::PromptCapabilities {
+        acp::PromptCapabilities {
+            image: false,
+            audio: false,
+            embedded_context: false,
+        }
     }
 
     fn cancel(&self, _session_id: &acp::SessionId, cx: &mut App) {

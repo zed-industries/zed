@@ -191,12 +191,12 @@ impl PickerDelegate for ProjectSymbolsDelegate {
                         .iter()
                         .enumerate()
                         .map(|(id, symbol)| {
-                            StringMatchCandidate::new(id, &symbol.label.filter_text())
+                            StringMatchCandidate::new(id, symbol.label.filter_text())
                         })
                         .partition(|candidate| {
                             project
                                 .entry_for_path(&symbols[candidate.id].path, cx)
-                                .map_or(false, |e| !e.is_ignored)
+                                .is_some_and(|e| !e.is_ignored)
                         });
 
                     delegate.visible_match_candidates = visible_match_candidates;
@@ -233,7 +233,7 @@ impl PickerDelegate for ProjectSymbolsDelegate {
             }
         }
         let label = symbol.label.text.clone();
-        let path = path.to_string().clone();
+        let path = path.to_string();
 
         let highlights = gpui::combine_highlights(
             string_match
@@ -257,10 +257,8 @@ impl PickerDelegate for ProjectSymbolsDelegate {
                     v_flex()
                         .child(
                             LabelLike::new().child(
-                                StyledText::new(label).with_default_highlights(
-                                    &window.text_style().clone(),
-                                    highlights,
-                                ),
+                                StyledText::new(label)
+                                    .with_default_highlights(&window.text_style(), highlights),
                             ),
                         )
                         .child(Label::new(path).color(Color::Muted)),

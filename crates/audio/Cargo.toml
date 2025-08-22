@@ -15,9 +15,10 @@ doctest = false
 [dependencies]
 anyhow.workspace = true
 collections.workspace = true
-derive_more.workspace = true
 gpui.workspace = true
-parking_lot.workspace = true
+settings.workspace = true
+schemars.workspace = true
+serde.workspace = true
 rodio = { workspace = true, features = [ "wav", "playback", "tracing" ] }
 util.workspace = true
 workspace-hack.workspace = true

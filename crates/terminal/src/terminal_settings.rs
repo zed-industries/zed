@@ -325,10 +325,10 @@ impl settings::Settings for TerminalSettings {
             .and_then(|v| v.as_object())
         {
             for (k, v) in env {
-                if v.is_null() {
-                    if let Some(zed_env) = current.env.as_mut() {
-                        zed_env.remove(k);
-                    }
+                if v.is_null()
+                    && let Some(zed_env) = current.env.as_mut()
+                {
+                    zed_env.remove(k);
                 }
                 let Some(v) = v.as_str() else { continue };
                 if let Some(zed_env) = current.env.as_mut() {

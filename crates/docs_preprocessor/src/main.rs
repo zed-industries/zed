@@ -21,7 +21,7 @@ static KEYMAP_LINUX: LazyLock<KeymapFile> = LazyLock::new(|| {
 
 static ALL_ACTIONS: LazyLock<Vec<ActionDef>> = LazyLock::new(dump_all_gpui_actions);
 
-const FRONT_MATTER_COMMENT: &'static str = "<!-- ZED_META {} -->";
+const FRONT_MATTER_COMMENT: &str = "<!-- ZED_META {} -->";
 
 fn main() -> Result<()> {
     zlog::init();
@@ -61,15 +61,13 @@ impl PreprocessorError {
             for alias in action.deprecated_aliases {
                 if alias == &action_name {
                     return PreprocessorError::DeprecatedActionUsed {
-                        used: action_name.clone(),
+                        used: action_name,
                         should_be: action.name.to_string(),
                     };
                 }
             }
         }
-        PreprocessorError::ActionNotFound {
-            action_name: action_name.to_string(),
-        }
+        PreprocessorError::ActionNotFound { action_name }
     }
 }
 
@@ -101,12 +99,13 @@ fn handle_preprocessing() -> Result<()> {
     let mut errors = HashSet::<PreprocessorError>::new();
 
     handle_frontmatter(&mut book, &mut errors);
+    template_big_table_of_actions(&mut book);
     template_and_validate_keybindings(&mut book, &mut errors);
     template_and_validate_actions(&mut book, &mut errors);
 
     if !errors.is_empty() {
-        const ANSI_RED: &'static str = "\x1b[31m";
-        const ANSI_RESET: &'static str = "\x1b[0m";
+        const ANSI_RED: &str = "\x1b[31m";
+        const ANSI_RESET: &str = "\x1b[0m";
         for error in &errors {
             eprintln!("{ANSI_RED}ERROR{ANSI_RESET}: {}", error);
         }
@@ -129,7 +128,7 @@ fn handle_frontmatter(book: &mut Book, errors: &mut HashSet<PreprocessorError>) 
                 let Some((name, value)) = line.split_once(':') else {
                     errors.insert(PreprocessorError::InvalidFrontmatterLine(format!(
                         "{}: {}",
-                        chapter_breadcrumbs(&chapter),
+                        chapter_breadcrumbs(chapter),
                         line
                     )));
                     continue;
@@ -143,11 +142,20 @@ fn handle_frontmatter(book: &mut Book, errors: &mut HashSet<PreprocessorError>) 
                 &serde_json::to_string(&metadata).expect("Failed to serialize metadata"),
             )
         });
-        match new_content {
-            Cow::Owned(content) => {
-                chapter.content = content;
-            }
-            Cow::Borrowed(_) => {}
+        if let Cow::Owned(content) = new_content {
+            chapter.content = content;
+        }
+    });
+}
+
+fn template_big_table_of_actions(book: &mut Book) {
+    for_each_chapter_mut(book, |chapter| {
+        let needle = "{#ACTIONS_TABLE#}";
+        if let Some(start) = chapter.content.rfind(needle) {
+            chapter.content.replace_range(
+                start..start + needle.len(),
+                &generate_big_table_of_actions(),
+            );
         }
     });
 }
@@ -282,6 +290,7 @@ struct ActionDef {
     name: &'static str,
     human_name: String,
     deprecated_aliases: &'static [&'static str],
+    docs: Option<&'static str>,
 }
 
 fn dump_all_gpui_actions() -> Vec<ActionDef> {
@@ -290,12 +299,13 @@ fn dump_all_gpui_actions() -> Vec<ActionDef> {
             name: action.name,
             human_name: command_palette::humanize_action_name(action.name),
             deprecated_aliases: action.deprecated_aliases,
+            docs: action.documentation,
         })
         .collect::<Vec<ActionDef>>();
 
     actions.sort_by_key(|a| a.name);
 
-    return actions;
+    actions
 }
 
 fn handle_postprocessing() -> Result<()> {
@@ -402,24 +412,75 @@ fn handle_postprocessing() -> Result<()> {
         path: &'a std::path::PathBuf,
         root: &'a std::path::PathBuf,
     ) -> &'a std::path::Path {
-        &path.strip_prefix(&root).unwrap_or(&path)
+        path.strip_prefix(&root).unwrap_or(path)
     }
     fn extract_title_from_page(contents: &str, pretty_path: &std::path::Path) -> String {
         let title_tag_contents = &title_regex()
-            .captures(&contents)
+            .captures(contents)
             .with_context(|| format!("Failed to find title in {:?}", pretty_path))
             .expect("Page has <title> element")[1];
-        let title = title_tag_contents
+
+        title_tag_contents
             .trim()
             .strip_suffix("- Zed")
             .unwrap_or(title_tag_contents)
             .trim()
-            .to_string();
-        title
+            .to_string()
     }
 }
 
 fn title_regex() -> &'static Regex {
     static TITLE_REGEX: OnceLock<Regex> = OnceLock::new();
     TITLE_REGEX.get_or_init(|| Regex::new(r"<title>\s*(.*?)\s*</title>").unwrap())
+}
+
+fn generate_big_table_of_actions() -> String {
+    let actions = &*ALL_ACTIONS;
+    let mut output = String::new();
+
+    let mut actions_sorted = actions.iter().collect::<Vec<_>>();
+    actions_sorted.sort_by_key(|a| a.name);
+
+    // Start the definition list with custom styling for better spacing
+    output.push_str("<dl style=\"line-height: 1.8;\">\n");
+
+    for action in actions_sorted.into_iter() {
+        // Add the humanized action name as the term with margin
+        output.push_str(
+            "<dt style=\"margin-top: 1.5em; margin-bottom: 0.5em; font-weight: bold;\"><code>",
+        );
+        output.push_str(&action.human_name);
+        output.push_str("</code></dt>\n");
+
+        // Add the definition with keymap name and description
+        output.push_str("<dd style=\"margin-left: 2em; margin-bottom: 1em;\">\n");
+
+        // Add the description, escaping HTML if needed
+        if let Some(description) = action.docs {
+            output.push_str(
+                &description
+                    .replace("&", "&amp;")
+                    .replace("<", "&lt;")
+                    .replace(">", "&gt;"),
+            );
+            output.push_str("<br>\n");
+        }
+        output.push_str("Keymap Name: <code>");
+        output.push_str(action.name);
+        output.push_str("</code><br>\n");
+        if !action.deprecated_aliases.is_empty() {
+            output.push_str("Deprecated Aliases:");
+            for alias in action.deprecated_aliases.iter() {
+                output.push_str("<code>");
+                output.push_str(alias);
+                output.push_str("</code>, ");
+            }
+        }
+        output.push_str("\n</dd>\n");
+    }
+
+    // Close the definition list
+    output.push_str("</dl>\n");
+
+    output
 }
