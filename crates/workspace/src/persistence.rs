@@ -542,6 +542,20 @@ define_connection! {
         ALTER TABLE breakpoints ADD COLUMN condition TEXT;
         ALTER TABLE breakpoints ADD COLUMN hit_condition TEXT;
     ),
+    sql!(CREATE TABLE toolchains2 (
+        workspace_id INTEGER,
+        worktree_id INTEGER,
+        language_name TEXT NOT NULL,
+        name TEXT NOT NULL,
+        path TEXT NOT NULL,
+        raw_json TEXT NOT NULL,
+        relative_worktree_path TEXT NOT NULL,
+        PRIMARY KEY (workspace_id, worktree_id, language_name, relative_worktree_path)) STRICT;
+        INSERT INTO toolchains2
+            SELECT * FROM toolchains;
+        DROP TABLE toolchains;
+        ALTER TABLE toolchains2 RENAME TO toolchains;
+    )
     ];
 }
 
@@ -937,6 +951,26 @@ impl WorkspaceDb {
             ) VALUES (?1, ?2, ?3, ?4)
             RETURNING id, host, port, paths, user
         }
+    }
+
+    query! {
+        pub async fn update_ssh_project_paths_query(ssh_project_id: u64, paths: String) -> Result<Option<SerializedSshProject>> {
+            UPDATE ssh_projects
+            SET paths = ?2
+            WHERE id = ?1
+            RETURNING id, host, port, paths, user
+        }
+    }
+
+    pub(crate) async fn update_ssh_project_paths(
+        &self,
+        ssh_project_id: SshProjectId,
+        new_paths: Vec<String>,
+    ) -> Result<SerializedSshProject> {
+        let paths = serde_json::to_string(&new_paths)?;
+        self.update_ssh_project_paths_query(ssh_project_id.0, paths)
+            .await?
+            .context("failed to update ssh project paths")
     }
 
     query! {
@@ -1336,6 +1370,14 @@ impl WorkspaceDb {
         }
     }
 
+    query! {
+        pub(crate) async fn set_session_id(workspace_id: WorkspaceId, session_id: Option<String>) -> Result<()> {
+            UPDATE workspaces
+            SET session_id = ?2
+            WHERE workspace_id = ?1
+        }
+    }
+
     pub async fn toolchain(
         &self,
         workspace_id: WorkspaceId,
@@ -1400,12 +1442,12 @@ impl WorkspaceDb {
         self.write(move |conn| {
             let mut insert = conn
                 .exec_bound(sql!(
-                    INSERT INTO toolchains(workspace_id, worktree_id, relative_worktree_path, language_name, name, path) VALUES (?, ?, ?, ?, ?,  ?)
+                    INSERT INTO toolchains(workspace_id, worktree_id, relative_worktree_path, language_name, name, path, raw_json) VALUES (?, ?, ?, ?, ?,  ?, ?)
                     ON CONFLICT DO
                     UPDATE SET
                         name = ?5,
-                        path = ?6
-
+                        path = ?6,
+                        raw_json = ?7
                 ))
                 .context("Preparing insertion")?;
 
@@ -1416,6 +1458,7 @@ impl WorkspaceDb {
                 toolchain.language_name.as_ref(),
                 toolchain.name.as_ref(),
                 toolchain.path.as_ref(),
+                toolchain.as_json.to_string(),
             ))?;
 
             Ok(())
@@ -2615,5 +2658,57 @@ mod tests {
         let new_workspace = db.workspace_for_roots(id).unwrap();
 
         assert_eq!(workspace.center_group, new_workspace.center_group);
+    }
+
+    #[gpui::test]
+    async fn test_update_ssh_project_paths() {
+        zlog::init_test();
+
+        let db = WorkspaceDb::open_test_db("test_update_ssh_project_paths").await;
+
+        let (host, port, initial_paths, user) = (
+            "example.com".to_string(),
+            Some(22_u16),
+            vec!["/home/user".to_string(), "/etc/nginx".to_string()],
+            Some("user".to_string()),
+        );
+
+        let project = db
+            .get_or_create_ssh_project(host.clone(), port, initial_paths.clone(), user.clone())
+            .await
+            .unwrap();
+
+        assert_eq!(project.host, host);
+        assert_eq!(project.paths, initial_paths);
+        assert_eq!(project.user, user);
+
+        let new_paths = vec![
+            "/home/user".to_string(),
+            "/etc/nginx".to_string(),
+            "/var/log".to_string(),
+            "/opt/app".to_string(),
+        ];
+
+        let updated_project = db
+            .update_ssh_project_paths(project.id, new_paths.clone())
+            .await
+            .unwrap();
+
+        assert_eq!(updated_project.id, project.id);
+        assert_eq!(updated_project.paths, new_paths);
+
+        let retrieved_project = db
+            .get_ssh_project(
+                host.clone(),
+                port,
+                serde_json::to_string(&new_paths).unwrap(),
+                user.clone(),
+            )
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(retrieved_project.id, project.id);
+        assert_eq!(retrieved_project.paths, new_paths);
     }
 }

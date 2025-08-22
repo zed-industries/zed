@@ -457,7 +457,7 @@ impl WorktreeStore {
             })
             .collect::<HashMap<_, _>>();
 
-        let (client, project_id) = self.upstream_client().clone().context("invalid project")?;
+        let (client, project_id) = self.upstream_client().context("invalid project")?;
 
         for worktree in worktrees {
             if let Some(old_worktree) =

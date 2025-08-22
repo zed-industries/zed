@@ -17,11 +17,12 @@ test-support = ["clock/test-support", "collections/test-support", "gpui/test-sup
 
 [dependencies]
 anyhow.workspace = true
-async-recursion = "0.3"
 async-tungstenite = { workspace = true, features = ["tokio", "tokio-rustls-manual-roots"] }
 base64.workspace = true
 chrono = { workspace = true, features = ["serde"] }
 clock.workspace = true
+cloud_api_client.workspace = true
+cloud_llm_client.workspace = true
 collections.workspace = true
 credentials_provider.workspace = true
 derive_more.workspace = true
@@ -33,8 +34,8 @@ http_client.workspace = true
 http_client_tls.workspace = true
 httparse = "1.10"
 log.workspace = true
-paths.workspace = true
 parking_lot.workspace = true
+paths.workspace = true
 postage.workspace = true
 rand.workspace = true
 regex.workspace = true
@@ -43,22 +44,22 @@ rpc = { workspace = true, features = ["gpui"] }
 schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+serde_urlencoded.workspace = true
 settings.workspace = true
 sha2.workspace = true
 smol.workspace = true
+telemetry.workspace = true
 telemetry_events.workspace = true
 text.workspace = true
 thiserror.workspace = true
 time.workspace = true
 tiny_http.workspace = true
 tokio-socks = { version = "0.5.2", default-features = false, features = ["futures-io"] }
+tokio.workspace = true
 url.workspace = true
 util.workspace = true
-worktree.workspace = true
-telemetry.workspace = true
-tokio.workspace = true
 workspace-hack.workspace = true
-zed_llm_client.workspace = true
+worktree.workspace = true
 
 [dev-dependencies]
 clock = { workspace = true, features = ["test-support"] }

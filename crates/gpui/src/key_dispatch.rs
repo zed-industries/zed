@@ -50,8 +50,8 @@
 ///  KeyBinding::new("cmd-k left", pane::SplitLeft, Some("Pane"))
 ///
 use crate::{
-    Action, ActionRegistry, App, BindingIndex, DispatchPhase, EntityId, FocusId, KeyBinding,
-    KeyContext, Keymap, Keystroke, ModifiersChangedEvent, Window,
+    Action, ActionRegistry, App, DispatchPhase, EntityId, FocusId, KeyBinding, KeyContext, Keymap,
+    Keystroke, ModifiersChangedEvent, Window,
 };
 use collections::FxHashMap;
 use smallvec::SmallVec;
@@ -406,16 +406,11 @@ impl DispatchTree {
         // methods, but this can't be done very cleanly since keymap must be borrowed.
         let keymap = self.keymap.borrow();
         keymap
-            .bindings_for_action_with_indices(action)
-            .filter(|(binding_index, binding)| {
-                Self::binding_matches_predicate_and_not_shadowed(
-                    &keymap,
-                    *binding_index,
-                    &binding.keystrokes,
-                    context_stack,
-                )
+            .bindings_for_action(action)
+            .filter(|binding| {
+                Self::binding_matches_predicate_and_not_shadowed(&keymap, binding, context_stack)
             })
-            .map(|(_, binding)| binding.clone())
+            .cloned()
             .collect()
     }
 
@@ -428,28 +423,22 @@ impl DispatchTree {
     ) -> Option<KeyBinding> {
         let keymap = self.keymap.borrow();
         keymap
-            .bindings_for_action_with_indices(action)
+            .bindings_for_action(action)
             .rev()
-            .find_map(|(binding_index, binding)| {
-                let found = Self::binding_matches_predicate_and_not_shadowed(
-                    &keymap,
-                    binding_index,
-                    &binding.keystrokes,
-                    context_stack,
-                );
-                if found { Some(binding.clone()) } else { None }
+            .find(|binding| {
+                Self::binding_matches_predicate_and_not_shadowed(&keymap, binding, context_stack)
             })
+            .cloned()
     }
 
     fn binding_matches_predicate_and_not_shadowed(
         keymap: &Keymap,
-        binding_index: BindingIndex,
-        keystrokes: &[Keystroke],
+        binding: &KeyBinding,
         context_stack: &[KeyContext],
     ) -> bool {
-        let (bindings, _) = keymap.bindings_for_input_with_indices(&keystrokes, context_stack);
-        if let Some((highest_precedence_index, _)) = bindings.iter().next() {
-            binding_index == *highest_precedence_index
+        let (bindings, _) = keymap.bindings_for_input(&binding.keystrokes, context_stack);
+        if let Some(found) = bindings.iter().next() {
+            found.action.partial_eq(binding.action.as_ref())
         } else {
             false
         }
@@ -469,7 +458,7 @@ impl DispatchTree {
             .keymap
             .borrow()
             .bindings_for_input(input, &context_stack);
-        return (bindings, partial, context_stack);
+        (bindings, partial, context_stack)
     }
 
     /// Find the bindings that can follow the current input sequence.
@@ -633,9 +622,17 @@ impl DispatchTree {
 
 #[cfg(test)]
 mod tests {
-    use std::{cell::RefCell, rc::Rc};
+    use crate::{
+        self as gpui, Element, ElementId, GlobalElementId, InspectorElementId, LayoutId, Style,
+    };
+    use core::panic;
+    use std::{cell::RefCell, ops::Range, rc::Rc};
 
-    use crate::{Action, ActionRegistry, DispatchTree, KeyBinding, KeyContext, Keymap};
+    use crate::{
+        Action, ActionRegistry, App, Bounds, Context, DispatchTree, FocusHandle, InputHandler,
+        IntoElement, KeyBinding, KeyContext, Keymap, Pixels, Point, Render, TestAppContext,
+        UTF16Selection, Window,
+    };
 
     #[derive(PartialEq, Eq)]
     struct TestAction;
@@ -653,10 +650,7 @@ mod tests {
         }
 
         fn partial_eq(&self, action: &dyn Action) -> bool {
-            action
-                .as_any()
-                .downcast_ref::<Self>()
-                .map_or(false, |a| self == a)
+            action.as_any().downcast_ref::<Self>() == Some(self)
         }
 
         fn boxed_clone(&self) -> std::boxed::Box<dyn Action> {
@@ -695,5 +689,166 @@ mod tests {
         let keybinding = tree.bindings_for_action(&TestAction, &contexts);
 
         assert!(keybinding[0].action.partial_eq(&TestAction))
+    }
+
+    #[crate::test]
+    fn test_input_handler_pending(cx: &mut TestAppContext) {
+        #[derive(Clone)]
+        struct CustomElement {
+            focus_handle: FocusHandle,
+            text: Rc<RefCell<String>>,
+        }
+        impl CustomElement {
+            fn new(cx: &mut Context<Self>) -> Self {
+                Self {
+                    focus_handle: cx.focus_handle(),
+                    text: Rc::default(),
+                }
+            }
+        }
+        impl Element for CustomElement {
+            type RequestLayoutState = ();
+
+            type PrepaintState = ();
+
+            fn id(&self) -> Option<ElementId> {
+                Some("custom".into())
+            }
+            fn source_location(&self) -> Option<&'static panic::Location<'static>> {
+                None
+            }
+            fn request_layout(
+                &mut self,
+                _: Option<&GlobalElementId>,
+                _: Option<&InspectorElementId>,
+                window: &mut Window,
+                cx: &mut App,
+            ) -> (LayoutId, Self::RequestLayoutState) {
+                (window.request_layout(Style::default(), [], cx), ())
+            }
+            fn prepaint(
+                &mut self,
+                _: Option<&GlobalElementId>,
+                _: Option<&InspectorElementId>,
+                _: Bounds<Pixels>,
+                _: &mut Self::RequestLayoutState,
+                window: &mut Window,
+                cx: &mut App,
+            ) -> Self::PrepaintState {
+                window.set_focus_handle(&self.focus_handle, cx);
+            }
+            fn paint(
+                &mut self,
+                _: Option<&GlobalElementId>,
+                _: Option<&InspectorElementId>,
+                _: Bounds<Pixels>,
+                _: &mut Self::RequestLayoutState,
+                _: &mut Self::PrepaintState,
+                window: &mut Window,
+                cx: &mut App,
+            ) {
+                let mut key_context = KeyContext::default();
+                key_context.add("Terminal");
+                window.set_key_context(key_context);
+                window.handle_input(&self.focus_handle, self.clone(), cx);
+                window.on_action(std::any::TypeId::of::<TestAction>(), |_, _, _, _| {});
+            }
+        }
+        impl IntoElement for CustomElement {
+            type Element = Self;
+
+            fn into_element(self) -> Self::Element {
+                self
+            }
+        }
+
+        impl InputHandler for CustomElement {
+            fn selected_text_range(
+                &mut self,
+                _: bool,
+                _: &mut Window,
+                _: &mut App,
+            ) -> Option<UTF16Selection> {
+                None
+            }
+
+            fn marked_text_range(&mut self, _: &mut Window, _: &mut App) -> Option<Range<usize>> {
+                None
+            }
+
+            fn text_for_range(
+                &mut self,
+                _: Range<usize>,
+                _: &mut Option<Range<usize>>,
+                _: &mut Window,
+                _: &mut App,
+            ) -> Option<String> {
+                None
+            }
+
+            fn replace_text_in_range(
+                &mut self,
+                replacement_range: Option<Range<usize>>,
+                text: &str,
+                _: &mut Window,
+                _: &mut App,
+            ) {
+                if replacement_range.is_some() {
+                    unimplemented!()
+                }
+                self.text.borrow_mut().push_str(text)
+            }
+
+            fn replace_and_mark_text_in_range(
+                &mut self,
+                replacement_range: Option<Range<usize>>,
+                new_text: &str,
+                _: Option<Range<usize>>,
+                _: &mut Window,
+                _: &mut App,
+            ) {
+                if replacement_range.is_some() {
+                    unimplemented!()
+                }
+                self.text.borrow_mut().push_str(new_text)
+            }
+
+            fn unmark_text(&mut self, _: &mut Window, _: &mut App) {}
+
+            fn bounds_for_range(
+                &mut self,
+                _: Range<usize>,
+                _: &mut Window,
+                _: &mut App,
+            ) -> Option<Bounds<Pixels>> {
+                None
+            }
+
+            fn character_index_for_point(
+                &mut self,
+                _: Point<Pixels>,
+                _: &mut Window,
+                _: &mut App,
+            ) -> Option<usize> {
+                None
+            }
+        }
+        impl Render for CustomElement {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                self.clone()
+            }
+        }
+
+        cx.update(|cx| {
+            cx.bind_keys([KeyBinding::new("ctrl-b", TestAction, Some("Terminal"))]);
+            cx.bind_keys([KeyBinding::new("ctrl-b h", TestAction, Some("Terminal"))]);
+        });
+        let (test, cx) = cx.add_window_view(|_, cx| CustomElement::new(cx));
+        cx.update(|window, cx| {
+            window.focus(&test.read(cx).focus_handle);
+            window.activate_window();
+        });
+        cx.simulate_keystrokes("ctrl-b [");
+        test.update(cx, |test, _| assert_eq!(test.text.borrow().as_str(), "["))
     }
 }

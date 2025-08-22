@@ -231,14 +231,15 @@ impl AnyEntity {
         Self {
             entity_id: id,
             entity_type,
-            entity_map: entity_map.clone(),
             #[cfg(any(test, feature = "leak-detection"))]
             handle_id: entity_map
+                .clone()
                 .upgrade()
                 .unwrap()
                 .write()
                 .leak_detector
                 .handle_created(id),
+            entity_map,
         }
     }
 
@@ -370,7 +371,7 @@ impl std::fmt::Debug for AnyEntity {
     }
 }
 
-/// A strong, well typed reference to a struct which is managed
+/// A strong, well-typed reference to a struct which is managed
 /// by GPUI
 #[derive(Deref, DerefMut)]
 pub struct Entity<T> {
@@ -661,7 +662,7 @@ pub struct WeakEntity<T> {
 
 impl<T> std::fmt::Debug for WeakEntity<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct(&type_name::<Self>())
+        f.debug_struct(type_name::<Self>())
             .field("entity_id", &self.any_entity.entity_id)
             .field("entity_type", &type_name::<T>())
             .finish()
@@ -786,7 +787,7 @@ impl<T: 'static> PartialOrd for WeakEntity<T> {
 
 #[cfg(any(test, feature = "leak-detection"))]
 static LEAK_BACKTRACE: std::sync::LazyLock<bool> =
-    std::sync::LazyLock::new(|| std::env::var("LEAK_BACKTRACE").map_or(false, |b| !b.is_empty()));
+    std::sync::LazyLock::new(|| std::env::var("LEAK_BACKTRACE").is_ok_and(|b| !b.is_empty()));
 
 #[cfg(any(test, feature = "leak-detection"))]
 #[derive(Clone, Copy, Debug, Default, Hash, PartialEq, Eq)]

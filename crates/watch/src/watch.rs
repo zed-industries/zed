@@ -218,7 +218,7 @@ mod tests {
         let mut tasks = Vec::new();
 
         tasks.push(cx.background_spawn({
-            let executor = cx.executor().clone();
+            let executor = cx.executor();
             let next_id = next_id.clone();
             let closed = closed.clone();
             async move {

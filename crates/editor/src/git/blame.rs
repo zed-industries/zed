@@ -213,8 +213,8 @@ impl GitBlame {
         let project_subscription = cx.subscribe(&project, {
             let buffer = buffer.clone();
 
-            move |this, _, event, cx| match event {
-                project::Event::WorktreeUpdatedEntries(_, updated) => {
+            move |this, _, event, cx| {
+                if let project::Event::WorktreeUpdatedEntries(_, updated) = event {
                     let project_entry_id = buffer.read(cx).entry_id(cx);
                     if updated
                         .iter()
@@ -224,7 +224,6 @@ impl GitBlame {
                         this.generate(cx);
                     }
                 }
-                _ => {}
             }
         });
 
@@ -292,11 +291,11 @@ impl GitBlame {
 
         let buffer_id = self.buffer_snapshot.remote_id();
         let mut cursor = self.entries.cursor::<u32>(&());
-        rows.into_iter().map(move |info| {
+        rows.iter().map(move |info| {
             let row = info
                 .buffer_row
                 .filter(|_| info.buffer_id == Some(buffer_id))?;
-            cursor.seek_forward(&row, Bias::Right, &());
+            cursor.seek_forward(&row, Bias::Right);
             cursor.item()?.blame.clone()
         })
     }
@@ -312,10 +311,10 @@ impl GitBlame {
                 .as_ref()
                 .and_then(|entry| entry.author.as_ref())
                 .map(|author| author.len());
-            if let Some(author_len) = author_len {
-                if author_len > max_author_length {
-                    max_author_length = author_len;
-                }
+            if let Some(author_len) = author_len
+                && author_len > max_author_length
+            {
+                max_author_length = author_len;
             }
         }
 
@@ -389,7 +388,7 @@ impl GitBlame {
                 }
             }
 
-            new_entries.append(cursor.slice(&edit.old.start, Bias::Right, &()), &());
+            new_entries.append(cursor.slice(&edit.old.start, Bias::Right), &());
 
             if edit.new.start > new_entries.summary().rows {
                 new_entries.push(
@@ -401,7 +400,7 @@ impl GitBlame {
                 );
             }
 
-            cursor.seek(&edit.old.end, Bias::Right, &());
+            cursor.seek(&edit.old.end, Bias::Right);
             if !edit.new.is_empty() {
                 new_entries.push(
                     GitBlameEntry {
@@ -412,27 +411,26 @@ impl GitBlame {
                 );
             }
 
-            let old_end = cursor.end(&());
+            let old_end = cursor.end();
             if row_edits
                 .peek()
-                .map_or(true, |next_edit| next_edit.old.start >= old_end)
+                .is_none_or(|next_edit| next_edit.old.start >= old_end)
+                && let Some(entry) = cursor.item()
             {
-                if let Some(entry) = cursor.item() {
-                    if old_end > edit.old.end {
-                        new_entries.push(
-                            GitBlameEntry {
-                                rows: cursor.end(&()) - edit.old.end,
-                                blame: entry.blame.clone(),
-                            },
-                            &(),
-                        );
-                    }
-
-                    cursor.next(&());
+                if old_end > edit.old.end {
+                    new_entries.push(
+                        GitBlameEntry {
+                            rows: cursor.end() - edit.old.end,
+                            blame: entry.blame.clone(),
+                        },
+                        &(),
+                    );
                 }
+
+                cursor.next();
             }
         }
-        new_entries.append(cursor.suffix(&()), &());
+        new_entries.append(cursor.suffix(), &());
         drop(cursor);
 
         self.buffer_snapshot = new_snapshot;

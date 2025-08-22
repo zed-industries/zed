@@ -106,14 +106,14 @@ impl Render for PlatformTitleBar {
                     // Note: On Windows the title bar behavior is handled by the platform implementation.
                     .when(self.platform_style == PlatformStyle::Mac, |this| {
                         this.on_click(|event, window, _| {
-                            if event.up.click_count == 2 {
+                            if event.click_count() == 2 {
                                 window.titlebar_double_click();
                             }
                         })
                     })
                     .when(self.platform_style == PlatformStyle::Linux, |this| {
                         this.on_click(|event, window, _| {
-                            if event.up.click_count == 2 {
+                            if event.click_count() == 2 {
                                 window.zoom_window();
                             }
                         })

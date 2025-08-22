@@ -20,7 +20,7 @@ pub trait Dismissable {
         KEY_VALUE_STORE
             .read_kvp(Self::KEY)
             .log_err()
-            .map_or(false, |s| s.is_some())
+            .is_some_and(|s| s.is_some())
     }
 
     fn set_dismissed(is_dismissed: bool, cx: &mut App) {

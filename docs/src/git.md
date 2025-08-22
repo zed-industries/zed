@@ -1,3 +1,8 @@
+---
+description: Zed is a text editor that supports lots of Git features
+title: Zed Editor Git integration documentation
+---
+
 # Git
 
 Zed currently offers a set of fundamental Git features, with support coming in the future for more advanced ones, like conflict resolution tools, line by line staging, and more.
@@ -76,7 +81,7 @@ You can ask AI to generate a commit message by focusing on the message editor wi
 
 > Note that you need to have an LLM provider configured. Visit [the AI configuration page](./ai/configuration.md) to learn how to do so.
 
-You can specify your preferred model to use by providing a `commit_message_model` agent setting. See [Feature-specific models](./ai/configuration.md#feature-specific-models) for more information.
+You can specify your preferred model to use by providing a `commit_message_model` agent setting. See [Feature-specific models](./ai/agent-settings.md#feature-specific-models) for more information.
 
 ```json
 {

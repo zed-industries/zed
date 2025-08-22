@@ -4,6 +4,7 @@
       "ctrl-alt-s": "zed::OpenSettings",
       "ctrl-{": "pane::ActivatePreviousItem",
       "ctrl-}": "pane::ActivateNextItem",
+      "shift-escape": null, // Unmap workspace::zoom
       "ctrl-f2": "debugger::Stop",
       "f6": "debugger::Pause",
       "f7": "debugger::StepInto",
@@ -44,8 +45,8 @@
       "ctrl-alt-right": "pane::GoForward",
       "alt-f7": "editor::FindAllReferences",
       "ctrl-alt-f7": "editor::FindAllReferences",
-      // "ctrl-b": "editor::GoToDefinition", // Conflicts with workspace::ToggleLeftDock
-      // "ctrl-alt-b": "editor::GoToDefinitionSplit", // Conflicts with workspace::ToggleLeftDock
+      "ctrl-b": "editor::GoToDefinition", // Conflicts with workspace::ToggleLeftDock
+      "ctrl-alt-b": "editor::GoToDefinitionSplit", // Conflicts with workspace::ToggleRightDock
       "ctrl-shift-b": "editor::GoToTypeDefinition",
       "ctrl-alt-shift-b": "editor::GoToTypeDefinitionSplit",
       "f2": "editor::GoToDiagnostic",
@@ -94,16 +95,31 @@
       "ctrl-shift-r": ["pane::DeploySearch", { "replace_enabled": true }],
       "alt-shift-f10": "task::Spawn",
       "ctrl-e": "file_finder::Toggle",
-      "ctrl-k": "git_panel::ToggleFocus", // bug: This should also focus commit editor
+      // "ctrl-k": "git_panel::ToggleFocus", // bug: This should also focus commit editor
       "ctrl-shift-n": "file_finder::Toggle",
       "ctrl-shift-a": "command_palette::Toggle",
       "shift shift": "command_palette::Toggle",
       "ctrl-alt-shift-n": "project_symbols::Toggle",
       "alt-0": "git_panel::ToggleFocus",
-      "alt-1": "workspace::ToggleLeftDock",
+      "alt-1": "project_panel::ToggleFocus",
       "alt-5": "debug_panel::ToggleFocus",
       "alt-6": "diagnostics::Deploy",
       "alt-7": "outline_panel::ToggleFocus"
+    }
+  },
+  {
+    "context": "Pane", // this is to override the default Pane mappings to switch tabs
+    "bindings": {
+      "alt-1": "project_panel::ToggleFocus",
+      "alt-2": null, // Bookmarks (left dock)
+      "alt-3": null, // Find Panel (bottom dock)
+      "alt-4": null, // Run Panel (bottom dock)
+      "alt-5": "debug_panel::ToggleFocus",
+      "alt-6": "diagnostics::Deploy",
+      "alt-7": "outline_panel::ToggleFocus",
+      "alt-8": null, // Services (bottom dock)
+      "alt-9": null, // Git History (bottom dock)
+      "alt-0": "git_panel::ToggleFocus"
     }
   },
   {
@@ -150,7 +166,10 @@
   { "context": "Diagnostics > Editor", "bindings": { "alt-6": "pane::CloseActiveItem" } },
   { "context": "OutlinePanel", "bindings": { "alt-7": "workspace::CloseActiveDock" } },
   {
-    "context": "Dock || Workspace || Terminal || OutlinePanel || ProjectPanel || CollabPanel || (Editor && mode == auto_height)",
-    "bindings": { "escape": "editor::ToggleFocus" }
+    "context": "Dock || Workspace || OutlinePanel || ProjectPanel || CollabPanel || (Editor && mode == auto_height)",
+    "bindings": {
+      "escape": "editor::ToggleFocus",
+      "shift-escape": "workspace::CloseActiveDock"
+    }
   }
 ]

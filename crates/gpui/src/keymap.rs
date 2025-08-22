@@ -5,7 +5,7 @@ pub use binding::*;
 pub use context::*;
 
 use crate::{Action, Keystroke, is_no_action};
-use collections::HashMap;
+use collections::{HashMap, HashSet};
 use smallvec::SmallVec;
 use std::any::TypeId;
 
@@ -77,15 +77,6 @@ impl Keymap {
         &'a self,
         action: &'a dyn Action,
     ) -> impl 'a + DoubleEndedIterator<Item = &'a KeyBinding> {
-        self.bindings_for_action_with_indices(action)
-            .map(|(_, binding)| binding)
-    }
-
-    /// Like `bindings_for_action_with_indices`, but also returns the binding indices.
-    pub fn bindings_for_action_with_indices<'a>(
-        &'a self,
-        action: &'a dyn Action,
-    ) -> impl 'a + DoubleEndedIterator<Item = (BindingIndex, &'a KeyBinding)> {
         let action_id = action.type_id();
         let binding_indices = self
             .binding_indices_by_action_id
@@ -118,7 +109,7 @@ impl Keymap {
                 }
             }
 
-            Some((BindingIndex(*ix), binding))
+            Some(binding)
         })
     }
 
@@ -153,90 +144,53 @@ impl Keymap {
         input: &[Keystroke],
         context_stack: &[KeyContext],
     ) -> (SmallVec<[KeyBinding; 1]>, bool) {
-        let (bindings, pending) = self.bindings_for_input_with_indices(input, context_stack);
-        let bindings = bindings
-            .into_iter()
-            .map(|(_, binding)| binding)
-            .collect::<SmallVec<[KeyBinding; 1]>>();
-        (bindings, pending)
-    }
+        let mut matched_bindings = SmallVec::<[(usize, BindingIndex, &KeyBinding); 1]>::new();
+        let mut pending_bindings = SmallVec::<[(BindingIndex, &KeyBinding); 1]>::new();
 
-    /// Like `bindings_for_input`, but also returns the binding indices.
-    pub fn bindings_for_input_with_indices(
-        &self,
-        input: &[Keystroke],
-        context_stack: &[KeyContext],
-    ) -> (SmallVec<[(BindingIndex, KeyBinding); 1]>, bool) {
-        let mut possibilities = self
-            .bindings()
-            .enumerate()
-            .rev()
-            .filter_map(|(ix, binding)| {
-                let depth = self.binding_enabled(binding, &context_stack)?;
-                let pending = binding.match_keystrokes(input)?;
-                Some((depth, BindingIndex(ix), binding, pending))
-            })
-            .collect::<Vec<_>>();
-        possibilities.sort_by(|(depth_a, ix_a, _, _), (depth_b, ix_b, _, _)| {
+        for (ix, binding) in self.bindings().enumerate().rev() {
+            let Some(depth) = self.binding_enabled(binding, context_stack) else {
+                continue;
+            };
+            let Some(pending) = binding.match_keystrokes(input) else {
+                continue;
+            };
+
+            if !pending {
+                matched_bindings.push((depth, BindingIndex(ix), binding));
+            } else {
+                pending_bindings.push((BindingIndex(ix), binding));
+            }
+        }
+
+        matched_bindings.sort_by(|(depth_a, ix_a, _), (depth_b, ix_b, _)| {
             depth_b.cmp(depth_a).then(ix_b.cmp(ix_a))
         });
 
-        let mut bindings: SmallVec<[(BindingIndex, KeyBinding, usize); 1]> = SmallVec::new();
-
-        // (pending, is_no_action, depth, keystrokes)
-        let mut pending_info_opt: Option<(bool, bool, usize, &[Keystroke])> = None;
-
-        'outer: for (depth, binding_index, binding, pending) in possibilities {
-            let is_no_action = is_no_action(&*binding.action);
-            // We only want to consider a binding pending if it has an action
-            // This, however, means that if we have both a NoAction binding and a binding
-            // with an action at the same depth, we should still set is_pending to true.
-            if let Some(pending_info) = pending_info_opt.as_mut() {
-                let (already_pending, pending_is_no_action, pending_depth, pending_keystrokes) =
-                    *pending_info;
-
-                // We only want to change the pending status if it's not already pending AND if
-                // the existing pending status was set by a NoAction binding. This avoids a NoAction
-                // binding erroneously setting the pending status to true when a binding with an action
-                // already set it to false
-                //
-                // We also want to change the pending status if the keystrokes don't match,
-                // meaning it's different keystrokes than the NoAction that set pending to false
-                if pending
-                    && !already_pending
-                    && pending_is_no_action
-                    && (pending_depth == depth || pending_keystrokes != binding.keystrokes())
-                {
-                    pending_info.0 = !is_no_action;
-                }
-            } else {
-                pending_info_opt = Some((
-                    pending && !is_no_action,
-                    is_no_action,
-                    depth,
-                    binding.keystrokes(),
-                ));
+        let mut bindings: SmallVec<[_; 1]> = SmallVec::new();
+        let mut first_binding_index = None;
+        for (_, ix, binding) in matched_bindings {
+            if is_no_action(&*binding.action) {
+                break;
             }
-
-            if !pending {
-                bindings.push((binding_index, binding.clone(), depth));
-                continue 'outer;
-            }
+            bindings.push(binding.clone());
+            first_binding_index.get_or_insert(ix);
         }
-        // sort by descending depth
-        bindings.sort_by(|a, b| a.2.cmp(&b.2).reverse());
-        let bindings = bindings
-            .into_iter()
-            .map_while(|(binding_index, binding, _)| {
-                if is_no_action(&*binding.action) {
-                    None
-                } else {
-                    Some((binding_index, binding))
-                }
-            })
-            .collect();
 
-        (bindings, pending_info_opt.unwrap_or_default().0)
+        let mut pending = HashSet::default();
+        for (ix, binding) in pending_bindings.into_iter().rev() {
+            if let Some(binding_ix) = first_binding_index
+                && binding_ix > ix
+            {
+                continue;
+            }
+            if is_no_action(&*binding.action) {
+                pending.remove(&&binding.keystrokes);
+                continue;
+            }
+            pending.insert(&binding.keystrokes);
+        }
+
+        (bindings, !pending.is_empty())
     }
 
     /// Check if the given binding is enabled, given a certain key context.
@@ -333,6 +287,30 @@ mod tests {
     }
 
     #[test]
+    fn test_depth_precedence() {
+        let bindings = [
+            KeyBinding::new("ctrl-a", ActionBeta {}, Some("pane")),
+            KeyBinding::new("ctrl-a", ActionGamma {}, Some("editor")),
+        ];
+
+        let mut keymap = Keymap::default();
+        keymap.add_bindings(bindings);
+
+        let (result, pending) = keymap.bindings_for_input(
+            &[Keystroke::parse("ctrl-a").unwrap()],
+            &[
+                KeyContext::parse("pane").unwrap(),
+                KeyContext::parse("editor").unwrap(),
+            ],
+        );
+
+        assert!(!pending);
+        assert_eq!(result.len(), 2);
+        assert!(result[0].action.partial_eq(&ActionGamma {}));
+        assert!(result[1].action.partial_eq(&ActionBeta {}));
+    }
+
+    #[test]
     fn test_keymap_disabled() {
         let bindings = [
             KeyBinding::new("ctrl-a", ActionAlpha {}, Some("editor")),
@@ -342,7 +320,7 @@ mod tests {
         ];
 
         let mut keymap = Keymap::default();
-        keymap.add_bindings(bindings.clone());
+        keymap.add_bindings(bindings);
 
         // binding is only enabled in a specific context
         assert!(
@@ -396,7 +374,7 @@ mod tests {
         ];
 
         let mut keymap = Keymap::default();
-        keymap.add_bindings(bindings.clone());
+        keymap.add_bindings(bindings);
 
         let space = || Keystroke::parse("space").unwrap();
         let w = || Keystroke::parse("w").unwrap();
@@ -416,29 +394,29 @@ mod tests {
         // Ensure `space` results in pending input on the workspace, but not editor
         let space_workspace = keymap.bindings_for_input(&[space()], &workspace_context());
         assert!(space_workspace.0.is_empty());
-        assert_eq!(space_workspace.1, true);
+        assert!(space_workspace.1);
 
         let space_editor = keymap.bindings_for_input(&[space()], &editor_workspace_context());
         assert!(space_editor.0.is_empty());
-        assert_eq!(space_editor.1, false);
+        assert!(!space_editor.1);
 
         // Ensure `space w` results in pending input on the workspace, but not editor
         let space_w_workspace = keymap.bindings_for_input(&space_w, &workspace_context());
         assert!(space_w_workspace.0.is_empty());
-        assert_eq!(space_w_workspace.1, true);
+        assert!(space_w_workspace.1);
 
         let space_w_editor = keymap.bindings_for_input(&space_w, &editor_workspace_context());
         assert!(space_w_editor.0.is_empty());
-        assert_eq!(space_w_editor.1, false);
+        assert!(!space_w_editor.1);
 
         // Ensure `space w w` results in the binding in the workspace, but not in the editor
         let space_w_w_workspace = keymap.bindings_for_input(&space_w_w, &workspace_context());
         assert!(!space_w_w_workspace.0.is_empty());
-        assert_eq!(space_w_w_workspace.1, false);
+        assert!(!space_w_w_workspace.1);
 
         let space_w_w_editor = keymap.bindings_for_input(&space_w_w, &editor_workspace_context());
         assert!(space_w_w_editor.0.is_empty());
-        assert_eq!(space_w_w_editor.1, false);
+        assert!(!space_w_w_editor.1);
 
         // Now test what happens if we have another binding defined AFTER the NoAction
         // that should result in pending
@@ -448,11 +426,11 @@ mod tests {
             KeyBinding::new("space w x", ActionAlpha {}, Some("editor")),
         ];
         let mut keymap = Keymap::default();
-        keymap.add_bindings(bindings.clone());
+        keymap.add_bindings(bindings);
 
         let space_editor = keymap.bindings_for_input(&[space()], &editor_workspace_context());
         assert!(space_editor.0.is_empty());
-        assert_eq!(space_editor.1, true);
+        assert!(space_editor.1);
 
         // Now test what happens if we have another binding defined BEFORE the NoAction
         // that should result in pending
@@ -462,11 +440,11 @@ mod tests {
             KeyBinding::new("space w w", NoAction {}, Some("editor")),
         ];
         let mut keymap = Keymap::default();
-        keymap.add_bindings(bindings.clone());
+        keymap.add_bindings(bindings);
 
         let space_editor = keymap.bindings_for_input(&[space()], &editor_workspace_context());
         assert!(space_editor.0.is_empty());
-        assert_eq!(space_editor.1, true);
+        assert!(space_editor.1);
 
         // Now test what happens if we have another binding defined at a higher context
         // that should result in pending
@@ -476,11 +454,198 @@ mod tests {
             KeyBinding::new("space w w", NoAction {}, Some("editor")),
         ];
         let mut keymap = Keymap::default();
-        keymap.add_bindings(bindings.clone());
+        keymap.add_bindings(bindings);
 
         let space_editor = keymap.bindings_for_input(&[space()], &editor_workspace_context());
         assert!(space_editor.0.is_empty());
-        assert_eq!(space_editor.1, true);
+        assert!(space_editor.1);
+    }
+
+    #[test]
+    fn test_override_multikey() {
+        let bindings = [
+            KeyBinding::new("ctrl-w left", ActionAlpha {}, Some("editor")),
+            KeyBinding::new("ctrl-w", NoAction {}, Some("editor")),
+        ];
+
+        let mut keymap = Keymap::default();
+        keymap.add_bindings(bindings);
+
+        // Ensure `space` results in pending input on the workspace, but not editor
+        let (result, pending) = keymap.bindings_for_input(
+            &[Keystroke::parse("ctrl-w").unwrap()],
+            &[KeyContext::parse("editor").unwrap()],
+        );
+        assert!(result.is_empty());
+        assert!(pending);
+
+        let bindings = [
+            KeyBinding::new("ctrl-w left", ActionAlpha {}, Some("editor")),
+            KeyBinding::new("ctrl-w", ActionBeta {}, Some("editor")),
+        ];
+
+        let mut keymap = Keymap::default();
+        keymap.add_bindings(bindings);
+
+        // Ensure `space` results in pending input on the workspace, but not editor
+        let (result, pending) = keymap.bindings_for_input(
+            &[Keystroke::parse("ctrl-w").unwrap()],
+            &[KeyContext::parse("editor").unwrap()],
+        );
+        assert_eq!(result.len(), 1);
+        assert!(!pending);
+    }
+
+    #[test]
+    fn test_simple_disable() {
+        let bindings = [
+            KeyBinding::new("ctrl-x", ActionAlpha {}, Some("editor")),
+            KeyBinding::new("ctrl-x", NoAction {}, Some("editor")),
+        ];
+
+        let mut keymap = Keymap::default();
+        keymap.add_bindings(bindings);
+
+        // Ensure `space` results in pending input on the workspace, but not editor
+        let (result, pending) = keymap.bindings_for_input(
+            &[Keystroke::parse("ctrl-x").unwrap()],
+            &[KeyContext::parse("editor").unwrap()],
+        );
+        assert!(result.is_empty());
+        assert!(!pending);
+    }
+
+    #[test]
+    fn test_fail_to_disable() {
+        // disabled at the wrong level
+        let bindings = [
+            KeyBinding::new("ctrl-x", ActionAlpha {}, Some("editor")),
+            KeyBinding::new("ctrl-x", NoAction {}, Some("workspace")),
+        ];
+
+        let mut keymap = Keymap::default();
+        keymap.add_bindings(bindings);
+
+        // Ensure `space` results in pending input on the workspace, but not editor
+        let (result, pending) = keymap.bindings_for_input(
+            &[Keystroke::parse("ctrl-x").unwrap()],
+            &[
+                KeyContext::parse("workspace").unwrap(),
+                KeyContext::parse("editor").unwrap(),
+            ],
+        );
+        assert_eq!(result.len(), 1);
+        assert!(!pending);
+    }
+
+    #[test]
+    fn test_disable_deeper() {
+        let bindings = [
+            KeyBinding::new("ctrl-x", ActionAlpha {}, Some("workspace")),
+            KeyBinding::new("ctrl-x", NoAction {}, Some("editor")),
+        ];
+
+        let mut keymap = Keymap::default();
+        keymap.add_bindings(bindings);
+
+        // Ensure `space` results in pending input on the workspace, but not editor
+        let (result, pending) = keymap.bindings_for_input(
+            &[Keystroke::parse("ctrl-x").unwrap()],
+            &[
+                KeyContext::parse("workspace").unwrap(),
+                KeyContext::parse("editor").unwrap(),
+            ],
+        );
+        assert_eq!(result.len(), 0);
+        assert!(!pending);
+    }
+
+    #[test]
+    fn test_pending_match_enabled() {
+        let bindings = [
+            KeyBinding::new("ctrl-x", ActionBeta, Some("vim_mode == normal")),
+            KeyBinding::new("ctrl-x 0", ActionAlpha, Some("Workspace")),
+        ];
+        let mut keymap = Keymap::default();
+        keymap.add_bindings(bindings);
+
+        let matched = keymap.bindings_for_input(
+            &[Keystroke::parse("ctrl-x")].map(Result::unwrap),
+            &[
+                KeyContext::parse("Workspace"),
+                KeyContext::parse("Pane"),
+                KeyContext::parse("Editor vim_mode=normal"),
+            ]
+            .map(Result::unwrap),
+        );
+        assert_eq!(matched.0.len(), 1);
+        assert!(matched.0[0].action.partial_eq(&ActionBeta));
+        assert!(matched.1);
+    }
+
+    #[test]
+    fn test_pending_match_enabled_extended() {
+        let bindings = [
+            KeyBinding::new("ctrl-x", ActionBeta, Some("vim_mode == normal")),
+            KeyBinding::new("ctrl-x 0", NoAction, Some("Workspace")),
+        ];
+        let mut keymap = Keymap::default();
+        keymap.add_bindings(bindings);
+
+        let matched = keymap.bindings_for_input(
+            &[Keystroke::parse("ctrl-x")].map(Result::unwrap),
+            &[
+                KeyContext::parse("Workspace"),
+                KeyContext::parse("Pane"),
+                KeyContext::parse("Editor vim_mode=normal"),
+            ]
+            .map(Result::unwrap),
+        );
+        assert_eq!(matched.0.len(), 1);
+        assert!(matched.0[0].action.partial_eq(&ActionBeta));
+        assert!(!matched.1);
+        let bindings = [
+            KeyBinding::new("ctrl-x", ActionBeta, Some("Workspace")),
+            KeyBinding::new("ctrl-x 0", NoAction, Some("vim_mode == normal")),
+        ];
+        let mut keymap = Keymap::default();
+        keymap.add_bindings(bindings);
+
+        let matched = keymap.bindings_for_input(
+            &[Keystroke::parse("ctrl-x")].map(Result::unwrap),
+            &[
+                KeyContext::parse("Workspace"),
+                KeyContext::parse("Pane"),
+                KeyContext::parse("Editor vim_mode=normal"),
+            ]
+            .map(Result::unwrap),
+        );
+        assert_eq!(matched.0.len(), 1);
+        assert!(matched.0[0].action.partial_eq(&ActionBeta));
+        assert!(!matched.1);
+    }
+
+    #[test]
+    fn test_overriding_prefix() {
+        let bindings = [
+            KeyBinding::new("ctrl-x 0", ActionAlpha, Some("Workspace")),
+            KeyBinding::new("ctrl-x", ActionBeta, Some("vim_mode == normal")),
+        ];
+        let mut keymap = Keymap::default();
+        keymap.add_bindings(bindings);
+
+        let matched = keymap.bindings_for_input(
+            &[Keystroke::parse("ctrl-x")].map(Result::unwrap),
+            &[
+                KeyContext::parse("Workspace"),
+                KeyContext::parse("Pane"),
+                KeyContext::parse("Editor vim_mode=normal"),
+            ]
+            .map(Result::unwrap),
+        );
+        assert_eq!(matched.0.len(), 1);
+        assert!(matched.0[0].action.partial_eq(&ActionBeta));
+        assert!(!matched.1);
     }
 
     #[test]
@@ -494,7 +659,7 @@ mod tests {
         ];
 
         let mut keymap = Keymap::default();
-        keymap.add_bindings(bindings.clone());
+        keymap.add_bindings(bindings);
 
         assert_bindings(&keymap, &ActionAlpha {}, &["ctrl-a"]);
         assert_bindings(&keymap, &ActionBeta {}, &[]);

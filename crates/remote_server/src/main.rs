@@ -12,6 +12,10 @@ struct Cli {
     /// by having Zed act like netcat communicating over a Unix socket.
     #[arg(long, hide = true)]
     askpass: Option<String>,
+    /// Used for recording minidumps on crashes by having the server run a separate
+    /// process communicating over a socket.
+    #[arg(long, hide = true)]
+    crash_handler: Option<PathBuf>,
     /// Used for loading the environment from the project.
     #[arg(long, hide = true)]
     printenv: bool,
@@ -55,6 +59,11 @@ fn main() {
 
     if let Some(socket_path) = &cli.askpass {
         askpass::main(socket_path);
+        return;
+    }
+
+    if let Some(socket) = &cli.crash_handler {
+        crashes::crash_server(socket.as_path());
         return;
     }
 

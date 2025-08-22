@@ -11,9 +11,10 @@ pub mod fake_provider;
 use anthropic::{AnthropicError, parse_prompt_too_long};
 use anyhow::{Result, anyhow};
 use client::Client;
+use cloud_llm_client::{CompletionMode, CompletionRequestStatus};
 use futures::FutureExt;
 use futures::{StreamExt, future::BoxFuture, stream::BoxStream};
-use gpui::{AnyElement, AnyView, App, AsyncApp, SharedString, Task, Window};
+use gpui::{AnyView, App, AsyncApp, SharedString, Task, Window};
 use http_client::{StatusCode, http};
 use icons::IconName;
 use parking_lot::Mutex;
@@ -26,7 +27,6 @@ use std::time::Duration;
 use std::{fmt, io};
 use thiserror::Error;
 use util::serde::is_default;
-use zed_llm_client::{CompletionMode, CompletionRequestStatus};
 
 pub use crate::model::*;
 pub use crate::rate_limiter::*;
@@ -54,7 +54,7 @@ pub const ZED_CLOUD_PROVIDER_NAME: LanguageModelProviderName =
 
 pub fn init(client: Arc<Client>, cx: &mut App) {
     init_settings(cx);
-    RefreshLlmTokenListener::register(client.clone(), cx);
+    RefreshLlmTokenListener::register(client, cx);
 }
 
 pub fn init_settings(cx: &mut App) {
@@ -300,7 +300,7 @@ impl From<AnthropicError> for LanguageModelCompletionError {
             },
             AnthropicError::ServerOverloaded { retry_after } => Self::ServerOverloaded {
                 provider,
-                retry_after: retry_after,
+                retry_after,
             },
             AnthropicError::ApiError(api_error) => api_error.into(),
         }
@@ -538,7 +538,7 @@ pub trait LanguageModel: Send + Sync {
             if let Some(first_event) = events.next().await {
                 match first_event {
                     Ok(LanguageModelCompletionEvent::StartMessage { message_id: id }) => {
-                        message_id = Some(id.clone());
+                        message_id = Some(id);
                     }
                     Ok(LanguageModelCompletionEvent::Text(text)) => {
                         first_item_text = Some(text);
@@ -634,18 +634,20 @@ pub trait LanguageModelProvider: 'static {
     }
     fn is_authenticated(&self, cx: &App) -> bool;
     fn authenticate(&self, cx: &mut App) -> Task<Result<(), AuthenticateError>>;
-    fn configuration_view(&self, window: &mut Window, cx: &mut App) -> AnyView;
-    fn must_accept_terms(&self, _cx: &App) -> bool {
-        false
-    }
-    fn render_accept_terms(
+    fn configuration_view(
         &self,
-        _view: LanguageModelProviderTosView,
-        _cx: &mut App,
-    ) -> Option<AnyElement> {
-        None
-    }
+        target_agent: ConfigurationViewTargetAgent,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> AnyView;
     fn reset_credentials(&self, cx: &mut App) -> Task<Result<()>>;
+}
+
+#[derive(Default, Clone, Copy)]
+pub enum ConfigurationViewTargetAgent {
+    #[default]
+    ZedAgent,
+    Other(&'static str),
 }
 
 #[derive(PartialEq, Eq)]
@@ -731,6 +733,18 @@ impl From<String> for LanguageModelProviderId {
 
 impl From<String> for LanguageModelProviderName {
     fn from(value: String) -> Self {
+        Self(SharedString::from(value))
+    }
+}
+
+impl From<Arc<str>> for LanguageModelProviderId {
+    fn from(value: Arc<str>) -> Self {
+        Self(SharedString::from(value))
+    }
+}
+
+impl From<Arc<str>> for LanguageModelProviderName {
+    fn from(value: Arc<str>) -> Self {
         Self(SharedString::from(value))
     }
 }

@@ -57,7 +57,7 @@ pub fn replace_edit_prediction_provider_setting(
         .nodes_for_capture_index(parent_object_capture_ix)
         .next()?
         .byte_range();
-    let parent_object_name = contents.get(parent_object_range.clone())?;
+    let parent_object_name = contents.get(parent_object_range)?;
 
     let setting_name_ix = query.capture_index_for_name("setting_name")?;
     let setting_range = mat

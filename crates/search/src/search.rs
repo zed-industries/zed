@@ -1,13 +1,17 @@
 use bitflags::bitflags;
 pub use buffer_search::BufferSearchBar;
 use editor::SearchSettings;
-use gpui::{Action, App, FocusHandle, IntoElement, actions};
+use gpui::{Action, App, ClickEvent, FocusHandle, IntoElement, actions};
 use project::search::SearchQuery;
 pub use project_search::ProjectSearchView;
 use ui::{ButtonStyle, IconButton, IconButtonShape};
 use ui::{Tooltip, prelude::*};
 use workspace::notifications::NotificationId;
 use workspace::{Toast, Workspace};
+
+pub use search_status_button::SEARCH_ICON;
+
+use crate::project_search::ProjectSearchBar;
 
 pub mod buffer_search;
 pub mod project_search;
@@ -59,48 +63,108 @@ actions!(
 bitflags! {
     #[derive(Debug, PartialEq, Eq, Clone, Copy, Default)]
     pub struct SearchOptions: u8 {
-        const NONE = 0b000;
-        const WHOLE_WORD = 0b001;
-        const CASE_SENSITIVE = 0b010;
-        const INCLUDE_IGNORED = 0b100;
-        const REGEX = 0b1000;
-        const ONE_MATCH_PER_LINE = 0b100000;
+        const NONE = 0;
+        const WHOLE_WORD = 1 << SearchOption::WholeWord as u8;
+        const CASE_SENSITIVE = 1 << SearchOption::CaseSensitive as u8;
+        const INCLUDE_IGNORED = 1 << SearchOption::IncludeIgnored as u8;
+        const REGEX = 1 << SearchOption::Regex as u8;
+        const ONE_MATCH_PER_LINE = 1 << SearchOption::OneMatchPerLine as u8;
         /// If set, reverse direction when finding the active match
-        const BACKWARDS = 0b10000;
+        const BACKWARDS = 1 << SearchOption::Backwards as u8;
     }
 }
 
-impl SearchOptions {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum SearchOption {
+    WholeWord = 0,
+    CaseSensitive,
+    IncludeIgnored,
+    Regex,
+    OneMatchPerLine,
+    Backwards,
+}
+
+pub(crate) enum SearchSource<'a, 'b> {
+    Buffer,
+    Project(&'a Context<'b, ProjectSearchBar>),
+}
+
+impl SearchOption {
+    pub fn as_options(&self) -> SearchOptions {
+        SearchOptions::from_bits(1 << *self as u8).unwrap()
+    }
+
     pub fn label(&self) -> &'static str {
-        match *self {
-            SearchOptions::WHOLE_WORD => "Match Whole Words",
-            SearchOptions::CASE_SENSITIVE => "Match Case Sensitively",
-            SearchOptions::INCLUDE_IGNORED => "Also search files ignored by configuration",
-            SearchOptions::REGEX => "Use Regular Expressions",
-            _ => panic!("{:?} is not a named SearchOption", self),
+        match self {
+            SearchOption::WholeWord => "Match Whole Words",
+            SearchOption::CaseSensitive => "Match Case Sensitively",
+            SearchOption::IncludeIgnored => "Also search files ignored by configuration",
+            SearchOption::Regex => "Use Regular Expressions",
+            SearchOption::OneMatchPerLine => "One Match Per Line",
+            SearchOption::Backwards => "Search Backwards",
         }
     }
 
     pub fn icon(&self) -> ui::IconName {
-        match *self {
-            SearchOptions::WHOLE_WORD => ui::IconName::WholeWord,
-            SearchOptions::CASE_SENSITIVE => ui::IconName::CaseSensitive,
-            SearchOptions::INCLUDE_IGNORED => ui::IconName::Sliders,
-            SearchOptions::REGEX => ui::IconName::Regex,
-            _ => panic!("{:?} is not a named SearchOption", self),
+        match self {
+            SearchOption::WholeWord => ui::IconName::WholeWord,
+            SearchOption::CaseSensitive => ui::IconName::CaseSensitive,
+            SearchOption::IncludeIgnored => ui::IconName::Sliders,
+            SearchOption::Regex => ui::IconName::Regex,
+            _ => panic!("{self:?} is not a named SearchOption"),
         }
     }
 
-    pub fn to_toggle_action(&self) -> Box<dyn Action + Sync + Send + 'static> {
-        match *self {
-            SearchOptions::WHOLE_WORD => Box::new(ToggleWholeWord),
-            SearchOptions::CASE_SENSITIVE => Box::new(ToggleCaseSensitive),
-            SearchOptions::INCLUDE_IGNORED => Box::new(ToggleIncludeIgnored),
-            SearchOptions::REGEX => Box::new(ToggleRegex),
-            _ => panic!("{:?} is not a named SearchOption", self),
+    pub fn to_toggle_action(self) -> &'static dyn Action {
+        match self {
+            SearchOption::WholeWord => &ToggleWholeWord,
+            SearchOption::CaseSensitive => &ToggleCaseSensitive,
+            SearchOption::IncludeIgnored => &ToggleIncludeIgnored,
+            SearchOption::Regex => &ToggleRegex,
+            _ => panic!("{self:?} is not a toggle action"),
         }
     }
 
+    pub(crate) fn as_button(
+        &self,
+        active: SearchOptions,
+        search_source: SearchSource,
+        focus_handle: FocusHandle,
+    ) -> impl IntoElement {
+        let action = self.to_toggle_action();
+        let label = self.label();
+        IconButton::new(
+            (label, matches!(search_source, SearchSource::Buffer) as u32),
+            self.icon(),
+        )
+        .map(|button| match search_source {
+            SearchSource::Buffer => {
+                let focus_handle = focus_handle.clone();
+                button.on_click(move |_: &ClickEvent, window, cx| {
+                    if !focus_handle.is_focused(window) {
+                        window.focus(&focus_handle);
+                    }
+                    window.dispatch_action(action.boxed_clone(), cx);
+                })
+            }
+            SearchSource::Project(cx) => {
+                let options = self.as_options();
+                button.on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                    this.toggle_search_option(options, window, cx);
+                }))
+            }
+        })
+        .style(ButtonStyle::Subtle)
+        .shape(IconButtonShape::Square)
+        .toggle_state(active.contains(self.as_options()))
+        .tooltip({
+            move |window, cx| Tooltip::for_action_in(label, action, &focus_handle, window, cx)
+        })
+    }
+}
+
+impl SearchOptions {
     pub fn none() -> SearchOptions {
         SearchOptions::NONE
     }
@@ -121,24 +185,6 @@ impl SearchOptions {
         options.set(SearchOptions::INCLUDE_IGNORED, settings.include_ignored);
         options.set(SearchOptions::REGEX, settings.regex);
         options
-    }
-
-    pub fn as_button<Action: Fn(&gpui::ClickEvent, &mut Window, &mut App) + 'static>(
-        &self,
-        active: bool,
-        focus_handle: FocusHandle,
-        action: Action,
-    ) -> impl IntoElement + use<Action> {
-        IconButton::new(self.label(), self.icon())
-            .on_click(action)
-            .style(ButtonStyle::Subtle)
-            .shape(IconButtonShape::Square)
-            .toggle_state(active)
-            .tooltip({
-                let action = self.to_toggle_action();
-                let label = self.label();
-                move |window, cx| Tooltip::for_action_in(label, &*action, &focus_handle, window, cx)
-            })
     }
 }
 

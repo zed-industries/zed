@@ -5,7 +5,7 @@ use crate::{FocusHandle, FocusId};
 /// Used to manage the `Tab` event to switch between focus handles.
 #[derive(Default)]
 pub(crate) struct TabHandles {
-    handles: Vec<FocusHandle>,
+    pub(crate) handles: Vec<FocusHandle>,
 }
 
 impl TabHandles {
@@ -32,42 +32,31 @@ impl TabHandles {
         self.handles.clear();
     }
 
-    fn current_index(&self, focused_id: Option<&FocusId>) -> usize {
-        self.handles
-            .iter()
-            .position(|h| Some(&h.id) == focused_id)
-            .unwrap_or_default()
+    fn current_index(&self, focused_id: Option<&FocusId>) -> Option<usize> {
+        self.handles.iter().position(|h| Some(&h.id) == focused_id)
     }
 
     pub(crate) fn next(&self, focused_id: Option<&FocusId>) -> Option<FocusHandle> {
-        let ix = self.current_index(focused_id);
+        let next_ix = self
+            .current_index(focused_id)
+            .and_then(|ix| {
+                let next_ix = ix + 1;
+                (next_ix < self.handles.len()).then_some(next_ix)
+            })
+            .unwrap_or_default();
 
-        let mut next_ix = ix + 1;
-        if next_ix + 1 > self.handles.len() {
-            next_ix = 0;
-        }
-
-        if let Some(next_handle) = self.handles.get(next_ix) {
-            Some(next_handle.clone())
-        } else {
-            None
-        }
+        self.handles.get(next_ix).cloned()
     }
 
     pub(crate) fn prev(&self, focused_id: Option<&FocusId>) -> Option<FocusHandle> {
-        let ix = self.current_index(focused_id);
-        let prev_ix;
-        if ix == 0 {
-            prev_ix = self.handles.len().saturating_sub(1);
+        let ix = self.current_index(focused_id).unwrap_or_default();
+        let prev_ix = if ix == 0 {
+            self.handles.len().saturating_sub(1)
         } else {
-            prev_ix = ix.saturating_sub(1);
-        }
+            ix.saturating_sub(1)
+        };
 
-        if let Some(prev_handle) = self.handles.get(prev_ix) {
-            Some(prev_handle.clone())
-        } else {
-            None
-        }
+        self.handles.get(prev_ix).cloned()
     }
 }
 
@@ -92,7 +81,7 @@ mod tests {
         ];
 
         for handle in focus_handles.iter() {
-            tab.insert(&handle);
+            tab.insert(handle);
         }
         assert_eq!(
             tab.handles
@@ -108,8 +97,14 @@ mod tests {
             ]
         );
 
-        // next
-        assert_eq!(tab.next(None), Some(tab.handles[1].clone()));
+        // Select first tab index if no handle is currently focused.
+        assert_eq!(tab.next(None), Some(tab.handles[0].clone()));
+        // Select last tab index if no handle is currently focused.
+        assert_eq!(
+            tab.prev(None),
+            Some(tab.handles[tab.handles.len() - 1].clone())
+        );
+
         assert_eq!(
             tab.next(Some(&tab.handles[0].id)),
             Some(tab.handles[1].clone())

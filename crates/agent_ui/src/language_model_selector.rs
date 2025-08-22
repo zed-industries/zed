@@ -1,16 +1,15 @@
 use std::{cmp::Reverse, sync::Arc};
 
+use cloud_llm_client::Plan;
 use collections::{HashSet, IndexMap};
 use feature_flags::ZedProFeatureFlag;
 use fuzzy::{StringMatch, StringMatchCandidate, match_strings};
 use gpui::{Action, AnyElement, App, BackgroundExecutor, DismissEvent, Subscription, Task};
 use language_model::{
-    AuthenticateError, ConfiguredModel, LanguageModel, LanguageModelProviderId,
-    LanguageModelRegistry,
+    ConfiguredModel, LanguageModel, LanguageModelProviderId, LanguageModelRegistry,
 };
 use ordered_float::OrderedFloat;
 use picker::{Picker, PickerDelegate};
-use proto::Plan;
 use ui::{ListItem, ListItemSpacing, prelude::*};
 
 const TRY_ZED_PRO_URL: &str = "https://zed.dev/pro";
@@ -77,7 +76,6 @@ pub struct LanguageModelPickerDelegate {
     all_models: Arc<GroupedModels>,
     filtered_entries: Vec<LanguageModelPickerEntry>,
     selected_index: usize,
-    _authenticate_all_providers_task: Task<()>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -93,18 +91,17 @@ impl LanguageModelPickerDelegate {
         let entries = models.entries();
 
         Self {
-            on_model_changed: on_model_changed.clone(),
+            on_model_changed,
             all_models: Arc::new(models),
             selected_index: Self::get_active_model_index(&entries, get_active_model(cx)),
             filtered_entries: entries,
             get_active_model: Arc::new(get_active_model),
-            _authenticate_all_providers_task: Self::authenticate_all_providers(cx),
             _subscriptions: vec![cx.subscribe_in(
                 &LanguageModelRegistry::global(cx),
                 window,
                 |picker, _, event, window, cx| {
                     match event {
-                        language_model::Event::ProviderStateChanged
+                        language_model::Event::ProviderStateChanged(_)
                         | language_model::Event::AddedProvider(_)
                         | language_model::Event::RemovedProvider(_) => {
                             let query = picker.query(cx);
@@ -140,56 +137,6 @@ impl LanguageModelPickerDelegate {
                 }
             })
             .unwrap_or(0)
-    }
-
-    /// Authenticates all providers in the [`LanguageModelRegistry`].
-    ///
-    /// We do this so that we can populate the language selector with all of the
-    /// models from the configured providers.
-    fn authenticate_all_providers(cx: &mut App) -> Task<()> {
-        let authenticate_all_providers = LanguageModelRegistry::global(cx)
-            .read(cx)
-            .providers()
-            .iter()
-            .map(|provider| (provider.id(), provider.name(), provider.authenticate(cx)))
-            .collect::<Vec<_>>();
-
-        cx.spawn(async move |_cx| {
-            for (provider_id, provider_name, authenticate_task) in authenticate_all_providers {
-                if let Err(err) = authenticate_task.await {
-                    if matches!(err, AuthenticateError::CredentialsNotFound) {
-                        // Since we're authenticating these providers in the
-                        // background for the purposes of populating the
-                        // language selector, we don't care about providers
-                        // where the credentials are not found.
-                    } else {
-                        // Some providers have noisy failure states that we
-                        // don't want to spam the logs with every time the
-                        // language model selector is initialized.
-                        //
-                        // Ideally these should have more clear failure modes
-                        // that we know are safe to ignore here, like what we do
-                        // with `CredentialsNotFound` above.
-                        match provider_id.0.as_ref() {
-                            "lmstudio" | "ollama" => {
-                                // LM Studio and Ollama both make fetch requests to the local APIs to determine if they are "authenticated".
-                                //
-                                // These fail noisily, so we don't log them.
-                            }
-                            "copilot_chat" => {
-                                // Copilot Chat returns an error if Copilot is not enabled, so we don't log those errors.
-                            }
-                            _ => {
-                                log::error!(
-                                    "Failed to authenticate provider: {}: {err}",
-                                    provider_name.0
-                                );
-                            }
-                        }
-                    }
-                }
-            }
-        })
     }
 
     pub fn active_model(&self, cx: &App) -> Option<ConfiguredModel> {
@@ -296,7 +243,7 @@ impl ModelMatcher {
     pub fn fuzzy_search(&self, query: &str) -> Vec<ModelInfo> {
         let mut matches = self.bg_executor.block(match_strings(
             &self.candidates,
-            &query,
+            query,
             false,
             true,
             100,
@@ -514,7 +461,7 @@ impl PickerDelegate for LanguageModelPickerDelegate {
                                 .pl_0p5()
                                 .gap_1p5()
                                 .w(px(240.))
-                                .child(Label::new(model_info.model.name().0.clone()).truncate()),
+                                .child(Label::new(model_info.model.name().0).truncate()),
                         )
                         .end_slot(div().pr_3().when(is_selected, |this| {
                             this.child(
@@ -536,7 +483,7 @@ impl PickerDelegate for LanguageModelPickerDelegate {
     ) -> Option<gpui::AnyElement> {
         use feature_flags::FeatureFlagAppExt;
 
-        let plan = proto::Plan::ZedPro;
+        let plan = Plan::ZedPro;
 
         Some(
             h_flex()
@@ -557,7 +504,7 @@ impl PickerDelegate for LanguageModelPickerDelegate {
                                 window
                                     .dispatch_action(Box::new(zed_actions::OpenAccountSettings), cx)
                             }),
-                        Plan::Free | Plan::ZedProTrial => Button::new(
+                        Plan::ZedFree | Plan::ZedProTrial => Button::new(
                             "try-pro",
                             if plan == Plan::ZedProTrial {
                                 "Upgrade to Pro"
@@ -576,7 +523,7 @@ impl PickerDelegate for LanguageModelPickerDelegate {
                         .icon_position(IconPosition::Start)
                         .on_click(|_, window, cx| {
                             window.dispatch_action(
-                                zed_actions::agent::OpenConfiguration.boxed_clone(),
+                                zed_actions::agent::OpenSettings.boxed_clone(),
                                 cx,
                             );
                         }),

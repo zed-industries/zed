@@ -13,6 +13,7 @@ env:
   CARGO_INCREMENTAL: 0
   RUST_BACKTRACE: 1
   ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
+  ZED_MINIDUMP_ENDPOINT: ${{ secrets.ZED_SENTRY_MINIDUMP_ENDPOINT }}
   DIGITALOCEAN_SPACES_ACCESS_KEY: ${{ secrets.DIGITALOCEAN_SPACES_ACCESS_KEY }}
   DIGITALOCEAN_SPACES_SECRET_KEY: ${{ secrets.DIGITALOCEAN_SPACES_SECRET_KEY }}
 
@@ -58,7 +59,7 @@ jobs:
     timeout-minutes: 60
     name: Run tests on Windows
     if: github.repository_owner == 'zed-industries'
-    runs-on: [self-hosted, Windows, X64]
+    runs-on: [self-32vcpu-windows-2022]
     steps:
       - name: Checkout repo
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
@@ -111,6 +112,11 @@ jobs:
           echo "Publishing version: ${version} on release channel nightly"
           echo "nightly" > crates/zed/RELEASE_CHANNEL
 
+      - name: Setup Sentry CLI
+        uses: matbour/setup-sentry-cli@3e938c54b3018bdd019973689ef984e033b0454b #v2
+        with:
+          token: ${{ SECRETS.SENTRY_AUTH_TOKEN }}
+
       - name: Create macOS app bundle
         run: script/bundle-mac
 
@@ -122,7 +128,7 @@ jobs:
     name: Create a Linux *.tar.gz bundle for x86
     if: github.repository_owner == 'zed-industries'
     runs-on:
-      - buildjet-16vcpu-ubuntu-2004
+      - namespace-profile-16x32-ubuntu-2004 # ubuntu 20.04 for minimal glibc
     needs: tests
     steps:
       - name: Checkout repo
@@ -135,6 +141,11 @@ jobs:
 
       - name: Install Linux dependencies
         run: ./script/linux && ./script/install-mold 2.34.0
+
+      - name: Setup Sentry CLI
+        uses: matbour/setup-sentry-cli@3e938c54b3018bdd019973689ef984e033b0454b #v2
+        with:
+          token: ${{ SECRETS.SENTRY_AUTH_TOKEN }}
 
       - name: Limit target directory size
         run: script/clear-target-dir-if-larger-than 100
@@ -157,7 +168,7 @@ jobs:
     name: Create a Linux *.tar.gz bundle for ARM
     if: github.repository_owner == 'zed-industries'
     runs-on:
-      - buildjet-16vcpu-ubuntu-2204-arm
+      - namespace-profile-8x32-ubuntu-2004-arm-m4 # ubuntu 20.04 for minimal glibc
     needs: tests
     steps:
       - name: Checkout repo
@@ -167,6 +178,11 @@ jobs:
 
       - name: Install Linux dependencies
         run: ./script/linux
+
+      - name: Setup Sentry CLI
+        uses: matbour/setup-sentry-cli@3e938c54b3018bdd019973689ef984e033b0454b #v2
+        with:
+          token: ${{ SECRETS.SENTRY_AUTH_TOKEN }}
 
       - name: Limit target directory size
         run: script/clear-target-dir-if-larger-than 100
@@ -190,9 +206,6 @@ jobs:
     runs-on: github-8vcpu-ubuntu-2404
     needs: tests
     name: Build Zed on FreeBSD
-    # env:
-    #   MYTOKEN : ${{ secrets.MYTOKEN }}
-    #   MYTOKEN2: "value2"
     steps:
       - uses: actions/checkout@v4
       - name: Build FreeBSD remote-server
@@ -227,7 +240,6 @@ jobs:
 
   bundle-nix:
     name: Build and cache Nix package
-    if: false
     needs: tests
     secrets: inherit
     uses: ./.github/workflows/nix.yml
@@ -236,7 +248,7 @@ jobs:
     timeout-minutes: 60
     name: Create a Windows installer
     if: github.repository_owner == 'zed-industries'
-    runs-on: [self-hosted, Windows, X64]
+    runs-on: [self-32vcpu-windows-2022]
     needs: windows-tests
     env:
       AZURE_TENANT_ID: ${{ secrets.AZURE_SIGNING_TENANT_ID }}
@@ -262,6 +274,11 @@ jobs:
           Write-Host "Publishing version: $version on release channel nightly"
           "nightly" | Set-Content -Path "crates/zed/RELEASE_CHANNEL"
 
+      - name: Setup Sentry CLI
+        uses: matbour/setup-sentry-cli@3e938c54b3018bdd019973689ef984e033b0454b #v2
+        with:
+          token: ${{ SECRETS.SENTRY_AUTH_TOKEN }}
+
       - name: Build Zed installer
         working-directory: ${{ env.ZED_WORKSPACE }}
         run: script/bundle-windows.ps1
@@ -273,7 +290,7 @@ jobs:
   update-nightly-tag:
     name: Update nightly tag
     if: github.repository_owner == 'zed-industries'
-    runs-on: ubuntu-latest
+    runs-on: namespace-profile-2x4-ubuntu-2404
     needs:
       - bundle-mac
       - bundle-linux-x86
@@ -295,3 +312,12 @@ jobs:
           git config user.email github-actions@github.com
           git tag -f nightly
           git push origin nightly --force
+
+      - name: Create Sentry release
+        uses: getsentry/action-release@526942b68292201ac6bbb99b9a0747d4abee354c # v3
+        env:
+          SENTRY_ORG: zed-dev
+          SENTRY_PROJECT: zed
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+        with:
+          environment: production

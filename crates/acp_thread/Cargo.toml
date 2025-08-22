@@ -13,34 +13,44 @@ path = "src/acp_thread.rs"
 doctest = false
 
 [features]
-test-support = ["gpui/test-support", "project/test-support"]
+test-support = ["gpui/test-support", "project/test-support", "dep:parking_lot"]
 
 [dependencies]
-agentic-coding-protocol.workspace = true
+action_log.workspace = true
+agent-client-protocol.workspace = true
 anyhow.workspace = true
-assistant_tool.workspace = true
 buffer_diff.workspace = true
+collections.workspace = true
 editor.workspace = true
+file_icons.workspace = true
 futures.workspace = true
 gpui.workspace = true
 itertools.workspace = true
 language.workspace = true
+language_model.workspace = true
 markdown.workspace = true
+parking_lot = { workspace = true, optional = true }
 project.workspace = true
+prompt_store.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true
 smol.workspace = true
+terminal.workspace = true
 ui.workspace = true
+url.workspace = true
 util.workspace = true
+uuid.workspace = true
+watch.workspace = true
 workspace-hack.workspace = true
 
 [dev-dependencies]
-async-pipe.workspace = true
 env_logger.workspace = true
 gpui = { workspace = true, "features" = ["test-support"] }
 indoc.workspace = true
+parking_lot.workspace = true
 project = { workspace = true, "features" = ["test-support"] }
+rand.workspace = true
 tempfile.workspace = true
 util.workspace = true
 settings.workspace = true

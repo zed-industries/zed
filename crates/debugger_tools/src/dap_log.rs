@@ -392,7 +392,7 @@ impl LogStore {
                         session.label(),
                         session
                             .adapter_client()
-                            .map_or(false, |client| client.has_adapter_logs()),
+                            .is_some_and(|client| client.has_adapter_logs()),
                     )
                 });
 
@@ -485,7 +485,7 @@ impl LogStore {
         &mut self,
         id: &LogStoreEntryIdentifier<'_>,
     ) -> Option<&Vec<SharedString>> {
-        self.get_debug_adapter_state(&id)
+        self.get_debug_adapter_state(id)
             .map(|state| &state.rpc_messages.initialization_sequence)
     }
 }
@@ -536,11 +536,11 @@ impl Render for DapLogToolbarItemView {
                     })
                     .unwrap_or_else(|| "No adapter selected".into()),
             ))
-            .menu(move |mut window, cx| {
+            .menu(move |window, cx| {
                 let log_view = log_view.clone();
                 let menu_rows = menu_rows.clone();
                 let project = project.clone();
-                ContextMenu::build(&mut window, cx, move |mut menu, window, _cx| {
+                ContextMenu::build(window, cx, move |mut menu, window, _cx| {
                     for row in menu_rows.into_iter() {
                         menu = menu.custom_row(move |_window, _cx| {
                             div()
@@ -661,11 +661,11 @@ impl ToolbarItemView for DapLogToolbarItemView {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> workspace::ToolbarItemLocation {
-        if let Some(item) = active_pane_item {
-            if let Some(log_view) = item.downcast::<DapLogView>() {
-                self.log_view = Some(log_view.clone());
-                return workspace::ToolbarItemLocation::PrimaryLeft;
-            }
+        if let Some(item) = active_pane_item
+            && let Some(log_view) = item.downcast::<DapLogView>()
+        {
+            self.log_view = Some(log_view);
+            return workspace::ToolbarItemLocation::PrimaryLeft;
         }
         self.log_view = None;
 
@@ -1131,7 +1131,7 @@ impl LogStore {
         project: &WeakEntity<Project>,
         session_id: SessionId,
     ) -> Vec<SharedString> {
-        self.projects.get(&project).map_or(vec![], |state| {
+        self.projects.get(project).map_or(vec![], |state| {
             state
                 .debug_sessions
                 .get(&session_id)

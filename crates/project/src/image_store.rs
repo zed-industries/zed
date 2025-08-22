@@ -224,7 +224,7 @@ impl ProjectItem for ImageItem {
         path: &ProjectPath,
         cx: &mut App,
     ) -> Option<Task<anyhow::Result<Entity<Self>>>> {
-        if is_image_file(&project, &path, cx) {
+        if is_image_file(project, path, cx) {
             Some(cx.spawn({
                 let path = path.clone();
                 let project = project.clone();
@@ -244,7 +244,7 @@ impl ProjectItem for ImageItem {
     }
 
     fn project_path(&self, cx: &App) -> Option<ProjectPath> {
-        Some(self.project_path(cx).clone())
+        Some(self.project_path(cx))
     }
 
     fn is_dirty(&self) -> bool {
@@ -375,7 +375,6 @@ impl ImageStore {
                 let (mut tx, rx) = postage::watch::channel();
                 entry.insert(rx.clone());
 
-                let project_path = project_path.clone();
                 let load_image = self
                     .state
                     .open_image(project_path.path.clone(), worktree, cx);
@@ -446,15 +445,12 @@ impl ImageStore {
         event: &ImageItemEvent,
         cx: &mut Context<Self>,
     ) {
-        match event {
-            ImageItemEvent::FileHandleChanged => {
-                if let Some(local) = self.state.as_local() {
-                    local.update(cx, |local, cx| {
-                        local.image_changed_file(image, cx);
-                    })
-                }
-            }
-            _ => {}
+        if let ImageItemEvent::FileHandleChanged = event
+            && let Some(local) = self.state.as_local()
+        {
+            local.update(cx, |local, cx| {
+                local.image_changed_file(image, cx);
+            })
         }
     }
 }
@@ -531,13 +527,10 @@ impl ImageStoreImpl for Entity<LocalImageStore> {
 impl LocalImageStore {
     fn subscribe_to_worktree(&mut self, worktree: &Entity<Worktree>, cx: &mut Context<Self>) {
         cx.subscribe(worktree, |this, worktree, event, cx| {
-            if worktree.read(cx).is_local() {
-                match event {
-                    worktree::Event::UpdatedEntries(changes) => {
-                        this.local_worktree_entries_changed(&worktree, changes, cx);
-                    }
-                    _ => {}
-                }
+            if worktree.read(cx).is_local()
+                && let worktree::Event::UpdatedEntries(changes) = event
+            {
+                this.local_worktree_entries_changed(&worktree, changes, cx);
             }
         })
         .detach();

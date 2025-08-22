@@ -1,6 +1,7 @@
 use crate::schema::json_schema_for;
+use action_log::ActionLog;
 use anyhow::Result;
-use assistant_tool::{ActionLog, Tool, ToolResult};
+use assistant_tool::{Tool, ToolResult};
 use gpui::{AnyWindowHandle, App, Entity, Task};
 use language_model::{LanguageModel, LanguageModelRequest, LanguageModelToolSchemaFormat};
 use project::Project;
@@ -19,7 +20,7 @@ impl Tool for ProjectNotificationsTool {
         "project_notifications".to_string()
     }
 
-    fn needs_confirmation(&self, _: &serde_json::Value, _: &App) -> bool {
+    fn needs_confirmation(&self, _: &serde_json::Value, _: &Entity<Project>, _: &App) -> bool {
         false
     }
     fn may_perform_edits(&self) -> bool {
@@ -80,7 +81,7 @@ fn fit_patch_to_size(patch: &str, max_size: usize) -> String {
     // Compression level 1: remove context lines in diff bodies, but
     // leave the counts and positions of inserted/deleted lines
     let mut current_size = patch.len();
-    let mut file_patches = split_patch(&patch);
+    let mut file_patches = split_patch(patch);
     file_patches.sort_by_key(|patch| patch.len());
     let compressed_patches = file_patches
         .iter()
@@ -200,7 +201,7 @@ mod tests {
 
         // Run the tool before any changes
         let tool = Arc::new(ProjectNotificationsTool);
-        let provider = Arc::new(FakeLanguageModelProvider);
+        let provider = Arc::new(FakeLanguageModelProvider::default());
         let model: Arc<dyn LanguageModel> = Arc::new(provider.test_model());
         let request = Arc::new(LanguageModelRequest::default());
         let tool_input = json!({});

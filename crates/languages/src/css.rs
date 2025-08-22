@@ -2,10 +2,10 @@ use anyhow::{Context as _, Result};
 use async_trait::async_trait;
 use futures::StreamExt;
 use gpui::AsyncApp;
-use language::{LanguageToolchainStore, LspAdapter, LspAdapterDelegate};
+use language::{LspAdapter, LspAdapterDelegate, Toolchain};
 use lsp::{LanguageServerBinary, LanguageServerName};
-use node_runtime::NodeRuntime;
-use project::Fs;
+use node_runtime::{NodeRuntime, VersionStrategy};
+use project::{Fs, lsp_store::language_server_settings};
 use serde_json::json;
 use smol::fs;
 use std::{
@@ -14,7 +14,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use util::{ResultExt, maybe};
+use util::{ResultExt, maybe, merge_json_value_into};
 
 const SERVER_PATH: &str =
     "node_modules/vscode-langservers-extracted/bin/vscode-css-language-server";
@@ -43,7 +43,7 @@ impl LspAdapter for CssLspAdapter {
     async fn check_if_user_installed(
         &self,
         delegate: &dyn LspAdapterDelegate,
-        _: Arc<dyn LanguageToolchainStore>,
+        _: Option<Toolchain>,
         _: &AsyncApp,
     ) -> Option<LanguageServerBinary> {
         let path = delegate
@@ -103,7 +103,12 @@ impl LspAdapter for CssLspAdapter {
 
         let should_install_language_server = self
             .node
-            .should_install_npm_package(Self::PACKAGE_NAME, &server_path, &container_dir, &version)
+            .should_install_npm_package(
+                Self::PACKAGE_NAME,
+                &server_path,
+                container_dir,
+                VersionStrategy::Latest(version),
+            )
             .await;
 
         if should_install_language_server {
@@ -133,6 +138,37 @@ impl LspAdapter for CssLspAdapter {
         Ok(Some(json!({
             "provideFormatter": true
         })))
+    }
+
+    async fn workspace_configuration(
+        self: Arc<Self>,
+        _: &dyn Fs,
+        delegate: &Arc<dyn LspAdapterDelegate>,
+        _: Option<Toolchain>,
+        cx: &mut AsyncApp,
+    ) -> Result<serde_json::Value> {
+        let mut default_config = json!({
+            "css": {
+                "lint": {}
+            },
+            "less": {
+                "lint": {}
+            },
+            "scss": {
+                "lint": {}
+            }
+        });
+
+        let project_options = cx.update(|cx| {
+            language_server_settings(delegate.as_ref(), &self.name(), cx)
+                .and_then(|s| s.settings.clone())
+        })?;
+
+        if let Some(override_options) = project_options {
+            merge_json_value_into(override_options, &mut default_config);
+        }
+
+        Ok(default_config)
     }
 }
 

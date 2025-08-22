@@ -2,12 +2,12 @@ use ::serde::{Deserialize, Serialize};
 use anyhow::Context as _;
 use gpui::{App, Entity, Task, WeakEntity};
 use language::ServerHealth;
-use lsp::LanguageServer;
+use lsp::{LanguageServer, LanguageServerName};
 use rpc::proto;
 
 use crate::{LspStore, LspStoreEvent, Project, ProjectPath, lsp_store};
 
-pub const RUST_ANALYZER_NAME: &str = "rust-analyzer";
+pub const RUST_ANALYZER_NAME: LanguageServerName = LanguageServerName::new_static("rust-analyzer");
 pub const CARGO_DIAGNOSTICS_SOURCE_NAME: &str = "rustc";
 
 /// Experimental: Informs the end user about the state of the server
@@ -34,7 +34,6 @@ pub fn register_notifications(lsp_store: WeakEntity<LspStore>, language_server: 
 
     language_server
         .on_notification::<ServerStatus, _>({
-            let name = name.clone();
             move |params, cx| {
                 let message = params.message;
                 let log_message = message.as_ref().map(|message| {
@@ -97,13 +96,9 @@ pub fn cancel_flycheck(
 
     cx.spawn(async move |cx| {
         let buffer = buffer.await?;
-        let Some(rust_analyzer_server) = project
-            .update(cx, |project, cx| {
-                buffer.update(cx, |buffer, cx| {
-                    project.language_server_id_for_name(buffer, RUST_ANALYZER_NAME, cx)
-                })
-            })?
-            .await
+        let Some(rust_analyzer_server) = project.read_with(cx, |project, cx| {
+            project.language_server_id_for_name(buffer.read(cx), &RUST_ANALYZER_NAME, cx)
+        })?
         else {
             return Ok(());
         };
@@ -148,13 +143,9 @@ pub fn run_flycheck(
 
     cx.spawn(async move |cx| {
         let buffer = buffer.await?;
-        let Some(rust_analyzer_server) = project
-            .update(cx, |project, cx| {
-                buffer.update(cx, |buffer, cx| {
-                    project.language_server_id_for_name(buffer, RUST_ANALYZER_NAME, cx)
-                })
-            })?
-            .await
+        let Some(rust_analyzer_server) = project.read_with(cx, |project, cx| {
+            project.language_server_id_for_name(buffer.read(cx), &RUST_ANALYZER_NAME, cx)
+        })?
         else {
             return Ok(());
         };
@@ -204,13 +195,9 @@ pub fn clear_flycheck(
 
     cx.spawn(async move |cx| {
         let buffer = buffer.await?;
-        let Some(rust_analyzer_server) = project
-            .update(cx, |project, cx| {
-                buffer.update(cx, |buffer, cx| {
-                    project.language_server_id_for_name(buffer, RUST_ANALYZER_NAME, cx)
-                })
-            })?
-            .await
+        let Some(rust_analyzer_server) = project.read_with(cx, |project, cx| {
+            project.language_server_id_for_name(buffer.read(cx), &RUST_ANALYZER_NAME, cx)
+        })?
         else {
             return Ok(());
         };

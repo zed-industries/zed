@@ -1,8 +1,6 @@
 use gpui::{Action, IntoElement, ParentElement, RenderOnce, point};
 use language_model::{LanguageModelRegistry, ZED_CLOUD_PROVIDER_ID};
-use ui::{Divider, List, prelude::*};
-
-use crate::BulletItem;
+use ui::{Divider, List, ListBulletItem, prelude::*};
 
 pub struct ApiKeysWithProviders {
     configured_providers: Vec<(IconName, SharedString)>,
@@ -13,7 +11,7 @@ impl ApiKeysWithProviders {
         cx.subscribe(
             &LanguageModelRegistry::global(cx),
             |this: &mut Self, _registry, event: &language_model::Event, cx| match event {
-                language_model::Event::ProviderStateChanged
+                language_model::Event::ProviderStateChanged(_)
                 | language_model::Event::AddedProvider(_)
                 | language_model::Event::RemovedProvider(_) => {
                     this.configured_providers = Self::compute_configured_providers(cx)
@@ -35,12 +33,8 @@ impl ApiKeysWithProviders {
             .filter(|provider| {
                 provider.is_authenticated(cx) && provider.id() != ZED_CLOUD_PROVIDER_ID
             })
-            .map(|provider| (provider.icon(), provider.name().0.clone()))
+            .map(|provider| (provider.icon(), provider.name().0))
             .collect()
-    }
-
-    pub fn has_providers(&self) -> bool {
-        !self.configured_providers.is_empty()
     }
 }
 
@@ -53,11 +47,10 @@ impl Render for ApiKeysWithProviders {
                 .map(|(icon, name)| {
                     h_flex()
                         .gap_1p5()
-                        .child(Icon::new(icon).size(IconSize::Small).color(Color::Muted))
+                        .child(Icon::new(icon).size(IconSize::XSmall).color(Color::Muted))
                         .child(Label::new(name))
                 });
-
-        h_flex()
+        div()
             .mx_2p5()
             .p_1()
             .pb_0()
@@ -85,8 +78,24 @@ impl Render for ApiKeysWithProviders {
                     .border_x_1()
                     .border_color(cx.theme().colors().border)
                     .bg(cx.theme().colors().panel_background)
-                    .child(Icon::new(IconName::Info).size(IconSize::XSmall).color(Color::Muted))
-                    .child(Label::new("Or start now using API keys from your environment for the following providers:").color(Color::Muted))
+                    .child(
+                        h_flex()
+                            .min_w_0()
+                            .gap_2()
+                            .child(
+                                Icon::new(IconName::Info)
+                                    .size(IconSize::XSmall)
+                                    .color(Color::Muted)
+                            )
+                            .child(
+                                div()
+                                    .w_full()
+                                    .child(
+                                        Label::new("Start now using API keys from your environment for the following providers:")
+                                            .color(Color::Muted)
+                                    )
+                            )
+                    )
                     .children(configured_providers_list)
             )
     }
@@ -117,18 +126,15 @@ impl RenderOnce for ApiKeysWithoutProviders {
                     )
                     .child(Divider::horizontal()),
             )
-            .child(List::new().child(BulletItem::new(
-                "You can also use AI in Zed by bringing your own API keys",
+            .child(List::new().child(ListBulletItem::new(
+                "Add your own keys to use AI without signing in.",
             )))
             .child(
                 Button::new("configure-providers", "Configure Providers")
                     .full_width()
                     .style(ButtonStyle::Outlined)
                     .on_click(move |_, window, cx| {
-                        window.dispatch_action(
-                            zed_actions::agent::OpenConfiguration.boxed_clone(),
-                            cx,
-                        );
+                        window.dispatch_action(zed_actions::agent::OpenSettings.boxed_clone(), cx);
                     }),
             )
     }

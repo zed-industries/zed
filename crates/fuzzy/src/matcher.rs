@@ -208,8 +208,15 @@ impl<'a> Matcher<'a> {
             return 1.0;
         }
 
-        let path_len = prefix.len() + path.len();
+        let limit = self.last_positions[query_idx];
+        let max_valid_index = (prefix.len() + path_lowercased.len()).saturating_sub(1);
+        let safe_limit = limit.min(max_valid_index);
 
+        if path_idx > safe_limit {
+            return 0.0;
+        }
+
+        let path_len = prefix.len() + path.len();
         if let Some(memoized) = self.score_matrix[query_idx * path_len + path_idx] {
             return memoized;
         }
@@ -218,16 +225,13 @@ impl<'a> Matcher<'a> {
         let mut best_position = 0;
 
         let query_char = self.lowercase_query[query_idx];
-        let limit = self.last_positions[query_idx];
-
-        let max_valid_index = (prefix.len() + path_lowercased.len()).saturating_sub(1);
-        let safe_limit = limit.min(max_valid_index);
 
         let mut last_slash = 0;
+
         for j in path_idx..=safe_limit {
             let extra_lowercase_chars_count = extra_lowercase_chars
                 .iter()
-                .take_while(|(i, _)| i < &&j)
+                .take_while(|&(&i, _)| i < j)
                 .map(|(_, increment)| increment)
                 .sum::<usize>();
             let j_regular = j - extra_lowercase_chars_count;
@@ -236,10 +240,9 @@ impl<'a> Matcher<'a> {
                 lowercase_prefix[j]
             } else {
                 let path_index = j - prefix.len();
-                if path_index < path_lowercased.len() {
-                    path_lowercased[path_index]
-                } else {
-                    continue;
+                match path_lowercased.get(path_index) {
+                    Some(&char) => char,
+                    None => continue,
                 }
             };
             let is_path_sep = path_char == MAIN_SEPARATOR;
@@ -255,18 +258,16 @@ impl<'a> Matcher<'a> {
             #[cfg(target_os = "windows")]
             let need_to_score = query_char == path_char || (is_path_sep && query_char == '_');
             if need_to_score {
-                let curr = if j_regular < prefix.len() {
-                    prefix[j_regular]
-                } else {
-                    path[j_regular - prefix.len()]
+                let curr = match prefix.get(j_regular) {
+                    Some(&curr) => curr,
+                    None => path[j_regular - prefix.len()],
                 };
 
                 let mut char_score = 1.0;
                 if j > path_idx {
-                    let last = if j_regular - 1 < prefix.len() {
-                        prefix[j_regular - 1]
-                    } else {
-                        path[j_regular - 1 - prefix.len()]
+                    let last = match prefix.get(j_regular - 1) {
+                        Some(&last) => last,
+                        None => path[j_regular - 1 - prefix.len()],
                     };
 
                     if last == MAIN_SEPARATOR {

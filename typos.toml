@@ -16,9 +16,6 @@ extend-exclude = [
     "crates/google_ai/src/supported_countries.rs",
     "crates/open_ai/src/supported_countries.rs",
 
-    # Some crate names are flagged as typos.
-    "crates/indexed_docs/src/providers/rustdoc/popular_crates.txt",
-
     # Some mock data is flagged as typos.
     "crates/assistant_tools/src/web_search_tool.rs",
 
@@ -71,6 +68,10 @@ extend-ignore-re = [
     # Not an actual typo but an intentionally invalid color, in `color_extractor`
     "#fof",
     # Stripped version of reserved keyword `type`
-    "typ"
+    "typ",
+    # AMD GPU Services
+    "ags",
+    # AMD GPU Services
+    "AGS"
 ]
 check-filename = true

@@ -19,25 +19,26 @@ test-support = [
 ]
 
 [dependencies]
+action_log.workspace = true
 agent_settings.workspace = true
 anyhow.workspace = true
 assistant_context.workspace = true
 assistant_tool.workspace = true
 chrono.workspace = true
 client.workspace = true
+cloud_llm_client.workspace = true
 collections.workspace = true
 component.workspace = true
 context_server.workspace = true
 convert_case.workspace = true
-feature_flags.workspace = true
 fs.workspace = true
 futures.workspace = true
 git.workspace = true
 gpui.workspace = true
 heed.workspace = true
+http_client.workspace = true
 icons.workspace = true
 indoc.workspace = true
-http_client.workspace = true
 itertools.workspace = true
 language.workspace = true
 language_model.workspace = true
@@ -46,7 +47,6 @@ paths.workspace = true
 postage.workspace = true
 project.workspace = true
 prompt_store.workspace = true
-proto.workspace = true
 ref-cast.workspace = true
 rope.workspace = true
 schemars.workspace = true
@@ -63,7 +63,6 @@ time.workspace = true
 util.workspace = true
 uuid.workspace = true
 workspace-hack.workspace = true
-zed_llm_client.workspace = true
 zstd.workspace = true
 
 [dev-dependencies]
