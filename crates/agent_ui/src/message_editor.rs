@@ -217,6 +217,7 @@ impl MessageEditor {
             cx.subscribe_in(&context_strip, window, Self::handle_context_strip_event),
             cx.subscribe(&editor, |this, _, event: &EditorEvent, cx| {
                 if event == &EditorEvent::BufferEdited {
+                    cx.emit(MessageEditorEvent::DismissOnboarding);
                     this.handle_message_changed(cx)
                 }
             }),
@@ -1416,6 +1417,7 @@ impl MessageEditor {
     }
 
     fn message_or_context_changed(&mut self, debounce: bool, cx: &mut Context<Self>) {
+        // todo! Might want to use this instead of dismiss onboarding event
         cx.emit(MessageEditorEvent::Changed);
         self.update_token_count_task.take();
 
@@ -1639,6 +1641,7 @@ pub enum MessageEditorEvent {
     EstimatedTokenCount,
     Changed,
     ScrollThreadToBottom,
+    DismissOnboarding,
 }
 
 impl Focusable for MessageEditor {

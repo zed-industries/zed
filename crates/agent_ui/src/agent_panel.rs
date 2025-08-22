@@ -300,6 +300,7 @@ impl ActiveView {
                 MessageEditorEvent::Changed | MessageEditorEvent::EstimatedTokenCount => {
                     cx.notify();
                 }
+                MessageEditorEvent::DismissOnboarding => {}
                 MessageEditorEvent::ScrollThreadToBottom => match &this.active_view {
                     ActiveView::Thread { thread, .. } => {
                         thread.update(cx, |thread, cx| {
@@ -669,6 +670,17 @@ impl AgentPanel {
                 cx,
             )
         });
+
+        cx.subscribe(&message_editor, |_, _, event, cx| match event {
+            // todo!: I don't like how this is writing to the db everything time the user types
+            //this also doens't work for text threads and newly openned threads??
+            MessageEditorEvent::DismissOnboarding => {
+                OnboardingUpsell::set_dismissed(true, cx);
+                cx.notify();
+            }
+            _ => {}
+        })
+        .detach();
 
         let acp_history_store = cx.new(|cx| agent2::HistoryStore::new(context_store.clone(), cx));
         let acp_history = cx.new(|cx| AcpThreadHistory::new(acp_history_store.clone(), window, cx));
