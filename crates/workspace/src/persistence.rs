@@ -1427,7 +1427,6 @@ impl WorkspaceDb {
         relative_path: String,
         language_name: LanguageName,
     ) -> Result<Option<Toolchain>> {
-        return Ok(None);
         self.write(move |this| {
             let mut select = this
                 .select_bound(sql!(
@@ -1453,7 +1452,6 @@ impl WorkspaceDb {
         &self,
         workspace_id: WorkspaceId,
     ) -> Result<Vec<(Toolchain, WorktreeId, Arc<Path>)>> {
-        return Ok(vec![]);
         self.write(move |this| {
             let mut select = this
                 .select_bound(sql!(
@@ -1464,6 +1462,7 @@ impl WorkspaceDb {
             let toolchain: Vec<(String, String, u64, String, String, String)> =
                 select(workspace_id)?;
 
+            // todo look into re-serializing these if we fix up
             Ok(toolchain.into_iter().filter_map(|(name, path, worktree_id, relative_worktree_path, language_name, raw_json)| Some((Toolchain {
                 name: name.into(),
                 path: path.into(),

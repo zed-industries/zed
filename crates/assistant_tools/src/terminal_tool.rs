@@ -213,18 +213,27 @@ impl Tool for TerminalTool {
             async move |cx| {
                 let program = program.await;
                 let env = env.await;
-                project.update(cx, |project, cx| {
-                    project.create_terminal_task(
-                        task::SpawnInTerminal {
-                            command: Some(program),
-                            args,
-                            cwd,
-                            env,
-                            ..Default::default()
-                        },
-                        cx,
-                    )
-                })?
+                project
+                    .update(cx, |project, cx| {
+                        project.create_terminal_task(
+                            task::SpawnInTerminal {
+                                command: Some(program),
+                                args,
+                                cwd,
+                                env,
+                                ..Default::default()
+                            },
+                            cx,
+                            project
+                                .active_entry()
+                                .and_then(|entry_id| project.worktree_id_for_entry(entry_id, cx))
+                                .map(|worktree_id| project::ProjectPath {
+                                    worktree_id,
+                                    path: Arc::from(Path::new("")),
+                                }),
+                        )
+                    })?
+                    .await
             }
         });
 

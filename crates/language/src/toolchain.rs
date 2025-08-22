@@ -28,6 +28,9 @@ pub struct Toolchain {
     pub as_json: serde_json::Value,
     /// shell -> script
     pub activation_script: FxHashMap<ShellKind, String>,
+    // Option<String>
+    // sh activate -c "user shell -l"
+    // check if this work with powershell
 }
 
 impl std::hash::Hash for Toolchain {

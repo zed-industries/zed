@@ -141,18 +141,28 @@ impl AgentTool for TerminalTool {
 
                 let program = program.await;
                 let env = env.await;
-                let terminal = self.project.update(cx, |project, cx| {
-                    project.create_terminal_task(
-                        task::SpawnInTerminal {
-                            command: Some(program),
-                            args,
-                            cwd: working_dir.clone(),
-                            env,
-                            ..Default::default()
-                        },
-                        cx,
-                    )
-                })??;
+                let terminal = self
+                    .project
+                    .update(cx, |project, cx| {
+                        project.create_terminal_task(
+                            task::SpawnInTerminal {
+                                command: Some(program),
+                                args,
+                                cwd: working_dir.clone(),
+                                env,
+                                ..Default::default()
+                            },
+                            cx,
+                            project
+                                .active_entry()
+                                .and_then(|entry_id| project.worktree_id_for_entry(entry_id, cx))
+                                .map(|worktree_id| project::ProjectPath {
+                                    worktree_id,
+                                    path: Arc::from(Path::new("")),
+                                }),
+                        )
+                    })?
+                    .await?;
                 let acp_terminal = cx.new(|cx| {
                     acp_thread::Terminal::new(
                         input.command.clone(),

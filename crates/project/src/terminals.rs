@@ -1,11 +1,13 @@
 use anyhow::Result;
 use collections::HashMap;
 use gpui::{App, AppContext as _, Context, Entity, Task, WeakEntity};
+use itertools::Itertools;
 use language::LanguageName;
 use remote::RemoteClient;
 use settings::{Settings, SettingsLocation};
 use smol::channel::bounded;
 use std::{
+    borrow::Cow,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -44,8 +46,10 @@ impl Project {
         &mut self,
         spawn_task: SpawnInTerminal,
         cx: &mut Context<Self>,
-    ) -> Result<Entity<Terminal>> {
+        project_path_context: Option<ProjectPath>,
+    ) -> Task<Result<Entity<Terminal>>> {
         let is_via_remote = self.remote_client.is_some();
+
         let path: Option<Arc<Path>> = if let Some(cwd) = &spawn_task.cwd {
             if is_via_remote {
                 Some(Arc::from(cwd.as_ref()))
@@ -94,71 +98,122 @@ impl Project {
             show_rerun: spawn_task.show_rerun,
             completion_rx,
         });
-        let shell = {
-            env.extend(spawn_task.env);
-
-            match self.remote_client.clone() {
-                Some(remote_client) => create_remote_shell(
-                    spawn_task
-                        .command
-                        .as_ref()
-                        .map(|command| (command, &spawn_task.args)),
-                    &mut env,
-                    path,
-                    remote_client,
-                    None,
-                    cx,
-                )?,
-                None => {
-                    let shell = if let Some(program) = spawn_task.command {
-                        Shell::WithArguments {
-                            program,
-                            args: spawn_task.args,
-                            title_override: None,
-                        }
-                    } else {
-                        Shell::System
-                    };
-                    shell
-                }
-            }
+        let remote_client = self.remote_client.clone();
+        let shell = match &remote_client {
+            Some(remote_client) => remote_client
+                .read(cx)
+                .shell()
+                .unwrap_or_else(|| "sh".to_owned()),
+            None => match &settings.shell {
+                Shell::Program(program) => program.clone(),
+                Shell::WithArguments {
+                    program,
+                    args: _,
+                    title_override: _,
+                } => program.clone(),
+                Shell::System => get_system_shell(),
+            },
         };
-        TerminalBuilder::new(
-            local_path.map(|path| path.to_path_buf()),
-            task_state,
-            shell,
-            env,
-            settings.cursor_shape.unwrap_or_default(),
-            settings.alternate_scroll,
-            settings.max_scroll_history_lines,
-            is_via_remote,
-            cx.entity_id().as_u64(),
-            Some(completion_tx),
-            cx,
-            None,
-        )
-        .map(|builder| {
-            let terminal_handle = cx.new(|cx| builder.subscribe(cx));
+        let shell_kind = ShellKind::new(&shell);
 
-            self.terminals
-                .local_handles
-                .push(terminal_handle.downgrade());
-
-            let id = terminal_handle.entity_id();
-            cx.observe_release(&terminal_handle, move |project, _terminal, cx| {
-                let handles = &mut project.terminals.local_handles;
-
-                if let Some(index) = handles
-                    .iter()
-                    .position(|terminal| terminal.entity_id() == id)
-                {
-                    handles.remove(index);
-                    cx.notify();
-                }
+        let toolchain =
+            project_path_context.map(|p| self.active_toolchain(p, LanguageName::new("Python"), cx));
+        cx.spawn(async move |project, cx| {
+            let scripts = maybe!(async {
+                let toolchain = toolchain?.await?;
+                Some(toolchain.activation_script)
             })
-            .detach();
+            .await;
 
-            terminal_handle
+            project.update(cx, move |this, cx| {
+                let shell = {
+                    env.extend(spawn_task.env);
+                    let activation_script = scripts.as_ref().and_then(|it| it.get(&shell_kind));
+                    match remote_client {
+                        Some(remote_client) => create_remote_shell(
+                            spawn_task
+                                .command
+                                .as_ref()
+                                .map(|command| (command, &spawn_task.args)),
+                            &mut env,
+                            path,
+                            remote_client,
+                            None,
+                            cx,
+                        )?,
+                        None => match activation_script {
+                            Some(activation_script) => {
+                                let to_run = if let Some(command) = spawn_task.command {
+                                    let command: Option<Cow<str>> = shlex::try_quote(&command).ok();
+                                    let args = spawn_task
+                                        .args
+                                        .iter()
+                                        .filter_map(|arg| shlex::try_quote(arg).ok());
+                                    command.into_iter().chain(args).join(" ")
+                                } else {
+                                    format!("exec {shell} -l")
+                                };
+                                Shell::WithArguments {
+                                    program: shell,
+                                    args: vec![
+                                        "-c".to_owned(),
+                                        format!("{activation_script}; {to_run}",),
+                                    ],
+                                    title_override: None,
+                                }
+                            }
+                            None => {
+                                if let Some(program) = spawn_task.command {
+                                    Shell::WithArguments {
+                                        program,
+                                        args: spawn_task.args,
+                                        title_override: None,
+                                    }
+                                } else {
+                                    Shell::System
+                                }
+                            }
+                        },
+                    }
+                };
+                TerminalBuilder::new(
+                    local_path.map(|path| path.to_path_buf()),
+                    task_state,
+                    shell,
+                    env,
+                    settings.cursor_shape.unwrap_or_default(),
+                    settings.alternate_scroll,
+                    settings.max_scroll_history_lines,
+                    is_via_remote,
+                    cx.entity_id().as_u64(),
+                    Some(completion_tx),
+                    cx,
+                    None,
+                )
+                .map(|builder| {
+                    let terminal_handle = cx.new(|cx| builder.subscribe(cx));
+
+                    this.terminals
+                        .local_handles
+                        .push(terminal_handle.downgrade());
+
+                    let id = terminal_handle.entity_id();
+                    cx.observe_release(&terminal_handle, move |project, _terminal, cx| {
+                        let handles = &mut project.terminals.local_handles;
+
+                        if let Some(index) = handles
+                            .iter()
+                            .position(|terminal| terminal.entity_id() == id)
+                        {
+                            handles.remove(index);
+                            cx.notify();
+                        }
+                    })
+                    .detach();
+
+                    terminal_handle
+                })
+            })?
         })
     }
 
