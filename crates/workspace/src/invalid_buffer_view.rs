@@ -26,8 +26,29 @@ impl InvalidBufferView {
 impl Item for InvalidBufferView {
     type Event = ();
 
-    fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
-        "TODO kb".into()
+    fn tab_content_text(&self, mut detail: usize, _: &App) -> SharedString {
+        // Ensure we always render at least the filename.
+        detail += 1;
+
+        let path = self.project_path.path.as_ref();
+
+        let mut prefix = path;
+        while detail > 0 {
+            if let Some(parent) = prefix.parent() {
+                prefix = parent;
+                detail -= 1;
+            } else {
+                break;
+            }
+        }
+
+        let path = if detail > 0 {
+            path
+        } else {
+            path.strip_prefix(prefix).unwrap_or(path)
+        };
+
+        SharedString::new(path.to_string_lossy())
     }
 }
 
@@ -38,6 +59,8 @@ impl Focusable for InvalidBufferView {
         self.focus_handle.clone()
     }
 }
+
+// TODO kb also check other ways to open the file (e.g. by drag and drop) and ensure it's the same view that opens for them
 
 impl Render for InvalidBufferView {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl gpui::IntoElement {
