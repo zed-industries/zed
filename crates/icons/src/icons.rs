@@ -164,6 +164,7 @@ pub enum IconName {
     PageDown,
     PageUp,
     Pencil,
+    PencilUnavailable,
     Person,
     Pin,
     PlayOutlined,
