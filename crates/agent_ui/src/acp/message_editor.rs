@@ -25,11 +25,11 @@ use gpui::{
     HighlightStyle, Image, ImageFormat, Img, KeyContext, Subscription, Task, TextStyle,
     UnderlineStyle, WeakEntity,
 };
-use language::{Buffer, BufferSnapshot, Language};
+use language::{Buffer, Language};
 use language_model::LanguageModelImage;
 use project::{CompletionIntent, Project, ProjectItem, ProjectPath, Worktree};
 use prompt_store::{PromptId, PromptStore};
-use rope::{Point, Rope};
+use rope::Point;
 use settings::Settings;
 use std::{
     cell::Cell,
@@ -49,7 +49,6 @@ use ui::{
     Render, SelectableButton, SharedString, Styled, TextSize, TintColor, Toggleable, Window, div,
     h_flex, px,
 };
-use url::Url;
 use util::{ResultExt, debug_panic};
 use workspace::{
     Toast, Workspace,
@@ -220,9 +219,9 @@ impl MessageEditor {
 
     pub fn mentions(&self) -> HashSet<MentionUri> {
         self.mention_set
-            .uri_by_crease_id
+            .mentions
             .values()
-            .cloned()
+            .map(|(uri, _)| uri.clone())
             .collect()
     }
 
@@ -336,34 +335,33 @@ impl MessageEditor {
         ) else {
             return Task::ready(());
         };
-        self.mention_set
-            .uri_by_crease_id
-            .insert(crease_id, mention_uri.clone());
 
-        let task = match mention_uri {
-            MentionUri::Fetch { url } => self.confirm_mention_for_fetch(crease_id, url, cx),
-            MentionUri::Directory { abs_path } => {
-                self.confirm_mention_for_directory(crease_id, abs_path, cx)
-            }
-            MentionUri::Thread { id, .. } => self.confirm_mention_for_thread(crease_id, id, cx),
-            MentionUri::TextThread { path, .. } => {
-                self.confirm_mention_for_text_thread(crease_id, path, cx)
-            }
-            MentionUri::File { abs_path } => self.confirm_mention_for_file(crease_id, abs_path, cx),
+        let task = match mention_uri.clone() {
+            MentionUri::Fetch { url } => self.confirm_mention_for_fetch(url, cx),
+            MentionUri::Directory { abs_path } => self.confirm_mention_for_directory(abs_path, cx),
+            MentionUri::Thread { id, .. } => self.confirm_mention_for_thread(id, cx),
+            MentionUri::TextThread { path, .. } => self.confirm_mention_for_text_thread(path, cx),
+            MentionUri::File { abs_path } => self.confirm_mention_for_file(abs_path, cx),
             MentionUri::PastedImage => {
-                debug_panic!("pasted image URI should not included in completions");
-                Task::ready(Ok(()))
+                debug_panic!("pasted image URI should not be included in completions");
+                Task::ready(Err(anyhow!(
+                    "pasted imaged URI should not be included in completions"
+                )))
             }
-            MentionUri::Symbol { abs_path, .. } => {
-                self.confirm_mention_for_symbol(crease_id, abs_path, cx)
-            }
-            MentionUri::Rule { id, .. } => self.confirm_mention_for_rule(crease_id, id, cx),
+            MentionUri::Symbol { abs_path, .. } => self.confirm_mention_for_symbol(abs_path, cx),
+            MentionUri::Rule { id, .. } => self.confirm_mention_for_rule(id, cx),
             MentionUri::Selection { .. } => {
                 // Handled elsewhere
                 debug_panic!("unexpected selection URI");
-                Task::ready(Ok(()))
+                Task::ready(Err(anyhow!("unexpected selection URI")))
             }
         };
+        let task = cx
+            .spawn(async move |_, _| task.await.map_err(|e| e.to_string()))
+            .shared();
+        self.mention_set
+            .mentions
+            .insert(crease_id, (mention_uri, task.clone()));
 
         // Notify the user if we failed to load the mentioned context
         cx.spawn_in(window, async move |this, cx| {
@@ -373,7 +371,7 @@ impl MessageEditor {
                         // Remove mention
                         editor.edit([(start_anchor..end_anchor, "")], cx);
                     });
-                    this.mention_set.uri_by_crease_id.remove(&crease_id);
+                    this.mention_set.mentions.remove(&crease_id);
                 })
                 .ok();
             }
@@ -383,43 +381,34 @@ impl MessageEditor {
     // FIXME this should support images
     fn confirm_mention_for_file(
         &mut self,
-        crease_id: CreaseId,
         abs_path: PathBuf,
         cx: &mut Context<Self>,
-    ) -> Task<Result<(), String>> {
+    ) -> Task<Result<Mention>> {
         let Some(project_path) = self
             .project
             .read(cx)
             .project_path_for_absolute_path(&abs_path, cx)
         else {
-            // FIXME
-            return Task::ready(Ok(()));
+            return Task::ready(Err(anyhow!("project path not found")));
         };
         let buffer = self
             .project
             .update(cx, |project, cx| project.open_buffer(project_path, cx));
-        let task = cx
-            .spawn(async move |_, cx| {
-                let buffer = buffer.await.map_err(|e| e.to_string())?;
-                buffer
-                    .update(cx, |buffer, cx| (buffer.text(), vec![cx.entity()]))
-                    .map_err(|e| e.to_string())
-            })
-            .shared();
-
-        self.mention_set
-            .text_contents_by_crease_id
-            .insert(crease_id, task.clone());
-
-        cx.spawn(async move |_, _| task.await.map(|_| ()))
+        cx.spawn(async move |_, cx| {
+            let buffer = buffer.await?;
+            let mention = buffer.update(cx, |buffer, cx| Mention::Text {
+                content: buffer.text(),
+                tracked_buffers: vec![cx.entity()],
+            })?;
+            anyhow::Ok(mention)
+        })
     }
 
     fn confirm_mention_for_directory(
         &mut self,
-        crease_id: CreaseId,
         abs_path: PathBuf,
         cx: &mut Context<Self>,
-    ) -> Task<Result<(), String>> {
+    ) -> Task<Result<Mention>> {
         fn collect_files_in_path(worktree: &Worktree, path: &Path) -> Vec<(Arc<Path>, PathBuf)> {
             let mut files = Vec::new();
 
@@ -439,19 +428,16 @@ impl MessageEditor {
             .read(cx)
             .project_path_for_absolute_path(&abs_path, cx)
         else {
-            // FIXME
-            return Task::ready(Ok(()));
+            return Task::ready(Err(anyhow!("project path not found")));
         };
         let Some(entry) = self.project.read(cx).entry_for_path(&project_path, cx) else {
-            // FIXME
-            return Task::ready(Ok(()));
+            return Task::ready(Err(anyhow!("project entry not found")));
         };
         let Some(worktree) = self.project.read(cx).worktree_for_entry(entry.id, cx) else {
-            // FIXME
-            return Task::ready(Ok(()));
+            return Task::ready(Err(anyhow!("worktree not found")));
         };
         let project = self.project.clone();
-        let task = cx.spawn(async move |_, cx| {
+        cx.spawn(async move |_, cx| {
             let directory_path = entry.path.clone();
 
             let worktree_id = worktree.read_with(cx, |worktree, _| worktree.id())?;
@@ -501,110 +487,80 @@ impl MessageEditor {
                             ((rel_path, full_path, rope), buffer)
                         })
                         .unzip();
-                    (render_directory_contents(contents), tracked_buffers)
+                    Mention::Text {
+                        content: render_directory_contents(contents),
+                        tracked_buffers,
+                    }
                 })
                 .await;
             anyhow::Ok(contents)
-        });
-        let task = cx
-            .spawn(async move |_, _| task.await.map_err(|e| e.to_string()))
-            .shared();
-
-        self.mention_set
-            .text_contents_by_crease_id
-            .insert(crease_id, task.clone());
-
-        cx.spawn(async move |_, _| task.await.map(|_| ()))
+        })
     }
 
     fn confirm_mention_for_fetch(
         &mut self,
-        crease_id: CreaseId,
         url: url::Url,
         cx: &mut Context<Self>,
-    ) -> Task<Result<(), String>> {
-        let Some(http_client) = self
+    ) -> Task<Result<Mention>> {
+        let http_client = match self
             .workspace
-            .update(cx, |workspace, _cx| workspace.client().http_client())
-            .ok()
-        else {
-            // FIXME
-            return Task::ready(Ok(()));
+            .update(cx, |workspace, _| workspace.client().http_client())
+        {
+            Ok(http_client) => http_client,
+            Err(e) => return Task::ready(Err(e.into())),
         };
-
-        let url_string = url.to_string();
-        let task = cx
-            .background_executor()
-            .spawn(async move {
-                let content = fetch_url_content(http_client, url_string)
-                    .await
-                    .map_err(|e| e.to_string())?;
-                Ok((content, Vec::new()))
+        cx.background_executor().spawn(async move {
+            let content = fetch_url_content(http_client, url.to_string()).await?;
+            Ok(Mention::Text {
+                content,
+                tracked_buffers: Vec::new(),
             })
-            .shared();
-        self.mention_set
-            .text_contents_by_crease_id
-            .insert(crease_id, task.clone());
-
-        cx.spawn(async move |_, _| task.await.map(|_| ()))
+        })
     }
 
     fn confirm_mention_for_symbol(
         &mut self,
-        crease_id: CreaseId,
         abs_path: PathBuf,
         cx: &mut Context<Self>,
-    ) -> Task<Result<(), String>> {
+    ) -> Task<Result<Mention>> {
         let Some(project_path) = self
             .project
             .read(cx)
             .project_path_for_absolute_path(&abs_path, cx)
         else {
             // FIXME
-            return Task::ready(Ok(()));
+            return Task::ready(Err(anyhow!("project path not found")));
         };
         let buffer = self
             .project
             .update(cx, |project, cx| project.open_buffer(project_path, cx));
-        let task = cx
-            .spawn(async move |_, cx| {
-                let buffer = buffer.await.map_err(|e| e.to_string())?;
-                buffer
-                    .update(cx, |buffer, cx| (buffer.text(), vec![cx.entity()]))
-                    .map_err(|e| e.to_string())
-            })
-            .shared();
-
-        self.mention_set
-            .text_contents_by_crease_id
-            .insert(crease_id, task.clone());
-
-        cx.spawn(async move |_, _| task.await.map(|_| ()))
+        cx.spawn(async move |_, cx| {
+            let buffer = buffer.await?;
+            let mention = buffer.update(cx, |buffer, cx| Mention::Text {
+                content: buffer.text(),
+                tracked_buffers: vec![cx.entity()],
+            })?;
+            anyhow::Ok(mention)
+        })
     }
 
     fn confirm_mention_for_rule(
         &mut self,
-        crease_id: CreaseId,
         id: PromptId,
         cx: &mut Context<Self>,
-    ) -> Task<Result<(), String>> {
+    ) -> Task<Result<Mention>> {
         let Some(prompt_store) = self.prompt_store.clone() else {
             // FIXME
-            return Task::ready(Ok(()));
+            return Task::ready(Err(anyhow!("missing prompt store")));
         };
         let prompt = prompt_store.read(cx).load(id, cx);
-        let task = cx
-            .spawn(async move |_, _| {
-                let prompt = prompt.await.map_err(|e| e.to_string())?;
-                Ok((prompt, Vec::new()))
+        cx.spawn(async move |_, _| {
+            let prompt = prompt.await?;
+            Ok(Mention::Text {
+                content: prompt,
+                tracked_buffers: Vec::new(),
             })
-            .shared();
-
-        self.mention_set
-            .text_contents_by_crease_id
-            .insert(crease_id, task.clone());
-
-        cx.spawn(async move |_, _| task.await.map(|_| ()))
+        })
     }
 
     // FIXME can we clean this up?
@@ -658,78 +614,68 @@ impl MessageEditor {
                 crease_ids.first().copied().unwrap()
             });
 
-            self.mention_set.uri_by_crease_id.insert(crease_id, uri);
-            self.mention_set
-                .text_contents_by_crease_id
-                .insert(crease_id, Task::ready(Ok((text, Vec::new()))).shared());
+            self.mention_set.mentions.insert(
+                crease_id,
+                (
+                    uri,
+                    Task::ready(Ok(Mention::Text {
+                        content: text,
+                        tracked_buffers: Vec::new(),
+                    }))
+                    .shared(),
+                ),
+            );
         }
     }
 
     fn confirm_mention_for_thread(
         &mut self,
-        crease_id: CreaseId,
         id: acp::SessionId,
         cx: &mut Context<Self>,
-    ) -> Task<Result<(), String>> {
+    ) -> Task<Result<Mention>> {
         let server = Rc::new(agent2::NativeAgentServer::new(
             self.project.read(cx).fs().clone(),
             self.history_store.clone(),
         ));
         let connection = server.connect(Path::new(""), &self.project, cx);
-        let load_summary = cx.spawn({
-            let id = id.clone();
-            async move |_, cx| {
-                let agent = connection.await?;
-                let agent = agent.downcast::<agent2::NativeAgentConnection>().unwrap();
-                let summary = agent
-                    .0
-                    .update(cx, |agent, cx| agent.thread_summary(id, cx))?
-                    .await?;
-                anyhow::Ok((summary.to_string(), Vec::new()))
-            }
-        });
-        let task = cx
-            .spawn(async move |_, _| load_summary.await.map_err(|e| format!("{e}")))
-            .shared();
-
-        self.mention_set
-            .text_contents_by_crease_id
-            .insert(crease_id, task.clone());
-
-        cx.spawn(async move |_, _| task.await.map(|_| ()))
+        let id = id.clone();
+        cx.spawn(async move |_, cx| {
+            let agent = connection.await?;
+            let agent = agent.downcast::<agent2::NativeAgentConnection>().unwrap();
+            let summary = agent
+                .0
+                .update(cx, |agent, cx| agent.thread_summary(id, cx))?
+                .await?;
+            anyhow::Ok(Mention::Text {
+                content: summary.to_string(),
+                tracked_buffers: Vec::new(),
+            })
+        })
     }
 
     fn confirm_mention_for_text_thread(
         &mut self,
-        crease_id: CreaseId,
         path: PathBuf,
         cx: &mut Context<Self>,
-    ) -> Task<Result<(), String>> {
+    ) -> Task<Result<Mention>> {
         let context = self.history_store.update(cx, |text_thread_store, cx| {
             text_thread_store.load_text_thread(path.as_path().into(), cx)
         });
-        let task = cx
-            .spawn(async move |_, cx| {
-                let context = context.await.map_err(|e| e.to_string())?;
-                let xml = context
-                    .update(cx, |context, cx| context.to_xml(cx))
-                    .map_err(|e| e.to_string())?;
-                Ok((xml, Vec::new()))
+        cx.spawn(async move |_, cx| {
+            let context = context.await?;
+            let xml = context.update(cx, |context, cx| context.to_xml(cx))?;
+            Ok(Mention::Text {
+                content: xml,
+                tracked_buffers: Vec::new(),
             })
-            .shared();
-
-        self.mention_set
-            .text_contents_by_crease_id
-            .insert(crease_id, task.clone());
-
-        cx.spawn(async move |_, _| task.await.map(|_| ()))
+        })
     }
 
     pub fn contents(
         &self,
         cx: &mut Context<Self>,
     ) -> Task<Result<(Vec<acp::ContentBlock>, Vec<Entity<Buffer>>)>> {
-        let contents = self.mention_set.contents(&self.project, cx);
+        let contents = self.mention_set.contents(cx);
         let editor = self.editor.clone();
         let prevent_slash_commands = self.prevent_slash_commands;
 
@@ -749,7 +695,7 @@ impl MessageEditor {
                             continue;
                         }
 
-                        let Some(mention) = contents.get(&crease_id) else {
+                        let Some((uri, mention)) = contents.get(&crease_id) else {
                             continue;
                         };
 
@@ -767,7 +713,6 @@ impl MessageEditor {
                         }
                         let chunk = match mention {
                             Mention::Text {
-                                uri,
                                 content,
                                 tracked_buffers,
                             } => {
@@ -791,6 +736,7 @@ impl MessageEditor {
                                     uri: mention_image
                                         .abs_path
                                         .as_ref()
+                                        // FIXME
                                         .map(|path| format!("file://{}", path.display())),
                                 })
                             }
@@ -822,7 +768,13 @@ impl MessageEditor {
     pub fn clear(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.editor.update(cx, |editor, cx| {
             editor.clear(window, cx);
-            editor.remove_creases(self.mention_set.drain(), cx)
+            editor.remove_creases(
+                self.mention_set
+                    .mentions
+                    .drain()
+                    .map(|(crease_id, _)| crease_id),
+                cx,
+            )
         });
     }
 
@@ -1025,11 +977,11 @@ impl MessageEditor {
                         .map_err(|e| e.to_string())?
                         .await;
                     if let Some(image) = image {
-                        Ok(MentionImage {
+                        Ok(Mention::Image(MentionImage {
                             abs_path,
                             data: image.source,
                             format,
-                        })
+                        }))
                     } else {
                         Err("Failed to convert image".into())
                     }
@@ -1042,10 +994,9 @@ impl MessageEditor {
         } else {
             MentionUri::PastedImage
         };
-        self.mention_set.uri_by_crease_id.insert(crease_id, uri);
         self.mention_set
-            .image_contents_by_crease_id
-            .insert(crease_id, task.clone());
+            .mentions
+            .insert(crease_id, (uri, task.clone()));
 
         cx.spawn_in(window, async move |this, cx| {
             if task.await.notify_async_err(cx).is_none() {
@@ -1053,7 +1004,7 @@ impl MessageEditor {
                     this.editor.update(cx, |editor, cx| {
                         // FIXME edit out the crease
                     });
-                    this.mention_set.uri_by_crease_id.remove(&crease_id);
+                    this.mention_set.mentions.remove(&crease_id);
                 })
                 .ok();
             }
@@ -1076,8 +1027,7 @@ impl MessageEditor {
         self.clear(window, cx);
 
         let mut text = String::new();
-        let mut text_mentions = Vec::new();
-        let mut image_mentions = Vec::new();
+        let mut mentions = Vec::new();
 
         for chunk in message {
             match chunk {
@@ -1088,18 +1038,59 @@ impl MessageEditor {
                     resource: acp::EmbeddedResourceResource::TextResourceContents(resource),
                     ..
                 }) => {
-                    if let Some(mention_uri) = MentionUri::parse(&resource.uri).log_err() {
-                        let start = text.len();
-                        write!(&mut text, "{}", mention_uri.as_link()).ok();
-                        let end = text.len();
-                        text_mentions.push((start..end, mention_uri, resource.text));
-                    }
-                }
-                acp::ContentBlock::Image(content) => {
+                    let Some(mention_uri) = MentionUri::parse(&resource.uri).log_err() else {
+                        continue;
+                    };
                     let start = text.len();
-                    text.push_str("image");
+                    write!(&mut text, "{}", mention_uri.as_link()).ok();
                     let end = text.len();
-                    image_mentions.push((start..end, content));
+                    mentions.push((
+                        start..end,
+                        mention_uri,
+                        Mention::Text {
+                            content: resource.text,
+                            tracked_buffers: Vec::new(),
+                        },
+                    ));
+                }
+                acp::ContentBlock::Image(acp::ImageContent {
+                    uri,
+                    data,
+                    mime_type,
+                    annotations: _,
+                }) => {
+                    let mention_uri = if let Some(uri) = uri {
+                        MentionUri::parse(&uri)
+                    } else {
+                        Ok(MentionUri::PastedImage)
+                    };
+                    let Some(mention_uri) = mention_uri.log_err() else {
+                        continue;
+                    };
+                    let abs_path = match &mention_uri {
+                        MentionUri::PastedImage => None,
+                        MentionUri::File { abs_path, .. } => Some(abs_path.clone()),
+                        other => {
+                            log::error!("unexpected URI for image: {other:?}");
+                            continue;
+                        }
+                    };
+                    let Some(format) = ImageFormat::from_mime_type(&mime_type) else {
+                        log::error!("failed to parse MIME type for image: {mime_type:?}");
+                        continue;
+                    };
+                    let start = text.len();
+                    write!(&mut text, "{}", mention_uri.as_link()).ok();
+                    let end = text.len();
+                    mentions.push((
+                        start..end,
+                        mention_uri,
+                        Mention::Image(MentionImage {
+                            abs_path,
+                            data: data.into(),
+                            format,
+                        }),
+                    ));
                 }
                 acp::ContentBlock::Audio(_)
                 | acp::ContentBlock::Resource(_)
@@ -1112,7 +1103,7 @@ impl MessageEditor {
             editor.buffer().read(cx).snapshot(cx)
         });
 
-        for (range, mention_uri, text) in text_mentions {
+        for (range, mention_uri, mention) in mentions {
             let anchor = snapshot.anchor_before(range.start);
             let Some(crease_id) = crate::context_picker::insert_crease_for_mention(
                 anchor.excerpt_id,
@@ -1127,56 +1118,10 @@ impl MessageEditor {
                 continue;
             };
 
-            self.mention_set
-                .uri_by_crease_id
-                .insert(crease_id, mention_uri.clone());
-            self.mention_set
-                .text_contents_by_crease_id
-                .insert(crease_id, Task::ready(Ok((text, Vec::new()))).shared());
-        }
-        // FIXME clean all of this up
-        for (range, content) in image_mentions {
-            let Some(format) = ImageFormat::from_mime_type(&content.mime_type) else {
-                continue;
-            };
-            let anchor = snapshot.anchor_before(range.start);
-            let abs_path = content
-                .uri
-                .as_ref()
-                .and_then(|uri| uri.strip_prefix("file://").map(|s| Path::new(s).into()));
-
-            let name = content
-                .uri
-                .as_ref()
-                .and_then(|uri| {
-                    uri.strip_prefix("file://")
-                        .and_then(|path| Path::new(path).file_name())
-                })
-                .map(|name| name.to_string_lossy().to_string())
-                .unwrap_or("Image".to_owned());
-            let crease_id = crate::context_picker::insert_crease_for_mention(
-                anchor.excerpt_id,
-                anchor.text_anchor,
-                range.end - range.start,
-                name.into(),
-                IconName::Image.path().into(),
-                self.editor.clone(),
-                window,
-                cx,
+            self.mention_set.mentions.insert(
+                crease_id,
+                (mention_uri.clone(), Task::ready(Ok(mention)).shared()),
             );
-            let data: SharedString = content.data.to_string().into();
-
-            if let Some(crease_id) = crease_id {
-                self.mention_set.image_contents_by_crease_id.insert(
-                    crease_id,
-                    Task::ready(Ok(MentionImage {
-                        abs_path,
-                        data,
-                        format,
-                    }))
-                    .shared(),
-                );
-            }
         }
         cx.notify();
     }
@@ -1406,10 +1351,9 @@ impl Render for ImageHover {
     }
 }
 
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub enum Mention {
     Text {
-        uri: MentionUri,
         content: String,
         tracked_buffers: Vec<Entity<Buffer>>,
     },
@@ -1425,217 +1369,21 @@ pub struct MentionImage {
 
 #[derive(Default)]
 pub struct MentionSet {
-    uri_by_crease_id: HashMap<CreaseId, MentionUri>,
-    text_contents_by_crease_id:
-        HashMap<CreaseId, Shared<Task<Result<(String, Vec<Entity<Buffer>>), String>>>>,
-    image_contents_by_crease_id: HashMap<CreaseId, Shared<Task<Result<MentionImage, String>>>>,
+    mentions: HashMap<CreaseId, (MentionUri, Shared<Task<Result<Mention, String>>>)>,
 }
 
 impl MentionSet {
-    pub fn drain(&mut self) -> impl Iterator<Item = CreaseId> {
-        self.uri_by_crease_id
-            .drain()
-            .map(|(id, _)| id)
-            .chain(self.text_contents_by_crease_id.drain().map(|(id, _)| id))
-            .chain(self.image_contents_by_crease_id.drain().map(|(id, _)| id))
-    }
-
-    pub fn contents(
-        &self,
-        project: &Entity<Project>,
-        cx: &mut App,
-    ) -> Task<Result<HashMap<CreaseId, Mention>>> {
-        let contents = self
-            .uri_by_crease_id
-            .iter()
-            .map(|(&crease_id, uri)| {
-                match uri {
-                    MentionUri::File { .. } => {
-                        if let Some(task) = self.images.get(&crease_id).cloned() {
-                            return cx.spawn(async move |_| {
-                                let image = task.await.map_err(|e| anyhow!("{e}"))?;
-                                anyhow::Ok((crease_id, Mention::Image(image)))
-                            });
-                        }
-
-                        let Some(task) = self.buffers.get(&crease_id).cloned() else {
-                            return Task::ready(Err(anyhow!("missing file load task")));
-                        };
-                        let uri = uri.clone();
-                        cx.spawn(async move |_| {
-                            let (content, buffer) =
-                                task.await.map_err(|e| anyhow::anyhow!("{e}"))?;
-                            Ok((
-                                crease_id,
-                                Mention::Text {
-                                    uri,
-                                    content: content.to_string(),
-                                    tracked_buffers: buffer.into_iter().collect(),
-                                },
-                            ))
-                        })
-                    }
-                    MentionUri::PastedImage => {
-                        let Some(task) = self.images.get(&crease_id).cloned() else {
-                            return Task::ready(Err(anyhow!("missing image load task")));
-                        };
-                        cx.spawn(async move |_| {
-                            let image = task.await.map_err(|e| anyhow!("{e}"))?;
-                            anyhow::Ok((crease_id, Mention::Image(image)))
-                        })
-                    }
-                    MentionUri::Directory { abs_path } => {
-                        let Some(content) = self.directories.get(abs_path).cloned() else {
-                            return Task::ready(Err(anyhow!("missing directory load task")));
-                        };
-                        let uri = uri.clone();
-                        cx.spawn(async move |_| {
-                            let (content, tracked_buffers) =
-                                content.await.map_err(|e| anyhow::anyhow!("{e}"))?;
-                            Ok((
-                                crease_id,
-                                Mention::Text {
-                                    uri,
-                                    content,
-                                    tracked_buffers,
-                                },
-                            ))
-                        })
-                    }
-                    MentionUri::Symbol {
-                        abs_path: path,
-                        line_range,
-                        ..
-                    }
-                    | MentionUri::Selection {
-                        abs_path: Some(path),
-                        line_range,
-                        ..
-                    } => {
-                        let uri = uri.clone();
-                        let path_buf = path.clone();
-                        let line_range = line_range.clone();
-
-                        // FIXME should not be trying to grab the buffer at this point (what if it was dropped?)
-                        let buffer_task = project.update(cx, |project, cx| {
-                            let path = project
-                                .find_project_path(&path_buf, cx)
-                                .context("Failed to find project path")?;
-                            anyhow::Ok(project.open_buffer(path, cx))
-                        });
-
-                        cx.spawn(async move |cx| {
-                            let buffer = buffer_task?.await?;
-                            let content = buffer.read_with(cx, |buffer, _cx| {
-                                buffer
-                                    .text_for_range(
-                                        Point::new(line_range.start, 0)
-                                            ..Point::new(
-                                                line_range.end,
-                                                buffer.line_len(line_range.end),
-                                            ),
-                                    )
-                                    .collect()
-                            })?;
-
-                            anyhow::Ok((
-                                crease_id,
-                                Mention::Text {
-                                    uri,
-                                    content,
-                                    tracked_buffers: vec![buffer],
-                                },
-                            ))
-                        })
-                    }
-                    MentionUri::Selection { abs_path: None, .. } => cx.spawn({
-                        // FIXME
-                        let uri = uri.clone();
-                        async move |_| {
-                            anyhow::Ok((
-                                crease_id,
-                                Mention::Text {
-                                    uri,
-                                    content: String::new(),
-                                    tracked_buffers: Vec::new(),
-                                },
-                            ))
-                        }
-                    }),
-                    MentionUri::Thread { id, .. } => {
-                        let Some(content) = self.thread_summaries.get(id).cloned() else {
-                            return Task::ready(Err(anyhow!("missing thread summary")));
-                        };
-                        let uri = uri.clone();
-                        cx.spawn(async move |_| {
-                            Ok((
-                                crease_id,
-                                Mention::Text {
-                                    uri,
-                                    content: content
-                                        .await
-                                        .map_err(|e| anyhow::anyhow!("{e}"))?
-                                        .to_string(),
-                                    tracked_buffers: Vec::new(),
-                                },
-                            ))
-                        })
-                    }
-                    MentionUri::TextThread { path, .. } => {
-                        let Some(content) = self.text_thread_summaries.get(path).cloned() else {
-                            return Task::ready(Err(anyhow!("missing text thread summary")));
-                        };
-                        let uri = uri.clone();
-                        cx.spawn(async move |_| {
-                            Ok((
-                                crease_id,
-                                Mention::Text {
-                                    uri,
-                                    content: content.await.map_err(|e| anyhow::anyhow!("{e}"))?,
-                                    tracked_buffers: Vec::new(),
-                                },
-                            ))
-                        })
-                    }
-                    MentionUri::Rule { id: prompt_id, .. } => {
-                        let Some(content) = self.rules.get(prompt_id).cloned() else {
-                            return Task::ready(Err(anyhow!("missing rule")));
-                        };
-                        let uri = uri.clone();
-                        cx.spawn(async move |_| {
-                            Ok((
-                                crease_id,
-                                Mention::Text {
-                                    uri,
-                                    content: content.await.map_err(|e| anyhow::anyhow!("{e}"))?,
-                                    tracked_buffers: Vec::new(),
-                                },
-                            ))
-                        })
-                    }
-                    MentionUri::Fetch { url } => {
-                        let Some(content) = self.fetch_results.get(url).cloned() else {
-                            return Task::ready(Err(anyhow!("missing fetch result")));
-                        };
-                        let uri = uri.clone();
-                        cx.spawn(async move |_| {
-                            Ok((
-                                crease_id,
-                                Mention::Text {
-                                    uri,
-                                    content: content.await.map_err(|e| anyhow::anyhow!("{e}"))?,
-                                    tracked_buffers: Vec::new(),
-                                },
-                            ))
-                        })
-                    }
-                }
-            })
-            .collect::<Vec<_>>();
-
+    fn contents(&self, cx: &mut App) -> Task<Result<HashMap<CreaseId, (MentionUri, Mention)>>> {
+        let mentions = self.mentions.clone();
         cx.spawn(async move |_cx| {
-            let contents = try_join_all(contents).await?.into_iter().collect();
-            anyhow::Ok(contents)
+            let mut contents = HashMap::default();
+            for (crease_id, (mention_uri, task)) in mentions {
+                contents.insert(
+                    crease_id,
+                    (mention_uri, task.await.map_err(|e| anyhow!("{e}"))?),
+                );
+            }
+            Ok(contents)
         })
     }
 }
@@ -2142,7 +1890,7 @@ mod tests {
 
         let contents = message_editor
             .update_in(&mut cx, |message_editor, window, cx| {
-                message_editor.mention_set().contents(&project, cx)
+                message_editor.mention_set().contents(cx)
             })
             .await
             .unwrap()
@@ -2192,7 +1940,7 @@ mod tests {
 
         let contents = message_editor
             .update_in(&mut cx, |message_editor, window, cx| {
-                message_editor.mention_set().contents(&project, cx)
+                message_editor.mention_set().contents(cx)
             })
             .await
             .unwrap()
@@ -2300,7 +2048,7 @@ mod tests {
 
         let contents = message_editor
             .update_in(&mut cx, |message_editor, window, cx| {
-                message_editor.mention_set().contents(&project, cx)
+                message_editor.mention_set().contents(cx)
             })
             .await
             .unwrap()
