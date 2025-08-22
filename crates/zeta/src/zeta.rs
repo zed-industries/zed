@@ -1555,10 +1555,6 @@ impl edit_prediction::EditPredictionProvider for ZetaEditPredictionProvider {
         _debounce: bool,
         cx: &mut Context<Self>,
     ) {
-        if self.needs_terms_acceptance(cx) {
-            return;
-        }
-
         if self.zeta.read(cx).update_required {
             return;
         }
