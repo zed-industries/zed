@@ -80,12 +80,9 @@ impl Diff {
         })
     }
 
-    pub fn new(
-        buffer: Entity<Buffer>,
-        base_text_snapshot: language::BufferSnapshot,
-        cx: &mut Context<Self>,
-    ) -> Self {
+    pub fn new(buffer: Entity<Buffer>, cx: &mut Context<Self>) -> Self {
         let buffer_text_snapshot = buffer.read(cx).text_snapshot();
+        let base_text_snapshot = buffer.read(cx).snapshot();
         let base_text = base_text_snapshot.text();
         debug_assert_eq!(buffer_text_snapshot.text(), base_text);
         let buffer_diff = cx.new(|cx| {
@@ -377,4 +374,22 @@ async fn build_buffer_diff(
         diff.set_secondary_diff(secondary_diff);
         diff
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use gpui::{AppContext as _, TestAppContext};
+    use language::Buffer;
+
+    use crate::Diff;
+
+    #[gpui::test]
+    async fn test_pending_diff(cx: &mut TestAppContext) {
+        let buffer = cx.new(|cx| Buffer::local("hello!", cx));
+        let _diff = cx.new(|cx| Diff::new(buffer.clone(), cx));
+        buffer.update(cx, |buffer, cx| {
+            buffer.set_text("HELLO!", cx);
+        });
+        cx.run_until_parked();
+    }
 }
