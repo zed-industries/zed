@@ -14,7 +14,7 @@ struct FeatureFlags {
 }
 
 pub static ZED_DISABLE_STAFF: LazyLock<bool> = LazyLock::new(|| {
-    std::env::var("ZED_DISABLE_STAFF").map_or(false, |value| !value.is_empty() && value != "0")
+    std::env::var("ZED_DISABLE_STAFF").is_ok_and(|value| !value.is_empty() && value != "0")
 });
 
 impl FeatureFlags {
@@ -77,14 +77,6 @@ impl FeatureFlag for NotebookFeatureFlag {
     const NAME: &'static str = "notebooks";
 }
 
-pub struct ThreadAutoCaptureFeatureFlag {}
-impl FeatureFlag for ThreadAutoCaptureFeatureFlag {
-    const NAME: &'static str = "thread-auto-capture";
-
-    fn enabled_for_staff() -> bool {
-        false
-    }
-}
 pub struct PanicFeatureFlag;
 
 impl FeatureFlag for PanicFeatureFlag {
@@ -97,10 +89,21 @@ impl FeatureFlag for JjUiFeatureFlag {
     const NAME: &'static str = "jj-ui";
 }
 
-pub struct AcpFeatureFlag;
+pub struct GeminiAndNativeFeatureFlag;
 
-impl FeatureFlag for AcpFeatureFlag {
-    const NAME: &'static str = "acp";
+impl FeatureFlag for GeminiAndNativeFeatureFlag {
+    // This was previously called "acp".
+    //
+    // We renamed it because existing builds used it to enable the Claude Code
+    // integration too, and we'd like to turn Gemini/Native on in new builds
+    // without enabling Claude Code in old builds.
+    const NAME: &'static str = "gemini-and-native";
+}
+
+pub struct ClaudeCodeFeatureFlag;
+
+impl FeatureFlag for ClaudeCodeFeatureFlag {
+    const NAME: &'static str = "claude-code";
 }
 
 pub trait FeatureFlagViewExt<V: 'static> {

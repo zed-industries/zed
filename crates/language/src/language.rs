@@ -121,8 +121,8 @@ where
     func(cursor.deref_mut())
 }
 
-static NEXT_LANGUAGE_ID: LazyLock<AtomicUsize> = LazyLock::new(Default::default);
-static NEXT_GRAMMAR_ID: LazyLock<AtomicUsize> = LazyLock::new(Default::default);
+static NEXT_LANGUAGE_ID: AtomicUsize = AtomicUsize::new(0);
+static NEXT_GRAMMAR_ID: AtomicUsize = AtomicUsize::new(0);
 static WASM_ENGINE: LazyLock<wasmtime::Engine> = LazyLock::new(|| {
     wasmtime::Engine::new(&wasmtime::Config::new()).expect("Failed to create Wasmtime engine")
 });
@@ -206,7 +206,7 @@ impl CachedLspAdapter {
     }
 
     pub fn name(&self) -> LanguageServerName {
-        self.adapter.name().clone()
+        self.adapter.name()
     }
 
     pub async fn get_language_server_command(
@@ -329,9 +329,9 @@ pub trait LspAdapter: 'static + Send + Sync {
             // We only want to cache when we fall back to the global one,
             // because we don't want to download and overwrite our global one
             // for each worktree we might have open.
-            if binary_options.allow_path_lookup {
-                if let Some(binary) = self.check_if_user_installed(delegate.as_ref(), toolchains, cx).await {
-                    log::info!(
+            if binary_options.allow_path_lookup
+                && let Some(binary) = self.check_if_user_installed(delegate.as_ref(), toolchains, cx).await {
+                    log::debug!(
                         "found user-installed language server for {}. path: {:?}, arguments: {:?}",
                         self.name().0,
                         binary.path,
@@ -339,7 +339,6 @@ pub trait LspAdapter: 'static + Send + Sync {
                     );
                     return Ok(binary);
                 }
-            }
 
             anyhow::ensure!(binary_options.allow_binary_download, "downloading language servers disabled");
 
@@ -602,7 +601,7 @@ async fn try_fetch_server_binary<L: LspAdapter + 'static + Send + Sync + ?Sized>
     }
 
     let name = adapter.name();
-    log::info!("fetching latest version of language server {:?}", name.0);
+    log::debug!("fetching latest version of language server {:?}", name.0);
     delegate.update_status(name.clone(), BinaryStatus::CheckingForUpdate);
 
     let latest_version = adapter
@@ -613,7 +612,7 @@ async fn try_fetch_server_binary<L: LspAdapter + 'static + Send + Sync + ?Sized>
         .check_if_version_installed(latest_version.as_ref(), &container_dir, delegate.as_ref())
         .await
     {
-        log::info!("language server {:?} is already installed", name.0);
+        log::debug!("language server {:?} is already installed", name.0);
         delegate.update_status(name.clone(), BinaryStatus::None);
         Ok(binary)
     } else {
@@ -964,11 +963,11 @@ where
 
 fn deserialize_regex_vec<'de, D: Deserializer<'de>>(d: D) -> Result<Vec<Regex>, D::Error> {
     let sources = Vec::<String>::deserialize(d)?;
-    let mut regexes = Vec::new();
-    for source in sources {
-        regexes.push(regex::Regex::new(&source).map_err(de::Error::custom)?);
-    }
-    Ok(regexes)
+    sources
+        .into_iter()
+        .map(|source| regex::Regex::new(&source))
+        .collect::<Result<_, _>>()
+        .map_err(de::Error::custom)
 }
 
 fn regex_vec_json_schema(_: &mut SchemaGenerator) -> schemars::Schema {
@@ -1034,12 +1033,10 @@ impl<'de> Deserialize<'de> for BracketPairConfig {
         D: Deserializer<'de>,
     {
         let result = Vec::<BracketPairContent>::deserialize(deserializer)?;
-        let mut brackets = Vec::with_capacity(result.len());
-        let mut disabled_scopes_by_bracket_ix = Vec::with_capacity(result.len());
-        for entry in result {
-            brackets.push(entry.bracket_pair);
-            disabled_scopes_by_bracket_ix.push(entry.not_in);
-        }
+        let (brackets, disabled_scopes_by_bracket_ix) = result
+            .into_iter()
+            .map(|entry| (entry.bracket_pair, entry.not_in))
+            .unzip();
 
         Ok(BracketPairConfig {
             pairs: brackets,
@@ -1379,16 +1376,14 @@ impl Language {
         let grammar = self.grammar_mut().context("cannot mutate grammar")?;
 
         let query = Query::new(&grammar.ts_language, source)?;
-        let mut extra_captures = Vec::with_capacity(query.capture_names().len());
-
-        for name in query.capture_names().iter() {
-            let kind = if *name == "run" {
-                RunnableCapture::Run
-            } else {
-                RunnableCapture::Named(name.to_string().into())
-            };
-            extra_captures.push(kind);
-        }
+        let extra_captures: Vec<_> = query
+            .capture_names()
+            .iter()
+            .map(|&name| match name {
+                "run" => RunnableCapture::Run,
+                name => RunnableCapture::Named(name.to_string().into()),
+            })
+            .collect();
 
         grammar.runnable_config = Some(RunnableConfig {
             extra_captures,
@@ -1518,9 +1513,8 @@ impl Language {
             .map(|ix| {
                 let mut config = BracketsPatternConfig::default();
                 for setting in query.property_settings(ix) {
-                    match setting.key.as_ref() {
-                        "newline.only" => config.newline_only = true,
-                        _ => {}
+                    if setting.key.as_ref() == "newline.only" {
+                        config.newline_only = true
                     }
                 }
                 config
@@ -1780,10 +1774,10 @@ impl Language {
                 BufferChunks::new(text, range, Some((captures, highlight_maps)), false, None)
             {
                 let end_offset = offset + chunk.text.len();
-                if let Some(highlight_id) = chunk.syntax_highlight_id {
-                    if !highlight_id.is_default() {
-                        result.push((offset..end_offset, highlight_id));
-                    }
+                if let Some(highlight_id) = chunk.syntax_highlight_id
+                    && !highlight_id.is_default()
+                {
+                    result.push((offset..end_offset, highlight_id));
                 }
                 offset = end_offset;
             }
@@ -1800,11 +1794,11 @@ impl Language {
     }
 
     pub fn set_theme(&self, theme: &SyntaxTheme) {
-        if let Some(grammar) = self.grammar.as_ref() {
-            if let Some(highlights_query) = &grammar.highlights_query {
-                *grammar.highlight_map.lock() =
-                    HighlightMap::new(highlights_query.capture_names(), theme);
-            }
+        if let Some(grammar) = self.grammar.as_ref()
+            && let Some(highlights_query) = &grammar.highlights_query
+        {
+            *grammar.highlight_map.lock() =
+                HighlightMap::new(highlights_query.capture_names(), theme);
         }
     }
 
@@ -1834,7 +1828,7 @@ impl Language {
 
 impl LanguageScope {
     pub fn path_suffixes(&self) -> &[String] {
-        &self.language.path_suffixes()
+        self.language.path_suffixes()
     }
 
     pub fn language_name(&self) -> LanguageName {
@@ -1924,11 +1918,11 @@ impl LanguageScope {
             .enumerate()
             .map(move |(ix, bracket)| {
                 let mut is_enabled = true;
-                if let Some(next_disabled_ix) = disabled_ids.first() {
-                    if ix == *next_disabled_ix as usize {
-                        disabled_ids = &disabled_ids[1..];
-                        is_enabled = false;
-                    }
+                if let Some(next_disabled_ix) = disabled_ids.first()
+                    && ix == *next_disabled_ix as usize
+                {
+                    disabled_ids = &disabled_ids[1..];
+                    is_enabled = false;
                 }
                 (bracket, is_enabled)
             })

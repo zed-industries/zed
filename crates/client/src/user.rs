@@ -41,7 +41,7 @@ impl std::fmt::Display for ChannelId {
 pub struct ProjectId(pub u64);
 
 impl ProjectId {
-    pub fn to_proto(&self) -> u64 {
+    pub fn to_proto(self) -> u64 {
         self.0
     }
 }
@@ -332,9 +332,9 @@ impl UserStore {
     async fn handle_update_contacts(
         this: Entity<Self>,
         message: TypedEnvelope<proto::UpdateContacts>,
-        mut cx: AsyncApp,
+        cx: AsyncApp,
     ) -> Result<()> {
-        this.read_with(&mut cx, |this, _| {
+        this.read_with(&cx, |this, _| {
             this.update_contacts_tx
                 .unbounded_send(UpdateContacts::Update(message.payload))
                 .unwrap();
@@ -848,7 +848,7 @@ impl UserStore {
 
     pub fn has_accepted_terms_of_service(&self) -> bool {
         self.accepted_tos_at
-            .map_or(false, |accepted_tos_at| accepted_tos_at.is_some())
+            .is_some_and(|accepted_tos_at| accepted_tos_at.is_some())
     }
 
     pub fn accept_terms_of_service(&self, cx: &Context<Self>) -> Task<Result<()>> {
@@ -894,10 +894,10 @@ impl UserStore {
         let mut ret = Vec::with_capacity(users.len());
         for user in users {
             let user = User::new(user);
-            if let Some(old) = self.users.insert(user.id, user.clone()) {
-                if old.github_login != user.github_login {
-                    self.by_github_login.remove(&old.github_login);
-                }
+            if let Some(old) = self.users.insert(user.id, user.clone())
+                && old.github_login != user.github_login
+            {
+                self.by_github_login.remove(&old.github_login);
             }
             self.by_github_login
                 .insert(user.github_login.clone(), user.id);

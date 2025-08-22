@@ -341,10 +341,10 @@ async fn detect_package_manager(
     fs: Arc<dyn Fs>,
     package_json_data: Option<PackageJsonData>,
 ) -> &'static str {
-    if let Some(package_json_data) = package_json_data {
-        if let Some(package_manager) = package_json_data.package_manager {
-            return package_manager;
-        }
+    if let Some(package_json_data) = package_json_data
+        && let Some(package_manager) = package_json_data.package_manager
+    {
+        return package_manager;
     }
     if fs.is_file(&worktree_root.join("pnpm-lock.yaml")).await {
         return "pnpm";
@@ -557,7 +557,7 @@ struct TypeScriptVersions {
 #[async_trait(?Send)]
 impl LspAdapter for TypeScriptLspAdapter {
     fn name(&self) -> LanguageServerName {
-        Self::SERVER_NAME.clone()
+        Self::SERVER_NAME
     }
 
     async fn fetch_latest_server_version(
@@ -587,7 +587,7 @@ impl LspAdapter for TypeScriptLspAdapter {
             .should_install_npm_package(
                 Self::PACKAGE_NAME,
                 &server_path,
-                &container_dir,
+                container_dir,
                 VersionStrategy::Latest(version.typescript_version.as_str()),
             )
             .await;
@@ -879,7 +879,7 @@ impl LspAdapter for EsLintLspAdapter {
     }
 
     fn name(&self) -> LanguageServerName {
-        Self::SERVER_NAME.clone()
+        Self::SERVER_NAME
     }
 
     async fn fetch_latest_server_version(
@@ -910,7 +910,7 @@ impl LspAdapter for EsLintLspAdapter {
         let server_path = destination_path.join(Self::SERVER_PATH);
 
         if fs::metadata(&server_path).await.is_err() {
-            remove_matching(&container_dir, |entry| entry != destination_path).await;
+            remove_matching(&container_dir, |_| true).await;
 
             download_server_binary(
                 delegate,

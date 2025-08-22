@@ -53,7 +53,7 @@ const BINARY: &str = if cfg!(target_os = "windows") {
 #[async_trait(?Send)]
 impl super::LspAdapter for GoLspAdapter {
     fn name(&self) -> LanguageServerName {
-        Self::SERVER_NAME.clone()
+        Self::SERVER_NAME
     }
 
     async fn fetch_latest_server_version(
@@ -131,19 +131,19 @@ impl super::LspAdapter for GoLspAdapter {
 
         if let Some(version) = *version {
             let binary_path = container_dir.join(format!("gopls_{version}_go_{go_version}"));
-            if let Ok(metadata) = fs::metadata(&binary_path).await {
-                if metadata.is_file() {
-                    remove_matching(&container_dir, |entry| {
-                        entry != binary_path && entry.file_name() != Some(OsStr::new("gobin"))
-                    })
-                    .await;
+            if let Ok(metadata) = fs::metadata(&binary_path).await
+                && metadata.is_file()
+            {
+                remove_matching(&container_dir, |entry| {
+                    entry != binary_path && entry.file_name() != Some(OsStr::new("gobin"))
+                })
+                .await;
 
-                    return Ok(LanguageServerBinary {
-                        path: binary_path.to_path_buf(),
-                        arguments: server_binary_arguments(),
-                        env: None,
-                    });
-                }
+                return Ok(LanguageServerBinary {
+                    path: binary_path.to_path_buf(),
+                    arguments: server_binary_arguments(),
+                    env: None,
+                });
             }
         } else if let Some(path) = this
             .cached_server_binary(container_dir.clone(), delegate)
@@ -452,7 +452,7 @@ async fn get_cached_server_binary(container_dir: PathBuf) -> Option<LanguageServ
                 && entry
                     .file_name()
                     .to_str()
-                    .map_or(false, |name| name.starts_with("gopls_"))
+                    .is_some_and(|name| name.starts_with("gopls_"))
             {
                 last_binary_path = Some(entry.path());
             }
@@ -525,7 +525,7 @@ impl ContextProvider for GoContextProvider {
                     })
                     .unwrap_or_else(|| format!("{}", buffer_dir.to_string_lossy()));
 
-                (GO_PACKAGE_TASK_VARIABLE.clone(), package_name.to_string())
+                (GO_PACKAGE_TASK_VARIABLE.clone(), package_name)
             });
 
         let go_module_root_variable = local_abs_path
@@ -702,7 +702,7 @@ impl ContextProvider for GoContextProvider {
                 label: format!("go generate {}", GO_PACKAGE_TASK_VARIABLE.template_value()),
                 command: "go".into(),
                 args: vec!["generate".into()],
-                cwd: package_cwd.clone(),
+                cwd: package_cwd,
                 tags: vec!["go-generate".to_owned()],
                 ..TaskTemplate::default()
             },
@@ -710,7 +710,7 @@ impl ContextProvider for GoContextProvider {
                 label: "go generate ./...".into(),
                 command: "go".into(),
                 args: vec!["generate".into(), "./...".into()],
-                cwd: module_cwd.clone(),
+                cwd: module_cwd,
                 ..TaskTemplate::default()
             },
         ])))

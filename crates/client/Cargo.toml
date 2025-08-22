@@ -44,6 +44,7 @@ rpc = { workspace = true, features = ["gpui"] }
 schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+serde_urlencoded.workspace = true
 settings.workspace = true
 sha2.workspace = true
 smol.workspace = true

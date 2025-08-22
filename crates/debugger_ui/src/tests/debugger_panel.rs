@@ -1330,7 +1330,6 @@ async fn test_unsetting_breakpoints_on_clear_breakpoint_action(
     let called_set_breakpoints = Arc::new(AtomicBool::new(false));
 
     client.on_request::<SetBreakpoints, _>({
-        let called_set_breakpoints = called_set_breakpoints.clone();
         move |_, args| {
             assert!(
                 args.breakpoints.is_none_or(|bps| bps.is_empty()),
@@ -1445,7 +1444,6 @@ async fn test_we_send_arguments_from_user_config(
     let launch_handler_called = Arc::new(AtomicBool::new(false));
 
     start_debug_session_with(&workspace, cx, debug_definition.clone(), {
-        let debug_definition = debug_definition.clone();
         let launch_handler_called = launch_handler_called.clone();
 
         move |client| {
@@ -1783,9 +1781,8 @@ async fn test_debug_adapters_shutdown_on_app_quit(
     let disconnect_request_received = Arc::new(AtomicBool::new(false));
     let disconnect_clone = disconnect_request_received.clone();
 
-    let disconnect_clone_for_handler = disconnect_clone.clone();
     client.on_request::<Disconnect, _>(move |_, _| {
-        disconnect_clone_for_handler.store(true, Ordering::SeqCst);
+        disconnect_clone.store(true, Ordering::SeqCst);
         Ok(())
     });
 

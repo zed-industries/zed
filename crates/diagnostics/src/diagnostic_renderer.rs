@@ -46,7 +46,7 @@ impl DiagnosticRenderer {
                     markdown.push_str(" (");
                 }
                 if let Some(source) = diagnostic.source.as_ref() {
-                    markdown.push_str(&Markdown::escape(&source));
+                    markdown.push_str(&Markdown::escape(source));
                 }
                 if diagnostic.source.is_some() && diagnostic.code.is_some() {
                     markdown.push(' ');
@@ -287,15 +287,13 @@ impl DiagnosticBlock {
                     }
                 }
             }
-        } else {
-            if let Some(diagnostic) = editor
-                .snapshot(window, cx)
-                .buffer_snapshot
-                .diagnostic_group(buffer_id, group_id)
-                .nth(ix)
-            {
-                Self::jump_to(editor, diagnostic.range, window, cx)
-            }
+        } else if let Some(diagnostic) = editor
+            .snapshot(window, cx)
+            .buffer_snapshot
+            .diagnostic_group(buffer_id, group_id)
+            .nth(ix)
+        {
+            Self::jump_to(editor, diagnostic.range, window, cx)
         };
     }
 
@@ -306,7 +304,7 @@ impl DiagnosticBlock {
         cx: &mut Context<Editor>,
     ) {
         let snapshot = &editor.buffer().read(cx).snapshot(cx);
-        let range = range.start.to_offset(&snapshot)..range.end.to_offset(&snapshot);
+        let range = range.start.to_offset(snapshot)..range.end.to_offset(snapshot);
 
         editor.unfold_ranges(&[range.start..range.end], true, false, cx);
         editor.change_selections(Default::default(), window, cx, |s| {

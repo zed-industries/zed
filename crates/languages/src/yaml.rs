@@ -38,7 +38,7 @@ impl YamlLspAdapter {
 #[async_trait(?Send)]
 impl LspAdapter for YamlLspAdapter {
     fn name(&self) -> LanguageServerName {
-        Self::SERVER_NAME.clone()
+        Self::SERVER_NAME
     }
 
     async fn fetch_latest_server_version(
@@ -105,7 +105,7 @@ impl LspAdapter for YamlLspAdapter {
             .should_install_npm_package(
                 Self::PACKAGE_NAME,
                 &server_path,
-                &container_dir,
+                container_dir,
                 VersionStrategy::Latest(version),
             )
             .await;

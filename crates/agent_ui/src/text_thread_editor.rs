@@ -1,4 +1,5 @@
 use crate::{
+    QuoteSelection,
     language_model_selector::{LanguageModelSelector, language_model_selector},
     ui::BurnModeTooltip,
 };
@@ -89,8 +90,6 @@ actions!(
         CycleMessageRole,
         /// Inserts the selected text into the active editor.
         InsertIntoEditor,
-        /// Quotes the current selection in the assistant conversation.
-        QuoteSelection,
         /// Splits the conversation at the current cursor position.
         Split,
     ]
@@ -373,7 +372,7 @@ impl TextThreadEditor {
             .map(|default| default.provider);
         if provider
             .as_ref()
-            .map_or(false, |provider| provider.must_accept_terms(cx))
+            .is_some_and(|provider| provider.must_accept_terms(cx))
         {
             self.show_accept_terms = true;
             cx.notify();
@@ -457,7 +456,7 @@ impl TextThreadEditor {
                         || snapshot
                             .chars_at(newest_cursor)
                             .next()
-                            .map_or(false, |ch| ch != '\n')
+                            .is_some_and(|ch| ch != '\n')
                     {
                         editor.move_to_end_of_line(
                             &MoveToEndOfLine {
@@ -540,7 +539,7 @@ impl TextThreadEditor {
             let context = self.context.read(cx);
             let sections = context
                 .slash_command_output_sections()
-                .into_iter()
+                .iter()
                 .filter(|section| section.is_valid(context.buffer().read(cx)))
                 .cloned()
                 .collect::<Vec<_>>();
@@ -745,32 +744,27 @@ impl TextThreadEditor {
     ) {
         if let Some(invoked_slash_command) =
             self.context.read(cx).invoked_slash_command(&command_id)
+            && let InvokedSlashCommandStatus::Finished = invoked_slash_command.status
         {
-            if let InvokedSlashCommandStatus::Finished = invoked_slash_command.status {
-                let run_commands_in_ranges = invoked_slash_command
-                    .run_commands_in_ranges
-                    .iter()
-                    .cloned()
-                    .collect::<Vec<_>>();
-                for range in run_commands_in_ranges {
-                    let commands = self.context.update(cx, |context, cx| {
-                        context.reparse(cx);
-                        context
-                            .pending_commands_for_range(range.clone(), cx)
-                            .to_vec()
-                    });
+            let run_commands_in_ranges = invoked_slash_command.run_commands_in_ranges.clone();
+            for range in run_commands_in_ranges {
+                let commands = self.context.update(cx, |context, cx| {
+                    context.reparse(cx);
+                    context
+                        .pending_commands_for_range(range.clone(), cx)
+                        .to_vec()
+                });
 
-                    for command in commands {
-                        self.run_command(
-                            command.source_range,
-                            &command.name,
-                            &command.arguments,
-                            false,
-                            self.workspace.clone(),
-                            window,
-                            cx,
-                        );
-                    }
+                for command in commands {
+                    self.run_command(
+                        command.source_range,
+                        &command.name,
+                        &command.arguments,
+                        false,
+                        self.workspace.clone(),
+                        window,
+                        cx,
+                    );
                 }
             }
         }
@@ -1242,7 +1236,7 @@ impl TextThreadEditor {
             let mut new_blocks = vec![];
             let mut block_index_to_message = vec![];
             for message in self.context.read(cx).messages(cx) {
-                if let Some(_) = blocks_to_remove.remove(&message.id) {
+                if blocks_to_remove.remove(&message.id).is_some() {
                     // This is an old message that we might modify.
                     let Some((meta, block_id)) = old_blocks.get_mut(&message.id) else {
                         debug_assert!(
@@ -1280,7 +1274,7 @@ impl TextThreadEditor {
         context_editor_view: &Entity<TextThreadEditor>,
         cx: &mut Context<Workspace>,
     ) -> Option<(String, bool)> {
-        const CODE_FENCE_DELIMITER: &'static str = "```";
+        const CODE_FENCE_DELIMITER: &str = "```";
 
         let context_editor = context_editor_view.read(cx).editor.clone();
         context_editor.update(cx, |context_editor, cx| {
@@ -1744,7 +1738,7 @@ impl TextThreadEditor {
                                 render_slash_command_output_toggle,
                                 |_, _, _, _| Empty.into_any(),
                             )
-                            .with_metadata(metadata.crease.clone())
+                            .with_metadata(metadata.crease)
                         }),
                         cx,
                     );
@@ -1815,7 +1809,7 @@ impl TextThreadEditor {
                 .filter_map(|(anchor, render_image)| {
                     const MAX_HEIGHT_IN_LINES: u32 = 8;
                     let anchor = buffer.anchor_in_excerpt(excerpt_id, anchor).unwrap();
-                    let image = render_image.clone();
+                    let image = render_image;
                     anchor.is_valid(&buffer).then(|| BlockProperties {
                         placement: BlockPlacement::Above(anchor),
                         height: Some(MAX_HEIGHT_IN_LINES),
@@ -1878,7 +1872,7 @@ impl TextThreadEditor {
     }
 
     fn render_send_button(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let focus_handle = self.focus_handle(cx).clone();
+        let focus_handle = self.focus_handle(cx);
 
         let (style, tooltip) = match token_state(&self.context, cx) {
             Some(TokenState::NoTokensLeft { .. }) => (
@@ -2020,7 +2014,7 @@ impl TextThreadEditor {
             None => IconName::Ai,
         };
 
-        let focus_handle = self.editor().focus_handle(cx).clone();
+        let focus_handle = self.editor().focus_handle(cx);
 
         PickerPopoverMenu::new(
             self.language_model_selector.clone(),
@@ -2166,8 +2160,8 @@ impl TextThreadEditor {
 
 /// Returns the contents of the *outermost* fenced code block that contains the given offset.
 fn find_surrounding_code_block(snapshot: &BufferSnapshot, offset: usize) -> Option<Range<usize>> {
-    const CODE_BLOCK_NODE: &'static str = "fenced_code_block";
-    const CODE_BLOCK_CONTENT: &'static str = "code_fence_content";
+    const CODE_BLOCK_NODE: &str = "fenced_code_block";
+    const CODE_BLOCK_CONTENT: &str = "code_fence_content";
 
     let layer = snapshot.syntax_layers().next()?;
 
@@ -3134,7 +3128,7 @@ mod tests {
         let context_editor = window
             .update(&mut cx, |_, window, cx| {
                 cx.new(|cx| {
-                    let editor = TextThreadEditor::for_context(
+                    TextThreadEditor::for_context(
                         context.clone(),
                         fs,
                         workspace.downgrade(),
@@ -3142,8 +3136,7 @@ mod tests {
                         None,
                         window,
                         cx,
-                    );
-                    editor
+                    )
                 })
             })
             .unwrap();

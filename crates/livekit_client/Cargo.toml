@@ -25,6 +25,7 @@ async-trait.workspace = true
 collections.workspace = true
 cpal.workspace = true
 futures.workspace = true
+audio.workspace = true
 gpui = { workspace = true, features = ["screen-capture", "x11", "wayland", "windows-manifest"] }
 gpui_tokio.workspace = true
 http_client_tls.workspace = true
@@ -35,6 +36,7 @@ nanoid.workspace = true
 parking_lot.workspace = true
 postage.workspace = true
 smallvec.workspace = true
+settings.workspace = true
 tokio-tungstenite.workspace = true
 util.workspace = true
 workspace-hack.workspace = true

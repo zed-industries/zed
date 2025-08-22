@@ -94,9 +94,7 @@ impl<'a, S: Summary, D: Dimension<'a, S> + Ord> SeekTarget<'a, S, D> for D {
 }
 
 impl<'a, T: Summary> Dimension<'a, T> for () {
-    fn zero(_: &T::Context) -> Self {
-        ()
-    }
+    fn zero(_: &T::Context) -> Self {}
 
     fn add_summary(&mut self, _: &'a T, _: &T::Context) {}
 }
@@ -674,11 +672,11 @@ impl<T: KeyedItem> SumTree<T> {
         *self = {
             let mut cursor = self.cursor::<T::Key>(cx);
             let mut new_tree = cursor.slice(&item.key(), Bias::Left);
-            if let Some(cursor_item) = cursor.item() {
-                if cursor_item.key() == item.key() {
-                    replaced = Some(cursor_item.clone());
-                    cursor.next();
-                }
+            if let Some(cursor_item) = cursor.item()
+                && cursor_item.key() == item.key()
+            {
+                replaced = Some(cursor_item.clone());
+                cursor.next();
             }
             new_tree.push(item, cx);
             new_tree.append(cursor.suffix(), cx);
@@ -692,11 +690,11 @@ impl<T: KeyedItem> SumTree<T> {
         *self = {
             let mut cursor = self.cursor::<T::Key>(cx);
             let mut new_tree = cursor.slice(key, Bias::Left);
-            if let Some(item) = cursor.item() {
-                if item.key() == *key {
-                    removed = Some(item.clone());
-                    cursor.next();
-                }
+            if let Some(item) = cursor.item()
+                && item.key() == *key
+            {
+                removed = Some(item.clone());
+                cursor.next();
             }
             new_tree.append(cursor.suffix(), cx);
             new_tree
@@ -728,7 +726,7 @@ impl<T: KeyedItem> SumTree<T> {
 
                 if old_item
                     .as_ref()
-                    .map_or(false, |old_item| old_item.key() < new_key)
+                    .is_some_and(|old_item| old_item.key() < new_key)
                 {
                     new_tree.extend(buffered_items.drain(..), cx);
                     let slice = cursor.slice(&new_key, Bias::Left);
@@ -736,11 +734,11 @@ impl<T: KeyedItem> SumTree<T> {
                     old_item = cursor.item();
                 }
 
-                if let Some(old_item) = old_item {
-                    if old_item.key() == new_key {
-                        removed.push(old_item.clone());
-                        cursor.next();
-                    }
+                if let Some(old_item) = old_item
+                    && old_item.key() == new_key
+                {
+                    removed.push(old_item.clone());
+                    cursor.next();
                 }
 
                 match edit {

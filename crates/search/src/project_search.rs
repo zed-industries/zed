@@ -775,15 +775,15 @@ impl ProjectSearchView {
         // Subscribe to query_editor in order to reraise editor events for workspace item activation purposes
         subscriptions.push(
             cx.subscribe(&query_editor, |this, _, event: &EditorEvent, cx| {
-                if let EditorEvent::Edited { .. } = event {
-                    if EditorSettings::get_global(cx).use_smartcase_search {
-                        let query = this.search_query_text(cx);
-                        if !query.is_empty()
-                            && this.search_options.contains(SearchOptions::CASE_SENSITIVE)
-                                != contains_uppercase(&query)
-                        {
-                            this.toggle_search_option(SearchOptions::CASE_SENSITIVE, cx);
-                        }
+                if let EditorEvent::Edited { .. } = event
+                    && EditorSettings::get_global(cx).use_smartcase_search
+                {
+                    let query = this.search_query_text(cx);
+                    if !query.is_empty()
+                        && this.search_options.contains(SearchOptions::CASE_SENSITIVE)
+                            != contains_uppercase(&query)
+                    {
+                        this.toggle_search_option(SearchOptions::CASE_SENSITIVE, cx);
                     }
                 }
                 cx.emit(ViewEvent::EditorEvent(event.clone()))
@@ -947,14 +947,14 @@ impl ProjectSearchView {
         {
             let new_query = search_view.update(cx, |search_view, cx| {
                 let new_query = search_view.build_search_query(cx);
-                if new_query.is_some() {
-                    if let Some(old_query) = search_view.entity.read(cx).active_query.clone() {
-                        search_view.query_editor.update(cx, |editor, cx| {
-                            editor.set_text(old_query.as_str(), window, cx);
-                        });
-                        search_view.search_options = SearchOptions::from_query(&old_query);
-                        search_view.adjust_query_regex_language(cx);
-                    }
+                if new_query.is_some()
+                    && let Some(old_query) = search_view.entity.read(cx).active_query.clone()
+                {
+                    search_view.query_editor.update(cx, |editor, cx| {
+                        editor.set_text(old_query.as_str(), window, cx);
+                    });
+                    search_view.search_options = SearchOptions::from_query(&old_query);
+                    search_view.adjust_query_regex_language(cx);
                 }
                 new_query
             });
@@ -1113,8 +1113,8 @@ impl ProjectSearchView {
                     .await
                     .log_err();
                 }
-                let should_search = result != 2;
-                should_search
+
+                result != 2
             } else {
                 true
             };
@@ -1844,8 +1844,8 @@ impl ProjectSearchBar {
                     ),
                 ] {
                     if editor.focus_handle(cx).is_focused(window) {
-                        if editor.read(cx).text(cx).is_empty() {
-                            if let Some(new_query) = search_view
+                        if editor.read(cx).text(cx).is_empty()
+                            && let Some(new_query) = search_view
                                 .entity
                                 .read(cx)
                                 .project
@@ -1853,10 +1853,9 @@ impl ProjectSearchBar {
                                 .search_history(kind)
                                 .current(search_view.entity.read(cx).cursor(kind))
                                 .map(str::to_string)
-                            {
-                                search_view.set_search_editor(kind, &new_query, window, cx);
-                                return;
-                            }
+                        {
+                            search_view.set_search_editor(kind, &new_query, window, cx);
+                            return;
                         }
 
                         if let Some(new_query) = search_view.entity.update(cx, |model, cx| {
@@ -1925,13 +1924,15 @@ impl Render for ProjectSearchBar {
         let limit_reached = project_search.limit_reached;
 
         let color_override = match (
+            &project_search.pending_search,
             project_search.no_results,
             &project_search.active_query,
             &project_search.last_search_query_text,
         ) {
-            (Some(true), Some(q), Some(p)) if q.as_str() == p => Some(Color::Error),
+            (None, Some(true), Some(q), Some(p)) if q.as_str() == p => Some(Color::Error),
             _ => None,
         };
+
         let match_text = search
             .active_match_index
             .and_then(|index| {
@@ -3715,7 +3716,7 @@ pub mod tests {
                 window
                     .update(cx, |_, _, cx| {
                         search_view.update(cx, |search_view, cx| {
-                            search_view.query_editor.read(cx).text(cx).to_string()
+                            search_view.query_editor.read(cx).text(cx)
                         })
                     })
                     .unwrap()
@@ -3882,7 +3883,6 @@ pub mod tests {
         // Add a project search item to the second pane
         window
             .update(cx, {
-                let search_bar = search_bar.clone();
                 |workspace, window, cx| {
                     assert_eq!(workspace.panes().len(), 2);
                     second_pane.update(cx, |pane, cx| {
@@ -4110,7 +4110,7 @@ pub mod tests {
         });
         cx.run_until_parked();
         let project_search_view = pane
-            .read_with(&mut cx, |pane, _| {
+            .read_with(&cx, |pane, _| {
                 pane.active_item()
                     .and_then(|item| item.downcast::<ProjectSearchView>())
             })

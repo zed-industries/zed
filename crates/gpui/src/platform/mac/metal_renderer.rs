@@ -332,7 +332,7 @@ impl MetalRenderer {
         self.path_intermediate_texture = Some(self.device.new_texture(&texture_descriptor));
 
         if self.path_sample_count > 1 {
-            let mut msaa_descriptor = texture_descriptor.clone();
+            let mut msaa_descriptor = texture_descriptor;
             msaa_descriptor.set_texture_type(metal::MTLTextureType::D2Multisample);
             msaa_descriptor.set_storage_mode(metal::MTLStorageMode::Private);
             msaa_descriptor.set_sample_count(self.path_sample_count as _);
@@ -445,14 +445,14 @@ impl MetalRenderer {
                     instance_buffer,
                     &mut instance_offset,
                     viewport_size,
-                    &command_encoder,
+                    command_encoder,
                 ),
                 PrimitiveBatch::Quads(quads) => self.draw_quads(
                     quads,
                     instance_buffer,
                     &mut instance_offset,
                     viewport_size,
-                    &command_encoder,
+                    command_encoder,
                 ),
                 PrimitiveBatch::Paths(paths) => {
                     command_encoder.end_encoding();
@@ -480,7 +480,7 @@ impl MetalRenderer {
                             instance_buffer,
                             &mut instance_offset,
                             viewport_size,
-                            &command_encoder,
+                            command_encoder,
                         )
                     } else {
                         false
@@ -491,7 +491,7 @@ impl MetalRenderer {
                     instance_buffer,
                     &mut instance_offset,
                     viewport_size,
-                    &command_encoder,
+                    command_encoder,
                 ),
                 PrimitiveBatch::MonochromeSprites {
                     texture_id,
@@ -502,7 +502,7 @@ impl MetalRenderer {
                     instance_buffer,
                     &mut instance_offset,
                     viewport_size,
-                    &command_encoder,
+                    command_encoder,
                 ),
                 PrimitiveBatch::PolychromeSprites {
                     texture_id,
@@ -513,14 +513,14 @@ impl MetalRenderer {
                     instance_buffer,
                     &mut instance_offset,
                     viewport_size,
-                    &command_encoder,
+                    command_encoder,
                 ),
                 PrimitiveBatch::Surfaces(surfaces) => self.draw_surfaces(
                     surfaces,
                     instance_buffer,
                     &mut instance_offset,
                     viewport_size,
-                    &command_encoder,
+                    command_encoder,
                 ),
             };
             if !ok {
@@ -763,7 +763,7 @@ impl MetalRenderer {
         viewport_size: Size<DevicePixels>,
         command_encoder: &metal::RenderCommandEncoderRef,
     ) -> bool {
-        let Some(ref first_path) = paths.first() else {
+        let Some(first_path) = paths.first() else {
             return true;
         };
 

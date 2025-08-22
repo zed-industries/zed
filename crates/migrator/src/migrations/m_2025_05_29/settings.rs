@@ -19,7 +19,7 @@ fn replace_preferred_completion_mode_value(
         .nodes_for_capture_index(parent_object_capture_ix)
         .next()?
         .byte_range();
-    let parent_object_name = contents.get(parent_object_range.clone())?;
+    let parent_object_name = contents.get(parent_object_range)?;
 
     if parent_object_name != "agent" {
         return None;
@@ -30,7 +30,7 @@ fn replace_preferred_completion_mode_value(
         .nodes_for_capture_index(setting_name_capture_ix)
         .next()?
         .byte_range();
-    let setting_name = contents.get(setting_name_range.clone())?;
+    let setting_name = contents.get(setting_name_range)?;
 
     if setting_name != "preferred_completion_mode" {
         return None;

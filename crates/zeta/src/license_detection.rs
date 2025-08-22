@@ -143,10 +143,10 @@ impl LicenseDetectionWatcher {
     }
 
     async fn is_path_eligible(fs: &Arc<dyn Fs>, abs_path: PathBuf) -> Option<bool> {
-        log::info!("checking if `{abs_path:?}` is an open source license");
+        log::debug!("checking if `{abs_path:?}` is an open source license");
         // Resolve symlinks so that the file size from metadata is correct.
         let Some(abs_path) = fs.canonicalize(&abs_path).await.ok() else {
-            log::info!(
+            log::debug!(
                 "`{abs_path:?}` license file probably deleted (error canonicalizing the path)"
             );
             return None;
@@ -159,11 +159,11 @@ impl LicenseDetectionWatcher {
         let text = fs.load(&abs_path).await.log_err()?;
         let is_eligible = is_license_eligible_for_data_collection(&text);
         if is_eligible {
-            log::info!(
+            log::debug!(
                 "`{abs_path:?}` matches a license that is eligible for data collection (if enabled)"
             );
         } else {
-            log::info!(
+            log::debug!(
                 "`{abs_path:?}` does not match a license that is eligible for data collection"
             );
         }
@@ -198,7 +198,7 @@ mod tests {
 
     #[test]
     fn test_mit_positive_detection() {
-        assert!(is_license_eligible_for_data_collection(&MIT_LICENSE));
+        assert!(is_license_eligible_for_data_collection(MIT_LICENSE));
     }
 
     #[test]

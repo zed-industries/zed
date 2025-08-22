@@ -206,7 +206,7 @@ impl CommandPaletteDelegate {
         if parse_zed_link(&query, cx).is_some() {
             intercept_results = vec![CommandInterceptResult {
                 action: OpenZedUrl { url: query.clone() }.boxed_clone(),
-                string: query.clone(),
+                string: query,
                 positions: vec![],
             }]
         }

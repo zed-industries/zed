@@ -320,7 +320,7 @@ impl ContextStore {
                 .client
                 .subscribe_to_entity(remote_id)
                 .log_err()
-                .map(|subscription| subscription.set_entity(&cx.entity(), &mut cx.to_async()));
+                .map(|subscription| subscription.set_entity(&cx.entity(), &cx.to_async()));
             self.advertise_contexts(cx);
         } else {
             self.client_subscription = None;
@@ -789,7 +789,7 @@ impl ContextStore {
         let fs = self.fs.clone();
         cx.spawn(async move |this, cx| {
             pub static ZED_STATELESS: LazyLock<bool> =
-                LazyLock::new(|| std::env::var("ZED_STATELESS").map_or(false, |v| !v.is_empty()));
+                LazyLock::new(|| std::env::var("ZED_STATELESS").is_ok_and(|v| !v.is_empty()));
             if *ZED_STATELESS {
                 return Ok(());
             }
@@ -862,7 +862,7 @@ impl ContextStore {
                     ContextServerStatus::Running => {
                         self.load_context_server_slash_commands(
                             server_id.clone(),
-                            context_server_store.clone(),
+                            context_server_store,
                             cx,
                         );
                     }
@@ -894,34 +894,33 @@ impl ContextStore {
                 return;
             };
 
-            if protocol.capable(context_server::protocol::ServerCapability::Prompts) {
-                if let Some(response) = protocol
+            if protocol.capable(context_server::protocol::ServerCapability::Prompts)
+                && let Some(response) = protocol
                     .request::<context_server::types::requests::PromptsList>(())
                     .await
                     .log_err()
-                {
-                    let slash_command_ids = response
-                        .prompts
-                        .into_iter()
-                        .filter(assistant_slash_commands::acceptable_prompt)
-                        .map(|prompt| {
-                            log::info!("registering context server command: {:?}", prompt.name);
-                            slash_command_working_set.insert(Arc::new(
-                                assistant_slash_commands::ContextServerSlashCommand::new(
-                                    context_server_store.clone(),
-                                    server.id(),
-                                    prompt,
-                                ),
-                            ))
-                        })
-                        .collect::<Vec<_>>();
-
-                    this.update(cx, |this, _cx| {
-                        this.context_server_slash_command_ids
-                            .insert(server_id.clone(), slash_command_ids);
+            {
+                let slash_command_ids = response
+                    .prompts
+                    .into_iter()
+                    .filter(assistant_slash_commands::acceptable_prompt)
+                    .map(|prompt| {
+                        log::info!("registering context server command: {:?}", prompt.name);
+                        slash_command_working_set.insert(Arc::new(
+                            assistant_slash_commands::ContextServerSlashCommand::new(
+                                context_server_store.clone(),
+                                server.id(),
+                                prompt,
+                            ),
+                        ))
                     })
-                    .log_err();
-                }
+                    .collect::<Vec<_>>();
+
+                this.update(cx, |this, _cx| {
+                    this.context_server_slash_command_ids
+                        .insert(server_id.clone(), slash_command_ids);
+                })
+                .log_err();
             }
         })
         .detach();

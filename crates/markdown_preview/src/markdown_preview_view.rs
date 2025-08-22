@@ -115,8 +115,7 @@ impl MarkdownPreviewView {
                         pane.activate_item(existing_follow_view_idx, true, true, window, cx);
                     });
                 } else {
-                    let view =
-                        Self::create_following_markdown_view(workspace, editor.clone(), window, cx);
+                    let view = Self::create_following_markdown_view(workspace, editor, window, cx);
                     workspace.active_pane().update(cx, |pane, cx| {
                         pane.add_item(Box::new(view.clone()), true, true, None, window, cx)
                     });
@@ -151,10 +150,9 @@ impl MarkdownPreviewView {
         if let Some(editor) = workspace
             .active_item(cx)
             .and_then(|item| item.act_as::<Editor>(cx))
+            && Self::is_markdown_file(&editor, cx)
         {
-            if Self::is_markdown_file(&editor, cx) {
-                return Some(editor);
-            }
+            return Some(editor);
         }
         None
     }
@@ -243,32 +241,30 @@ impl MarkdownPreviewView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(item) = active_item {
-            if item.item_id() != cx.entity_id() {
-                if let Some(editor) = item.act_as::<Editor>(cx) {
-                    if Self::is_markdown_file(&editor, cx) {
-                        self.set_editor(editor, window, cx);
-                    }
-                }
-            }
+        if let Some(item) = active_item
+            && item.item_id() != cx.entity_id()
+            && let Some(editor) = item.act_as::<Editor>(cx)
+            && Self::is_markdown_file(&editor, cx)
+        {
+            self.set_editor(editor, window, cx);
         }
     }
 
     pub fn is_markdown_file<V>(editor: &Entity<Editor>, cx: &mut Context<V>) -> bool {
         let buffer = editor.read(cx).buffer().read(cx);
-        if let Some(buffer) = buffer.as_singleton() {
-            if let Some(language) = buffer.read(cx).language() {
-                return language.name() == "Markdown".into();
-            }
+        if let Some(buffer) = buffer.as_singleton()
+            && let Some(language) = buffer.read(cx).language()
+        {
+            return language.name() == "Markdown".into();
         }
         false
     }
 
     fn set_editor(&mut self, editor: Entity<Editor>, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(active) = &self.active_editor {
-            if active.editor == editor {
-                return;
-            }
+        if let Some(active) = &self.active_editor
+            && active.editor == editor
+        {
+            return;
         }
 
         let subscription = cx.subscribe_in(
@@ -552,21 +548,20 @@ impl Render for MarkdownPreviewView {
                                 .group("markdown-block")
                                 .on_click(cx.listener(
                                     move |this, event: &ClickEvent, window, cx| {
-                                        if event.click_count() == 2 {
-                                            if let Some(source_range) = this
+                                        if event.click_count() == 2
+                                            && let Some(source_range) = this
                                                 .contents
                                                 .as_ref()
                                                 .and_then(|c| c.children.get(ix))
                                                 .and_then(|block: &ParsedMarkdownElement| {
                                                     block.source_range()
                                                 })
-                                            {
-                                                this.move_cursor_to_block(
-                                                    window,
-                                                    cx,
-                                                    source_range.start..source_range.start,
-                                                );
-                                            }
+                                        {
+                                            this.move_cursor_to_block(
+                                                window,
+                                                cx,
+                                                source_range.start..source_range.start,
+                                            );
                                         }
                                     },
                                 ))

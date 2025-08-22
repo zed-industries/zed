@@ -181,6 +181,7 @@ impl LanguageServerTree {
                     &root_path.path,
                     language_name.clone(),
                 );
+
                 (
                     Arc::new(InnerTreeNode::new(
                         adapter.name(),
@@ -192,7 +193,7 @@ impl LanguageServerTree {
                 )
             });
             languages.insert(language_name.clone());
-            Arc::downgrade(&node).into()
+            Arc::downgrade(node).into()
         })
     }
 
@@ -245,7 +246,7 @@ impl LanguageServerTree {
         if !settings.enable_language_server {
             return Default::default();
         }
-        let available_lsp_adapters = self.languages.lsp_adapters(&language_name);
+        let available_lsp_adapters = self.languages.lsp_adapters(language_name);
         let available_language_servers = available_lsp_adapters
             .iter()
             .map(|lsp_adapter| lsp_adapter.name.clone())
@@ -287,7 +288,7 @@ impl LanguageServerTree {
         // (e.g., native vs extension) still end up in the right order at the end, rather than
         // it being based on which language server happened to be loaded in first.
         self.languages.reorder_language_servers(
-            &language_name,
+            language_name,
             adapters_with_settings
                 .values()
                 .map(|(_, adapter)| adapter.clone())
@@ -312,9 +313,9 @@ impl LanguageServerTree {
 
     /// Remove nodes with a given ID from the tree.
     pub(crate) fn remove_nodes(&mut self, ids: &BTreeSet<LanguageServerId>) {
-        for (_, servers) in &mut self.instances {
-            for (_, nodes) in &mut servers.roots {
-                nodes.retain(|_, (node, _)| node.id.get().map_or(true, |id| !ids.contains(&id)));
+        for servers in self.instances.values_mut() {
+            for nodes in &mut servers.roots.values_mut() {
+                nodes.retain(|_, (node, _)| node.id.get().is_none_or(|id| !ids.contains(id)));
             }
         }
     }
@@ -408,6 +409,7 @@ impl ServerTreeRebase {
                 if live_node.id.get().is_some() {
                     return Some(node);
                 }
+
                 let disposition = &live_node.disposition;
                 let Some((existing_node, _)) = self
                     .old_contents
