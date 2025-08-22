@@ -1,17 +1,23 @@
-use std::{collections::HashSet, fmt::Display, sync::Arc};
+use std::{
+    cell::RefCell,
+    collections::HashSet,
+    fmt::Display,
+    rc::{Rc, Weak},
+    sync::Arc,
+};
 
 use agent_client_protocol as acp;
 use gpui::{
-    App, Empty, Entity, EventEmitter, FocusHandle, Focusable, ListAlignment, ListState,
-    StyleRefinement, TextStyleRefinement, Window, actions, list, prelude::*,
+    App, Empty, Entity, EventEmitter, FocusHandle, Focusable, Global, ListAlignment, ListState,
+    StyleRefinement, Subscription, Task, TextStyleRefinement, Window, actions, list, prelude::*,
 };
 use language::LanguageRegistry;
 use markdown::{CodeBlockRenderer, Markdown, MarkdownElement, MarkdownStyle};
 use project::Project;
-use serde::Serialize;
 use settings::Settings;
 use theme::ThemeSettings;
 use ui::prelude::*;
+use util::ResultExt as _;
 use workspace::{Item, Workspace};
 
 actions!(acp, [OpenDebugTools]);
@@ -29,281 +35,129 @@ pub fn init(cx: &mut App) {
     .detach();
 }
 
+struct GlobalAcpConnectionRegistry(Entity<AcpConnectionRegistry>);
+
+impl Global for GlobalAcpConnectionRegistry {}
+
+#[derive(Default)]
+pub struct AcpConnectionRegistry {
+    active_connection: RefCell<Option<ActiveConnection>>,
+}
+
+struct ActiveConnection {
+    server_name: &'static str,
+    connection: Weak<acp::ClientSideConnection>,
+}
+
+impl AcpConnectionRegistry {
+    pub fn default_global(cx: &mut App) -> Entity<Self> {
+        if cx.has_global::<GlobalAcpConnectionRegistry>() {
+            cx.global::<GlobalAcpConnectionRegistry>().0.clone()
+        } else {
+            let registry = cx.new(|_cx| AcpConnectionRegistry::default());
+            cx.set_global(GlobalAcpConnectionRegistry(registry.clone()));
+            registry
+        }
+    }
+
+    pub fn set_active_connection(
+        &self,
+        server_name: &'static str,
+        connection: &Rc<acp::ClientSideConnection>,
+        cx: &mut Context<Self>,
+    ) {
+        self.active_connection.replace(Some(ActiveConnection {
+            server_name,
+            connection: Rc::downgrade(connection),
+        }));
+        cx.notify();
+    }
+}
+
 struct AcpTools {
     project: Entity<Project>,
     focus_handle: FocusHandle,
-    list_state: ListState,
-    messages: Vec<AnyMessage>,
     expanded: HashSet<usize>,
+    watched_connection: Option<WatchedConnection>,
+    connection_registry: Entity<AcpConnectionRegistry>,
+    _subscription: Subscription,
+}
+
+struct WatchedConnection {
+    server_name: &'static str,
+    messages: Vec<WatchedConnectionMessage>,
+    list_state: ListState,
+    connection: Weak<acp::ClientSideConnection>,
+    _task: Task<()>,
 }
 
 impl AcpTools {
     fn new(project: Entity<Project>, cx: &mut Context<Self>) -> Self {
-        let test_messages = vec![
-            // Client Request -> Agent Response pairs
-            Message::ClientRequest(acp::ClientRequest::InitializeRequest(
-                acp::InitializeRequest {
-                    protocol_version: acp::ProtocolVersion::default(),
-                    client_capabilities: acp::ClientCapabilities {
-                        fs: acp::FileSystemCapability {
-                            read_text_file: true,
-                            write_text_file: true,
-                        },
-                    },
-                },
-            )),
-            Message::AgentResponse(acp::AgentResponse::InitializeResponse(
-                acp::InitializeResponse {
-                    protocol_version: acp::ProtocolVersion::default(),
-                    agent_capabilities: acp::AgentCapabilities {
-                        load_session: true,
-                        prompt_capabilities: acp::PromptCapabilities {
-                            image: true,
-                            audio: false,
-                            embedded_context: true,
-                        },
-                    },
-                    auth_methods: vec![acp::AuthMethod {
-                        id: acp::AuthMethodId("oauth".into()),
-                        name: "OAuth 2.0".into(),
-                        description: Some("OAuth 2.0 authentication".into()),
-                    }],
-                },
-            )),
-            Message::ClientRequest(acp::ClientRequest::AuthenticateRequest(
-                acp::AuthenticateRequest {
-                    method_id: acp::AuthMethodId("oauth".into()),
-                },
-            )),
-            Message::AgentResponse(acp::AgentResponse::AuthenticateResponse),
-            Message::ClientRequest(acp::ClientRequest::NewSessionRequest(
-                acp::NewSessionRequest {
-                    mcp_servers: vec![acp::McpServer {
-                        name: "filesystem".into(),
-                        command: "/usr/bin/mcp-server".into(),
-                        args: vec!["--filesystem".into()],
-                        env: vec![acp::EnvVariable {
-                            name: "PATH".into(),
-                            value: "/usr/bin".into(),
-                        }],
-                    }],
-                    cwd: "/home/user/project".into(),
-                },
-            )),
-            Message::AgentResponse(acp::AgentResponse::NewSessionResponse(
-                acp::NewSessionResponse {
-                    session_id: acp::SessionId("session-123".into()),
-                },
-            )),
-            Message::ClientRequest(acp::ClientRequest::LoadSessionRequest(
-                acp::LoadSessionRequest {
-                    mcp_servers: vec![],
-                    cwd: "/home/user/project".into(),
-                    session_id: acp::SessionId("session-123".into()),
-                },
-            )),
-            Message::AgentResponse(acp::AgentResponse::LoadSessionResponse),
-            Message::ClientRequest(acp::ClientRequest::PromptRequest(acp::PromptRequest {
-                session_id: acp::SessionId("session-123".into()),
-                prompt: vec![
-                    acp::ContentBlock::Text(acp::TextContent {
-                        annotations: None,
-                        text: "Hello, can you help me write some code?".into(),
-                    }),
-                    acp::ContentBlock::ResourceLink(acp::ResourceLink {
-                        annotations: None,
-                        description: Some("Main source file".into()),
-                        mime_type: Some("text/rust".into()),
-                        name: "main.rs".into(),
-                        size: Some(1024),
-                        title: Some("Main Rust File".into()),
-                        uri: "file:///home/user/project/src/main.rs".into(),
-                    }),
-                ],
-            })),
-            Message::AgentResponse(acp::AgentResponse::PromptResponse(acp::PromptResponse {
-                stop_reason: acp::StopReason::EndTurn,
-            })),
-            // Agent Request -> Client Response pairs
-            Message::AgentRequest(acp::AgentRequest::RequestPermissionRequest(
-                acp::RequestPermissionRequest {
-                    session_id: acp::SessionId("session-123".into()),
-                    tool_call: acp::ToolCallUpdate {
-                        id: acp::ToolCallId("tool-call-456".into()),
-                        fields: acp::ToolCallUpdateFields {
-                            title: Some("Write File".into()),
-                            kind: Some(acp::ToolKind::Edit),
-                            status: Some(acp::ToolCallStatus::Pending),
-                            content: Some(vec![acp::ToolCallContent::Content {
-                                content: acp::ContentBlock::Text(acp::TextContent {
-                                    annotations: None,
-                                    text: "Writing to main.rs".into(),
-                                }),
-                            }]),
-                            locations: Some(vec![acp::ToolCallLocation {
-                                path: "src/main.rs".into(),
-                                line: Some(10),
-                            }]),
-                            raw_input: None,
-                            raw_output: None,
-                        },
-                    },
-                    options: vec![
-                        acp::PermissionOption {
-                            id: acp::PermissionOptionId("allow_once".into()),
-                            name: "Allow Once".into(),
-                            kind: acp::PermissionOptionKind::AllowOnce,
-                        },
-                        acp::PermissionOption {
-                            id: acp::PermissionOptionId("reject_once".into()),
-                            name: "Reject Once".into(),
-                            kind: acp::PermissionOptionKind::RejectOnce,
-                        },
-                    ],
-                },
-            )),
-            Message::ClientResponse(acp::ClientResponse::RequestPermissionResponse(
-                acp::RequestPermissionResponse {
-                    outcome: acp::RequestPermissionOutcome::Selected {
-                        option_id: acp::PermissionOptionId("allow_once".into()),
-                    },
-                },
-            )),
-            Message::AgentRequest(acp::AgentRequest::WriteTextFileRequest(
-                acp::WriteTextFileRequest {
-                    session_id: acp::SessionId("session-123".into()),
-                    path: "src/main.rs".into(),
-                    content: "fn main() {\n    println!(\"Hello, world!\");\n}".into(),
-                },
-            )),
-            Message::ClientResponse(acp::ClientResponse::WriteTextFileResponse),
-            Message::AgentRequest(acp::AgentRequest::ReadTextFileRequest(
-                acp::ReadTextFileRequest {
-                    session_id: acp::SessionId("session-123".into()),
-                    path: "src/main.rs".into(),
-                    line: Some(1),
-                    limit: Some(100),
-                },
-            )),
-            Message::ClientResponse(acp::ClientResponse::ReadTextFileResponse(
-                acp::ReadTextFileResponse {
-                    content: "fn main() {\n    println!(\"Hello, world!\");\n}".into(),
-                },
-            )),
-            // Notifications (no responses)
-            Message::ClientNotification(acp::ClientNotification::CancelNotification(
-                acp::CancelNotification {
-                    session_id: acp::SessionId("session-123".into()),
-                },
-            )),
-            Message::AgentNotification(acp::AgentNotification::SessionNotification(
-                acp::SessionNotification {
-                    session_id: acp::SessionId("session-123".into()),
-                    update: acp::SessionUpdate::UserMessageChunk {
-                        content: acp::ContentBlock::Text(acp::TextContent {
-                            annotations: None,
-                            text: "User is typing...".into(),
-                        }),
-                    },
-                },
-            )),
-            Message::AgentNotification(acp::AgentNotification::SessionNotification(
-                acp::SessionNotification {
-                    session_id: acp::SessionId("session-123".into()),
-                    update: acp::SessionUpdate::AgentMessageChunk {
-                        content: acp::ContentBlock::Text(acp::TextContent {
-                            annotations: None,
-                            text: "I'll help you write that code...".into(),
-                        }),
-                    },
-                },
-            )),
-            Message::AgentNotification(acp::AgentNotification::SessionNotification(
-                acp::SessionNotification {
-                    session_id: acp::SessionId("session-123".into()),
-                    update: acp::SessionUpdate::AgentThoughtChunk {
-                        content: acp::ContentBlock::Text(acp::TextContent {
-                            annotations: None,
-                            text: "Let me think about the best approach...".into(),
-                        }),
-                    },
-                },
-            )),
-            Message::AgentNotification(acp::AgentNotification::SessionNotification(
-                acp::SessionNotification {
-                    session_id: acp::SessionId("session-123".into()),
-                    update: acp::SessionUpdate::ToolCall(acp::ToolCall {
-                        id: acp::ToolCallId("tool-call-789".into()),
-                        title: "Read File".into(),
-                        kind: acp::ToolKind::Read,
-                        status: acp::ToolCallStatus::InProgress,
-                        content: vec![acp::ToolCallContent::Content {
-                            content: acp::ContentBlock::Text(acp::TextContent {
-                                annotations: None,
-                                text: "Reading src/main.rs".into(),
-                            }),
-                        }],
-                        locations: vec![acp::ToolCallLocation {
-                            path: "src/main.rs".into(),
-                            line: None,
-                        }],
-                        raw_input: Some(serde_json::json!({"path": "src/main.rs"})),
-                        raw_output: None,
-                    }),
-                },
-            )),
-            Message::AgentNotification(acp::AgentNotification::SessionNotification(
-                acp::SessionNotification {
-                    session_id: acp::SessionId("session-123".into()),
-                    update: acp::SessionUpdate::ToolCallUpdate(acp::ToolCallUpdate {
-                        id: acp::ToolCallId("tool-call-789".into()),
-                        fields: acp::ToolCallUpdateFields {
-                            status: Some(acp::ToolCallStatus::Completed),
-                            raw_output: Some(
-                                serde_json::json!({"content": "fn main() { println!(\"Hello!\"); }"}),
-                            ),
-                            ..Default::default()
-                        },
-                    }),
-                },
-            )),
-            Message::AgentNotification(acp::AgentNotification::SessionNotification(
-                acp::SessionNotification {
-                    session_id: acp::SessionId("session-123".into()),
-                    update: acp::SessionUpdate::Plan(acp::Plan {
-                        entries: vec![
-                            acp::PlanEntry {
-                                content: "Read the existing code".into(),
-                                priority: acp::PlanEntryPriority::High,
-                                status: acp::PlanEntryStatus::Completed,
-                            },
-                            acp::PlanEntry {
-                                content: "Write improved version".into(),
-                                priority: acp::PlanEntryPriority::Medium,
-                                status: acp::PlanEntryStatus::InProgress,
-                            },
-                            acp::PlanEntry {
-                                content: "Test the changes".into(),
-                                priority: acp::PlanEntryPriority::Low,
-                                status: acp::PlanEntryStatus::Pending,
-                            },
-                        ],
-                    }),
-                },
-            )),
-        ];
+        let connection_registry = AcpConnectionRegistry::default_global(cx);
 
-        let language_registry = project.read(cx).languages().clone();
+        let subscription = cx.observe(&connection_registry, |this, _, cx| {
+            dbg!();
+            this.update_connection(cx);
+            cx.notify();
+        });
 
-        Self {
+        let mut this = Self {
             project,
             focus_handle: cx.focus_handle(),
-            list_state: ListState::new(test_messages.len(), ListAlignment::Top, px(2048.)),
-            messages: test_messages
-                .into_iter()
-                .map(|m| m.as_any(language_registry.clone(), cx))
-                .collect(),
             expanded: HashSet::default(),
+            watched_connection: None,
+            connection_registry,
+            _subscription: subscription,
+        };
+        this.update_connection(cx);
+        this
+    }
+
+    fn update_connection(&mut self, cx: &mut Context<Self>) {
+        let active_connection = self.connection_registry.read(cx).active_connection.borrow();
+        let Some(active_connection) = active_connection.as_ref() else {
+            return;
+        };
+
+        if let Some(watched_connection) = self.watched_connection.as_ref() {
+            if Weak::ptr_eq(
+                &watched_connection.connection,
+                &active_connection.connection,
+            ) {
+                return;
+            }
+        }
+
+        if let Some(connection) = active_connection.connection.upgrade() {
+            let mut receiver = connection.subscribe();
+            let language_registry = self.project.read(cx).languages().clone();
+            let task = cx.spawn(async move |this, cx| {
+                while let Ok(message) = receiver.recv().await {
+                    this.update(cx, |this, cx| {
+                        if let Some(connection) = &mut this.watched_connection {
+                            let index = connection.messages.len();
+                            connection.messages.push(
+                                WatchedConnectionMessage::from_stream_message(
+                                    message,
+                                    &language_registry,
+                                    cx,
+                                ),
+                            );
+                            connection.list_state.splice(index..index, 1);
+                            cx.notify();
+                        }
+                    })
+                    .ok();
+                }
+            });
+
+            self.watched_connection = Some(WatchedConnection {
+                server_name: active_connection.server_name,
+                messages: vec![],
+                list_state: ListState::new(0, ListAlignment::Bottom, px(2048.)),
+                connection: active_connection.connection.clone(),
+                _task: task,
+            });
         }
     }
 
@@ -313,7 +167,11 @@ impl AcpTools {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let Some(message) = self.messages.get(index) else {
+        let Some(connection) = self.watched_connection.as_ref() else {
+            return Empty.into_any();
+        };
+
+        let Some(message) = connection.messages.get(index) else {
             return Empty.into_any();
         };
 
@@ -342,10 +200,14 @@ impl AcpTools {
                     this.expanded.remove(&index);
                 } else {
                     this.expanded.insert(index);
-                    if let Some(message) = this.messages.get_mut(index) {
-                        message.expanded(this.project.read(cx).languages().clone(), cx);
-                    }
-                    this.list_state.scroll_to_reveal_item(index);
+                    let Some(connection) = &mut this.watched_connection else {
+                        return;
+                    };
+                    let Some(message) = connection.messages.get_mut(index) else {
+                        return;
+                    };
+                    message.expanded(this.project.read(cx).languages().clone(), cx);
+                    connection.list_state.scroll_to_reveal_item(index);
                 }
                 cx.notify()
             }))
@@ -355,8 +217,19 @@ impl AcpTools {
                     .gap_2()
                     .items_center()
                     .flex_shrink_0()
-                    .child(message.direction.icon())
-                    .child(div().child(message.name).text_color(colors.text_muted))
+                    .child(match message.direction {
+                        acp::StreamMessageDirection::Incoming => {
+                            ui::Icon::new(ui::IconName::ArrowDown).color(Color::Error)
+                        }
+                        acp::StreamMessageDirection::Outgoing => {
+                            ui::Icon::new(ui::IconName::ArrowUp).color(Color::Success)
+                        }
+                    })
+                    .child(
+                        div()
+                            .children(message.name.clone())
+                            .text_color(colors.text_muted),
+                    )
                     .child(div().flex_1())
                     .child(
                         div()
@@ -409,157 +282,71 @@ impl AcpTools {
     }
 }
 
-#[derive(Debug)]
-pub enum Message {
-    ClientRequest(acp::ClientRequest),
-    ClientResponse(acp::ClientResponse),
-    ClientNotification(acp::ClientNotification),
-    AgentRequest(acp::AgentRequest),
-    AgentResponse(acp::AgentResponse),
-    AgentNotification(acp::AgentNotification),
-}
-
-impl Message {
-    fn as_any(&self, language_registry: Arc<LanguageRegistry>, cx: &mut App) -> AnyMessage {
-        match self {
-            Message::ClientRequest(client_request) => {
-                let name = match client_request {
-                    acp::ClientRequest::InitializeRequest(_) => "initialize",
-                    acp::ClientRequest::AuthenticateRequest(_) => "authenticate",
-                    acp::ClientRequest::NewSessionRequest(_) => "session/new",
-                    acp::ClientRequest::LoadSessionRequest(_) => "session/load",
-                    acp::ClientRequest::PromptRequest(_) => "session/prompt",
-                };
-                AnyMessage::new(
-                    name,
-                    Direction::Outgoing,
-                    MessageType::Request,
-                    client_request,
-                    &language_registry,
-                    cx,
-                )
-            }
-            Message::ClientResponse(client_response) => {
-                let name = match client_response {
-                    acp::ClientResponse::RequestPermissionResponse(_) => {
-                        "session/request_permission"
-                    }
-                    acp::ClientResponse::WriteTextFileResponse => "fs/write_text_file",
-                    acp::ClientResponse::ReadTextFileResponse(_) => "fs/read_text_file",
-                };
-                AnyMessage::new(
-                    name,
-                    Direction::Incoming,
-                    MessageType::Response,
-                    client_response,
-                    &language_registry,
-                    cx,
-                )
-            }
-            Message::ClientNotification(client_notification) => {
-                let name = match client_notification {
-                    acp::ClientNotification::CancelNotification(_) => "session/cancel",
-                };
-                AnyMessage::new(
-                    name,
-                    Direction::Outgoing,
-                    MessageType::Notification,
-                    client_notification,
-                    &language_registry,
-                    cx,
-                )
-            }
-            Message::AgentRequest(agent_request) => {
-                let name = match agent_request {
-                    acp::AgentRequest::RequestPermissionRequest(_) => "session/request_permission",
-                    acp::AgentRequest::WriteTextFileRequest(_) => "fs/write_text_file",
-                    acp::AgentRequest::ReadTextFileRequest(_) => "fs/read_text_file",
-                };
-                AnyMessage::new(
-                    name,
-                    Direction::Incoming,
-                    MessageType::Request,
-                    agent_request,
-                    &language_registry,
-                    cx,
-                )
-            }
-            Message::AgentResponse(agent_response) => {
-                let name = match agent_response {
-                    acp::AgentResponse::InitializeResponse(_) => "initialize",
-                    acp::AgentResponse::AuthenticateResponse => "authenticate",
-                    acp::AgentResponse::NewSessionResponse(_) => "session/new",
-                    acp::AgentResponse::LoadSessionResponse => "session/load",
-                    acp::AgentResponse::PromptResponse(_) => "session/prompt",
-                };
-                AnyMessage::new(
-                    name,
-                    Direction::Incoming,
-                    MessageType::Response,
-                    agent_response,
-                    &language_registry,
-                    cx,
-                )
-            }
-            Message::AgentNotification(agent_notification) => {
-                let name = match agent_notification {
-                    acp::AgentNotification::SessionNotification(_) => "session/update",
-                };
-                AnyMessage::new(
-                    name,
-                    Direction::Incoming,
-                    MessageType::Notification,
-                    agent_notification,
-                    &language_registry,
-                    cx,
-                )
-            }
-        }
-    }
-}
-
-struct AnyMessage {
-    name: &'static str,
-    direction: Direction,
+struct WatchedConnectionMessage {
+    name: Option<SharedString>,
+    direction: acp::StreamMessageDirection,
     message_type: MessageType,
-    params: Option<serde_json::Value>,
+    params: Result<Option<serde_json::Value>, acp::Error>,
     collapsed_params_md: Option<Entity<Markdown>>,
     expanded_params_md: Option<Entity<Markdown>>,
 }
 
-impl AnyMessage {
-    fn new(
-        name: &'static str,
-        direction: Direction,
-        message_type: MessageType,
-        params: &impl Serialize,
+impl WatchedConnectionMessage {
+    fn from_stream_message(
+        stream_message: acp::StreamMessage,
         language_registry: &Arc<LanguageRegistry>,
         cx: &mut App,
     ) -> Self {
-        let params = serde_json::to_value(params).unwrap_or_default();
-        // hide empty responses
-        let params = if params.is_null() { None } else { Some(params) };
+        let (name, message_type, params) = match stream_message.message {
+            acp::StreamMessageContent::Request {
+                id: _,
+                method,
+                params,
+            } => (Some(method), MessageType::Request, Ok(params)),
+            acp::StreamMessageContent::Response { id: _, result } => {
+                // todo!
+                (Some("response".into()), MessageType::Response, result)
+            }
+            acp::StreamMessageContent::Notification { method, params } => {
+                (Some(method), MessageType::Notification, Ok(params))
+            }
+        };
 
         Self {
+            name: name.map(|name| name.to_string().into()),
             message_type,
-            direction,
-            name,
-            collapsed_params_md: params
-                .as_ref()
-                .map(|params| collapsed_params_md(params, language_registry, cx)),
+            direction: stream_message.direction,
+            collapsed_params_md: match params.as_ref() {
+                Ok(params) => params
+                    .as_ref()
+                    .map(|params| collapsed_params_md(params, language_registry, cx)),
+                Err(err) => {
+                    if let Ok(err) = &serde_json::to_value(err) {
+                        Some(collapsed_params_md(&err, language_registry, cx))
+                    } else {
+                        None
+                    }
+                }
+            },
+
             expanded_params_md: None,
             params,
         }
     }
 
     fn expanded(&mut self, language_registry: Arc<LanguageRegistry>, cx: &mut App) {
-        if let Some(params) = &self.params {
-            let params_json = serde_json::to_string_pretty(params).unwrap_or_default();
-            let params_md = format!("```json\n{}\n```", params_json);
-            self.expanded_params_md = Some(cx.new(|cx| {
-                Markdown::new(params_md.into(), Some(language_registry.clone()), None, cx)
-            }));
-        }
+        let params_md = match &self.params {
+            Ok(Some(params)) => Some(expanded_params_md(params, &language_registry, cx)),
+            Err(err) => {
+                if let Some(err) = &serde_json::to_value(err).log_err() {
+                    Some(expanded_params_md(&err, &language_registry, cx))
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        };
+        self.expanded_params_md = params_md;
     }
 }
 
@@ -579,9 +366,14 @@ fn collapsed_params_md(
     cx.new(|cx| Markdown::new(params_md.into(), Some(language_registry.clone()), None, cx))
 }
 
-enum Direction {
-    Incoming,
-    Outgoing,
+fn expanded_params_md(
+    params: &serde_json::Value,
+    language_registry: &Arc<LanguageRegistry>,
+    cx: &mut App,
+) -> Entity<Markdown> {
+    let params_json = serde_json::to_string_pretty(params).unwrap_or_default();
+    let params_md = format!("```json\n{}\n```", params_json);
+    cx.new(|cx| Markdown::new(params_md.into(), Some(language_registry.clone()), None, cx))
 }
 
 enum MessageType {
@@ -600,15 +392,6 @@ impl Display for MessageType {
     }
 }
 
-impl Direction {
-    fn icon(&self) -> ui::Icon {
-        match self {
-            Direction::Incoming => ui::Icon::new(ui::IconName::ArrowDown).color(Color::Error),
-            Direction::Outgoing => ui::Icon::new(ui::IconName::ArrowUp).color(Color::Success),
-        }
-    }
-}
-
 enum AcpToolsEvent {}
 
 impl EventEmitter<AcpToolsEvent> for AcpTools {}
@@ -617,7 +400,17 @@ impl Item for AcpTools {
     type Event = AcpToolsEvent;
 
     fn tab_content_text(&self, _detail: usize, _cx: &App) -> ui::SharedString {
-        "ACP Stream".into()
+        format!(
+            "ACP: {}",
+            self.watched_connection
+                .as_ref()
+                .map_or("Disconnected", |connection| connection.server_name)
+        )
+        .into()
+    }
+
+    fn tab_icon(&self, _window: &Window, _cx: &App) -> Option<Icon> {
+        Some(ui::Icon::new(IconName::Thread))
     }
 }
 
@@ -630,12 +423,34 @@ impl Focusable for AcpTools {
 impl Render for AcpTools {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
+            .track_focus(&self.focus_handle)
             .size_full()
             .bg(cx.theme().colors().editor_background)
-            .child(
-                list(self.list_state.clone(), cx.processor(Self::render_message))
-                    .with_sizing_behavior(gpui::ListSizingBehavior::Auto)
-                    .flex_grow(),
-            )
+            .child(match self.watched_connection.as_ref() {
+                Some(connection) => {
+                    if connection.messages.is_empty() {
+                        h_flex()
+                            .size_full()
+                            .justify_center()
+                            .items_center()
+                            .child("No messages recorded yet")
+                            .into_any()
+                    } else {
+                        list(
+                            connection.list_state.clone(),
+                            cx.processor(Self::render_message),
+                        )
+                        .with_sizing_behavior(gpui::ListSizingBehavior::Auto)
+                        .flex_grow()
+                        .into_any()
+                    }
+                }
+                None => h_flex()
+                    .size_full()
+                    .justify_center()
+                    .items_center()
+                    .child("No connection")
+                    .into_any(),
+            })
     }
 }
