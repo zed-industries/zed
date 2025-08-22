@@ -530,6 +530,8 @@ impl MacWindow {
             titlebar,
             kind,
             is_movable,
+            is_resizable,
+            is_minimizable,
             focus,
             show,
             display_id,
@@ -545,10 +547,16 @@ impl MacWindow {
 
             let mut style_mask;
             if let Some(titlebar) = titlebar.as_ref() {
-                style_mask = NSWindowStyleMask::NSClosableWindowMask
-                    | NSWindowStyleMask::NSMiniaturizableWindowMask
-                    | NSWindowStyleMask::NSResizableWindowMask
-                    | NSWindowStyleMask::NSTitledWindowMask;
+                style_mask =
+                    NSWindowStyleMask::NSClosableWindowMask | NSWindowStyleMask::NSTitledWindowMask;
+
+                if is_resizable {
+                    style_mask |= NSWindowStyleMask::NSResizableWindowMask;
+                }
+
+                if is_minimizable {
+                    style_mask |= NSWindowStyleMask::NSMiniaturizableWindowMask;
+                }
 
                 if titlebar.appears_transparent {
                     style_mask |= NSWindowStyleMask::NSFullSizeContentViewWindowMask;
