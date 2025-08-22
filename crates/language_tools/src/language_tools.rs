@@ -15,7 +15,7 @@ use ui::{Context, Window};
 use workspace::{Item, ItemHandle, SplitDirection, Workspace};
 
 pub fn init(client: AnyProtoClient, cx: &mut App) {
-    lsp_log::init(client, cx);
+    lsp_log::init(client, true, cx);
     syntax_tree_view::init(cx);
     key_context_view::init(cx);
 }
