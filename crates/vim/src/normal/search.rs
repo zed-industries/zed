@@ -357,12 +357,12 @@ impl Vim {
                     .query_suggestion(window, cx)
                     .or_else(|| cursor_word)
                 else {
-                    drop(search_bar.search("", None, window, cx));
+                    drop(search_bar.search("", None, true, window, cx));
                     return None;
                 };
 
                 let query = regex::escape(&query);
-                Some(search_bar.search(&query, Some(options), window, cx))
+                Some(search_bar.search(&query, Some(options), true, window, cx))
             });
 
             let Some(search) = search else { return false };
@@ -422,7 +422,7 @@ impl Vim {
                         );
                     }
 
-                    Some(search_bar.search(&query, Some(options), window, cx))
+                    Some(search_bar.search(&query, Some(options), true, window, cx))
                 });
                 let Some(search) = search else { return };
                 let search_bar = search_bar.downgrade();
@@ -506,7 +506,7 @@ impl Vim {
             if replacement.flag_c {
                 search_bar.focus_replace(window, cx);
             }
-            Some(search_bar.search(&search, Some(options), window, cx))
+            Some(search_bar.search(&search, Some(options), true, window, cx))
         });
         if replacement.flag_n {
             self.move_cursor(
@@ -531,7 +531,7 @@ impl Vim {
                 search_bar.select_last_match(window, cx);
                 search_bar.replace_all(&Default::default(), window, cx);
                 editor.update(cx, |editor, cx| editor.clear_search_within_ranges(cx));
-                let _ = search_bar.search(&search_bar.query(cx), None, window, cx);
+                let _ = search_bar.search(&search_bar.query(cx), None, true, window, cx);
                 vim.update(cx, |vim, cx| {
                     vim.move_cursor(
                         Motion::StartOfLine {

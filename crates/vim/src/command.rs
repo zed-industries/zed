@@ -1586,6 +1586,7 @@ impl OnMatchingLines {
                             let _ = search_bar.search(
                                 &last_pattern,
                                 Some(SearchOptions::REGEX | SearchOptions::CASE_SENSITIVE),
+                                true,
                                 window,
                                 cx,
                             );
