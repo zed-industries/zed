@@ -270,12 +270,9 @@ pub(crate) fn deserialize_pane_layout(
                 .children
                 .iter()
                 .map(|child| match child {
-                    DebuggerPaneItem::Frames => Box::new(SubView::new(
-                        stack_frame_list.focus_handle(cx),
-                        stack_frame_list.clone().into(),
-                        DebuggerPaneItem::Frames,
-                        cx,
-                    )),
+                    DebuggerPaneItem::Frames => {
+                        Box::new(SubView::stack_frame_list(stack_frame_list.clone(), cx))
+                    }
                     DebuggerPaneItem::Variables => Box::new(SubView::new(
                         variable_list.focus_handle(cx),
                         variable_list.clone().into(),

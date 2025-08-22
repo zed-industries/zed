@@ -4,16 +4,17 @@ use std::time::Duration;
 
 use anyhow::{Context as _, Result, anyhow};
 use dap::StackFrameId;
+use db::kvp::KEY_VALUE_STORE;
 use gpui::{
-    AnyElement, Entity, EventEmitter, FocusHandle, Focusable, FontWeight, ListState, MouseButton,
-    Stateful, Subscription, Task, WeakEntity, list,
+    Action, AnyElement, Entity, EventEmitter, FocusHandle, Focusable, FontWeight, ListState,
+    MouseButton, Stateful, Subscription, Task, WeakEntity, list,
 };
 use util::debug_panic;
 
-use crate::StackTraceView;
+use crate::{StackTraceView, ToggleUserFrames};
 use language::PointUtf16;
 use project::debugger::breakpoint_store::ActiveStackFrame;
-use project::debugger::session::{Session, SessionEvent, StackFrame};
+use project::debugger::session::{Session, SessionEvent, StackFrame, ThreadStatus};
 use project::{ProjectItem, ProjectPath};
 use ui::{Scrollbar, ScrollbarState, Tooltip, prelude::*};
 use workspace::{ItemHandle, Workspace};
@@ -24,6 +25,33 @@ use super::RunningState;
 pub enum StackFrameListEvent {
     SelectedStackFrameChanged(StackFrameId),
     BuiltEntries,
+}
+
+/// Represents the filter applied to the stack frame list
+#[derive(PartialEq, Eq)]
+enum StackFrameFilter {
+    /// Show all frames
+    All,
+    /// Show only frames from the user's code
+    OnlyUserFrames,
+}
+
+impl StackFrameFilter {
+    fn from_str_or_default(s: impl AsRef<str>) -> Self {
+        match s.as_ref() {
+            "user" => StackFrameFilter::OnlyUserFrames,
+            "all" | _ => StackFrameFilter::All,
+        }
+    }
+}
+
+impl From<StackFrameFilter> for &'static str {
+    fn from(filter: StackFrameFilter) -> Self {
+        match filter {
+            StackFrameFilter::All => "all",
+            StackFrameFilter::OnlyUserFrames => "user",
+        }
+    }
 }
 
 pub struct StackFrameList {
@@ -37,6 +65,7 @@ pub struct StackFrameList {
     opened_stack_frame_id: Option<StackFrameId>,
     scrollbar_state: ScrollbarState,
     list_state: ListState,
+    list_filter: StackFrameFilter,
     error: Option<SharedString>,
     _refresh_task: Task<()>,
 }
@@ -73,6 +102,16 @@ impl StackFrameList {
         let list_state = ListState::new(0, gpui::ListAlignment::Top, px(1000.));
         let scrollbar_state = ScrollbarState::new(list_state.clone());
 
+        let list_filter = KEY_VALUE_STORE
+            .read_kvp(&format!(
+                "stack-frame-list-filter-{}",
+                session.read(cx).adapter().0
+            ))
+            .ok()
+            .flatten()
+            .map(StackFrameFilter::from_str_or_default)
+            .unwrap_or(StackFrameFilter::All);
+
         let mut this = Self {
             session,
             workspace,
@@ -83,6 +122,7 @@ impl StackFrameList {
             error: None,
             selected_ix: None,
             opened_stack_frame_id: None,
+            list_filter,
             list_state,
             scrollbar_state,
             _refresh_task: Task::ready(()),
@@ -192,7 +232,34 @@ impl StackFrameList {
                 return;
             }
         };
+
+        let worktree_prefixes = if self.list_filter == StackFrameFilter::All {
+            vec![]
+        } else {
+            self.workspace
+                .read_with(cx, |workspace, cx| {
+                    workspace
+                        .visible_worktrees(cx)
+                        .map(|tree| tree.read(cx).abs_path())
+                        .collect()
+                })
+                .unwrap_or_default()
+        };
+
         for stack_frame in &stack_frames {
+            if !(self.list_filter == StackFrameFilter::All
+                || stack_frame.dap.source.as_ref().is_some_and(|source| {
+                    source.path.as_ref().is_some_and(|path| {
+                        worktree_prefixes
+                            .iter()
+                            .filter_map(|tree| tree.to_str())
+                            .any(|tree| path.starts_with(tree))
+                    })
+                }))
+            {
+                continue;
+            }
+
             match stack_frame.dap.presentation_hint {
                 Some(dap::StackFramePresentationHint::Deemphasize)
                 | Some(dap::StackFramePresentationHint::Subtle) => {
@@ -244,6 +311,7 @@ impl StackFrameList {
 
         self.list_state.reset(self.entries.len());
         cx.emit(StackFrameListEvent::BuiltEntries);
+
         cx.notify();
     }
 
@@ -702,6 +770,22 @@ impl StackFrameList {
         self.activate_selected_entry(window, cx);
     }
 
+    pub(crate) fn toggle_frame_filter(
+        &mut self,
+        thread_status: Option<ThreadStatus>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.list_filter = match self.list_filter {
+            StackFrameFilter::All => StackFrameFilter::OnlyUserFrames,
+            StackFrameFilter::OnlyUserFrames => StackFrameFilter::All,
+        };
+
+        if let Some(ThreadStatus::Stopped) = thread_status {
+            self.build_entries(true, window, cx);
+        }
+    }
+
     fn render_list(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         div().p_1().size_full().child(
             list(
@@ -710,6 +794,30 @@ impl StackFrameList {
             )
             .size_full(),
         )
+    }
+
+    pub(crate) fn render_control_strip(&self) -> AnyElement {
+        let tooltip_title = match self.list_filter {
+            StackFrameFilter::All => "Show stack frames from your project",
+            StackFrameFilter::OnlyUserFrames => "Show all stack frames",
+        };
+
+        h_flex()
+            .child(
+                IconButton::new(
+                    "filter-by-visible-worktree-stack-frame-list",
+                    IconName::FolderSearch,
+                )
+                .tooltip(move |window, cx| {
+                    Tooltip::for_action(tooltip_title, &ToggleUserFrames, window, cx)
+                })
+                .toggle_state(self.list_filter == StackFrameFilter::OnlyUserFrames)
+                .icon_size(IconSize::Small)
+                .on_click(|_, window, cx| {
+                    window.dispatch_action(ToggleUserFrames.boxed_clone(), cx)
+                }),
+            )
+            .into_any_element()
     }
 }
 
