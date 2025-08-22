@@ -2581,8 +2581,8 @@ impl AcpThreadView {
     ) -> Div {
         v_flex().flex_1().size_full().justify_end().child(
             v_flex()
-                .p_4()
-                .pr_5()
+                .p_2()
+                .pr_3()
                 .w_full()
                 .border_t_1()
                 .border_color(cx.theme().colors().border)
