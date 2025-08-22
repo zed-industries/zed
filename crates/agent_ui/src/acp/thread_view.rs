@@ -1668,39 +1668,14 @@ impl AcpThreadView {
         let header_id = SharedString::from(format!("outer-tool-call-header-{}", entry_ix));
         let card_header_id = SharedString::from("inner-tool-call-header");
 
-        let status_icon = match &tool_call.status {
-            ToolCallStatus::Pending
-            | ToolCallStatus::WaitingForConfirmation { .. }
-            | ToolCallStatus::Completed => None,
-            ToolCallStatus::InProgress => Some(
-                div()
-                    .absolute()
-                    .right_2()
-                    .child(
-                        Icon::new(IconName::ArrowCircle)
-                            .color(Color::Muted)
-                            .size(IconSize::Small)
-                            .with_animation(
-                                "running",
-                                Animation::new(Duration::from_secs(3)).repeat(),
-                                |icon, delta| {
-                                    icon.transform(Transformation::rotate(percentage(delta)))
-                                },
-                            ),
-                    )
-                    .into_any(),
-            ),
-            ToolCallStatus::Rejected | ToolCallStatus::Canceled | ToolCallStatus::Failed => Some(
-                div()
-                    .absolute()
-                    .right_2()
-                    .child(
-                        Icon::new(IconName::Close)
-                            .color(Color::Error)
-                            .size(IconSize::Small),
-                    )
-                    .into_any_element(),
-            ),
+        let in_progress = match &tool_call.status {
+            ToolCallStatus::InProgress => true,
+            _ => false,
+        };
+
+        let failed_or_canceled = match &tool_call.status {
+            ToolCallStatus::Rejected | ToolCallStatus::Canceled | ToolCallStatus::Failed => true,
+            _ => false,
         };
 
         let failed_tool_call = matches!(
@@ -1884,7 +1859,33 @@ impl AcpThreadView {
                                     .into_any()
                             }),
                     )
-                    .children(status_icon),
+                    .when(in_progress && use_card_layout, |this| {
+                        this.child(
+                            div().absolute().right_2().child(
+                                Icon::new(IconName::ArrowCircle)
+                                    .color(Color::Muted)
+                                    .size(IconSize::Small)
+                                    .with_animation(
+                                        "running",
+                                        Animation::new(Duration::from_secs(3)).repeat(),
+                                        |icon, delta| {
+                                            icon.transform(Transformation::rotate(percentage(
+                                                delta,
+                                            )))
+                                        },
+                                    ),
+                            ),
+                        )
+                    })
+                    .when(failed_or_canceled, |this| {
+                        this.child(
+                            div().absolute().right_2().child(
+                                Icon::new(IconName::Close)
+                                    .color(Color::Error)
+                                    .size(IconSize::Small),
+                            ),
+                        )
+                    }),
             )
             .children(tool_output_display)
     }
