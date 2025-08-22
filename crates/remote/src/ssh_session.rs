@@ -53,7 +53,7 @@ use util::{
 };
 
 #[derive(Clone)]
-pub struct SshSocket {
+struct SshSocket {
     connection_options: SshConnectionOptions,
     #[cfg(not(target_os = "windows"))]
     socket_path: PathBuf,
@@ -1367,12 +1367,6 @@ impl ConnectionPool {
         self.connections
             .insert(opts.clone(), ConnectionPoolEntry::Connecting(task.clone()));
         task
-    }
-}
-
-impl From<SshRemoteClient> for AnyProtoClient {
-    fn from(client: SshRemoteClient) -> Self {
-        AnyProtoClient::new(client.client)
     }
 }
 

@@ -762,32 +762,19 @@ where
     R: AsyncRead + Unpin,
     W: AsyncWrite + Unpin,
 {
-    use remote::protocol::read_message_raw;
+    use remote::protocol::{read_message_raw, write_size_prefixed_buffer};
 
     let mut buffer = Vec::new();
     loop {
         read_message_raw(&mut reader, &mut buffer)
             .await
             .with_context(|| format!("failed to read message from {}", socket_name))?;
-
         write_size_prefixed_buffer(&mut writer, &mut buffer)
             .await
             .with_context(|| format!("failed to write message to {}", socket_name))?;
-
         writer.flush().await?;
-
         buffer.clear();
     }
-}
-
-async fn write_size_prefixed_buffer<S: AsyncWrite + Unpin>(
-    stream: &mut S,
-    buffer: &mut Vec<u8>,
-) -> Result<()> {
-    let len = buffer.len() as u32;
-    stream.write_all(len.to_le_bytes().as_slice()).await?;
-    stream.write_all(buffer).await?;
-    Ok(())
 }
 
 fn initialize_settings(
