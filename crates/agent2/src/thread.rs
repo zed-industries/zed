@@ -628,7 +628,20 @@ impl Thread {
         stream: &ThreadEventStream,
         cx: &mut Context<Self>,
     ) {
-        let Some(tool) = self.tool(tool_use.name.as_ref()) else {
+        let tool = self.tools.get(tool_use.name.as_ref()).cloned().or_else(|| {
+            self.context_server_registry
+                .read(cx)
+                .servers()
+                .find_map(|(_, tools)| {
+                    if let Some(tool) = tools.get(tool_use.name.as_ref()) {
+                        Some(tool.clone())
+                    } else {
+                        None
+                    }
+                })
+        });
+
+        let Some(tool) = tool else {
             stream
                 .0
                 .unbounded_send(Ok(ThreadEvent::ToolCall(acp::ToolCall {
