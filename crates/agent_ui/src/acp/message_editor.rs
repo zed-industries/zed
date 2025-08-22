@@ -112,6 +112,14 @@ impl MessageEditor {
             range: Cell::new(None),
         });
         let mention_set = MentionSet::default();
+
+        let editor_mode = match settings.editor_mode {
+            agent_settings::AgentEditorMode::EditorModeOverride(mode) => mode,
+            agent_settings::AgentEditorMode::Inherit => {
+                vim_mode_setting::EditorModeSetting::get_global(cx).0
+            }
+        };
+
         let editor = cx.new(|cx| {
             let buffer = cx.new(|cx| Buffer::local("", cx).with_language(Arc::new(language), cx));
             let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
@@ -120,7 +128,7 @@ impl MessageEditor {
             editor.set_placeholder_text(placeholder, cx);
             editor.set_show_indent_guides(false, cx);
             editor.set_soft_wrap();
-            editor.set_use_modal_editing(true);
+            editor.set_use_modal_editing(editor_mode);
             editor.set_completion_provider(Some(Rc::new(completion_provider)));
             editor.set_context_menu_options(ContextMenuOptions {
                 min_entries_visible: 12,

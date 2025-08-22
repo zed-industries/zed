@@ -40,7 +40,7 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_derive::Serialize;
 use settings::{Settings, SettingsSources, SettingsStore, update_settings_file};
-use state::{Mode, Operator, RecordedSelection, SearchState, VimGlobals};
+use state::{Operator, RecordedSelection, SearchState, VimGlobals};
 use std::{mem, ops::Range, sync::Arc};
 use surrounds::SurroundsType;
 use theme::ThemeSettings;
@@ -360,8 +360,8 @@ impl editor::Addon for VimAddon {
 
 /// The state pertaining to Vim mode.
 pub(crate) struct Vim {
-    pub(crate) mode: Mode,
-    pub last_mode: Mode,
+    pub(crate) mode: ModalMode,
+    pub last_mode: ModalMode,
     pub temp_mode: bool,
     pub status_label: Option<SharedString>,
     pub exit_temporary_mode: bool,
@@ -369,11 +369,11 @@ pub(crate) struct Vim {
     operator_stack: Vec<Operator>,
     pub(crate) replacements: Vec<(Range<editor::Anchor>, String)>,
 
-    pub(crate) stored_visual_mode: Option<(Mode, Vec<bool>)>,
+    pub(crate) stored_visual_mode: Option<(ModalMode, Vec<bool>)>,
 
     pub(crate) current_tx: Option<TransactionId>,
     pub(crate) current_anchor: Option<Selection<Anchor>>,
-    pub(crate) undo_modes: HashMap<TransactionId, Mode>,
+    pub(crate) undo_modes: HashMap<TransactionId, ModalMode>,
     pub(crate) undo_last_line_tx: Option<TransactionId>,
 
     selected_register: Option<char>,
@@ -407,16 +407,9 @@ impl Vim {
     pub fn new(window: &mut Window, cx: &mut Context<Editor>) -> Entity<Self> {
         let editor = cx.entity();
 
-        let mut initial_mode = VimSettings::get_global(cx).default_mode;
-        if initial_mode == Mode::Normal
-            && matches!(EditorModeSetting::get_global(cx).0, EditorMode::Helix)
-        {
-            initial_mode = Mode::HelixNormal;
-        }
-
         cx.new(|cx| Vim {
-            mode: initial_mode,
-            last_mode: Mode::Normal,
+            mode: ModalMode::Normal,
+            last_mode: ModalMode::Normal,
             temp_mode: false,
             exit_temporary_mode: false,
             operator_stack: Vec::new(),
@@ -450,56 +443,45 @@ impl Vim {
             return;
         };
 
-        if !editor.use_modal_editing() {
+        if !editor.default_editor_mode().is_modal() {
             return;
         }
 
-        if editor.default_editor_mode() == EditorMode::Default {
-            return;
-        }
-
-        let mut was_enabled = Vim::enabled(cx);
         let mut was_toggle = VimSettings::get_global(cx).toggle_relative_line_numbers;
         cx.observe_global_in::<SettingsStore>(window, move |editor, window, cx| {
-            let enabled = Vim::enabled(cx);
             let toggle = VimSettings::get_global(cx).toggle_relative_line_numbers;
-            if enabled && was_enabled && (toggle != was_toggle) {
+            if toggle != was_toggle {
                 if toggle {
                     let is_relative = editor
                         .addon::<VimAddon>()
-                        .map(|vim| vim.entity.read(cx).mode != Mode::Insert);
+                        .map(|vim| vim.entity.read(cx).mode != ModalMode::Insert);
                     editor.set_relative_line_number(is_relative, cx)
                 } else {
                     editor.set_relative_line_number(None, cx)
                 }
             }
             was_toggle = VimSettings::get_global(cx).toggle_relative_line_numbers;
-            if was_enabled == enabled {
-                return;
-            }
-            was_enabled = enabled;
-            if enabled {
-                Self::activate(editor, window, cx)
-            } else {
-                Self::deactivate(editor, cx)
-            }
         })
         .detach();
-        if was_enabled {
-            Self::activate(editor, window, cx)
-        }
+
+        let mut was_enabled = true;
+        cx.observe::<Editor>(window, move |editor, window, cx| {})
+            .detach();
+
+        Self::activate(editor, window, cx)
     }
 
     fn activate(editor: &mut Editor, window: &mut Window, cx: &mut Context<Editor>) {
         let vim = Vim::new(window, cx);
 
-        let default_editor_mode = editor.default_editor_mode();
-
-        if default_editor_mode == EditorMode::VimInsert {
-            vim.update(cx, |vim, _| {
-                vim.mode = Mode::Insert;
-            });
-        }
+        vim.update(cx, |vim, _| {
+            let initial_mode = match editor.default_editor_mode() {
+                EditorMode::Default => return,
+                EditorMode::Vim(modal_mode) => modal_mode,
+                EditorMode::Helix(modal_mode) => modal_mode,
+            };
+            vim.mode = initial_mode;
+        });
 
         editor.register_addon(VimAddon {
             entity: vim.clone(),
@@ -511,34 +493,34 @@ impl Vim {
                 cx,
                 move |vim, _: &SwitchToNormalMode, window, cx| {
                     if matches!(default_editor_mode, EditorMode::Helix) {
-                        vim.switch_mode(Mode::HelixNormal, false, window, cx)
+                        vim.switch_mode(ModalMode::HelixNormal, false, window, cx)
                     } else {
-                        vim.switch_mode(Mode::Normal, false, window, cx)
+                        vim.switch_mode(ModalMode::Normal, false, window, cx)
                     }
                 },
             );
 
             Vim::action(editor, cx, |vim, _: &SwitchToInsertMode, window, cx| {
-                vim.switch_mode(Mode::Insert, false, window, cx)
+                vim.switch_mode(ModalMode::Insert, false, window, cx)
             });
 
             Vim::action(editor, cx, |vim, _: &SwitchToReplaceMode, window, cx| {
-                vim.switch_mode(Mode::Replace, false, window, cx)
+                vim.switch_mode(ModalMode::Replace, false, window, cx)
             });
 
             Vim::action(editor, cx, |vim, _: &SwitchToVisualMode, window, cx| {
-                vim.switch_mode(Mode::Visual, false, window, cx)
+                vim.switch_mode(ModalMode::Visual, false, window, cx)
             });
 
             Vim::action(editor, cx, |vim, _: &SwitchToVisualLineMode, window, cx| {
-                vim.switch_mode(Mode::VisualLine, false, window, cx)
+                vim.switch_mode(ModalMode::VisualLine, false, window, cx)
             });
 
             Vim::action(
                 editor,
                 cx,
                 |vim, _: &SwitchToVisualBlockMode, window, cx| {
-                    vim.switch_mode(Mode::VisualBlock, false, window, cx)
+                    vim.switch_mode(ModalMode::VisualBlock, false, window, cx)
                 },
             );
 
@@ -546,7 +528,7 @@ impl Vim {
                 editor,
                 cx,
                 |vim, _: &SwitchToHelixNormalMode, window, cx| {
-                    vim.switch_mode(Mode::HelixNormal, false, window, cx)
+                    vim.switch_mode(ModalMode::HelixNormal, false, window, cx)
                 },
             );
             Vim::action(editor, cx, |_, _: &PushForcedMotion, _, cx| {
@@ -766,8 +748,8 @@ impl Vim {
                     // displayed (and performed by `accept_edit_prediction`). This switches to
                     // insert mode so that the prediction is displayed after the jump.
                     match vim.mode {
-                        Mode::Replace => {}
-                        _ => vim.switch_mode(Mode::Insert, true, window, cx),
+                        ModalMode::Replace => {}
+                        _ => vim.switch_mode(ModalMode::Insert, true, window, cx),
                     };
                 },
             );
@@ -859,7 +841,7 @@ impl Vim {
             {
                 return;
             }
-            self.switch_mode(Mode::Insert, false, window, cx)
+            self.switch_mode(ModalMode::Insert, false, window, cx)
         }
         if let Some(action) = keystroke_event.action.as_ref() {
             // Keystroke is handled by the vim system, so continue forward
@@ -935,6 +917,24 @@ impl Vim {
                     vim.set_mark(mark, vec![*anchor], editor.buffer(), window, cx);
                 });
             }
+            EditorEvent::EditorModeChanged => {
+                self.update_editor(cx, |vim, editor, cx| {
+                    let enabled = editor.default_editor_mode().is_modal();
+                    if was_enabled == enabled {
+                        return;
+                    }
+                    if !enabled {
+                        editor.set_relative_line_number(None, cx);
+                    }
+                    was_enabled = enabled;
+                    if enabled {
+                        Self::activate(editor, window, cx)
+                    } else {
+                        Self::deactivate(editor, cx)
+                    }
+                    //
+                });
+            }
             _ => {}
         }
     }
@@ -961,18 +961,21 @@ impl Vim {
 
     pub fn switch_mode(
         &mut self,
-        mode: Mode,
+        mode: ModalMode,
         leave_selections: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.temp_mode && mode == Mode::Normal {
+        if self.temp_mode && mode == ModalMode::Normal {
             self.temp_mode = false;
-            self.switch_mode(Mode::Normal, leave_selections, window, cx);
-            self.switch_mode(Mode::Insert, false, window, cx);
+            self.switch_mode(ModalMode::Normal, leave_selections, window, cx);
+            self.switch_mode(ModalMode::Insert, false, window, cx);
             return;
         } else if self.temp_mode
-            && !matches!(mode, Mode::Visual | Mode::VisualLine | Mode::VisualBlock)
+            && !matches!(
+                mode,
+                ModalMode::Visual | ModalMode::VisualLine | ModalMode::VisualBlock
+            )
         {
             self.temp_mode = false;
         }
@@ -986,7 +989,7 @@ impl Vim {
         self.operator_stack.clear();
         self.selected_register.take();
         self.cancel_running_command(window, cx);
-        if mode == Mode::Normal || mode != last_mode {
+        if mode == ModalMode::Normal || mode != last_mode {
             self.current_tx.take();
             self.current_anchor.take();
             self.update_editor(cx, |_, editor, _| {
@@ -994,7 +997,7 @@ impl Vim {
             });
         }
         Vim::take_forced_motion(cx);
-        if mode != Mode::Insert && mode != Mode::Replace {
+        if mode != ModalMode::Insert && mode != ModalMode::Replace {
             Vim::take_count(cx);
         }
 
@@ -1003,10 +1006,10 @@ impl Vim {
 
         if VimSettings::get_global(cx).toggle_relative_line_numbers
             && self.mode != self.last_mode
-            && (self.mode == Mode::Insert || self.last_mode == Mode::Insert)
+            && (self.mode == ModalMode::Insert || self.last_mode == ModalMode::Insert)
         {
             self.update_editor(cx, |vim, editor, cx| {
-                let is_relative = vim.mode != Mode::Insert;
+                let is_relative = vim.mode != ModalMode::Insert;
                 editor.set_relative_line_number(Some(is_relative), cx)
             });
         }
@@ -1021,13 +1024,15 @@ impl Vim {
 
         // Adjust selections
         self.update_editor(cx, |vim, editor, cx| {
-            if last_mode != Mode::VisualBlock && last_mode.is_visual() && mode == Mode::VisualBlock
+            if last_mode != ModalMode::VisualBlock
+                && last_mode.is_visual()
+                && mode == ModalMode::VisualBlock
             {
                 vim.visual_block_motion(true, editor, window, cx, |_, point, goal| {
                     Some((point, goal))
                 })
             }
-            if (last_mode == Mode::Insert || last_mode == Mode::Replace)
+            if (last_mode == ModalMode::Insert || last_mode == ModalMode::Replace)
                 && let Some(prior_tx) = prior_tx
             {
                 editor.group_until_transaction(prior_tx, cx)
@@ -1037,15 +1042,15 @@ impl Vim {
                 // we cheat with visual block mode and use multiple cursors.
                 // the cost of this cheat is we need to convert back to a single
                 // cursor whenever vim would.
-                if last_mode == Mode::VisualBlock
-                    && (mode != Mode::VisualBlock && mode != Mode::Insert)
+                if last_mode == ModalMode::VisualBlock
+                    && (mode != ModalMode::VisualBlock && mode != ModalMode::Insert)
                 {
                     let tail = s.oldest_anchor().tail();
                     let head = s.newest_anchor().head();
                     s.select_anchor_ranges(vec![tail..head]);
-                } else if last_mode == Mode::Insert
-                    && prior_mode == Mode::VisualBlock
-                    && mode != Mode::VisualBlock
+                } else if last_mode == ModalMode::Insert
+                    && prior_mode == ModalMode::VisualBlock
+                    && mode != ModalMode::VisualBlock
                 {
                     let pos = s.first_anchor().head();
                     s.select_anchor_ranges(vec![pos..pos])
@@ -1110,7 +1115,7 @@ impl Vim {
     pub fn cursor_shape(&self, cx: &mut App) -> CursorShape {
         let cursor_shape = VimSettings::get_global(cx).cursor_shape;
         match self.mode {
-            Mode::Normal => {
+            ModalMode::Normal => {
                 if let Some(operator) = self.operator_stack.last() {
                     match operator {
                         // Navigation operators -> Block cursor
@@ -1129,12 +1134,12 @@ impl Vim {
                     cursor_shape.normal.unwrap_or(CursorShape::Block)
                 }
             }
-            Mode::HelixNormal => cursor_shape.normal.unwrap_or(CursorShape::Block),
-            Mode::Replace => cursor_shape.replace.unwrap_or(CursorShape::Underline),
-            Mode::Visual | Mode::VisualLine | Mode::VisualBlock => {
+            ModalMode::HelixNormal => cursor_shape.normal.unwrap_or(CursorShape::Block),
+            ModalMode::Replace => cursor_shape.replace.unwrap_or(CursorShape::Underline),
+            ModalMode::Visual | ModalMode::VisualLine | ModalMode::VisualBlock => {
                 cursor_shape.visual.unwrap_or(CursorShape::Block)
             }
-            Mode::Insert => cursor_shape.insert.unwrap_or({
+            ModalMode::Insert => cursor_shape.insert.unwrap_or({
                 let editor_settings = EditorSettings::get_global(cx);
                 editor_settings.cursor_shape.unwrap_or_default()
             }),
@@ -1143,45 +1148,45 @@ impl Vim {
 
     pub fn editor_input_enabled(&self) -> bool {
         match self.mode {
-            Mode::Insert => {
+            ModalMode::Insert => {
                 if let Some(operator) = self.operator_stack.last() {
                     !operator.is_waiting(self.mode)
                 } else {
                     true
                 }
             }
-            Mode::Normal
-            | Mode::HelixNormal
-            | Mode::Replace
-            | Mode::Visual
-            | Mode::VisualLine
-            | Mode::VisualBlock => false,
+            ModalMode::Normal
+            | ModalMode::HelixNormal
+            | ModalMode::Replace
+            | ModalMode::Visual
+            | ModalMode::VisualLine
+            | ModalMode::VisualBlock => false,
         }
     }
 
     pub fn should_autoindent(&self) -> bool {
-        !(self.mode == Mode::Insert && self.last_mode == Mode::VisualBlock)
+        !(self.mode == ModalMode::Insert && self.last_mode == ModalMode::VisualBlock)
     }
 
     pub fn clip_at_line_ends(&self) -> bool {
         match self.mode {
-            Mode::Insert
-            | Mode::Visual
-            | Mode::VisualLine
-            | Mode::VisualBlock
-            | Mode::Replace
-            | Mode::HelixNormal => false,
-            Mode::Normal => true,
+            ModalMode::Insert
+            | ModalMode::Visual
+            | ModalMode::VisualLine
+            | ModalMode::VisualBlock
+            | ModalMode::Replace
+            | ModalMode::HelixNormal => false,
+            ModalMode::Normal => true,
         }
     }
 
     pub fn extend_key_context(&self, context: &mut KeyContext, cx: &App) {
         let mut mode = match self.mode {
-            Mode::Normal => "normal",
-            Mode::Visual | Mode::VisualLine | Mode::VisualBlock => "visual",
-            Mode::Insert => "insert",
-            Mode::Replace => "replace",
-            Mode::HelixNormal => "helix_normal",
+            ModalMode::Normal => "normal",
+            ModalMode::Visual | ModalMode::VisualLine | ModalMode::VisualBlock => "visual",
+            ModalMode::Insert => "insert",
+            ModalMode::Replace => "replace",
+            ModalMode::HelixNormal => "helix_normal",
         }
         .to_string();
 
@@ -1226,12 +1231,12 @@ impl Vim {
 
         if editor_mode.is_full()
             && !newest_selection_empty
-            && self.mode == Mode::Normal
+            && self.mode == ModalMode::Normal
             // When following someone, don't switch vim mode.
             && editor.leader_id().is_none()
         {
             if preserve_selection {
-                self.switch_mode(Mode::Visual, true, window, cx);
+                self.switch_mode(ModalMode::Visual, true, window, cx);
             } else {
                 self.update_editor(cx, |_, editor, cx| {
                     editor.set_clip_at_line_ends(false, cx);
@@ -1257,13 +1262,13 @@ impl Vim {
                     });
 
                     self.update_editor(cx, |vim, editor, cx| {
-                        let is_relative = vim.mode != Mode::Insert;
+                        let is_relative = vim.mode != ModalMode::Insert;
                         editor.set_relative_line_number(Some(is_relative), cx)
                     });
                 }
             } else {
                 self.update_editor(cx, |vim, editor, cx| {
-                    let is_relative = vim.mode != Mode::Insert;
+                    let is_relative = vim.mode != ModalMode::Insert;
                     editor.set_relative_line_number(Some(is_relative), cx)
                 });
             }
@@ -1351,19 +1356,19 @@ impl Vim {
 
                 if let Some((oldest, newest)) = selections {
                     globals.recorded_selection = match self.mode {
-                        Mode::Visual if newest.end.row == newest.start.row => {
+                        ModalMode::Visual if newest.end.row == newest.start.row => {
                             RecordedSelection::SingleLine {
                                 cols: newest.end.column - newest.start.column,
                             }
                         }
-                        Mode::Visual => RecordedSelection::Visual {
+                        ModalMode::Visual => RecordedSelection::Visual {
                             rows: newest.end.row - newest.start.row,
                             cols: newest.end.column,
                         },
-                        Mode::VisualLine => RecordedSelection::VisualLine {
+                        ModalMode::VisualLine => RecordedSelection::VisualLine {
                             rows: newest.end.row - newest.start.row,
                         },
-                        Mode::VisualBlock => RecordedSelection::VisualBlock {
+                        ModalMode::VisualBlock => RecordedSelection::VisualBlock {
                             rows: newest.end.row.abs_diff(oldest.start.row),
                             cols: newest.end.column.abs_diff(oldest.start.column),
                         },
@@ -1480,9 +1485,9 @@ impl Vim {
         _window: &mut Window,
         _: &mut Context<Self>,
     ) {
-        let mode = if (self.mode == Mode::Insert
-            || self.mode == Mode::Replace
-            || self.mode == Mode::Normal)
+        let mode = if (self.mode == ModalMode::Insert
+            || self.mode == ModalMode::Replace
+            || self.mode == ModalMode::Normal)
             && self.current_tx.is_none()
         {
             self.current_tx = Some(transaction_id);
@@ -1490,7 +1495,7 @@ impl Vim {
         } else {
             self.mode
         };
-        if mode == Mode::VisualLine || mode == Mode::VisualBlock {
+        if mode == ModalMode::VisualLine || mode == ModalMode::VisualBlock {
             self.undo_modes.insert(transaction_id, mode);
         }
     }
@@ -1502,12 +1507,12 @@ impl Vim {
         cx: &mut Context<Self>,
     ) {
         match self.mode {
-            Mode::VisualLine | Mode::VisualBlock | Mode::Visual => {
+            ModalMode::VisualLine | ModalMode::VisualBlock | ModalMode::Visual => {
                 self.update_editor(cx, |vim, editor, cx| {
                     let original_mode = vim.undo_modes.get(transaction_id);
                     editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
                         match original_mode {
-                            Some(Mode::VisualLine) => {
+                            Some(ModalMode::VisualLine) => {
                                 s.move_with(|map, selection| {
                                     selection.collapse_to(
                                         map.prev_line_boundary(selection.start.to_point(map)).1,
@@ -1515,7 +1520,7 @@ impl Vim {
                                     )
                                 });
                             }
-                            Some(Mode::VisualBlock) => {
+                            Some(ModalMode::VisualBlock) => {
                                 let mut first = s.first_anchor();
                                 first.collapse_to(first.start, first.goal);
                                 s.select_anchors(vec![first]);
@@ -1531,9 +1536,9 @@ impl Vim {
                         }
                     });
                 });
-                self.switch_mode(Mode::Normal, true, window, cx)
+                self.switch_mode(ModalMode::Normal, true, window, cx)
             }
-            Mode::Normal => {
+            ModalMode::Normal => {
                 self.update_editor(cx, |_, editor, cx| {
                     editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
                         s.move_with(|map, selection| {
@@ -1543,7 +1548,7 @@ impl Vim {
                     })
                 });
             }
-            Mode::Insert | Mode::Replace | Mode::HelixNormal => {}
+            ModalMode::Insert | ModalMode::Replace | ModalMode::HelixNormal => {}
         }
     }
 
@@ -1556,7 +1561,7 @@ impl Vim {
 
         let newest = editor.read(cx).selections.newest_anchor().clone();
         let is_multicursor = editor.read(cx).selections.count() > 1;
-        if self.mode == Mode::Insert && self.current_tx.is_some() {
+        if self.mode == ModalMode::Insert && self.current_tx.is_some() {
             if self.current_anchor.is_none() {
                 self.current_anchor = Some(newest);
             } else if self.current_anchor.as_ref().unwrap() != &newest
@@ -1566,17 +1571,22 @@ impl Vim {
                     editor.group_until_transaction(tx_id, cx)
                 });
             }
-        } else if self.mode == Mode::Normal && newest.start != newest.end {
+        } else if self.mode == ModalMode::Normal && newest.start != newest.end {
             if matches!(newest.goal, SelectionGoal::HorizontalRange { .. }) {
-                self.switch_mode(Mode::VisualBlock, false, window, cx);
+                self.switch_mode(ModalMode::VisualBlock, false, window, cx);
             } else {
-                self.switch_mode(Mode::Visual, false, window, cx)
+                self.switch_mode(ModalMode::Visual, false, window, cx)
             }
         } else if newest.start == newest.end
             && !is_multicursor
-            && [Mode::Visual, Mode::VisualLine, Mode::VisualBlock].contains(&self.mode)
+            && [
+                ModalMode::Visual,
+                ModalMode::VisualLine,
+                ModalMode::VisualBlock,
+            ]
+            .contains(&self.mode)
         {
-            self.switch_mode(Mode::Normal, true, window, cx);
+            self.switch_mode(ModalMode::Normal, true, window, cx);
         }
     }
 
@@ -1649,11 +1659,11 @@ impl Vim {
                 }
             }
             Some(Operator::Replace) => match self.mode {
-                Mode::Normal => self.normal_replace(text, window, cx),
-                Mode::Visual | Mode::VisualLine | Mode::VisualBlock => {
+                ModalMode::Normal => self.normal_replace(text, window, cx),
+                ModalMode::Visual | ModalMode::VisualLine | ModalMode::VisualBlock => {
                     self.visual_replace(text, window, cx)
                 }
-                Mode::HelixNormal => self.helix_replace(&text, window, cx),
+                ModalMode::HelixNormal => self.helix_replace(&text, window, cx),
                 _ => self.clear_operator(window, cx),
             },
             Some(Operator::Digraph { first_char }) => {
@@ -1671,20 +1681,20 @@ impl Vim {
                 self.handle_literal_input(prefix.unwrap_or_default(), &text, window, cx)
             }
             Some(Operator::AddSurrounds { target }) => match self.mode {
-                Mode::Normal => {
+                ModalMode::Normal => {
                     if let Some(target) = target {
                         self.add_surrounds(text, target, window, cx);
                         self.clear_operator(window, cx);
                     }
                 }
-                Mode::Visual | Mode::VisualLine | Mode::VisualBlock => {
+                ModalMode::Visual | ModalMode::VisualLine | ModalMode::VisualBlock => {
                     self.add_surrounds(text, SurroundsType::Selection, window, cx);
                     self.clear_operator(window, cx);
                 }
                 _ => self.clear_operator(window, cx),
             },
             Some(Operator::ChangeSurrounds { target }) => match self.mode {
-                Mode::Normal => {
+                ModalMode::Normal => {
                     if let Some(target) = target {
                         self.change_surrounds(text, target, window, cx);
                         self.clear_operator(window, cx);
@@ -1693,7 +1703,7 @@ impl Vim {
                 _ => self.clear_operator(window, cx),
             },
             Some(Operator::DeleteSurrounds) => match self.mode {
-                Mode::Normal => {
+                ModalMode::Normal => {
                     self.delete_surrounds(text, window, cx);
                     self.clear_operator(window, cx);
                 }
@@ -1707,7 +1717,7 @@ impl Vim {
                 self.replay_register(text.chars().next().unwrap(), window, cx)
             }
             Some(Operator::Register) => match self.mode {
-                Mode::Insert => {
+                ModalMode::Insert => {
                     self.update_editor(cx, |_, editor, cx| {
                         if let Some(register) = Vim::update_globals(cx, |globals, cx| {
                             globals.read_register(text.chars().next(), Some(editor), cx)
@@ -1729,11 +1739,11 @@ impl Vim {
             },
             Some(Operator::Jump { line }) => self.jump(text, line, true, window, cx),
             _ => {
-                if self.mode == Mode::Replace {
+                if self.mode == ModalMode::Replace {
                     self.multi_replace(text, window, cx)
                 }
 
-                if self.mode == Mode::Normal {
+                if self.mode == ModalMode::Normal {
                     self.update_editor(cx, |_, editor, cx| {
                         editor.accept_edit_prediction(
                             &editor::actions::AcceptEditPrediction {},
@@ -1753,9 +1763,9 @@ impl Vim {
             editor.set_collapse_matches(true);
             editor.set_input_enabled(vim.editor_input_enabled());
             editor.set_autoindent(vim.should_autoindent());
-            editor.selections.line_mode = matches!(vim.mode, Mode::VisualLine);
+            editor.selections.line_mode = matches!(vim.mode, ModalMode::VisualLine);
 
-            let hide_edit_predictions = !matches!(vim.mode, Mode::Insert | Mode::Replace);
+            let hide_edit_predictions = !matches!(vim.mode, ModalMode::Insert | ModalMode::Replace);
             editor.set_edit_predictions_hidden_for_vim_mode(hide_edit_predictions, window, cx);
         });
         cx.notify()
@@ -1797,7 +1807,6 @@ struct CursorShapeSettings {
 
 #[derive(Deserialize)]
 struct VimSettings {
-    pub default_mode: Mode,
     pub toggle_relative_line_numbers: bool,
     pub use_system_clipboard: UseSystemClipboard,
     pub use_smartcase_find: bool,
@@ -1808,40 +1817,12 @@ struct VimSettings {
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
 struct VimSettingsContent {
-    pub default_mode: Option<ModeContent>,
     pub toggle_relative_line_numbers: Option<bool>,
     pub use_system_clipboard: Option<UseSystemClipboard>,
     pub use_smartcase_find: Option<bool>,
     pub custom_digraphs: Option<HashMap<String, Arc<str>>>,
     pub highlight_on_yank_duration: Option<u64>,
     pub cursor_shape: Option<CursorShapeSettings>,
-}
-
-#[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum ModeContent {
-    #[default]
-    Normal,
-    Insert,
-    Replace,
-    Visual,
-    VisualLine,
-    VisualBlock,
-    HelixNormal,
-}
-
-impl From<ModeContent> for Mode {
-    fn from(mode: ModeContent) -> Self {
-        match mode {
-            ModeContent::Normal => Self::Normal,
-            ModeContent::Insert => Self::Insert,
-            ModeContent::Replace => Self::Replace,
-            ModeContent::Visual => Self::Visual,
-            ModeContent::VisualLine => Self::VisualLine,
-            ModeContent::VisualBlock => Self::VisualBlock,
-            ModeContent::HelixNormal => Self::HelixNormal,
-        }
-    }
 }
 
 impl Settings for VimSettings {
@@ -1853,10 +1834,6 @@ impl Settings for VimSettings {
         let settings: VimSettingsContent = sources.json_merge()?;
 
         Ok(Self {
-            default_mode: settings
-                .default_mode
-                .ok_or_else(Self::missing_default)?
-                .into(),
             toggle_relative_line_numbers: settings
                 .toggle_relative_line_numbers
                 .ok_or_else(Self::missing_default)?,

@@ -32,48 +32,9 @@ use ui::{
     StyledTypography, Window, h_flex, rems,
 };
 use util::ResultExt;
+use vim_mode_setting::ModalMode;
 use workspace::searchable::Direction;
 use workspace::{Workspace, WorkspaceDb, WorkspaceId};
-
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-pub enum Mode {
-    Normal,
-    Insert,
-    Replace,
-    Visual,
-    VisualLine,
-    VisualBlock,
-    HelixNormal,
-}
-
-impl Display for Mode {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Mode::Normal => write!(f, "NORMAL"),
-            Mode::Insert => write!(f, "INSERT"),
-            Mode::Replace => write!(f, "REPLACE"),
-            Mode::Visual => write!(f, "VISUAL"),
-            Mode::VisualLine => write!(f, "VISUAL LINE"),
-            Mode::VisualBlock => write!(f, "VISUAL BLOCK"),
-            Mode::HelixNormal => write!(f, "HELIX NORMAL"),
-        }
-    }
-}
-
-impl Mode {
-    pub fn is_visual(&self) -> bool {
-        match self {
-            Self::Visual | Self::VisualLine | Self::VisualBlock => true,
-            Self::Normal | Self::Insert | Self::Replace | Self::HelixNormal => false,
-        }
-    }
-}
-
-impl Default for Mode {
-    fn default() -> Self {
-        Self::Normal
-    }
-}
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Operator {
@@ -976,7 +937,7 @@ pub struct SearchState {
 
     pub prior_selections: Vec<Range<Anchor>>,
     pub prior_operator: Option<Operator>,
-    pub prior_mode: Mode,
+    pub prior_mode: ModalMode,
 }
 
 impl Operator {
@@ -1043,7 +1004,7 @@ impl Operator {
         }
     }
 
-    pub fn is_waiting(&self, mode: Mode) -> bool {
+    pub fn is_waiting(&self, mode: ModalMode) -> bool {
         match self {
             Operator::AddSurrounds { target } => target.is_some() || mode.is_visual(),
             Operator::FindForward { .. }

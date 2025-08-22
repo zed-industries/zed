@@ -26,6 +26,7 @@ use std::{cell::RefCell, ops::Range, rc::Rc, usize};
 use theme::{Theme, ThemeSettings};
 use ui::{ContextMenu, Divider, PopoverMenu, SplitButton, Tooltip, prelude::*};
 use util::ResultExt;
+use vim_mode_settings::EditorMode;
 
 actions!(
     console,
@@ -74,7 +75,7 @@ impl Console {
             editor.set_show_wrap_guides(false, cx);
             editor.set_show_indent_guides(false, cx);
             editor.set_show_edit_predictions(Some(false), window, cx);
-            editor.set_use_modal_editing(false);
+            editor.set_default_editor_mode(EditorMode::Default);
             editor.set_soft_wrap_mode(language::language_settings::SoftWrap::EditorWidth, cx);
             editor
         });

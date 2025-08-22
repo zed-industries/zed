@@ -165,7 +165,6 @@ use project::{
 };
 use rand::{seq::SliceRandom, thread_rng};
 use rpc::{ErrorCode, ErrorExt, proto::PeerId};
-use schemars::JsonSchema;
 use scroll::{Autoscroll, OngoingScroll, ScrollAnchor, ScrollManager, ScrollbarAutoHide};
 use selections_collection::{
     MutableSelectionsCollection, SelectionsCollection, resolve_selections,
@@ -202,7 +201,6 @@ use ui::{
     IconSize, Indicator, Key, Tooltip, h_flex, prelude::*,
 };
 use util::{RangeExt, ResultExt, TryFutureExt, maybe, post_inc};
-use vim_mode_setting::EditorModeSetting;
 use workspace::{
     CollaboratorId, Item as WorkspaceItem, ItemId, ItemNavHistory, OpenInTerminal, OpenTerminal,
     RestoreOnStartupBehavior, SERIALIZATION_THROTTLE_TIME, SplitDirection, TabBarSettings, Toast,
@@ -2185,7 +2183,6 @@ impl Editor {
             collapse_matches: false,
             workspace: None,
             input_enabled: !is_minimap,
-            use_modal_editing: full_mode,
             read_only: is_minimap,
             use_autoclose: true,
             use_auto_surround: true,
@@ -22940,6 +22937,7 @@ pub enum EditorEvent {
         anchor: Anchor,
         is_deactivate: bool,
     },
+    EditorModeChanged,
 }
 
 impl EventEmitter<EditorEvent> for Editor {}

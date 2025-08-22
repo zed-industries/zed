@@ -50,12 +50,15 @@ pub enum NotifyWhenAgentWaiting {
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Default)]
 pub enum AgentEditorMode {
-    Vim,
-    VimInsert,
-    Helix,
-    Default,
+    EditorModeOverride(EditorMode),
     #[default]
     Inherit,
+}
+
+impl From<EditorMode> for AgentEditorMode {
+    fn from(b: EditorMode) -> Self {
+        AgentEditorMode::EditorModeOverride(b)
+    }
 }
 
 #[derive(Default, Clone, Debug)]

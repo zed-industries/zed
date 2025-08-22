@@ -76,6 +76,7 @@ util.workspace = true
 workspace-hack.workspace = true
 workspace.workspace = true
 zed_actions.workspace = true
+vim_mode_settings.workspace = true
 
 [dev-dependencies]
 dap = { workspace = true, features = ["test-support"] }
