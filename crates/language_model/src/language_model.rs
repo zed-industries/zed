@@ -14,7 +14,7 @@ use client::Client;
 use cloud_llm_client::{CompletionMode, CompletionRequestStatus};
 use futures::FutureExt;
 use futures::{StreamExt, future::BoxFuture, stream::BoxStream};
-use gpui::{AnyElement, AnyView, App, AsyncApp, SharedString, Task, Window};
+use gpui::{AnyView, App, AsyncApp, SharedString, Task, Window};
 use http_client::{StatusCode, http};
 use icons::IconName;
 use parking_lot::Mutex;
@@ -640,16 +640,6 @@ pub trait LanguageModelProvider: 'static {
         window: &mut Window,
         cx: &mut App,
     ) -> AnyView;
-    fn must_accept_terms(&self, _cx: &App) -> bool {
-        false
-    }
-    fn render_accept_terms(
-        &self,
-        _view: LanguageModelProviderTosView,
-        _cx: &mut App,
-    ) -> Option<AnyElement> {
-        None
-    }
     fn reset_credentials(&self, cx: &mut App) -> Task<Result<()>>;
 }
 
