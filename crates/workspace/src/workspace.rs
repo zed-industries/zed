@@ -614,6 +614,7 @@ impl ProjectItemRegistry {
         self.build_project_item_for_path_fns
             .push(|project, project_path, window, cx| {
                 let project_path = project_path.clone();
+                let abs_path = project.read(cx).absolute_path(&project_path, cx);
                 let project_item =
                     <T::Item as project::ProjectItem>::try_open(project, &project_path, cx)?;
                 let project = project.clone();
@@ -637,9 +638,9 @@ impl ProjectItemRegistry {
                         ) as Box<_>;
                         Ok((project_entry_id, build_workspace_item))
                     }
-                    Err(e) => {
-                        match cx.update(|window, cx| {
-                            T::for_broken_project_item(project_path, &e, window, cx)
+                    Err(e) => match abs_path {
+                        Some(abs_path) => match cx.update(|window, cx| {
+                            T::for_broken_project_item(abs_path, &e, window, cx)
                         })? {
                             Some(broken_project_item_view) => {
                                 let build_workspace_item = Box::new(
@@ -651,8 +652,9 @@ impl ProjectItemRegistry {
                                 Ok((None, build_workspace_item))
                             }
                             None => Err(e)?,
-                        }
-                    }
+                        },
+                        None => Err(e)?,
+                    },
                 }))
             });
     }

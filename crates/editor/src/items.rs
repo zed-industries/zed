@@ -1404,12 +1404,12 @@ impl ProjectItem for Editor {
     }
 
     fn for_broken_project_item(
-        project_path: ProjectPath,
+        abs_path: PathBuf,
         e: &anyhow::Error,
         window: &mut Window,
         cx: &mut App,
     ) -> Option<InvalidBufferView> {
-        Some(InvalidBufferView::new(project_path, e, window, cx))
+        Some(InvalidBufferView::new(abs_path, e, window, cx))
     }
 }
 

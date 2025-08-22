@@ -950,10 +950,9 @@ impl Pane {
             if let Some(invalid_buffer_view) = new_item.downcast::<InvalidBufferView>() {
                 let mut already_open_view = None;
                 let mut views_to_close = HashSet::default();
-                for existing_error_view in
-                    self.items_of_type::<InvalidBufferView>().filter(|item| {
-                        item.read(cx).project_path == invalid_buffer_view.read(cx).project_path
-                    })
+                for existing_error_view in self
+                    .items_of_type::<InvalidBufferView>()
+                    .filter(|item| item.read(cx).abs_path == invalid_buffer_view.read(cx).abs_path)
                 {
                     if already_open_view.is_none()
                         && existing_error_view.read(cx).error == invalid_buffer_view.read(cx).error
