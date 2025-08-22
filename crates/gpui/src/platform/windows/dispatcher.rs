@@ -10,8 +10,7 @@ use parking_lot::Mutex;
 use util::ResultExt;
 use windows::{
     System::Threading::{
-        ThreadPool, ThreadPoolTimer, TimerElapsedHandler, WorkItemHandler,
-        WorkItemPriority,
+        ThreadPool, ThreadPoolTimer, TimerElapsedHandler, WorkItemHandler, WorkItemPriority,
     },
     Win32::{
         Foundation::{LPARAM, WPARAM},
@@ -55,11 +54,7 @@ impl WindowsDispatcher {
                 Ok(())
             })
         };
-        ThreadPool::RunWithPriorityAsync(
-            &handler,
-            WorkItemPriority::High,
-        )
-        .log_err();
+        ThreadPool::RunWithPriorityAsync(&handler, WorkItemPriority::High).log_err();
     }
 
     fn dispatch_on_threadpool_after(&self, runnable: Runnable, duration: Duration) {
