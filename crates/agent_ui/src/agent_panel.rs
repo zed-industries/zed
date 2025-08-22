@@ -2097,7 +2097,7 @@ impl AgentPanel {
                         .child(title_editor)
                         .into_any_element()
                 } else {
-                    Label::new(thread_view.read(cx).title(cx))
+                    Label::new(thread_view.read(cx).title())
                         .color(Color::Muted)
                         .truncate()
                         .into_any_element()
