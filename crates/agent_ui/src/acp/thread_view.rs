@@ -312,6 +312,13 @@ impl AcpThreadView {
     ) -> Self {
         let prompt_capabilities = Rc::new(Cell::new(acp::PromptCapabilities::default()));
         let prevent_slash_commands = agent.clone().downcast::<ClaudeCode>().is_some();
+
+        let placeholder = if agent.name() == "Zed Agent" {
+            format!("Message the {} — @ to include context", agent.name())
+        } else {
+            format!("Message {} — @ to include context", agent.name())
+        };
+
         let message_editor = cx.new(|cx| {
             let mut editor = MessageEditor::new(
                 workspace.clone(),
@@ -319,7 +326,7 @@ impl AcpThreadView {
                 history_store.clone(),
                 prompt_store.clone(),
                 prompt_capabilities.clone(),
-                "Message the agent — @ to include context",
+                placeholder,
                 prevent_slash_commands,
                 editor::EditorMode::AutoHeight {
                     min_lines: MIN_EDITOR_LINES,
