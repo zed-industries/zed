@@ -2427,15 +2427,14 @@ impl AcpThreadView {
                     parent.child(
                         h_flex()
                             .id("user-rules")
-                            .mr_1()
+                            .ml_1()
+                            .mr_1p5()
                             .child(
                                 Label::new(user_rules_text)
                                     .size(LabelSize::XSmall)
                                     .color(Color::Muted)
                                     .truncate()
-                                    .buffer_font(cx)
-                                    .ml_1p5()
-                                    .mr_0p5(),
+                                    .buffer_font(cx),
                             )
                             .hover(|s| s.bg(cx.theme().colors().element_hover))
                             .tooltip(Tooltip::text("View User Rules"))
@@ -2454,14 +2453,12 @@ impl AcpThreadView {
                     parent.child(
                         h_flex()
                             .id("project-rules")
-                            .ml_1()
+                            .ml_1p5()
                             .child(
                                 Label::new(rules_file_text)
                                     .size(LabelSize::XSmall)
                                     .color(Color::Muted)
-                                    .buffer_font(cx)
-                                    .ml_1p5()
-                                    .mr_0p5(),
+                                    .buffer_font(cx),
                             )
                             .hover(|s| s.bg(cx.theme().colors().element_hover))
                             .tooltip(Tooltip::text("View Project Rules"))
