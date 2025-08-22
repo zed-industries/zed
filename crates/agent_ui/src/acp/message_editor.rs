@@ -247,7 +247,11 @@ impl MessageEditor {
         else {
             return Task::ready(());
         };
+        let end_anchor = snapshot
+            .buffer_snapshot
+            .anchor_before(start_anchor.to_offset(&snapshot.buffer_snapshot) + content_len + 1);
 
+        // FIXME can we get rid of this
         if let MentionUri::File { abs_path, .. } = &mention_uri {
             let extension = abs_path
                 .extension()
@@ -257,10 +261,6 @@ impl MessageEditor {
             if Img::extensions().contains(&extension) && !extension.contains("svg") {
                 if !self.prompt_capabilities.get().image {
                     struct ImagesNotAllowed;
-
-                    let end_anchor = snapshot.buffer_snapshot.anchor_before(
-                        start_anchor.to_offset(&snapshot.buffer_snapshot) + content_len + 1,
-                    );
 
                     self.editor.update(cx, |editor, cx| {
                         // Remove mention
@@ -336,65 +336,51 @@ impl MessageEditor {
         ) else {
             return Task::ready(());
         };
+        self.mention_set.insert_uri(crease_id, mention_uri.clone());
 
-        match mention_uri {
-            MentionUri::Fetch { url } => {
-                self.confirm_mention_for_fetch(crease_id, start_anchor, url, window, cx)
+        let task = match mention_uri {
+            MentionUri::Fetch { url } => self.confirm_mention_for_fetch(url, cx),
+            MentionUri::Directory { abs_path } => self.confirm_mention_for_directory(abs_path, cx),
+            MentionUri::Thread { id, .. } => self.confirm_mention_for_thread(id, cx),
+            MentionUri::TextThread { path, .. } => self.confirm_mention_for_text_thread(path, cx),
+            MentionUri::File { abs_path } => self.confirm_mention_for_file(crease_id, abs_path, cx),
+            MentionUri::Symbol { abs_path, .. } => {
+                self.confirm_mention_for_symbol(crease_id, abs_path, cx)
             }
-            MentionUri::Directory { abs_path } => {
-                self.confirm_mention_for_directory(crease_id, start_anchor, abs_path, window, cx)
-            }
-            MentionUri::Thread { id, name } => {
-                self.confirm_mention_for_thread(crease_id, start_anchor, id, name, window, cx)
-            }
-            MentionUri::TextThread { path, name } => self.confirm_mention_for_text_thread(
-                crease_id,
-                start_anchor,
-                path,
-                name,
-                window,
-                cx,
-            ),
-            MentionUri::File { abs_path } => {
-                self.confirm_mention_for_file(crease_id, start_anchor, abs_path, window, cx)
-            }
-            MentionUri::Symbol {
-                abs_path,
-                name,
-                line_range,
-            } => self.confirm_mention_for_symbol(
-                crease_id,
-                start_anchor,
-                abs_path,
-                name,
-                line_range,
-                window,
-                cx,
-            ),
-            MentionUri::Rule { id, name } => {
-                self.confirm_mention_for_rule(crease_id, start_anchor, id, name, window, cx)
-            }
+            MentionUri::Rule { id, .. } => self.confirm_mention_for_rule(id, cx),
             MentionUri::Selection { .. } => {
                 debug_panic!("unexpected MentionUri::Selection");
-                Task::ready(())
+                Task::ready(Ok(()))
             }
-        }
+        };
+
+        cx.spawn_in(window, async move |this, cx| {
+            if task.await.notify_async_err(cx).is_none() {
+                this.update(cx, |this, cx| {
+                    this.editor.update(cx, |editor, cx| {
+                        // Remove mention
+                        editor.edit([(start_anchor..end_anchor, "")], cx);
+                    });
+                    this.mention_set.uri_by_crease_id.remove(&crease_id);
+                })
+                .ok();
+            }
+        })
     }
 
     fn confirm_mention_for_file(
         &mut self,
         crease_id: CreaseId,
-        anchor: Anchor,
         abs_path: PathBuf,
-        window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Task<()> {
+    ) -> Task<Result<(), String>> {
         let Some(project_path) = self
             .project
             .read(cx)
             .project_path_for_absolute_path(&abs_path, cx)
         else {
-            return Task::ready(());
+            // FIXME
+            return Task::ready(Ok(()));
         };
         let buffer = self
             .project
@@ -407,40 +393,17 @@ impl MessageEditor {
                     .map_err(|e| e.to_string())
             })
             .shared();
-        let uri = MentionUri::File { abs_path };
+
         self.mention_set.buffers.insert(crease_id, task.clone());
-        let editor = self.editor.clone();
-        cx.spawn_in(window, async move |this, cx| {
-            if task.await.notify_async_err(cx).is_some() {
-                this.update(cx, |this, _| {
-                    this.mention_set.insert_uri(crease_id, uri);
-                })
-                .ok();
-            } else {
-                editor
-                    .update(cx, |editor, cx| {
-                        editor.display_map.update(cx, |display_map, cx| {
-                            display_map.unfold_intersecting(vec![anchor..anchor], true, cx);
-                        });
-                        editor.remove_creases([crease_id], cx);
-                    })
-                    .ok();
-                this.update(cx, |this, _| {
-                    this.mention_set.buffers.remove(&crease_id);
-                })
-                .ok();
-            }
-        })
+
+        cx.spawn(async move |_, _| task.await.map(|_| ()))
     }
 
     fn confirm_mention_for_directory(
         &mut self,
-        crease_id: CreaseId,
-        anchor: Anchor,
         abs_path: PathBuf,
-        window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Task<()> {
+    ) -> Task<Result<(), String>> {
         fn collect_files_in_path(worktree: &Worktree, path: &Path) -> Vec<(Arc<Path>, PathBuf)> {
             let mut files = Vec::new();
 
@@ -455,21 +418,21 @@ impl MessageEditor {
             files
         }
 
-        let uri = MentionUri::Directory {
-            abs_path: abs_path.clone(),
-        };
         let Some(project_path) = self
             .project
             .read(cx)
             .project_path_for_absolute_path(&abs_path, cx)
         else {
-            return Task::ready(());
+            // FIXME
+            return Task::ready(Ok(()));
         };
         let Some(entry) = self.project.read(cx).entry_for_path(&project_path, cx) else {
-            return Task::ready(());
+            // FIXME
+            return Task::ready(Ok(()));
         };
         let Some(worktree) = self.project.read(cx).worktree_for_entry(entry.id, cx) else {
-            return Task::ready(());
+            // FIXME
+            return Task::ready(Ok(()));
         };
         let project = self.project.clone();
         let task = cx.spawn(async move |_, cx| {
@@ -535,44 +498,21 @@ impl MessageEditor {
             .directories
             .insert(abs_path.clone(), task.clone());
 
-        let editor = self.editor.clone();
-        cx.spawn_in(window, async move |this, cx| {
-            if task.await.notify_async_err(cx).is_some() {
-                this.update(cx, |this, _| {
-                    this.mention_set.insert_uri(crease_id, uri);
-                })
-                .ok();
-            } else {
-                editor
-                    .update(cx, |editor, cx| {
-                        editor.display_map.update(cx, |display_map, cx| {
-                            display_map.unfold_intersecting(vec![anchor..anchor], true, cx);
-                        });
-                        editor.remove_creases([crease_id], cx);
-                    })
-                    .ok();
-                this.update(cx, |this, _cx| {
-                    this.mention_set.directories.remove(&abs_path);
-                })
-                .ok();
-            }
-        })
+        cx.spawn(async move |_, _| task.await.map(|_| ()))
     }
 
     fn confirm_mention_for_fetch(
         &mut self,
-        crease_id: CreaseId,
-        anchor: Anchor,
         url: url::Url,
-        window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Task<()> {
+    ) -> Task<Result<(), String>> {
         let Some(http_client) = self
             .workspace
             .update(cx, |workspace, _cx| workspace.client().http_client())
             .ok()
         else {
-            return Task::ready(());
+            // FIXME
+            return Task::ready(Ok(()));
         };
 
         let url_string = url.to_string();
@@ -587,43 +527,22 @@ impl MessageEditor {
         self.mention_set
             .add_fetch_result(url.clone(), fetch.clone());
 
-        cx.spawn_in(window, async move |this, cx| {
-            let fetch = fetch.await.notify_async_err(cx);
-            this.update(cx, |this, cx| {
-                if fetch.is_some() {
-                    this.mention_set
-                        .insert_uri(crease_id, MentionUri::Fetch { url });
-                } else {
-                    // Remove crease if we failed to fetch
-                    this.editor.update(cx, |editor, cx| {
-                        editor.display_map.update(cx, |display_map, cx| {
-                            display_map.unfold_intersecting(vec![anchor..anchor], true, cx);
-                        });
-                        editor.remove_creases([crease_id], cx);
-                    });
-                    this.mention_set.fetch_results.remove(&url);
-                }
-            })
-            .ok();
-        })
+        cx.spawn(async move |_, _| fetch.await.map(|_| ()))
     }
 
     fn confirm_mention_for_symbol(
         &mut self,
         crease_id: CreaseId,
-        anchor: Anchor,
         abs_path: PathBuf,
-        name: String,
-        line_range: Range<u32>,
-        window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Task<()> {
+    ) -> Task<Result<(), String>> {
         let Some(project_path) = self
             .project
             .read(cx)
             .project_path_for_absolute_path(&abs_path, cx)
         else {
-            return Task::ready(());
+            // FIXME
+            return Task::ready(Ok(()));
         };
         let buffer = self
             .project
@@ -636,78 +555,32 @@ impl MessageEditor {
                     .map_err(|e| e.to_string())
             })
             .shared();
-        let uri = MentionUri::Symbol {
-            name,
-            line_range,
-            abs_path,
-        };
+
         self.mention_set.buffers.insert(crease_id, task.clone());
-        let editor = self.editor.clone();
-        cx.spawn_in(window, async move |this, cx| {
-            if task.await.notify_async_err(cx).is_some() {
-                this.update(cx, |this, _| {
-                    this.mention_set.insert_uri(crease_id, uri);
-                })
-                .ok();
-            } else {
-                editor
-                    .update(cx, |editor, cx| {
-                        editor.display_map.update(cx, |display_map, cx| {
-                            display_map.unfold_intersecting(vec![anchor..anchor], true, cx);
-                        });
-                        editor.remove_creases([crease_id], cx);
-                    })
-                    .ok();
-                this.update(cx, |this, _| {
-                    this.mention_set.buffers.remove(&crease_id);
-                })
-                .ok();
-            }
-        })
+
+        cx.spawn(async move |_, _| task.await.map(|_| ()))
     }
 
     fn confirm_mention_for_rule(
         &mut self,
-        crease_id: CreaseId,
-        anchor: Anchor,
         id: PromptId,
-        name: String,
-        window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Task<()> {
+    ) -> Task<Result<(), String>> {
         let Some(prompt_store) = self.prompt_store.clone() else {
-            return Task::ready(());
+            // FIXME
+            return Task::ready(Ok(()));
         };
         let prompt = prompt_store.read(cx).load(id, cx);
         let task = cx
             .spawn(async move |_, _| prompt.await.map_err(|e| e.to_string()))
             .shared();
-        let uri = MentionUri::Rule { id, name };
+
         self.mention_set.insert_rule(id, task.clone());
-        let editor = self.editor.clone();
-        cx.spawn_in(window, async move |this, cx| {
-            if task.await.notify_async_err(cx).is_some() {
-                this.update(cx, |this, _| {
-                    this.mention_set.insert_uri(crease_id, uri);
-                })
-                .ok();
-            } else {
-                editor
-                    .update(cx, |editor, cx| {
-                        editor.display_map.update(cx, |display_map, cx| {
-                            display_map.unfold_intersecting(vec![anchor..anchor], true, cx);
-                        });
-                        editor.remove_creases([crease_id], cx);
-                    })
-                    .ok();
-                this.update(cx, |this, _| {
-                    this.mention_set.rules.remove(&id);
-                })
-                .ok();
-            }
-        })
+
+        cx.spawn(async move |_, _| task.await.map(|_| ()))
     }
 
+    // FIXME can we clean this up?
     pub fn confirm_mention_for_selection(
         &mut self,
         source_range: Range<text::Anchor>,
@@ -765,17 +638,9 @@ impl MessageEditor {
 
     fn confirm_mention_for_thread(
         &mut self,
-        crease_id: CreaseId,
-        anchor: Anchor,
         id: acp::SessionId,
-        name: String,
-        window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Task<()> {
-        let uri = MentionUri::Thread {
-            id: id.clone(),
-            name,
-        };
+    ) -> Task<Result<(), String>> {
         let server = Rc::new(agent2::NativeAgentServer::new(
             self.project.read(cx).fs().clone(),
             self.history_store.clone(),
@@ -798,41 +663,15 @@ impl MessageEditor {
             .shared();
 
         self.mention_set.insert_thread(id.clone(), task.clone());
-        self.mention_set.insert_uri(crease_id, uri);
 
-        let editor = self.editor.clone();
-        cx.spawn_in(window, async move |this, cx| {
-            if task.await.notify_async_err(cx).is_none() {
-                editor
-                    .update(cx, |editor, cx| {
-                        editor.display_map.update(cx, |display_map, cx| {
-                            display_map.unfold_intersecting(vec![anchor..anchor], true, cx);
-                        });
-                        editor.remove_creases([crease_id], cx);
-                    })
-                    .ok();
-                this.update(cx, |this, _| {
-                    this.mention_set.thread_summaries.remove(&id);
-                    this.mention_set.uri_by_crease_id.remove(&crease_id);
-                })
-                .ok();
-            }
-        })
+        cx.spawn(async move |_, _| task.await.map(|_| ()))
     }
 
     fn confirm_mention_for_text_thread(
         &mut self,
-        crease_id: CreaseId,
-        anchor: Anchor,
         path: PathBuf,
-        name: String,
-        window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Task<()> {
-        let uri = MentionUri::TextThread {
-            path: path.clone(),
-            name,
-        };
+    ) -> Task<Result<(), String>> {
         let context = self.history_store.update(cx, |text_thread_store, cx| {
             text_thread_store.load_text_thread(path.as_path().into(), cx)
         });
@@ -849,28 +688,7 @@ impl MessageEditor {
         self.mention_set
             .insert_text_thread(path.clone(), task.clone());
 
-        let editor = self.editor.clone();
-        cx.spawn_in(window, async move |this, cx| {
-            if task.await.notify_async_err(cx).is_some() {
-                this.update(cx, |this, _| {
-                    this.mention_set.insert_uri(crease_id, uri);
-                })
-                .ok();
-            } else {
-                editor
-                    .update(cx, |editor, cx| {
-                        editor.display_map.update(cx, |display_map, cx| {
-                            display_map.unfold_intersecting(vec![anchor..anchor], true, cx);
-                        });
-                        editor.remove_creases([crease_id], cx);
-                    })
-                    .ok();
-                this.update(cx, |this, _| {
-                    this.mention_set.text_thread_summaries.remove(&path);
-                })
-                .ok();
-            }
-        })
+        cx.spawn(async move |_, _| task.await.map(|_| ()))
     }
 
     pub fn contents(
