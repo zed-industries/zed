@@ -3,9 +3,9 @@ use async_trait::async_trait;
 use collections::HashMap;
 use futures::StreamExt;
 use gpui::AsyncApp;
-use language::{LanguageName, LanguageToolchainStore, LspAdapter, LspAdapterDelegate};
+use language::{LanguageName, LspAdapter, LspAdapterDelegate, Toolchain};
 use lsp::{LanguageServerBinary, LanguageServerName};
-use node_runtime::NodeRuntime;
+use node_runtime::{NodeRuntime, VersionStrategy};
 use project::{Fs, lsp_store::language_server_settings};
 use serde_json::{Value, json};
 use smol::fs;
@@ -44,13 +44,13 @@ impl TailwindLspAdapter {
 #[async_trait(?Send)]
 impl LspAdapter for TailwindLspAdapter {
     fn name(&self) -> LanguageServerName {
-        Self::SERVER_NAME.clone()
+        Self::SERVER_NAME
     }
 
     async fn check_if_user_installed(
         &self,
         delegate: &dyn LspAdapterDelegate,
-        _: Arc<dyn LanguageToolchainStore>,
+        _: Option<Toolchain>,
         _: &AsyncApp,
     ) -> Option<LanguageServerBinary> {
         let path = delegate.which(Self::SERVER_NAME.as_ref()).await?;
@@ -108,7 +108,12 @@ impl LspAdapter for TailwindLspAdapter {
 
         let should_install_language_server = self
             .node
-            .should_install_npm_package(Self::PACKAGE_NAME, &server_path, &container_dir, &version)
+            .should_install_npm_package(
+                Self::PACKAGE_NAME,
+                &server_path,
+                container_dir,
+                VersionStrategy::Latest(version),
+            )
             .await;
 
         if should_install_language_server {
@@ -150,7 +155,7 @@ impl LspAdapter for TailwindLspAdapter {
         self: Arc<Self>,
         _: &dyn Fs,
         delegate: &Arc<dyn LspAdapterDelegate>,
-        _: Arc<dyn LanguageToolchainStore>,
+        _: Option<Toolchain>,
         cx: &mut AsyncApp,
     ) -> Result<Value> {
         let mut tailwind_user_settings = cx.update(|cx| {

@@ -9,12 +9,14 @@ use refineable::Refineable;
 use schemars::{JsonSchema, json_schema};
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use std::borrow::Cow;
+use std::ops::Range;
 use std::{
     cmp::{self, PartialOrd},
     fmt::{self, Display},
     hash::Hash,
     ops::{Add, Div, Mul, MulAssign, Neg, Sub},
 };
+use taffy::prelude::{TaffyGridLine, TaffyGridSpan};
 
 use crate::{App, DisplayId};
 
@@ -1044,7 +1046,7 @@ where
             size: self.size.clone()
                 + size(
                     amount.left.clone() + amount.right.clone(),
-                    amount.top.clone() + amount.bottom.clone(),
+                    amount.top.clone() + amount.bottom,
                 ),
         }
     }
@@ -1157,10 +1159,10 @@ where
     /// Computes the space available within outer bounds.
     pub fn space_within(&self, outer: &Self) -> Edges<T> {
         Edges {
-            top: self.top().clone() - outer.top().clone(),
-            right: outer.right().clone() - self.right().clone(),
-            bottom: outer.bottom().clone() - self.bottom().clone(),
-            left: self.left().clone() - outer.left().clone(),
+            top: self.top() - outer.top(),
+            right: outer.right() - self.right(),
+            bottom: outer.bottom() - self.bottom(),
+            left: self.left() - outer.left(),
         }
     }
 }
@@ -1639,7 +1641,7 @@ impl Bounds<Pixels> {
     }
 
     /// Convert the bounds from logical pixels to physical pixels
-    pub fn to_device_pixels(&self, factor: f32) -> Bounds<DevicePixels> {
+    pub fn to_device_pixels(self, factor: f32) -> Bounds<DevicePixels> {
         Bounds {
             origin: point(
                 DevicePixels((self.origin.x.0 * factor).round() as i32),
@@ -1710,7 +1712,7 @@ where
             top: self.top.clone() * rhs.top,
             right: self.right.clone() * rhs.right,
             bottom: self.bottom.clone() * rhs.bottom,
-            left: self.left.clone() * rhs.left,
+            left: self.left * rhs.left,
         }
     }
 }
@@ -1955,7 +1957,7 @@ impl Edges<DefiniteLength> {
     /// assert_eq!(edges_in_pixels.bottom, px(32.0)); // 2 rems
     /// assert_eq!(edges_in_pixels.left, px(50.0)); // 25% of parent width
     /// ```
-    pub fn to_pixels(&self, parent_size: Size<AbsoluteLength>, rem_size: Pixels) -> Edges<Pixels> {
+    pub fn to_pixels(self, parent_size: Size<AbsoluteLength>, rem_size: Pixels) -> Edges<Pixels> {
         Edges {
             top: self.top.to_pixels(parent_size.height, rem_size),
             right: self.right.to_pixels(parent_size.width, rem_size),
@@ -2025,7 +2027,7 @@ impl Edges<AbsoluteLength> {
     /// assert_eq!(edges_in_pixels.bottom, px(20.0)); // Already in pixels
     /// assert_eq!(edges_in_pixels.left, px(32.0)); // 2 rems converted to pixels
     /// ```
-    pub fn to_pixels(&self, rem_size: Pixels) -> Edges<Pixels> {
+    pub fn to_pixels(self, rem_size: Pixels) -> Edges<Pixels> {
         Edges {
             top: self.top.to_pixels(rem_size),
             right: self.right.to_pixels(rem_size),
@@ -2270,7 +2272,7 @@ impl Corners<AbsoluteLength> {
     /// assert_eq!(corners_in_pixels.bottom_right, Pixels(30.0));
     /// assert_eq!(corners_in_pixels.bottom_left, Pixels(32.0)); // 2 rems converted to pixels
     /// ```
-    pub fn to_pixels(&self, rem_size: Pixels) -> Corners<Pixels> {
+    pub fn to_pixels(self, rem_size: Pixels) -> Corners<Pixels> {
         Corners {
             top_left: self.top_left.to_pixels(rem_size),
             top_right: self.top_right.to_pixels(rem_size),
@@ -2409,7 +2411,7 @@ where
             top_left: self.top_left.clone() * rhs.top_left,
             top_right: self.top_right.clone() * rhs.top_right,
             bottom_right: self.bottom_right.clone() * rhs.bottom_right,
-            bottom_left: self.bottom_left.clone() * rhs.bottom_left,
+            bottom_left: self.bottom_left * rhs.bottom_left,
         }
     }
 }
@@ -2856,7 +2858,7 @@ impl DevicePixels {
     /// let total_bytes = pixels.to_bytes(bytes_per_pixel);
     /// assert_eq!(total_bytes, 40); // 10 pixels * 4 bytes/pixel = 40 bytes
     /// ```
-    pub fn to_bytes(&self, bytes_per_pixel: u8) -> u32 {
+    pub fn to_bytes(self, bytes_per_pixel: u8) -> u32 {
         self.0 as u32 * bytes_per_pixel as u32
     }
 }
@@ -3071,8 +3073,8 @@ pub struct Rems(pub f32);
 
 impl Rems {
     /// Convert this Rem value to pixels.
-    pub fn to_pixels(&self, rem_size: Pixels) -> Pixels {
-        *self * rem_size
+    pub fn to_pixels(self, rem_size: Pixels) -> Pixels {
+        self * rem_size
     }
 }
 
@@ -3166,9 +3168,9 @@ impl AbsoluteLength {
     /// assert_eq!(length_in_pixels.to_pixels(rem_size), Pixels(42.0));
     /// assert_eq!(length_in_rems.to_pixels(rem_size), Pixels(32.0));
     /// ```
-    pub fn to_pixels(&self, rem_size: Pixels) -> Pixels {
+    pub fn to_pixels(self, rem_size: Pixels) -> Pixels {
         match self {
-            AbsoluteLength::Pixels(pixels) => *pixels,
+            AbsoluteLength::Pixels(pixels) => pixels,
             AbsoluteLength::Rems(rems) => rems.to_pixels(rem_size),
         }
     }
@@ -3182,10 +3184,10 @@ impl AbsoluteLength {
     /// # Returns
     ///
     /// Returns the `AbsoluteLength` as `Pixels`.
-    pub fn to_rems(&self, rem_size: Pixels) -> Rems {
+    pub fn to_rems(self, rem_size: Pixels) -> Rems {
         match self {
             AbsoluteLength::Pixels(pixels) => Rems(pixels.0 / rem_size.0),
-            AbsoluteLength::Rems(rems) => *rems,
+            AbsoluteLength::Rems(rems) => rems,
         }
     }
 }
@@ -3313,12 +3315,12 @@ impl DefiniteLength {
     /// assert_eq!(length_in_rems.to_pixels(base_size, rem_size), Pixels(32.0));
     /// assert_eq!(length_as_fraction.to_pixels(base_size, rem_size), Pixels(50.0));
     /// ```
-    pub fn to_pixels(&self, base_size: AbsoluteLength, rem_size: Pixels) -> Pixels {
+    pub fn to_pixels(self, base_size: AbsoluteLength, rem_size: Pixels) -> Pixels {
         match self {
             DefiniteLength::Absolute(size) => size.to_pixels(rem_size),
             DefiniteLength::Fraction(fraction) => match base_size {
-                AbsoluteLength::Pixels(px) => px * *fraction,
-                AbsoluteLength::Rems(rems) => rems * rem_size * *fraction,
+                AbsoluteLength::Pixels(px) => px * fraction,
+                AbsoluteLength::Rems(rems) => rems * rem_size * fraction,
             },
         }
     }
@@ -3605,6 +3607,37 @@ impl Default for Length {
 impl From<()> for Length {
     fn from(_: ()) -> Self {
         Self::Definite(DefiniteLength::default())
+    }
+}
+
+/// A location in a grid layout.
+#[derive(Clone, PartialEq, Debug, Serialize, Deserialize, JsonSchema, Default)]
+pub struct GridLocation {
+    /// The rows this item uses within the grid.
+    pub row: Range<GridPlacement>,
+    /// The columns this item uses within the grid.
+    pub column: Range<GridPlacement>,
+}
+
+/// The placement of an item within a grid layout's column or row.
+#[derive(Clone, Copy, PartialEq, Debug, Serialize, Deserialize, JsonSchema, Default)]
+pub enum GridPlacement {
+    /// The grid line index to place this item.
+    Line(i16),
+    /// The number of grid lines to span.
+    Span(u16),
+    /// Automatically determine the placement, equivalent to Span(1)
+    #[default]
+    Auto,
+}
+
+impl From<GridPlacement> for taffy::GridPlacement {
+    fn from(placement: GridPlacement) -> Self {
+        match placement {
+            GridPlacement::Line(index) => taffy::GridPlacement::from_line_index(index),
+            GridPlacement::Span(span) => taffy::GridPlacement::from_span(span),
+            GridPlacement::Auto => taffy::GridPlacement::Auto,
+        }
     }
 }
 

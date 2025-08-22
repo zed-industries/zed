@@ -224,7 +224,7 @@ impl Vim {
                     .search
                     .prior_selections
                     .last()
-                    .map_or(true, |range| range.start != new_head);
+                    .is_none_or(|range| range.start != new_head);
 
                 if is_different_head {
                     count = count.saturating_sub(1)
@@ -332,7 +332,7 @@ impl Vim {
         Vim::take_forced_motion(cx);
         let prior_selections = self.editor_selections(window, cx);
         let cursor_word = self.editor_cursor_word(window, cx);
-        let vim = cx.entity().clone();
+        let vim = cx.entity();
 
         let searched = pane.update(cx, |pane, cx| {
             self.search.direction = direction;

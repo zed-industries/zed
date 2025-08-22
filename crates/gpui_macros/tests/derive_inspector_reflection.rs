@@ -34,13 +34,6 @@ trait Transform: Clone {
 
     /// Adds one to the value
     fn add_one(self) -> Self;
-
-    /// cfg attributes are respected
-    #[cfg(all())]
-    fn cfg_included(self) -> Self;
-
-    #[cfg(any())]
-    fn cfg_omitted(self) -> Self;
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -70,10 +63,6 @@ impl Transform for Number {
     fn add_one(self) -> Self {
         Number(self.0 + 1)
     }
-
-    fn cfg_included(self) -> Self {
-        Number(self.0)
-    }
 }
 
 #[test]
@@ -83,14 +72,13 @@ fn test_derive_inspector_reflection() {
     // Get all methods that match the pattern fn(self) -> Self or fn(mut self) -> Self
     let methods = methods::<Number>();
 
-    assert_eq!(methods.len(), 6);
+    assert_eq!(methods.len(), 5);
     let method_names: Vec<_> = methods.iter().map(|m| m.name).collect();
     assert!(method_names.contains(&"double"));
     assert!(method_names.contains(&"triple"));
     assert!(method_names.contains(&"increment"));
     assert!(method_names.contains(&"quadruple"));
     assert!(method_names.contains(&"add_one"));
-    assert!(method_names.contains(&"cfg_included"));
 
     // Invoke methods by name
     let num = Number(5);
@@ -106,9 +94,7 @@ fn test_derive_inspector_reflection() {
         .invoke(num.clone());
     assert_eq!(incremented, Number(6));
 
-    let quadrupled = find_method::<Number>("quadruple")
-        .unwrap()
-        .invoke(num.clone());
+    let quadrupled = find_method::<Number>("quadruple").unwrap().invoke(num);
     assert_eq!(quadrupled, Number(20));
 
     // Try to invoke a non-existent method

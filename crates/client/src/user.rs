@@ -41,7 +41,7 @@ impl std::fmt::Display for ChannelId {
 pub struct ProjectId(pub u64);
 
 impl ProjectId {
-    pub fn to_proto(&self) -> u64 {
+    pub fn to_proto(self) -> u64 {
         self.0
     }
 }
@@ -177,7 +177,6 @@ impl UserStore {
         let (mut current_user_tx, current_user_rx) = watch::channel();
         let (update_contacts_tx, mut update_contacts_rx) = mpsc::unbounded();
         let rpc_subscriptions = vec![
-            client.add_message_handler(cx.weak_entity(), Self::handle_update_plan),
             client.add_message_handler(cx.weak_entity(), Self::handle_update_contacts),
             client.add_message_handler(cx.weak_entity(), Self::handle_update_invite_info),
             client.add_message_handler(cx.weak_entity(), Self::handle_show_contacts),
@@ -333,34 +332,14 @@ impl UserStore {
     async fn handle_update_contacts(
         this: Entity<Self>,
         message: TypedEnvelope<proto::UpdateContacts>,
-        mut cx: AsyncApp,
+        cx: AsyncApp,
     ) -> Result<()> {
-        this.read_with(&mut cx, |this, _| {
+        this.read_with(&cx, |this, _| {
             this.update_contacts_tx
                 .unbounded_send(UpdateContacts::Update(message.payload))
                 .unwrap();
         })?;
         Ok(())
-    }
-
-    async fn handle_update_plan(
-        this: Entity<Self>,
-        _message: TypedEnvelope<proto::UpdateUserPlan>,
-        mut cx: AsyncApp,
-    ) -> Result<()> {
-        let client = this
-            .read_with(&cx, |this, _| this.client.upgrade())?
-            .context("client was dropped")?;
-
-        let response = client
-            .cloud_client()
-            .get_authenticated_user()
-            .await
-            .context("failed to fetch authenticated user")?;
-
-        this.update(&mut cx, |this, cx| {
-            this.update_authenticated_user(response, cx);
-        })
     }
 
     fn update_contacts(&mut self, message: UpdateContacts, cx: &Context<Self>) -> Task<Result<()>> {
@@ -869,7 +848,7 @@ impl UserStore {
 
     pub fn has_accepted_terms_of_service(&self) -> bool {
         self.accepted_tos_at
-            .map_or(false, |accepted_tos_at| accepted_tos_at.is_some())
+            .is_some_and(|accepted_tos_at| accepted_tos_at.is_some())
     }
 
     pub fn accept_terms_of_service(&self, cx: &Context<Self>) -> Task<Result<()>> {
@@ -915,10 +894,10 @@ impl UserStore {
         let mut ret = Vec::with_capacity(users.len());
         for user in users {
             let user = User::new(user);
-            if let Some(old) = self.users.insert(user.id, user.clone()) {
-                if old.github_login != user.github_login {
-                    self.by_github_login.remove(&old.github_login);
-                }
+            if let Some(old) = self.users.insert(user.id, user.clone())
+                && old.github_login != user.github_login
+            {
+                self.by_github_login.remove(&old.github_login);
             }
             self.by_github_login
                 .insert(user.github_login.clone(), user.id);
@@ -1017,19 +996,6 @@ impl RequestUsage {
             UsageLimit::Limited(limit) => self.amount >= limit,
             UsageLimit::Unlimited => false,
         }
-    }
-
-    pub fn from_proto(amount: u32, limit: proto::UsageLimit) -> Option<Self> {
-        let limit = match limit.variant? {
-            proto::usage_limit::Variant::Limited(limited) => {
-                UsageLimit::Limited(limited.limit as i32)
-            }
-            proto::usage_limit::Variant::Unlimited(_) => UsageLimit::Unlimited,
-        };
-        Some(RequestUsage {
-            limit,
-            amount: amount as i32,
-        })
     }
 
     fn from_headers(

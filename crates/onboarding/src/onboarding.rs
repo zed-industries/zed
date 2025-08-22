@@ -1,8 +1,7 @@
-use crate::welcome::{ShowWelcome, WelcomePage};
+pub use crate::welcome::ShowWelcome;
+use crate::{multibuffer_hint::MultibufferHint, welcome::WelcomePage};
 use client::{Client, UserStore, zed_urls};
-use command_palette_hooks::CommandPaletteFilter;
 use db::kvp::KEY_VALUE_STORE;
-use feature_flags::{FeatureFlag, FeatureFlagViewExt as _};
 use fs::Fs;
 use gpui::{
     Action, AnyElement, App, AppContext, AsyncWindowContext, Context, Entity, EventEmitter,
@@ -27,16 +26,12 @@ use workspace::{
 };
 
 mod ai_setup_page;
+mod base_keymap_picker;
 mod basics_page;
 mod editing_page;
+pub mod multibuffer_hint;
 mod theme_preview;
 mod welcome;
-
-pub struct OnBoardingFeatureFlag {}
-
-impl FeatureFlag for OnBoardingFeatureFlag {
-    const NAME: &'static str = "onboarding";
-}
 
 /// Imports settings from Visual Studio Code.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Deserialize, JsonSchema, Action)]
@@ -57,6 +52,7 @@ pub struct ImportCursorSettings {
 }
 
 pub const FIRST_OPEN: &str = "first_open";
+pub const DOCS_URL: &str = "https://zed.dev/docs/";
 
 actions!(
     zed,
@@ -80,11 +76,19 @@ actions!(
         /// Sign in while in the onboarding flow.
         SignIn,
         /// Open the user account in zed.dev while in the onboarding flow.
-        OpenAccount
+        OpenAccount,
+        /// Resets the welcome screen hints to their initial state.
+        ResetHints
     ]
 );
 
 pub fn init(cx: &mut App) {
+    cx.observe_new(|workspace: &mut Workspace, _, _cx| {
+        workspace
+            .register_action(|_workspace, _: &ResetHints, _, cx| MultibufferHint::set_count(0, cx));
+    })
+    .detach();
+
     cx.on_action(|_: &OpenOnboarding, cx| {
         with_active_or_new_workspace(cx, |workspace, window, cx| {
             workspace
@@ -182,38 +186,14 @@ pub fn init(cx: &mut App) {
     })
     .detach();
 
-    cx.observe_new::<Workspace>(|_, window, cx| {
-        let Some(window) = window else {
-            return;
-        };
+    base_keymap_picker::init(cx);
 
-        let onboarding_actions = [
-            std::any::TypeId::of::<OpenOnboarding>(),
-            std::any::TypeId::of::<ShowWelcome>(),
-        ];
-
-        CommandPaletteFilter::update_global(cx, |filter, _cx| {
-            filter.hide_action_types(&onboarding_actions);
-        });
-
-        cx.observe_flag::<OnBoardingFeatureFlag, _>(window, move |is_enabled, _, _, cx| {
-            if is_enabled {
-                CommandPaletteFilter::update_global(cx, |filter, _cx| {
-                    filter.show_action_types(onboarding_actions.iter());
-                });
-            } else {
-                CommandPaletteFilter::update_global(cx, |filter, _cx| {
-                    filter.hide_action_types(&onboarding_actions);
-                });
-            }
-        })
-        .detach();
-    })
-    .detach();
     register_serializable_item::<Onboarding>(cx);
+    register_serializable_item::<WelcomePage>(cx);
 }
 
 pub fn show_onboarding_view(app_state: Arc<AppState>, cx: &mut App) -> Task<anyhow::Result<()>> {
+    telemetry::event!("Onboarding Page Opened");
     open_new(
         Default::default(),
         app_state,
@@ -242,6 +222,16 @@ enum SelectedPage {
     AiSetup,
 }
 
+impl SelectedPage {
+    fn name(&self) -> &'static str {
+        match self {
+            SelectedPage::Basics => "Basics",
+            SelectedPage::Editing => "Editing",
+            SelectedPage::AiSetup => "AI Setup",
+        }
+    }
+}
+
 struct Onboarding {
     workspace: WeakEntity<Workspace>,
     focus_handle: FocusHandle,
@@ -261,7 +251,21 @@ impl Onboarding {
         })
     }
 
-    fn set_page(&mut self, page: SelectedPage, cx: &mut Context<Self>) {
+    fn set_page(
+        &mut self,
+        page: SelectedPage,
+        clicked: Option<&'static str>,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(click) = clicked {
+            telemetry::event!(
+                "Welcome Tab Clicked",
+                from = self.selected_page.name(),
+                to = page.name(),
+                clicked = click,
+            );
+        }
+
         self.selected_page = page;
         cx.notify();
         cx.emit(ItemEvent::UpdateTab);
@@ -325,8 +329,13 @@ impl Onboarding {
                     gpui::Empty.into_any_element(),
                     IntoElement::into_any_element,
                 ))
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    this.set_page(page, cx);
+                .on_click(cx.listener(move |this, click_event, _, cx| {
+                    let click = match click_event {
+                        gpui::ClickEvent::Mouse(_) => "mouse",
+                        gpui::ClickEvent::Keyboard(_) => "keyboard",
+                    };
+
+                    this.set_page(page, Some(click), cx);
                 }))
         })
     }
@@ -475,6 +484,7 @@ impl Onboarding {
     }
 
     fn on_finish(_: &Finish, _: &mut Window, cx: &mut App) {
+        telemetry::event!("Welcome Skip Clicked");
         go_to_welcome_page(cx);
     }
 
@@ -484,7 +494,7 @@ impl Onboarding {
         window
             .spawn(cx, async move |cx| {
                 client
-                    .sign_in_with_optional_connect(true, &cx)
+                    .sign_in_with_optional_connect(true, cx)
                     .await
                     .notify_async_err(cx);
             })
@@ -532,13 +542,13 @@ impl Render for Onboarding {
             .on_action(Self::handle_sign_in)
             .on_action(Self::handle_open_account)
             .on_action(cx.listener(|this, _: &ActivateBasicsPage, _, cx| {
-                this.set_page(SelectedPage::Basics, cx);
+                this.set_page(SelectedPage::Basics, Some("action"), cx);
             }))
             .on_action(cx.listener(|this, _: &ActivateEditingPage, _, cx| {
-                this.set_page(SelectedPage::Editing, cx);
+                this.set_page(SelectedPage::Editing, Some("action"), cx);
             }))
             .on_action(cx.listener(|this, _: &ActivateAISetupPage, _, cx| {
-                this.set_page(SelectedPage::AiSetup, cx);
+                this.set_page(SelectedPage::AiSetup, Some("action"), cx);
             }))
             .on_action(cx.listener(|_, _: &menu::SelectNext, window, cx| {
                 window.focus_next();
@@ -551,6 +561,7 @@ impl Render for Onboarding {
             .child(
                 h_flex()
                     .max_w(rems_from_px(1100.))
+                    .max_h(rems_from_px(850.))
                     .size_full()
                     .m_auto()
                     .py_20()
@@ -560,12 +571,14 @@ impl Render for Onboarding {
                     .child(self.render_nav(window, cx))
                     .child(
                         v_flex()
+                            .id("page-content")
+                            .size_full()
                             .max_w_full()
                             .min_w_0()
                             .pl_12()
                             .border_l_1()
                             .border_color(cx.theme().colors().border_variant.opacity(0.5))
-                            .size_full()
+                            .overflow_y_scroll()
                             .child(self.render_page(window, cx)),
                     ),
             )
@@ -803,7 +816,7 @@ impl workspace::SerializableItem for Onboarding {
                     if let Some(page) = page {
                         zlog::info!("Onboarding page {page:?} loaded");
                         onboarding_page.update(cx, |onboarding_page, cx| {
-                            onboarding_page.set_page(page, cx);
+                            onboarding_page.set_page(page, None, cx);
                         })
                     }
                     onboarding_page

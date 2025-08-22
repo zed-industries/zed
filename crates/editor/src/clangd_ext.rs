@@ -13,7 +13,7 @@ use crate::{Editor, SwitchSourceHeader, element::register_action};
 use project::lsp_store::clangd_ext::CLANGD_SERVER_NAME;
 
 fn is_c_language(language: &Language) -> bool {
-    return language.name() == "C++".into() || language.name() == "C".into();
+    language.name() == "C++".into() || language.name() == "C".into()
 }
 
 pub fn switch_source_header(
@@ -104,6 +104,6 @@ pub fn apply_related_actions(editor: &Entity<Editor>, window: &mut Window, cx: &
         .filter_map(|buffer| buffer.read(cx).language())
         .any(|language| is_c_language(language))
     {
-        register_action(&editor, window, switch_source_header);
+        register_action(editor, window, switch_source_header);
     }
 }

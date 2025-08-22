@@ -3,6 +3,8 @@ use settings::Settings as _;
 use ui::{ButtonCommon, Clickable, Context, Render, Tooltip, Window, prelude::*};
 use workspace::{ItemHandle, StatusItemView};
 
+pub const SEARCH_ICON: IconName = IconName::MagnifyingGlass;
+
 pub struct SearchButton;
 
 impl SearchButton {
@@ -20,7 +22,7 @@ impl Render for SearchButton {
         }
 
         button.child(
-            IconButton::new("project-search-indicator", IconName::MagnifyingGlass)
+            IconButton::new("project-search-indicator", SEARCH_ICON)
                 .icon_size(IconSize::Small)
                 .tooltip(|window, cx| {
                     Tooltip::for_action(

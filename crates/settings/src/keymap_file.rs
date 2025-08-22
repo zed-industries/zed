@@ -358,11 +358,11 @@ impl KeymapFile {
                 let action_input = items[1].clone();
                 let action_input_string = action_input.to_string();
                 (
-                    cx.build_action(&name, Some(action_input)),
+                    cx.build_action(name, Some(action_input)),
                     Some(action_input_string),
                 )
             }
-            Value::String(name) => (cx.build_action(&name, None), None),
+            Value::String(name) => (cx.build_action(name, None), None),
             Value::Null => (Ok(NoAction.boxed_clone()), None),
             _ => {
                 return Err(format!(
@@ -543,27 +543,27 @@ impl KeymapFile {
             //
             // When a struct with no deserializable fields is added by deriving `Action`, an empty
             // object schema is produced. The action should be invoked without data in this case.
-            if let Some(schema) = action_schema {
-                if schema != empty_object {
-                    let mut matches_action_name = json_schema!({
-                        "const": name
-                    });
-                    if let Some(desc) = description.clone() {
-                        add_description(&mut matches_action_name, desc);
-                    }
-                    if let Some(message) = deprecation_messages.get(name) {
-                        add_deprecation(&mut matches_action_name, message.to_string());
-                    } else if let Some(new_name) = deprecation {
-                        add_deprecation_preferred_name(&mut matches_action_name, new_name);
-                    }
-                    let action_with_input = json_schema!({
-                        "type": "array",
-                        "items": [matches_action_name, schema],
-                        "minItems": 2,
-                        "maxItems": 2
-                    });
-                    keymap_action_alternatives.push(action_with_input);
+            if let Some(schema) = action_schema
+                && schema != empty_object
+            {
+                let mut matches_action_name = json_schema!({
+                    "const": name
+                });
+                if let Some(desc) = description.clone() {
+                    add_description(&mut matches_action_name, desc);
                 }
+                if let Some(message) = deprecation_messages.get(name) {
+                    add_deprecation(&mut matches_action_name, message.to_string());
+                } else if let Some(new_name) = deprecation {
+                    add_deprecation_preferred_name(&mut matches_action_name, new_name);
+                }
+                let action_with_input = json_schema!({
+                    "type": "array",
+                    "items": [matches_action_name, schema],
+                    "minItems": 2,
+                    "maxItems": 2
+                });
+                keymap_action_alternatives.push(action_with_input);
             }
         }
 
@@ -593,10 +593,10 @@ impl KeymapFile {
         match fs.load(paths::keymap_file()).await {
             result @ Ok(_) => result,
             Err(err) => {
-                if let Some(e) = err.downcast_ref::<std::io::Error>() {
-                    if e.kind() == std::io::ErrorKind::NotFound {
-                        return Ok(crate::initial_keymap_content().to_string());
-                    }
+                if let Some(e) = err.downcast_ref::<std::io::Error>()
+                    && e.kind() == std::io::ErrorKind::NotFound
+                {
+                    return Ok(crate::initial_keymap_content().to_string());
                 }
                 Err(err)
             }
@@ -653,7 +653,7 @@ impl KeymapFile {
             let is_only_binding = keymap.0[index]
                 .bindings
                 .as_ref()
-                .map_or(true, |bindings| bindings.len() == 1);
+                .is_none_or(|bindings| bindings.len() == 1);
             let key_path: &[&str] = if is_only_binding {
                 &[]
             } else {
@@ -703,7 +703,7 @@ impl KeymapFile {
                 } else if keymap.0[index]
                     .bindings
                     .as_ref()
-                    .map_or(true, |bindings| bindings.len() == 1)
+                    .is_none_or(|bindings| bindings.len() == 1)
                 {
                     // if we are replacing the only binding in the section,
                     // just update the section in place, updating the context
@@ -839,7 +839,7 @@ impl KeymapFile {
                     if &action.0 != target_action_value {
                         continue;
                     }
-                    return Some((index, &keystrokes_str));
+                    return Some((index, keystrokes_str));
                 }
             }
             None
@@ -928,14 +928,14 @@ impl<'a> KeybindUpdateTarget<'a> {
         }
         let action_name: Value = self.action_name.into();
         let value = match self.action_arguments {
-            Some(args) => {
+            Some(args) if !args.is_empty() => {
                 let args = serde_json::from_str::<Value>(args)
                     .context("Failed to parse action arguments as JSON")?;
                 serde_json::json!([action_name, args])
             }
-            None => action_name,
+            _ => action_name,
         };
-        return Ok(value);
+        Ok(value)
     }
 
     fn keystrokes_unparsed(&self) -> String {
@@ -1056,10 +1056,10 @@ mod tests {
 
     #[track_caller]
     fn parse_keystrokes(keystrokes: &str) -> Vec<Keystroke> {
-        return keystrokes
+        keystrokes
             .split(' ')
             .map(|s| Keystroke::parse(s).expect("Keystrokes valid"))
-            .collect();
+            .collect()
     }
 
     #[test]
@@ -1073,6 +1073,24 @@ mod tests {
                 action_name: "zed::SomeAction",
                 context: None,
                 action_arguments: None,
+            }),
+            r#"[
+                {
+                    "bindings": {
+                        "ctrl-a": "zed::SomeAction"
+                    }
+                }
+            ]"#
+            .unindent(),
+        );
+
+        check_keymap_update(
+            "[]",
+            KeybindUpdateOperation::add(KeybindUpdateTarget {
+                keystrokes: &parse_keystrokes("ctrl-a"),
+                action_name: "zed::SomeAction",
+                context: None,
+                action_arguments: Some(""),
             }),
             r#"[
                 {

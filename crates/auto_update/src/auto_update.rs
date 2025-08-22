@@ -59,16 +59,9 @@ pub enum VersionCheckType {
 pub enum AutoUpdateStatus {
     Idle,
     Checking,
-    Downloading {
-        version: VersionCheckType,
-    },
-    Installing {
-        version: VersionCheckType,
-    },
-    Updated {
-        binary_path: PathBuf,
-        version: VersionCheckType,
-    },
+    Downloading { version: VersionCheckType },
+    Installing { version: VersionCheckType },
+    Updated { version: VersionCheckType },
     Errored,
 }
 
@@ -83,6 +76,7 @@ pub struct AutoUpdater {
     current_version: SemanticVersion,
     http_client: Arc<HttpClientWithUrl>,
     pending_poll: Option<Task<Option<()>>>,
+    quit_subscription: Option<gpui::Subscription>,
 }
 
 #[derive(Deserialize, Clone, Debug)]
@@ -164,7 +158,7 @@ pub fn init(http_client: Arc<HttpClientWithUrl>, cx: &mut App) {
     AutoUpdateSetting::register(cx);
 
     cx.observe_new(|workspace: &mut Workspace, _window, _cx| {
-        workspace.register_action(|_, action: &Check, window, cx| check(action, window, cx));
+        workspace.register_action(|_, action, window, cx| check(action, window, cx));
 
         workspace.register_action(|_, action, _, cx| {
             view_release_notes(action, cx);
@@ -174,7 +168,7 @@ pub fn init(http_client: Arc<HttpClientWithUrl>, cx: &mut App) {
 
     let version = release_channel::AppVersion::global(cx);
     let auto_updater = cx.new(|cx| {
-        let updater = AutoUpdater::new(version, http_client);
+        let updater = AutoUpdater::new(version, http_client, cx);
 
         let poll_for_updates = ReleaseChannel::try_global(cx)
             .map(|channel| channel.poll_for_updates())
@@ -321,12 +315,34 @@ impl AutoUpdater {
         cx.default_global::<GlobalAutoUpdate>().0.clone()
     }
 
-    fn new(current_version: SemanticVersion, http_client: Arc<HttpClientWithUrl>) -> Self {
+    fn new(
+        current_version: SemanticVersion,
+        http_client: Arc<HttpClientWithUrl>,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        // On windows, executable files cannot be overwritten while they are
+        // running, so we must wait to overwrite the application until quitting
+        // or restarting. When quitting the app, we spawn the auto update helper
+        // to finish the auto update process after Zed exits. When restarting
+        // the app after an update, we use `set_restart_path` to run the auto
+        // update helper instead of the app, so that it can overwrite the app
+        // and then spawn the new binary.
+        let quit_subscription = Some(cx.on_app_quit(|_, _| async move {
+            #[cfg(target_os = "windows")]
+            finalize_auto_update_on_quit();
+        }));
+
+        cx.on_app_restart(|this, _| {
+            this.quit_subscription.take();
+        })
+        .detach();
+
         Self {
             status: AutoUpdateStatus::Idle,
             current_version,
             http_client,
             pending_poll: None,
+            quit_subscription,
         }
     }
 
@@ -527,7 +543,7 @@ impl AutoUpdater {
 
     async fn update(this: Entity<Self>, mut cx: AsyncApp) -> Result<()> {
         let (client, installed_version, previous_status, release_channel) =
-            this.read_with(&mut cx, |this, cx| {
+            this.read_with(&cx, |this, cx| {
                 (
                     this.http_client.clone(),
                     this.current_version,
@@ -535,6 +551,8 @@ impl AutoUpdater {
                     ReleaseChannel::try_global(cx),
                 )
             })?;
+
+        Self::check_dependencies()?;
 
         this.update(&mut cx, |this, cx| {
             this.status = AutoUpdateStatus::Checking;
@@ -582,13 +600,15 @@ impl AutoUpdater {
             cx.notify();
         })?;
 
-        let binary_path = Self::binary_path(installer_dir, target_path, &cx).await?;
+        let new_binary_path = Self::install_release(installer_dir, target_path, &cx).await?;
+        if let Some(new_binary_path) = new_binary_path {
+            cx.update(|cx| cx.set_restart_path(new_binary_path))?;
+        }
 
         this.update(&mut cx, |this, cx| {
             this.set_should_show_update_notification(true, cx)
                 .detach_and_log_err(cx);
             this.status = AutoUpdateStatus::Updated {
-                binary_path,
                 version: newer_version,
             };
             cx.notify();
@@ -639,6 +659,15 @@ impl AutoUpdater {
         }
     }
 
+    fn check_dependencies() -> Result<()> {
+        #[cfg(not(target_os = "windows"))]
+        anyhow::ensure!(
+            which::which("rsync").is_ok(),
+            "Aborting. Could not find rsync which is required for auto-updates."
+        );
+        Ok(())
+    }
+
     async fn target_path(installer_dir: &InstallerDir) -> Result<PathBuf> {
         let filename = match OS {
             "macos" => anyhow::Ok("Zed.dmg"),
@@ -647,20 +676,14 @@ impl AutoUpdater {
             unsupported_os => anyhow::bail!("not supported: {unsupported_os}"),
         }?;
 
-        #[cfg(not(target_os = "windows"))]
-        anyhow::ensure!(
-            which::which("rsync").is_ok(),
-            "Aborting. Could not find rsync which is required for auto-updates."
-        );
-
         Ok(installer_dir.path().join(filename))
     }
 
-    async fn binary_path(
+    async fn install_release(
         installer_dir: InstallerDir,
         target_path: PathBuf,
         cx: &AsyncApp,
-    ) -> Result<PathBuf> {
+    ) -> Result<Option<PathBuf>> {
         match OS {
             "macos" => install_release_macos(&installer_dir, target_path, cx).await,
             "linux" => install_release_linux(&installer_dir, target_path, cx).await,
@@ -801,7 +824,7 @@ async fn install_release_linux(
     temp_dir: &InstallerDir,
     downloaded_tar_gz: PathBuf,
     cx: &AsyncApp,
-) -> Result<PathBuf> {
+) -> Result<Option<PathBuf>> {
     let channel = cx.update(|cx| ReleaseChannel::global(cx).dev_name())?;
     let home_dir = PathBuf::from(env::var("HOME").context("no HOME env var set")?);
     let running_app_path = cx.update(|cx| cx.app_path())??;
@@ -861,14 +884,14 @@ async fn install_release_linux(
         String::from_utf8_lossy(&output.stderr)
     );
 
-    Ok(to.join(expected_suffix))
+    Ok(Some(to.join(expected_suffix)))
 }
 
 async fn install_release_macos(
     temp_dir: &InstallerDir,
     downloaded_dmg: PathBuf,
     cx: &AsyncApp,
-) -> Result<PathBuf> {
+) -> Result<Option<PathBuf>> {
     let running_app_path = cx.update(|cx| cx.app_path())??;
     let running_app_filename = running_app_path
         .file_name()
@@ -910,10 +933,10 @@ async fn install_release_macos(
         String::from_utf8_lossy(&output.stderr)
     );
 
-    Ok(running_app_path)
+    Ok(None)
 }
 
-async fn install_release_windows(downloaded_installer: PathBuf) -> Result<PathBuf> {
+async fn install_release_windows(downloaded_installer: PathBuf) -> Result<Option<PathBuf>> {
     let output = Command::new(downloaded_installer)
         .arg("/verysilent")
         .arg("/update=true")
@@ -926,29 +949,36 @@ async fn install_release_windows(downloaded_installer: PathBuf) -> Result<PathBu
         "failed to start installer: {:?}",
         String::from_utf8_lossy(&output.stderr)
     );
-    Ok(std::env::current_exe()?)
+    // We return the path to the update helper program, because it will
+    // perform the final steps of the update process, copying the new binary,
+    // deleting the old one, and launching the new binary.
+    let helper_path = std::env::current_exe()?
+        .parent()
+        .context("No parent dir for Zed.exe")?
+        .join("tools\\auto_update_helper.exe");
+    Ok(Some(helper_path))
 }
 
-pub fn check_pending_installation() -> bool {
+pub fn finalize_auto_update_on_quit() {
     let Some(installer_path) = std::env::current_exe()
         .ok()
         .and_then(|p| p.parent().map(|p| p.join("updates")))
     else {
-        return false;
+        return;
     };
 
     // The installer will create a flag file after it finishes updating
     let flag_file = installer_path.join("versions.txt");
-    if flag_file.exists() {
-        if let Some(helper) = installer_path
+    if flag_file.exists()
+        && let Some(helper) = installer_path
             .parent()
             .map(|p| p.join("tools\\auto_update_helper.exe"))
-        {
-            let _ = std::process::Command::new(helper).spawn();
-            return true;
-        }
+    {
+        let mut command = std::process::Command::new(helper);
+        command.arg("--launch");
+        command.arg("false");
+        let _ = command.spawn();
     }
-    false
 }
 
 #[cfg(test)]
@@ -1002,7 +1032,6 @@ mod tests {
         let app_commit_sha = Ok(Some("a".to_string()));
         let installed_version = SemanticVersion::new(1, 0, 0);
         let status = AutoUpdateStatus::Updated {
-            binary_path: PathBuf::new(),
             version: VersionCheckType::Semantic(SemanticVersion::new(1, 0, 1)),
         };
         let fetched_version = SemanticVersion::new(1, 0, 1);
@@ -1024,7 +1053,6 @@ mod tests {
         let app_commit_sha = Ok(Some("a".to_string()));
         let installed_version = SemanticVersion::new(1, 0, 0);
         let status = AutoUpdateStatus::Updated {
-            binary_path: PathBuf::new(),
             version: VersionCheckType::Semantic(SemanticVersion::new(1, 0, 1)),
         };
         let fetched_version = SemanticVersion::new(1, 0, 2);
@@ -1090,7 +1118,6 @@ mod tests {
         let app_commit_sha = Ok(Some("a".to_string()));
         let installed_version = SemanticVersion::new(1, 0, 0);
         let status = AutoUpdateStatus::Updated {
-            binary_path: PathBuf::new(),
             version: VersionCheckType::Sha(AppCommitSha::new("b".to_string())),
         };
         let fetched_sha = "b".to_string();
@@ -1112,7 +1139,6 @@ mod tests {
         let app_commit_sha = Ok(Some("a".to_string()));
         let installed_version = SemanticVersion::new(1, 0, 0);
         let status = AutoUpdateStatus::Updated {
-            binary_path: PathBuf::new(),
             version: VersionCheckType::Sha(AppCommitSha::new("b".to_string())),
         };
         let fetched_sha = "c".to_string();
@@ -1160,7 +1186,6 @@ mod tests {
         let app_commit_sha = Ok(None);
         let installed_version = SemanticVersion::new(1, 0, 0);
         let status = AutoUpdateStatus::Updated {
-            binary_path: PathBuf::new(),
             version: VersionCheckType::Sha(AppCommitSha::new("b".to_string())),
         };
         let fetched_sha = "b".to_string();
@@ -1183,7 +1208,6 @@ mod tests {
         let app_commit_sha = Ok(None);
         let installed_version = SemanticVersion::new(1, 0, 0);
         let status = AutoUpdateStatus::Updated {
-            binary_path: PathBuf::new(),
             version: VersionCheckType::Sha(AppCommitSha::new("b".to_string())),
         };
         let fetched_sha = "c".to_string();

@@ -48,7 +48,6 @@ There are several third-party Zed packages for various Linux distributions and p
 - Manjaro: [`zed`](https://packages.manjaro.org/?query=zed)
 - ALT Linux (Sisyphus): [`zed`](https://packages.altlinux.org/en/sisyphus/srpms/zed/)
 - AOSC OS: [`zed`](https://packages.aosc.io/packages/zed)
-- openSUSE Tumbleweed: [`zed`](https://en.opensuse.org/Zed)
 
 See [Repology](https://repology.org/project/zed-editor/versions) for a list of Zed packages in various repositories.
 

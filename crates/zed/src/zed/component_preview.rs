@@ -33,8 +33,6 @@ use workspace::{
 pub fn init(app_state: Arc<AppState>, cx: &mut App) {
     workspace::register_serializable_item::<ComponentPreview>(cx);
 
-    let app_state = app_state.clone();
-
     cx.observe_new(move |workspace: &mut Workspace, _window, cx| {
         let app_state = app_state.clone();
         let project = workspace.project().clone();
@@ -318,25 +316,25 @@ impl ComponentPreview {
             let lowercase_scope = scope_name.to_lowercase();
             let lowercase_desc = description.to_lowercase();
 
-            if lowercase_scopeless.contains(&lowercase_filter) {
-                if let Some(index) = lowercase_scopeless.find(&lowercase_filter) {
-                    let end = index + lowercase_filter.len();
+            if lowercase_scopeless.contains(&lowercase_filter)
+                && let Some(index) = lowercase_scopeless.find(&lowercase_filter)
+            {
+                let end = index + lowercase_filter.len();
 
-                    if end <= scopeless_name.len() {
-                        let mut positions = Vec::new();
-                        for i in index..end {
-                            if scopeless_name.is_char_boundary(i) {
-                                positions.push(i);
-                            }
+                if end <= scopeless_name.len() {
+                    let mut positions = Vec::new();
+                    for i in index..end {
+                        if scopeless_name.is_char_boundary(i) {
+                            positions.push(i);
                         }
+                    }
 
-                        if !positions.is_empty() {
-                            scope_groups
-                                .entry(component.scope())
-                                .or_insert_with(Vec::new)
-                                .push((component.clone(), Some(positions)));
-                            continue;
-                        }
+                    if !positions.is_empty() {
+                        scope_groups
+                            .entry(component.scope())
+                            .or_insert_with(Vec::new)
+                            .push((component.clone(), Some(positions)));
+                        continue;
                     }
                 }
             }
@@ -372,32 +370,32 @@ impl ComponentPreview {
         scopes.sort_by_key(|s| s.to_string());
 
         for scope in scopes {
-            if let Some(components) = scope_groups.remove(&scope) {
-                if !components.is_empty() {
-                    entries.push(PreviewEntry::Separator);
-                    entries.push(PreviewEntry::SectionHeader(scope.to_string().into()));
+            if let Some(components) = scope_groups.remove(&scope)
+                && !components.is_empty()
+            {
+                entries.push(PreviewEntry::Separator);
+                entries.push(PreviewEntry::SectionHeader(scope.to_string().into()));
 
-                    let mut sorted_components = components;
-                    sorted_components.sort_by_key(|(component, _)| component.sort_name());
+                let mut sorted_components = components;
+                sorted_components.sort_by_key(|(component, _)| component.sort_name());
 
-                    for (component, positions) in sorted_components {
-                        entries.push(PreviewEntry::Component(component, positions));
-                    }
+                for (component, positions) in sorted_components {
+                    entries.push(PreviewEntry::Component(component, positions));
                 }
             }
         }
 
         // Add uncategorized components last
-        if let Some(components) = scope_groups.get(&ComponentScope::None) {
-            if !components.is_empty() {
-                entries.push(PreviewEntry::Separator);
-                entries.push(PreviewEntry::SectionHeader("Uncategorized".into()));
-                let mut sorted_components = components.clone();
-                sorted_components.sort_by_key(|(c, _)| c.sort_name());
+        if let Some(components) = scope_groups.get(&ComponentScope::None)
+            && !components.is_empty()
+        {
+            entries.push(PreviewEntry::Separator);
+            entries.push(PreviewEntry::SectionHeader("Uncategorized".into()));
+            let mut sorted_components = components.clone();
+            sorted_components.sort_by_key(|(c, _)| c.sort_name());
 
-                for (component, positions) in sorted_components {
-                    entries.push(PreviewEntry::Component(component, positions));
-                }
+            for (component, positions) in sorted_components {
+                entries.push(PreviewEntry::Component(component, positions));
             }
         }
 
@@ -415,19 +413,20 @@ impl ComponentPreview {
 
         let filtered_components = self.filtered_components();
 
-        if !self.filter_text.is_empty() && !matches!(self.active_page, PreviewPage::AllComponents) {
-            if let PreviewPage::Component(ref component_id) = self.active_page {
-                let component_still_visible = filtered_components
-                    .iter()
-                    .any(|component| component.id() == *component_id);
+        if !self.filter_text.is_empty()
+            && !matches!(self.active_page, PreviewPage::AllComponents)
+            && let PreviewPage::Component(ref component_id) = self.active_page
+        {
+            let component_still_visible = filtered_components
+                .iter()
+                .any(|component| component.id() == *component_id);
 
-                if !component_still_visible {
-                    if !filtered_components.is_empty() {
-                        let first_component = &filtered_components[0];
-                        self.set_active_page(PreviewPage::Component(first_component.id()), cx);
-                    } else {
-                        self.set_active_page(PreviewPage::AllComponents, cx);
-                    }
+            if !component_still_visible {
+                if !filtered_components.is_empty() {
+                    let first_component = &filtered_components[0];
+                    self.set_active_page(PreviewPage::Component(first_component.id()), cx);
+                } else {
+                    self.set_active_page(PreviewPage::AllComponents, cx);
                 }
             }
         }
@@ -461,12 +460,12 @@ impl ComponentPreview {
                             Vec::new()
                         };
                         if valid_positions.is_empty() {
-                            Label::new(name.clone()).into_any_element()
+                            Label::new(name).into_any_element()
                         } else {
-                            HighlightedLabel::new(name.clone(), valid_positions).into_any_element()
+                            HighlightedLabel::new(name, valid_positions).into_any_element()
                         }
                     } else {
-                        Label::new(name.clone()).into_any_element()
+                        Label::new(name).into_any_element()
                     })
                     .selectable(true)
                     .toggle_state(selected)
@@ -650,7 +649,7 @@ impl ComponentPreview {
         _window: &mut Window,
         _cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let component = self.component_map.get(&component_id);
+        let component = self.component_map.get(component_id);
 
         if let Some(component) = component {
             v_flex()
@@ -684,7 +683,7 @@ impl ComponentPreview {
                     .h_full()
                     .py_8()
                     .bg(cx.theme().colors().panel_background)
-                    .children(self.active_thread.clone().map(|thread| thread.clone()))
+                    .children(self.active_thread.clone())
                     .when_none(&self.active_thread.clone(), |this| {
                         this.child("No active thread")
                     }),
@@ -715,7 +714,7 @@ impl Render for ComponentPreview {
             if input.is_empty(cx) {
                 String::new()
             } else {
-                input.editor().read(cx).text(cx).to_string()
+                input.editor().read(cx).text(cx)
             }
         });
 
@@ -761,7 +760,7 @@ impl Render for ComponentPreview {
                         )
                         .track_scroll(self.nav_scroll_handle.clone())
                         .p_2p5()
-                        .w(px(229.))
+                        .w(px(231.)) // Matches perfectly with the size of the "Component Preview" tab, if that's the first one in the pane
                         .h_full()
                         .flex_1(),
                     )
@@ -928,7 +927,7 @@ impl SerializableItem for ComponentPreview {
                 Err(_) => ActivePageId::default(),
             };
 
-        let user_store = project.read(cx).user_store().clone();
+        let user_store = project.read(cx).user_store();
         let language_registry = project.read(cx).languages().clone();
         let preview_page = if deserialized_active_page.0 == ActivePageId::default().0 {
             Some(PreviewPage::default())
@@ -939,7 +938,7 @@ impl SerializableItem for ComponentPreview {
             let found_component = all_components.iter().find(|c| c.id().0 == component_str);
 
             if let Some(component) = found_component {
-                Some(PreviewPage::Component(component.id().clone()))
+                Some(PreviewPage::Component(component.id()))
             } else {
                 Some(PreviewPage::default())
             }
@@ -1056,7 +1055,7 @@ impl ComponentPreviewPage {
                             .rounded_sm()
                             .bg(color.color(cx).alpha(0.12))
                             .child(
-                                Label::new(status.clone().to_string())
+                                Label::new(status.to_string())
                                     .size(LabelSize::Small)
                                     .color(color),
                             ),

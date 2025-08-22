@@ -400,6 +400,7 @@ pub struct ButtonLike {
     size: ButtonSize,
     rounding: Option<ButtonLikeRounding>,
     tooltip: Option<Box<dyn Fn(&mut Window, &mut App) -> AnyView>>,
+    hoverable_tooltip: Option<Box<dyn Fn(&mut Window, &mut App) -> AnyView>>,
     cursor_style: CursorStyle,
     on_click: Option<Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
     on_right_click: Option<Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
@@ -420,6 +421,7 @@ impl ButtonLike {
             size: ButtonSize::Default,
             rounding: Some(ButtonLikeRounding::All),
             tooltip: None,
+            hoverable_tooltip: None,
             children: SmallVec::new(),
             cursor_style: CursorStyle::PointingHand,
             on_click: None,
@@ -463,6 +465,14 @@ impl ButtonLike {
         self.on_right_click = Some(Box::new(handler));
         self
     }
+
+    pub fn hoverable_tooltip(
+        mut self,
+        tooltip: impl Fn(&mut Window, &mut App) -> AnyView + 'static,
+    ) -> Self {
+        self.hoverable_tooltip = Some(Box::new(tooltip));
+        self
+    }
 }
 
 impl Disableable for ButtonLike {
@@ -499,8 +509,8 @@ impl Clickable for ButtonLike {
 }
 
 impl FixedWidth for ButtonLike {
-    fn width(mut self, width: DefiniteLength) -> Self {
-        self.width = Some(width);
+    fn width(mut self, width: impl Into<DefiniteLength>) -> Self {
+        self.width = Some(width.into());
         self
     }
 
@@ -572,13 +582,9 @@ impl RenderOnce for ButtonLike {
             .when_some(self.width, |this, width| {
                 this.w(width).justify_center().text_center()
             })
-            .when(
-                match self.style {
-                    ButtonStyle::Outlined => true,
-                    _ => false,
-                },
-                |this| this.border_1(),
-            )
+            .when(matches!(self.style, ButtonStyle::Outlined), |this| {
+                this.border_1()
+            })
             .when_some(self.rounding, |this, rounding| match rounding {
                 ButtonLikeRounding::All => this.rounded_sm(),
                 ButtonLikeRounding::Left => this.rounded_l_sm(),
@@ -653,6 +659,9 @@ impl RenderOnce for ButtonLike {
             )
             .when_some(self.tooltip, |this, tooltip| {
                 this.tooltip(move |window, cx| tooltip(window, cx))
+            })
+            .when_some(self.hoverable_tooltip, |this, tooltip| {
+                this.hoverable_tooltip(move |window, cx| tooltip(window, cx))
             })
             .children(self.children)
     }

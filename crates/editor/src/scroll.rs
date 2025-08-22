@@ -675,7 +675,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if matches!(self.mode, EditorMode::SingleLine { .. }) {
+        if matches!(self.mode, EditorMode::SingleLine) {
             cx.propagate();
             return;
         }
@@ -703,20 +703,20 @@ impl Editor {
         if matches!(
             settings.defaults.soft_wrap,
             SoftWrap::PreferredLineLength | SoftWrap::Bounded
-        ) {
-            if (settings.defaults.preferred_line_length as f32) < visible_column_count {
-                visible_column_count = settings.defaults.preferred_line_length as f32;
-            }
+        ) && (settings.defaults.preferred_line_length as f32) < visible_column_count
+        {
+            visible_column_count = settings.defaults.preferred_line_length as f32;
         }
 
         // If the scroll position is currently at the left edge of the document
         // (x == 0.0) and the intent is to scroll right, the gutter's margin
         // should first be added to the current position, otherwise the cursor
         // will end at the column position minus the margin, which looks off.
-        if current_position.x == 0.0 && amount.columns(visible_column_count) > 0. {
-            if let Some(last_position_map) = &self.last_position_map {
-                current_position.x += self.gutter_dimensions.margin / last_position_map.em_advance;
-            }
+        if current_position.x == 0.0
+            && amount.columns(visible_column_count) > 0.
+            && let Some(last_position_map) = &self.last_position_map
+        {
+            current_position.x += self.gutter_dimensions.margin / last_position_map.em_advance;
         }
         let new_position = current_position
             + point(
@@ -749,12 +749,10 @@ impl Editor {
 
         if let (Some(visible_lines), Some(visible_columns)) =
             (self.visible_line_count(), self.visible_column_count())
+            && newest_head.row() <= DisplayRow(screen_top.row().0 + visible_lines as u32)
+            && newest_head.column() <= screen_top.column() + visible_columns as u32
         {
-            if newest_head.row() <= DisplayRow(screen_top.row().0 + visible_lines as u32)
-                && newest_head.column() <= screen_top.column() + visible_columns as u32
-            {
-                return Ordering::Equal;
-            }
+            return Ordering::Equal;
         }
 
         Ordering::Greater

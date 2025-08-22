@@ -586,7 +586,7 @@ impl ChannelModalDelegate {
             return;
         };
         let user_id = membership.user.id;
-        let picker = cx.entity().clone();
+        let picker = cx.entity();
         let context_menu = ContextMenu::build(window, cx, |mut menu, _window, _cx| {
             let role = membership.role;
 

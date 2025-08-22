@@ -28,7 +28,9 @@
     "edit_prediction_provider": "zed"
   },
   // The name of a font to use for rendering text in the editor
-  "buffer_font_family": "Zed Plex Mono",
+  // ".ZedMono" currently aliases to Lilex
+  // but this may change in the future.
+  "buffer_font_family": ".ZedMono",
   // Set the buffer text's font fallbacks, this will be merged with
   // the platform's default fallbacks.
   "buffer_font_fallbacks": null,
@@ -54,7 +56,9 @@
   "buffer_line_height": "comfortable",
   // The name of a font to use for rendering text in the UI
   // You can set this to ".SystemUIFont" to use the system font
-  "ui_font_family": "Zed Plex Sans",
+  // ".ZedSans" currently aliases to "IBM Plex Sans", but this may
+  // change in the future
+  "ui_font_family": ".ZedSans",
   // Set the UI's font fallbacks, this will be merged with the platform's
   // default font fallbacks.
   "ui_font_fallbacks": null,
@@ -67,8 +71,8 @@
   "ui_font_weight": 400,
   // The default font size for text in the UI
   "ui_font_size": 16,
-  // The default font size for text in the agent panel
-  "agent_font_size": 16,
+  // The default font size for text in the agent panel. Falls back to the UI font size if unset.
+  "agent_font_size": null,
   // How much to fade out unused code.
   "unnecessary_code_fade": 0.3,
   // Active pane styling settings.
@@ -82,10 +86,10 @@
   // Layout mode of the bottom dock. Defaults to "contained"
   //   choices: contained, full, left_aligned, right_aligned
   "bottom_dock_layout": "contained",
-  // The direction that you want to split panes horizontally. Defaults to "up"
-  "pane_split_direction_horizontal": "up",
-  // The direction that you want to split panes vertically. Defaults to "left"
-  "pane_split_direction_vertical": "left",
+  // The direction that you want to split panes horizontally. Defaults to "down"
+  "pane_split_direction_horizontal": "down",
+  // The direction that you want to split panes vertically. Defaults to "right"
+  "pane_split_direction_vertical": "right",
   // Centered layout related settings.
   "centered_layout": {
     // The relative width of the left padding of the central pane from the
@@ -282,6 +286,8 @@
   // bracket, brace, single or double quote characters.
   // For example, when you select text and type (, Zed will surround the text with ().
   "use_auto_surround": true,
+  /// Whether indentation should be adjusted based on the context whilst typing.
+  "auto_indent": true,
   // Whether indentation of pasted content should be adjusted based on the context.
   "auto_indent_on_paste": true,
   // Controls how the editor handles the autoclosed characters.
@@ -711,7 +717,7 @@
     // Can be 'never', 'always', or 'when_in_call',
     // or a boolean (interpreted as 'never'/'always').
     "button": "when_in_call",
-    // Where to the chat panel. Can be 'left' or 'right'.
+    // Where to dock the chat panel. Can be 'left' or 'right'.
     "dock": "right",
     // Default width of the chat panel.
     "default_width": 240
@@ -719,7 +725,7 @@
   "git_panel": {
     // Whether to show the git panel button in the status bar.
     "button": true,
-    // Where to show the git panel. Can be 'left' or 'right'.
+    // Where to dock the git panel. Can be 'left' or 'right'.
     "dock": "left",
     // Default width of the git panel.
     "default_width": 360,
@@ -883,11 +889,6 @@
   },
   // The settings for slash commands.
   "slash_commands": {
-    // Settings for the `/docs` slash command.
-    "docs": {
-      // Whether `/docs` is enabled.
-      "enabled": false
-    },
     // Settings for the `/project` slash command.
     "project": {
       // Whether `/project` is enabled.
@@ -1252,7 +1253,9 @@
   // Status bar-related settings.
   "status_bar": {
     // Whether to show the active language button in the status bar.
-    "active_language_button": true
+    "active_language_button": true,
+    // Whether to show the cursor position button in the status bar.
+    "cursor_position_button": true
   },
   // Settings specific to the terminal
   "terminal": {
@@ -1402,7 +1405,7 @@
     // "font_size": 15,
     // Set the terminal's font family. If this option is not included,
     // the terminal will default to matching the buffer's font family.
-    // "font_family": "Zed Plex Mono",
+    // "font_family": ".ZedMono",
     // Set the terminal's font fallbacks. If this option is not included,
     // the terminal will default to matching the buffer's font fallbacks.
     // This will be merged with the platform's default font fallbacks

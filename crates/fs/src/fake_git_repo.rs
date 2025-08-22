@@ -1,8 +1,9 @@
-use crate::{FakeFs, Fs};
+use crate::{FakeFs, FakeFsEntry, Fs};
 use anyhow::{Context as _, Result};
 use collections::{HashMap, HashSet};
 use futures::future::{self, BoxFuture, join_all};
 use git::{
+    Oid,
     blame::Blame,
     repository::{
         AskPassDelegate, Branch, CommitDetails, CommitOptions, FetchOptions, GitRepository,
@@ -10,8 +11,9 @@ use git::{
     },
     status::{FileStatus, GitStatus, StatusCode, TrackedStatus, UnmergedStatus},
 };
-use gpui::{AsyncApp, BackgroundExecutor, SharedString};
+use gpui::{AsyncApp, BackgroundExecutor, SharedString, Task};
 use ignore::gitignore::GitignoreBuilder;
+use parking_lot::Mutex;
 use rope::Rope;
 use smol::future::FutureExt as _;
 use std::{path::PathBuf, sync::Arc};
@@ -19,6 +21,7 @@ use std::{path::PathBuf, sync::Arc};
 #[derive(Clone)]
 pub struct FakeGitRepository {
     pub(crate) fs: Arc<FakeFs>,
+    pub(crate) checkpoints: Arc<Mutex<HashMap<Oid, FakeFsEntry>>>,
     pub(crate) executor: BackgroundExecutor,
     pub(crate) dot_git_path: PathBuf,
     pub(crate) repository_dir_path: PathBuf,
@@ -183,7 +186,7 @@ impl GitRepository for FakeGitRepository {
         async move { None }.boxed()
     }
 
-    fn status(&self, path_prefixes: &[RepoPath]) -> BoxFuture<'_, Result<GitStatus>> {
+    fn status(&self, path_prefixes: &[RepoPath]) -> Task<Result<GitStatus>> {
         let workdir_path = self.dot_git_path.parent().unwrap();
 
         // Load gitignores
@@ -311,7 +314,10 @@ impl GitRepository for FakeGitRepository {
                 entries: entries.into(),
             })
         });
-        async move { result? }.boxed()
+        Task::ready(match result {
+            Ok(result) => result,
+            Err(e) => Err(e),
+        })
     }
 
     fn branches(&self) -> BoxFuture<'_, Result<Vec<Branch>>> {
@@ -339,7 +345,7 @@ impl GitRepository for FakeGitRepository {
 
     fn create_branch(&self, name: String) -> BoxFuture<'_, Result<()>> {
         self.with_state_async(true, move |state| {
-            state.branches.insert(name.to_owned());
+            state.branches.insert(name);
             Ok(())
         })
     }
@@ -466,22 +472,57 @@ impl GitRepository for FakeGitRepository {
     }
 
     fn checkpoint(&self) -> BoxFuture<'static, Result<GitRepositoryCheckpoint>> {
-        unimplemented!()
+        let executor = self.executor.clone();
+        let fs = self.fs.clone();
+        let checkpoints = self.checkpoints.clone();
+        let repository_dir_path = self.repository_dir_path.parent().unwrap().to_path_buf();
+        async move {
+            executor.simulate_random_delay().await;
+            let oid = Oid::random(&mut executor.rng());
+            let entry = fs.entry(&repository_dir_path)?;
+            checkpoints.lock().insert(oid, entry);
+            Ok(GitRepositoryCheckpoint { commit_sha: oid })
+        }
+        .boxed()
     }
 
-    fn restore_checkpoint(
-        &self,
-        _checkpoint: GitRepositoryCheckpoint,
-    ) -> BoxFuture<'_, Result<()>> {
-        unimplemented!()
+    fn restore_checkpoint(&self, checkpoint: GitRepositoryCheckpoint) -> BoxFuture<'_, Result<()>> {
+        let executor = self.executor.clone();
+        let fs = self.fs.clone();
+        let checkpoints = self.checkpoints.clone();
+        let repository_dir_path = self.repository_dir_path.parent().unwrap().to_path_buf();
+        async move {
+            executor.simulate_random_delay().await;
+            let checkpoints = checkpoints.lock();
+            let entry = checkpoints
+                .get(&checkpoint.commit_sha)
+                .context(format!("invalid checkpoint: {}", checkpoint.commit_sha))?;
+            fs.insert_entry(&repository_dir_path, entry.clone())?;
+            Ok(())
+        }
+        .boxed()
     }
 
     fn compare_checkpoints(
         &self,
-        _left: GitRepositoryCheckpoint,
-        _right: GitRepositoryCheckpoint,
+        left: GitRepositoryCheckpoint,
+        right: GitRepositoryCheckpoint,
     ) -> BoxFuture<'_, Result<bool>> {
-        unimplemented!()
+        let executor = self.executor.clone();
+        let checkpoints = self.checkpoints.clone();
+        async move {
+            executor.simulate_random_delay().await;
+            let checkpoints = checkpoints.lock();
+            let left = checkpoints
+                .get(&left.commit_sha)
+                .context(format!("invalid left checkpoint: {}", left.commit_sha))?;
+            let right = checkpoints
+                .get(&right.commit_sha)
+                .context(format!("invalid right checkpoint: {}", right.commit_sha))?;
+
+            Ok(left == right)
+        }
+        .boxed()
     }
 
     fn diff_checkpoints(
@@ -494,5 +535,65 @@ impl GitRepository for FakeGitRepository {
 
     fn default_branch(&self) -> BoxFuture<'_, Result<Option<SharedString>>> {
         unimplemented!()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{FakeFs, Fs};
+    use gpui::BackgroundExecutor;
+    use serde_json::json;
+    use std::path::Path;
+    use util::path;
+
+    #[gpui::test]
+    async fn test_checkpoints(executor: BackgroundExecutor) {
+        let fs = FakeFs::new(executor);
+        fs.insert_tree(
+            path!("/"),
+            json!({
+                "bar": {
+                    "baz": "qux"
+                },
+                "foo": {
+                    ".git": {},
+                    "a": "lorem",
+                    "b": "ipsum",
+                },
+            }),
+        )
+        .await;
+        fs.with_git_state(Path::new("/foo/.git"), true, |_git| {})
+            .unwrap();
+        let repository = fs.open_repo(Path::new("/foo/.git")).unwrap();
+
+        let checkpoint_1 = repository.checkpoint().await.unwrap();
+        fs.write(Path::new("/foo/b"), b"IPSUM").await.unwrap();
+        fs.write(Path::new("/foo/c"), b"dolor").await.unwrap();
+        let checkpoint_2 = repository.checkpoint().await.unwrap();
+        let checkpoint_3 = repository.checkpoint().await.unwrap();
+
+        assert!(
+            repository
+                .compare_checkpoints(checkpoint_2.clone(), checkpoint_3.clone())
+                .await
+                .unwrap()
+        );
+        assert!(
+            !repository
+                .compare_checkpoints(checkpoint_1.clone(), checkpoint_2.clone())
+                .await
+                .unwrap()
+        );
+
+        repository.restore_checkpoint(checkpoint_1).await.unwrap();
+        assert_eq!(
+            fs.files_with_contents(Path::new("")),
+            [
+                (Path::new(path!("/bar/baz")).into(), b"qux".into()),
+                (Path::new(path!("/foo/a")).into(), b"lorem".into()),
+                (Path::new(path!("/foo/b")).into(), b"ipsum".into())
+            ]
+        );
     }
 }

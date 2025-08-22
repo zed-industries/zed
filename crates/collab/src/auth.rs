@@ -79,27 +79,27 @@ pub async fn validate_header<B>(mut req: Request<B>, next: Next<B>) -> impl Into
         verify_access_token(access_token, user_id, &state.db).await
     };
 
-    if let Ok(validate_result) = validate_result {
-        if validate_result.is_valid {
-            let user = state
-                .db
-                .get_user_by_id(user_id)
-                .await?
-                .with_context(|| format!("user {user_id} not found"))?;
+    if let Ok(validate_result) = validate_result
+        && validate_result.is_valid
+    {
+        let user = state
+            .db
+            .get_user_by_id(user_id)
+            .await?
+            .with_context(|| format!("user {user_id} not found"))?;
 
-            if let Some(impersonator_id) = validate_result.impersonator_id {
-                let admin = state
-                    .db
-                    .get_user_by_id(impersonator_id)
-                    .await?
-                    .with_context(|| format!("user {impersonator_id} not found"))?;
-                req.extensions_mut()
-                    .insert(Principal::Impersonated { user, admin });
-            } else {
-                req.extensions_mut().insert(Principal::User(user));
-            };
-            return Ok::<_, Error>(next.run(req).await);
-        }
+        if let Some(impersonator_id) = validate_result.impersonator_id {
+            let admin = state
+                .db
+                .get_user_by_id(impersonator_id)
+                .await?
+                .with_context(|| format!("user {impersonator_id} not found"))?;
+            req.extensions_mut()
+                .insert(Principal::Impersonated { user, admin });
+        } else {
+            req.extensions_mut().insert(Principal::User(user));
+        };
+        return Ok::<_, Error>(next.run(req).await);
     }
 
     Err(Error::http(
@@ -236,7 +236,7 @@ mod test {
 
     #[gpui::test]
     async fn test_verify_access_token(cx: &mut gpui::TestAppContext) {
-        let test_db = crate::db::TestDb::sqlite(cx.executor().clone());
+        let test_db = crate::db::TestDb::sqlite(cx.executor());
         let db = test_db.db();
 
         let user = db

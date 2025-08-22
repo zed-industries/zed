@@ -164,6 +164,20 @@ impl<'a, T: 'static> Context<'a, T> {
         subscription
     }
 
+    /// Register a callback to be invoked when the application is about to restart.
+    pub fn on_app_restart(
+        &self,
+        mut on_restart: impl FnMut(&mut T, &mut App) + 'static,
+    ) -> Subscription
+    where
+        T: 'static,
+    {
+        let handle = self.weak_entity();
+        self.app.on_app_restart(move |cx| {
+            handle.update(cx, |entity, cx| on_restart(entity, cx)).ok();
+        })
+    }
+
     /// Arrange for the given function to be invoked whenever the application is quit.
     /// The future returned from this callback will be polled for up to [crate::SHUTDOWN_TIMEOUT] until the app fully quits.
     pub fn on_app_quit<Fut>(
@@ -175,20 +189,15 @@ impl<'a, T: 'static> Context<'a, T> {
         T: 'static,
     {
         let handle = self.weak_entity();
-        let (subscription, activate) = self.app.quit_observers.insert(
-            (),
-            Box::new(move |cx| {
-                let future = handle.update(cx, |entity, cx| on_quit(entity, cx)).ok();
-                async move {
-                    if let Some(future) = future {
-                        future.await;
-                    }
+        self.app.on_app_quit(move |cx| {
+            let future = handle.update(cx, |entity, cx| on_quit(entity, cx)).ok();
+            async move {
+                if let Some(future) = future {
+                    future.await;
                 }
-                .boxed_local()
-            }),
-        );
-        activate();
-        subscription
+            }
+            .boxed_local()
+        })
     }
 
     /// Tell GPUI that this entity has changed and observers of it should be notified.
@@ -463,7 +472,7 @@ impl<'a, T: 'static> Context<'a, T> {
 
         let view = self.weak_entity();
         inner(
-            &mut self.keystroke_observers,
+            &self.keystroke_observers,
             Box::new(move |event, window, cx| {
                 if let Some(view) = view.upgrade() {
                     view.update(cx, |view, cx| f(view, event, window, cx));
@@ -601,16 +610,16 @@ impl<'a, T: 'static> Context<'a, T> {
         let (subscription, activate) =
             window.new_focus_listener(Box::new(move |event, window, cx| {
                 view.update(cx, |view, cx| {
-                    if let Some(blurred_id) = event.previous_focus_path.last().copied() {
-                        if event.is_focus_out(focus_id) {
-                            let event = FocusOutEvent {
-                                blurred: WeakFocusHandle {
-                                    id: blurred_id,
-                                    handles: Arc::downgrade(&cx.focus_handles),
-                                },
-                            };
-                            listener(view, event, window, cx)
-                        }
+                    if let Some(blurred_id) = event.previous_focus_path.last().copied()
+                        && event.is_focus_out(focus_id)
+                    {
+                        let event = FocusOutEvent {
+                            blurred: WeakFocusHandle {
+                                id: blurred_id,
+                                handles: Arc::downgrade(&cx.focus_handles),
+                            },
+                        };
+                        listener(view, event, window, cx)
                     }
                 })
                 .is_ok()

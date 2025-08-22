@@ -414,6 +414,8 @@ impl Vim {
                             );
                         }
 
+                        let original_point = selection.tail().to_point(map);
+
                         if let Some(range) = object.range(map, mut_selection, around, count) {
                             if !range.is_empty() {
                                 let expand_both_ways = object.always_expands_both_ways()
@@ -461,6 +463,37 @@ impl Vim {
                                     Point::new(row_of_selection_end_line, 1)
                                 };
                                 selection.end = new_selection_end.to_display_point(map);
+                            }
+
+                            // To match vim, if the range starts of the same line as it originally
+                            // did, we keep the tail of the selection in the same place instead of
+                            // snapping it to the start of the line
+                            if target_mode == Mode::VisualLine {
+                                let new_start_point = selection.start.to_point(map);
+                                if new_start_point.row == original_point.row {
+                                    if selection.end.to_point(map).row > new_start_point.row {
+                                        if original_point.column
+                                            == map
+                                                .buffer_snapshot
+                                                .line_len(MultiBufferRow(original_point.row))
+                                        {
+                                            selection.start = movement::saturating_left(
+                                                map,
+                                                original_point.to_display_point(map),
+                                            )
+                                        } else {
+                                            selection.start = original_point.to_display_point(map)
+                                        }
+                                    } else {
+                                        selection.end = movement::saturating_right(
+                                            map,
+                                            original_point.to_display_point(map),
+                                        );
+                                        if original_point.column > 0 {
+                                            selection.reversed = true
+                                        }
+                                    }
+                                }
                             }
                         }
                     });
@@ -1170,7 +1203,7 @@ mod test {
                     the lazy dog"});
         assert_eq!(
             cx.read_from_clipboard()
-                .map(|item| item.text().unwrap().to_string())
+                .map(|item| item.text().unwrap())
                 .unwrap(),
             "The q"
         );

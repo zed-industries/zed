@@ -247,7 +247,7 @@ pub fn parse_markdown(
                             events.push(event_for(
                                 text,
                                 range.source_range.start..range.source_range.start + prefix_len,
-                                &head,
+                                head,
                             ));
                             range.parsed = CowStr::Boxed(tail.into());
                             range.merged_range.start += prefix_len;

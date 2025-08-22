@@ -76,22 +76,22 @@ impl<'a> MarkdownParser<'a> {
         if self.eof() || (steps + self.cursor) >= self.tokens.len() {
             return self.tokens.last();
         }
-        return self.tokens.get(self.cursor + steps);
+        self.tokens.get(self.cursor + steps)
     }
 
     fn previous(&self) -> Option<&(Event<'_>, Range<usize>)> {
         if self.cursor == 0 || self.cursor > self.tokens.len() {
             return None;
         }
-        return self.tokens.get(self.cursor - 1);
+        self.tokens.get(self.cursor - 1)
     }
 
     fn current(&self) -> Option<&(Event<'_>, Range<usize>)> {
-        return self.peek(0);
+        self.peek(0)
     }
 
     fn current_event(&self) -> Option<&Event<'_>> {
-        return self.current().map(|(event, _)| event);
+        self.current().map(|(event, _)| event)
     }
 
     fn is_text_like(event: &Event) -> bool {
@@ -178,7 +178,6 @@ impl<'a> MarkdownParser<'a> {
                 _ => None,
             },
             Event::Rule => {
-                let source_range = source_range.clone();
                 self.cursor += 1;
                 Some(vec![ParsedMarkdownElement::HorizontalRule(source_range)])
             }
@@ -300,13 +299,12 @@ impl<'a> MarkdownParser<'a> {
 
                     if style != MarkdownHighlightStyle::default() && last_run_len < text.len() {
                         let mut new_highlight = true;
-                        if let Some((last_range, last_style)) = highlights.last_mut() {
-                            if last_range.end == last_run_len
-                                && last_style == &MarkdownHighlight::Style(style.clone())
-                            {
-                                last_range.end = text.len();
-                                new_highlight = false;
-                            }
+                        if let Some((last_range, last_style)) = highlights.last_mut()
+                            && last_range.end == last_run_len
+                            && last_style == &MarkdownHighlight::Style(style.clone())
+                        {
+                            last_range.end = text.len();
+                            new_highlight = false;
                         }
                         if new_highlight {
                             highlights.push((
@@ -402,7 +400,7 @@ impl<'a> MarkdownParser<'a> {
         }
         if !text.is_empty() {
             markdown_text_like.push(MarkdownParagraphChunk::Text(ParsedMarkdownText {
-                source_range: source_range.clone(),
+                source_range,
                 contents: text,
                 highlights,
                 regions,
@@ -421,7 +419,7 @@ impl<'a> MarkdownParser<'a> {
         self.cursor += 1;
 
         ParsedMarkdownHeading {
-            source_range: source_range.clone(),
+            source_range,
             level: match level {
                 pulldown_cmark::HeadingLevel::H1 => HeadingLevel::H1,
                 pulldown_cmark::HeadingLevel::H2 => HeadingLevel::H2,
@@ -579,10 +577,10 @@ impl<'a> MarkdownParser<'a> {
                             }
                         } else {
                             let block = self.parse_block().await;
-                            if let Some(block) = block {
-                                if let Some(list_item) = items_stack.last_mut() {
-                                    list_item.content.extend(block);
-                                }
+                            if let Some(block) = block
+                                && let Some(list_item) = items_stack.last_mut()
+                            {
+                                list_item.content.extend(block);
                             }
                         }
                     }

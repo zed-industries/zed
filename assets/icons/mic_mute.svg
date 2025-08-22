@@ -1,8 +1,8 @@
 <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
-<path d="M3 3L13 13" stroke="black" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-<path d="M12 9C12 8.74858 12 8.49375 12 8.23839V7" stroke="black" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-<path d="M4.00043 7V8.09869C3.98856 8.86731 4.22157 9.62164 4.66938 10.2643C5.11718 10.907 5.75924 11.4085 6.51267 11.7042C7.2661 11.9999 8.09632 12.0761 8.89619 11.923C9.47851 11.8115 10.0253 11.5823 10.5 11.2539" stroke="black" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-<path d="M10 6V3.62904C9.99714 3.26103 9.8347 2.90448 9.53885 2.6168C9.24299 2.32913 8.83093 2.12707 8.36903 2.04316C7.90713 1.95926 7.42226 1.9984 6.99252 2.15427C6.56278 2.31015 6.21317 2.57369 6 2.90245" stroke="black" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-<path d="M6 6V8.00088C6.00031 8.39636 6.10356 8.78287 6.29674 9.11159C6.48991 9.44031 6.76433 9.69649 7.08534 9.84779C7.40634 9.99909 7.75954 10.0387 8.10032 9.96165C8.4411 9.88459 8.75417 9.69431 9 9.41483" stroke="black" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-<path d="M8 12V14" stroke="black" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M3 3L13 13" stroke="black" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M12 9C12 8.74858 12 8.49375 12 8.23839V7" stroke="black" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M4.00043 7V8.09869C3.98856 8.86731 4.22157 9.62164 4.66938 10.2643C5.11718 10.907 5.75924 11.4085 6.51267 11.7042C7.2661 11.9999 8.09632 12.0761 8.89619 11.923C9.47851 11.8115 10.0253 11.5823 10.5 11.2539" stroke="black" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M10 6V3.62904C9.99714 3.26103 9.8347 2.90448 9.53885 2.6168C9.24299 2.32913 8.83093 2.12707 8.36903 2.04316C7.90713 1.95926 7.42226 1.9984 6.99252 2.15427C6.56278 2.31015 6.21317 2.57369 6 2.90245" stroke="black" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M6 6V8.00088C6.00031 8.39636 6.10356 8.78287 6.29674 9.11159C6.48991 9.44031 6.76433 9.69649 7.08534 9.84779C7.40634 9.99909 7.75954 10.0387 8.10032 9.96165C8.4411 9.88459 8.75417 9.69431 9 9.41483" stroke="black" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M8 12V14" stroke="black" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
 </svg>
