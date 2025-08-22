@@ -630,13 +630,7 @@ message LogMessage {
 }
 
 message TraceMessage {
-    TraceLevel level = 1;
-
-    enum TraceLevel {
-        OFF = 0;
-        MESSAGES = 1;
-        VERBOSE = 2;
-    }
+    optional string verbose_info = 1;
 }
 
 message RpcMessage {
