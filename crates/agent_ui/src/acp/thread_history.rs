@@ -116,8 +116,7 @@ impl AcpThreadHistory {
     fn update_visible_items(&mut self, preserve_selected_item: bool, cx: &mut Context<Self>) {
         let entries = self
             .history_store
-            .update(cx, |store, cx| store.entries(cx))
-            .into();
+            .update(cx, |store, _| store.entries().collect());
         let new_list_items = if self.search_query.is_empty() {
             self.add_list_separators(entries, cx)
         } else {
