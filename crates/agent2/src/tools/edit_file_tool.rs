@@ -186,11 +186,11 @@ impl AgentTool for EditFileTool {
     type Input = EditFileToolInput;
     type Output = EditFileToolOutput;
 
-    fn name(&self) -> SharedString {
-        "edit_file".into()
+    fn name() -> &'static str {
+        "edit_file"
     }
 
-    fn kind(&self) -> acp::ToolKind {
+    fn kind() -> acp::ToolKind {
         acp::ToolKind::Edit
     }
 
