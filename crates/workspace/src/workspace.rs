@@ -1,5 +1,6 @@
 pub mod dock;
 pub mod history_manager;
+pub mod invalid_buffer_view;
 pub mod item;
 mod modal_layer;
 pub mod notifications;
@@ -612,21 +613,49 @@ impl ProjectItemRegistry {
         );
         self.build_project_item_for_path_fns
             .push(|project, project_path, window, cx| {
+                let project_path = project_path.clone();
+                let abs_path = project.read(cx).absolute_path(&project_path, cx);
+                let is_local = project.read(cx).is_local();
                 let project_item =
-                    <T::Item as project::ProjectItem>::try_open(project, project_path, cx)?;
+                    <T::Item as project::ProjectItem>::try_open(project, &project_path, cx)?;
                 let project = project.clone();
-                Some(window.spawn(cx, async move |cx| {
-                    let project_item = project_item.await?;
-                    let project_entry_id: Option<ProjectEntryId> =
-                        project_item.read_with(cx, project::ProjectItem::entry_id)?;
-                    let build_workspace_item = Box::new(
-                        |pane: &mut Pane, window: &mut Window, cx: &mut Context<Pane>| {
-                            Box::new(cx.new(|cx| {
-                                T::for_project_item(project, Some(pane), project_item, window, cx)
-                            })) as Box<dyn ItemHandle>
+                Some(window.spawn(cx, async move |cx| match project_item.await {
+                    Ok(project_item) => {
+                        let project_item = project_item;
+                        let project_entry_id: Option<ProjectEntryId> =
+                            project_item.read_with(cx, project::ProjectItem::entry_id)?;
+                        let build_workspace_item = Box::new(
+                            |pane: &mut Pane, window: &mut Window, cx: &mut Context<Pane>| {
+                                Box::new(cx.new(|cx| {
+                                    T::for_project_item(
+                                        project,
+                                        Some(pane),
+                                        project_item,
+                                        window,
+                                        cx,
+                                    )
+                                })) as Box<dyn ItemHandle>
+                            },
+                        ) as Box<_>;
+                        Ok((project_entry_id, build_workspace_item))
+                    }
+                    Err(e) => match abs_path {
+                        Some(abs_path) => match cx.update(|window, cx| {
+                            T::for_broken_project_item(abs_path, is_local, &e, window, cx)
+                        })? {
+                            Some(broken_project_item_view) => {
+                                let build_workspace_item = Box::new(
+                                    move |_: &mut Pane, _: &mut Window, cx: &mut Context<Pane>| {
+                                        cx.new(|_| broken_project_item_view).boxed_clone()
+                                    },
+                                )
+                                    as Box<_>;
+                                Ok((None, build_workspace_item))
+                            }
+                            None => Err(e)?,
                         },
-                    ) as Box<_>;
-                    Ok((project_entry_id, build_workspace_item))
+                        None => Err(e)?,
+                    },
                 }))
             });
     }
@@ -3379,9 +3408,8 @@ impl Workspace {
         window: &mut Window,
         cx: &mut App,
     ) -> Task<Result<(Option<ProjectEntryId>, WorkspaceItemBuilder)>> {
-        let project = self.project().clone();
         let registry = cx.default_global::<ProjectItemRegistry>().clone();
-        registry.open_path(&project, &path, window, cx)
+        registry.open_path(self.project(), &path, window, cx)
     }
 
     pub fn find_project_item<T>(

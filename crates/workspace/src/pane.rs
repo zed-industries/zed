@@ -2,6 +2,7 @@ use crate::{
     CloseWindow, NewFile, NewTerminal, OpenInTerminal, OpenOptions, OpenTerminal, OpenVisible,
     SplitDirection, ToggleFileFinder, ToggleProjectSymbols, ToggleZoom, Workspace,
     WorkspaceItemBuilder,
+    invalid_buffer_view::InvalidBufferView,
     item::{
         ActivateOnClose, ClosePosition, Item, ItemHandle, ItemSettings, PreviewTabsSettings,
         ProjectItemKind, SaveOptions, ShowCloseButton, ShowDiagnostics, TabContentParams,
@@ -897,19 +898,43 @@ impl Pane {
                 }
             }
         }
+
+        let set_up_existing_item =
+            |index: usize, pane: &mut Self, window: &mut Window, cx: &mut Context<Self>| {
+                // If the item is already open, and the item is a preview item
+                // and we are not allowing items to open as preview, mark the item as persistent.
+                if let Some(preview_item_id) = pane.preview_item_id
+                    && let Some(tab) = pane.items.get(index)
+                    && tab.item_id() == preview_item_id
+                    && !allow_preview
+                {
+                    pane.set_preview_item_id(None, cx);
+                }
+                if activate {
+                    pane.activate_item(index, focus_item, focus_item, window, cx);
+                }
+            };
+        let set_up_new_item = |new_item: Box<dyn ItemHandle>,
+                               destination_index: Option<usize>,
+                               pane: &mut Self,
+                               window: &mut Window,
+                               cx: &mut Context<Self>| {
+            if allow_preview {
+                pane.set_preview_item_id(Some(new_item.item_id()), cx);
+            }
+            pane.add_item_inner(
+                new_item,
+                true,
+                focus_item,
+                activate,
+                destination_index,
+                window,
+                cx,
+            );
+        };
+
         if let Some((index, existing_item)) = existing_item {
-            // If the item is already open, and the item is a preview item
-            // and we are not allowing items to open as preview, mark the item as persistent.
-            if let Some(preview_item_id) = self.preview_item_id
-                && let Some(tab) = self.items.get(index)
-                && tab.item_id() == preview_item_id
-                && !allow_preview
-            {
-                self.set_preview_item_id(None, cx);
-            }
-            if activate {
-                self.activate_item(index, focus_item, focus_item, window, cx);
-            }
+            set_up_existing_item(index, self, window, cx);
             existing_item
         } else {
             // If the item is being opened as preview and we have an existing preview tab,
@@ -921,21 +946,46 @@ impl Pane {
             };
 
             let new_item = build_item(self, window, cx);
+            // A special case that won't ever get a `project_entry_id` but has to be deduplicated nonetheless.
+            if let Some(invalid_buffer_view) = new_item.downcast::<InvalidBufferView>() {
+                let mut already_open_view = None;
+                let mut views_to_close = HashSet::default();
+                for existing_error_view in self
+                    .items_of_type::<InvalidBufferView>()
+                    .filter(|item| item.read(cx).abs_path == invalid_buffer_view.read(cx).abs_path)
+                {
+                    if already_open_view.is_none()
+                        && existing_error_view.read(cx).error == invalid_buffer_view.read(cx).error
+                    {
+                        already_open_view = Some(existing_error_view);
+                    } else {
+                        views_to_close.insert(existing_error_view.item_id());
+                    }
+                }
 
-            if allow_preview {
-                self.set_preview_item_id(Some(new_item.item_id()), cx);
+                let resulting_item = match already_open_view {
+                    Some(already_open_view) => {
+                        if let Some(index) = self.index_for_item_id(already_open_view.item_id()) {
+                            set_up_existing_item(index, self, window, cx);
+                        }
+                        Box::new(already_open_view) as Box<_>
+                    }
+                    None => {
+                        set_up_new_item(new_item.clone(), destination_index, self, window, cx);
+                        new_item
+                    }
+                };
+
+                self.close_items(window, cx, SaveIntent::Skip, |existing_item| {
+                    views_to_close.contains(&existing_item)
+                })
+                .detach();
+
+                resulting_item
+            } else {
+                set_up_new_item(new_item.clone(), destination_index, self, window, cx);
+                new_item
             }
-            self.add_item_inner(
-                new_item.clone(),
-                true,
-                focus_item,
-                activate,
-                destination_index,
-                window,
-                cx,
-            );
-
-            new_item
         }
     }
 
