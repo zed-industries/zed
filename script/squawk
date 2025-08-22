@@ -15,13 +15,11 @@ SQUAWK_VERSION=0.26.0
 SQUAWK_BIN="./target/squawk-$SQUAWK_VERSION"
 SQUAWK_ARGS="--assume-in-transaction --config script/lib/squawk.toml"
 
-if  [ ! -f "$SQUAWK_BIN" ]; then
-  pkgutil --pkg-info com.apple.pkg.RosettaUpdateAuto || /usr/sbin/softwareupdate --install-rosetta --agree-to-license
-  # When bootstrapping a brand new CI machine, the `target` directory may not exist yet.
-  mkdir -p "./target"
-  curl -L -o "$SQUAWK_BIN" "https://github.com/sbdchd/squawk/releases/download/v$SQUAWK_VERSION/squawk-darwin-x86_64"
-  chmod +x "$SQUAWK_BIN"
-fi
+pkgutil --pkg-info com.apple.pkg.RosettaUpdateAuto || /usr/sbin/softwareupdate --install-rosetta --agree-to-license
+# When bootstrapping a brand new CI machine, the `target` directory may not exist yet.
+mkdir -p "./target"
+curl -L -o "$SQUAWK_BIN" "https://github.com/sbdchd/squawk/releases/download/v$SQUAWK_VERSION/squawk-darwin-x86_64"
+chmod +x "$SQUAWK_BIN"
 
 if [ -n "$SQUAWK_GITHUB_TOKEN" ]; then
     export SQUAWK_GITHUB_REPO_OWNER=$(echo $GITHUB_REPOSITORY | awk -F/ '{print $1}')

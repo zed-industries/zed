@@ -23,11 +23,11 @@ impl NativeAgentServer {
 
 impl AgentServer for NativeAgentServer {
     fn name(&self) -> &'static str {
-        "Native Agent"
+        "Zed Agent"
     }
 
     fn empty_state_headline(&self) -> &'static str {
-        "Welcome to the Agent Panel"
+        self.name()
     }
 
     fn empty_state_message(&self) -> &'static str {

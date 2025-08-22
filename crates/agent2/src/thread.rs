@@ -9,15 +9,15 @@ use action_log::ActionLog;
 use agent::thread::{GitState, ProjectSnapshot, WorktreeSnapshot};
 use agent_client_protocol as acp;
 use agent_settings::{
-    AgentProfileId, AgentSettings, CompletionMode, SUMMARIZE_THREAD_DETAILED_PROMPT,
-    SUMMARIZE_THREAD_PROMPT,
+    AgentProfileId, AgentProfileSettings, AgentSettings, CompletionMode,
+    SUMMARIZE_THREAD_DETAILED_PROMPT, SUMMARIZE_THREAD_PROMPT,
 };
 use anyhow::{Context as _, Result, anyhow};
 use assistant_tool::adapt_schema_to_format;
 use chrono::{DateTime, Utc};
 use client::{ModelRequestUsage, RequestUsage};
 use cloud_llm_client::{CompletionIntent, CompletionRequestStatus, UsageLimit};
-use collections::{HashMap, IndexMap};
+use collections::{HashMap, HashSet, IndexMap};
 use fs::Fs;
 use futures::{
     FutureExt,
@@ -56,6 +56,7 @@ use util::{ResultExt, markdown::MarkdownCodeBlock};
 use uuid::Uuid;
 
 const TOOL_CANCELED_MESSAGE: &str = "Tool canceled by user";
+pub const MAX_TOOL_NAME_LENGTH: usize = 64;
 
 /// The ID of the user prompt that initiated a request.
 ///
@@ -487,7 +488,6 @@ pub enum ThreadEvent {
     ToolCall(acp::ToolCall),
     ToolCallUpdate(acp_thread::ToolCallUpdate),
     ToolCallAuthorization(ToolCallAuthorization),
-    TitleUpdate(SharedString),
     Retry(acp_thread::RetryStatus),
     Stop(acp::StopReason),
 }
@@ -514,6 +514,7 @@ pub struct Thread {
     prompt_id: PromptId,
     updated_at: DateTime<Utc>,
     title: Option<SharedString>,
+    pending_title_generation: Option<Task<()>>,
     summary: Option<SharedString>,
     messages: Vec<Message>,
     completion_mode: CompletionMode,
@@ -544,17 +545,18 @@ impl Thread {
         project: Entity<Project>,
         project_context: Entity<ProjectContext>,
         context_server_registry: Entity<ContextServerRegistry>,
-        action_log: Entity<ActionLog>,
         templates: Arc<Templates>,
         model: Option<Arc<dyn LanguageModel>>,
         cx: &mut Context<Self>,
     ) -> Self {
         let profile_id = AgentSettings::get_global(cx).default_profile.clone();
+        let action_log = cx.new(|_cx| ActionLog::new(project.clone()));
         Self {
             id: acp::SessionId(uuid::Uuid::new_v4().to_string().into()),
             prompt_id: PromptId::new(),
             updated_at: Utc::now(),
             title: None,
+            pending_title_generation: None,
             summary: None,
             messages: Vec::new(),
             completion_mode: AgentSettings::get_global(cx).preferred_completion_mode,
@@ -626,7 +628,20 @@ impl Thread {
         stream: &ThreadEventStream,
         cx: &mut Context<Self>,
     ) {
-        let Some(tool) = self.tools.get(tool_use.name.as_ref()) else {
+        let tool = self.tools.get(tool_use.name.as_ref()).cloned().or_else(|| {
+            self.context_server_registry
+                .read(cx)
+                .servers()
+                .find_map(|(_, tools)| {
+                    if let Some(tool) = tools.get(tool_use.name.as_ref()) {
+                        Some(tool.clone())
+                    } else {
+                        None
+                    }
+                })
+        });
+
+        let Some(tool) = tool else {
             stream
                 .0
                 .unbounded_send(Ok(ThreadEvent::ToolCall(acp::ToolCall {
@@ -705,6 +720,7 @@ impl Thread {
             } else {
                 Some(db_thread.title.clone())
             },
+            pending_title_generation: None,
             summary: db_thread.detailed_summary,
             messages: db_thread.messages,
             completion_mode: db_thread.completion_mode.unwrap_or_default(),
@@ -957,11 +973,11 @@ impl Thread {
         ));
         self.add_tool(TerminalTool::new(self.project.clone(), cx));
         self.add_tool(ThinkingTool);
-        self.add_tool(WebSearchTool); // TODO: Enable this only if it's a zed model.
+        self.add_tool(WebSearchTool);
     }
 
-    pub fn add_tool(&mut self, tool: impl AgentTool) {
-        self.tools.insert(tool.name(), tool.erase());
+    pub fn add_tool<T: AgentTool>(&mut self, tool: T) {
+        self.tools.insert(T::name().into(), tool.erase());
     }
 
     pub fn remove_tool(&mut self, name: &str) -> bool {
@@ -1077,6 +1093,10 @@ impl Thread {
         self.cancel(cx);
 
         let model = self.model.clone().context("No language model configured")?;
+        let profile = AgentSettings::get_global(cx)
+            .profiles
+            .get(&self.profile_id)
+            .context("Profile not found")?;
         let (events_tx, events_rx) = mpsc::unbounded::<Result<ThreadEvent>>();
         let event_stream = ThreadEventStream(events_tx);
         let message_ix = self.messages.len().saturating_sub(1);
@@ -1084,9 +1104,10 @@ impl Thread {
         self.summary = None;
         self.running_turn = Some(RunningTurn {
             event_stream: event_stream.clone(),
+            tools: self.enabled_tools(profile, &model, cx),
             _task: cx.spawn(async move |this, cx| {
                 log::info!("Starting agent turn execution");
-                let mut update_title = None;
+
                 let turn_result: Result<()> = async {
                     let mut intent = CompletionIntent::UserPrompt;
                     loop {
@@ -1095,8 +1116,8 @@ impl Thread {
                         let mut end_turn = true;
                         this.update(cx, |this, cx| {
                             // Generate title if needed.
-                            if this.title.is_none() && update_title.is_none() {
-                                update_title = Some(this.update_title(&event_stream, cx));
+                            if this.title.is_none() && this.pending_title_generation.is_none() {
+                                this.generate_title(cx);
                             }
 
                             // End the turn if the model didn't use tools.
@@ -1119,10 +1140,6 @@ impl Thread {
                 }
                 .await;
                 _ = this.update(cx, |this, cx| this.flush_pending_message(cx));
-
-                if let Some(update_title) = update_title {
-                    update_title.await.context("update title failed").log_err();
-                }
 
                 match turn_result {
                     Ok(()) => {
@@ -1419,7 +1436,7 @@ impl Thread {
     ) -> Option<Task<LanguageModelToolResult>> {
         cx.notify();
 
-        let tool = self.tools.get(tool_use.name.as_ref()).cloned();
+        let tool = self.tool(tool_use.name.as_ref());
         let mut title = SharedString::from(&tool_use.name);
         let mut kind = acp::ToolKind::Other;
         if let Some(tool) = tool.as_ref() {
@@ -1607,19 +1624,15 @@ impl Thread {
         })
     }
 
-    fn update_title(
-        &mut self,
-        event_stream: &ThreadEventStream,
-        cx: &mut Context<Self>,
-    ) -> Task<Result<()>> {
+    fn generate_title(&mut self, cx: &mut Context<Self>) {
+        let Some(model) = self.summarization_model.clone() else {
+            return;
+        };
+
         log::info!(
             "Generating title with model: {:?}",
             self.summarization_model.as_ref().map(|model| model.name())
         );
-        let Some(model) = self.summarization_model.clone() else {
-            return Task::ready(Ok(()));
-        };
-        let event_stream = event_stream.clone();
         let mut request = LanguageModelRequest {
             intent: Some(CompletionIntent::ThreadSummarization),
             temperature: AgentSettings::temperature_for_model(&model, cx),
@@ -1635,42 +1648,51 @@ impl Thread {
             content: vec![SUMMARIZE_THREAD_PROMPT.into()],
             cache: false,
         });
-        cx.spawn(async move |this, cx| {
+        self.pending_title_generation = Some(cx.spawn(async move |this, cx| {
             let mut title = String::new();
-            let mut messages = model.stream_completion(request, cx).await?;
-            while let Some(event) = messages.next().await {
-                let event = event?;
-                let text = match event {
-                    LanguageModelCompletionEvent::Text(text) => text,
-                    LanguageModelCompletionEvent::StatusUpdate(
-                        CompletionRequestStatus::UsageUpdated { amount, limit },
-                    ) => {
-                        this.update(cx, |thread, cx| {
-                            thread.update_model_request_usage(amount, limit, cx);
-                        })?;
-                        continue;
+
+            let generate = async {
+                let mut messages = model.stream_completion(request, cx).await?;
+                while let Some(event) = messages.next().await {
+                    let event = event?;
+                    let text = match event {
+                        LanguageModelCompletionEvent::Text(text) => text,
+                        LanguageModelCompletionEvent::StatusUpdate(
+                            CompletionRequestStatus::UsageUpdated { amount, limit },
+                        ) => {
+                            this.update(cx, |thread, cx| {
+                                thread.update_model_request_usage(amount, limit, cx);
+                            })?;
+                            continue;
+                        }
+                        _ => continue,
+                    };
+
+                    let mut lines = text.lines();
+                    title.extend(lines.next());
+
+                    // Stop if the LLM generated multiple lines.
+                    if lines.next().is_some() {
+                        break;
                     }
-                    _ => continue,
-                };
-
-                let mut lines = text.lines();
-                title.extend(lines.next());
-
-                // Stop if the LLM generated multiple lines.
-                if lines.next().is_some() {
-                    break;
                 }
+                anyhow::Ok(())
+            };
+
+            if generate.await.context("failed to generate title").is_ok() {
+                _ = this.update(cx, |this, cx| this.set_title(title.into(), cx));
             }
+            _ = this.update(cx, |this, _| this.pending_title_generation = None);
+        }));
+    }
 
-            log::info!("Setting title: {}", title);
-
-            this.update(cx, |this, cx| {
-                let title = SharedString::from(title);
-                event_stream.send_title_update(title.clone());
-                this.title = Some(title);
-                cx.notify();
-            })
-        })
+    pub fn set_title(&mut self, title: SharedString, cx: &mut Context<Self>) {
+        self.pending_title_generation = None;
+        if Some(&title) != self.title.as_ref() {
+            self.title = Some(title);
+            cx.emit(TitleUpdated);
+            cx.notify();
+        }
     }
 
     fn last_user_message(&self) -> Option<&UserMessage> {
@@ -1724,6 +1746,21 @@ impl Thread {
         cx: &mut App,
     ) -> Result<LanguageModelRequest> {
         let model = self.model().context("No language model configured")?;
+        let tools = if let Some(turn) = self.running_turn.as_ref() {
+            turn.tools
+                .iter()
+                .filter_map(|(tool_name, tool)| {
+                    log::trace!("Including tool: {}", tool_name);
+                    Some(LanguageModelRequestTool {
+                        name: tool_name.to_string(),
+                        description: tool.description().to_string(),
+                        input_schema: tool.input_schema(model.tool_input_format()).log_err()?,
+                    })
+                })
+                .collect::<Vec<_>>()
+        } else {
+            Vec::new()
+        };
 
         log::debug!("Building completion request");
         log::debug!("Completion intent: {:?}", completion_intent);
@@ -1731,23 +1768,6 @@ impl Thread {
 
         let messages = self.build_request_messages(cx);
         log::info!("Request will include {} messages", messages.len());
-
-        let tools = if let Some(tools) = self.tools(cx).log_err() {
-            tools
-                .filter_map(|tool| {
-                    let tool_name = tool.name().to_string();
-                    log::trace!("Including tool: {}", tool_name);
-                    Some(LanguageModelRequestTool {
-                        name: tool_name,
-                        description: tool.description().to_string(),
-                        input_schema: tool.input_schema(model.tool_input_format()).log_err()?,
-                    })
-                })
-                .collect()
-        } else {
-            Vec::new()
-        };
-
         log::info!("Request includes {} tools", tools.len());
 
         let request = LanguageModelRequest {
@@ -1767,37 +1787,76 @@ impl Thread {
         Ok(request)
     }
 
-    fn tools<'a>(&'a self, cx: &'a App) -> Result<impl Iterator<Item = &'a Arc<dyn AnyAgentTool>>> {
-        let model = self.model().context("No language model configured")?;
+    fn enabled_tools(
+        &self,
+        profile: &AgentProfileSettings,
+        model: &Arc<dyn LanguageModel>,
+        cx: &App,
+    ) -> BTreeMap<SharedString, Arc<dyn AnyAgentTool>> {
+        fn truncate(tool_name: &SharedString) -> SharedString {
+            if tool_name.len() > MAX_TOOL_NAME_LENGTH {
+                let mut truncated = tool_name.to_string();
+                truncated.truncate(MAX_TOOL_NAME_LENGTH);
+                truncated.into()
+            } else {
+                tool_name.clone()
+            }
+        }
 
-        let profile = AgentSettings::get_global(cx)
-            .profiles
-            .get(&self.profile_id)
-            .context("profile not found")?;
-        let provider_id = model.provider_id();
-
-        Ok(self
+        let mut tools = self
             .tools
             .iter()
-            .filter(move |(_, tool)| tool.supported_provider(&provider_id))
             .filter_map(|(tool_name, tool)| {
-                if profile.is_tool_enabled(tool_name) {
-                    Some(tool)
+                if tool.supported_provider(&model.provider_id())
+                    && profile.is_tool_enabled(tool_name)
+                {
+                    Some((truncate(tool_name), tool.clone()))
                 } else {
                     None
                 }
             })
-            .chain(self.context_server_registry.read(cx).servers().flat_map(
-                |(server_id, tools)| {
-                    tools.iter().filter_map(|(tool_name, tool)| {
-                        if profile.is_context_server_tool_enabled(&server_id.0, tool_name) {
-                            Some(tool)
-                        } else {
-                            None
-                        }
-                    })
-                },
-            )))
+            .collect::<BTreeMap<_, _>>();
+
+        let mut context_server_tools = Vec::new();
+        let mut seen_tools = tools.keys().cloned().collect::<HashSet<_>>();
+        let mut duplicate_tool_names = HashSet::default();
+        for (server_id, server_tools) in self.context_server_registry.read(cx).servers() {
+            for (tool_name, tool) in server_tools {
+                if profile.is_context_server_tool_enabled(&server_id.0, &tool_name) {
+                    let tool_name = truncate(tool_name);
+                    if !seen_tools.insert(tool_name.clone()) {
+                        duplicate_tool_names.insert(tool_name.clone());
+                    }
+                    context_server_tools.push((server_id.clone(), tool_name, tool.clone()));
+                }
+            }
+        }
+
+        // When there are duplicate tool names, disambiguate by prefixing them
+        // with the server ID. In the rare case there isn't enough space for the
+        // disambiguated tool name, keep only the last tool with this name.
+        for (server_id, tool_name, tool) in context_server_tools {
+            if duplicate_tool_names.contains(&tool_name) {
+                let available = MAX_TOOL_NAME_LENGTH.saturating_sub(tool_name.len());
+                if available >= 2 {
+                    let mut disambiguated = server_id.0.to_string();
+                    disambiguated.truncate(available - 1);
+                    disambiguated.push('_');
+                    disambiguated.push_str(&tool_name);
+                    tools.insert(disambiguated.into(), tool.clone());
+                } else {
+                    tools.insert(tool_name, tool.clone());
+                }
+            } else {
+                tools.insert(tool_name, tool.clone());
+            }
+        }
+
+        tools
+    }
+
+    fn tool(&self, name: &str) -> Option<Arc<dyn AnyAgentTool>> {
+        self.running_turn.as_ref()?.tools.get(name).cloned()
     }
 
     fn build_request_messages(&self, cx: &App) -> Vec<LanguageModelRequestMessage> {
@@ -1962,6 +2021,8 @@ struct RunningTurn {
     /// The current event stream for the running turn. Used to report a final
     /// cancellation event if we cancel the turn.
     event_stream: ThreadEventStream,
+    /// The tools that were enabled for this turn.
+    tools: BTreeMap<SharedString, Arc<dyn AnyAgentTool>>,
 }
 
 impl RunningTurn {
@@ -1975,6 +2036,10 @@ pub struct TokenUsageUpdated(pub Option<acp_thread::TokenUsage>);
 
 impl EventEmitter<TokenUsageUpdated> for Thread {}
 
+pub struct TitleUpdated;
+
+impl EventEmitter<TitleUpdated> for Thread {}
+
 pub trait AgentTool
 where
     Self: 'static + Sized,
@@ -1982,7 +2047,7 @@ where
     type Input: for<'de> Deserialize<'de> + Serialize + JsonSchema;
     type Output: for<'de> Deserialize<'de> + Serialize + Into<LanguageModelToolResultContent>;
 
-    fn name(&self) -> SharedString;
+    fn name() -> &'static str;
 
     fn description(&self) -> SharedString {
         let schema = schemars::schema_for!(Self::Input);
@@ -1994,7 +2059,7 @@ where
         )
     }
 
-    fn kind(&self) -> acp::ToolKind;
+    fn kind() -> acp::ToolKind;
 
     /// The initial tool title to display. Can be updated during the tool run.
     fn initial_title(&self, input: Result<Self::Input, serde_json::Value>) -> SharedString;
@@ -2070,7 +2135,7 @@ where
     T: AgentTool,
 {
     fn name(&self) -> SharedString {
-        self.0.name()
+        T::name().into()
     }
 
     fn description(&self) -> SharedString {
@@ -2078,7 +2143,7 @@ where
     }
 
     fn kind(&self) -> agent_client_protocol::ToolKind {
-        self.0.kind()
+        T::kind()
     }
 
     fn initial_title(&self, input: serde_json::Value) -> SharedString {
@@ -2132,12 +2197,6 @@ where
 struct ThreadEventStream(mpsc::UnboundedSender<Result<ThreadEvent>>);
 
 impl ThreadEventStream {
-    fn send_title_update(&self, text: SharedString) {
-        self.0
-            .unbounded_send(Ok(ThreadEvent::TitleUpdate(text)))
-            .ok();
-    }
-
     fn send_user_message(&self, message: &UserMessage) {
         self.0
             .unbounded_send(Ok(ThreadEvent::UserMessage(message.clone())))

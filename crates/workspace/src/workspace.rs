@@ -1,5 +1,6 @@
 pub mod dock;
 pub mod history_manager;
+pub mod invalid_buffer_view;
 pub mod item;
 mod modal_layer;
 pub mod notifications;
@@ -614,21 +615,49 @@ impl ProjectItemRegistry {
         );
         self.build_project_item_for_path_fns
             .push(|project, project_path, window, cx| {
+                let project_path = project_path.clone();
+                let abs_path = project.read(cx).absolute_path(&project_path, cx);
+                let is_local = project.read(cx).is_local();
                 let project_item =
-                    <T::Item as project::ProjectItem>::try_open(project, project_path, cx)?;
+                    <T::Item as project::ProjectItem>::try_open(project, &project_path, cx)?;
                 let project = project.clone();
-                Some(window.spawn(cx, async move |cx| {
-                    let project_item = project_item.await?;
-                    let project_entry_id: Option<ProjectEntryId> =
-                        project_item.read_with(cx, project::ProjectItem::entry_id)?;
-                    let build_workspace_item = Box::new(
-                        |pane: &mut Pane, window: &mut Window, cx: &mut Context<Pane>| {
-                            Box::new(cx.new(|cx| {
-                                T::for_project_item(project, Some(pane), project_item, window, cx)
-                            })) as Box<dyn ItemHandle>
+                Some(window.spawn(cx, async move |cx| match project_item.await {
+                    Ok(project_item) => {
+                        let project_item = project_item;
+                        let project_entry_id: Option<ProjectEntryId> =
+                            project_item.read_with(cx, project::ProjectItem::entry_id)?;
+                        let build_workspace_item = Box::new(
+                            |pane: &mut Pane, window: &mut Window, cx: &mut Context<Pane>| {
+                                Box::new(cx.new(|cx| {
+                                    T::for_project_item(
+                                        project,
+                                        Some(pane),
+                                        project_item,
+                                        window,
+                                        cx,
+                                    )
+                                })) as Box<dyn ItemHandle>
+                            },
+                        ) as Box<_>;
+                        Ok((project_entry_id, build_workspace_item))
+                    }
+                    Err(e) => match abs_path {
+                        Some(abs_path) => match cx.update(|window, cx| {
+                            T::for_broken_project_item(abs_path, is_local, &e, window, cx)
+                        })? {
+                            Some(broken_project_item_view) => {
+                                let build_workspace_item = Box::new(
+                                    move |_: &mut Pane, _: &mut Window, cx: &mut Context<Pane>| {
+                                        cx.new(|_| broken_project_item_view).boxed_clone()
+                                    },
+                                )
+                                    as Box<_>;
+                                Ok((None, build_workspace_item))
+                            }
+                            None => Err(e)?,
                         },
-                    ) as Box<_>;
-                    Ok((project_entry_id, build_workspace_item))
+                        None => Err(e)?,
+                    },
                 }))
             });
     }
@@ -2230,27 +2259,43 @@ impl Workspace {
             })?;
 
             if let Some(active_call) = active_call
-                && close_intent != CloseIntent::Quit
                 && workspace_count == 1
                 && active_call.read_with(cx, |call, _| call.room().is_some())?
             {
-                let answer = cx.update(|window, cx| {
-                    window.prompt(
-                        PromptLevel::Warning,
-                        "Do you want to leave the current call?",
-                        None,
-                        &["Close window and hang up", "Cancel"],
-                        cx,
-                    )
-                })?;
+                if close_intent == CloseIntent::CloseWindow {
+                    let answer = cx.update(|window, cx| {
+                        window.prompt(
+                            PromptLevel::Warning,
+                            "Do you want to leave the current call?",
+                            None,
+                            &["Close window and hang up", "Cancel"],
+                            cx,
+                        )
+                    })?;
 
-                if answer.await.log_err() == Some(1) {
-                    return anyhow::Ok(false);
-                } else {
-                    active_call
-                        .update(cx, |call, cx| call.hang_up(cx))?
-                        .await
-                        .log_err();
+                    if answer.await.log_err() == Some(1) {
+                        return anyhow::Ok(false);
+                    } else {
+                        active_call
+                            .update(cx, |call, cx| call.hang_up(cx))?
+                            .await
+                            .log_err();
+                    }
+                }
+                if close_intent == CloseIntent::ReplaceWindow {
+                    _ = active_call.update(cx, |this, cx| {
+                        let workspace = cx
+                            .windows()
+                            .iter()
+                            .filter_map(|window| window.downcast::<Workspace>())
+                            .next()
+                            .unwrap();
+                        let project = workspace.read(cx)?.project.clone();
+                        if project.read(cx).is_shared() {
+                            this.unshare_project(project, cx)?;
+                        }
+                        Ok::<_, anyhow::Error>(())
+                    })?;
                 }
             }
 
@@ -3344,9 +3389,8 @@ impl Workspace {
         window: &mut Window,
         cx: &mut App,
     ) -> Task<Result<(Option<ProjectEntryId>, WorkspaceItemBuilder)>> {
-        let project = self.project().clone();
         let registry = cx.default_global::<ProjectItemRegistry>().clone();
-        registry.open_path(&project, &path, window, cx)
+        registry.open_path(self.project(), &path, window, cx)
     }
 
     pub fn find_project_item<T>(

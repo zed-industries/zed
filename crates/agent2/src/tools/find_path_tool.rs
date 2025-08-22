@@ -85,11 +85,11 @@ impl AgentTool for FindPathTool {
     type Input = FindPathToolInput;
     type Output = FindPathToolOutput;
 
-    fn name(&self) -> SharedString {
-        "find_path".into()
+    fn name() -> &'static str {
+        "find_path"
     }
 
-    fn kind(&self) -> acp::ToolKind {
+    fn kind() -> acp::ToolKind {
         acp::ToolKind::Search
     }
 

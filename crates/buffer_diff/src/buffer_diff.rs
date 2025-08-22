@@ -162,6 +162,22 @@ impl BufferDiffSnapshot {
         }
     }
 
+    fn unchanged(
+        buffer: &text::BufferSnapshot,
+        base_text: language::BufferSnapshot,
+    ) -> BufferDiffSnapshot {
+        debug_assert_eq!(buffer.text(), base_text.text());
+        BufferDiffSnapshot {
+            inner: BufferDiffInner {
+                base_text,
+                hunks: SumTree::new(buffer),
+                pending_hunks: SumTree::new(buffer),
+                base_text_exists: false,
+            },
+            secondary_diff: None,
+        }
+    }
+
     fn new_with_base_text(
         buffer: text::BufferSnapshot,
         base_text: Option<Arc<String>>,
@@ -213,7 +229,10 @@ impl BufferDiffSnapshot {
         cx: &App,
     ) -> impl Future<Output = Self> + use<> {
         let base_text_exists = base_text.is_some();
-        let base_text_pair = base_text.map(|text| (text, base_text_snapshot.as_rope().clone()));
+        let base_text_pair = base_text.map(|text| {
+            debug_assert_eq!(&*text, &base_text_snapshot.text());
+            (text, base_text_snapshot.as_rope().clone())
+        });
         cx.background_executor()
             .spawn_labeled(*CALCULATE_DIFF_TASK, async move {
                 Self {
@@ -869,6 +888,18 @@ impl BufferDiff {
         BufferDiff {
             buffer_id: buffer.remote_id(),
             inner: BufferDiffSnapshot::empty(buffer, cx).inner,
+            secondary_diff: None,
+        }
+    }
+
+    pub fn new_unchanged(
+        buffer: &text::BufferSnapshot,
+        base_text: language::BufferSnapshot,
+    ) -> Self {
+        debug_assert_eq!(buffer.text(), base_text.text());
+        BufferDiff {
+            buffer_id: buffer.remote_id(),
+            inner: BufferDiffSnapshot::unchanged(buffer, base_text).inner,
             secondary_diff: None,
         }
     }

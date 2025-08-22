@@ -51,11 +51,11 @@ impl AgentTool for ListDirectoryTool {
     type Input = ListDirectoryToolInput;
     type Output = String;
 
-    fn name(&self) -> SharedString {
-        "list_directory".into()
+    fn name() -> &'static str {
+        "list_directory"
     }
 
-    fn kind(&self) -> ToolKind {
+    fn kind() -> ToolKind {
         ToolKind::Read
     }
 
