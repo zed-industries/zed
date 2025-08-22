@@ -1275,7 +1275,7 @@ impl Pane {
 
     pub fn swap_item_right(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let index = self.active_item_index;
-        if index + 1 == self.items.len() {
+        if index + 1 >= self.items.len() {
             return;
         }
 
