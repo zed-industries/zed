@@ -53,8 +53,10 @@ impl GitCommitList {
                         this.reload_history(window, cx)
                     }
 
-                    // Reload the history for any other changes
-                    _ => this.reload_history(window, cx),
+                    // Reload the git history on repository changes to the current repo
+                    GitStoreEvent::RepositoryUpdated(_, _, true) => this.reload_history(window, cx),
+
+                    _ => {}
                 },
             )
             .detach();
@@ -62,7 +64,10 @@ impl GitCommitList {
             let commits_list = ListState::new(0, gpui::ListAlignment::Top, px(1000.));
             commits_list.set_scroll_handler(cx.listener(
                 |this: &mut Self, event: &ListScrollEvent, window, cx| {
-                    if event.visible_range.end >= this.commits.len() - 5 && this.has_next_page() {
+                    if this.commits.len() > 5
+                        && event.visible_range.end >= this.commits.len() - 5
+                        && this.has_next_page()
+                    {
                         this.load_next_history_page(window, cx);
                     }
                 },
@@ -125,7 +130,7 @@ impl GitCommitList {
                         author_email: commit.author_email.clone(),
                         commit_time: OffsetDateTime::from_unix_timestamp(commit.commit_timestamp)?,
                         message: Some(ParsedCommitMessage {
-                            message: commit.message.clone(),
+                            message: commit.message,
                             ..Default::default()
                         }),
                     })
@@ -209,7 +214,6 @@ impl GitCommitList {
                     ),
             )
             .on_click({
-                let commit = commit_summary.clone();
                 let workspace = self.workspace.clone();
                 let repo = self.active_repository.as_ref().map(|repo| repo.downgrade());
                 move |_, window, cx| {
@@ -217,13 +221,7 @@ impl GitCommitList {
                         Some(repo) => repo,
                         None => return,
                     };
-                    CommitView::open(
-                        commit.clone(),
-                        repo.clone(),
-                        workspace.clone().clone(),
-                        window,
-                        cx,
-                    );
+                    CommitView::open(commit_summary.clone(), repo, workspace.clone(), window, cx);
                 }
             })
     }
