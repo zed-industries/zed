@@ -9,9 +9,8 @@ use parking::Parker;
 use parking_lot::Mutex;
 use util::ResultExt;
 use windows::{
-    Foundation::TimeSpan,
     System::Threading::{
-        ThreadPool, ThreadPoolTimer, TimerElapsedHandler, WorkItemHandler, WorkItemOptions,
+        ThreadPool, ThreadPoolTimer, TimerElapsedHandler, WorkItemHandler,
         WorkItemPriority,
     },
     Win32::{
