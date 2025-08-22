@@ -6,10 +6,12 @@
 
 use anyhow::Result;
 use gpui::App;
-use schemars::JsonSchema;
+use schemars::{JsonSchema, Schema, json_schema};
+
 use serde::de::Error;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use settings::{Settings, SettingsSources};
+use std::borrow::Cow;
 use std::fmt::Display;
 
 /// Initializes the `vim_mode_setting` crate.
@@ -22,12 +24,62 @@ pub fn init(cx: &mut App) {
 /// Default: `EditMode::Default`
 pub struct EditorModeSetting(pub EditorMode);
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, JsonSchema, Default)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Default)]
 pub enum EditorMode {
     #[default]
     Default,
     Vim(ModalMode),
     Helix(ModalMode),
+}
+
+impl JsonSchema for EditorMode {
+    fn schema_name() -> Cow<'static, str> {
+        "EditorMode".into()
+    }
+
+    fn json_schema(_gen: &mut schemars::SchemaGenerator) -> Schema {
+        json_schema!({
+            "oneOf": [
+                {
+                    "const": "default",
+                    "description": "Standard editing mode"
+                },
+                {
+                    "const": "vim",
+                    "description": "Vim normal mode"
+                },
+                {
+                    "const": "vim_normal",
+                    "description": "Vim normal mode"
+                },
+                {
+                    "const": "vim_insert",
+                    "description": "Vim insert mode"
+                },
+                {
+                    "const": "vim_replace",
+                    "description": "Vim replace mode"
+                },
+                {
+                    "const": "vim_visual",
+                    "description": "Vim visual mode"
+                },
+                {
+                    "const": "vim_visual_line",
+                    "description": "Vim visual line mode"
+                },
+                {
+                    "const": "vim_visual_block",
+                    "description": "Vim visual block mode"
+                },
+                {
+                    "const": "helix_experimental",
+                    "description": "Helix mode (experimental)"
+                }
+            ],
+            "description":  "Editor mode"
+        })
+    }
 }
 
 impl<'de> Deserialize<'de> for EditorMode {

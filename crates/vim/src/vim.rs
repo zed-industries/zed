@@ -244,7 +244,7 @@ pub fn init(cx: &mut App) {
     cx.observe_new(|workspace: &mut Workspace, _, _| {
         workspace.register_action(|workspace, _: &ToggleVimMode, _, cx| {
             let fs = workspace.app_state().fs.clone();
-            let currently_enabled = Vim::enabled(cx);
+            let currently_enabled = Vim::global_enabled(cx);
             update_settings_file::<EditorModeSetting>(fs, cx, move |setting, _| {
                 *setting = Some(if currently_enabled {
                     EditorMode::Default
@@ -812,13 +812,11 @@ impl Vim {
             .map(|workspace| workspace.read(cx).focused_pane(window, cx))
     }
 
-    pub fn enabled(cx: &mut App) -> bool {
+    pub fn global_enabled(cx: &mut App) -> bool {
+        dbg!(&EditorModeSetting::get_global(cx).0);
         if EditorModeSetting::get_global(cx).0 == EditorMode::Default {
             return false;
         }
-
-        // check for agent.editor_mode
-        //
         return true;
     }
 

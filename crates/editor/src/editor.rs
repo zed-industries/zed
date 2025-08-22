@@ -201,7 +201,7 @@ use ui::{
     IconSize, Indicator, Key, Tooltip, h_flex, prelude::*,
 };
 use util::{RangeExt, ResultExt, TryFutureExt, maybe, post_inc};
-use vim_mode_setting::EditorMode;
+use vim_mode_setting::{EditorMode, EditorModeSetting};
 use workspace::{
     CollaboratorId, Item as WorkspaceItem, ItemId, ItemNavHistory, OpenInTerminal, OpenTerminal,
     RestoreOnStartupBehavior, SERIALIZATION_THROTTLE_TIME, SplitDirection, TabBarSettings, Toast,
@@ -1181,38 +1181,6 @@ pub struct Editor {
     colors: Option<LspColorData>,
     folding_newlines: Task<()>,
     editor_mode: vim_mode_setting::EditorMode,
-    // editor_mode: EditorMode, <-- while init define which editor,
-
-    // agenty subscribe to agen settings
-    //
-    // editor <- agent
-    //
-    // settings listent to event emitted by editor,
-    //
-
-    // agent will set_editor_mode(AgentPanelSettings::read("editor_mode")) on init
-    // vim.rs will get_editor_mode() on init / activate / register
-    //
-    // match editor_mode {
-    //      // which setting to use
-    // }
-    //
-    //
-
-    // editor_mode: EditorMode, <-- while init define which editor,
-    // pros -> jsut set enum
-    // cons -> actual setting check lives in either editor.rs or vim.rs??
-    //
-    // set_edutr();
-    //
-    // Fn () -> weather mode this editor is, and what;s the default value?
-    //  pros -> all setting lives in agent, git.
-    // cons -> if someone wants to use agent setting in their editor, they need to copy paste code
-    //
-    // // agent.rs
-    // set_vim_setting_fn(|| {
-    //     // edito seting agnet
-    // });
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Default)]
@@ -2294,7 +2262,11 @@ impl Editor {
             display_mode: mode,
             selection_drag_state: SelectionDragState::None,
             folding_newlines: Task::ready(()),
-            editor_mode: vim_mode_setting::EditorMode::default(),
+            editor_mode: if full_mode {
+                EditorModeSetting::get_global(cx).0
+            } else {
+                vim_mode_setting::EditorMode::default()
+            },
         };
 
         if is_minimap {

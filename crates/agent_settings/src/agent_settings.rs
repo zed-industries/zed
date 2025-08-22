@@ -49,7 +49,7 @@ pub enum NotifyWhenAgentWaiting {
     Never,
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, JsonSchema, Default)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Default)]
 pub enum AgentEditorMode {
     EditorModeOverride(EditorMode),
     #[default]
@@ -62,10 +62,12 @@ impl<'de> Deserialize<'de> for AgentEditorMode {
         D: Deserializer<'de>,
     {
         let s = String::deserialize(deserializer)?;
+        dbg!(&s);
         if s == "inherit" {
             Ok(AgentEditorMode::Inherit)
         } else {
             let mode = EditorMode::deserialize(serde::de::value::StringDeserializer::new(s))?;
+            dbg!(&mode);
             Ok(AgentEditorMode::EditorModeOverride(mode))
         }
     }
@@ -80,6 +82,31 @@ impl Serialize for AgentEditorMode {
             AgentEditorMode::EditorModeOverride(mode) => mode.serialize(serializer),
             AgentEditorMode::Inherit => serializer.serialize_str("inherit"),
         }
+    }
+}
+
+impl JsonSchema for AgentEditorMode {
+    fn schema_name() -> Cow<'static, str> {
+        "AgentEditorMode".into()
+    }
+
+    fn json_schema(schema_gen: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        let editor_mode_schema = EditorMode::json_schema(schema_gen);
+
+        // TODO: This schema is incorrect. Need to extend editor_mode_schema with `inherit`
+        let result = json_schema!({
+            "oneOf": [
+                {
+                    "const": "inherit",
+                    "description": "Inherit editor mode from global settings"
+                },
+                editor_mode_schema
+            ],
+            "description": "Agent editor mode - either inherit from global settings or override with a specific mode"
+        });
+
+        dbg!(&result);
+        result
     }
 }
 

@@ -652,7 +652,7 @@ impl VimGlobals {
         let mut was_enabled = None;
 
         cx.observe_global::<SettingsStore>(move |cx| {
-            let is_enabled = Vim::enabled(cx);
+            let is_enabled = Vim::global_enabled(cx);
             if was_enabled == Some(is_enabled) {
                 return;
             }
