@@ -12237,6 +12237,7 @@ async fn test_completion_mode(cx: &mut TestAppContext) {
                 settings.defaults.completions = Some(CompletionSettings {
                     lsp_insert_mode,
                     words: WordsCompletionMode::Disabled,
+                    words_min_length: 0,
                     lsp: true,
                     lsp_fetch_timeout_ms: 0,
                 });
@@ -12295,6 +12296,7 @@ async fn test_completion_with_mode_specified_by_action(cx: &mut TestAppContext) 
     update_test_language_settings(&mut cx, |settings| {
         settings.defaults.completions = Some(CompletionSettings {
             words: WordsCompletionMode::Disabled,
+            words_min_length: 0,
             // set the opposite here to ensure that the action is overriding the default behavior
             lsp_insert_mode: LspInsertMode::Insert,
             lsp: true,
@@ -12331,6 +12333,7 @@ async fn test_completion_with_mode_specified_by_action(cx: &mut TestAppContext) 
     update_test_language_settings(&mut cx, |settings| {
         settings.defaults.completions = Some(CompletionSettings {
             words: WordsCompletionMode::Disabled,
+            words_min_length: 0,
             // set the opposite here to ensure that the action is overriding the default behavior
             lsp_insert_mode: LspInsertMode::Replace,
             lsp: true,
@@ -13072,6 +13075,7 @@ async fn test_word_completion(cx: &mut TestAppContext) {
     init_test(cx, |language_settings| {
         language_settings.defaults.completions = Some(CompletionSettings {
             words: WordsCompletionMode::Fallback,
+            words_min_length: 0,
             lsp: true,
             lsp_fetch_timeout_ms: 10,
             lsp_insert_mode: LspInsertMode::Insert,
@@ -13168,6 +13172,7 @@ async fn test_word_completions_do_not_duplicate_lsp_ones(cx: &mut TestAppContext
     init_test(cx, |language_settings| {
         language_settings.defaults.completions = Some(CompletionSettings {
             words: WordsCompletionMode::Enabled,
+            words_min_length: 0,
             lsp: true,
             lsp_fetch_timeout_ms: 0,
             lsp_insert_mode: LspInsertMode::Insert,
@@ -13231,6 +13236,7 @@ async fn test_word_completions_continue_on_typing(cx: &mut TestAppContext) {
     init_test(cx, |language_settings| {
         language_settings.defaults.completions = Some(CompletionSettings {
             words: WordsCompletionMode::Disabled,
+            words_min_length: 0,
             lsp: true,
             lsp_fetch_timeout_ms: 0,
             lsp_insert_mode: LspInsertMode::Insert,
@@ -13304,6 +13310,7 @@ async fn test_word_completions_usually_skip_digits(cx: &mut TestAppContext) {
     init_test(cx, |language_settings| {
         language_settings.defaults.completions = Some(CompletionSettings {
             words: WordsCompletionMode::Fallback,
+            words_min_length: 0,
             lsp: false,
             lsp_fetch_timeout_ms: 0,
             lsp_insert_mode: LspInsertMode::Insert,
@@ -13357,6 +13364,56 @@ async fn test_word_completions_usually_skip_digits(cx: &mut TestAppContext) {
                 return matching words with digits (`33`, `35f32`) but exclude query duplicates (`3`)");
         } else {
             panic!("expected completion menu to be open");
+        }
+    });
+}
+
+#[gpui::test]
+async fn test_word_completions_do_not_show_before_threshold(cx: &mut TestAppContext) {
+    init_test(cx, |language_settings| {
+        language_settings.defaults.completions = Some(CompletionSettings {
+            words: WordsCompletionMode::Enabled,
+            words_min_length: 3,
+            lsp: true,
+            lsp_fetch_timeout_ms: 0,
+            lsp_insert_mode: LspInsertMode::Insert,
+        });
+    });
+
+    let mut cx = EditorLspTestContext::new_rust(lsp::ServerCapabilities::default(), cx).await;
+    cx.set_state(indoc! {"ˇ
+        wow
+        wowen
+        wowser
+    "});
+    cx.simulate_keystroke("w");
+    cx.executor().run_until_parked();
+    cx.update_editor(|editor, _, _| {
+        if editor.context_menu.borrow_mut().is_some() {
+            panic!(
+                "expected completion menu to be hidden, as words completion threshold is not met"
+            );
+        }
+    });
+
+    cx.simulate_keystroke("o");
+    cx.executor().run_until_parked();
+    cx.update_editor(|editor, _, _| {
+        if editor.context_menu.borrow_mut().is_some() {
+            panic!(
+                "expected completion menu to be hidden, as words completion threshold is not met still"
+            );
+        }
+    });
+
+    cx.simulate_keystroke("w");
+    cx.executor().run_until_parked();
+    cx.update_editor(|editor, _, _| {
+        if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu.borrow_mut().as_ref()
+        {
+            assert_eq!(completion_menu_entries(menu), &["wowen", "wowser"], "After word completion threshold is met, matching words should be shown, excluding the already typed word");
+        } else {
+            panic!("expected completion menu to be open after the word completions threshold is met");
         }
     });
 }
