@@ -31,6 +31,58 @@ pub trait RequestMessage: EnvelopedMessage {
     type Response: EnvelopedMessage;
 }
 
+/// A trait to bind LSP request and responses for the proto layer.
+/// Should be used for every LSP request that has to traverse through the proto layer.
+///
+/// `lsp_messages` macro in the same crate provides a convenient way to implement this.
+pub trait LspRequestMessage: EnvelopedMessage {
+    type Response: EnvelopedMessage;
+
+    fn to_proto_query(self) -> crate::lsp_query::Request;
+
+    fn response_to_proto_query(response: Self::Response) -> crate::lsp_response::Response;
+
+    fn buffer_id(&self) -> u64;
+
+    fn buffer_version(&self) -> &[crate::VectorClockEntry];
+
+    /// Whether to deduplicate the requests, or keep the previous ones running when another
+    /// request of the same kind is processed.
+    fn stop_previous_requests() -> bool;
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct LspRequestId(pub u64);
+
+/// A response from a single language server.
+/// There could be multiple responses for a single LSP request,
+/// from different servers.
+pub struct ProtoLspResponse<R> {
+    pub server_id: u64,
+    pub response: R,
+}
+
+impl ProtoLspResponse<Box<dyn AnyTypedEnvelope>> {
+    pub fn into_response<T: LspRequestMessage>(self) -> Result<ProtoLspResponse<T::Response>> {
+        let envelope = self
+            .response
+            .into_any()
+            .downcast::<TypedEnvelope<T::Response>>()
+            .map_err(|_| {
+                anyhow::anyhow!(
+                    "cannot downcast LspResponse to {} for message {}",
+                    T::Response::NAME,
+                    T::NAME,
+                )
+            })?;
+
+        Ok(ProtoLspResponse {
+            server_id: self.server_id,
+            response: envelope.payload,
+        })
+    }
+}
+
 pub trait AnyTypedEnvelope: Any + Send + Sync {
     fn payload_type_id(&self) -> TypeId;
     fn payload_type_name(&self) -> &'static str;

@@ -62,13 +62,6 @@ async fn main() -> Result<()> {
             db.initialize_notification_kinds().await?;
 
             collab::seed::seed(&config, &db, false).await?;
-
-            if let Some(llm_database_url) = config.llm_database_url.clone() {
-                let db_options = db::ConnectOptions::new(llm_database_url);
-                let mut db = LlmDatabase::new(db_options.clone(), Executor::Production).await?;
-                db.initialize().await?;
-                collab::llm::db::seed_database(&config, &mut db, true).await?;
-            }
         }
         Some("serve") => {
             let mode = match args.next().as_deref() {
@@ -101,13 +94,6 @@ async fn main() -> Result<()> {
                 setup_llm_database(&config).await?;
 
                 let state = AppState::new(config, Executor::Production).await?;
-
-                if let Some(stripe_billing) = state.stripe_billing.clone() {
-                    let executor = state.executor.clone();
-                    executor.spawn_detached(async move {
-                        stripe_billing.initialize().await.trace_err();
-                    });
-                }
 
                 if mode.is_collab() {
                     state.db.purge_old_embeddings().await.trace_err();
@@ -270,9 +256,6 @@ async fn setup_llm_database(config: &Config) -> Result<()> {
         .llm_database_migrations_path
         .as_deref()
         .unwrap_or_else(|| {
-            #[cfg(feature = "sqlite")]
-            let default_migrations = concat!(env!("CARGO_MANIFEST_DIR"), "/migrations_llm.sqlite");
-            #[cfg(not(feature = "sqlite"))]
             let default_migrations = concat!(env!("CARGO_MANIFEST_DIR"), "/migrations_llm");
 
             Path::new(default_migrations)

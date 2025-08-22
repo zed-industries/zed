@@ -42,7 +42,6 @@ impl<T: 'static> SearchActionsRegistrar for DivRegistrar<'_, '_, T> {
         self.div = self.div.take().map(|div| {
             div.on_action(self.cx.listener(move |this, action, window, cx| {
                 let should_notify = (getter)(this, window, cx)
-                    .clone()
                     .map(|search_bar| {
                         search_bar.update(cx, |search_bar, cx| {
                             callback.execute(search_bar, action, window, cx)

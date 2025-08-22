@@ -10,14 +10,17 @@ use git::{
     status::{FileStatus, StatusCode, UnmergedStatus, UnmergedStatusCode},
 };
 use git_panel_settings::GitPanelSettings;
-use gpui::{Action, App, Context, FocusHandle, Window, actions};
+use gpui::{
+    Action, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Window,
+    actions,
+};
 use onboarding::GitOnboardingModal;
 use project_diff::ProjectDiff;
 use ui::prelude::*;
-use workspace::Workspace;
+use workspace::{ModalView, Workspace};
 use zed_actions;
 
-use crate::text_diff_view::TextDiffView;
+use crate::{git_panel::GitPanel, text_diff_view::TextDiffView};
 
 mod askpass_modal;
 pub mod branch_picker;
@@ -169,6 +172,15 @@ pub fn init(cx: &mut App) {
                 panel.git_init(window, cx);
             });
         });
+        workspace.register_action(|workspace, _action: &git::Clone, window, cx| {
+            let Some(panel) = workspace.panel::<git_panel::GitPanel>(cx) else {
+                return;
+            };
+
+            workspace.toggle_modal(window, cx, |window, cx| {
+                GitCloneModal::show(panel, window, cx)
+            });
+        });
         workspace.register_action(|workspace, _: &git::OpenModifiedFiles, window, cx| {
             open_modified_files(workspace, window, cx);
         });
@@ -233,12 +245,12 @@ fn render_remote_button(
             }
             (0, 0) => None,
             (ahead, 0) => Some(remote_button::render_push_button(
-                keybinding_target.clone(),
+                keybinding_target,
                 id,
                 ahead,
             )),
             (ahead, behind) => Some(remote_button::render_pull_button(
-                keybinding_target.clone(),
+                keybinding_target,
                 id,
                 ahead,
                 behind,
@@ -413,16 +425,9 @@ mod remote_button {
         let command = command.into();
 
         if let Some(handle) = focus_handle {
-            Tooltip::with_meta_in(
-                label.clone(),
-                Some(action),
-                command.clone(),
-                &handle,
-                window,
-                cx,
-            )
+            Tooltip::with_meta_in(label, Some(action), command, &handle, window, cx)
         } else {
-            Tooltip::with_meta(label.clone(), Some(action), command.clone(), window, cx)
+            Tooltip::with_meta(label, Some(action), command, window, cx)
         }
     }
 
@@ -445,7 +450,7 @@ mod remote_button {
                 Some(ContextMenu::build(window, cx, |context_menu, _, _| {
                     context_menu
                         .when_some(keybinding_target.clone(), |el, keybinding_target| {
-                            el.context(keybinding_target.clone())
+                            el.context(keybinding_target)
                         })
                         .action("Fetch", git::Fetch.boxed_clone())
                         .action("Fetch From", git::FetchFrom.boxed_clone())
@@ -613,3 +618,88 @@ impl Component for GitStatusIcon {
         )
     }
 }
+
+struct GitCloneModal {
+    panel: Entity<GitPanel>,
+    repo_input: Entity<Editor>,
+    focus_handle: FocusHandle,
+}
+
+impl GitCloneModal {
+    pub fn show(panel: Entity<GitPanel>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let repo_input = cx.new(|cx| {
+            let mut editor = Editor::single_line(window, cx);
+            editor.set_placeholder_text("Enter repository URL…", cx);
+            editor
+        });
+        let focus_handle = repo_input.focus_handle(cx);
+
+        window.focus(&focus_handle);
+
+        Self {
+            panel,
+            repo_input,
+            focus_handle,
+        }
+    }
+}
+
+impl Focusable for GitCloneModal {
+    fn focus_handle(&self, _: &App) -> FocusHandle {
+        self.focus_handle.clone()
+    }
+}
+
+impl Render for GitCloneModal {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .elevation_3(cx)
+            .w(rems(34.))
+            .flex_1()
+            .overflow_hidden()
+            .child(
+                div()
+                    .w_full()
+                    .p_2()
+                    .border_b_1()
+                    .border_color(cx.theme().colors().border_variant)
+                    .child(self.repo_input.clone()),
+            )
+            .child(
+                h_flex()
+                    .w_full()
+                    .p_2()
+                    .gap_0p5()
+                    .rounded_b_sm()
+                    .bg(cx.theme().colors().editor_background)
+                    .child(
+                        Label::new("Clone a repository from GitHub or other sources.")
+                            .color(Color::Muted)
+                            .size(LabelSize::Small),
+                    )
+                    .child(
+                        Button::new("learn-more", "Learn More")
+                            .label_size(LabelSize::Small)
+                            .icon(IconName::ArrowUpRight)
+                            .icon_size(IconSize::XSmall)
+                            .on_click(|_, _, cx| {
+                                cx.open_url("https://github.com/git-guides/git-clone");
+                            }),
+                    ),
+            )
+            .on_action(cx.listener(|_, _: &menu::Cancel, _, cx| {
+                cx.emit(DismissEvent);
+            }))
+            .on_action(cx.listener(|this, _: &menu::Confirm, window, cx| {
+                let repo = this.repo_input.read(cx).text(cx);
+                this.panel.update(cx, |panel, cx| {
+                    panel.git_clone(repo, window, cx);
+                });
+                cx.emit(DismissEvent);
+            }))
+    }
+}
+
+impl EventEmitter<DismissEvent> for GitCloneModal {}
+
+impl ModalView for GitCloneModal {}

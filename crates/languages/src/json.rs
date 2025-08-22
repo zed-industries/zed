@@ -8,11 +8,11 @@ use futures::StreamExt;
 use gpui::{App, AsyncApp, Task};
 use http_client::github::{GitHubLspBinaryVersion, latest_github_release};
 use language::{
-    ContextProvider, LanguageName, LanguageRegistry, LanguageToolchainStore, LocalFile as _,
-    LspAdapter, LspAdapterDelegate,
+    ContextProvider, LanguageName, LanguageRegistry, LocalFile as _, LspAdapter,
+    LspAdapterDelegate, Toolchain,
 };
 use lsp::{LanguageServerBinary, LanguageServerName};
-use node_runtime::NodeRuntime;
+use node_runtime::{NodeRuntime, VersionStrategy};
 use project::{Fs, lsp_store::language_server_settings};
 use serde_json::{Value, json};
 use settings::{KeymapFile, SettingsJsonSchemaParams, SettingsStore};
@@ -234,7 +234,7 @@ impl JsonLspAdapter {
         schemas
             .as_array_mut()
             .unwrap()
-            .extend(cx.all_action_names().into_iter().map(|&name| {
+            .extend(cx.all_action_names().iter().map(|&name| {
                 project::lsp_store::json_language_server_ext::url_schema_for_action(name)
             }));
 
@@ -280,7 +280,7 @@ impl JsonLspAdapter {
             )
         })?;
         writer.replace(config.clone());
-        return Ok(config);
+        Ok(config)
     }
 }
 
@@ -303,7 +303,7 @@ impl LspAdapter for JsonLspAdapter {
     async fn check_if_user_installed(
         &self,
         delegate: &dyn LspAdapterDelegate,
-        _: Arc<dyn LanguageToolchainStore>,
+        _: Option<Toolchain>,
         _: &AsyncApp,
     ) -> Option<LanguageServerBinary> {
         let path = delegate
@@ -340,7 +340,12 @@ impl LspAdapter for JsonLspAdapter {
 
         let should_install_language_server = self
             .node
-            .should_install_npm_package(Self::PACKAGE_NAME, &server_path, &container_dir, &version)
+            .should_install_npm_package(
+                Self::PACKAGE_NAME,
+                &server_path,
+                container_dir,
+                VersionStrategy::Latest(version),
+            )
             .await;
 
         if should_install_language_server {
@@ -399,7 +404,7 @@ impl LspAdapter for JsonLspAdapter {
         self: Arc<Self>,
         _: &dyn Fs,
         delegate: &Arc<dyn LspAdapterDelegate>,
-        _: Arc<dyn LanguageToolchainStore>,
+        _: Option<Toolchain>,
         cx: &mut AsyncApp,
     ) -> Result<Value> {
         let mut config = self.get_or_init_workspace_config(cx).await?;
@@ -483,7 +488,7 @@ impl NodeVersionAdapter {
 #[async_trait(?Send)]
 impl LspAdapter for NodeVersionAdapter {
     fn name(&self) -> LanguageServerName {
-        Self::SERVER_NAME.clone()
+        Self::SERVER_NAME
     }
 
     async fn fetch_latest_server_version(
@@ -524,7 +529,7 @@ impl LspAdapter for NodeVersionAdapter {
     async fn check_if_user_installed(
         &self,
         delegate: &dyn LspAdapterDelegate,
-        _: Arc<dyn LanguageToolchainStore>,
+        _: Option<Toolchain>,
         _: &AsyncApp,
     ) -> Option<LanguageServerBinary> {
         let path = delegate.which(Self::SERVER_NAME.as_ref()).await?;

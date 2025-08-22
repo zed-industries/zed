@@ -58,6 +58,8 @@
       "[ space": "vim::InsertEmptyLineAbove",
       "[ e": "editor::MoveLineUp",
       "] e": "editor::MoveLineDown",
+      "[ f": "workspace::FollowNextCollaborator",
+      "] f": "workspace::FollowNextCollaborator",
 
       // Word motions
       "w": "vim::NextWordStart",
@@ -333,10 +335,14 @@
       "ctrl-x ctrl-c": "editor::ShowEditPrediction", // zed specific
       "ctrl-x ctrl-l": "editor::ToggleCodeActions", // zed specific
       "ctrl-x ctrl-z": "editor::Cancel",
+      "ctrl-x ctrl-e": "vim::LineDown",
+      "ctrl-x ctrl-y": "vim::LineUp",
       "ctrl-w": "editor::DeleteToPreviousWordStart",
       "ctrl-u": "editor::DeleteToBeginningOfLine",
       "ctrl-t": "vim::Indent",
       "ctrl-d": "vim::Outdent",
+      "ctrl-y": "vim::InsertFromAbove",
+      "ctrl-e": "vim::InsertFromBelow",
       "ctrl-k": ["vim::PushDigraph", {}],
       "ctrl-v": ["vim::PushLiteral", {}],
       "ctrl-shift-v": "editor::Paste", // note: this is *very* similar to ctrl-v in vim, but ctrl-shift-v on linux is the typical shortcut for paste when ctrl-v is already in use.
@@ -386,7 +392,7 @@
       "right": "vim::WrappingRight",
       "h": "vim::WrappingLeft",
       "l": "vim::WrappingRight",
-      "y": "editor::Copy",
+      "y": "vim::HelixYank",
       "alt-;": "vim::OtherEnd",
       "ctrl-r": "vim::Redo",
       "f": ["vim::PushFindForward", { "before": false, "multiline": true }],
@@ -403,6 +409,7 @@
       "g w": "vim::PushRewrap",
       "insert": "vim::InsertBefore",
       "alt-.": "vim::RepeatFind",
+      "alt-s": ["editor::SplitSelectionIntoLines", { "keep_selections": true }],
       // tree-sitter related commands
       "[ x": "editor::SelectLargerSyntaxNode",
       "] x": "editor::SelectSmallerSyntaxNode",

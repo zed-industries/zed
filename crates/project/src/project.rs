@@ -84,7 +84,7 @@ use lsp::{
 };
 use lsp_command::*;
 use lsp_store::{CompletionDocumentation, LspFormatTarget, OpenLspBufferHandle};
-pub use manifest_tree::ManifestProviders;
+pub use manifest_tree::ManifestProvidersStore;
 use node_runtime::NodeRuntime;
 use parking_lot::Mutex;
 pub use prettier_store::PrettierStore;
@@ -327,6 +327,7 @@ pub enum Event {
     RevealInProjectPanel(ProjectEntryId),
     SnippetEdit(BufferId, Vec<(lsp::Range, Snippet)>),
     ExpandedAllForEntry(WorktreeId, ProjectEntryId),
+    EntryRenamed(ProjectTransaction),
     AgentLocationChanged,
 }
 
@@ -489,67 +490,63 @@ impl CompletionSource {
             ..
         } = self
         {
-            if apply_defaults {
-                if let Some(lsp_defaults) = lsp_defaults {
-                    let mut completion_with_defaults = *lsp_completion.clone();
-                    let default_commit_characters = lsp_defaults.commit_characters.as_ref();
-                    let default_edit_range = lsp_defaults.edit_range.as_ref();
-                    let default_insert_text_format = lsp_defaults.insert_text_format.as_ref();
-                    let default_insert_text_mode = lsp_defaults.insert_text_mode.as_ref();
+            if apply_defaults && let Some(lsp_defaults) = lsp_defaults {
+                let mut completion_with_defaults = *lsp_completion.clone();
+                let default_commit_characters = lsp_defaults.commit_characters.as_ref();
+                let default_edit_range = lsp_defaults.edit_range.as_ref();
+                let default_insert_text_format = lsp_defaults.insert_text_format.as_ref();
+                let default_insert_text_mode = lsp_defaults.insert_text_mode.as_ref();
 
-                    if default_commit_characters.is_some()
-                        || default_edit_range.is_some()
-                        || default_insert_text_format.is_some()
-                        || default_insert_text_mode.is_some()
+                if default_commit_characters.is_some()
+                    || default_edit_range.is_some()
+                    || default_insert_text_format.is_some()
+                    || default_insert_text_mode.is_some()
+                {
+                    if completion_with_defaults.commit_characters.is_none()
+                        && default_commit_characters.is_some()
                     {
-                        if completion_with_defaults.commit_characters.is_none()
-                            && default_commit_characters.is_some()
-                        {
-                            completion_with_defaults.commit_characters =
-                                default_commit_characters.cloned()
-                        }
-                        if completion_with_defaults.text_edit.is_none() {
-                            match default_edit_range {
-                                Some(lsp::CompletionListItemDefaultsEditRange::Range(range)) => {
-                                    completion_with_defaults.text_edit =
-                                        Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
-                                            range: *range,
-                                            new_text: completion_with_defaults.label.clone(),
-                                        }))
-                                }
-                                Some(
-                                    lsp::CompletionListItemDefaultsEditRange::InsertAndReplace {
-                                        insert,
-                                        replace,
-                                    },
-                                ) => {
-                                    completion_with_defaults.text_edit =
-                                        Some(lsp::CompletionTextEdit::InsertAndReplace(
-                                            lsp::InsertReplaceEdit {
-                                                new_text: completion_with_defaults.label.clone(),
-                                                insert: *insert,
-                                                replace: *replace,
-                                            },
-                                        ))
-                                }
-                                None => {}
+                        completion_with_defaults.commit_characters =
+                            default_commit_characters.cloned()
+                    }
+                    if completion_with_defaults.text_edit.is_none() {
+                        match default_edit_range {
+                            Some(lsp::CompletionListItemDefaultsEditRange::Range(range)) => {
+                                completion_with_defaults.text_edit =
+                                    Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
+                                        range: *range,
+                                        new_text: completion_with_defaults.label.clone(),
+                                    }))
                             }
-                        }
-                        if completion_with_defaults.insert_text_format.is_none()
-                            && default_insert_text_format.is_some()
-                        {
-                            completion_with_defaults.insert_text_format =
-                                default_insert_text_format.cloned()
-                        }
-                        if completion_with_defaults.insert_text_mode.is_none()
-                            && default_insert_text_mode.is_some()
-                        {
-                            completion_with_defaults.insert_text_mode =
-                                default_insert_text_mode.cloned()
+                            Some(lsp::CompletionListItemDefaultsEditRange::InsertAndReplace {
+                                insert,
+                                replace,
+                            }) => {
+                                completion_with_defaults.text_edit =
+                                    Some(lsp::CompletionTextEdit::InsertAndReplace(
+                                        lsp::InsertReplaceEdit {
+                                            new_text: completion_with_defaults.label.clone(),
+                                            insert: *insert,
+                                            replace: *replace,
+                                        },
+                                    ))
+                            }
+                            None => {}
                         }
                     }
-                    return Some(Cow::Owned(completion_with_defaults));
+                    if completion_with_defaults.insert_text_format.is_none()
+                        && default_insert_text_format.is_some()
+                    {
+                        completion_with_defaults.insert_text_format =
+                            default_insert_text_format.cloned()
+                    }
+                    if completion_with_defaults.insert_text_mode.is_none()
+                        && default_insert_text_mode.is_some()
+                    {
+                        completion_with_defaults.insert_text_mode =
+                            default_insert_text_mode.cloned()
+                    }
                 }
+                return Some(Cow::Owned(completion_with_defaults));
             }
             Some(Cow::Borrowed(lsp_completion))
         } else {
@@ -962,14 +959,19 @@ impl settings::Settings for DisableAiSettings {
     type FileContent = Option<bool>;
 
     fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {
-        Ok(Self {
-            disable_ai: sources
-                .user
-                .or(sources.server)
-                .copied()
-                .flatten()
-                .unwrap_or(sources.default.ok_or_else(Self::missing_default)?),
-        })
+        // For security reasons, settings can only make AI restrictions MORE strict, not less.
+        // (For example, if someone is working on a project that contractually
+        // requires no AI use, that should override the user's setting which
+        // permits AI use.)
+        // This also prevents an attacker from using project or server settings to enable AI when it should be disabled.
+        let disable_ai = sources
+            .project
+            .iter()
+            .chain(sources.user.iter())
+            .chain(sources.server.iter())
+            .any(|disabled| **disabled == Some(true));
+
+        Ok(Self { disable_ai })
     }
 
     fn import_from_vscode(_vscode: &settings::VsCodeSettings, _current: &mut Self::FileContent) {}
@@ -1110,7 +1112,11 @@ impl Project {
                     buffer_store.clone(),
                     worktree_store.clone(),
                     prettier_store.clone(),
-                    toolchain_store.clone(),
+                    toolchain_store
+                        .read(cx)
+                        .as_local_store()
+                        .expect("Toolchain store to be local")
+                        .clone(),
                     environment.clone(),
                     manifest_tree,
                     languages.clone(),
@@ -1255,7 +1261,6 @@ impl Project {
                 LspStore::new_remote(
                     buffer_store.clone(),
                     worktree_store.clone(),
-                    Some(toolchain_store.clone()),
                     languages.clone(),
                     ssh_proto.clone(),
                     SSH_PROJECT_ID,
@@ -1342,14 +1347,13 @@ impl Project {
             };
 
             // ssh -> local machine handlers
-            let ssh = ssh.read(cx);
-            ssh.subscribe_to_entity(SSH_PROJECT_ID, &cx.entity());
-            ssh.subscribe_to_entity(SSH_PROJECT_ID, &this.buffer_store);
-            ssh.subscribe_to_entity(SSH_PROJECT_ID, &this.worktree_store);
-            ssh.subscribe_to_entity(SSH_PROJECT_ID, &this.lsp_store);
-            ssh.subscribe_to_entity(SSH_PROJECT_ID, &this.dap_store);
-            ssh.subscribe_to_entity(SSH_PROJECT_ID, &this.settings_observer);
-            ssh.subscribe_to_entity(SSH_PROJECT_ID, &this.git_store);
+            ssh_proto.subscribe_to_entity(SSH_PROJECT_ID, &cx.entity());
+            ssh_proto.subscribe_to_entity(SSH_PROJECT_ID, &this.buffer_store);
+            ssh_proto.subscribe_to_entity(SSH_PROJECT_ID, &this.worktree_store);
+            ssh_proto.subscribe_to_entity(SSH_PROJECT_ID, &this.lsp_store);
+            ssh_proto.subscribe_to_entity(SSH_PROJECT_ID, &this.dap_store);
+            ssh_proto.subscribe_to_entity(SSH_PROJECT_ID, &this.settings_observer);
+            ssh_proto.subscribe_to_entity(SSH_PROJECT_ID, &this.git_store);
 
             ssh_proto.add_entity_message_handler(Self::handle_create_buffer_for_peer);
             ssh_proto.add_entity_message_handler(Self::handle_update_worktree);
@@ -1480,7 +1484,6 @@ impl Project {
             let mut lsp_store = LspStore::new_remote(
                 buffer_store.clone(),
                 worktree_store.clone(),
-                None,
                 languages.clone(),
                 client.clone().into(),
                 remote_id,
@@ -1610,25 +1613,23 @@ impl Project {
             .into_iter()
             .map(|s| match s {
                 EntitySubscription::BufferStore(subscription) => {
-                    subscription.set_entity(&buffer_store, &mut cx)
+                    subscription.set_entity(&buffer_store, &cx)
                 }
                 EntitySubscription::WorktreeStore(subscription) => {
-                    subscription.set_entity(&worktree_store, &mut cx)
+                    subscription.set_entity(&worktree_store, &cx)
                 }
                 EntitySubscription::GitStore(subscription) => {
-                    subscription.set_entity(&git_store, &mut cx)
+                    subscription.set_entity(&git_store, &cx)
                 }
                 EntitySubscription::SettingsObserver(subscription) => {
-                    subscription.set_entity(&settings_observer, &mut cx)
+                    subscription.set_entity(&settings_observer, &cx)
                 }
-                EntitySubscription::Project(subscription) => {
-                    subscription.set_entity(&this, &mut cx)
-                }
+                EntitySubscription::Project(subscription) => subscription.set_entity(&this, &cx),
                 EntitySubscription::LspStore(subscription) => {
-                    subscription.set_entity(&lsp_store, &mut cx)
+                    subscription.set_entity(&lsp_store, &cx)
                 }
                 EntitySubscription::DapStore(subscription) => {
-                    subscription.set_entity(&dap_store, &mut cx)
+                    subscription.set_entity(&dap_store, &cx)
                 }
             })
             .collect::<Vec<_>>();
@@ -1841,7 +1842,7 @@ impl Project {
         cx: &'a mut App,
     ) -> Shared<Task<Option<HashMap<String, String>>>> {
         self.environment.update(cx, |environment, cx| {
-            environment.get_buffer_environment(&buffer, &worktree_store, cx)
+            environment.get_buffer_environment(buffer, worktree_store, cx)
         })
     }
 
@@ -1896,15 +1897,7 @@ impl Project {
             return true;
         }
 
-        return false;
-    }
-
-    pub fn ssh_connection_string(&self, cx: &App) -> Option<SharedString> {
-        if let Some(ssh_state) = &self.ssh_client {
-            return Some(ssh_state.read(cx).connection_string().into());
-        }
-
-        return None;
+        false
     }
 
     pub fn ssh_connection_state(&self, cx: &App) -> Option<remote::ConnectionState> {
@@ -2127,7 +2120,7 @@ impl Project {
         let is_root_entry = self.entry_is_worktree_root(entry_id, cx);
 
         let lsp_store = self.lsp_store().downgrade();
-        cx.spawn(async move |_, cx| {
+        cx.spawn(async move |project, cx| {
             let (old_abs_path, new_abs_path) = {
                 let root_path = worktree.read_with(cx, |this, _| this.abs_path())?;
                 let new_abs_path = if is_root_entry {
@@ -2137,7 +2130,7 @@ impl Project {
                 };
                 (root_path.join(&old_path), new_abs_path)
             };
-            LspStore::will_rename_entry(
+            let transaction = LspStore::will_rename_entry(
                 lsp_store.clone(),
                 worktree_id,
                 &old_abs_path,
@@ -2152,6 +2145,12 @@ impl Project {
                     worktree.rename_entry(entry_id, new_path.clone(), cx)
                 })?
                 .await?;
+
+            project
+                .update(cx, |_, cx| {
+                    cx.emit(Event::EntryRenamed(transaction));
+                })
+                .ok();
 
             lsp_store
                 .read_with(cx, |this, _| {
@@ -2223,28 +2222,28 @@ impl Project {
         self.client_subscriptions.extend([
             self.client
                 .subscribe_to_entity(project_id)?
-                .set_entity(&cx.entity(), &mut cx.to_async()),
+                .set_entity(&cx.entity(), &cx.to_async()),
             self.client
                 .subscribe_to_entity(project_id)?
-                .set_entity(&self.worktree_store, &mut cx.to_async()),
+                .set_entity(&self.worktree_store, &cx.to_async()),
             self.client
                 .subscribe_to_entity(project_id)?
-                .set_entity(&self.buffer_store, &mut cx.to_async()),
+                .set_entity(&self.buffer_store, &cx.to_async()),
             self.client
                 .subscribe_to_entity(project_id)?
-                .set_entity(&self.lsp_store, &mut cx.to_async()),
+                .set_entity(&self.lsp_store, &cx.to_async()),
             self.client
                 .subscribe_to_entity(project_id)?
-                .set_entity(&self.settings_observer, &mut cx.to_async()),
+                .set_entity(&self.settings_observer, &cx.to_async()),
             self.client
                 .subscribe_to_entity(project_id)?
-                .set_entity(&self.dap_store, &mut cx.to_async()),
+                .set_entity(&self.dap_store, &cx.to_async()),
             self.client
                 .subscribe_to_entity(project_id)?
-                .set_entity(&self.breakpoint_store, &mut cx.to_async()),
+                .set_entity(&self.breakpoint_store, &cx.to_async()),
             self.client
                 .subscribe_to_entity(project_id)?
-                .set_entity(&self.git_store, &mut cx.to_async()),
+                .set_entity(&self.git_store, &cx.to_async()),
         ]);
 
         self.buffer_store.update(cx, |buffer_store, cx| {
@@ -2510,7 +2509,7 @@ impl Project {
         path: ProjectPath,
         cx: &mut Context<Self>,
     ) -> Task<Result<(Option<ProjectEntryId>, Entity<Buffer>)>> {
-        let task = self.open_buffer(path.clone(), cx);
+        let task = self.open_buffer(path, cx);
         cx.spawn(async move |_project, cx| {
             let buffer = task.await?;
             let project_entry_id = buffer.read_with(cx, |buffer, cx| {
@@ -2585,7 +2584,7 @@ impl Project {
         cx: &mut App,
     ) -> OpenLspBufferHandle {
         self.lsp_store.update(cx, |lsp_store, cx| {
-            lsp_store.register_buffer_with_language_servers(&buffer, HashSet::default(), false, cx)
+            lsp_store.register_buffer_with_language_servers(buffer, HashSet::default(), false, cx)
         })
     }
 
@@ -2748,11 +2747,12 @@ impl Project {
                         operations,
                     }))
                 })?;
-                if let Some(request) = request {
-                    if request.await.is_err() && !is_local {
-                        *needs_resync_with_host = true;
-                        break;
-                    }
+                if let Some(request) = request
+                    && request.await.is_err()
+                    && !is_local
+                {
+                    *needs_resync_with_host = true;
+                    break;
                 }
             }
             Ok(())
@@ -2883,14 +2883,11 @@ impl Project {
         event: &DapStoreEvent,
         cx: &mut Context<Self>,
     ) {
-        match event {
-            DapStoreEvent::Notification(message) => {
-                cx.emit(Event::Toast {
-                    notification_id: "dap".into(),
-                    message: message.clone(),
-                });
-            }
-            _ => {}
+        if let DapStoreEvent::Notification(message) = event {
+            cx.emit(Event::Toast {
+                notification_id: "dap".into(),
+                message: message.clone(),
+            });
         }
     }
 
@@ -3129,7 +3126,7 @@ impl Project {
         event: &BufferEvent,
         cx: &mut Context<Self>,
     ) -> Option<()> {
-        if matches!(event, BufferEvent::Edited { .. } | BufferEvent::Reloaded) {
+        if matches!(event, BufferEvent::Edited | BufferEvent::Reloaded) {
             self.request_buffer_diff_recalculation(&buffer, cx);
         }
 
@@ -3177,14 +3174,11 @@ impl Project {
         event: &ImageItemEvent,
         cx: &mut Context<Self>,
     ) -> Option<()> {
-        match event {
-            ImageItemEvent::ReloadNeeded => {
-                if !self.is_via_collab() {
-                    self.reload_images([image.clone()].into_iter().collect(), cx)
-                        .detach_and_log_err(cx);
-                }
-            }
-            _ => {}
+        if let ImageItemEvent::ReloadNeeded = event
+            && !self.is_via_collab()
+        {
+            self.reload_images([image].into_iter().collect(), cx)
+                .detach_and_log_err(cx);
         }
 
         None
@@ -3428,7 +3422,7 @@ impl Project {
         buffer: &Entity<Buffer>,
         position: T,
         cx: &mut Context<Self>,
-    ) -> Task<Result<Vec<LocationLink>>> {
+    ) -> Task<Result<Option<Vec<LocationLink>>>> {
         let position = position.to_point_utf16(buffer.read(cx));
         let guard = self.retain_remotely_created_models(cx);
         let task = self.lsp_store.update(cx, |lsp_store, cx| {
@@ -3446,7 +3440,7 @@ impl Project {
         buffer: &Entity<Buffer>,
         position: T,
         cx: &mut Context<Self>,
-    ) -> Task<Result<Vec<LocationLink>>> {
+    ) -> Task<Result<Option<Vec<LocationLink>>>> {
         let position = position.to_point_utf16(buffer.read(cx));
         let guard = self.retain_remotely_created_models(cx);
         let task = self.lsp_store.update(cx, |lsp_store, cx| {
@@ -3464,7 +3458,7 @@ impl Project {
         buffer: &Entity<Buffer>,
         position: T,
         cx: &mut Context<Self>,
-    ) -> Task<Result<Vec<LocationLink>>> {
+    ) -> Task<Result<Option<Vec<LocationLink>>>> {
         let position = position.to_point_utf16(buffer.read(cx));
         let guard = self.retain_remotely_created_models(cx);
         let task = self.lsp_store.update(cx, |lsp_store, cx| {
@@ -3482,7 +3476,7 @@ impl Project {
         buffer: &Entity<Buffer>,
         position: T,
         cx: &mut Context<Self>,
-    ) -> Task<Result<Vec<LocationLink>>> {
+    ) -> Task<Result<Option<Vec<LocationLink>>>> {
         let position = position.to_point_utf16(buffer.read(cx));
         let guard = self.retain_remotely_created_models(cx);
         let task = self.lsp_store.update(cx, |lsp_store, cx| {
@@ -3500,7 +3494,7 @@ impl Project {
         buffer: &Entity<Buffer>,
         position: T,
         cx: &mut Context<Self>,
-    ) -> Task<Result<Vec<Location>>> {
+    ) -> Task<Result<Option<Vec<Location>>>> {
         let position = position.to_point_utf16(buffer.read(cx));
         let guard = self.retain_remotely_created_models(cx);
         let task = self.lsp_store.update(cx, |lsp_store, cx| {
@@ -3591,27 +3585,10 @@ impl Project {
         &mut self,
         abs_path: lsp::Url,
         language_server_id: LanguageServerId,
-        language_server_name: LanguageServerName,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Buffer>>> {
         self.lsp_store.update(cx, |lsp_store, cx| {
-            lsp_store.open_local_buffer_via_lsp(
-                abs_path,
-                language_server_id,
-                language_server_name,
-                cx,
-            )
-        })
-    }
-
-    pub fn signature_help<T: ToPointUtf16>(
-        &self,
-        buffer: &Entity<Buffer>,
-        position: T,
-        cx: &mut Context<Self>,
-    ) -> Task<Vec<SignatureHelp>> {
-        self.lsp_store.update(cx, |lsp_store, cx| {
-            lsp_store.signature_help(buffer, position, cx)
+            lsp_store.open_local_buffer_via_lsp(abs_path, language_server_id, cx)
         })
     }
 
@@ -3620,7 +3597,7 @@ impl Project {
         buffer: &Entity<Buffer>,
         position: T,
         cx: &mut Context<Self>,
-    ) -> Task<Vec<Hover>> {
+    ) -> Task<Option<Vec<Hover>>> {
         let position = position.to_point_utf16(buffer.read(cx));
         self.lsp_store
             .update(cx, |lsp_store, cx| lsp_store.hover(buffer, position, cx))
@@ -3656,7 +3633,7 @@ impl Project {
         range: Range<T>,
         kinds: Option<Vec<CodeActionKind>>,
         cx: &mut Context<Self>,
-    ) -> Task<Result<Vec<CodeAction>>> {
+    ) -> Task<Result<Option<Vec<CodeAction>>>> {
         let buffer = buffer_handle.read(cx);
         let range = buffer.anchor_before(range.start)..buffer.anchor_before(range.end);
         self.lsp_store.update(cx, |lsp_store, cx| {
@@ -3669,9 +3646,9 @@ impl Project {
         buffer: &Entity<Buffer>,
         range: Range<T>,
         cx: &mut Context<Self>,
-    ) -> Task<Result<Vec<CodeAction>>> {
+    ) -> Task<Result<Option<Vec<CodeAction>>>> {
         let snapshot = buffer.read(cx).snapshot();
-        let range = range.clone().to_owned().to_point(&snapshot);
+        let range = range.to_point(&snapshot);
         let range_start = snapshot.anchor_before(range.start);
         let range_end = if range.start == range.end {
             range_start
@@ -3687,16 +3664,18 @@ impl Project {
             let mut code_lens_actions = code_lens_actions
                 .await
                 .map_err(|e| anyhow!("code lens fetch failed: {e:#}"))?;
-            code_lens_actions.retain(|code_lens_action| {
-                range
-                    .start
-                    .cmp(&code_lens_action.range.start, &snapshot)
-                    .is_ge()
-                    && range
-                        .end
-                        .cmp(&code_lens_action.range.end, &snapshot)
-                        .is_le()
-            });
+            if let Some(code_lens_actions) = &mut code_lens_actions {
+                code_lens_actions.retain(|code_lens_action| {
+                    range
+                        .start
+                        .cmp(&code_lens_action.range.start, &snapshot)
+                        .is_ge()
+                        && range
+                            .end
+                            .cmp(&code_lens_action.range.end, &snapshot)
+                            .is_le()
+                });
+            }
             Ok(code_lens_actions)
         })
     }
@@ -3938,10 +3917,10 @@ impl Project {
                     if let Some(entry) = b
                         .entry_id(cx)
                         .and_then(|entry_id| worktree_store.entry_for_id(entry_id, cx))
+                        && entry.is_ignored
+                        && !search_query.include_ignored()
                     {
-                        if entry.is_ignored && !search_query.include_ignored() {
-                            return false;
-                        }
+                        return false;
                     }
                 }
                 true
@@ -4138,7 +4117,7 @@ impl Project {
                 }
             })
         } else {
-            return Task::ready(None);
+            Task::ready(None)
         }
     }
 
@@ -4150,11 +4129,11 @@ impl Project {
     ) -> Task<Option<ResolvedPath>> {
         let mut candidates = vec![path.clone()];
 
-        if let Some(file) = buffer.read(cx).file() {
-            if let Some(dir) = file.path().parent() {
-                let joined = dir.to_path_buf().join(path);
-                candidates.push(joined);
-            }
+        if let Some(file) = buffer.read(cx).file()
+            && let Some(dir) = file.path().parent()
+        {
+            let joined = dir.to_path_buf().join(path);
+            candidates.push(joined);
         }
 
         let buffer_worktree_id = buffer.read(cx).file().map(|file| file.worktree_id(cx));
@@ -4166,18 +4145,15 @@ impl Project {
             })
             .collect();
 
-        cx.spawn(async move |_, mut cx| {
-            if let Some(buffer_worktree_id) = buffer_worktree_id {
-                if let Some((worktree, _)) = worktrees_with_ids
+        cx.spawn(async move |_, cx| {
+            if let Some(buffer_worktree_id) = buffer_worktree_id
+                && let Some((worktree, _)) = worktrees_with_ids
                     .iter()
                     .find(|(_, id)| *id == buffer_worktree_id)
-                {
-                    for candidate in candidates.iter() {
-                        if let Some(path) =
-                            Self::resolve_path_in_worktree(&worktree, candidate, &mut cx)
-                        {
-                            return Some(path);
-                        }
+            {
+                for candidate in candidates.iter() {
+                    if let Some(path) = Self::resolve_path_in_worktree(worktree, candidate, cx) {
+                        return Some(path);
                     }
                 }
             }
@@ -4186,9 +4162,7 @@ impl Project {
                     continue;
                 }
                 for candidate in candidates.iter() {
-                    if let Some(path) =
-                        Self::resolve_path_in_worktree(&worktree, candidate, &mut cx)
-                    {
+                    if let Some(path) = Self::resolve_path_in_worktree(&worktree, candidate, cx) {
                         return Some(path);
                     }
                 }
@@ -4353,7 +4327,7 @@ impl Project {
     /// # Arguments
     ///
     /// * `path` - A full path that starts with a worktree root name, or alternatively a
-    ///            relative path within a visible worktree.
+    ///   relative path within a visible worktree.
     /// * `cx` - A reference to the `AppContext`.
     ///
     /// # Returns
@@ -5196,7 +5170,7 @@ impl<'a> fuzzy::PathMatchCandidateSet<'a> for PathMatchCandidateSet {
     }
 
     fn prefix(&self) -> Arc<str> {
-        if self.snapshot.root_entry().map_or(false, |e| e.is_file()) {
+        if self.snapshot.root_entry().is_some_and(|e| e.is_file()) {
             self.snapshot.root_name().into()
         } else if self.include_root_name {
             format!("{}{}", self.snapshot.root_name(), std::path::MAIN_SEPARATOR).into()
@@ -5328,7 +5302,7 @@ impl ResolvedPath {
 
     pub fn project_path(&self) -> Option<&ProjectPath> {
         match self {
-            Self::ProjectPath { project_path, .. } => Some(&project_path),
+            Self::ProjectPath { project_path, .. } => Some(project_path),
             _ => None,
         }
     }
@@ -5398,7 +5372,7 @@ impl Completion {
                 _ => None,
             })
             .unwrap_or(DEFAULT_KIND_KEY);
-        (kind_key, &self.label.filter_text())
+        (kind_key, self.label.filter_text())
     }
 
     /// Whether this completion is a snippet.
@@ -5406,7 +5380,7 @@ impl Completion {
         self.source
             // `lsp::CompletionListItemDefaults` has `insert_text_format` field
             .lsp_completion(true)
-            .map_or(false, |lsp_completion| {
+            .is_some_and(|lsp_completion| {
                 lsp_completion.insert_text_format == Some(lsp::InsertTextFormat::SNIPPET)
             })
     }
@@ -5462,9 +5436,10 @@ fn provide_inline_values(
                     .collect::<String>();
                 let point = snapshot.offset_to_point(capture_range.end);
 
-                while scopes.last().map_or(false, |scope: &Range<_>| {
-                    !scope.contains(&capture_range.start)
-                }) {
+                while scopes
+                    .last()
+                    .is_some_and(|scope: &Range<_>| !scope.contains(&capture_range.start))
+                {
                     scopes.pop();
                 }
 
@@ -5474,7 +5449,7 @@ fn provide_inline_values(
 
                 let scope = if scopes
                     .last()
-                    .map_or(true, |scope| !scope.contains(&active_debug_line_offset))
+                    .is_none_or(|scope| !scope.contains(&active_debug_line_offset))
                 {
                     VariableScope::Global
                 } else {
@@ -5507,4 +5482,148 @@ fn provide_inline_values(
     }
 
     variables
+}
+
+#[cfg(test)]
+mod disable_ai_settings_tests {
+    use super::*;
+    use gpui::TestAppContext;
+    use settings::{Settings, SettingsSources};
+
+    #[gpui::test]
+    async fn test_disable_ai_settings_security(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            // Test 1: Default is false (AI enabled)
+            let sources = SettingsSources {
+                default: &Some(false),
+                global: None,
+                extensions: None,
+                user: None,
+                release_channel: None,
+                operating_system: None,
+                profile: None,
+                server: None,
+                project: &[],
+            };
+            let settings = DisableAiSettings::load(sources, cx).unwrap();
+            assert!(!settings.disable_ai, "Default should allow AI");
+
+            // Test 2: Global true, local false -> still disabled (local cannot re-enable)
+            let global_true = Some(true);
+            let local_false = Some(false);
+            let sources = SettingsSources {
+                default: &Some(false),
+                global: None,
+                extensions: None,
+                user: Some(&global_true),
+                release_channel: None,
+                operating_system: None,
+                profile: None,
+                server: None,
+                project: &[&local_false],
+            };
+            let settings = DisableAiSettings::load(sources, cx).unwrap();
+            assert!(
+                settings.disable_ai,
+                "Local false cannot override global true"
+            );
+
+            // Test 3: Global false, local true -> disabled (local can make more restrictive)
+            let global_false = Some(false);
+            let local_true = Some(true);
+            let sources = SettingsSources {
+                default: &Some(false),
+                global: None,
+                extensions: None,
+                user: Some(&global_false),
+                release_channel: None,
+                operating_system: None,
+                profile: None,
+                server: None,
+                project: &[&local_true],
+            };
+            let settings = DisableAiSettings::load(sources, cx).unwrap();
+            assert!(settings.disable_ai, "Local true can override global false");
+
+            // Test 4: Server can only make more restrictive (set to true)
+            let user_false = Some(false);
+            let server_true = Some(true);
+            let sources = SettingsSources {
+                default: &Some(false),
+                global: None,
+                extensions: None,
+                user: Some(&user_false),
+                release_channel: None,
+                operating_system: None,
+                profile: None,
+                server: Some(&server_true),
+                project: &[],
+            };
+            let settings = DisableAiSettings::load(sources, cx).unwrap();
+            assert!(
+                settings.disable_ai,
+                "Server can set to true even if user is false"
+            );
+
+            // Test 5: Server false cannot override user true
+            let user_true = Some(true);
+            let server_false = Some(false);
+            let sources = SettingsSources {
+                default: &Some(false),
+                global: None,
+                extensions: None,
+                user: Some(&user_true),
+                release_channel: None,
+                operating_system: None,
+                profile: None,
+                server: Some(&server_false),
+                project: &[],
+            };
+            let settings = DisableAiSettings::load(sources, cx).unwrap();
+            assert!(
+                settings.disable_ai,
+                "Server false cannot override user true"
+            );
+
+            // Test 6: Multiple local settings, any true disables AI
+            let global_false = Some(false);
+            let local_false3 = Some(false);
+            let local_true2 = Some(true);
+            let local_false4 = Some(false);
+            let sources = SettingsSources {
+                default: &Some(false),
+                global: None,
+                extensions: None,
+                user: Some(&global_false),
+                release_channel: None,
+                operating_system: None,
+                profile: None,
+                server: None,
+                project: &[&local_false3, &local_true2, &local_false4],
+            };
+            let settings = DisableAiSettings::load(sources, cx).unwrap();
+            assert!(settings.disable_ai, "Any local true should disable AI");
+
+            // Test 7: All three sources can independently disable AI
+            let user_false2 = Some(false);
+            let server_false2 = Some(false);
+            let local_true3 = Some(true);
+            let sources = SettingsSources {
+                default: &Some(false),
+                global: None,
+                extensions: None,
+                user: Some(&user_false2),
+                release_channel: None,
+                operating_system: None,
+                profile: None,
+                server: Some(&server_false2),
+                project: &[&local_true3],
+            };
+            let settings = DisableAiSettings::load(sources, cx).unwrap();
+            assert!(
+                settings.disable_ai,
+                "Local can disable even if user and server are false"
+            );
+        });
+    }
 }

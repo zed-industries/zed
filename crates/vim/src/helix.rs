@@ -1,9 +1,11 @@
+use editor::display_map::DisplaySnapshot;
 use editor::{DisplayPoint, Editor, SelectionEffects, ToOffset, ToPoint, movement};
 use gpui::{Action, actions};
 use gpui::{Context, Window};
 use language::{CharClassifier, CharKind};
 use text::{Bias, SelectionGoal};
 
+use crate::motion;
 use crate::{
     Vim,
     motion::{Motion, right},
@@ -15,6 +17,8 @@ actions!(
     [
         /// Switches to normal mode after the cursor (Helix-style).
         HelixNormalAfter,
+        /// Yanks the current selection or character if no selection.
+        HelixYank,
         /// Inserts at the beginning of the selection.
         HelixInsert,
         /// Appends at the end of the selection.
@@ -26,6 +30,7 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     Vim::action(editor, cx, Vim::helix_normal_after);
     Vim::action(editor, cx, Vim::helix_insert);
     Vim::action(editor, cx, Vim::helix_append);
+    Vim::action(editor, cx, Vim::helix_yank);
 }
 
 impl Vim {
@@ -42,7 +47,6 @@ impl Vim {
         }
         self.stop_recording_immediately(action.boxed_clone(), cx);
         self.switch_mode(Mode::HelixNormal, false, window, cx);
-        return;
     }
 
     pub fn helix_normal_motion(
@@ -55,6 +59,35 @@ impl Vim {
         self.helix_move_cursor(motion, times, window, cx);
     }
 
+    /// Updates all selections based on where the cursors are.
+    fn helix_new_selections(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        mut change: impl FnMut(
+            // the start of the cursor
+            DisplayPoint,
+            &DisplaySnapshot,
+        ) -> Option<(DisplayPoint, DisplayPoint)>,
+    ) {
+        self.update_editor(cx, |_, editor, cx| {
+            editor.change_selections(Default::default(), window, cx, |s| {
+                s.move_with(|map, selection| {
+                    let cursor_start = if selection.reversed || selection.is_empty() {
+                        selection.head()
+                    } else {
+                        movement::left(map, selection.head())
+                    };
+                    let Some((head, tail)) = change(cursor_start, map) else {
+                        return;
+                    };
+
+                    selection.set_head_tail(head, tail, SelectionGoal::None);
+                });
+            });
+        });
+    }
+
     fn helix_find_range_forward(
         &mut self,
         times: Option<usize>,
@@ -62,49 +95,30 @@ impl Vim {
         cx: &mut Context<Self>,
         mut is_boundary: impl FnMut(char, char, &CharClassifier) -> bool,
     ) {
-        self.update_editor(window, cx, |_, editor, window, cx| {
-            editor.change_selections(Default::default(), window, cx, |s| {
-                s.move_with(|map, selection| {
-                    let times = times.unwrap_or(1);
-                    let new_goal = SelectionGoal::None;
-                    let mut head = selection.head();
-                    let mut tail = selection.tail();
+        let times = times.unwrap_or(1);
+        self.helix_new_selections(window, cx, |cursor, map| {
+            let mut head = movement::right(map, cursor);
+            let mut tail = cursor;
+            let classifier = map.buffer_snapshot.char_classifier_at(head.to_point(map));
+            if head == map.max_point() {
+                return None;
+            }
+            for _ in 0..times {
+                let (maybe_next_tail, next_head) =
+                    movement::find_boundary_trail(map, head, |left, right| {
+                        is_boundary(left, right, &classifier)
+                    });
 
-                    if head == map.max_point() {
-                        return;
-                    }
+                if next_head == head && maybe_next_tail.unwrap_or(next_head) == tail {
+                    break;
+                }
 
-                    // collapse to block cursor
-                    if tail < head {
-                        tail = movement::left(map, head);
-                    } else {
-                        tail = head;
-                        head = movement::right(map, head);
-                    }
-
-                    // create a classifier
-                    let classifier = map.buffer_snapshot.char_classifier_at(head.to_point(map));
-
-                    for _ in 0..times {
-                        let (maybe_next_tail, next_head) =
-                            movement::find_boundary_trail(map, head, |left, right| {
-                                is_boundary(left, right, &classifier)
-                            });
-
-                        if next_head == head && maybe_next_tail.unwrap_or(next_head) == tail {
-                            break;
-                        }
-
-                        head = next_head;
-                        if let Some(next_tail) = maybe_next_tail {
-                            tail = next_tail;
-                        }
-                    }
-
-                    selection.set_tail(tail, new_goal);
-                    selection.set_head(head, new_goal);
-                });
-            });
+                head = next_head;
+                if let Some(next_tail) = maybe_next_tail {
+                    tail = next_tail;
+                }
+            }
+            Some((head, tail))
         });
     }
 
@@ -115,56 +129,33 @@ impl Vim {
         cx: &mut Context<Self>,
         mut is_boundary: impl FnMut(char, char, &CharClassifier) -> bool,
     ) {
-        self.update_editor(window, cx, |_, editor, window, cx| {
-            editor.change_selections(Default::default(), window, cx, |s| {
-                s.move_with(|map, selection| {
-                    let times = times.unwrap_or(1);
-                    let new_goal = SelectionGoal::None;
-                    let mut head = selection.head();
-                    let mut tail = selection.tail();
+        let times = times.unwrap_or(1);
+        self.helix_new_selections(window, cx, |cursor, map| {
+            let mut head = cursor;
+            // The original cursor was one character wide,
+            // but the search starts from the left side of it,
+            // so to include that space the selection must end one character to the right.
+            let mut tail = movement::right(map, cursor);
+            let classifier = map.buffer_snapshot.char_classifier_at(head.to_point(map));
+            if head == DisplayPoint::zero() {
+                return None;
+            }
+            for _ in 0..times {
+                let (maybe_next_tail, next_head) =
+                    movement::find_preceding_boundary_trail(map, head, |left, right| {
+                        is_boundary(left, right, &classifier)
+                    });
 
-                    if head == DisplayPoint::zero() {
-                        return;
-                    }
+                if next_head == head && maybe_next_tail.unwrap_or(next_head) == tail {
+                    break;
+                }
 
-                    // collapse to block cursor
-                    if tail < head {
-                        tail = movement::left(map, head);
-                    } else {
-                        tail = head;
-                        head = movement::right(map, head);
-                    }
-
-                    selection.set_head(head, new_goal);
-                    selection.set_tail(tail, new_goal);
-                    // flip the selection
-                    selection.swap_head_tail();
-                    head = selection.head();
-                    tail = selection.tail();
-
-                    // create a classifier
-                    let classifier = map.buffer_snapshot.char_classifier_at(head.to_point(map));
-
-                    for _ in 0..times {
-                        let (maybe_next_tail, next_head) =
-                            movement::find_preceding_boundary_trail(map, head, |left, right| {
-                                is_boundary(left, right, &classifier)
-                            });
-
-                        if next_head == head && maybe_next_tail.unwrap_or(next_head) == tail {
-                            break;
-                        }
-
-                        head = next_head;
-                        if let Some(next_tail) = maybe_next_tail {
-                            tail = next_tail;
-                        }
-                    }
-
-                    selection.set_tail(tail, new_goal);
-                    selection.set_head(head, new_goal);
-                });
-            })
+                head = next_head;
+                if let Some(next_tail) = maybe_next_tail {
+                    tail = next_tail;
+                }
+            }
+            Some((head, tail))
         });
     }
 
@@ -175,7 +166,7 @@ impl Vim {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.update_editor(window, cx, |_, editor, window, cx| {
+        self.update_editor(cx, |_, editor, cx| {
             let text_layout_details = editor.text_layout_details(window);
             editor.change_selections(Default::default(), window, cx, |s| {
                 s.move_with(|map, selection| {
@@ -210,10 +201,7 @@ impl Vim {
                     let right_kind = classifier.kind_with(right, ignore_punctuation);
                     let at_newline = (left == '\n') ^ (right == '\n');
 
-                    let found = (left_kind != right_kind && right_kind != CharKind::Whitespace)
-                        || at_newline;
-
-                    found
+                    (left_kind != right_kind && right_kind != CharKind::Whitespace) || at_newline
                 })
             }
             Motion::NextWordEnd { ignore_punctuation } => {
@@ -222,10 +210,7 @@ impl Vim {
                     let right_kind = classifier.kind_with(right, ignore_punctuation);
                     let at_newline = (left == '\n') ^ (right == '\n');
 
-                    let found = (left_kind != right_kind && left_kind != CharKind::Whitespace)
-                        || at_newline;
-
-                    found
+                    (left_kind != right_kind && left_kind != CharKind::Whitespace) || at_newline
                 })
             }
             Motion::PreviousWordStart { ignore_punctuation } => {
@@ -234,10 +219,7 @@ impl Vim {
                     let right_kind = classifier.kind_with(right, ignore_punctuation);
                     let at_newline = (left == '\n') ^ (right == '\n');
 
-                    let found = (left_kind != right_kind && left_kind != CharKind::Whitespace)
-                        || at_newline;
-
-                    found
+                    (left_kind != right_kind && left_kind != CharKind::Whitespace) || at_newline
                 })
             }
             Motion::PreviousWordEnd { ignore_punctuation } => {
@@ -246,73 +228,106 @@ impl Vim {
                     let right_kind = classifier.kind_with(right, ignore_punctuation);
                     let at_newline = (left == '\n') ^ (right == '\n');
 
-                    let found = (left_kind != right_kind && right_kind != CharKind::Whitespace)
-                        || at_newline;
-
-                    found
+                    (left_kind != right_kind && right_kind != CharKind::Whitespace) || at_newline
                 })
             }
-            Motion::FindForward { .. } => {
-                self.update_editor(window, cx, |_, editor, window, cx| {
-                    let text_layout_details = editor.text_layout_details(window);
-                    editor.change_selections(Default::default(), window, cx, |s| {
-                        s.move_with(|map, selection| {
-                            let goal = selection.goal;
-                            let cursor = if selection.is_empty() || selection.reversed {
-                                selection.head()
-                            } else {
-                                movement::left(map, selection.head())
-                            };
-
-                            let (point, goal) = motion
-                                .move_point(
-                                    map,
-                                    cursor,
-                                    selection.goal,
-                                    times,
-                                    &text_layout_details,
-                                )
-                                .unwrap_or((cursor, goal));
-                            selection.set_tail(selection.head(), goal);
-                            selection.set_head(movement::right(map, point), goal);
-                        })
-                    });
+            Motion::FindForward {
+                before,
+                char,
+                mode,
+                smartcase,
+            } => {
+                self.helix_new_selections(window, cx, |cursor, map| {
+                    let start = cursor;
+                    let mut last_boundary = start;
+                    for _ in 0..times.unwrap_or(1) {
+                        last_boundary = movement::find_boundary(
+                            map,
+                            movement::right(map, last_boundary),
+                            mode,
+                            |left, right| {
+                                let current_char = if before { right } else { left };
+                                motion::is_character_match(char, current_char, smartcase)
+                            },
+                        );
+                    }
+                    Some((last_boundary, start))
                 });
             }
-            Motion::FindBackward { .. } => {
-                self.update_editor(window, cx, |_, editor, window, cx| {
-                    let text_layout_details = editor.text_layout_details(window);
-                    editor.change_selections(Default::default(), window, cx, |s| {
-                        s.move_with(|map, selection| {
-                            let goal = selection.goal;
-                            let cursor = if selection.is_empty() || selection.reversed {
-                                selection.head()
-                            } else {
-                                movement::left(map, selection.head())
-                            };
-
-                            let (point, goal) = motion
-                                .move_point(
-                                    map,
-                                    cursor,
-                                    selection.goal,
-                                    times,
-                                    &text_layout_details,
-                                )
-                                .unwrap_or((cursor, goal));
-                            selection.set_tail(selection.head(), goal);
-                            selection.set_head(point, goal);
-                        })
-                    });
+            Motion::FindBackward {
+                after,
+                char,
+                mode,
+                smartcase,
+            } => {
+                self.helix_new_selections(window, cx, |cursor, map| {
+                    let start = cursor;
+                    let mut last_boundary = start;
+                    for _ in 0..times.unwrap_or(1) {
+                        last_boundary = movement::find_preceding_boundary_display_point(
+                            map,
+                            last_boundary,
+                            mode,
+                            |left, right| {
+                                let current_char = if after { left } else { right };
+                                motion::is_character_match(char, current_char, smartcase)
+                            },
+                        );
+                    }
+                    // The original cursor was one character wide,
+                    // but the search started from the left side of it,
+                    // so to include that space the selection must end one character to the right.
+                    Some((last_boundary, movement::right(map, start)))
                 });
             }
             _ => self.helix_move_and_collapse(motion, times, window, cx),
         }
     }
 
+    pub fn helix_yank(&mut self, _: &HelixYank, window: &mut Window, cx: &mut Context<Self>) {
+        self.update_editor(cx, |vim, editor, cx| {
+            let has_selection = editor
+                .selections
+                .all_adjusted(cx)
+                .iter()
+                .any(|selection| !selection.is_empty());
+
+            if !has_selection {
+                // If no selection, expand to current character (like 'v' does)
+                editor.change_selections(Default::default(), window, cx, |s| {
+                    s.move_with(|map, selection| {
+                        let head = selection.head();
+                        let new_head = movement::saturating_right(map, head);
+                        selection.set_tail(head, SelectionGoal::None);
+                        selection.set_head(new_head, SelectionGoal::None);
+                    });
+                });
+                vim.yank_selections_content(
+                    editor,
+                    crate::motion::MotionKind::Exclusive,
+                    window,
+                    cx,
+                );
+                editor.change_selections(Default::default(), window, cx, |s| {
+                    s.move_with(|_map, selection| {
+                        selection.collapse_to(selection.start, SelectionGoal::None);
+                    });
+                });
+            } else {
+                // Yank the selection(s)
+                vim.yank_selections_content(
+                    editor,
+                    crate::motion::MotionKind::Exclusive,
+                    window,
+                    cx,
+                );
+            }
+        });
+    }
+
     fn helix_insert(&mut self, _: &HelixInsert, window: &mut Window, cx: &mut Context<Self>) {
         self.start_recording(cx);
-        self.update_editor(window, cx, |_, editor, window, cx| {
+        self.update_editor(cx, |_, editor, cx| {
             editor.change_selections(Default::default(), window, cx, |s| {
                 s.move_with(|_map, selection| {
                     // In helix normal mode, move cursor to start of selection and collapse
@@ -328,7 +343,7 @@ impl Vim {
     fn helix_append(&mut self, _: &HelixAppend, window: &mut Window, cx: &mut Context<Self>) {
         self.start_recording(cx);
         self.switch_mode(Mode::Insert, false, window, cx);
-        self.update_editor(window, cx, |_, editor, window, cx| {
+        self.update_editor(cx, |_, editor, cx| {
             editor.change_selections(Default::default(), window, cx, |s| {
                 s.move_with(|map, selection| {
                     let point = if selection.is_empty() {
@@ -343,7 +358,7 @@ impl Vim {
     }
 
     pub fn helix_replace(&mut self, text: &str, window: &mut Window, cx: &mut Context<Self>) {
-        self.update_editor(window, cx, |_, editor, window, cx| {
+        self.update_editor(cx, |_, editor, cx| {
             editor.transact(window, cx, |editor, window, cx| {
                 let (map, selections) = editor.selections.all_display(cx);
 
@@ -519,27 +534,27 @@ mod test {
         );
     }
 
-    // #[gpui::test]
-    // async fn test_delete_character_end_of_line(cx: &mut gpui::TestAppContext) {
-    //     let mut cx = VimTestContext::new(cx, true).await;
+    #[gpui::test]
+    async fn test_delete_character_end_of_line(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
 
-    //     cx.set_state(
-    //         indoc! {"
-    //         The quick brownˇ
-    //         fox jumps over
-    //         the lazy dog."},
-    //         Mode::HelixNormal,
-    //     );
+        cx.set_state(
+            indoc! {"
+            The quick brownˇ
+            fox jumps over
+            the lazy dog."},
+            Mode::HelixNormal,
+        );
 
-    //     cx.simulate_keystrokes("d");
+        cx.simulate_keystrokes("d");
 
-    //     cx.assert_state(
-    //         indoc! {"
-    //         The quick brownˇfox jumps over
-    //         the lazy dog."},
-    //         Mode::HelixNormal,
-    //     );
-    // }
+        cx.assert_state(
+            indoc! {"
+            The quick brownˇfox jumps over
+            the lazy dog."},
+            Mode::HelixNormal,
+        );
+    }
 
     // #[gpui::test]
     // async fn test_delete_character_end_of_buffer(cx: &mut gpui::TestAppContext) {
@@ -586,13 +601,33 @@ mod test {
             Mode::HelixNormal,
         );
 
-        cx.simulate_keystrokes("2 T r");
+        cx.simulate_keystrokes("F e F e");
 
         cx.assert_state(
             indoc! {"
-                The quick br«ˇown
-                fox jumps over
-                the laz»y dog."},
+                The quick brown
+                fox jumps ov«ˇer
+                the» lazy dog."},
+            Mode::HelixNormal,
+        );
+
+        cx.simulate_keystrokes("e 2 F e");
+
+        cx.assert_state(
+            indoc! {"
+                Th«ˇe quick brown
+                fox jumps over»
+                the lazy dog."},
+            Mode::HelixNormal,
+        );
+
+        cx.simulate_keystrokes("t r t r");
+
+        cx.assert_state(
+            indoc! {"
+                The quick «brown
+                fox jumps oveˇ»r
+                the lazy dog."},
             Mode::HelixNormal,
         );
     }
@@ -702,5 +737,30 @@ mod test {
         cx.simulate_keystrokes("r x");
 
         cx.assert_state("«xxˇ»", Mode::HelixNormal);
+    }
+
+    #[gpui::test]
+    async fn test_helix_yank(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.enable_helix();
+
+        // Test yanking current character with no selection
+        cx.set_state("hello ˇworld", Mode::HelixNormal);
+        cx.simulate_keystrokes("y");
+
+        // Test cursor remains at the same position after yanking single character
+        cx.assert_state("hello ˇworld", Mode::HelixNormal);
+        cx.shared_clipboard().assert_eq("w");
+
+        // Move cursor and yank another character
+        cx.simulate_keystrokes("l");
+        cx.simulate_keystrokes("y");
+        cx.shared_clipboard().assert_eq("o");
+
+        // Test yanking with existing selection
+        cx.set_state("hello «worlˇ»d", Mode::HelixNormal);
+        cx.simulate_keystrokes("y");
+        cx.shared_clipboard().assert_eq("worl");
+        cx.assert_state("hello «worlˇ»d", Mode::HelixNormal);
     }
 }

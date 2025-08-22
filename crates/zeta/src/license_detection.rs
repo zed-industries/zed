@@ -14,7 +14,7 @@ use util::ResultExt as _;
 use worktree::ChildEntriesOptions;
 
 /// Matches the most common license locations, with US and UK English spelling.
-const LICENSE_FILE_NAME_REGEX: LazyLock<regex::bytes::Regex> = LazyLock::new(|| {
+static LICENSE_FILE_NAME_REGEX: LazyLock<regex::bytes::Regex> = LazyLock::new(|| {
     regex::bytes::RegexBuilder::new(
         "^ \
         (?: license | licence) \
@@ -29,7 +29,7 @@ const LICENSE_FILE_NAME_REGEX: LazyLock<regex::bytes::Regex> = LazyLock::new(|| 
 });
 
 fn is_license_eligible_for_data_collection(license: &str) -> bool {
-    const LICENSE_REGEXES: LazyLock<Vec<Regex>> = LazyLock::new(|| {
+    static LICENSE_REGEXES: LazyLock<Vec<Regex>> = LazyLock::new(|| {
         [
             include_str!("license_detection/apache.regex"),
             include_str!("license_detection/isc.regex"),
@@ -47,7 +47,7 @@ fn is_license_eligible_for_data_collection(license: &str) -> bool {
 
 /// Canonicalizes the whitespace of license text and license regexes.
 fn canonicalize_license_text(license: &str) -> String {
-    const PARAGRAPH_SEPARATOR_REGEX: LazyLock<Regex> =
+    static PARAGRAPH_SEPARATOR_REGEX: LazyLock<Regex> =
         LazyLock::new(|| Regex::new(r"\s*\n\s*\n\s*").unwrap());
 
     PARAGRAPH_SEPARATOR_REGEX
@@ -143,10 +143,10 @@ impl LicenseDetectionWatcher {
     }
 
     async fn is_path_eligible(fs: &Arc<dyn Fs>, abs_path: PathBuf) -> Option<bool> {
-        log::info!("checking if `{abs_path:?}` is an open source license");
+        log::debug!("checking if `{abs_path:?}` is an open source license");
         // Resolve symlinks so that the file size from metadata is correct.
         let Some(abs_path) = fs.canonicalize(&abs_path).await.ok() else {
-            log::info!(
+            log::debug!(
                 "`{abs_path:?}` license file probably deleted (error canonicalizing the path)"
             );
             return None;
@@ -159,11 +159,11 @@ impl LicenseDetectionWatcher {
         let text = fs.load(&abs_path).await.log_err()?;
         let is_eligible = is_license_eligible_for_data_collection(&text);
         if is_eligible {
-            log::info!(
+            log::debug!(
                 "`{abs_path:?}` matches a license that is eligible for data collection (if enabled)"
             );
         } else {
-            log::info!(
+            log::debug!(
                 "`{abs_path:?}` does not match a license that is eligible for data collection"
             );
         }
@@ -198,7 +198,7 @@ mod tests {
 
     #[test]
     fn test_mit_positive_detection() {
-        assert!(is_license_eligible_for_data_collection(&MIT_LICENSE));
+        assert!(is_license_eligible_for_data_collection(MIT_LICENSE));
     }
 
     #[test]

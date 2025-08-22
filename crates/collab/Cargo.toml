@@ -19,7 +19,6 @@ test-support = ["sqlite"]
 
 [dependencies]
 anyhow.workspace = true
-async-stripe.workspace = true
 async-trait.workspace = true
 async-tungstenite.workspace = true
 aws-config = { version = "1.1.5" }
@@ -30,16 +29,13 @@ axum-extra = { version = "0.4", features = ["erased-json"] }
 base64.workspace = true
 chrono.workspace = true
 clock.workspace = true
-cloud_llm_client.workspace = true
 collections.workspace = true
 dashmap.workspace = true
-derive_more.workspace = true
 envy = "0.4.2"
 futures.workspace = true
 gpui.workspace = true
 hex.workspace = true
 http_client.workspace = true
-jsonwebtoken.workspace = true
 livekit_api.workspace = true
 log.workspace = true
 nanoid.workspace = true
@@ -65,7 +61,6 @@ subtle.workspace = true
 supermaven_api.workspace = true
 telemetry_events.workspace = true
 text.workspace = true
-thiserror.workspace = true
 time.workspace = true
 tokio = { workspace = true, features = ["full"] }
 toml.workspace = true
@@ -136,6 +131,3 @@ util.workspace = true
 workspace = { workspace = true, features = ["test-support"] }
 worktree = { workspace = true, features = ["test-support"] }
 zlog.workspace = true
-
-[package.metadata.cargo-machete]
-ignored = ["async-stripe"]

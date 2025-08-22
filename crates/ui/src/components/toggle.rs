@@ -420,7 +420,7 @@ pub struct Switch {
     id: ElementId,
     toggle_state: ToggleState,
     disabled: bool,
-    on_click: Option<Box<dyn Fn(&ToggleState, &mut Window, &mut App) + 'static>>,
+    on_click: Option<Rc<dyn Fn(&ToggleState, &mut Window, &mut App) + 'static>>,
     label: Option<SharedString>,
     key_binding: Option<KeyBinding>,
     color: SwitchColor,
@@ -459,7 +459,7 @@ impl Switch {
         mut self,
         handler: impl Fn(&ToggleState, &mut Window, &mut App) + 'static,
     ) -> Self {
-        self.on_click = Some(Box::new(handler));
+        self.on_click = Some(Rc::new(handler));
         self
     }
 
@@ -513,10 +513,16 @@ impl RenderOnce for Switch {
             .when_some(
                 self.tab_index.filter(|_| !self.disabled),
                 |this, tab_index| {
-                    this.tab_index(tab_index).focus(|mut style| {
-                        style.border_color = Some(cx.theme().colors().border_focused);
-                        style
-                    })
+                    this.tab_index(tab_index)
+                        .focus(|mut style| {
+                            style.border_color = Some(cx.theme().colors().border_focused);
+                            style
+                        })
+                        .when_some(self.on_click.clone(), |this, on_click| {
+                            this.on_click(move |_, window, cx| {
+                                on_click(&self.toggle_state.inverse(), window, cx)
+                            })
+                        })
                 },
             )
             .child(
@@ -610,7 +616,7 @@ impl SwitchField {
         Self {
             id: id.into(),
             label: label.into(),
-            description: description,
+            description,
             toggle_state: toggle_state.into(),
             on_click: Arc::new(on_click),
             disabled: false,

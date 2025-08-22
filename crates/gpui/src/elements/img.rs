@@ -379,13 +379,12 @@ impl Element for Img {
                         None => {
                             if let Some(state) = &mut state {
                                 if let Some((started_loading, _)) = state.started_loading {
-                                    if started_loading.elapsed() > LOADING_DELAY {
-                                        if let Some(loading) = self.style.loading.as_ref() {
-                                            let mut element = loading();
-                                            replacement_id =
-                                                Some(element.request_layout(window, cx));
-                                            layout_state.replacement = Some(element);
-                                        }
+                                    if started_loading.elapsed() > LOADING_DELAY
+                                        && let Some(loading) = self.style.loading.as_ref()
+                                    {
+                                        let mut element = loading();
+                                        replacement_id = Some(element.request_layout(window, cx));
+                                        layout_state.replacement = Some(element);
                                     }
                                 } else {
                                     let current_view = window.current_view();
@@ -476,7 +475,7 @@ impl Element for Img {
                         .paint_image(
                             new_bounds,
                             corner_radii,
-                            data.clone(),
+                            data,
                             layout_state.frame_index,
                             self.style.grayscale,
                         )

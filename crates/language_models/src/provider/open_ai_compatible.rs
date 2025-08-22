@@ -38,6 +38,27 @@ pub struct AvailableModel {
     pub max_tokens: u64,
     pub max_output_tokens: Option<u64>,
     pub max_completion_tokens: Option<u64>,
+    #[serde(default)]
+    pub capabilities: ModelCapabilities,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct ModelCapabilities {
+    pub tools: bool,
+    pub images: bool,
+    pub parallel_tool_calls: bool,
+    pub prompt_cache_key: bool,
+}
+
+impl Default for ModelCapabilities {
+    fn default() -> Self {
+        Self {
+            tools: true,
+            images: false,
+            parallel_tool_calls: false,
+            prompt_cache_key: false,
+        }
+    }
 }
 
 pub struct OpenAiCompatibleLanguageModelProvider {
@@ -66,7 +87,7 @@ impl State {
         let api_url = self.settings.api_url.clone();
         cx.spawn(async move |this, cx| {
             credentials_provider
-                .delete_credentials(&api_url, &cx)
+                .delete_credentials(&api_url, cx)
                 .await
                 .log_err();
             this.update(cx, |this, cx| {
@@ -82,7 +103,7 @@ impl State {
         let api_url = self.settings.api_url.clone();
         cx.spawn(async move |this, cx| {
             credentials_provider
-                .write_credentials(&api_url, "Bearer", api_key.as_bytes(), &cx)
+                .write_credentials(&api_url, "Bearer", api_key.as_bytes(), cx)
                 .await
                 .log_err();
             this.update(cx, |this, cx| {
@@ -105,7 +126,7 @@ impl State {
                 (api_key, true)
             } else {
                 let (_, api_key) = credentials_provider
-                    .read_credentials(&api_url, &cx)
+                    .read_credentials(&api_url, cx)
                     .await?
                     .ok_or(AuthenticateError::CredentialsNotFound)?;
                 (
@@ -222,7 +243,12 @@ impl LanguageModelProvider for OpenAiCompatibleLanguageModelProvider {
         self.state.update(cx, |state, cx| state.authenticate(cx))
     }
 
-    fn configuration_view(&self, window: &mut Window, cx: &mut App) -> AnyView {
+    fn configuration_view(
+        &self,
+        _target_agent: language_model::ConfigurationViewTargetAgent,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> AnyView {
         cx.new(|cx| ConfigurationView::new(self.state.clone(), window, cx))
             .into()
     }
@@ -293,17 +319,17 @@ impl LanguageModel for OpenAiCompatibleLanguageModel {
     }
 
     fn supports_tools(&self) -> bool {
-        true
+        self.model.capabilities.tools
     }
 
     fn supports_images(&self) -> bool {
-        false
+        self.model.capabilities.images
     }
 
     fn supports_tool_choice(&self, choice: LanguageModelToolChoice) -> bool {
         match choice {
-            LanguageModelToolChoice::Auto => true,
-            LanguageModelToolChoice::Any => true,
+            LanguageModelToolChoice::Auto => self.model.capabilities.tools,
+            LanguageModelToolChoice::Any => self.model.capabilities.tools,
             LanguageModelToolChoice::None => true,
         }
     }
@@ -355,7 +381,14 @@ impl LanguageModel for OpenAiCompatibleLanguageModel {
             LanguageModelCompletionError,
         >,
     > {
-        let request = into_open_ai(request, &self.model.name, true, self.max_output_tokens());
+        let request = into_open_ai(
+            request,
+            &self.model.name,
+            self.model.capabilities.parallel_tool_calls,
+            self.model.capabilities.prompt_cache_key,
+            self.max_output_tokens(),
+            None,
+        );
         let completions = self.stream_completion(request, cx);
         async move {
             let mapper = OpenAiEventMapper::new();

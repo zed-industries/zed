@@ -289,12 +289,12 @@ pub(crate) fn search_symbols(
                         .iter()
                         .enumerate()
                         .map(|(id, symbol)| {
-                            StringMatchCandidate::new(id, &symbol.label.filter_text())
+                            StringMatchCandidate::new(id, symbol.label.filter_text())
                         })
                         .partition(|candidate| {
                             project
                                 .entry_for_path(&symbols[candidate.id].path, cx)
-                                .map_or(false, |e| !e.is_ignored)
+                                .is_some_and(|e| !e.is_ignored)
                         })
                 })
                 .log_err()

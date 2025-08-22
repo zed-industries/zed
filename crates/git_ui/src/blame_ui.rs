@@ -172,7 +172,7 @@ impl BlameRenderer for GitBlameRenderer {
                 .clone()
                 .unwrap_or("<no name>".to_string())
                 .into(),
-            author_email: blame.author_mail.clone().unwrap_or("".to_string()).into(),
+            author_email: blame.author_mail.unwrap_or("".to_string()).into(),
             message: details,
         };
 
@@ -186,7 +186,7 @@ impl BlameRenderer for GitBlameRenderer {
             .get(0..8)
             .map(|sha| sha.to_string().into())
             .unwrap_or_else(|| commit_details.sha.clone());
-        let full_sha = commit_details.sha.to_string().clone();
+        let full_sha = commit_details.sha.to_string();
         let absolute_timestamp = format_local_timestamp(
             commit_details.commit_time,
             OffsetDateTime::now_utc(),
@@ -377,7 +377,7 @@ impl BlameRenderer for GitBlameRenderer {
                 has_parent: true,
             },
             repository.downgrade(),
-            workspace.clone(),
+            workspace,
             window,
             cx,
         )

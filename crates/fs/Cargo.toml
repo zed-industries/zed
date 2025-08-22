@@ -51,6 +51,7 @@ ashpd.workspace = true
 
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }
+git = { workspace = true, features = ["test-support"] }
 
 [features]
 test-support = ["gpui/test-support", "git/test-support"]

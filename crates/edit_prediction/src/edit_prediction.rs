@@ -34,7 +34,7 @@ pub enum DataCollectionState {
 
 impl DataCollectionState {
     pub fn is_supported(&self) -> bool {
-        !matches!(self, DataCollectionState::Unsupported { .. })
+        !matches!(self, DataCollectionState::Unsupported)
     }
 
     pub fn is_enabled(&self) -> bool {

@@ -187,24 +187,24 @@ impl TestPlatform {
             .push_back(TestPrompt {
                 msg: msg.to_string(),
                 detail: detail.map(|s| s.to_string()),
-                answers: answers.clone(),
+                answers,
                 tx,
             });
         rx
     }
 
     pub(crate) fn set_active_window(&self, window: Option<TestWindow>) {
-        let executor = self.foreground_executor().clone();
+        let executor = self.foreground_executor();
         let previous_window = self.active_window.borrow_mut().take();
         self.active_window.borrow_mut().clone_from(&window);
 
         executor
             .spawn(async move {
                 if let Some(previous_window) = previous_window {
-                    if let Some(window) = window.as_ref() {
-                        if Rc::ptr_eq(&previous_window.0, &window.0) {
-                            return;
-                        }
+                    if let Some(window) = window.as_ref()
+                        && Rc::ptr_eq(&previous_window.0, &window.0)
+                    {
+                        return;
                     }
                     previous_window.simulate_active_status_change(false);
                 }
@@ -336,6 +336,7 @@ impl Platform for TestPlatform {
     fn prompt_for_new_path(
         &self,
         directory: &std::path::Path,
+        _suggested_name: Option<&str>,
     ) -> oneshot::Receiver<Result<Option<std::path::PathBuf>>> {
         let (tx, rx) = oneshot::channel();
         self.background_executor()

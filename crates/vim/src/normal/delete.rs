@@ -2,6 +2,7 @@ use crate::{
     Vim,
     motion::{Motion, MotionKind},
     object::Object,
+    state::Mode,
 };
 use collections::{HashMap, HashSet};
 use editor::{
@@ -22,7 +23,7 @@ impl Vim {
         cx: &mut Context<Self>,
     ) {
         self.stop_recording(cx);
-        self.update_editor(window, cx, |vim, editor, window, cx| {
+        self.update_editor(cx, |vim, editor, cx| {
             let text_layout_details = editor.text_layout_details(window);
             editor.transact(window, cx, |editor, window, cx| {
                 editor.set_clip_at_line_ends(false, cx);
@@ -73,10 +74,10 @@ impl Vim {
                 editor.change_selections(Default::default(), window, cx, |s| {
                     s.move_with(|map, selection| {
                         let mut cursor = selection.head();
-                        if kind.linewise() {
-                            if let Some(column) = original_columns.get(&selection.id) {
-                                *cursor.column_mut() = *column
-                            }
+                        if kind.linewise()
+                            && let Some(column) = original_columns.get(&selection.id)
+                        {
+                            *cursor.column_mut() = *column
                         }
                         cursor = map.clip_point(cursor, Bias::Left);
                         selection.collapse_to(cursor, selection.goal)
@@ -96,14 +97,26 @@ impl Vim {
         cx: &mut Context<Self>,
     ) {
         self.stop_recording(cx);
-        self.update_editor(window, cx, |vim, editor, window, cx| {
+        self.update_editor(cx, |vim, editor, cx| {
             editor.transact(window, cx, |editor, window, cx| {
                 editor.set_clip_at_line_ends(false, cx);
                 // Emulates behavior in vim where if we expanded backwards to include a newline
                 // the cursor gets set back to the start of the line
                 let mut should_move_to_start: HashSet<_> = Default::default();
+
+                // Emulates behavior in vim where after deletion the cursor should try to move
+                // to the same column it was before deletion if the line is not empty or only
+                // contains whitespace
+                let mut column_before_move: HashMap<_, _> = Default::default();
+                let target_mode = object.target_visual_mode(vim.mode, around);
+
                 editor.change_selections(Default::default(), window, cx, |s| {
                     s.move_with(|map, selection| {
+                        let cursor_point = selection.head().to_point(map);
+                        if target_mode == Mode::VisualLine {
+                            column_before_move.insert(selection.id, cursor_point.column);
+                        }
+
                         object.expand_selection(map, selection, around, times);
                         let offset_range = selection.map(|p| p.to_offset(map, Bias::Left)).range();
                         let mut move_selection_start_to_previous_line =
@@ -164,6 +177,15 @@ impl Vim {
                         let mut cursor = selection.head();
                         if should_move_to_start.contains(&selection.id) {
                             *cursor.column_mut() = 0;
+                        } else if let Some(column) = column_before_move.get(&selection.id)
+                            && *column > 0
+                        {
+                            let mut cursor_point = cursor.to_point(map);
+                            cursor_point.column = *column;
+                            cursor = map
+                                .buffer_snapshot
+                                .clip_point(cursor_point, Bias::Left)
+                                .to_display_point(map);
                         }
                         cursor = map.clip_point(cursor, Bias::Left);
                         selection.collapse_to(cursor, selection.goal)

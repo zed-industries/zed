@@ -35,6 +35,11 @@ fn write_show_mini_map(show: ShowMinimap, cx: &mut App) {
     EditorSettings::override_global(curr_settings, cx);
 
     update_settings_file::<EditorSettings>(fs, cx, move |editor_settings, _| {
+        telemetry::event!(
+            "Welcome Minimap Clicked",
+            from = editor_settings.minimap.unwrap_or_default(),
+            to = show
+        );
         editor_settings.minimap.get_or_insert_default().show = Some(show);
     });
 }
@@ -71,7 +76,7 @@ fn read_git_blame(cx: &App) -> bool {
     ProjectSettings::get_global(cx).git.inline_blame_enabled()
 }
 
-fn set_git_blame(enabled: bool, cx: &mut App) {
+fn write_git_blame(enabled: bool, cx: &mut App) {
     let fs = <dyn Fs>::global(cx);
 
     let mut curr_settings = ProjectSettings::get_global(cx).clone();
@@ -95,6 +100,12 @@ fn write_ui_font_family(font: SharedString, cx: &mut App) {
     let fs = <dyn Fs>::global(cx);
 
     update_settings_file::<ThemeSettings>(fs, cx, move |theme_settings, _| {
+        telemetry::event!(
+            "Welcome Font Changed",
+            type = "ui font",
+            old = theme_settings.ui_font_family,
+            new = font
+        );
         theme_settings.ui_font_family = Some(FontFamilyName(font.into()));
     });
 }
@@ -119,6 +130,13 @@ fn write_buffer_font_family(font_family: SharedString, cx: &mut App) {
     let fs = <dyn Fs>::global(cx);
 
     update_settings_file::<ThemeSettings>(fs, cx, move |theme_settings, _| {
+        telemetry::event!(
+            "Welcome Font Changed",
+            type = "editor font",
+            old = theme_settings.buffer_font_family,
+            new = font_family
+        );
+
         theme_settings.buffer_font_family = Some(FontFamilyName(font_family.into()));
     });
 }
@@ -197,7 +215,7 @@ fn render_setting_import_button(
                                     .color(Color::Muted)
                                     .size(IconSize::XSmall),
                             )
-                            .child(Label::new(label)),
+                            .child(Label::new(label.clone())),
                     )
                     .when(imported, |this| {
                         this.child(
@@ -212,7 +230,10 @@ fn render_setting_import_button(
                         )
                     }),
             )
-            .on_click(move |_, window, cx| window.dispatch_action(action.boxed_clone(), cx)),
+            .on_click(move |_, window, cx| {
+                telemetry::event!("Welcome Import Settings", import_source = label,);
+                window.dispatch_action(action.boxed_clone(), cx);
+            }),
     )
 }
 
@@ -293,7 +314,7 @@ fn render_font_customization_section(
                         .child(
                             PopoverMenu::new("ui-font-picker")
                                 .menu({
-                                    let ui_font_picker = ui_font_picker.clone();
+                                    let ui_font_picker = ui_font_picker;
                                     move |_window, _cx| Some(ui_font_picker.clone())
                                 })
                                 .trigger(
@@ -357,7 +378,7 @@ fn render_font_customization_section(
                         .child(
                             PopoverMenu::new("buffer-font-picker")
                                 .menu({
-                                    let buffer_font_picker = buffer_font_picker.clone();
+                                    let buffer_font_picker = buffer_font_picker;
                                     move |_window, _cx| Some(buffer_font_picker.clone())
                                 })
                                 .trigger(
@@ -573,7 +594,7 @@ fn font_picker(
 ) -> FontPicker {
     let delegate = FontPickerDelegate::new(current_font, on_font_changed, cx);
 
-    Picker::list(delegate, window, cx)
+    Picker::uniform_list(delegate, window, cx)
         .show_scrollbar(true)
         .width(rems_from_px(210.))
         .max_height(Some(rems(20.).into()))
@@ -584,7 +605,7 @@ fn render_popular_settings_section(
     window: &mut Window,
     cx: &mut App,
 ) -> impl IntoElement {
-    const LIGATURE_TOOLTIP: &'static str =
+    const LIGATURE_TOOLTIP: &str =
         "Font ligatures combine two characters into one. For example, turning =/= into ≠.";
 
     v_flex()
@@ -605,7 +626,13 @@ fn render_popular_settings_section(
                     ui::ToggleState::Unselected
                 },
                 |toggle_state, _, cx| {
-                    write_font_ligatures(toggle_state == &ToggleState::Selected, cx);
+                    let enabled = toggle_state == &ToggleState::Selected;
+                    telemetry::event!(
+                        "Welcome Font Ligature",
+                        options = if enabled { "on" } else { "off" },
+                    );
+
+                    write_font_ligatures(enabled, cx);
                 },
             )
             .tab_index({
@@ -625,7 +652,13 @@ fn render_popular_settings_section(
                     ui::ToggleState::Unselected
                 },
                 |toggle_state, _, cx| {
-                    write_format_on_save(toggle_state == &ToggleState::Selected, cx);
+                    let enabled = toggle_state == &ToggleState::Selected;
+                    telemetry::event!(
+                        "Welcome Format On Save Changed",
+                        options = if enabled { "on" } else { "off" },
+                    );
+
+                    write_format_on_save(enabled, cx);
                 },
             )
             .tab_index({
@@ -644,7 +677,13 @@ fn render_popular_settings_section(
                     ui::ToggleState::Unselected
                 },
                 |toggle_state, _, cx| {
-                    write_inlay_hints(toggle_state == &ToggleState::Selected, cx);
+                    let enabled = toggle_state == &ToggleState::Selected;
+                    telemetry::event!(
+                        "Welcome Inlay Hints Changed",
+                        options = if enabled { "on" } else { "off" },
+                    );
+
+                    write_inlay_hints(enabled, cx);
                 },
             )
             .tab_index({
@@ -663,7 +702,13 @@ fn render_popular_settings_section(
                     ui::ToggleState::Unselected
                 },
                 |toggle_state, _, cx| {
-                    set_git_blame(toggle_state == &ToggleState::Selected, cx);
+                    let enabled = toggle_state == &ToggleState::Selected;
+                    telemetry::event!(
+                        "Welcome Git Blame Changed",
+                        options = if enabled { "on" } else { "off" },
+                    );
+
+                    write_git_blame(enabled, cx);
                 },
             )
             .tab_index({
@@ -676,7 +721,7 @@ fn render_popular_settings_section(
                 .items_start()
                 .justify_between()
                 .child(
-                    v_flex().child(Label::new("Mini Map")).child(
+                    v_flex().child(Label::new("Minimap")).child(
                         Label::new("See a high-level overview of your source code.")
                             .color(Color::Muted),
                     ),
@@ -706,7 +751,7 @@ fn render_popular_settings_section(
                     })
                     .tab_index(tab_index)
                     .style(ToggleButtonGroupStyle::Outlined)
-                    .button_width(ui::rems_from_px(64.)),
+                    .width(ui::rems_from_px(3. * 64.)),
                 ),
         )
 }

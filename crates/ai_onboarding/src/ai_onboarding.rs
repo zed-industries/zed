@@ -332,17 +332,25 @@ impl ZedAiOnboarding {
                     .mb_2(),
             )
             .child(plan_definitions.pro_plan(false))
-            .child(
-                Button::new("pro", "Continue with Zed Pro")
-                    .full_width()
-                    .style(ButtonStyle::Outlined)
-                    .on_click({
-                        let callback = self.continue_with_zed_ai.clone();
-                        move |_, window, cx| {
-                            telemetry::event!("Banner Dismissed", source = "AI Onboarding");
-                            callback(window, cx)
-                        }
-                    }),
+            .when_some(
+                self.dismiss_onboarding.as_ref(),
+                |this, dismiss_callback| {
+                    let callback = dismiss_callback.clone();
+                    this.child(
+                        h_flex().absolute().top_0().right_0().child(
+                            IconButton::new("dismiss_onboarding", IconName::Close)
+                                .icon_size(IconSize::Small)
+                                .tooltip(Tooltip::text("Dismiss"))
+                                .on_click(move |_, window, cx| {
+                                    telemetry::event!(
+                                        "Banner Dismissed",
+                                        source = "AI Onboarding",
+                                    );
+                                    callback(window, cx)
+                                }),
+                        ),
+                    )
+                },
             )
             .into_any_element()
     }

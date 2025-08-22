@@ -58,7 +58,7 @@ use std::{
     path::PathBuf,
     process::ExitStatus,
     sync::Arc,
-    time::{Duration, Instant},
+    time::Instant,
 };
 use thiserror::Error;
 
@@ -167,6 +167,7 @@ enum InternalEvent {
     // Vi mode events
     ToggleViMode,
     ViMotion(ViMotion),
+    MoveViCursorToAlacPoint(AlacPoint),
 }
 
 ///A translation struct for Alacritty to communicate with us from their event loop
@@ -408,7 +409,13 @@ impl TerminalBuilder {
         let terminal_title_override = shell_params.as_ref().and_then(|e| e.title_override.clone());
 
         #[cfg(windows)]
-        let shell_program = shell_params.as_ref().map(|params| params.program.clone());
+        let shell_program = shell_params.as_ref().map(|params| {
+            use util::ResultExt;
+
+            Self::resolve_path(&params.program)
+                .log_err()
+                .unwrap_or(params.program.clone())
+        });
 
         let pty_options = {
             let alac_shell = shell_params.map(|params| {
@@ -479,7 +486,7 @@ impl TerminalBuilder {
         //And connect them together
         let event_loop = EventLoop::new(
             term.clone(),
-            ZedListener(events_tx.clone()),
+            ZedListener(events_tx),
             pty,
             pty_options.drain_on_exit,
             false,
@@ -534,10 +541,15 @@ impl TerminalBuilder {
 
                 'outer: loop {
                     let mut events = Vec::new();
+
+                    #[cfg(any(test, feature = "test-support"))]
+                    let mut timer = cx.background_executor().simulate_random_delay().fuse();
+                    #[cfg(not(any(test, feature = "test-support")))]
                     let mut timer = cx
                         .background_executor()
-                        .timer(Duration::from_millis(4))
+                        .timer(std::time::Duration::from_millis(4))
                         .fuse();
+
                     let mut wakeup = false;
                     loop {
                         futures::select_biased! {
@@ -583,6 +595,24 @@ impl TerminalBuilder {
         .detach();
 
         self.terminal
+    }
+
+    #[cfg(windows)]
+    fn resolve_path(path: &str) -> Result<String> {
+        use windows::Win32::Storage::FileSystem::SearchPathW;
+        use windows::core::HSTRING;
+
+        let path = if path.starts_with(r"\\?\") || !path.contains(&['/', '\\']) {
+            path.to_string()
+        } else {
+            r"\\?\".to_string() + path
+        };
+
+        let required_length = unsafe { SearchPathW(None, &HSTRING::from(&path), None, None, None) };
+        let mut buf = vec![0u16; required_length as usize];
+        let size = unsafe { SearchPathW(None, &HSTRING::from(&path), None, Some(&mut buf), None) };
+
+        Ok(String::from_utf16(&buf[..size as usize])?)
     }
 }
 
@@ -860,15 +890,15 @@ impl Terminal {
                 if self.vi_mode_enabled {
                     match *scroll {
                         AlacScroll::Delta(delta) => {
-                            term.vi_mode_cursor = term.vi_mode_cursor.scroll(&term, delta);
+                            term.vi_mode_cursor = term.vi_mode_cursor.scroll(term, delta);
                         }
                         AlacScroll::PageUp => {
                             let lines = term.screen_lines() as i32;
-                            term.vi_mode_cursor = term.vi_mode_cursor.scroll(&term, lines);
+                            term.vi_mode_cursor = term.vi_mode_cursor.scroll(term, lines);
                         }
                         AlacScroll::PageDown => {
                             let lines = -(term.screen_lines() as i32);
-                            term.vi_mode_cursor = term.vi_mode_cursor.scroll(&term, lines);
+                            term.vi_mode_cursor = term.vi_mode_cursor.scroll(term, lines);
                         }
                         AlacScroll::Top => {
                             let point = AlacPoint::new(term.topmost_line(), Column(0));
@@ -941,6 +971,10 @@ impl Terminal {
             }
             InternalEvent::ScrollToAlacPoint(point) => {
                 term.scroll_to_point(*point);
+                self.refresh_hovered_word(window);
+            }
+            InternalEvent::MoveViCursorToAlacPoint(point) => {
+                term.vi_goto_point(*point);
                 self.refresh_hovered_word(window);
             }
             InternalEvent::ToggleViMode => {
@@ -1017,15 +1051,16 @@ impl Terminal {
         navigation_target: MaybeNavigationTarget,
         cx: &mut Context<Self>,
     ) {
-        if let Some(prev_word) = prev_word {
-            if prev_word.word == word && prev_word.word_match == word_match {
-                self.last_content.last_hovered_word = Some(HoveredWord {
-                    word,
-                    word_match,
-                    id: prev_word.id,
-                });
-                return;
-            }
+        if let Some(prev_word) = prev_word
+            && prev_word.word == word
+            && prev_word.word_match == word_match
+        {
+            self.last_content.last_hovered_word = Some(HoveredWord {
+                word,
+                word_match,
+                id: prev_word.id,
+            });
+            return;
         }
 
         self.last_content.last_hovered_word = Some(HoveredWord {
@@ -1071,10 +1106,19 @@ impl Terminal {
     pub fn activate_match(&mut self, index: usize) {
         if let Some(search_match) = self.matches.get(index).cloned() {
             self.set_selection(Some((make_selection(&search_match), *search_match.end())));
-
-            self.events
-                .push_back(InternalEvent::ScrollToAlacPoint(*search_match.start()));
+            if self.vi_mode_enabled {
+                self.events
+                    .push_back(InternalEvent::MoveViCursorToAlacPoint(*search_match.end()));
+            } else {
+                self.events
+                    .push_back(InternalEvent::ScrollToAlacPoint(*search_match.start()));
+            }
         }
+    }
+
+    pub fn clear_matches(&mut self) {
+        self.matches.clear();
+        self.set_selection(None);
     }
 
     pub fn select_matches(&mut self, matches: &[RangeInclusive<AlacPoint>]) {
@@ -1255,23 +1299,19 @@ impl Terminal {
                 let selection = Selection::new(selection_type, point, side);
                 self.events
                     .push_back(InternalEvent::SetSelection(Some((selection, point))));
-                return;
             }
 
             "escape" => {
                 self.events.push_back(InternalEvent::SetSelection(None));
-                return;
             }
 
             "y" => {
                 self.copy(Some(false));
-                return;
             }
 
             "i" => {
                 self.scroll_to_bottom();
                 self.toggle_vi_mode();
-                return;
             }
             _ => {}
         }
@@ -1474,12 +1514,11 @@ impl Terminal {
                 self.last_content.display_offset,
             );
 
-            if self.mouse_changed(point, side) {
-                if let Some(bytes) =
+            if self.mouse_changed(point, side)
+                && let Some(bytes) =
                     mouse_moved_report(point, e.pressed_button, e.modifiers, self.last_content.mode)
-                {
-                    self.pty_tx.notify(bytes);
-                }
+            {
+                self.pty_tx.notify(bytes);
             }
         } else if e.modifiers.secondary() {
             self.word_from_position(e.position);
@@ -1622,7 +1661,7 @@ impl Terminal {
                 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
                 MouseButton::Middle => {
                     if let Some(item) = _cx.read_from_primary() {
-                        let text = item.text().unwrap_or_default().to_string();
+                        let text = item.text().unwrap_or_default();
                         self.input(text.into_bytes());
                     }
                 }
@@ -1821,10 +1860,10 @@ impl Terminal {
     }
 
     pub fn kill_active_task(&mut self) {
-        if let Some(task) = self.task() {
-            if task.status == TaskStatus::Running {
-                self.pty_info.kill_current_process();
-            }
+        if let Some(task) = self.task()
+            && task.status == TaskStatus::Running
+        {
+            self.pty_info.kill_current_process();
         }
     }
 
@@ -1848,11 +1887,11 @@ impl Terminal {
         let e: Option<ExitStatus> = error_code.map(|code| {
             #[cfg(unix)]
             {
-                return std::os::unix::process::ExitStatusExt::from_raw(code);
+                std::os::unix::process::ExitStatusExt::from_raw(code)
             }
             #[cfg(windows)]
             {
-                return std::os::windows::process::ExitStatusExt::from_raw(code as u32);
+                std::os::windows::process::ExitStatusExt::from_raw(code as u32)
             }
         });
 
@@ -2104,16 +2143,56 @@ pub fn rgba_color(r: u8, g: u8, b: u8) -> Hsla {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+    use crate::{
+        IndexedCell, TerminalBounds, TerminalBuilder, TerminalContent, content_index_for_mouse,
+        rgb_for_index,
+    };
     use alacritty_terminal::{
         index::{Column, Line, Point as AlacPoint},
         term::cell::Cell,
     };
-    use gpui::{Pixels, Point, bounds, point, size};
+    use collections::HashMap;
+    use gpui::{Pixels, Point, TestAppContext, bounds, point, size};
     use rand::{Rng, distributions::Alphanumeric, rngs::ThreadRng, thread_rng};
 
-    use crate::{
-        IndexedCell, TerminalBounds, TerminalContent, content_index_for_mouse, rgb_for_index,
-    };
+    #[ignore = "Test is flaky on macOS, and doesn't run on Windows"]
+    #[gpui::test]
+    async fn test_basic_terminal(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+
+        let (completion_tx, completion_rx) = smol::channel::unbounded();
+        let terminal = cx.new(|cx| {
+            TerminalBuilder::new(
+                None,
+                None,
+                None,
+                task::Shell::WithArguments {
+                    program: "echo".into(),
+                    args: vec!["hello".into()],
+                    title_override: None,
+                },
+                HashMap::default(),
+                CursorShape::default(),
+                AlternateScroll::On,
+                None,
+                false,
+                0,
+                completion_tx,
+                cx,
+            )
+            .unwrap()
+            .subscribe(cx)
+        });
+        assert_eq!(
+            completion_rx.recv().await.unwrap(),
+            Some(ExitStatus::default())
+        );
+        assert_eq!(
+            terminal.update(cx, |term, _| term.get_content()).trim(),
+            "hello"
+        );
+    }
 
     #[test]
     fn test_rgb_for_index() {

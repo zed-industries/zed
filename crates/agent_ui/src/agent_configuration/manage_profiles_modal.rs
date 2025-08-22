@@ -464,7 +464,7 @@ impl ManageProfilesModal {
                 },
             ))
             .child(ListSeparator)
-            .child(h_flex().p_2().child(mode.name_editor.clone()))
+            .child(h_flex().p_2().child(mode.name_editor))
     }
 
     fn render_view_profile(

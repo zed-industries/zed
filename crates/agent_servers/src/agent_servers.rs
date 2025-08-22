@@ -3,8 +3,8 @@ mod claude;
 mod gemini;
 mod settings;
 
-#[cfg(test)]
-mod e2e_tests;
+#[cfg(any(test, feature = "test-support"))]
+pub mod e2e_tests;
 
 pub use claude::*;
 pub use gemini::*;
@@ -18,6 +18,7 @@ use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::{
+    any::Any,
     path::{Path, PathBuf},
     rc::Rc,
     sync::Arc,
@@ -40,6 +41,14 @@ pub trait AgentServer: Send {
         project: &Entity<Project>,
         cx: &mut App,
     ) -> Task<Result<Rc<dyn AgentConnection>>>;
+
+    fn into_any(self: Rc<Self>) -> Rc<dyn Any>;
+}
+
+impl dyn AgentServer {
+    pub fn downcast<T: 'static + AgentServer + Sized>(self: Rc<Self>) -> Option<Rc<T>> {
+        self.into_any().downcast().ok()
+    }
 }
 
 impl std::fmt::Debug for AgentServerCommand {
@@ -95,7 +104,7 @@ impl AgentServerCommand {
         cx: &mut AsyncApp,
     ) -> Option<Self> {
         if let Some(agent_settings) = settings {
-            return Some(Self {
+            Some(Self {
                 path: agent_settings.command.path,
                 args: agent_settings
                     .command
@@ -104,7 +113,7 @@ impl AgentServerCommand {
                     .chain(extra_args.iter().map(|arg| arg.to_string()))
                     .collect(),
                 env: agent_settings.command.env,
-            });
+            })
         } else {
             match find_bin_in_path(path_bin_name, project, cx).await {
                 Some(path) => Some(Self {
