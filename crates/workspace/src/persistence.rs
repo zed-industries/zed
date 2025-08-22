@@ -538,21 +538,35 @@ define_connection! {
         INSERT
         INTO workspaces_2
         SELECT
-            workspaces.local_paths_array as paths,
-            workspaces.local_paths_order as paths_order,
+            workspaces.workspace_id,
+            CASE
+                WHEN ssh_projects.id IS NOT NULL THEN ssh_projects.paths
+                ELSE
+                    CASE
+                        WHEN workspaces.local_paths_array IS NULL OR workspaces.local_paths_array = "" THEN
+                            NULL
+                        ELSE
+                            json('[' || '"' || replace(workspaces.local_paths_array, ',', '"' || "," || '"') || '"' || ']')
+                    END
+            END as paths,
+
+            CASE
+                WHEN ssh_projects.id IS NOT NULL THEN ""
+                ELSE workspaces.local_paths_order_array
+            END as paths_order,
+
             CASE
                 WHEN ssh_projects.id IS NOT NULL THEN (
                     SELECT ssh_connections.id
                     FROM ssh_connections
                     WHERE
-                        ssh_connections.host = ssh_projects.host AND
-                        ssh_connections.port = ssh_projects.port AND
-                        ssh_connections.user = ssh_projects.user
+                        ssh_connections.host IS ssh_projects.host AND
+                        ssh_connections.port IS ssh_projects.port AND
+                        ssh_connections.user IS ssh_projects.user
                 )
                 ELSE NULL
             END as ssh_connection_id,
 
-            workspaces.workspace_id,
             workspaces.timestamp,
             workspaces.window_state,
             workspaces.window_x,
@@ -660,8 +674,8 @@ impl WorkspaceDb {
                     window_id
                 FROM workspaces
                 WHERE
-                    paths = ? AND
-                    (? IS NULL AND ssh_connection_id IS NULL) OR ssh_connection_id = ?
+                    paths IS ? AND
+                    ssh_connection_id IS ?
                 LIMIT 1
             })
             .map(|mut prepared_statement| {
@@ -802,8 +816,8 @@ impl WorkspaceDb {
                     FROM workspaces
                     WHERE
                         workspace_id != ?1 AND
-                        paths = ?2 AND
-                        ((?3 IS NULL AND ssh_connection_id IS NULL) OR ssh_connection_id = ?3)
+                        paths IS ?2 AND
+                        ssh_connection_id IS ?3
                 ))?((
                     workspace.id,
                     paths.paths.clone(),

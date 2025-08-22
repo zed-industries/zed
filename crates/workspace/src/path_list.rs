@@ -58,9 +58,9 @@ impl PathList {
         let mut paths: Vec<PathBuf> = if serialized.paths.is_empty() {
             Vec::new()
         } else {
-            serialized
-                .paths
-                .split(',')
+            serde_json::from_str::<Vec<PathBuf>>(&serialized.paths)
+                .unwrap_or(Vec::new())
+                .into_iter()
                 .map(|s| SanitizedPath::from(s).into())
                 .collect()
         };
@@ -85,14 +85,9 @@ impl PathList {
     pub fn serialize(&self) -> SerializedPathList {
         use std::fmt::Write as _;
 
-        let mut paths = String::new();
+        let paths = serde_json::to_string(&self.paths).unwrap_or_default();
+
         let mut order = String::new();
-        for path in self.paths.iter() {
-            if !paths.is_empty() {
-                paths.push(',');
-            }
-            write!(&mut paths, "{}", path.display()).unwrap();
-        }
         for ix in self.order.iter() {
             if !order.is_empty() {
                 order.push(',');
