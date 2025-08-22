@@ -54,9 +54,7 @@ use gpui::{
     Pixels, Subscription, Task, UpdateGlobal, WeakEntity, prelude::*, pulsating_between,
 };
 use language::LanguageRegistry;
-use language_model::{
-    ConfigurationError, ConfiguredModel, LanguageModelProviderTosView, LanguageModelRegistry,
-};
+use language_model::{ConfigurationError, ConfiguredModel, LanguageModelRegistry};
 use project::{DisableAiSettings, Project, ProjectPath, Worktree};
 use prompt_store::{PromptBuilder, PromptStore, UserPromptId};
 use rules_library::{RulesLibrary, open_rules_library};
@@ -3203,17 +3201,6 @@ impl AgentPanel {
             ConfigurationError::ModelNotFound
             | ConfigurationError::ProviderNotAuthenticated(_)
             | ConfigurationError::NoProvider => callout.into_any_element(),
-            ConfigurationError::ProviderPendingTermsAcceptance(provider) => {
-                Banner::new()
-                    .severity(Severity::Warning)
-                    .child(h_flex().w_full().children(
-                        provider.render_accept_terms(
-                            LanguageModelProviderTosView::ThreadEmptyState,
-                            cx,
-                        ),
-                    ))
-                    .into_any_element()
-            }
         }
     }
 

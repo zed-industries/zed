@@ -89,9 +89,6 @@ pub trait EditPredictionProvider: 'static + Sized {
         debounce: bool,
         cx: &mut Context<Self>,
     );
-    fn needs_terms_acceptance(&self, _cx: &App) -> bool {
-        false
-    }
     fn cycle(
         &mut self,
         buffer: Entity<Buffer>,
@@ -124,7 +121,6 @@ pub trait EditPredictionProviderHandle {
     fn data_collection_state(&self, cx: &App) -> DataCollectionState;
     fn usage(&self, cx: &App) -> Option<EditPredictionUsage>;
     fn toggle_data_collection(&self, cx: &mut App);
-    fn needs_terms_acceptance(&self, cx: &App) -> bool;
     fn is_refreshing(&self, cx: &App) -> bool;
     fn refresh(
         &self,
@@ -194,10 +190,6 @@ where
         cx: &App,
     ) -> bool {
         self.read(cx).is_enabled(buffer, cursor_position, cx)
-    }
-
-    fn needs_terms_acceptance(&self, cx: &App) -> bool {
-        self.read(cx).needs_terms_acceptance(cx)
     }
 
     fn is_refreshing(&self, cx: &App) -> bool {
