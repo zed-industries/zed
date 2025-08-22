@@ -828,16 +828,14 @@ impl<'a> MarkdownParser<'a> {
                         return;
                     };
 
-                    let Some(mut image) = Image::identify(
-                        src.to_string(),
-                        source_range,
-                        self.file_location_directory.clone(),
-                    ) else {
+                    let Some(mut image) =
+                        Image::identify(src, source_range, self.file_location_directory.clone())
+                    else {
                         return;
                     };
 
                     if let Some(alt) = Self::attr_value(attrs, local_name!("alt")) {
-                        image.set_alt_text(alt.to_string().into());
+                        image.set_alt_text(alt.into());
                     }
 
                     if let Some(width) = Self::attr_value(attrs, local_name!("width"))
