@@ -2538,9 +2538,9 @@ impl AcpThreadView {
                 )
             })
             .when(render_history, |this| {
-                let recent_history = self
-                    .history_store
-                    .update(cx, |history_store, cx| history_store.recent_entries(3, cx));
+                let recent_history: Vec<_> = self.history_store.update(cx, |history_store, _| {
+                    history_store.entries().take(3).collect()
+                });
                 this.justify_end().child(
                     v_flex()
                         .child(

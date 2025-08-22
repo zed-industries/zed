@@ -805,7 +805,7 @@ pub(crate) fn search_threads(
     history_store: &Entity<HistoryStore>,
     cx: &mut App,
 ) -> Task<Vec<HistoryEntry>> {
-    let threads = history_store.read(cx).entries(cx);
+    let threads = history_store.read(cx).entries().collect();
     if query.is_empty() {
         return Task::ready(threads);
     }

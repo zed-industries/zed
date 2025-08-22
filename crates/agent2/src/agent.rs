@@ -1406,10 +1406,9 @@ mod tests {
         history: &Entity<HistoryStore>,
         cx: &mut TestAppContext,
     ) -> Vec<(HistoryEntryId, String)> {
-        history.read_with(cx, |history, cx| {
+        history.read_with(cx, |history, _| {
             history
-                .entries(cx)
-                .iter()
+                .entries()
                 .map(|e| (e.id(), e.title().to_string()))
                 .collect::<Vec<_>>()
         })
