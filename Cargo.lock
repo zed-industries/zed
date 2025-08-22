@@ -40,6 +40,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "acp_tools"
+version = "0.1.0"
+dependencies = [
+ "agent-client-protocol",
+ "gpui",
+ "language",
+ "log",
+ "markdown",
+ "project",
+ "serde",
+ "serde_json",
+ "settings",
+ "theme",
+ "ui",
+ "util",
+ "workspace",
+ "workspace-hack",
+]
+
+[[package]]
 name = "action_log"
 version = "0.1.0"
 dependencies = [
@@ -20398,6 +20418,7 @@ dependencies = [
 name = "zed"
 version = "0.202.0"
 dependencies = [
+ "acp_tools",
  "activity_indicator",
  "agent",
  "agent_servers",
