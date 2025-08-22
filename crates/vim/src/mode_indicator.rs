@@ -110,9 +110,14 @@ impl Render for ModeIndicator {
             format!("{} -- {} --", pending, mode).into()
         };
 
-        Label::new(label)
-            .size(LabelSize::Small)
-            .line_height_style(LineHeightStyle::UiLabel)
+        div()
+            .py(DynamicSpacing::Base04.rems(cx))
+            .child(
+                Label::new(label)
+                    .size(LabelSize::Small)
+                    .line_height_style(LineHeightStyle::UiLabel)
+                    .into_any_element()
+            )
             .into_any_element()
     }
 }

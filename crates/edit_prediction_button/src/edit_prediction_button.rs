@@ -76,6 +76,8 @@ impl Render for EditPredictionButton {
 
         let all_language_settings = all_language_settings(None, cx);
 
+        let spaced_div = div().py(DynamicSpacing::Base04.rems(cx));
+
         match all_language_settings.edit_predictions.provider {
             EditPredictionProvider::None => div(),
 
@@ -100,7 +102,7 @@ impl Render for EditPredictionButton {
                 };
 
                 if let Status::Error(e) = status {
-                    return div().child(
+                    return spaced_div.child(
                         IconButton::new("copilot-error", icon)
                             .icon_size(IconSize::Small)
                             .on_click(cx.listener(move |_, _, window, cx| {
@@ -129,7 +131,7 @@ impl Render for EditPredictionButton {
                 }
                 let this = cx.entity();
 
-                div().child(
+                spaced_div.child(
                     PopoverMenu::new("copilot")
                         .menu(move |window, cx| {
                             Some(match status {
@@ -185,7 +187,7 @@ impl Render for EditPredictionButton {
                 let this = cx.entity();
                 let fs = self.fs.clone();
 
-                div().child(
+                spaced_div.child(
                     PopoverMenu::new("supermaven")
                         .menu(move |window, cx| match &status {
                             SupermavenButtonStatus::NeedsActivation(activate_url) => {
@@ -253,7 +255,7 @@ impl Render for EditPredictionButton {
                         "Sign In"
                     };
 
-                    return div().child(
+                    return spaced_div.child(
                         IconButton::new("zed-predict-pending-button", zeta_icon)
                             .shape(IconButtonShape::Square)
                             .indicator(Indicator::dot().color(Color::Muted))
@@ -359,7 +361,7 @@ impl Render for EditPredictionButton {
                     popover_menu = popover_menu.trigger(icon_button);
                 }
 
-                div().child(popover_menu.into_any_element())
+                spaced_div.child(popover_menu.into_any_element())
             }
         }
     }
