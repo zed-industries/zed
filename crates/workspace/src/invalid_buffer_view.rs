@@ -1,21 +1,20 @@
 use gpui::{EventEmitter, FocusHandle, Focusable};
 use project::ProjectPath;
 use ui::{App, Context, InteractiveElement, ParentElement, Render, SharedString, Window, div};
-use workspace::Item;
 
+use crate::Item;
+
+/// A view to display when a certain buffer fails to open.
 pub struct InvalidBufferView {
+    /// Which path was attempted to open.
     pub project_path: ProjectPath,
-    error: SharedString,
+    /// An error message, happened when opening the buffer.
+    pub error: SharedString,
     focus_handle: FocusHandle,
 }
 
 impl InvalidBufferView {
-    pub fn new(
-        project_path: ProjectPath,
-        e: &anyhow::Error,
-        _: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Self {
+    pub fn new(project_path: ProjectPath, e: &anyhow::Error, _: &mut Window, cx: &mut App) -> Self {
         Self {
             project_path,
             error: format!("{e}").into(),

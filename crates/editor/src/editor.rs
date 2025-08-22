@@ -26,7 +26,6 @@ mod hover_links;
 pub mod hover_popover;
 mod indent_guides;
 mod inlay_hint_cache;
-mod invalid_buffer_view;
 pub mod items;
 mod jsx_tag_auto_close;
 mod linked_editing_ranges;

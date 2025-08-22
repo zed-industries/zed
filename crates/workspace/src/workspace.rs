@@ -1,5 +1,6 @@
 pub mod dock;
 pub mod history_manager;
+pub mod invalid_buffer_view;
 pub mod item;
 mod modal_layer;
 pub mod notifications;
@@ -642,8 +643,8 @@ impl ProjectItemRegistry {
                         })? {
                             Some(broken_project_item_view) => {
                                 let build_workspace_item = Box::new(
-                                    |_: &mut Pane, _: &mut Window, _: &mut Context<Pane>| {
-                                        broken_project_item_view
+                                    move |_: &mut Pane, _: &mut Window, cx: &mut Context<Pane>| {
+                                        cx.new(|_| broken_project_item_view).boxed_clone()
                                     },
                                 )
                                     as Box<_>;
@@ -3388,9 +3389,8 @@ impl Workspace {
         window: &mut Window,
         cx: &mut App,
     ) -> Task<Result<(Option<ProjectEntryId>, WorkspaceItemBuilder)>> {
-        let project = self.project().clone();
         let registry = cx.default_global::<ProjectItemRegistry>().clone();
-        registry.open_path(&project, &path, window, cx)
+        registry.open_path(self.project(), &path, window, cx)
     }
 
     pub fn find_project_item<T>(

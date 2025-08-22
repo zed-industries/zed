@@ -1,6 +1,7 @@
 use crate::{
     CollaboratorId, DelayedDebouncedEditAction, FollowableViewRegistry, ItemNavHistory,
     SerializableItemRegistry, ToolbarItemLocation, ViewId, Workspace, WorkspaceId,
+    invalid_buffer_view::InvalidBufferView,
     pane::{self, Pane},
     persistence::model::ItemId,
     searchable::SearchableItemHandle,
@@ -1170,7 +1171,7 @@ pub trait ProjectItem: Item {
         _e: &anyhow::Error,
         _window: &mut Window,
         _cx: &mut App,
-    ) -> Option<Box<dyn ItemHandle>>
+    ) -> Option<InvalidBufferView>
     where
         Self: Sized,
     {
