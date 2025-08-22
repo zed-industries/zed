@@ -52,11 +52,11 @@ impl AgentTool for MovePathTool {
     type Input = MovePathToolInput;
     type Output = String;
 
-    fn name(&self) -> SharedString {
-        "move_path".into()
+    fn name() -> &'static str {
+        "move_path"
     }
 
-    fn kind(&self) -> ToolKind {
+    fn kind() -> ToolKind {
         ToolKind::Move
     }
 
