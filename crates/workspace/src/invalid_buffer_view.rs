@@ -1,23 +1,34 @@
-use std::path::PathBuf;
+use std::{path::PathBuf, sync::Arc};
 
 use gpui::{EventEmitter, FocusHandle, Focusable};
-use ui::{App, Context, InteractiveElement, ParentElement, Render, SharedString, Window, div};
+use ui::{
+    App, Button, Clickable, Context, FluentBuilder, InteractiveElement, ParentElement, Render,
+    SharedString, Styled as _, Window, h_flex, v_flex,
+};
 
 use crate::Item;
 
 /// A view to display when a certain buffer fails to open.
 pub struct InvalidBufferView {
     /// Which path was attempted to open.
-    pub abs_path: PathBuf,
+    pub abs_path: Arc<PathBuf>,
     /// An error message, happened when opening the buffer.
     pub error: SharedString,
+    is_local: bool,
     focus_handle: FocusHandle,
 }
 
 impl InvalidBufferView {
-    pub fn new(abs_path: PathBuf, e: &anyhow::Error, _: &mut Window, cx: &mut App) -> Self {
+    pub fn new(
+        abs_path: PathBuf,
+        is_local: bool,
+        e: &anyhow::Error,
+        _: &mut Window,
+        cx: &mut App,
+    ) -> Self {
         Self {
-            abs_path,
+            is_local,
+            abs_path: Arc::new(abs_path),
             error: format!("{e}").into(),
             focus_handle: cx.focus_handle(),
         }
@@ -62,10 +73,31 @@ impl Focusable for InvalidBufferView {
 }
 
 impl Render for InvalidBufferView {
-    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl gpui::IntoElement {
-        div()
-            .track_focus(&self.focus_handle)
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl gpui::IntoElement {
+        let abs_path = self.abs_path.clone();
+        v_flex()
+            .size_full()
+            .track_focus(&self.focus_handle(cx))
+            .flex_none()
+            .justify_center()
+            .overflow_hidden()
             .key_context("InvalidBuffer")
-            .child("so bad, TODO kb")
+            .child(
+                h_flex().size_full().justify_center().child(
+                    v_flex()
+                        .justify_center()
+                        .gap_2()
+                        .child("Cannot display the file contents in Zed")
+                        .when(self.is_local, |contents| {
+                            contents.child(h_flex().justify_center().child(
+                                Button::new("open-with-system", "Open in Default App").on_click(
+                                    move |_, _, cx| {
+                                        cx.open_with_system(&abs_path);
+                                    },
+                                ),
+                            ))
+                        }),
+                ),
+            )
     }
 }
