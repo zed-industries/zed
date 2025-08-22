@@ -115,10 +115,9 @@ impl MessageEditor {
         let mention_set = MentionSet::default();
 
         let settings = AgentSettings::get_global(cx);
-        dbg!(&settings);
         let editor_mode = match settings.editor_mode {
             AgentEditorMode::EditorModeOverride(mode) => mode,
-            AgentEditorMode::Inherit => vim_mode_setting::EditorModeSetting::get_global(cx).0,
+            AgentEditorMode::Inherit => editor_mode_setting::EditorModeSetting::get_global(cx).0,
         };
 
         let editor = cx.new(|cx| {
@@ -129,8 +128,6 @@ impl MessageEditor {
             editor.set_placeholder_text(placeholder, cx);
             editor.set_show_indent_guides(false, cx);
             editor.set_soft_wrap();
-            println!("editor mode in agent acp");
-            dbg!(&editor_mode);
             editor.set_editor_mode(editor_mode, cx);
             editor.set_completion_provider(Some(Rc::new(completion_provider)));
             editor.set_context_menu_options(ContextMenuOptions {
@@ -174,7 +171,9 @@ impl MessageEditor {
             let settings = AgentSettings::get_global(cx);
             let editor_mode = match settings.editor_mode {
                 AgentEditorMode::EditorModeOverride(mode) => mode,
-                AgentEditorMode::Inherit => vim_mode_setting::EditorModeSetting::get_global(cx).0,
+                AgentEditorMode::Inherit => {
+                    editor_mode_setting::EditorModeSetting::get_global(cx).0
+                }
             };
             this.editor.update(cx, |editor, cx| {
                 editor.set_editor_mode(editor_mode, cx);

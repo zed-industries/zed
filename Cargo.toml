@@ -181,7 +181,7 @@ members = [
     "crates/util_macros",
     "crates/vercel",
     "crates/vim",
-    "crates/vim_mode_setting",
+    "crates/editor_mode_setting",
     "crates/watch",
     "crates/web_search",
     "crates/web_search_providers",
@@ -406,7 +406,7 @@ util = { path = "crates/util" }
 util_macros = { path = "crates/util_macros" }
 vercel = { path = "crates/vercel" }
 vim = { path = "crates/vim" }
-vim_mode_setting = { path = "crates/vim_mode_setting" }
+editor_mode_setting = { path = "crates/editor_mode_setting" }
 
 watch = { path = "crates/watch" }
 web_search = { path = "crates/web_search" }

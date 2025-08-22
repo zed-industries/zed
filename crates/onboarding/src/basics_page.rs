@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use client::TelemetrySettings;
+use editor_mode_setting::{EditorMode, EditorModeSetting};
 use fs::Fs;
 use gpui::{App, IntoElement};
 use settings::{BaseKeymap, Settings, update_settings_file};
@@ -12,7 +13,6 @@ use ui::{
     ParentElement as _, StatefulInteractiveElement, SwitchField, ToggleButtonGroup,
     ToggleButtonSimple, ToggleButtonWithIcon, prelude::*, rems_from_px,
 };
-use vim_mode_setting::{EditorMode, EditorModeSetting};
 
 use crate::theme_preview::{ThemePreviewStyle, ThemePreviewTile};
 

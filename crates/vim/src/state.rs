@@ -11,6 +11,7 @@ use db::define_connection;
 use db::sqlez_macros::sql;
 use editor::display_map::{is_invisible, replacement};
 use editor::{Anchor, ClipboardSelection, Editor, MultiBuffer, ToPoint as EditorToPoint};
+pub use editor_mode_setting::ModalMode as Mode;
 use gpui::{
     Action, App, AppContext, BorrowAppContext, ClipboardEntry, ClipboardItem, DismissEvent, Entity,
     EntityId, Global, HighlightStyle, StyledText, Subscription, Task, TextStyle, WeakEntity,
@@ -31,7 +32,6 @@ use ui::{
     StyledTypography, Window, h_flex, rems,
 };
 use util::ResultExt;
-pub use vim_mode_setting::ModalMode as Mode;
 use workspace::searchable::Direction;
 use workspace::{Workspace, WorkspaceDb, WorkspaceId};
 

@@ -10,6 +10,7 @@ use editor::actions::{
 };
 use editor::code_context_menus::{CodeContextMenu, ContextMenuOrigin};
 use editor::{Editor, EditorSettings};
+use editor_mode_setting::{EditorMode, EditorModeSetting};
 use gpui::{
     Action, AnchoredPositionMode, ClickEvent, Context, Corner, ElementId, Entity, EventEmitter,
     FocusHandle, Focusable, InteractiveElement, ParentElement, Render, Styled, Subscription,
@@ -23,7 +24,6 @@ use ui::{
     ButtonStyle, ContextMenu, ContextMenuEntry, DocumentationSide, IconButton, IconName, IconSize,
     PopoverMenu, PopoverMenuHandle, Tooltip, prelude::*,
 };
-use vim_mode_setting::{EditorMode, EditorModeSetting};
 use workspace::{
     ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace, item::ItemHandle,
 };

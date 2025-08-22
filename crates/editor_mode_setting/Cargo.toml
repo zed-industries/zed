@@ -1,5 +1,5 @@
 [package]
-name = "vim_mode_setting"
+name = "editor_mode_setting"
 version = "0.1.0"
 edition.workspace = true
 publish.workspace = true
@@ -9,7 +9,7 @@ license = "GPL-3.0-or-later"
 workspace = true
 
 [lib]
-path = "src/vim_mode_setting.rs"
+path = "src/editor_mode_setting.rs"
 
 [dependencies]
 anyhow.workspace = true

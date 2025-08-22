@@ -14,7 +14,7 @@ use settings::{Settings, SettingsSources};
 use std::borrow::Cow;
 use std::fmt::Display;
 
-/// Initializes the `vim_mode_setting` crate.
+/// Initializes the `editor_mode_setting` crate.
 pub fn init(cx: &mut App) {
     EditorModeSetting::register(cx);
 }

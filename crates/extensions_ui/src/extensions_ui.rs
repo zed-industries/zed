@@ -10,6 +10,7 @@ use anyhow::Context as _;
 use client::{ExtensionMetadata, ExtensionProvides};
 use collections::{BTreeMap, BTreeSet};
 use editor::{Editor, EditorElement, EditorStyle};
+use editor_mode_setting::{EditorMode, EditorModeSetting};
 use extension_host::{ExtensionManifest, ExtensionOperation, ExtensionStore};
 use fuzzy::{StringMatchCandidate, match_strings};
 use gpui::{
@@ -27,7 +28,6 @@ use ui::{
     CheckboxWithLabel, Chip, ContextMenu, PopoverMenu, ScrollableHandle, Scrollbar, ScrollbarState,
     ToggleButton, Tooltip, prelude::*,
 };
-use vim_mode_setting::{EditorMode, EditorModeSetting};
 use workspace::{
     Workspace, WorkspaceId,
     item::{Item, ItemEvent},

@@ -7,6 +7,7 @@ use anyhow::Result;
 use collections::HashMap;
 use dap::{CompletionItem, CompletionItemType, OutputEvent};
 use editor::{Bias, CompletionProvider, Editor, EditorElement, EditorStyle, ExcerptId};
+use editor_mode_setting::EditorMode;
 use fuzzy::StringMatchCandidate;
 use gpui::{
     Action as _, AppContext, Context, Corner, Entity, FocusHandle, Focusable, HighlightStyle, Hsla,
@@ -26,7 +27,6 @@ use std::{cell::RefCell, ops::Range, rc::Rc, usize};
 use theme::{Theme, ThemeSettings};
 use ui::{ContextMenu, Divider, PopoverMenu, SplitButton, Tooltip, prelude::*};
 use util::ResultExt;
-use vim_mode_setting::EditorMode;
 
 actions!(
     console,

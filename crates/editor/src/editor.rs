@@ -94,6 +94,7 @@ use convert_case::{Case, Casing};
 use dap::TelemetrySpawnLocation;
 use display_map::*;
 use edit_prediction::{EditPredictionProvider, EditPredictionProviderHandle};
+use editor_mode_setting::{EditorMode, EditorModeSetting};
 use editor_settings::{GoToDefinitionFallback, Minimap as MinimapSettings};
 use element::{AcceptEditPredictionBinding, LineWithInvisibles, PositionMap, layout_line};
 use futures::{
@@ -201,7 +202,6 @@ use ui::{
     IconSize, Indicator, Key, Tooltip, h_flex, prelude::*,
 };
 use util::{RangeExt, ResultExt, TryFutureExt, maybe, post_inc};
-use vim_mode_setting::{EditorMode, EditorModeSetting};
 use workspace::{
     CollaboratorId, Item as WorkspaceItem, ItemId, ItemNavHistory, OpenInTerminal, OpenTerminal,
     RestoreOnStartupBehavior, SERIALIZATION_THROTTLE_TIME, SplitDirection, TabBarSettings, Toast,
@@ -1180,7 +1180,7 @@ pub struct Editor {
     next_color_inlay_id: usize,
     colors: Option<LspColorData>,
     folding_newlines: Task<()>,
-    editor_mode: vim_mode_setting::EditorMode,
+    editor_mode: editor_mode_setting::EditorMode,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Default)]
@@ -2265,7 +2265,7 @@ impl Editor {
             editor_mode: if full_mode {
                 EditorModeSetting::get_global(cx).0
             } else {
-                vim_mode_setting::EditorMode::default()
+                editor_mode_setting::EditorMode::default()
             },
         };
 
@@ -3003,7 +3003,7 @@ impl Editor {
         })
     }
 
-    pub fn set_editor_mode(&mut self, to: vim_mode_setting::EditorMode, cx: &mut Context<Self>) {
+    pub fn set_editor_mode(&mut self, to: editor_mode_setting::EditorMode, cx: &mut Context<Self>) {
         let from = self.editor_mode;
         if from != to {
             self.editor_mode = to;
@@ -3014,7 +3014,7 @@ impl Editor {
         }
     }
 
-    pub fn editor_mode(&self) -> vim_mode_setting::EditorMode {
+    pub fn editor_mode(&self) -> editor_mode_setting::EditorMode {
         self.editor_mode
     }
 

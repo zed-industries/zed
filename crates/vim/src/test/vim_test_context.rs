@@ -4,7 +4,7 @@ use editor::test::editor_lsp_test_context::EditorLspTestContext;
 use gpui::{Context, Entity, SemanticVersion, UpdateGlobal};
 use search::{BufferSearchBar, project_search::ProjectSearchBar};
 
-use crate::{state::Operator, state::Mode, *};
+use crate::{state::Mode, state::Operator, *};
 
 pub struct VimTestContext {
     cx: EditorLspTestContext,
@@ -156,7 +156,7 @@ impl VimTestContext {
     pub fn enable_helix(&mut self) {
         self.cx.update(|_, cx| {
             SettingsStore::update_global(cx, |store, cx| {
-                store.update_user_settings::<vim_mode_setting::EditorModeSetting>(cx, |s| {
+                store.update_user_settings::<editor_mode_setting::EditorModeSetting>(cx, |s| {
                     *s = Some(EditorMode::Helix(ModalMode::HelixNormal))
                 });
             });

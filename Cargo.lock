@@ -313,6 +313,7 @@ dependencies = [
  "anyhow",
  "cloud_llm_client",
  "collections",
+ "editor_mode_setting",
  "fs",
  "gpui",
  "language_model",
@@ -322,7 +323,6 @@ dependencies = [
  "serde_json",
  "serde_json_lenient",
  "settings",
- "vim_mode_setting",
  "workspace-hack",
 ]
 
@@ -355,6 +355,7 @@ dependencies = [
  "context_server",
  "db",
  "editor",
+ "editor_mode_setting",
  "extension",
  "extension_host",
  "feature_flags",
@@ -416,7 +417,6 @@ dependencies = [
  "urlencoding",
  "util",
  "uuid",
- "vim_mode_setting",
  "watch",
  "workspace",
  "workspace-hack",
@@ -4549,6 +4549,7 @@ dependencies = [
  "db",
  "debugger_tools",
  "editor",
+ "editor_mode_setting",
  "file_icons",
  "futures 0.3.31",
  "fuzzy",
@@ -4586,7 +4587,6 @@ dependencies = [
  "ui",
  "unindent",
  "util",
- "vim_mode_setting",
  "workspace",
  "workspace-hack",
  "zed_actions",
@@ -5064,6 +5064,7 @@ dependencies = [
  "dap",
  "db",
  "edit_prediction",
+ "editor_mode_setting",
  "emojis",
  "file_icons",
  "fs",
@@ -5118,11 +5119,23 @@ dependencies = [
  "url",
  "util",
  "uuid",
- "vim_mode_setting",
  "workspace",
  "workspace-hack",
  "zed_actions",
  "zlog",
+]
+
+[[package]]
+name = "editor_mode_setting"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "gpui",
+ "schemars",
+ "serde",
+ "serde_json",
+ "settings",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -5616,6 +5629,7 @@ dependencies = [
  "collections",
  "db",
  "editor",
+ "editor_mode_setting",
  "extension",
  "extension_host",
  "fs",
@@ -5636,7 +5650,6 @@ dependencies = [
  "theme",
  "ui",
  "util",
- "vim_mode_setting",
  "workspace",
  "workspace-hack",
  "zed_actions",
@@ -11105,6 +11118,7 @@ dependencies = [
  "db",
  "documented",
  "editor",
+ "editor_mode_setting",
  "fs",
  "fuzzy",
  "git",
@@ -11123,7 +11137,6 @@ dependencies = [
  "theme",
  "ui",
  "util",
- "vim_mode_setting",
  "workspace",
  "workspace-hack",
  "zed_actions",
@@ -13966,6 +13979,7 @@ dependencies = [
  "anyhow",
  "collections",
  "editor",
+ "editor_mode_setting",
  "gpui",
  "language",
  "language_model",
@@ -13981,7 +13995,6 @@ dependencies = [
  "title_bar",
  "ui",
  "util",
- "vim_mode_setting",
  "workspace",
  "workspace-hack",
  "zed_actions",
@@ -17957,6 +17970,7 @@ dependencies = [
  "command_palette_hooks",
  "db",
  "editor",
+ "editor_mode_setting",
  "env_logger 0.11.8",
  "futures 0.3.31",
  "git_ui",
@@ -17986,23 +18000,9 @@ dependencies = [
  "tokio",
  "ui",
  "util",
- "vim_mode_setting",
  "workspace",
  "workspace-hack",
  "zed_actions",
-]
-
-[[package]]
-name = "vim_mode_setting"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "gpui",
- "schemars",
- "serde",
- "serde_json",
- "settings",
- "workspace-hack",
 ]
 
 [[package]]
@@ -20463,6 +20463,7 @@ dependencies = [
  "diagnostics",
  "edit_prediction_button",
  "editor",
+ "editor_mode_setting",
  "env_logger 0.11.8",
  "extension",
  "extension_host",
@@ -20562,7 +20563,6 @@ dependencies = [
  "util",
  "uuid",
  "vim",
- "vim_mode_setting",
  "watch",
  "web_search",
  "web_search_providers",

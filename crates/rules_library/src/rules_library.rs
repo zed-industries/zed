@@ -2,6 +2,7 @@ use anyhow::Result;
 use collections::{HashMap, HashSet};
 use editor::{CompletionProvider, SelectionEffects};
 use editor::{CurrentLineHighlight, Editor, EditorElement, EditorEvent, EditorStyle, actions::Tab};
+use editor_mode_setting::EditorMode;
 use gpui::{
     Action, App, Bounds, Entity, EventEmitter, Focusable, PromptLevel, Subscription, Task,
     TextStyle, TitlebarOptions, WindowBounds, WindowHandle, WindowOptions, actions, point, size,
@@ -26,7 +27,6 @@ use ui::{
     SharedString, Styled, Tooltip, Window, div, prelude::*,
 };
 use util::{ResultExt, TryFutureExt};
-use vim_mode_setting::EditorMode;
 use workspace::{Workspace, client_side_decorations};
 use zed_actions::assistant::InlineAssist;
 

@@ -4,13 +4,13 @@ use std::sync::Arc;
 
 use anyhow::{Result, bail};
 use collections::IndexMap;
+use editor_mode_setting::EditorMode;
 use gpui::{App, Pixels, SharedString};
 use language_model::LanguageModel;
 use schemars::{JsonSchema, json_schema};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use settings::{Settings, SettingsSources};
 use std::borrow::Cow;
-use vim_mode_setting::EditorMode;
 
 pub use crate::agent_profile::*;
 
@@ -62,12 +62,10 @@ impl<'de> Deserialize<'de> for AgentEditorMode {
         D: Deserializer<'de>,
     {
         let s = String::deserialize(deserializer)?;
-        dbg!(&s);
         if s == "inherit" {
             Ok(AgentEditorMode::Inherit)
         } else {
             let mode = EditorMode::deserialize(serde::de::value::StringDeserializer::new(s))?;
-            dbg!(&mode);
             Ok(AgentEditorMode::EditorModeOverride(mode))
         }
     }
@@ -91,7 +89,7 @@ impl JsonSchema for AgentEditorMode {
     }
 
     fn json_schema(_gen: &mut schemars::SchemaGenerator) -> schemars::Schema {
-        use vim_mode_setting::EditorMode;
+        use editor_mode_setting::EditorMode;
 
         let mut options = vec![serde_json::json!({
             "const": "inherit",

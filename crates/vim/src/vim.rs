@@ -26,6 +26,7 @@ use editor::{
     ToPoint,
     movement::{self, FindRange},
 };
+use editor_mode_setting::{EditorMode, EditorModeSetting, ModalMode};
 use gpui::{
     Action, App, AppContext, Axis, Context, Entity, EventEmitter, KeyContext, KeystrokeEvent,
     Render, Subscription, Task, WeakEntity, Window, actions,
@@ -45,7 +46,6 @@ use std::{mem, ops::Range, sync::Arc};
 use surrounds::SurroundsType;
 use theme::ThemeSettings;
 use ui::{IntoElement, SharedString, px};
-use vim_mode_setting::{EditorMode, EditorModeSetting, ModalMode};
 use workspace::{self, Pane, Workspace};
 
 use crate::state::ReplayableAction;
@@ -235,7 +235,7 @@ actions!(
 
 /// Initializes the `vim` crate.
 pub fn init(cx: &mut App) {
-    vim_mode_setting::init(cx);
+    editor_mode_setting::init(cx);
     VimSettings::register(cx);
     VimGlobals::register(cx);
 
@@ -813,7 +813,6 @@ impl Vim {
     }
 
     pub fn global_enabled(cx: &mut App) -> bool {
-        dbg!(&EditorModeSetting::get_global(cx).0);
         if EditorModeSetting::get_global(cx).0 == EditorMode::Default {
             return false;
         }
