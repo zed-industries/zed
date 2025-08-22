@@ -11,7 +11,7 @@ use assistant_tool::{
     AnyToolCard, Tool, ToolCard, ToolResult, ToolResultContent, ToolResultOutput, ToolUseStatus,
 };
 use buffer_diff::{BufferDiff, BufferDiffSnapshot};
-use editor::{Editor, EditorMode, MinimapVisibility, MultiBuffer, PathKey};
+use editor::{Editor, EditorDisplayMode, MinimapVisibility, MultiBuffer, PathKey};
 use futures::StreamExt;
 use gpui::{
     Animation, AnimationExt, AnyWindowHandle, App, AppContext, AsyncApp, Entity, Task,
@@ -582,7 +582,7 @@ impl EditFileToolCard {
 
         let editor = cx.new(|cx| {
             let mut editor = Editor::new(
-                EditorMode::Full {
+                EditorDisplayMode::Full {
                     scale_ui_elements_with_buffer_font_size: false,
                     show_active_line_background: false,
                     sized_by_content: true,

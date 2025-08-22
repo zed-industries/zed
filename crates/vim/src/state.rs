@@ -11,6 +11,7 @@ use db::define_connection;
 use db::sqlez_macros::sql;
 use editor::display_map::{is_invisible, replacement};
 use editor::{Anchor, ClipboardSelection, Editor, MultiBuffer, ToPoint as EditorToPoint};
+pub use editor_mode_setting::ModalMode as Mode;
 use gpui::{
     Action, App, AppContext, BorrowAppContext, ClipboardEntry, ClipboardItem, DismissEvent, Entity,
     EntityId, Global, HighlightStyle, StyledText, Subscription, Task, TextStyle, WeakEntity,
@@ -19,12 +20,11 @@ use language::{Buffer, BufferEvent, BufferId, Chunk, Point};
 use multi_buffer::MultiBufferRow;
 use picker::{Picker, PickerDelegate};
 use project::{Project, ProjectItem, ProjectPath};
-use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
 use std::borrow::BorrowMut;
 use std::collections::HashSet;
 use std::path::Path;
-use std::{fmt::Display, ops::Range, sync::Arc};
+use std::{ops::Range, sync::Arc};
 use text::{Bias, ToPoint};
 use theme::ThemeSettings;
 use ui::{
@@ -34,46 +34,6 @@ use ui::{
 use util::ResultExt;
 use workspace::searchable::Direction;
 use workspace::{Workspace, WorkspaceDb, WorkspaceId};
-
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-pub enum Mode {
-    Normal,
-    Insert,
-    Replace,
-    Visual,
-    VisualLine,
-    VisualBlock,
-    HelixNormal,
-}
-
-impl Display for Mode {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Mode::Normal => write!(f, "NORMAL"),
-            Mode::Insert => write!(f, "INSERT"),
-            Mode::Replace => write!(f, "REPLACE"),
-            Mode::Visual => write!(f, "VISUAL"),
-            Mode::VisualLine => write!(f, "VISUAL LINE"),
-            Mode::VisualBlock => write!(f, "VISUAL BLOCK"),
-            Mode::HelixNormal => write!(f, "HELIX NORMAL"),
-        }
-    }
-}
-
-impl Mode {
-    pub fn is_visual(&self) -> bool {
-        match self {
-            Self::Visual | Self::VisualLine | Self::VisualBlock => true,
-            Self::Normal | Self::Insert | Self::Replace | Self::HelixNormal => false,
-        }
-    }
-}
-
-impl Default for Mode {
-    fn default() -> Self {
-        Self::Normal
-    }
-}
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Operator {
@@ -692,7 +652,7 @@ impl VimGlobals {
         let mut was_enabled = None;
 
         cx.observe_global::<SettingsStore>(move |cx| {
-            let is_enabled = Vim::enabled(cx);
+            let is_enabled = Vim::global_enabled(cx);
             if was_enabled == Some(is_enabled) {
                 return;
             }

@@ -7,7 +7,7 @@ use std::time::Duration;
 use collections::HashMap;
 use command_palette::CommandPalette;
 use editor::{
-    AnchorRangeExt, DisplayPoint, Editor, EditorMode, MultiBuffer, actions::DeleteLine,
+    AnchorRangeExt, DisplayPoint, Editor, EditorDisplayMode, MultiBuffer, actions::DeleteLine,
     display_map::DisplayRow, test::editor_test_context::EditorTestContext,
 };
 use futures::StreamExt;
@@ -1784,7 +1784,13 @@ async fn test_folded_multibuffer_excerpts(cx: &mut gpui::TestAppContext) {
             ],
             cx,
         );
-        let mut editor = Editor::new(EditorMode::full(), multi_buffer.clone(), None, window, cx);
+        let mut editor = Editor::new(
+            EditorDisplayMode::full(),
+            multi_buffer.clone(),
+            None,
+            window,
+            cx,
+        );
 
         let buffer_ids = multi_buffer.read(cx).excerpt_buffer_ids();
         // fold all but the second buffer, so that we test navigating between two

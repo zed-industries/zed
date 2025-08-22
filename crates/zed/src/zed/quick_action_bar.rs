@@ -10,6 +10,7 @@ use editor::actions::{
 };
 use editor::code_context_menus::{CodeContextMenu, ContextMenuOrigin};
 use editor::{Editor, EditorSettings};
+use editor_mode_setting::{EditorMode, EditorModeSetting};
 use gpui::{
     Action, AnchoredPositionMode, ClickEvent, Context, Corner, ElementId, Entity, EventEmitter,
     FocusHandle, Focusable, InteractiveElement, ParentElement, Render, Styled, Subscription,
@@ -23,7 +24,6 @@ use ui::{
     ButtonStyle, ContextMenu, ContextMenuEntry, DocumentationSide, IconButton, IconName, IconSize,
     PopoverMenu, PopoverMenuHandle, Tooltip, prelude::*,
 };
-use vim_mode_setting::VimModeSetting;
 use workspace::{
     ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace, item::ItemHandle,
 };
@@ -119,7 +119,7 @@ impl Render for QuickActionBar {
         let selection_menu_enabled = editor_value.selection_menu_enabled(cx);
         let inlay_hints_enabled = editor_value.inlay_hints_enabled();
         let inline_values_enabled = editor_value.inline_values_enabled();
-        let supports_diagnostics = editor_value.mode().is_full();
+        let supports_diagnostics = editor_value.display_mode().is_full();
         let diagnostics_enabled = editor_value.diagnostics_max_severity != DiagnosticSeverity::Off;
         let supports_inline_diagnostics = editor_value.inline_diagnostics_enabled();
         let inline_diagnostics_enabled = editor_value.show_inline_diagnostics();
@@ -301,7 +301,8 @@ impl Render for QuickActionBar {
         let editor_focus_handle = editor.focus_handle(cx);
         let editor = editor.downgrade();
         let editor_settings_dropdown = {
-            let vim_mode_enabled = VimModeSetting::get_global(cx).0;
+            let editor_mode = EditorModeSetting::get_global(cx).0;
+            let vim_mode_enabled = editor_mode.is_modal();
 
             PopoverMenu::new("editor-settings")
                 .trigger_with_tooltip(
@@ -576,8 +577,12 @@ impl Render for QuickActionBar {
                                 None,
                                 {
                                     move |window, cx| {
-                                        let new_value = !vim_mode_enabled;
-                                        VimModeSetting::override_global(VimModeSetting(new_value), cx);
+                                        let new_value = if vim_mode_enabled {
+                                            EditorMode::default()
+                                        } else {
+                                            EditorMode::vim()
+                                        };
+                                        EditorModeSetting::override_global(EditorModeSetting(new_value), cx);
                                         window.refresh();
                                     }
                                 },

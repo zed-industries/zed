@@ -14,7 +14,7 @@ use anyhow::Context as _;
 use askpass::AskPassDelegate;
 use db::kvp::KEY_VALUE_STORE;
 use editor::{
-    Editor, EditorElement, EditorMode, EditorSettings, MultiBuffer, ShowScrollbar,
+    Editor, EditorDisplayMode, EditorElement, EditorSettings, MultiBuffer, ShowScrollbar,
     scroll::ScrollbarAutoHide,
 };
 use futures::StreamExt as _;
@@ -394,7 +394,7 @@ pub(crate) fn commit_message_editor(
     let buffer = cx.new(|cx| MultiBuffer::singleton(commit_message_buffer, cx));
     let max_lines = if in_panel { MAX_PANEL_EDITOR_LINES } else { 18 };
     let mut commit_editor = Editor::new(
-        EditorMode::AutoHeight {
+        EditorDisplayMode::AutoHeight {
             min_lines: 1,
             max_lines: Some(max_lines),
         },
@@ -406,7 +406,7 @@ pub(crate) fn commit_message_editor(
     commit_editor.set_collaboration_hub(Box::new(project));
     commit_editor.set_use_autoclose(false);
     commit_editor.set_show_gutter(false, cx);
-    commit_editor.set_use_modal_editing(true);
+    // commit_editor.set_use_modal_editing(true); TODO
     commit_editor.set_show_wrap_guides(false, cx);
     commit_editor.set_show_indent_guides(false, cx);
     let placeholder = placeholder.unwrap_or("Enter commit message".into());

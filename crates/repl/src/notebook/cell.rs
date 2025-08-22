@@ -1,7 +1,7 @@
 #![allow(unused, dead_code)]
 use std::sync::Arc;
 
-use editor::{Editor, EditorMode, MultiBuffer};
+use editor::{Editor, EditorDisplayMode, MultiBuffer};
 use futures::future::Shared;
 use gpui::{
     App, Entity, Hsla, RetainAllImageCache, Task, TextStyleRefinement, image_cache, prelude::*,
@@ -177,7 +177,7 @@ impl Cell {
 
                 let editor_view = cx.new(|cx| {
                     let mut editor = Editor::new(
-                        EditorMode::AutoHeight {
+                        EditorDisplayMode::AutoHeight {
                             min_lines: 1,
                             max_lines: Some(1024),
                         },

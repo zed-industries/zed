@@ -1,6 +1,6 @@
 use anyhow::{Result, anyhow};
 use editor::{
-    Bias, CompletionProvider, Editor, EditorEvent, EditorMode, ExcerptId, MinimapVisibility,
+    Bias, CompletionProvider, Editor, EditorDisplayMode, EditorEvent, ExcerptId, MinimapVisibility,
     MultiBuffer,
 };
 use fuzzy::StringMatch;
@@ -483,7 +483,7 @@ impl DivInspector {
         cx.new(|cx| {
             let multi_buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
             let mut editor = Editor::new(
-                EditorMode::full(),
+                EditorDisplayMode::full(),
                 multi_buffer,
                 Some(self.project.clone()),
                 window,

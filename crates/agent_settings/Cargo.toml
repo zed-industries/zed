@@ -19,8 +19,10 @@ gpui.workspace = true
 language_model.workspace = true
 schemars.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 settings.workspace = true
 workspace-hack.workspace = true
+editor_mode_setting.workspace = true
 
 [dev-dependencies]
 fs.workspace = true

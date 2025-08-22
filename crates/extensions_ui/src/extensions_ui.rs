@@ -10,6 +10,7 @@ use anyhow::Context as _;
 use client::{ExtensionMetadata, ExtensionProvides};
 use collections::{BTreeMap, BTreeSet};
 use editor::{Editor, EditorElement, EditorStyle};
+use editor_mode_setting::{EditorMode, EditorModeSetting};
 use extension_host::{ExtensionManifest, ExtensionOperation, ExtensionStore};
 use fuzzy::{StringMatchCandidate, match_strings};
 use gpui::{
@@ -27,7 +28,6 @@ use ui::{
     CheckboxWithLabel, Chip, ContextMenu, PopoverMenu, ScrollableHandle, Scrollbar, ScrollbarState,
     ToggleButton, Tooltip, prelude::*,
 };
-use vim_mode_setting::VimModeSetting;
 use workspace::{
     Workspace, WorkspaceId,
     item::{Item, ItemEvent},
@@ -1335,17 +1335,26 @@ impl ExtensionsPage {
                     .child(CheckboxWithLabel::new(
                         "enable-vim",
                         Label::new("Enable vim mode"),
-                        if VimModeSetting::get_global(cx).0 {
-                            ui::ToggleState::Selected
-                        } else {
-                            ui::ToggleState::Unselected
+                        {
+                            let editor_mode = EditorModeSetting::get_global(cx).0;
+                            if editor_mode.is_modal() {
+                                ui::ToggleState::Selected
+                            } else {
+                                ui::ToggleState::Unselected
+                            }
                         },
                         cx.listener(move |this, selection, _, cx| {
                             telemetry::event!("Vim Mode Toggled", source = "Feature Upsell");
-                            this.update_settings::<VimModeSetting>(
+                            this.update_settings::<EditorModeSetting>(
                                 selection,
                                 cx,
-                                |setting, value| *setting = Some(value),
+                                |setting, value| {
+                                    *setting = Some(if value {
+                                        EditorMode::vim()
+                                    } else {
+                                        EditorMode::default()
+                                    });
+                                },
                             );
                         }),
                     )),

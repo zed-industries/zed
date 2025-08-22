@@ -22,8 +22,8 @@ use collections::{HashMap, HashSet};
 use editor::actions::{MoveUp, Paste};
 use editor::display_map::CreaseId;
 use editor::{
-    Addon, AnchorRangeExt, ContextMenuOptions, ContextMenuPlacement, Editor, EditorElement,
-    EditorEvent, EditorMode, EditorStyle, MultiBuffer,
+    Addon, AnchorRangeExt, ContextMenuOptions, ContextMenuPlacement, Editor, EditorDisplayMode,
+    EditorElement, EditorEvent, EditorStyle, MultiBuffer,
 };
 use file_icons::FileIcons;
 use fs::Fs;
@@ -114,8 +114,17 @@ pub(crate) fn create_editor(
     let editor = cx.new(|cx| {
         let buffer = cx.new(|cx| Buffer::local("", cx).with_language(Arc::new(language), cx));
         let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+        let settings = agent_settings::AgentSettings::get_global(cx);
+
+        let editor_mode = match settings.editor_mode {
+            agent_settings::AgentEditorMode::EditorModeOverride(mode) => mode,
+            agent_settings::AgentEditorMode::Inherit => {
+                editor_mode_setting::EditorModeSetting::get_global(cx).0
+            }
+        };
+
         let mut editor = Editor::new(
-            editor::EditorMode::AutoHeight {
+            editor::EditorDisplayMode::AutoHeight {
                 min_lines,
                 max_lines,
             },
@@ -127,7 +136,7 @@ pub(crate) fn create_editor(
         editor.set_placeholder_text("Message the agent – @ to include context", cx);
         editor.set_show_indent_guides(false, cx);
         editor.set_soft_wrap();
-        editor.set_use_modal_editing(true);
+        editor.set_editor_mode(editor_mode, cx);
         editor.set_context_menu_options(ContextMenuOptions {
             min_entries_visible: 12,
             max_entries_visible: 12,
@@ -227,6 +236,18 @@ impl MessageEditor {
             cx.observe(&thread.read(cx).action_log().clone(), |_, _, cx| {
                 cx.notify()
             }),
+            cx.observe_global::<AgentSettings>(move |this, cx| {
+                let settings = agent_settings::AgentSettings::get_global(cx);
+                let editor_mode = match settings.editor_mode {
+                    agent_settings::AgentEditorMode::EditorModeOverride(mode) => mode,
+                    agent_settings::AgentEditorMode::Inherit => {
+                        editor_mode_setting::EditorModeSetting::get_global(cx).0
+                    }
+                };
+                this.editor.update(cx, |editor, cx| {
+                    editor.set_editor_mode(editor_mode, cx);
+                });
+            }),
         ];
 
         let model_selector = cx.new(|cx| {
@@ -299,13 +320,13 @@ impl MessageEditor {
         self.editor_is_expanded = is_expanded;
         self.editor.update(cx, |editor, _| {
             if self.editor_is_expanded {
-                editor.set_mode(EditorMode::Full {
+                editor.set_display_mode(EditorDisplayMode::Full {
                     scale_ui_elements_with_buffer_font_size: false,
                     show_active_line_background: false,
                     sized_by_content: false,
                 })
             } else {
-                editor.set_mode(EditorMode::AutoHeight {
+                editor.set_display_mode(EditorDisplayMode::AutoHeight {
                     min_lines: MIN_EDITOR_LINES,
                     max_lines: Some(MAX_EDITOR_LINES),
                 })

@@ -19,6 +19,7 @@ use collections::VecDeque;
 use debugger_ui::debugger_panel::DebugPanel;
 use editor::ProposedChangesEditorToolbar;
 use editor::{Editor, MultiBuffer};
+use editor_mode_setting::EditorModeSetting;
 use feature_flags::{FeatureFlagAppExt, PanicFeatureFlag};
 use futures::future::Either;
 use futures::{StreamExt, channel::mpsc, select_biased};
@@ -70,7 +71,6 @@ use ui::{PopoverMenuHandle, prelude::*};
 use util::markdown::MarkdownString;
 use util::{ResultExt, asset_str};
 use uuid::Uuid;
-use vim_mode_setting::VimModeSetting;
 use workspace::notifications::{
     NotificationId, SuppressEvent, dismiss_app_notification, show_app_notification,
 };
@@ -1282,26 +1282,20 @@ pub fn handle_keymap_file_changes(
     cx: &mut App,
 ) {
     BaseKeymap::register(cx);
-    vim_mode_setting::init(cx);
+    editor_mode_setting::init(cx);
 
     let (base_keymap_tx, mut base_keymap_rx) = mpsc::unbounded();
     let (keyboard_layout_tx, mut keyboard_layout_rx) = mpsc::unbounded();
     let mut old_base_keymap = *BaseKeymap::get_global(cx);
-    let mut old_vim_enabled = VimModeSetting::get_global(cx).0;
-    let mut old_helix_enabled = vim_mode_setting::HelixModeSetting::get_global(cx).0;
+    let mut old_editor_mode = EditorModeSetting::get_global(cx).0;
 
     cx.observe_global::<SettingsStore>(move |cx| {
         let new_base_keymap = *BaseKeymap::get_global(cx);
-        let new_vim_enabled = VimModeSetting::get_global(cx).0;
-        let new_helix_enabled = vim_mode_setting::HelixModeSetting::get_global(cx).0;
+        let new_editor_mode = EditorModeSetting::get_global(cx).0;
 
-        if new_base_keymap != old_base_keymap
-            || new_vim_enabled != old_vim_enabled
-            || new_helix_enabled != old_helix_enabled
-        {
+        if new_base_keymap != old_base_keymap || new_editor_mode != old_editor_mode {
             old_base_keymap = new_base_keymap;
-            old_vim_enabled = new_vim_enabled;
-            old_helix_enabled = new_helix_enabled;
+            old_editor_mode = new_editor_mode;
 
             base_keymap_tx.unbounded_send(()).unwrap();
         }
@@ -1498,8 +1492,8 @@ pub fn load_default_keymap(cx: &mut App) {
     if let Some(asset_path) = base_keymap.asset_path() {
         cx.bind_keys(KeymapFile::load_asset(asset_path, Some(KeybindSource::Base), cx).unwrap());
     }
-
-    if VimModeSetting::get_global(cx).0 || vim_mode_setting::HelixModeSetting::get_global(cx).0 {
+    let editor_mode = EditorModeSetting::get_global(cx).0;
+    if editor_mode.is_modal() {
         cx.bind_keys(
             KeymapFile::load_asset(VIM_KEYMAP_PATH, Some(KeybindSource::Vim), cx).unwrap(),
         );
@@ -4623,7 +4617,7 @@ mod tests {
             app_state.languages.add(markdown_language());
 
             gpui_tokio::init(cx);
-            vim_mode_setting::init(cx);
+            editor_mode_setting::init(cx);
             theme::init(theme::LoadThemes::JustBase, cx);
             audio::init(cx);
             channel::init(&app_state.client, app_state.user_store.clone(), cx);

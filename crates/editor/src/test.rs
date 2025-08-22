@@ -5,7 +5,7 @@ use std::{rc::Rc, sync::LazyLock};
 
 pub use crate::rust_analyzer_ext::expand_macro_recursively;
 use crate::{
-    DisplayPoint, Editor, EditorMode, FoldPlaceholder, MultiBuffer, SelectionEffects,
+    DisplayPoint, Editor, EditorDisplayMode, FoldPlaceholder, MultiBuffer, SelectionEffects,
     display_map::{
         Block, BlockPlacement, CustomBlockId, DisplayMap, DisplayRow, DisplaySnapshot,
         ToDisplayPoint,
@@ -121,7 +121,7 @@ pub(crate) fn build_editor(
     window: &mut Window,
     cx: &mut Context<Editor>,
 ) -> Editor {
-    Editor::new(EditorMode::full(), buffer, None, window, cx)
+    Editor::new(EditorDisplayMode::full(), buffer, None, window, cx)
 }
 
 pub(crate) fn build_editor_with_project(
@@ -130,7 +130,7 @@ pub(crate) fn build_editor_with_project(
     window: &mut Window,
     cx: &mut Context<Editor>,
 ) -> Editor {
-    Editor::new(EditorMode::full(), buffer, Some(project), window, cx)
+    Editor::new(EditorDisplayMode::full(), buffer, Some(project), window, cx)
 }
 
 #[derive(Default)]

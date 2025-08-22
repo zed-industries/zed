@@ -4,7 +4,7 @@ use editor::test::editor_lsp_test_context::EditorLspTestContext;
 use gpui::{Context, Entity, SemanticVersion, UpdateGlobal};
 use search::{BufferSearchBar, project_search::ProjectSearchBar};
 
-use crate::{state::Operator, *};
+use crate::{state::Mode, state::Operator, *};
 
 pub struct VimTestContext {
     cx: EditorLspTestContext,
@@ -64,7 +64,13 @@ impl VimTestContext {
 
     pub fn init_keybindings(enabled: bool, cx: &mut App) {
         SettingsStore::update_global(cx, |store, cx| {
-            store.update_user_settings::<VimModeSetting>(cx, |s| *s = Some(enabled));
+            store.update_user_settings::<EditorModeSetting>(cx, |s| {
+                *s = Some(if enabled {
+                    EditorMode::vim()
+                } else {
+                    EditorMode::Default
+                })
+            });
         });
         let default_key_bindings = settings::KeymapFile::load_asset_allow_partial_failure(
             "keymaps/default-macos.json",
@@ -130,7 +136,9 @@ impl VimTestContext {
     pub fn enable_vim(&mut self) {
         self.cx.update(|_, cx| {
             SettingsStore::update_global(cx, |store, cx| {
-                store.update_user_settings::<VimModeSetting>(cx, |s| *s = Some(true));
+                store.update_user_settings::<EditorModeSetting>(cx, |s| {
+                    *s = Some(EditorMode::vim())
+                });
             });
         })
     }
@@ -138,7 +146,9 @@ impl VimTestContext {
     pub fn disable_vim(&mut self) {
         self.cx.update(|_, cx| {
             SettingsStore::update_global(cx, |store, cx| {
-                store.update_user_settings::<VimModeSetting>(cx, |s| *s = Some(false));
+                store.update_user_settings::<EditorModeSetting>(cx, |s| {
+                    *s = Some(EditorMode::vim())
+                });
             });
         })
     }
@@ -146,8 +156,8 @@ impl VimTestContext {
     pub fn enable_helix(&mut self) {
         self.cx.update(|_, cx| {
             SettingsStore::update_global(cx, |store, cx| {
-                store.update_user_settings::<vim_mode_setting::HelixModeSetting>(cx, |s| {
-                    *s = Some(true)
+                store.update_user_settings::<editor_mode_setting::EditorModeSetting>(cx, |s| {
+                    *s = Some(EditorMode::Helix(ModalMode::HelixNormal))
                 });
             });
         })

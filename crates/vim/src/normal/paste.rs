@@ -1,11 +1,11 @@
 use editor::{DisplayPoint, RowExt, SelectionEffects, display_map::ToDisplayPoint, movement};
+use editor_mode_setting::{EditorMode, EditorModeSetting};
 use gpui::{Action, Context, Window};
 use language::{Bias, SelectionGoal};
 use schemars::JsonSchema;
 use serde::Deserialize;
 use settings::Settings;
 use std::cmp;
-use vim_mode_setting::HelixModeSetting;
 
 use crate::{
     Vim,
@@ -220,7 +220,7 @@ impl Vim {
             });
         });
 
-        if HelixModeSetting::get_global(cx).0 {
+        if matches!(EditorModeSetting::get_global(cx).0, EditorMode::Helix(_)) {
             self.switch_mode(Mode::HelixNormal, true, window, cx);
         } else {
             self.switch_mode(Mode::Normal, true, window, cx);

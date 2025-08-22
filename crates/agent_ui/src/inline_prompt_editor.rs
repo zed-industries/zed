@@ -16,7 +16,8 @@ use db::kvp::Dismissable;
 use editor::actions::Paste;
 use editor::display_map::EditorMargins;
 use editor::{
-    ContextMenuOptions, Editor, EditorElement, EditorEvent, EditorMode, EditorStyle, MultiBuffer,
+    ContextMenuOptions, Editor, EditorDisplayMode, EditorElement, EditorEvent, EditorStyle,
+    MultiBuffer,
     actions::{MoveDown, MoveUp},
 };
 use feature_flags::{FeatureFlagAppExt as _, ZedProFeatureFlag};
@@ -869,7 +870,7 @@ impl PromptEditor<BufferCodegen> {
 
         let prompt_editor = cx.new(|cx| {
             let mut editor = Editor::new(
-                EditorMode::AutoHeight {
+                EditorDisplayMode::AutoHeight {
                     min_lines: 1,
                     max_lines: Some(Self::MAX_LINES as usize),
                 },
@@ -1048,7 +1049,7 @@ impl PromptEditor<TerminalCodegen> {
 
         let prompt_editor = cx.new(|cx| {
             let mut editor = Editor::new(
-                EditorMode::AutoHeight {
+                EditorDisplayMode::AutoHeight {
                     min_lines: 1,
                     max_lines: Some(Self::MAX_LINES as usize),
                 },

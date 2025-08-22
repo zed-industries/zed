@@ -18,7 +18,7 @@ pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
         let client = client.clone();
         let user_store = user_store.clone();
         move |editor: &mut Editor, window, cx: &mut Context<Editor>| {
-            if !editor.mode().is_full() {
+            if !editor.display_mode().is_full() {
                 return;
             }
 

@@ -4,10 +4,11 @@ use std::sync::Arc;
 
 use anyhow::{Result, bail};
 use collections::IndexMap;
+use editor_mode_setting::EditorMode;
 use gpui::{App, Pixels, SharedString};
 use language_model::LanguageModel;
 use schemars::{JsonSchema, json_schema};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use settings::{Settings, SettingsSources};
 use std::borrow::Cow;
 
@@ -48,6 +49,67 @@ pub enum NotifyWhenAgentWaiting {
     Never,
 }
 
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Default)]
+pub enum AgentEditorMode {
+    EditorModeOverride(EditorMode),
+    #[default]
+    Inherit,
+}
+
+impl<'de> Deserialize<'de> for AgentEditorMode {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        if s == "inherit" {
+            Ok(AgentEditorMode::Inherit)
+        } else {
+            let mode = EditorMode::deserialize(serde::de::value::StringDeserializer::new(s))?;
+            Ok(AgentEditorMode::EditorModeOverride(mode))
+        }
+    }
+}
+
+impl Serialize for AgentEditorMode {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match self {
+            AgentEditorMode::EditorModeOverride(mode) => mode.serialize(serializer),
+            AgentEditorMode::Inherit => serializer.serialize_str("inherit"),
+        }
+    }
+}
+
+impl JsonSchema for AgentEditorMode {
+    fn schema_name() -> Cow<'static, str> {
+        "AgentEditorMode".into()
+    }
+
+    fn json_schema(_gen: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        use editor_mode_setting::EditorMode;
+
+        let mut options = vec![serde_json::json!({
+            "const": "inherit",
+            "description": "Inherit editor mode from global settings"
+        })];
+        options.extend(EditorMode::get_schema_options());
+
+        json_schema!({
+            "oneOf": options,
+            "description": "Agent editor mode - either inherit from global settings or override with a specific mode"
+        })
+    }
+}
+
+impl From<EditorMode> for AgentEditorMode {
+    fn from(b: EditorMode) -> Self {
+        AgentEditorMode::EditorModeOverride(b)
+    }
+}
+
 #[derive(Default, Clone, Debug)]
 pub struct AgentSettings {
     pub enabled: bool,
@@ -75,6 +137,7 @@ pub struct AgentSettings {
     pub expand_edit_card: bool,
     pub expand_terminal_card: bool,
     pub use_modifier_to_send: bool,
+    pub editor_mode: AgentEditorMode,
 }
 
 impl AgentSettings {
@@ -315,6 +378,10 @@ pub struct AgentSettingsContent {
     ///
     /// Default: false
     use_modifier_to_send: Option<bool>,
+    /// Weather to inherit or override the editor mode for the agent panel.
+    ///
+    /// Default: inherit
+    editor_mode: Option<AgentEditorMode>,
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Default)]
@@ -470,6 +537,7 @@ impl Settings for AgentSettings {
                 &mut settings.use_modifier_to_send,
                 value.use_modifier_to_send,
             );
+            merge(&mut settings.editor_mode, value.editor_mode);
 
             settings
                 .model_parameters

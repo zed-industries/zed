@@ -150,7 +150,7 @@ impl Editor {
         _: &Window,
         cx: &mut Context<Self>,
     ) {
-        if !self.mode().is_full() {
+        if !self.display_mode().is_full() {
             return;
         }
         let Some(project) = self.project.clone() else {
