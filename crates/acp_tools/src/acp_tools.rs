@@ -189,7 +189,7 @@ impl AcpTools {
                 } else {
                     (
                         Some(id),
-                        "[unrecgonized response]".into(),
+                        "[unrecognized response]".into(),
                         MessageType::Response,
                         result,
                     )
