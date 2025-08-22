@@ -57,7 +57,9 @@ use crate::agent_diff::AgentDiff;
 use crate::profile_selector::{ProfileProvider, ProfileSelector};
 
 use crate::ui::preview::UsageCallout;
-use crate::ui::{AgentNotification, AgentNotificationEvent, BurnModeTooltip};
+use crate::ui::{
+    AgentNotification, AgentNotificationEvent, BurnModeTooltip, UnavailableEditingTooltip,
+};
 use crate::{
     AgentDiffPane, AgentPanel, ContinueThread, ContinueWithBurnMode, ExpandMessageEditor, Follow,
     KeepAll, OpenAgentDiff, OpenHistory, RejectAll, ToggleBurnMode, ToggleProfileSelector,
@@ -1325,6 +1327,31 @@ impl AcpThreadView {
                                                         );
                                                     }
                                                 })),
+                                        )
+                                )
+                            )
+                            .when(!editing && editor_focus, |this|
+                                this.child(
+                                    h_flex()
+                                        .absolute()
+                                        .top_neg_3p5()
+                                        .right_3()
+                                        .gap_1()
+                                        .rounded_sm()
+                                        .border_1()
+                                        .border_dashed()
+                                        .border_color(cx.theme().colors().border)
+                                        .bg(cx.theme().colors().editor_background)
+                                        .overflow_hidden()
+                                        .child(
+                                            IconButton::new("editing_unavailable", IconName::PencilUnavailable)
+                                                .icon_size(IconSize::Small)
+                                                .icon_color(Color::Muted)
+                                                .style(ButtonStyle::Transparent)
+                                                .tooltip(move |_window, cx| {
+                                                    cx.new(|_| UnavailableEditingTooltip::new())
+                                                        .into()
+                                                })
                                         )
                                 )
                             ),
