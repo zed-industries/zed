@@ -636,16 +636,21 @@ impl ProjectItemRegistry {
                         ) as Box<_>;
                         Ok((project_entry_id, build_workspace_item))
                     }
-                    Err(err) => {
-                        let broken_project_item_view = cx.update(|window, cx| {
-                            T::for_broken_project_item(project_path, err, window, cx)
-                        })??;
-                        let build_workspace_item = Box::new(
-                            |pane: &mut Pane, window: &mut Window, cx: &mut Context<Pane>| {
-                                broken_project_item_view
-                            },
-                        ) as Box<_>;
-                        Ok((None, build_workspace_item))
+                    Err(e) => {
+                        match cx.update(|window, cx| {
+                            T::for_broken_project_item(project_path, &e, window, cx)
+                        })? {
+                            Some(broken_project_item_view) => {
+                                let build_workspace_item = Box::new(
+                                    |_: &mut Pane, _: &mut Window, _: &mut Context<Pane>| {
+                                        broken_project_item_view
+                                    },
+                                )
+                                    as Box<_>;
+                                Ok((None, build_workspace_item))
+                            }
+                            None => Err(e)?,
+                        }
                     }
                 }))
             });

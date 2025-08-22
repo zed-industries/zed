@@ -1,10 +1,10 @@
 use gpui::{EventEmitter, FocusHandle, Focusable};
 use project::ProjectPath;
-use ui::{Context, InteractiveElement, ParentElement, Render, SharedString, Window, div};
+use ui::{App, Context, InteractiveElement, ParentElement, Render, SharedString, Window, div};
 use workspace::Item;
 
 pub struct InvalidBufferView {
-    project_path: ProjectPath,
+    pub project_path: ProjectPath,
     error: SharedString,
     focus_handle: FocusHandle,
 }
@@ -12,8 +12,8 @@ pub struct InvalidBufferView {
 impl InvalidBufferView {
     pub fn new(
         project_path: ProjectPath,
-        e: anyhow::Error,
-        window: &mut Window,
+        e: &anyhow::Error,
+        _: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
         Self {
@@ -27,7 +27,7 @@ impl InvalidBufferView {
 impl Item for InvalidBufferView {
     type Event = ();
 
-    fn tab_content_text(&self, _detail: usize, _cx: &ui::App) -> SharedString {
+    fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
         "TODO kb".into()
     }
 }
@@ -35,16 +35,16 @@ impl Item for InvalidBufferView {
 impl EventEmitter<()> for InvalidBufferView {}
 
 impl Focusable for InvalidBufferView {
-    fn focus_handle(&self, cx: &ui::App) -> FocusHandle {
+    fn focus_handle(&self, _: &App) -> FocusHandle {
         self.focus_handle.clone()
     }
 }
 
 impl Render for InvalidBufferView {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl gpui::IntoElement {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl gpui::IntoElement {
         div()
             .track_focus(&self.focus_handle)
             .key_context("InvalidBuffer")
-            .child("so bad")
+            .child("so bad, TODO kb")
     }
 }

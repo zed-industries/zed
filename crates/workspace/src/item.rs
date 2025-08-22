@@ -1162,17 +1162,19 @@ pub trait ProjectItem: Item {
     where
         Self: Sized;
 
-    /// TODO kb comment
+    /// A fallback handler, which will be called after [`project::ProjectItem::try_open`] fails,
+    /// with the error from that failure as an argument.
+    /// Allows to open an item that can gracefully display and handle errors.
     fn for_broken_project_item(
         _project_path: ProjectPath,
-        err: anyhow::Error,
+        _e: &anyhow::Error,
         _window: &mut Window,
         _cx: &mut App,
-    ) -> Result<Box<dyn ItemHandle>>
+    ) -> Option<Box<dyn ItemHandle>>
     where
         Self: Sized,
     {
-        anyhow::bail!(err)
+        None
     }
 }
 

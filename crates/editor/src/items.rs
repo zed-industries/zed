@@ -1406,13 +1406,15 @@ impl ProjectItem for Editor {
 
     fn for_broken_project_item(
         project_path: ProjectPath,
-        err: anyhow::Error,
+        e: &anyhow::Error,
         window: &mut Window,
         cx: &mut App,
-    ) -> Result<Box<dyn ItemHandle>> {
-        Ok(cx
-            .new(|cx| InvalidBufferView::new(project_path, err, window, cx))
-            .boxed_clone())
+    ) -> Option<Box<dyn ItemHandle>> {
+        // TODO kb this will always open another item on the pane, instead of deduplicating
+        Some(
+            cx.new(|cx| InvalidBufferView::new(project_path, e, window, cx))
+                .boxed_clone(),
+        )
     }
 }
 
