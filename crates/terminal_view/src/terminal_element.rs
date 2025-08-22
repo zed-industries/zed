@@ -26,7 +26,7 @@ use terminal::{
     terminal_settings::TerminalSettings,
 };
 use theme::{ActiveTheme, Theme, ThemeSettings};
-use ui::utils::{apca_contrast, ensure_minimum_contrast};
+use ui::utils::ensure_minimum_contrast;
 use ui::{ParentElement, Tooltip};
 use util::ResultExt;
 use workspace::Workspace;
@@ -1598,6 +1598,7 @@ pub fn convert_color(fg: &terminal::alacritty_terminal::vte::ansi::Color, theme:
 mod tests {
     use super::*;
     use gpui::{AbsoluteLength, Hsla, font};
+    use ui::utils::apca_contrast;
 
     #[test]
     fn test_is_decorative_character() {
