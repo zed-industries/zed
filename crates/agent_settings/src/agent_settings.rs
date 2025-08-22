@@ -7,7 +7,7 @@ use collections::IndexMap;
 use gpui::{App, Pixels, SharedString};
 use language_model::LanguageModel;
 use schemars::{JsonSchema, json_schema};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use settings::{Settings, SettingsSources};
 use std::borrow::Cow;
 use vim_mode_setting::EditorMode;
@@ -49,11 +49,38 @@ pub enum NotifyWhenAgentWaiting {
     Never,
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Default)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, JsonSchema, Default)]
 pub enum AgentEditorMode {
     EditorModeOverride(EditorMode),
     #[default]
     Inherit,
+}
+
+impl<'de> Deserialize<'de> for AgentEditorMode {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        if s == "inherit" {
+            Ok(AgentEditorMode::Inherit)
+        } else {
+            let mode = EditorMode::deserialize(serde::de::value::StringDeserializer::new(s))?;
+            Ok(AgentEditorMode::EditorModeOverride(mode))
+        }
+    }
+}
+
+impl Serialize for AgentEditorMode {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match self {
+            AgentEditorMode::EditorModeOverride(mode) => mode.serialize(serializer),
+            AgentEditorMode::Inherit => serializer.serialize_str("inherit"),
+        }
+    }
 }
 
 impl From<EditorMode> for AgentEditorMode {
