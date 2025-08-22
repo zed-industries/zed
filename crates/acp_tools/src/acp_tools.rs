@@ -7,6 +7,7 @@ use std::{
 };
 
 use agent_client_protocol as acp;
+use collections::HashMap;
 use gpui::{
     App, Empty, Entity, EventEmitter, FocusHandle, Focusable, Global, ListAlignment, ListState,
     StyleRefinement, Subscription, Task, TextStyleRefinement, Window, actions, list, prelude::*,
@@ -88,6 +89,7 @@ struct WatchedConnection {
     messages: Vec<WatchedConnectionMessage>,
     list_state: ListState,
     connection: Weak<acp::ClientSideConnection>,
+    pending_request_methods: HashMap<i32, Arc<str>>,
     _task: Task<()>,
 }
 
@@ -130,22 +132,10 @@ impl AcpTools {
 
         if let Some(connection) = active_connection.connection.upgrade() {
             let mut receiver = connection.subscribe();
-            let language_registry = self.project.read(cx).languages().clone();
             let task = cx.spawn(async move |this, cx| {
                 while let Ok(message) = receiver.recv().await {
                     this.update(cx, |this, cx| {
-                        if let Some(connection) = &mut this.watched_connection {
-                            let index = connection.messages.len();
-                            connection.messages.push(
-                                WatchedConnectionMessage::from_stream_message(
-                                    message,
-                                    &language_registry,
-                                    cx,
-                                ),
-                            );
-                            connection.list_state.splice(index..index, 1);
-                            cx.notify();
-                        }
+                        this.push_stream_message(message, cx);
                     })
                     .ok();
                 }
@@ -156,9 +146,66 @@ impl AcpTools {
                 messages: vec![],
                 list_state: ListState::new(0, ListAlignment::Bottom, px(2048.)),
                 connection: active_connection.connection.clone(),
+                pending_request_methods: HashMap::default(),
                 _task: task,
             });
         }
+    }
+
+    fn push_stream_message(&mut self, stream_message: acp::StreamMessage, cx: &mut Context<Self>) {
+        let Some(connection) = self.watched_connection.as_mut() else {
+            return;
+        };
+        let language_registry = self.project.read(cx).languages().clone();
+        let index = connection.messages.len();
+
+        let (name, message_type, params) = match stream_message.message {
+            acp::StreamMessageContent::Request { id, method, params } => {
+                connection
+                    .pending_request_methods
+                    .insert(id, method.clone());
+                (Some(method), MessageType::Request, Ok(params))
+            }
+            acp::StreamMessageContent::Response { id, result } => {
+                if let Some(method) = connection.pending_request_methods.remove(&id) {
+                    (Some(method), MessageType::Response, result)
+                } else {
+                    (
+                        Some("[unrecgonized response]".into()),
+                        MessageType::Response,
+                        result,
+                    )
+                }
+            }
+            acp::StreamMessageContent::Notification { method, params } => {
+                (Some(method), MessageType::Notification, Ok(params))
+            }
+        };
+
+        let message = WatchedConnectionMessage {
+            name: name.map(|name| name.to_string().into()),
+            message_type,
+            direction: stream_message.direction,
+            collapsed_params_md: match params.as_ref() {
+                Ok(params) => params
+                    .as_ref()
+                    .map(|params| collapsed_params_md(params, &language_registry, cx)),
+                Err(err) => {
+                    if let Ok(err) = &serde_json::to_value(err) {
+                        Some(collapsed_params_md(&err, &language_registry, cx))
+                    } else {
+                        None
+                    }
+                }
+            },
+
+            expanded_params_md: None,
+            params,
+        };
+
+        connection.messages.push(message);
+        connection.list_state.splice(index..index, 1);
+        cx.notify();
     }
 
     fn render_message(
@@ -237,7 +284,8 @@ impl AcpTools {
                             .visible_on_hover("message"),
                     ),
             )
-            // probably shouldn't use markdown for this
+            // I'm aware using markdown is a hack. Trying to get something working for the demo.
+            // Will clean up soon!
             .when_some(
                 if self.expanded.contains(&index) {
                     message.expanded_params_md.clone()
@@ -292,48 +340,6 @@ struct WatchedConnectionMessage {
 }
 
 impl WatchedConnectionMessage {
-    fn from_stream_message(
-        stream_message: acp::StreamMessage,
-        language_registry: &Arc<LanguageRegistry>,
-        cx: &mut App,
-    ) -> Self {
-        let (name, message_type, params) = match stream_message.message {
-            acp::StreamMessageContent::Request {
-                id: _,
-                method,
-                params,
-            } => (Some(method), MessageType::Request, Ok(params)),
-            acp::StreamMessageContent::Response { id: _, result } => {
-                // todo!
-                (Some("response".into()), MessageType::Response, result)
-            }
-            acp::StreamMessageContent::Notification { method, params } => {
-                (Some(method), MessageType::Notification, Ok(params))
-            }
-        };
-
-        Self {
-            name: name.map(|name| name.to_string().into()),
-            message_type,
-            direction: stream_message.direction,
-            collapsed_params_md: match params.as_ref() {
-                Ok(params) => params
-                    .as_ref()
-                    .map(|params| collapsed_params_md(params, language_registry, cx)),
-                Err(err) => {
-                    if let Ok(err) = &serde_json::to_value(err) {
-                        Some(collapsed_params_md(&err, language_registry, cx))
-                    } else {
-                        None
-                    }
-                }
-            },
-
-            expanded_params_md: None,
-            params,
-        }
-    }
-
     fn expanded(&mut self, language_registry: Arc<LanguageRegistry>, cx: &mut App) {
         let params_md = match &self.params {
             Ok(Some(params)) => Some(expanded_params_md(params, &language_registry, cx)),
@@ -355,14 +361,20 @@ fn collapsed_params_md(
     language_registry: &Arc<LanguageRegistry>,
     cx: &mut App,
 ) -> Entity<Markdown> {
-    let params_json = serde_json::to_string(params)
-        .unwrap_or_default()
-        .replace("{", "{ ")
-        .replace("}", " }")
-        .replace(":", ": ")
-        .replace(",", ", ");
+    let params_json = serde_json::to_string(params).unwrap_or_default();
+    let mut spaced_out_json = String::with_capacity(params_json.len() + params_json.len() / 4);
 
-    let params_md = format!("```json\n{}\n```", params_json);
+    for ch in params_json.chars() {
+        match ch {
+            '{' => spaced_out_json.push_str("{ "),
+            '}' => spaced_out_json.push_str(" }"),
+            ':' => spaced_out_json.push_str(": "),
+            ',' => spaced_out_json.push_str(", "),
+            c => spaced_out_json.push(c),
+        }
+    }
+
+    let params_md = format!("```json\n{}\n```", spaced_out_json);
     cx.new(|cx| Markdown::new(params_md.into(), Some(language_registry.clone()), None, cx))
 }
 
@@ -449,7 +461,7 @@ impl Render for AcpTools {
                     .size_full()
                     .justify_center()
                     .items_center()
-                    .child("No connection")
+                    .child("No active connection")
                     .into_any(),
             })
     }
