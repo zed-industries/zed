@@ -247,6 +247,7 @@ impl AcpTools {
         let text_style = window.text_style();
 
         let colors = cx.theme().colors();
+        let expanded = self.expanded.contains(&index);
 
         v_flex()
             .w_full()
@@ -311,14 +312,14 @@ impl AcpTools {
             // I'm aware using markdown is a hack. Trying to get something working for the demo.
             // Will clean up soon!
             .when_some(
-                if self.expanded.contains(&index) {
+                if expanded {
                     message.expanded_params_md.clone()
                 } else {
                     message.collapsed_params_md.clone()
                 },
                 |this, params| {
                     this.child(
-                        div().ml_6().flex_1().child(
+                        div().pl_6().w_full().child(
                             MarkdownElement::new(
                                 params,
                                 MarkdownStyle {
@@ -342,7 +343,7 @@ impl AcpTools {
                             .code_block_renderer(
                                 CodeBlockRenderer::Default {
                                     copy_button: false,
-                                    copy_button_on_hover: false,
+                                    copy_button_on_hover: expanded,
                                     border: false,
                                 },
                             ),
