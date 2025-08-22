@@ -4949,7 +4949,7 @@ fn workspace_active_editor(
     let active_item = workspace.active_item(cx)?;
     let active_editor = active_item
         .act_as::<Editor>(cx)
-        .filter(|editor| editor.read(cx).mode().is_full())?;
+        .filter(|editor| editor.read(cx).display_mode().is_full())?;
     Some((active_item, active_editor))
 }
 

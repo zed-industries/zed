@@ -15,7 +15,7 @@ use buffer_diff::BufferDiff;
 use client::zed_urls;
 use collections::{HashMap, HashSet};
 use editor::scroll::Autoscroll;
-use editor::{Editor, EditorEvent, EditorMode, MultiBuffer, PathKey, SelectionEffects};
+use editor::{Editor, EditorDisplayMode, EditorEvent, MultiBuffer, PathKey, SelectionEffects};
 use file_icons::FileIcons;
 use fs::Fs;
 use gpui::{
@@ -228,7 +228,7 @@ impl ThreadFeedbackState {
 
         let editor = cx.new(|cx| {
             let mut editor = Editor::new(
-                editor::EditorMode::AutoHeight {
+                editor::EditorDisplayMode::AutoHeight {
                     min_lines: 1,
                     max_lines: Some(4),
                 },
@@ -321,7 +321,7 @@ impl AcpThreadView {
                 prompt_capabilities.clone(),
                 "Message the agent — @ to include context",
                 prevent_slash_commands,
-                editor::EditorMode::AutoHeight {
+                editor::EditorDisplayMode::AutoHeight {
                     min_lines: MIN_EDITOR_LINES,
                     max_lines: Some(MAX_EDITOR_LINES),
                 },
@@ -673,8 +673,8 @@ impl AcpThreadView {
         self.editor_expanded = is_expanded;
         self.message_editor.update(cx, |editor, cx| {
             if is_expanded {
-                editor.set_mode(
-                    EditorMode::Full {
+                editor.set_display_mode(
+                    EditorDisplayMode::Full {
                         scale_ui_elements_with_buffer_font_size: false,
                         show_active_line_background: false,
                         sized_by_content: false,
@@ -682,8 +682,8 @@ impl AcpThreadView {
                     cx,
                 )
             } else {
-                editor.set_mode(
-                    EditorMode::AutoHeight {
+                editor.set_display_mode(
+                    EditorDisplayMode::AutoHeight {
                         min_lines: MIN_EDITOR_LINES,
                         max_lines: Some(MAX_EDITOR_LINES),
                     },

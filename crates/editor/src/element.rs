@@ -3,7 +3,7 @@ use crate::{
     CodeActionSource, ColumnarMode, ConflictsOurs, ConflictsOursMarker, ConflictsOuter,
     ConflictsTheirs, ConflictsTheirsMarker, ContextMenuPlacement, CursorShape, CustomBlockId,
     DisplayDiffHunk, DisplayPoint, DisplayRow, DocumentHighlightRead, DocumentHighlightWrite,
-    EditDisplayMode, EditPrediction, Editor, EditorMode, EditorSettings, EditorSnapshot,
+    EditDisplayMode, EditPrediction, Editor, EditorDisplayMode, EditorSettings, EditorSnapshot,
     EditorStyle, FILE_HEADER_HEIGHT, FocusedBlock, GutterDimensions, HalfPageDown, HalfPageUp,
     HandleInput, HoveredCursor, InlayHintRefreshReason, JumpData, LineDown, LineHighlight, LineUp,
     MAX_LINE_LEN, MINIMAP_FONT_SIZE, MULTI_BUFFER_EXCERPT_HEADER_HEIGHT, OpenExcerpts, PageDown,
@@ -1816,7 +1816,7 @@ impl EditorElement {
             }
         }
 
-        if !snapshot.mode.is_full()
+        if !snapshot.display_mode.is_full()
             || minimap_width.is_zero()
             || matches!(
                 minimap_settings.show,
@@ -3212,7 +3212,7 @@ impl EditorElement {
         cx: &mut App,
     ) -> Vec<Option<AnyElement>> {
         let include_fold_statuses = EditorSettings::get_global(cx).gutter.folds
-            && snapshot.mode.is_full()
+            && snapshot.display_mode.is_full()
             && self.editor.read(cx).is_singleton(cx);
         if include_fold_statuses {
             row_infos
@@ -3314,7 +3314,7 @@ impl EditorElement {
                 style,
                 MAX_LINE_LEN,
                 rows.len(),
-                &snapshot.mode,
+                &snapshot.display_mode,
                 editor_width,
                 is_row_soft_wrapped,
                 window,
@@ -5282,14 +5282,14 @@ impl EditorElement {
 
             if matches!(
                 layout.mode,
-                EditorMode::Full { .. } | EditorMode::Minimap { .. }
+                EditorDisplayMode::Full { .. } | EditorDisplayMode::Minimap { .. }
             ) {
                 let show_active_line_background = match layout.mode {
-                    EditorMode::Full {
+                    EditorDisplayMode::Full {
                         show_active_line_background,
                         ..
                     } => show_active_line_background,
-                    EditorMode::Minimap { .. } => true,
+                    EditorDisplayMode::Minimap { .. } => true,
                     _ => false,
                 };
                 let mut active_rows = layout.active_rows.iter().peekable();
@@ -7311,7 +7311,7 @@ impl LineWithInvisibles {
         editor_style: &EditorStyle,
         max_line_len: usize,
         max_line_count: usize,
-        editor_mode: &EditorMode,
+        editor_mode: &EditorDisplayMode,
         text_width: Pixels,
         is_row_soft_wrapped: impl Copy + Fn(usize) -> bool,
         window: &mut Window,
@@ -7839,12 +7839,12 @@ impl EditorElement {
     ///
     /// This allows UI elements to scale based on the `buffer_font_size`.
     fn rem_size(&self, cx: &mut App) -> Option<Pixels> {
-        match self.editor.read(cx).mode {
-            EditorMode::Full {
+        match self.editor.read(cx).display_mode {
+            EditorDisplayMode::Full {
                 scale_ui_elements_with_buffer_font_size: true,
                 ..
             }
-            | EditorMode::Minimap { .. } => {
+            | EditorDisplayMode::Minimap { .. } => {
                 let buffer_font_size = self.style.text.font_size;
                 match buffer_font_size {
                     AbsoluteLength::Pixels(pixels) => {
@@ -7877,7 +7877,7 @@ impl EditorElement {
     }
 
     fn editor_with_selections(&self, cx: &App) -> Option<Entity<Editor>> {
-        if let EditorMode::Minimap { parent } = self.editor.read(cx).mode() {
+        if let EditorDisplayMode::Minimap { parent } = self.editor.read(cx).display_mode() {
             parent.upgrade()
         } else {
             Some(self.editor.clone())
@@ -7909,8 +7909,8 @@ impl Element for EditorElement {
             self.editor.update(cx, |editor, cx| {
                 editor.set_style(self.style.clone(), window, cx);
 
-                let layout_id = match editor.mode {
-                    EditorMode::SingleLine => {
+                let layout_id = match editor.display_mode {
+                    EditorDisplayMode::SingleLine => {
                         let rem_size = window.rem_size();
                         let height = self.style.text.line_height_in_pixels(rem_size);
                         let mut style = Style::default();
@@ -7918,7 +7918,7 @@ impl Element for EditorElement {
                         style.size.width = relative(1.).into();
                         window.request_layout(style, None, cx)
                     }
-                    EditorMode::AutoHeight {
+                    EditorDisplayMode::AutoHeight {
                         min_lines,
                         max_lines,
                     } => {
@@ -7945,13 +7945,13 @@ impl Element for EditorElement {
                             },
                         )
                     }
-                    EditorMode::Minimap { .. } => {
+                    EditorDisplayMode::Minimap { .. } => {
                         let mut style = Style::default();
                         style.size.width = relative(1.).into();
                         style.size.height = relative(1.).into();
                         window.request_layout(style, None, cx)
                     }
-                    EditorMode::Full {
+                    EditorDisplayMode::Full {
                         sized_by_content, ..
                     } => {
                         let mut style = Style::default();
@@ -7990,7 +7990,7 @@ impl Element for EditorElement {
             ..Default::default()
         };
 
-        let is_minimap = self.editor.read(cx).mode.is_minimap();
+        let is_minimap = self.editor.read(cx).display_mode.is_minimap();
 
         if !is_minimap {
             let focus_handle = self.editor.focus_handle(cx);
@@ -8065,8 +8065,9 @@ impl Element for EditorElement {
                         editor.set_visible_column_count(editor_width / em_advance);
 
                         if matches!(
-                            editor.mode,
-                            EditorMode::AutoHeight { .. } | EditorMode::Minimap { .. }
+                            editor.display_mode,
+                            EditorDisplayMode::AutoHeight { .. }
+                                | EditorDisplayMode::Minimap { .. }
                         ) {
                             snapshot
                         } else {
@@ -8112,10 +8113,10 @@ impl Element for EditorElement {
 
                     // The max scroll position for the top of the window
                     let max_scroll_top = if matches!(
-                        snapshot.mode,
-                        EditorMode::SingleLine
-                            | EditorMode::AutoHeight { .. }
-                            | EditorMode::Full {
+                        snapshot.display_mode,
+                        EditorDisplayMode::SingleLine
+                            | EditorDisplayMode::AutoHeight { .. }
+                            | EditorDisplayMode::Full {
                                 sized_by_content: true,
                                 ..
                             }
@@ -8980,7 +8981,7 @@ impl Element for EditorElement {
                         None,
                     );
 
-                    let mode = snapshot.mode.clone();
+                    let mode = snapshot.display_mode.clone();
 
                     let (diff_hunk_controls, diff_hunk_control_bounds) = if is_read_only {
                         (vec![], vec![])
@@ -9209,7 +9210,7 @@ pub struct EditorLayout {
     content_origin: gpui::Point<Pixels>,
     scrollbars_layout: Option<EditorScrollbars>,
     minimap: Option<MinimapLayout>,
-    mode: EditorMode,
+    mode: EditorDisplayMode,
     wrap_guides: SmallVec<[(Pixels, bool); 2]>,
     indent_guides: Option<Vec<IndentGuideLayout>>,
     visible_display_row_range: Range<DisplayRow>,
@@ -9788,7 +9789,7 @@ pub fn layout_line(
         style,
         MAX_LINE_LEN,
         1,
-        &snapshot.mode,
+        &snapshot.display_mode,
         text_width,
         is_row_soft_wrapped,
         window,
@@ -10197,7 +10198,7 @@ mod tests {
         let window = cx.add_window(|window, cx| {
             let buffer = MultiBuffer::build_simple(&"a ".to_string().repeat(100), cx);
             let mut editor = Editor::new(
-                EditorMode::AutoHeight {
+                EditorDisplayMode::AutoHeight {
                     min_lines: 1,
                     max_lines: None,
                 },
@@ -10233,7 +10234,7 @@ mod tests {
 
         let window = cx.add_window(|window, cx| {
             let buffer = MultiBuffer::build_simple(&"a ".to_string().repeat(100), cx);
-            let mut editor = Editor::new(EditorMode::full(), buffer, None, window, cx);
+            let mut editor = Editor::new(EditorDisplayMode::full(), buffer, None, window, cx);
             editor.set_soft_wrap_mode(language_settings::SoftWrap::EditorWidth, cx);
             editor
         });
@@ -10260,7 +10261,7 @@ mod tests {
         init_test(cx, |_| {});
         let window = cx.add_window(|window, cx| {
             let buffer = MultiBuffer::build_simple(&sample_text(6, 6, 'a'), cx);
-            Editor::new(EditorMode::full(), buffer, None, window, cx)
+            Editor::new(EditorDisplayMode::full(), buffer, None, window, cx)
         });
 
         let editor = window.root(cx).unwrap();
@@ -10361,7 +10362,7 @@ mod tests {
 
         let window = cx.add_window(|window, cx| {
             let buffer = MultiBuffer::build_simple(&(sample_text(6, 6, 'a') + "\n"), cx);
-            Editor::new(EditorMode::full(), buffer, None, window, cx)
+            Editor::new(EditorDisplayMode::full(), buffer, None, window, cx)
         });
         let cx = &mut VisualTestContext::from_window(*window, cx);
         let editor = window.root(cx).unwrap();
@@ -10432,7 +10433,7 @@ mod tests {
 
         let window = cx.add_window(|window, cx| {
             let buffer = MultiBuffer::build_simple("", cx);
-            Editor::new(EditorMode::full(), buffer, None, window, cx)
+            Editor::new(EditorDisplayMode::full(), buffer, None, window, cx)
         });
         let cx = &mut VisualTestContext::from_window(*window, cx);
         let editor = window.root(cx).unwrap();
@@ -10518,7 +10519,7 @@ mod tests {
 
             let actual_invisibles = collect_invisibles_from_new_editor(
                 cx,
-                EditorMode::full(),
+                EditorDisplayMode::full(),
                 input_text,
                 px(500.0),
                 show_line_numbers,
@@ -10536,8 +10537,8 @@ mod tests {
         });
 
         for editor_mode_without_invisibles in [
-            EditorMode::SingleLine,
-            EditorMode::AutoHeight {
+            EditorDisplayMode::SingleLine,
+            EditorDisplayMode::AutoHeight {
                 min_lines: 1,
                 max_lines: Some(100),
             },
@@ -10615,7 +10616,7 @@ mod tests {
 
                 let actual_invisibles = collect_invisibles_from_new_editor(
                     cx,
-                    EditorMode::full(),
+                    EditorDisplayMode::full(),
                     &input_text,
                     px(editor_width),
                     show_line_numbers,
@@ -10654,7 +10655,7 @@ mod tests {
 
     fn collect_invisibles_from_new_editor(
         cx: &mut TestAppContext,
-        editor_mode: EditorMode,
+        editor_mode: EditorDisplayMode,
         input_text: &str,
         editor_width: Pixels,
         show_line_numbers: bool,

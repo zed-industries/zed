@@ -4,7 +4,7 @@ pub(crate) mod scroll_amount;
 
 use crate::editor_settings::ScrollBeyondLastLine;
 use crate::{
-    Anchor, DisplayPoint, DisplayRow, Editor, EditorEvent, EditorMode, EditorSettings,
+    Anchor, DisplayPoint, DisplayRow, Editor, EditorDisplayMode, EditorEvent, EditorSettings,
     InlayHintRefreshReason, MultiBufferSnapshot, RowExt, ToPoint,
     display_map::{DisplaySnapshot, ToDisplayPoint},
     hover_popover::hide_hover,
@@ -675,7 +675,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if matches!(self.mode, EditorMode::SingleLine) {
+        if matches!(self.display_mode, EditorDisplayMode::SingleLine) {
             cx.propagate();
             return;
         }

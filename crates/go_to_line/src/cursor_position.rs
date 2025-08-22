@@ -104,14 +104,14 @@ impl CursorPosition {
                     cursor_position.update(cx, |cursor_position, cx| {
                         cursor_position.selected_count = SelectionStats::default();
                         cursor_position.selected_count.selections = editor.selections.count();
-                        match editor.mode() {
-                            editor::EditorMode::AutoHeight { .. }
-                            | editor::EditorMode::SingleLine
-                            | editor::EditorMode::Minimap { .. } => {
+                        match editor.display_mode() {
+                            editor::EditorDisplayMode::AutoHeight { .. }
+                            | editor::EditorDisplayMode::SingleLine
+                            | editor::EditorDisplayMode::Minimap { .. } => {
                                 cursor_position.position = None;
                                 cursor_position.context = None;
                             }
-                            editor::EditorMode::Full { .. } => {
+                            editor::EditorDisplayMode::Full { .. } => {
                                 let mut last_selection = None::<Selection<Point>>;
                                 let snapshot = editor.buffer().read(cx).snapshot(cx);
                                 if snapshot.excerpts().count() > 0 {

@@ -1222,7 +1222,7 @@ impl Vim {
             editor.selections.newest::<usize>(cx).is_empty()
         });
         let editor = editor.read(cx);
-        let editor_mode = editor.mode();
+        let editor_mode = editor.display_mode();
 
         if editor_mode.is_full()
             && !newest_selection_empty

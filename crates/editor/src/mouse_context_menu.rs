@@ -153,7 +153,7 @@ pub fn deploy_context_menu(
     }
 
     // Don't show context menu for inline editors
-    if !editor.mode().is_full() {
+    if !editor.display_mode().is_full() {
         return;
     }
 

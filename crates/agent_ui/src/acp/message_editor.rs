@@ -10,9 +10,9 @@ use anyhow::{Context as _, Result, anyhow};
 use assistant_slash_commands::codeblock_fence_for_path;
 use collections::{HashMap, HashSet};
 use editor::{
-    Addon, Anchor, AnchorRangeExt, ContextMenuOptions, ContextMenuPlacement, Editor, EditorElement,
-    EditorEvent, EditorMode, EditorSnapshot, EditorStyle, ExcerptId, FoldPlaceholder, MultiBuffer,
-    SemanticsProvider, ToOffset,
+    Addon, Anchor, AnchorRangeExt, ContextMenuOptions, ContextMenuPlacement, Editor,
+    EditorDisplayMode, EditorElement, EditorEvent, EditorSnapshot, EditorStyle, ExcerptId,
+    FoldPlaceholder, MultiBuffer, SemanticsProvider, ToOffset,
     actions::Paste,
     display_map::{Crease, CreaseId, FoldId},
 };
@@ -90,7 +90,7 @@ impl MessageEditor {
         prompt_capabilities: Rc<Cell<acp::PromptCapabilities>>,
         placeholder: impl Into<Arc<str>>,
         prevent_slash_commands: bool,
-        mode: EditorMode,
+        mode: EditorDisplayMode,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -1056,9 +1056,9 @@ impl MessageEditor {
         })
     }
 
-    pub fn set_mode(&mut self, mode: EditorMode, cx: &mut Context<Self>) {
+    pub fn set_display_mode(&mut self, mode: EditorDisplayMode, cx: &mut Context<Self>) {
         self.editor.update(cx, |editor, cx| {
-            editor.set_mode(mode);
+            editor.set_display_mode(mode);
             cx.notify()
         });
     }
@@ -1858,7 +1858,7 @@ mod tests {
     use agent_client_protocol as acp;
     use agent2::HistoryStore;
     use assistant_context::ContextStore;
-    use editor::{AnchorRangeExt as _, Editor, EditorMode};
+    use editor::{AnchorRangeExt as _, Editor, EditorDisplayMode};
     use fs::FakeFs;
     use futures::StreamExt as _;
     use gpui::{
@@ -1901,7 +1901,7 @@ mod tests {
                     Default::default(),
                     "Test",
                     false,
-                    EditorMode::AutoHeight {
+                    EditorDisplayMode::AutoHeight {
                         min_lines: 1,
                         max_lines: None,
                     },
@@ -2102,7 +2102,7 @@ mod tests {
                     prompt_capabilities.clone(),
                     "Test",
                     false,
-                    EditorMode::AutoHeight {
+                    EditorDisplayMode::AutoHeight {
                         max_lines: None,
                         min_lines: 1,
                     },

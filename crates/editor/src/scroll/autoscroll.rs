@@ -1,5 +1,5 @@
 use crate::{
-    DisplayRow, Editor, EditorMode, LineWithInvisibles, RowExt, SelectionEffects,
+    DisplayRow, Editor, EditorDisplayMode, LineWithInvisibles, RowExt, SelectionEffects,
     display_map::ToDisplayPoint, scroll::WasScrolled,
 };
 use gpui::{Bounds, Context, Pixels, Window, px};
@@ -184,7 +184,7 @@ impl Editor {
             }
         }
 
-        let margin = if matches!(self.mode, EditorMode::AutoHeight { .. }) {
+        let margin = if matches!(self.display_mode, EditorDisplayMode::AutoHeight { .. }) {
             0.
         } else {
             ((visible_lines - (target_bottom - target_top)) / 2.0).floor()

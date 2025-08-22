@@ -1046,7 +1046,7 @@ impl ToolbarItemView for AgentDiffToolbar {
             }
 
             if let Some(editor) = item.act_as::<Editor>(cx)
-                && editor.read(cx).mode().is_full()
+                && editor.read(cx).display_mode().is_full()
             {
                 let agent_diff = AgentDiff::global(cx);
 
@@ -1549,7 +1549,7 @@ impl AgentDiff {
     }
 
     fn full_editor_buffer(editor: &Editor, cx: &App) -> Option<WeakEntity<Buffer>> {
-        if editor.mode().is_full() {
+        if editor.display_mode().is_full() {
             editor
                 .buffer()
                 .read(cx)

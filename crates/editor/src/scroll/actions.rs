@@ -1,6 +1,6 @@
 use super::Axis;
 use crate::{
-    Autoscroll, Editor, EditorMode, NextScreen, NextScrollCursorCenterTopBottom,
+    Autoscroll, Editor, EditorDisplayMode, NextScreen, NextScrollCursorCenterTopBottom,
     SCROLL_CENTER_TOP_BOTTOM_DEBOUNCE_TIMEOUT, ScrollCursorBottom, ScrollCursorCenter,
     ScrollCursorCenterTopBottom, ScrollCursorTop, display_map::DisplayRow,
 };
@@ -16,7 +16,7 @@ impl Editor {
             return;
         }
 
-        if matches!(self.mode, EditorMode::SingleLine) {
+        if matches!(self.display_mode, EditorDisplayMode::SingleLine) {
             cx.propagate();
             return;
         }

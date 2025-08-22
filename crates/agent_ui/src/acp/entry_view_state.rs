@@ -4,7 +4,7 @@ use acp_thread::{AcpThread, AgentThreadEntry};
 use agent_client_protocol::{PromptCapabilities, ToolCallId};
 use agent2::HistoryStore;
 use collections::HashMap;
-use editor::{Editor, EditorMode, MinimapVisibility};
+use editor::{Editor, EditorDisplayMode, MinimapVisibility};
 use gpui::{
     AnyEntity, App, AppContext as _, Entity, EntityId, EventEmitter, Focusable,
     TextStyleRefinement, WeakEntity, Window,
@@ -87,7 +87,7 @@ impl EntryViewState {
                             self.prompt_capabilities.clone(),
                             "Edit message － @ to include context",
                             self.prevent_slash_commands,
-                            editor::EditorMode::AutoHeight {
+                            editor::EditorDisplayMode::AutoHeight {
                                 min_lines: 1,
                                 max_lines: None,
                             },
@@ -287,7 +287,7 @@ fn create_editor_diff(
 ) -> Entity<Editor> {
     cx.new(|cx| {
         let mut editor = Editor::new(
-            EditorMode::Full {
+            EditorDisplayMode::Full {
                 scale_ui_elements_with_buffer_font_size: false,
                 show_active_line_background: false,
                 sized_by_content: true,

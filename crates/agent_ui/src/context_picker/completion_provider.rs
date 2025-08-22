@@ -1244,7 +1244,7 @@ mod tests {
         let editor = workspace.update_in(&mut cx, |workspace, window, cx| {
             let editor = cx.new(|cx| {
                 Editor::new(
-                    editor::EditorMode::full(),
+                    editor::EditorDisplayMode::full(),
                     multi_buffer::MultiBuffer::build_simple("", cx),
                     None,
                     window,

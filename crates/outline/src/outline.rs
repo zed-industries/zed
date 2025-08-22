@@ -88,7 +88,7 @@ impl Render for OutlineView {
 
 impl OutlineView {
     fn register(editor: &mut Editor, _: Option<&mut Window>, cx: &mut Context<Editor>) {
-        if editor.mode().is_full() {
+        if editor.display_mode().is_full() {
             let handle = cx.entity().downgrade();
             editor
                 .register_action(move |action, window, cx| {

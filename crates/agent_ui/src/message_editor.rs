@@ -22,8 +22,8 @@ use collections::{HashMap, HashSet};
 use editor::actions::{MoveUp, Paste};
 use editor::display_map::CreaseId;
 use editor::{
-    Addon, AnchorRangeExt, ContextMenuOptions, ContextMenuPlacement, Editor, EditorElement,
-    EditorEvent, EditorMode, EditorStyle, MultiBuffer,
+    Addon, AnchorRangeExt, ContextMenuOptions, ContextMenuPlacement, Editor, EditorDisplayMode,
+    EditorElement, EditorEvent, EditorStyle, MultiBuffer,
 };
 use file_icons::FileIcons;
 use fs::Fs;
@@ -127,7 +127,7 @@ pub(crate) fn create_editor(
         };
 
         let mut editor = Editor::new(
-            editor::EditorMode::AutoHeight {
+            editor::EditorDisplayMode::AutoHeight {
                 min_lines,
                 max_lines,
             },
@@ -312,13 +312,13 @@ impl MessageEditor {
         self.editor_is_expanded = is_expanded;
         self.editor.update(cx, |editor, _| {
             if self.editor_is_expanded {
-                editor.set_mode(EditorMode::Full {
+                editor.set_display_mode(EditorDisplayMode::Full {
                     scale_ui_elements_with_buffer_font_size: false,
                     show_active_line_background: false,
                     sized_by_content: false,
                 })
             } else {
-                editor.set_mode(EditorMode::AutoHeight {
+                editor.set_display_mode(EditorDisplayMode::AutoHeight {
                     min_lines: MIN_EDITOR_LINES,
                     max_lines: Some(MAX_EDITOR_LINES),
                 })

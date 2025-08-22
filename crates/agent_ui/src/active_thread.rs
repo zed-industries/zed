@@ -1723,7 +1723,7 @@ impl ActiveThread {
 
         let editor = cx.new(|cx| {
             let mut editor = Editor::new(
-                editor::EditorMode::AutoHeight {
+                editor::EditorDisplayMode::AutoHeight {
                     min_lines: 1,
                     max_lines: Some(4),
                 },

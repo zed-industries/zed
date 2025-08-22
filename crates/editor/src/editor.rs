@@ -496,7 +496,7 @@ pub enum SelectMode {
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
-pub enum EditorMode {
+pub enum EditorDisplayMode {
     SingleLine,
     AutoHeight {
         min_lines: usize,
@@ -515,7 +515,7 @@ pub enum EditorMode {
     },
 }
 
-impl EditorMode {
+impl EditorDisplayMode {
     pub fn full() -> Self {
         Self::Full {
             scale_ui_elements_with_buffer_font_size: true,
@@ -759,7 +759,7 @@ pub enum MinimapVisibility {
 }
 
 impl MinimapVisibility {
-    fn for_mode(mode: &EditorMode, cx: &App) -> Self {
+    fn for_display_mode(mode: &EditorDisplayMode, cx: &App) -> Self {
         if mode.is_full() {
             Self::Enabled {
                 setting_configuration: EditorSettings::get_global(cx).minimap.minimap_enabled(),
@@ -1046,7 +1046,7 @@ pub struct Editor {
     show_cursor_names: bool,
     hovered_cursors: HashMap<HoveredCursor, Task<()>>,
     pub show_local_selections: bool,
-    mode: EditorMode,
+    display_mode: EditorDisplayMode,
     show_breadcrumbs: bool,
     show_gutter: bool,
     show_scrollbars: ScrollbarAxes,
@@ -1236,7 +1236,7 @@ impl NextScrollCursorCenterTopBottom {
 
 #[derive(Clone)]
 pub struct EditorSnapshot {
-    pub mode: EditorMode,
+    pub display_mode: EditorDisplayMode,
     show_gutter: bool,
     show_line_numbers: Option<bool>,
     show_git_diff_gutter: Option<bool>,
@@ -1704,13 +1704,13 @@ impl Editor {
     pub fn single_line(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let buffer = cx.new(|cx| Buffer::local("", cx));
         let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
-        Self::new(EditorMode::SingleLine, buffer, None, window, cx)
+        Self::new(EditorDisplayMode::SingleLine, buffer, None, window, cx)
     }
 
     pub fn multi_line(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let buffer = cx.new(|cx| Buffer::local("", cx));
         let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
-        Self::new(EditorMode::full(), buffer, None, window, cx)
+        Self::new(EditorDisplayMode::full(), buffer, None, window, cx)
     }
 
     pub fn auto_height(
@@ -1722,7 +1722,7 @@ impl Editor {
         let buffer = cx.new(|cx| Buffer::local("", cx));
         let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
         Self::new(
-            EditorMode::AutoHeight {
+            EditorDisplayMode::AutoHeight {
                 min_lines,
                 max_lines: Some(max_lines),
             },
@@ -1743,7 +1743,7 @@ impl Editor {
         let buffer = cx.new(|cx| Buffer::local("", cx));
         let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
         Self::new(
-            EditorMode::AutoHeight {
+            EditorDisplayMode::AutoHeight {
                 min_lines,
                 max_lines: None,
             },
@@ -1761,7 +1761,7 @@ impl Editor {
         cx: &mut Context<Self>,
     ) -> Self {
         let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
-        Self::new(EditorMode::full(), buffer, project, window, cx)
+        Self::new(EditorDisplayMode::full(), buffer, project, window, cx)
     }
 
     pub fn for_multibuffer(
@@ -1770,12 +1770,12 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        Self::new(EditorMode::full(), buffer, project, window, cx)
+        Self::new(EditorDisplayMode::full(), buffer, project, window, cx)
     }
 
     pub fn clone(&self, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let mut clone = Self::new(
-            self.mode.clone(),
+            self.display_mode.clone(),
             self.buffer.clone(),
             self.project.clone(),
             window,
@@ -1796,7 +1796,7 @@ impl Editor {
     }
 
     pub fn new(
-        mode: EditorMode,
+        mode: EditorDisplayMode,
         buffer: Entity<MultiBuffer>,
         project: Option<Entity<Project>>,
         window: &mut Window,
@@ -1806,7 +1806,7 @@ impl Editor {
     }
 
     fn new_internal(
-        mode: EditorMode,
+        mode: EditorDisplayMode,
         buffer: Entity<MultiBuffer>,
         project: Option<Entity<Project>>,
         display_map: Option<Entity<DisplayMap>>,
@@ -1888,8 +1888,8 @@ impl Editor {
             blink_manager
         });
 
-        let soft_wrap_mode_override =
-            matches!(mode, EditorMode::SingleLine).then(|| language_settings::SoftWrap::None);
+        let soft_wrap_mode_override = matches!(mode, EditorDisplayMode::SingleLine)
+            .then(|| language_settings::SoftWrap::None);
 
         let mut project_subscriptions = Vec::new();
         if full_mode && let Some(project) = project.as_ref() {
@@ -2068,15 +2068,19 @@ impl Editor {
                 .detach();
         }
 
-        let show_indent_guides =
-            if matches!(mode, EditorMode::SingleLine | EditorMode::Minimap { .. }) {
-                Some(false)
-            } else {
-                None
-            };
+        let show_indent_guides = if matches!(
+            mode,
+            EditorDisplayMode::SingleLine | EditorDisplayMode::Minimap { .. }
+        ) {
+            Some(false)
+        } else {
+            None
+        };
 
         let breakpoint_store = match (&mode, project.as_ref()) {
-            (EditorMode::Full { .. }, Some(project)) => Some(project.read(cx).breakpoint_store()),
+            (EditorDisplayMode::Full { .. }, Some(project)) => {
+                Some(project.read(cx).breakpoint_store())
+            }
             _ => None,
         };
 
@@ -2132,8 +2136,8 @@ impl Editor {
                 horizontal: full_mode,
                 vertical: full_mode,
             },
-            minimap_visibility: MinimapVisibility::for_mode(&mode, cx),
-            offset_content: !matches!(mode, EditorMode::SingleLine),
+            minimap_visibility: MinimapVisibility::for_display_mode(&mode, cx),
+            offset_content: !matches!(mode, EditorDisplayMode::SingleLine),
             show_breadcrumbs: EditorSettings::get_global(cx).toolbar.breadcrumbs,
             show_gutter: full_mode,
             show_line_numbers: (!full_mode).then_some(false),
@@ -2289,7 +2293,7 @@ impl Editor {
                 .hide_mouse
                 .unwrap_or_default(),
             change_list: ChangeList::new(),
-            mode,
+            display_mode: mode,
             selection_drag_state: SelectionDragState::None,
             folding_newlines: Task::ready(()),
             default_editor_mode: vim_mode_setting::EditorMode::default(),
@@ -2418,7 +2422,7 @@ impl Editor {
             editor.update_lsp_data(false, None, window, cx);
         }
 
-        if editor.mode.is_full() {
+        if editor.display_mode.is_full() {
             editor.report_editor_event(ReportEditorEvent::EditorOpened, None, cx);
         }
 
@@ -2487,11 +2491,11 @@ impl Editor {
     ) -> KeyContext {
         let mut key_context = KeyContext::new_with_defaults();
         key_context.add("Editor");
-        let mode = match self.mode {
-            EditorMode::SingleLine => "single_line",
-            EditorMode::AutoHeight { .. } => "auto_height",
-            EditorMode::Minimap { .. } => "minimap",
-            EditorMode::Full { .. } => "full",
+        let mode = match self.display_mode {
+            EditorDisplayMode::SingleLine => "single_line",
+            EditorDisplayMode::AutoHeight { .. } => "auto_height",
+            EditorDisplayMode::Minimap { .. } => "minimap",
+            EditorDisplayMode::Full { .. } => "full",
         };
 
         if EditorSettings::jupyter_enabled(cx) {
@@ -2755,7 +2759,7 @@ impl Editor {
             .flatten();
 
         EditorSnapshot {
-            mode: self.mode.clone(),
+            display_mode: self.display_mode.clone(),
             show_gutter: self.show_gutter,
             show_line_numbers: self.show_line_numbers,
             show_git_diff_gutter: self.show_git_diff_gutter,
@@ -2792,12 +2796,12 @@ impl Editor {
             .excerpt_containing(self.selections.newest_anchor().head(), cx)
     }
 
-    pub fn mode(&self) -> &EditorMode {
-        &self.mode
+    pub fn display_mode(&self) -> &EditorDisplayMode {
+        &self.display_mode
     }
 
-    pub fn set_mode(&mut self, mode: EditorMode) {
-        self.mode = mode;
+    pub fn set_display_mode(&mut self, mode: EditorDisplayMode) {
+        self.display_mode = mode;
     }
 
     pub fn collaboration_hub(&self) -> Option<&dyn CollaborationHub> {
@@ -3237,7 +3241,7 @@ impl Editor {
         use text::ToOffset as _;
         use text::ToPoint as _;
 
-        if self.mode.is_minimap()
+        if self.display_mode.is_minimap()
             || WorkspaceSettings::get(None, cx).restore_on_startup == RestoreOnStartupBehavior::None
         {
             return;
@@ -3920,7 +3924,7 @@ impl Editor {
             return;
         }
 
-        if self.mode.is_full()
+        if self.display_mode.is_full()
             && self.change_selections(Default::default(), window, cx, |s| s.try_cancel())
         {
             return;
@@ -3963,7 +3967,9 @@ impl Editor {
             return true;
         }
 
-        if self.mode.is_full() && matches!(self.active_diagnostics, ActiveDiagnostic::Group(_)) {
+        if self.display_mode.is_full()
+            && matches!(self.active_diagnostics, ActiveDiagnostic::Group(_))
+        {
             self.dismiss_diagnostics(cx);
             return true;
         }
@@ -5177,7 +5183,7 @@ impl Editor {
     }
 
     fn refresh_inlay_hints(&mut self, reason: InlayHintRefreshReason, cx: &mut Context<Self>) {
-        if self.semantics_provider.is_none() || !self.mode.is_full() {
+        if self.semantics_provider.is_none() || !self.display_mode.is_full() {
             return;
         }
 
@@ -6854,7 +6860,7 @@ impl Editor {
         &mut self,
         cx: &mut Context<Editor>,
     ) -> Option<(String, Range<Anchor>)> {
-        if matches!(self.mode, EditorMode::SingleLine) {
+        if matches!(self.display_mode, EditorDisplayMode::SingleLine) {
             return None;
         }
         if !EditorSettings::get_global(cx).selection_highlight {
@@ -6953,7 +6959,7 @@ impl Editor {
     fn refresh_single_line_folds(&mut self, window: &mut Window, cx: &mut Context<Editor>) {
         struct NewlineFold;
         let type_id = std::any::TypeId::of::<NewlineFold>();
-        if !self.mode.is_single_line() {
+        if !self.display_mode.is_single_line() {
             return;
         }
         let snapshot = self.snapshot(window, cx);
@@ -7179,7 +7185,7 @@ impl Editor {
         buffer_position: language::Anchor,
         cx: &App,
     ) -> EditPredictionSettings {
-        if !self.mode.is_full()
+        if !self.display_mode.is_full()
             || !self.show_edit_predictions_override.unwrap_or(true)
             || self.edit_predictions_disabled_in_scope(buffer, buffer_position, cx)
         {
@@ -8518,7 +8524,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut App,
     ) -> Option<(AnyElement, gpui::Point<Pixels>)> {
-        if self.mode().is_minimap() {
+        if self.display_mode().is_minimap() {
             return None;
         }
         let active_edit_prediction = self.active_edit_prediction.as_ref()?;
@@ -9955,7 +9961,7 @@ impl Editor {
     }
 
     pub fn backtab(&mut self, _: &Backtab, window: &mut Window, cx: &mut Context<Self>) {
-        if self.mode.is_single_line() {
+        if self.display_mode.is_single_line() {
             cx.propagate();
             return;
         }
@@ -9968,7 +9974,7 @@ impl Editor {
     }
 
     pub fn tab(&mut self, _: &Tab, window: &mut Window, cx: &mut Context<Self>) {
-        if self.mode.is_single_line() {
+        if self.display_mode.is_single_line() {
             cx.propagate();
             return;
         }
@@ -10091,7 +10097,7 @@ impl Editor {
         if self.read_only(cx) {
             return;
         }
-        if self.mode.is_single_line() {
+        if self.display_mode.is_single_line() {
             cx.propagate();
             return;
         }
@@ -10199,7 +10205,7 @@ impl Editor {
         if self.read_only(cx) {
             return;
         }
-        if self.mode.is_single_line() {
+        if self.display_mode.is_single_line() {
             cx.propagate();
             return;
         }
@@ -10276,7 +10282,7 @@ impl Editor {
         if self.read_only(cx) {
             return;
         }
-        if self.mode.is_single_line() {
+        if self.display_mode.is_single_line() {
             cx.propagate();
             return;
         }
@@ -11521,7 +11527,7 @@ impl Editor {
 
     pub fn move_line_up(&mut self, _: &MoveLineUp, window: &mut Window, cx: &mut Context<Self>) {
         self.hide_mouse_cursor(HideMouseCursorOrigin::TypingAction, cx);
-        if self.mode.is_single_line() {
+        if self.display_mode.is_single_line() {
             cx.propagate();
             return;
         }
@@ -11632,7 +11638,7 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         self.hide_mouse_cursor(HideMouseCursorOrigin::TypingAction, cx);
-        if self.mode.is_single_line() {
+        if self.display_mode.is_single_line() {
             cx.propagate();
             return;
         }
@@ -11784,7 +11790,7 @@ impl Editor {
 
     pub fn rewrap(&mut self, _: &Rewrap, _: &mut Window, cx: &mut Context<Self>) {
         self.hide_mouse_cursor(HideMouseCursorOrigin::TypingAction, cx);
-        if self.mode.is_single_line() {
+        if self.display_mode.is_single_line() {
             cx.propagate();
             return;
         }
@@ -12495,7 +12501,7 @@ impl Editor {
             return;
         }
 
-        if self.mode.is_single_line() {
+        if self.display_mode.is_single_line() {
             cx.propagate();
             return;
         }
@@ -12538,7 +12544,7 @@ impl Editor {
             return;
         }
 
-        if self.mode.is_single_line() {
+        if self.display_mode.is_single_line() {
             cx.propagate();
             return;
         }
@@ -12575,7 +12581,7 @@ impl Editor {
             return;
         }
 
-        if self.mode.is_single_line() {
+        if self.display_mode.is_single_line() {
             cx.propagate();
             return;
         }
@@ -12673,7 +12679,7 @@ impl Editor {
             return;
         }
 
-        if matches!(self.mode, EditorMode::SingleLine) {
+        if matches!(self.display_mode, EditorDisplayMode::SingleLine) {
             cx.propagate();
             return;
         }
@@ -12723,7 +12729,7 @@ impl Editor {
     pub fn move_down(&mut self, _: &MoveDown, window: &mut Window, cx: &mut Context<Self>) {
         self.take_rename(true, window, cx);
 
-        if self.mode.is_single_line() {
+        if self.display_mode.is_single_line() {
             cx.propagate();
             return;
         }
@@ -12797,7 +12803,7 @@ impl Editor {
             return;
         }
 
-        if matches!(self.mode, EditorMode::SingleLine) {
+        if matches!(self.display_mode, EditorDisplayMode::SingleLine) {
             cx.propagate();
             return;
         }
@@ -13281,7 +13287,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if matches!(self.mode, EditorMode::SingleLine) {
+        if matches!(self.display_mode, EditorDisplayMode::SingleLine) {
             cx.propagate();
             return;
         }
@@ -13302,7 +13308,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if matches!(self.mode, EditorMode::SingleLine) {
+        if matches!(self.display_mode, EditorDisplayMode::SingleLine) {
             cx.propagate();
             return;
         }
@@ -13323,7 +13329,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if matches!(self.mode, EditorMode::SingleLine) {
+        if matches!(self.display_mode, EditorDisplayMode::SingleLine) {
             cx.propagate();
             return;
         }
@@ -13344,7 +13350,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if matches!(self.mode, EditorMode::SingleLine) {
+        if matches!(self.display_mode, EditorDisplayMode::SingleLine) {
             cx.propagate();
             return;
         }
@@ -13365,7 +13371,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if matches!(self.mode, EditorMode::SingleLine) {
+        if matches!(self.display_mode, EditorDisplayMode::SingleLine) {
             cx.propagate();
             return;
         }
@@ -13390,7 +13396,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if matches!(self.mode, EditorMode::SingleLine) {
+        if matches!(self.display_mode, EditorDisplayMode::SingleLine) {
             cx.propagate();
             return;
         }
@@ -13415,7 +13421,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if matches!(self.mode, EditorMode::SingleLine) {
+        if matches!(self.display_mode, EditorDisplayMode::SingleLine) {
             cx.propagate();
             return;
         }
@@ -13440,7 +13446,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if matches!(self.mode, EditorMode::SingleLine) {
+        if matches!(self.display_mode, EditorDisplayMode::SingleLine) {
             cx.propagate();
             return;
         }
@@ -13465,7 +13471,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if matches!(self.mode, EditorMode::SingleLine) {
+        if matches!(self.display_mode, EditorDisplayMode::SingleLine) {
             cx.propagate();
             return;
         }
@@ -13486,7 +13492,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if matches!(self.mode, EditorMode::SingleLine) {
+        if matches!(self.display_mode, EditorDisplayMode::SingleLine) {
             cx.propagate();
             return;
         }
@@ -13507,7 +13513,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if matches!(self.mode, EditorMode::SingleLine) {
+        if matches!(self.display_mode, EditorDisplayMode::SingleLine) {
             cx.propagate();
             return;
         }
@@ -13528,7 +13534,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if matches!(self.mode, EditorMode::SingleLine) {
+        if matches!(self.display_mode, EditorDisplayMode::SingleLine) {
             cx.propagate();
             return;
         }
@@ -13549,7 +13555,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if matches!(self.mode, EditorMode::SingleLine) {
+        if matches!(self.display_mode, EditorDisplayMode::SingleLine) {
             cx.propagate();
             return;
         }
@@ -13574,7 +13580,7 @@ impl Editor {
     }
 
     pub fn move_to_end(&mut self, _: &MoveToEnd, window: &mut Window, cx: &mut Context<Self>) {
-        if matches!(self.mode, EditorMode::SingleLine) {
+        if matches!(self.display_mode, EditorDisplayMode::SingleLine) {
             cx.propagate();
             return;
         }
@@ -14623,7 +14629,7 @@ impl Editor {
             let advance_downwards = action.advance_downwards
                 && selections_on_single_row
                 && !selections_selecting
-                && !matches!(this.mode, EditorMode::SingleLine);
+                && !matches!(this.display_mode, EditorDisplayMode::SingleLine);
 
             if advance_downwards {
                 let snapshot = this.buffer.read(cx).snapshot(cx);
@@ -16948,7 +16954,7 @@ impl Editor {
     }
 
     pub fn diagnostics_enabled(&self) -> bool {
-        self.diagnostics_enabled && self.mode.is_full()
+        self.diagnostics_enabled && self.display_mode.is_full()
     }
 
     pub fn inline_diagnostics_enabled(&self) -> bool {
@@ -17108,7 +17114,7 @@ impl Editor {
         window: &Window,
         cx: &mut Context<Self>,
     ) -> Option<()> {
-        if !self.mode().is_full() {
+        if !self.display_mode().is_full() {
             return None;
         }
         let pull_diagnostics_settings = ProjectSettings::get_global(cx)
@@ -18390,7 +18396,7 @@ impl Editor {
         const MINIMAP_FONT_WEIGHT: gpui::FontWeight = gpui::FontWeight::BLACK;
 
         let mut minimap = Editor::new_internal(
-            EditorMode::Minimap {
+            EditorDisplayMode::Minimap {
                 parent: cx.weak_entity(),
             },
             self.buffer.clone(),
@@ -18492,7 +18498,7 @@ impl Editor {
         // We intentionally do not inform the display map about the minimap style
         // so that wrapping is not recalculated and stays consistent for the editor
         // and its linked minimap.
-        if !self.mode.is_minimap() {
+        if !self.display_mode.is_minimap() {
             let rem_size = window.rem_size();
             self.display_map.update(cx, |map, cx| {
                 map.set_font(
@@ -19038,7 +19044,9 @@ impl Editor {
     }
 
     pub fn render_git_blame_gutter(&self, cx: &App) -> bool {
-        !self.mode().is_minimap() && self.show_git_blame_gutter && self.has_blame_entries(cx)
+        !self.display_mode().is_minimap()
+            && self.show_git_blame_gutter
+            && self.has_blame_entries(cx)
     }
 
     pub fn render_git_blame_inline(&self, window: &Window, cx: &App) -> bool {
@@ -20309,9 +20317,9 @@ impl Editor {
 
         let project_settings = ProjectSettings::get_global(cx);
         self.serialize_dirty_buffers =
-            !self.mode.is_minimap() && project_settings.session.restore_unsaved_buffers;
+            !self.display_mode.is_minimap() && project_settings.session.restore_unsaved_buffers;
 
-        if self.mode.is_full() {
+        if self.display_mode.is_full() {
             let show_inline_diagnostics = project_settings.diagnostics.inline.enabled;
             let inline_blame_enabled = project_settings.git.inline_blame_enabled();
             if self.show_inline_diagnostics != show_inline_diagnostics {
@@ -20329,7 +20337,7 @@ impl Editor {
                     != minimap_settings.minimap_enabled()
                 {
                     self.set_minimap_visibility(
-                        MinimapVisibility::for_mode(self.mode(), cx),
+                        MinimapVisibility::for_display_mode(self.display_mode(), cx),
                         window,
                         cx,
                     );
@@ -21162,7 +21170,7 @@ impl Editor {
     }
 
     pub fn register_addon<T: Addon>(&mut self, instance: T) {
-        if self.mode.is_minimap() {
+        if self.display_mode.is_minimap() {
             return;
         }
         self.addons
@@ -21215,7 +21223,7 @@ impl Editor {
         cx: &mut Context<Editor>,
     ) {
         if self.is_singleton(cx)
-            && !self.mode.is_minimap()
+            && !self.display_mode.is_minimap()
             && WorkspaceSettings::get(None, cx).restore_on_startup != RestoreOnStartupBehavior::None
         {
             let buffer_snapshot = OnceCell::new();
@@ -22946,8 +22954,8 @@ impl Render for Editor {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let settings = ThemeSettings::get_global(cx);
 
-        let mut text_style = match self.mode {
-            EditorMode::SingleLine | EditorMode::AutoHeight { .. } => TextStyle {
+        let mut text_style = match self.display_mode {
+            EditorDisplayMode::SingleLine | EditorDisplayMode::AutoHeight { .. } => TextStyle {
                 color: cx.theme().colors().editor_foreground,
                 font_family: settings.ui_font.family.clone(),
                 font_features: settings.ui_font.features.clone(),
@@ -22957,7 +22965,7 @@ impl Render for Editor {
                 line_height: relative(settings.buffer_line_height.value()),
                 ..Default::default()
             },
-            EditorMode::Full { .. } | EditorMode::Minimap { .. } => TextStyle {
+            EditorDisplayMode::Full { .. } | EditorDisplayMode::Minimap { .. } => TextStyle {
                 color: cx.theme().colors().editor_foreground,
                 font_family: settings.buffer_font.family.clone(),
                 font_features: settings.buffer_font.features.clone(),
@@ -22972,11 +22980,11 @@ impl Render for Editor {
             text_style.refine(text_style_refinement)
         }
 
-        let background = match self.mode {
-            EditorMode::SingleLine => cx.theme().system().transparent,
-            EditorMode::AutoHeight { .. } => cx.theme().system().transparent,
-            EditorMode::Full { .. } => cx.theme().colors().editor_background,
-            EditorMode::Minimap { .. } => cx.theme().colors().editor_background.opacity(0.7),
+        let background = match self.display_mode {
+            EditorDisplayMode::SingleLine => cx.theme().system().transparent,
+            EditorDisplayMode::AutoHeight { .. } => cx.theme().system().transparent,
+            EditorDisplayMode::Full { .. } => cx.theme().colors().editor_background,
+            EditorDisplayMode::Minimap { .. } => cx.theme().colors().editor_background.opacity(0.7),
         };
 
         EditorElement::new(
@@ -23661,7 +23669,7 @@ impl BreakpointPromptEditor {
 
         let prompt = cx.new(|cx| {
             let mut prompt = Editor::new(
-                EditorMode::AutoHeight {
+                EditorDisplayMode::AutoHeight {
                     min_lines: 1,
                     max_lines: Some(Self::MAX_LINES as usize),
                 },
