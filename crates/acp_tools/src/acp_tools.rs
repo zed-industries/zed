@@ -89,7 +89,8 @@ struct WatchedConnection {
     messages: Vec<WatchedConnectionMessage>,
     list_state: ListState,
     connection: Weak<acp::ClientSideConnection>,
-    pending_request_methods: HashMap<i32, Arc<str>>,
+    incoming_request_methods: HashMap<i32, Arc<str>>,
+    outgoing_request_methods: HashMap<i32, Arc<str>>,
     _task: Task<()>,
 }
 
@@ -145,7 +146,8 @@ impl AcpTools {
                 messages: vec![],
                 list_state: ListState::new(0, ListAlignment::Bottom, px(2048.)),
                 connection: active_connection.connection.clone(),
-                pending_request_methods: HashMap::default(),
+                incoming_request_methods: HashMap::default(),
+                outgoing_request_methods: HashMap::default(),
                 _task: task,
             });
         }
@@ -158,32 +160,37 @@ impl AcpTools {
         let language_registry = self.project.read(cx).languages().clone();
         let index = connection.messages.len();
 
-        let (name, message_type, params) = match stream_message.message {
+        let method_map = match stream_message.direction {
+            acp::StreamMessageDirection::Incoming => &mut connection.incoming_request_methods,
+            acp::StreamMessageDirection::Outgoing => &mut connection.outgoing_request_methods,
+        };
+
+        let (request_id, method, message_type, params) = match stream_message.message {
             acp::StreamMessageContent::Request { id, method, params } => {
-                connection
-                    .pending_request_methods
-                    .insert(id, method.clone());
-                (Some(method), MessageType::Request, Ok(params))
+                method_map.insert(id, method.clone());
+                (Some(id), method.into(), MessageType::Request, Ok(params))
             }
             acp::StreamMessageContent::Response { id, result } => {
-                if let Some(method) = connection.pending_request_methods.remove(&id) {
-                    (Some(method), MessageType::Response, result)
+                if let Some(method) = method_map.remove(&id) {
+                    (Some(id), method.into(), MessageType::Response, result)
                 } else {
                     (
-                        Some("[unrecgonized response]".into()),
+                        Some(id),
+                        "[unrecgonized response]".into(),
                         MessageType::Response,
                         result,
                     )
                 }
             }
             acp::StreamMessageContent::Notification { method, params } => {
-                (Some(method), MessageType::Notification, Ok(params))
+                (None, method.into(), MessageType::Notification, Ok(params))
             }
         };
 
         let message = WatchedConnectionMessage {
-            name: name.map(|name| name.to_string().into()),
+            name: method,
             message_type,
+            request_id,
             direction: stream_message.direction,
             collapsed_params_md: match params.as_ref() {
                 Ok(params) => params
@@ -272,15 +279,20 @@ impl AcpTools {
                         }
                     })
                     .child(
-                        div()
-                            .children(message.name.clone())
-                            .text_color(colors.text_muted),
+                        Label::new(message.name.clone())
+                            .buffer_font(cx)
+                            .color(Color::Muted),
                     )
                     .child(div().flex_1())
                     .child(
                         div()
                             .child(ui::Chip::new(message.message_type.to_string()))
                             .visible_on_hover("message"),
+                    )
+                    .children(
+                        message
+                            .request_id
+                            .map(|req_id| div().child(ui::Chip::new(req_id.to_string()))),
                     ),
             )
             // I'm aware using markdown is a hack. Trying to get something working for the demo.
@@ -330,7 +342,8 @@ impl AcpTools {
 }
 
 struct WatchedConnectionMessage {
-    name: Option<SharedString>,
+    name: SharedString,
+    request_id: Option<i32>,
     direction: acp::StreamMessageDirection,
     message_type: MessageType,
     params: Result<Option<serde_json::Value>, acp::Error>,
