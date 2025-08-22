@@ -1697,7 +1697,7 @@ impl AcpThreadView {
                 .absolute()
                 .top_0()
                 .right_0()
-                .w_12()
+                .w_16()
                 .h_full()
                 .bg(linear_gradient(
                     90.,
@@ -1837,6 +1837,7 @@ impl AcpThreadView {
                                     .w_full()
                                     .max_w_full()
                                     .ml_1p5()
+                                    .overflow_hidden()
                                     .child(h_flex().pr_8().child(self.render_markdown(
                                         tool_call.label.clone(),
                                         default_markdown_style(false, true, window, cx),
