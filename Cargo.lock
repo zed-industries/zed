@@ -18000,6 +18000,7 @@ dependencies = [
  "gpui",
  "schemars",
  "serde",
+ "serde_json",
  "settings",
  "workspace-hack",
 ]

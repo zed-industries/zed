@@ -38,45 +38,9 @@ impl JsonSchema for EditorMode {
     }
 
     fn json_schema(_gen: &mut schemars::SchemaGenerator) -> Schema {
+        let options = Self::get_schema_options();
         json_schema!({
-            "oneOf": [
-                {
-                    "const": "default",
-                    "description": "Standard editing mode"
-                },
-                {
-                    "const": "vim",
-                    "description": "Vim normal mode"
-                },
-                {
-                    "const": "vim_normal",
-                    "description": "Vim normal mode"
-                },
-                {
-                    "const": "vim_insert",
-                    "description": "Vim insert mode"
-                },
-                {
-                    "const": "vim_replace",
-                    "description": "Vim replace mode"
-                },
-                {
-                    "const": "vim_visual",
-                    "description": "Vim visual mode"
-                },
-                {
-                    "const": "vim_visual_line",
-                    "description": "Vim visual line mode"
-                },
-                {
-                    "const": "vim_visual_block",
-                    "description": "Vim visual block mode"
-                },
-                {
-                    "const": "helix_experimental",
-                    "description": "Helix mode (experimental)"
-                }
-            ],
+            "oneOf": options,
             "description":  "Editor mode"
         })
     }
@@ -191,5 +155,46 @@ impl EditorMode {
 
     pub fn vim() -> EditorMode {
         EditorMode::Vim(ModalMode::default())
+    }
+
+    pub fn get_schema_options() -> Vec<serde_json::Value> {
+        vec![
+            serde_json::json!({
+                "const": "default",
+                "description": "Standard editing mode"
+            }),
+            serde_json::json!({
+                "const": "vim",
+                "description": "Vim normal mode"
+            }),
+            serde_json::json!({
+                "const": "vim_normal",
+                "description": "Vim normal mode"
+            }),
+            serde_json::json!({
+                "const": "vim_insert",
+                "description": "Vim insert mode"
+            }),
+            serde_json::json!({
+                "const": "vim_replace",
+                "description": "Vim replace mode"
+            }),
+            serde_json::json!({
+                "const": "vim_visual",
+                "description": "Vim visual mode"
+            }),
+            serde_json::json!({
+                "const": "vim_visual_line",
+                "description": "Vim visual line mode"
+            }),
+            serde_json::json!({
+                "const": "vim_visual_block",
+                "description": "Vim visual block mode"
+            }),
+            serde_json::json!({
+                "const": "helix_experimental",
+                "description": "Helix mode (experimental)"
+            }),
+        ]
     }
 }

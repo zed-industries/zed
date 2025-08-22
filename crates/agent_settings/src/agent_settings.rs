@@ -90,23 +90,19 @@ impl JsonSchema for AgentEditorMode {
         "AgentEditorMode".into()
     }
 
-    fn json_schema(schema_gen: &mut schemars::SchemaGenerator) -> schemars::Schema {
-        let editor_mode_schema = EditorMode::json_schema(schema_gen);
+    fn json_schema(_gen: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        use vim_mode_setting::EditorMode;
 
-        // TODO: This schema is incorrect. Need to extend editor_mode_schema with `inherit`
-        let result = json_schema!({
-            "oneOf": [
-                {
-                    "const": "inherit",
-                    "description": "Inherit editor mode from global settings"
-                },
-                editor_mode_schema
-            ],
+        let mut options = vec![serde_json::json!({
+            "const": "inherit",
+            "description": "Inherit editor mode from global settings"
+        })];
+        options.extend(EditorMode::get_schema_options());
+
+        json_schema!({
+            "oneOf": options,
             "description": "Agent editor mode - either inherit from global settings or override with a specific mode"
-        });
-
-        dbg!(&result);
-        result
+        })
     }
 }
 
