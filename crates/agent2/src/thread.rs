@@ -1805,10 +1805,7 @@ impl Thread {
             .collect::<BTreeMap<_, _>>();
 
         let mut context_server_tools = Vec::new();
-        let mut seen_tools = tools
-            .iter()
-            .map(|(name, _)| name.clone())
-            .collect::<HashSet<_>>();
+        let mut seen_tools = tools.keys().cloned().collect::<HashSet<_>>();
         let mut duplicate_tool_names = HashSet::default();
         for (server_id, server_tools) in self.context_server_registry.read(cx).servers() {
             for (tool_name, tool) in server_tools {
@@ -1838,7 +1835,7 @@ impl Thread {
                     tools.insert(tool_name, tool.clone());
                 }
             } else {
-                tools.insert(tool_name.into(), tool.clone());
+                tools.insert(tool_name, tool.clone());
             }
         }
 
