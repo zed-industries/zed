@@ -3,7 +3,7 @@ use crate::{
     Member, Pane, PaneAxis, SerializableItemRegistry, Workspace, WorkspaceId, item::ItemHandle,
     path_list::PathList,
 };
-use anyhow::{Context as _, Result};
+use anyhow::Result;
 use async_recursion::async_recursion;
 use db::sqlez::{
     bindable::{Bind, Column, StaticColumnCount},
@@ -19,161 +19,21 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use util::{ResultExt, paths::SanitizedPath};
+use util::ResultExt;
 use uuid::Uuid;
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
-pub struct SerializedSshProject {
+pub struct SerializedSshConnection {
     pub id: SshProjectId,
     pub host: String,
     pub port: Option<u16>,
-    pub paths: Vec<String>,
     pub user: Option<String>,
-}
-
-impl SerializedSshProject {
-    pub fn ssh_urls(&self) -> Vec<PathBuf> {
-        self.paths
-            .iter()
-            .map(|path| {
-                let mut result = String::new();
-                if let Some(user) = &self.user {
-                    result.push_str(user);
-                    result.push('@');
-                }
-                result.push_str(&self.host);
-                if let Some(port) = &self.port {
-                    result.push(':');
-                    result.push_str(&port.to_string());
-                }
-                result.push_str(path);
-                PathBuf::from(result)
-            })
-            .collect()
-    }
-}
-
-impl StaticColumnCount for SerializedSshProject {
-    fn column_count() -> usize {
-        5
-    }
-}
-
-impl Bind for &SerializedSshProject {
-    fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
-        let next_index = statement.bind(&self.id.0, start_index)?;
-        let next_index = statement.bind(&self.host, next_index)?;
-        let next_index = statement.bind(&self.port, next_index)?;
-        let raw_paths = serde_json::to_string(&self.paths)?;
-        let next_index = statement.bind(&raw_paths, next_index)?;
-        statement.bind(&self.user, next_index)
-    }
-}
-
-impl Column for SerializedSshProject {
-    fn column(statement: &mut Statement, start_index: i32) -> Result<(Self, i32)> {
-        let id = statement.column_int64(start_index)?;
-        let host = statement.column_text(start_index + 1)?.to_string();
-        let (port, _) = Option::<u16>::column(statement, start_index + 2)?;
-        let raw_paths = statement.column_text(start_index + 3)?.to_string();
-        let paths: Vec<String> = serde_json::from_str(&raw_paths)?;
-
-        let (user, _) = Option::<String>::column(statement, start_index + 4)?;
-
-        Ok((
-            Self {
-                id: SshProjectId(id as u64),
-                host,
-                port,
-                paths,
-                user,
-            },
-            start_index + 5,
-        ))
-    }
-}
-
-#[derive(Debug, PartialEq, Clone)]
-pub struct LocalPaths(Arc<Vec<PathBuf>>);
-
-impl LocalPaths {
-    pub fn new<P: AsRef<Path>>(paths: impl IntoIterator<Item = P>) -> Self {
-        let mut paths: Vec<PathBuf> = paths
-            .into_iter()
-            .map(|p| SanitizedPath::from(p).into())
-            .collect();
-        // Ensure all future `zed workspace1 workspace2` and `zed workspace2 workspace1` calls are using the same workspace.
-        // The actual workspace order is stored in the `LocalPathsOrder` struct.
-        paths.sort();
-        Self(Arc::new(paths))
-    }
-
-    pub fn paths(&self) -> &Arc<Vec<PathBuf>> {
-        &self.0
-    }
-}
-
-impl StaticColumnCount for LocalPaths {}
-impl Bind for &LocalPaths {
-    fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
-        statement.bind(&bincode::serialize(&self.0)?, start_index)
-    }
-}
-
-impl Column for LocalPaths {
-    fn column(statement: &mut Statement, start_index: i32) -> Result<(Self, i32)> {
-        let path_blob = statement.column_blob(start_index)?;
-        let paths: Arc<Vec<PathBuf>> = if path_blob.is_empty() {
-            Default::default()
-        } else {
-            bincode::deserialize(path_blob).context("Bincode deserialization of paths failed")?
-        };
-
-        Ok((Self(paths), start_index + 1))
-    }
-}
-
-#[derive(Debug, PartialEq, Clone)]
-pub struct LocalPathsOrder(Vec<usize>);
-
-impl LocalPathsOrder {
-    pub fn new(order: impl IntoIterator<Item = usize>) -> Self {
-        Self(order.into_iter().collect())
-    }
-
-    pub fn order(&self) -> &[usize] {
-        self.0.as_slice()
-    }
-
-    pub fn default_for_paths(paths: &LocalPaths) -> Self {
-        Self::new(0..paths.0.len())
-    }
-}
-
-impl StaticColumnCount for LocalPathsOrder {}
-impl Bind for &LocalPathsOrder {
-    fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
-        statement.bind(&bincode::serialize(&self.0)?, start_index)
-    }
-}
-
-impl Column for LocalPathsOrder {
-    fn column(statement: &mut Statement, start_index: i32) -> Result<(Self, i32)> {
-        let order_blob = statement.column_blob(start_index)?;
-        let order = if order_blob.is_empty() {
-            Vec::new()
-        } else {
-            bincode::deserialize(order_blob).context("deserializing workspace root order")?
-        };
-
-        Ok((Self(order), start_index + 1))
-    }
 }
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum SerializedWorkspaceLocation {
     Local,
-    Ssh(SerializedSshProject),
+    Ssh(SerializedSshConnection),
 }
 
 impl SerializedWorkspaceLocation {

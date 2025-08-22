@@ -19,10 +19,7 @@ use picker::{
 pub use remote_servers::RemoteServerProjects;
 use settings::Settings;
 pub use ssh_connections::SshSettings;
-use std::{
-    path::{Path, PathBuf},
-    sync::Arc,
-};
+use std::{path::Path, sync::Arc};
 use ui::{KeyBinding, ListItem, ListItemSpacing, Tooltip, prelude::*, tooltip_container};
 use util::{ResultExt, paths::PathExt};
 use workspace::{
@@ -323,7 +320,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                                     workspace.open_workspace_for_paths(false, paths, window, cx)
                                 }
                             }
-                            SerializedWorkspaceLocation::Ssh(ssh_project) => {
+                            SerializedWorkspaceLocation::Ssh(connection) => {
                                 let app_state = workspace.app_state().clone();
 
                                 let replace_window = if replace_current_window {
@@ -339,12 +336,12 @@ impl PickerDelegate for RecentProjectsDelegate {
 
                                 let connection_options = SshSettings::get_global(cx)
                                     .connection_options_for(
-                                        ssh_project.host.clone(),
-                                        ssh_project.port,
-                                        ssh_project.user.clone(),
+                                        connection.host.clone(),
+                                        connection.port,
+                                        connection.user.clone(),
                                     );
 
-                                let paths = ssh_project.paths.iter().map(PathBuf::from).collect();
+                                let paths = candidate_workspace_paths.paths().to_vec();
 
                                 cx.spawn_in(window, async move |_, cx| {
                                     open_ssh_project(

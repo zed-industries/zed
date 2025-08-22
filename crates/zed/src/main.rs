@@ -977,7 +977,7 @@ async fn restore_or_create_workspace(app_state: Arc<AppState>, cx: &mut AsyncApp
                         match connection_options {
                             Ok(connection_options) => recent_projects::open_ssh_project(
                                 connection_options,
-                                ssh.paths.into_iter().map(PathBuf::from).collect(),
+                                paths.paths().into_iter().map(PathBuf::from).collect(),
                                 app_state,
                                 workspace::OpenOptions::default(),
                                 cx,

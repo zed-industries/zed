@@ -46,7 +46,13 @@ impl HistoryManager {
                 .unwrap_or_default()
                 .into_iter()
                 .rev()
-                .map(|(id, location, paths)| HistoryManagerEntry::new(id, &location, &paths))
+                .filter_map(|(id, location, paths)| {
+                    if matches!(location, SerializedWorkspaceLocation::Local) {
+                        Some(HistoryManagerEntry::new(id, &paths))
+                    } else {
+                        None
+                    }
+                })
                 .collect::<Vec<_>>();
             this.update(cx, |this, cx| {
                 this.history = recent_folders;
@@ -120,7 +126,7 @@ impl HistoryManager {
 }
 
 impl HistoryManagerEntry {
-    pub fn new(id: WorkspaceId, _location: &SerializedWorkspaceLocation, paths: &PathList) -> Self {
+    pub fn new(id: WorkspaceId, paths: &PathList) -> Self {
         let path = paths
             .paths()
             .iter()

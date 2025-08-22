@@ -5,14 +5,17 @@ use std::{
 
 use util::paths::SanitizedPath;
 
-use crate::persistence::model::{LocalPaths, SerializedSshProject};
-
+/// A list of absolute paths, in a specific order.
+///
+/// The paths are stored in lexicographic order, so that they can be compared to
+/// other path lists without regard to the order of the paths.
 #[derive(Default, PartialEq, Eq, Debug, Clone)]
 pub struct PathList {
     paths: Arc<[PathBuf]>,
     order: Arc<[usize]>,
 }
 
+#[derive(Debug)]
 pub struct SerializedPathList {
     pub paths: String,
     pub order: String,
@@ -97,16 +100,6 @@ impl PathList {
             write!(&mut order, "{}", *ix).unwrap();
         }
         SerializedPathList { paths, order }
-    }
-
-    pub fn from_local(local_paths: LocalPaths) -> Self {
-        let paths = local_paths.paths();
-        Self::new(paths.as_slice())
-    }
-
-    pub fn from_ssh(ssh_project: SerializedSshProject) -> Self {
-        let paths: Vec<PathBuf> = ssh_project.paths.iter().map(|p| PathBuf::from(p)).collect();
-        Self::new(&paths)
     }
 }
 
