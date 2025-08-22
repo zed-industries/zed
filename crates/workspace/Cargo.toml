@@ -29,7 +29,6 @@ test-support = [
 any_vec.workspace = true
 anyhow.workspace = true
 async-recursion.workspace = true
-bincode = "1.2.1"
 call.workspace = true
 client.workspace = true
 clock.workspace = true
