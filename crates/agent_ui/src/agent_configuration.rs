@@ -93,14 +93,6 @@ impl AgentConfiguration {
         let scroll_handle = ScrollHandle::new();
         let scrollbar_state = ScrollbarState::new(scroll_handle.clone());
 
-        let mut expanded_provider_configurations = HashMap::default();
-        if LanguageModelRegistry::read_global(cx)
-            .provider(&ZED_CLOUD_PROVIDER_ID)
-            .is_some_and(|cloud_provider| cloud_provider.must_accept_terms(cx))
-        {
-            expanded_provider_configurations.insert(ZED_CLOUD_PROVIDER_ID, true);
-        }
-
         let mut this = Self {
             fs,
             language_registry,
@@ -109,7 +101,7 @@ impl AgentConfiguration {
             configuration_views_by_provider: HashMap::default(),
             context_server_store,
             expanded_context_server_tools: HashMap::default(),
-            expanded_provider_configurations,
+            expanded_provider_configurations: HashMap::default(),
             tools,
             _registry_subscription: registry_subscription,
             scroll_handle,
