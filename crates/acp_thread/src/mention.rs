@@ -38,7 +38,6 @@ pub enum MentionUri {
         id: PromptId,
         name: String,
     },
-    // FIXME parse line range for abs_path None
     Selection {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         abs_path: Option<PathBuf>,
