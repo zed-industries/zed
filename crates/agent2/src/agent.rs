@@ -228,7 +228,7 @@ impl NativeAgent {
     ) -> Entity<AcpThread> {
         let connection = Rc::new(NativeAgentConnection(cx.entity()));
         let registry = LanguageModelRegistry::read_global(cx);
-        let summarization_model = registry.thread_summary_model().map(|c| c.model);
+        let summarization_model = registry.thread_summary_model(cx).map(|c| c.model);
 
         thread_handle.update(cx, |thread, cx| {
             thread.set_summarization_model(summarization_model, cx);
@@ -521,7 +521,7 @@ impl NativeAgent {
 
         let registry = LanguageModelRegistry::read_global(cx);
         let default_model = registry.default_model().map(|m| m.model);
-        let summarization_model = registry.thread_summary_model().map(|m| m.model);
+        let summarization_model = registry.thread_summary_model(cx).map(|m| m.model);
 
         for session in self.sessions.values_mut() {
             session.thread.update(cx, |thread, cx| {
@@ -857,7 +857,6 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
         cx.spawn(async move |cx| {
             log::debug!("Starting thread creation in async context");
 
-            let action_log = cx.new(|_cx| ActionLog::new(project.clone()))?;
             // Create Thread
             let thread = agent.update(
                 cx,
@@ -878,7 +877,6 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
                             project.clone(),
                             agent.project_context.clone(),
                             agent.context_server_registry.clone(),
-                            action_log.clone(),
                             agent.templates.clone(),
                             default_model,
                             cx,
@@ -1408,10 +1406,9 @@ mod tests {
         history: &Entity<HistoryStore>,
         cx: &mut TestAppContext,
     ) -> Vec<(HistoryEntryId, String)> {
-        history.read_with(cx, |history, cx| {
+        history.read_with(cx, |history, _| {
             history
-                .entries(cx)
-                .iter()
+                .entries()
                 .map(|e| (e.id(), e.title().to_string()))
                 .collect::<Vec<_>>()
         })

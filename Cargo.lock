@@ -4072,6 +4072,7 @@ dependencies = [
 name = "crashes"
 version = "0.1.0"
 dependencies = [
+ "bincode",
  "crash-handler",
  "log",
  "mach2 0.5.0",
@@ -4081,6 +4082,7 @@ dependencies = [
  "serde",
  "serde_json",
  "smol",
+ "system_specs",
  "workspace-hack",
 ]
 
@@ -5760,14 +5762,10 @@ dependencies = [
 name = "feedback"
 version = "0.1.0"
 dependencies = [
- "client",
  "editor",
  "gpui",
- "human_bytes",
  "menu",
- "release_channel",
- "serde",
- "sysinfo",
+ "system_specs",
  "ui",
  "urlencoding",
  "util",
@@ -11657,6 +11655,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "pciid-parser"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0008e816fcdaf229cdd540e9b6ca2dc4a10d65c31624abb546c6420a02846e61"
+
+[[package]]
 name = "pem"
 version = "3.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -16177,6 +16181,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "system_specs"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "client",
+ "gpui",
+ "human_bytes",
+ "pciid-parser",
+ "release_channel",
+ "serde",
+ "sysinfo",
+ "workspace-hack",
+]
+
+[[package]]
 name = "tab_switcher"
 version = "0.1.0"
 dependencies = [
@@ -20436,6 +20455,7 @@ dependencies = [
  "auto_update",
  "auto_update_ui",
  "backtrace",
+ "bincode",
  "breadcrumbs",
  "call",
  "channel",
@@ -20534,6 +20554,7 @@ dependencies = [
  "supermaven",
  "svg_preview",
  "sysinfo",
+ "system_specs",
  "tab_switcher",
  "task",
  "tasks_ui",

@@ -57,7 +57,9 @@ use crate::agent_diff::AgentDiff;
 use crate::profile_selector::{ProfileProvider, ProfileSelector};
 
 use crate::ui::preview::UsageCallout;
-use crate::ui::{AgentNotification, AgentNotificationEvent, BurnModeTooltip};
+use crate::ui::{
+    AgentNotification, AgentNotificationEvent, BurnModeTooltip, UnavailableEditingTooltip,
+};
 use crate::{
     AgentDiffPane, AgentPanel, ContinueThread, ContinueWithBurnMode, ExpandMessageEditor, Follow,
     KeepAll, OpenAgentDiff, OpenHistory, RejectAll, ToggleBurnMode, ToggleProfileSelector,
@@ -1239,6 +1241,8 @@ impl AcpThreadView {
                     None
                 };
 
+                let agent_name = self.agent.name();
+
                 v_flex()
                     .id(("user_message", entry_ix))
                     .pt_2()
@@ -1292,42 +1296,61 @@ impl AcpThreadView {
                                     .text_xs()
                                     .child(editor.clone().into_any_element()),
                             )
-                            .when(editing && editor_focus, |this|
-                                this.child(
-                                    h_flex()
-                                        .absolute()
-                                        .top_neg_3p5()
-                                        .right_3()
-                                        .gap_1()
-                                        .rounded_sm()
-                                        .border_1()
-                                        .border_color(cx.theme().colors().border)
-                                        .bg(cx.theme().colors().editor_background)
-                                        .overflow_hidden()
-                                        .child(
-                                            IconButton::new("cancel", IconName::Close)
-                                                .icon_color(Color::Error)
-                                                .icon_size(IconSize::XSmall)
-                                                .on_click(cx.listener(Self::cancel_editing))
-                                        )
-                                        .child(
-                                            IconButton::new("regenerate", IconName::Return)
-                                                .icon_color(Color::Muted)
-                                                .icon_size(IconSize::XSmall)
-                                                .tooltip(Tooltip::text(
-                                                    "Editing will restart the thread from this point."
-                                                ))
-                                                .on_click(cx.listener({
-                                                    let editor = editor.clone();
-                                                    move |this, _, window, cx| {
-                                                        this.regenerate(
-                                                            entry_ix, &editor, window, cx,
-                                                        );
-                                                    }
-                                                })),
-                                        )
-                                )
-                            ),
+                            .when(editor_focus, |this| {
+                                let base_container = h_flex()
+                                    .absolute()
+                                    .top_neg_3p5()
+                                    .right_3()
+                                    .gap_1()
+                                    .rounded_sm()
+                                    .border_1()
+                                    .border_color(cx.theme().colors().border)
+                                    .bg(cx.theme().colors().editor_background)
+                                    .overflow_hidden();
+
+                                if message.id.is_some() {
+                                    this.child(
+                                        base_container
+                                            .child(
+                                                IconButton::new("cancel", IconName::Close)
+                                                    .icon_color(Color::Error)
+                                                    .icon_size(IconSize::XSmall)
+                                                    .on_click(cx.listener(Self::cancel_editing))
+                                            )
+                                            .child(
+                                                IconButton::new("regenerate", IconName::Return)
+                                                    .icon_color(Color::Muted)
+                                                    .icon_size(IconSize::XSmall)
+                                                    .tooltip(Tooltip::text(
+                                                        "Editing will restart the thread from this point."
+                                                    ))
+                                                    .on_click(cx.listener({
+                                                        let editor = editor.clone();
+                                                        move |this, _, window, cx| {
+                                                            this.regenerate(
+                                                                entry_ix, &editor, window, cx,
+                                                            );
+                                                        }
+                                                    })),
+                                            )
+                                    )
+                                } else {
+                                    this.child(
+                                        base_container
+                                            .border_dashed()
+                                            .child(
+                                                IconButton::new("editing_unavailable", IconName::PencilUnavailable)
+                                                    .icon_size(IconSize::Small)
+                                                    .icon_color(Color::Muted)
+                                                    .style(ButtonStyle::Transparent)
+                                                    .tooltip(move |_window, cx| {
+                                                        cx.new(|_| UnavailableEditingTooltip::new(agent_name.into()))
+                                                            .into()
+                                                    })
+                                            )
+                                    )
+                                }
+                            }),
                     )
                     .into_any()
             }
@@ -1372,7 +1395,7 @@ impl AcpThreadView {
             AgentThreadEntry::ToolCall(tool_call) => {
                 let has_terminals = tool_call.terminals().next().is_some();
 
-                div().w_full().py_1p5().px_5().map(|this| {
+                div().w_full().py_1().px_5().map(|this| {
                     if has_terminals {
                         this.children(tool_call.terminals().map(|terminal| {
                             self.render_terminal_tool_call(
@@ -1570,7 +1593,7 @@ impl AcpThreadView {
             .size(IconSize::Small)
             .color(Color::Muted);
 
-        let base_container = h_flex().size_4().justify_center();
+        let base_container = h_flex().flex_shrink_0().size_4().justify_center();
 
         if is_collapsible {
             base_container
@@ -1623,20 +1646,32 @@ impl AcpThreadView {
             | ToolCallStatus::WaitingForConfirmation { .. }
             | ToolCallStatus::Completed => None,
             ToolCallStatus::InProgress => Some(
-                Icon::new(IconName::ArrowCircle)
-                    .color(Color::Muted)
-                    .size(IconSize::Small)
-                    .with_animation(
-                        "running",
-                        Animation::new(Duration::from_secs(3)).repeat(),
-                        |icon, delta| icon.transform(Transformation::rotate(percentage(delta))),
+                div()
+                    .absolute()
+                    .right_2()
+                    .child(
+                        Icon::new(IconName::ArrowCircle)
+                            .color(Color::Muted)
+                            .size(IconSize::Small)
+                            .with_animation(
+                                "running",
+                                Animation::new(Duration::from_secs(3)).repeat(),
+                                |icon, delta| {
+                                    icon.transform(Transformation::rotate(percentage(delta)))
+                                },
+                            ),
                     )
                     .into_any(),
             ),
             ToolCallStatus::Rejected | ToolCallStatus::Canceled | ToolCallStatus::Failed => Some(
-                Icon::new(IconName::Close)
-                    .color(Color::Error)
-                    .size(IconSize::Small)
+                div()
+                    .absolute()
+                    .right_2()
+                    .child(
+                        Icon::new(IconName::Close)
+                            .color(Color::Error)
+                            .size(IconSize::Small),
+                    )
                     .into_any_element(),
             ),
         };
@@ -1662,7 +1697,7 @@ impl AcpThreadView {
                 .absolute()
                 .top_0()
                 .right_0()
-                .w_12()
+                .w_16()
                 .h_full()
                 .bg(linear_gradient(
                     90.,
@@ -1734,13 +1769,14 @@ impl AcpThreadView {
             .child(
                 h_flex()
                     .id(header_id)
+                    .relative()
                     .w_full()
+                    .max_w_full()
                     .gap_1()
-                    .justify_between()
                     .when(use_card_layout, |this| {
-                        this.pl_2()
-                            .pr_1p5()
-                            .py_1()
+                        this.pl_1p5()
+                            .pr_1()
+                            .py_0p5()
                             .rounded_t_md()
                             .when(is_open && !failed_tool_call, |this| {
                                 this.border_b_1()
@@ -1753,7 +1789,7 @@ impl AcpThreadView {
                             .group(&card_header_id)
                             .relative()
                             .w_full()
-                            .min_h_6()
+                            .h(window.line_height() - px(2.))
                             .text_size(self.tool_name_font_size())
                             .child(self.render_tool_call_icon(
                                 card_header_id,
@@ -1797,21 +1833,15 @@ impl AcpThreadView {
                             } else {
                                 h_flex()
                                     .id("non-card-label-container")
-                                    .w_full()
                                     .relative()
+                                    .w_full()
+                                    .max_w_full()
                                     .ml_1p5()
                                     .overflow_hidden()
-                                    .child(
-                                        h_flex()
-                                            .id("non-card-label")
-                                            .pr_8()
-                                            .w_full()
-                                            .overflow_x_scroll()
-                                            .child(self.render_markdown(
-                                                tool_call.label.clone(),
-                                                default_markdown_style(false, true, window, cx),
-                                            )),
-                                    )
+                                    .child(h_flex().pr_8().child(self.render_markdown(
+                                        tool_call.label.clone(),
+                                        default_markdown_style(false, true, window, cx),
+                                    )))
                                     .child(gradient_overlay(gradient_color))
                                     .on_click(cx.listener({
                                         let id = tool_call.id.clone();
@@ -1877,13 +1907,10 @@ impl AcpThreadView {
             .text_color(cx.theme().colors().text_muted)
             .child(self.render_markdown(markdown, default_markdown_style(false, false, window, cx)))
             .child(
-                Button::new(button_id, "Collapse")
+                IconButton::new(button_id, IconName::ChevronUp)
                     .full_width()
                     .style(ButtonStyle::Outlined)
-                    .label_size(LabelSize::Small)
-                    .icon(IconName::ChevronUp)
                     .icon_color(Color::Muted)
-                    .icon_position(IconPosition::Start)
                     .on_click(cx.listener({
                         move |this: &mut Self, _, _, cx: &mut Context<Self>| {
                             this.expanded_tool_calls.remove(&tool_call_id);
@@ -2385,39 +2412,32 @@ impl AcpThreadView {
             return None;
         }
 
+        let has_both = user_rules_text.is_some() && rules_file_text.is_some();
+
         Some(
-            v_flex()
+            h_flex()
                 .px_2p5()
-                .gap_1()
+                .pb_1()
+                .child(
+                    Icon::new(IconName::Attach)
+                        .size(IconSize::XSmall)
+                        .color(Color::Disabled),
+                )
                 .when_some(user_rules_text, |parent, user_rules_text| {
                     parent.child(
                         h_flex()
-                            .group("user-rules")
                             .id("user-rules")
-                            .w_full()
-                            .child(
-                                Icon::new(IconName::Reader)
-                                    .size(IconSize::XSmall)
-                                    .color(Color::Disabled),
-                            )
+                            .ml_1()
+                            .mr_1p5()
                             .child(
                                 Label::new(user_rules_text)
                                     .size(LabelSize::XSmall)
                                     .color(Color::Muted)
                                     .truncate()
-                                    .buffer_font(cx)
-                                    .ml_1p5()
-                                    .mr_0p5(),
+                                    .buffer_font(cx),
                             )
-                            .child(
-                                IconButton::new("open-prompt-library", IconName::ArrowUpRight)
-                                    .shape(ui::IconButtonShape::Square)
-                                    .icon_size(IconSize::XSmall)
-                                    .icon_color(Color::Ignored)
-                                    .visible_on_hover("user-rules")
-                                    // TODO: Figure out a way to pass focus handle here so we can display the `OpenRulesLibrary`  keybinding
-                                    .tooltip(Tooltip::text("View User Rules")),
-                            )
+                            .hover(|s| s.bg(cx.theme().colors().element_hover))
+                            .tooltip(Tooltip::text("View User Rules"))
                             .on_click(move |_event, window, cx| {
                                 window.dispatch_action(
                                     Box::new(OpenRulesLibrary {
@@ -2428,33 +2448,20 @@ impl AcpThreadView {
                             }),
                     )
                 })
+                .when(has_both, |this| this.child(Divider::vertical()))
                 .when_some(rules_file_text, |parent, rules_file_text| {
                     parent.child(
                         h_flex()
-                            .group("project-rules")
                             .id("project-rules")
-                            .w_full()
-                            .child(
-                                Icon::new(IconName::Reader)
-                                    .size(IconSize::XSmall)
-                                    .color(Color::Disabled),
-                            )
+                            .ml_1p5()
                             .child(
                                 Label::new(rules_file_text)
                                     .size(LabelSize::XSmall)
                                     .color(Color::Muted)
-                                    .buffer_font(cx)
-                                    .ml_1p5()
-                                    .mr_0p5(),
+                                    .buffer_font(cx),
                             )
-                            .child(
-                                IconButton::new("open-rule", IconName::ArrowUpRight)
-                                    .shape(ui::IconButtonShape::Square)
-                                    .icon_size(IconSize::XSmall)
-                                    .icon_color(Color::Ignored)
-                                    .visible_on_hover("project-rules")
-                                    .tooltip(Tooltip::text("View Project Rules")),
-                            )
+                            .hover(|s| s.bg(cx.theme().colors().element_hover))
+                            .tooltip(Tooltip::text("View Project Rules"))
                             .on_click(cx.listener(Self::handle_open_rules)),
                     )
                 })
@@ -2532,9 +2539,9 @@ impl AcpThreadView {
                 )
             })
             .when(render_history, |this| {
-                let recent_history = self
-                    .history_store
-                    .update(cx, |history_store, cx| history_store.recent_entries(3, cx));
+                let recent_history: Vec<_> = self.history_store.update(cx, |history_store, _| {
+                    history_store.entries().take(3).collect()
+                });
                 this.justify_end().child(
                     v_flex()
                         .child(
@@ -4051,8 +4058,10 @@ impl AcpThreadView {
             .group("thread-controls-container")
             .w_full()
             .mr_1()
+            .pt_1()
             .pb_2()
             .px(RESPONSE_PADDING_X)
+            .gap_px()
             .opacity(0.4)
             .hover(|style| style.opacity(1.))
             .flex_wrap()

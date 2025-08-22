@@ -1,4 +1,3 @@
-use crate::color_contrast;
 use editor::{CursorLayout, HighlightedRange, HighlightedRangeLine};
 use gpui::{
     AbsoluteLength, AnyElement, App, AvailableSpace, Bounds, ContentMask, Context, DispatchPhase,
@@ -27,6 +26,7 @@ use terminal::{
     terminal_settings::TerminalSettings,
 };
 use theme::{ActiveTheme, Theme, ThemeSettings};
+use ui::utils::ensure_minimum_contrast;
 use ui::{ParentElement, Tooltip};
 use util::ResultExt;
 use workspace::Workspace;
@@ -534,7 +534,7 @@ impl TerminalElement {
 
         // Only apply contrast adjustment to non-decorative characters
         if !Self::is_decorative_character(indexed.c) {
-            fg = color_contrast::ensure_minimum_contrast(fg, bg, minimum_contrast);
+            fg = ensure_minimum_contrast(fg, bg, minimum_contrast);
         }
 
         // Ghostty uses (175/255) as the multiplier (~0.69), Alacritty uses 0.66, Kitty
@@ -1598,6 +1598,7 @@ pub fn convert_color(fg: &terminal::alacritty_terminal::vte::ansi::Color, theme:
 mod tests {
     use super::*;
     use gpui::{AbsoluteLength, Hsla, font};
+    use ui::utils::apca_contrast;
 
     #[test]
     fn test_is_decorative_character() {
@@ -1713,7 +1714,7 @@ mod tests {
         };
 
         // Should have poor contrast
-        let actual_contrast = color_contrast::apca_contrast(white_fg, light_gray_bg).abs();
+        let actual_contrast = apca_contrast(white_fg, light_gray_bg).abs();
         assert!(
             actual_contrast < 30.0,
             "White on light gray should have poor APCA contrast: {}",
@@ -1721,12 +1722,12 @@ mod tests {
         );
 
         // After adjustment with minimum APCA contrast of 45, should be darker
-        let adjusted = color_contrast::ensure_minimum_contrast(white_fg, light_gray_bg, 45.0);
+        let adjusted = ensure_minimum_contrast(white_fg, light_gray_bg, 45.0);
         assert!(
             adjusted.l < white_fg.l,
             "Adjusted color should be darker than original"
         );
-        let adjusted_contrast = color_contrast::apca_contrast(adjusted, light_gray_bg).abs();
+        let adjusted_contrast = apca_contrast(adjusted, light_gray_bg).abs();
         assert!(adjusted_contrast >= 45.0, "Should meet minimum contrast");
 
         // Test case 2: Dark colors (poor contrast)
@@ -1744,7 +1745,7 @@ mod tests {
         };
 
         // Should have poor contrast
-        let actual_contrast = color_contrast::apca_contrast(black_fg, dark_gray_bg).abs();
+        let actual_contrast = apca_contrast(black_fg, dark_gray_bg).abs();
         assert!(
             actual_contrast < 30.0,
             "Black on dark gray should have poor APCA contrast: {}",
@@ -1752,16 +1753,16 @@ mod tests {
         );
 
         // After adjustment with minimum APCA contrast of 45, should be lighter
-        let adjusted = color_contrast::ensure_minimum_contrast(black_fg, dark_gray_bg, 45.0);
+        let adjusted = ensure_minimum_contrast(black_fg, dark_gray_bg, 45.0);
         assert!(
             adjusted.l > black_fg.l,
             "Adjusted color should be lighter than original"
         );
-        let adjusted_contrast = color_contrast::apca_contrast(adjusted, dark_gray_bg).abs();
+        let adjusted_contrast = apca_contrast(adjusted, dark_gray_bg).abs();
         assert!(adjusted_contrast >= 45.0, "Should meet minimum contrast");
 
         // Test case 3: Already good contrast
-        let good_contrast = color_contrast::ensure_minimum_contrast(black_fg, white_fg, 45.0);
+        let good_contrast = ensure_minimum_contrast(black_fg, white_fg, 45.0);
         assert_eq!(
             good_contrast, black_fg,
             "Good contrast should not be adjusted"
@@ -1788,11 +1789,11 @@ mod tests {
         };
 
         // With minimum contrast of 0.0, no adjustment should happen
-        let no_adjust = color_contrast::ensure_minimum_contrast(white_fg, white_bg, 0.0);
+        let no_adjust = ensure_minimum_contrast(white_fg, white_bg, 0.0);
         assert_eq!(no_adjust, white_fg, "No adjustment with min_contrast 0.0");
 
         // With minimum APCA contrast of 15, it should adjust to a darker color
-        let adjusted = color_contrast::ensure_minimum_contrast(white_fg, white_bg, 15.0);
+        let adjusted = ensure_minimum_contrast(white_fg, white_bg, 15.0);
         assert!(
             adjusted.l < white_fg.l,
             "White on white should become darker, got l={}",
@@ -1800,7 +1801,7 @@ mod tests {
         );
 
         // Verify the contrast is now acceptable
-        let new_contrast = color_contrast::apca_contrast(adjusted, white_bg).abs();
+        let new_contrast = apca_contrast(adjusted, white_bg).abs();
         assert!(
             new_contrast >= 15.0,
             "Adjusted APCA contrast {} should be >= 15.0",

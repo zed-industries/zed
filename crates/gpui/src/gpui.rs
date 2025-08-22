@@ -352,7 +352,7 @@ impl<T> Flatten<T> for Result<T> {
 }
 
 /// Information about the GPU GPUI is running on.
-#[derive(Default, Debug)]
+#[derive(Default, Debug, serde::Serialize, serde::Deserialize, Clone)]
 pub struct GpuSpecs {
     /// Whether the GPU is really a fake (like `llvmpipe`) running on the CPU.
     pub is_software_emulated: bool,

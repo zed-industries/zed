@@ -37,11 +37,11 @@ impl AgentTool for OpenTool {
     type Input = OpenToolInput;
     type Output = String;
 
-    fn name(&self) -> SharedString {
-        "open".into()
+    fn name() -> &'static str {
+        "open"
     }
 
-    fn kind(&self) -> ToolKind {
+    fn kind() -> ToolKind {
         ToolKind::Execute
     }
 

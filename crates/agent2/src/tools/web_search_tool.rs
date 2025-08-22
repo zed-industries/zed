@@ -40,11 +40,11 @@ impl AgentTool for WebSearchTool {
     type Input = WebSearchToolInput;
     type Output = WebSearchToolOutput;
 
-    fn name(&self) -> SharedString {
-        "web_search".into()
+    fn name() -> &'static str {
+        "web_search"
     }
 
-    fn kind(&self) -> acp::ToolKind {
+    fn kind() -> acp::ToolKind {
         acp::ToolKind::Fetch
     }
 

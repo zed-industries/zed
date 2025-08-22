@@ -1,7 +1,7 @@
 use crate::{AgentTool, ToolCallEventStream};
 use agent_client_protocol::ToolKind;
 use anyhow::{Context as _, Result, anyhow};
-use gpui::{App, AppContext, Entity, SharedString, Task};
+use gpui::{App, AppContext, Entity, Task};
 use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -50,11 +50,11 @@ impl AgentTool for CopyPathTool {
     type Input = CopyPathToolInput;
     type Output = String;
 
-    fn name(&self) -> SharedString {
-        "copy_path".into()
+    fn name() -> &'static str {
+        "copy_path"
     }
 
-    fn kind(&self) -> ToolKind {
+    fn kind() -> ToolKind {
         ToolKind::Move
     }
 
