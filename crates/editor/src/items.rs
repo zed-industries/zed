@@ -42,6 +42,7 @@ use ui::{IconDecorationKind, prelude::*};
 use util::{ResultExt, TryFutureExt, paths::PathExt};
 use workspace::{
     CollaboratorId, ItemId, ItemNavHistory, ToolbarItemLocation, ViewId, Workspace, WorkspaceId,
+    invalid_buffer_view::InvalidBufferView,
     item::{FollowableItem, Item, ItemEvent, ProjectItem, SaveOptions},
     searchable::{Direction, SearchEvent, SearchableItem, SearchableItemHandle},
 };
@@ -1400,6 +1401,16 @@ impl ProjectItem for Editor {
         }
 
         editor
+    }
+
+    fn for_broken_project_item(
+        abs_path: PathBuf,
+        is_local: bool,
+        e: &anyhow::Error,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Option<InvalidBufferView> {
+        Some(InvalidBufferView::new(abs_path, is_local, e, window, cx))
     }
 }
 
