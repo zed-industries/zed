@@ -56,10 +56,9 @@ impl WindowsDispatcher {
                 Ok(())
             })
         };
-        ThreadPool::RunWithPriorityAndOptionsAsync(
+        ThreadPool::RunWithPriorityAsync(
             &handler,
             WorkItemPriority::High,
-            WorkItemOptions::TimeSliced,
         )
         .log_err();
     }
@@ -72,12 +71,7 @@ impl WindowsDispatcher {
                 Ok(())
             })
         };
-        let delay = TimeSpan {
-            // A time period expressed in 100-nanosecond units.
-            // 10,000,000 ticks per second
-            Duration: (duration.as_nanos() / 100) as i64,
-        };
-        ThreadPoolTimer::CreateTimer(&handler, delay).log_err();
+        ThreadPoolTimer::CreateTimer(&handler, duration.into()).log_err();
     }
 }
 
