@@ -14,11 +14,9 @@ impl Render for UnavailableEditingTooltip {
         tooltip_container(window, cx, |this, _, _| {
             this.child(Label::new("Editing Unavailable")).child(
                 div().max_w_64().child(
-                    Label::new(
-                        "Editing previosus user messages is not available for this provider yet.",
-                    )
-                    .size(LabelSize::Small)
-                    .color(Color::Muted),
+                    Label::new("Editing previous messages is not available for this agent yet.")
+                        .size(LabelSize::Small)
+                        .color(Color::Muted),
                 ),
             )
         })
