@@ -5,6 +5,7 @@ use crate::{
 use acp_thread::{MentionUri, selection_name};
 use agent_client_protocol as acp;
 use agent_servers::AgentServer;
+use agent_settings::{AgentEditorMode, AgentSettings};
 use agent2::HistoryStore;
 use anyhow::{Context as _, Result, anyhow};
 use assistant_slash_commands::codeblock_fence_for_path;
@@ -113,12 +114,10 @@ impl MessageEditor {
         });
         let mention_set = MentionSet::default();
 
-        let settings = agent_settings::AgentSettings::get_global(cx);
+        let settings = AgentSettings::get_global(cx);
         let editor_mode = match settings.editor_mode {
-            agent_settings::AgentEditorMode::EditorModeOverride(mode) => mode,
-            agent_settings::AgentEditorMode::Inherit => {
-                vim_mode_setting::EditorModeSetting::get_global(cx).0
-            }
+            AgentEditorMode::EditorModeOverride(mode) => mode,
+            AgentEditorMode::Inherit => vim_mode_setting::EditorModeSetting::get_global(cx).0,
         };
 
         let editor = cx.new(|cx| {
@@ -129,7 +128,7 @@ impl MessageEditor {
             editor.set_placeholder_text(placeholder, cx);
             editor.set_show_indent_guides(false, cx);
             editor.set_soft_wrap();
-            editor.set_default_editor_mode(editor_mode);
+            editor.set_editor_mode(editor_mode, cx);
             editor.set_completion_provider(Some(Rc::new(completion_provider)));
             editor.set_context_menu_options(ContextMenuOptions {
                 min_entries_visible: 12,
@@ -166,6 +165,17 @@ impl MessageEditor {
                     cx.notify();
                 }
             }
+        }));
+
+        subscriptions.push(cx.observe_global::<AgentSettings>(move |this, cx| {
+            let settings = AgentSettings::get_global(cx);
+            let editor_mode = match settings.editor_mode {
+                AgentEditorMode::EditorModeOverride(mode) => mode,
+                AgentEditorMode::Inherit => vim_mode_setting::EditorModeSetting::get_global(cx).0,
+            };
+            this.editor.update(cx, |editor, cx| {
+                editor.set_editor_mode(editor_mode, cx);
+            });
         }));
 
         Self {

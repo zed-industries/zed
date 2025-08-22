@@ -443,7 +443,7 @@ impl Vim {
             return;
         };
 
-        if !editor.default_editor_mode().is_modal() {
+        if !editor.editor_mode().is_modal() {
             return;
         }
 
@@ -471,7 +471,7 @@ impl Vim {
         let vim = Vim::new(window, cx);
 
         vim.update(cx, |vim, _| {
-            let initial_mode = match editor.default_editor_mode() {
+            let initial_mode = match editor.editor_mode() {
                 EditorMode::Default => return,
                 EditorMode::Vim(modal_mode) => modal_mode,
                 EditorMode::Helix(modal_mode) => modal_mode,
@@ -483,7 +483,7 @@ impl Vim {
             entity: vim.clone(),
         });
 
-        let default_editor_mode = editor.default_editor_mode();
+        let default_editor_mode = editor.editor_mode();
         vim.update(cx, move |_, cx| {
             Vim::action(
                 editor,
@@ -914,23 +914,19 @@ impl Vim {
                     vim.set_mark(mark, vec![*anchor], editor.buffer(), window, cx);
                 });
             }
-            EditorEvent::EditorModeChanged => {
-                self.update_editor(cx, |_vim, _editor, _cx| {
-                    // TODO
-                    // let enabled = editor.default_editor_mode().is_modal();
-                    // if was_enabled == enabled {
-                    //     return;
-                    // }
-                    // if !enabled {
-                    //     editor.set_relative_line_number(None, cx);
-                    // }
-                    // was_enabled = enabled;
-                    // if enabled {
-                    //     Self::activate(editor, window, cx)
-                    // } else {
-                    //     Self::deactivate(editor, cx)
-                    // }
-                    //
+            EditorEvent::EditorModeChanged { new_mode, old_mode } => {
+                self.update_editor(cx, |_vim, editor, cx| {
+                    let enabled = new_mode.is_modal();
+                    let was_enabled = old_mode.is_modal();
+                    if was_enabled == enabled {
+                        return;
+                    }
+                    if enabled {
+                        Self::activate(editor, window, cx)
+                    } else {
+                        editor.set_relative_line_number(None, cx);
+                        Self::deactivate(editor, cx)
+                    }
                 });
             }
             _ => {}

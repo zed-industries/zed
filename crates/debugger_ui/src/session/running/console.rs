@@ -75,7 +75,7 @@ impl Console {
             editor.set_show_wrap_guides(false, cx);
             editor.set_show_indent_guides(false, cx);
             editor.set_show_edit_predictions(Some(false), window, cx);
-            editor.set_default_editor_mode(EditorMode::Default);
+            editor.set_editor_mode(EditorMode::Default, cx);
             editor.set_soft_wrap_mode(language::language_settings::SoftWrap::EditorWidth, cx);
             editor
         });

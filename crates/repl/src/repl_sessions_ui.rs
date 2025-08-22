@@ -75,7 +75,7 @@ pub fn init(cx: &mut App) {
                 return;
             };
 
-            if !editor.default_editor_mode().is_modal() || !editor.buffer().read(cx).is_singleton()
+            if !editor.editor_mode().is_modal() || !editor.buffer().read(cx).is_singleton()
             {
                 return;
             }

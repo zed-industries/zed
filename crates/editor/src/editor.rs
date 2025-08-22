@@ -201,6 +201,7 @@ use ui::{
     IconSize, Indicator, Key, Tooltip, h_flex, prelude::*,
 };
 use util::{RangeExt, ResultExt, TryFutureExt, maybe, post_inc};
+use vim_mode_setting::EditorMode;
 use workspace::{
     CollaboratorId, Item as WorkspaceItem, ItemId, ItemNavHistory, OpenInTerminal, OpenTerminal,
     RestoreOnStartupBehavior, SERIALIZATION_THROTTLE_TIME, SplitDirection, TabBarSettings, Toast,
@@ -1179,7 +1180,7 @@ pub struct Editor {
     next_color_inlay_id: usize,
     colors: Option<LspColorData>,
     folding_newlines: Task<()>,
-    default_editor_mode: vim_mode_setting::EditorMode,
+    editor_mode: vim_mode_setting::EditorMode,
     // editor_mode: EditorMode, <-- while init define which editor,
 
     // agenty subscribe to agen settings
@@ -2293,7 +2294,7 @@ impl Editor {
             display_mode: mode,
             selection_drag_state: SelectionDragState::None,
             folding_newlines: Task::ready(()),
-            default_editor_mode: vim_mode_setting::EditorMode::default(),
+            editor_mode: vim_mode_setting::EditorMode::default(),
         };
 
         if is_minimap {
@@ -3030,12 +3031,19 @@ impl Editor {
         })
     }
 
-    pub fn set_default_editor_mode(&mut self, to: vim_mode_setting::EditorMode) {
-        self.default_editor_mode = to;
+    pub fn set_editor_mode(&mut self, to: vim_mode_setting::EditorMode, cx: &mut Context<Self>) {
+        let from = self.editor_mode;
+        if from != to {
+            self.editor_mode = to;
+            cx.emit(EditorEvent::EditorModeChanged {
+                old_mode: from,
+                new_mode: to,
+            });
+        }
     }
 
-    pub fn default_editor_mode(&self) -> vim_mode_setting::EditorMode {
-        self.default_editor_mode
+    pub fn editor_mode(&self) -> vim_mode_setting::EditorMode {
+        self.editor_mode
     }
 
     fn selections_did_change(
@@ -22937,7 +22945,10 @@ pub enum EditorEvent {
         anchor: Anchor,
         is_deactivate: bool,
     },
-    EditorModeChanged,
+    EditorModeChanged {
+        new_mode: EditorMode,
+        old_mode: EditorMode,
+    },
 }
 
 impl EventEmitter<EditorEvent> for Editor {}
