@@ -970,7 +970,7 @@ async fn test_peers_following_each_other(cx_a: &mut TestAppContext, cx_b: &mut T
     // the follow.
     workspace_b.update_in(cx_b, |workspace, window, cx| {
         workspace.active_pane().update(cx, |pane, cx| {
-            pane.activate_prev_item(true, window, cx);
+            pane.activate_previous_item(&Default::default(), window, cx);
         });
     });
     executor.run_until_parked();
@@ -1073,7 +1073,7 @@ async fn test_peers_following_each_other(cx_a: &mut TestAppContext, cx_b: &mut T
     // Client A cycles through some tabs.
     workspace_a.update_in(cx_a, |workspace, window, cx| {
         workspace.active_pane().update(cx, |pane, cx| {
-            pane.activate_prev_item(true, window, cx);
+            pane.activate_previous_item(&Default::default(), window, cx);
         });
     });
     executor.run_until_parked();
@@ -1117,7 +1117,7 @@ async fn test_peers_following_each_other(cx_a: &mut TestAppContext, cx_b: &mut T
 
     workspace_a.update_in(cx_a, |workspace, window, cx| {
         workspace.active_pane().update(cx, |pane, cx| {
-            pane.activate_prev_item(true, window, cx);
+            pane.activate_previous_item(&Default::default(), window, cx);
         });
     });
     executor.run_until_parked();
@@ -1164,7 +1164,7 @@ async fn test_peers_following_each_other(cx_a: &mut TestAppContext, cx_b: &mut T
 
     workspace_a.update_in(cx_a, |workspace, window, cx| {
         workspace.active_pane().update(cx, |pane, cx| {
-            pane.activate_prev_item(true, window, cx);
+            pane.activate_previous_item(&Default::default(), window, cx);
         });
     });
     executor.run_until_parked();
