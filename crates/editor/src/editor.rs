@@ -1763,17 +1763,17 @@ impl Editor {
     }
 
     pub fn new(
-        mode: EditorDisplayMode,
+        display_mode: EditorDisplayMode,
         buffer: Entity<MultiBuffer>,
         project: Option<Entity<Project>>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        Editor::new_internal(mode, buffer, project, None, window, cx)
+        Editor::new_internal(display_mode, buffer, project, None, window, cx)
     }
 
     fn new_internal(
-        mode: EditorDisplayMode,
+        display_mode: EditorDisplayMode,
         buffer: Entity<MultiBuffer>,
         project: Option<Entity<Project>>,
         display_map: Option<Entity<DisplayMap>>,
@@ -1781,12 +1781,12 @@ impl Editor {
         cx: &mut Context<Self>,
     ) -> Self {
         debug_assert!(
-            display_map.is_none() || mode.is_minimap(),
+            display_map.is_none() || display_mode.is_minimap(),
             "Providing a display map for a new editor is only intended for the minimap and might have unintended side effects otherwise!"
         );
 
-        let full_mode = mode.is_full();
-        let is_minimap = mode.is_minimap();
+        let full_mode = display_mode.is_full();
+        let is_minimap = display_mode.is_minimap();
         let diagnostics_max_severity = if full_mode {
             EditorSettings::get_global(cx)
                 .diagnostics_max_severity
@@ -1855,7 +1855,7 @@ impl Editor {
             blink_manager
         });
 
-        let soft_wrap_mode_override = matches!(mode, EditorDisplayMode::SingleLine)
+        let soft_wrap_mode_override = matches!(display_mode, EditorDisplayMode::SingleLine)
             .then(|| language_settings::SoftWrap::None);
 
         let mut project_subscriptions = Vec::new();
@@ -2036,7 +2036,7 @@ impl Editor {
         }
 
         let show_indent_guides = if matches!(
-            mode,
+            display_mode,
             EditorDisplayMode::SingleLine | EditorDisplayMode::Minimap { .. }
         ) {
             Some(false)
@@ -2044,7 +2044,7 @@ impl Editor {
             None
         };
 
-        let breakpoint_store = match (&mode, project.as_ref()) {
+        let breakpoint_store = match (&display_mode, project.as_ref()) {
             (EditorDisplayMode::Full { .. }, Some(project)) => {
                 Some(project.read(cx).breakpoint_store())
             }
@@ -2103,8 +2103,8 @@ impl Editor {
                 horizontal: full_mode,
                 vertical: full_mode,
             },
-            minimap_visibility: MinimapVisibility::for_display_mode(&mode, cx),
-            offset_content: !matches!(mode, EditorDisplayMode::SingleLine),
+            minimap_visibility: MinimapVisibility::for_display_mode(&display_mode, cx),
+            offset_content: !matches!(display_mode, EditorDisplayMode::SingleLine),
             show_breadcrumbs: EditorSettings::get_global(cx).toolbar.breadcrumbs,
             show_gutter: full_mode,
             show_line_numbers: (!full_mode).then_some(false),
@@ -2259,7 +2259,7 @@ impl Editor {
                 .hide_mouse
                 .unwrap_or_default(),
             change_list: ChangeList::new(),
-            display_mode: mode,
+            display_mode,
             selection_drag_state: SelectionDragState::None,
             folding_newlines: Task::ready(()),
             editor_mode: if full_mode {
@@ -2302,7 +2302,7 @@ impl Editor {
                     }
                 }
                 EditorEvent::Edited { .. } => {
-                    if !vim_enabled(cx) {
+                    if !editor.editor_mode().is_modal() {
                         let (map, selections) = editor.selections.all_adjusted_display(cx);
                         let pop_state = editor
                             .change_list
@@ -2461,7 +2461,7 @@ impl Editor {
     ) -> KeyContext {
         let mut key_context = KeyContext::new_with_defaults();
         key_context.add("Editor");
-        let mode = match self.display_mode {
+        let display_mode = match self.display_mode {
             EditorDisplayMode::SingleLine => "single_line",
             EditorDisplayMode::AutoHeight { .. } => "auto_height",
             EditorDisplayMode::Minimap { .. } => "minimap",
@@ -2472,7 +2472,7 @@ impl Editor {
             key_context.add("jupyter");
         }
 
-        key_context.set("mode", mode);
+        key_context.set("mode", display_mode);
         if self.pending_rename.is_some() {
             key_context.add("renaming");
         }
@@ -20663,7 +20663,7 @@ impl Editor {
             .and_then(|e| e.to_str())
             .map(|a| a.to_string()));
 
-        let vim_mode = vim_enabled(cx);
+        let vim_mode = self.editor_mode.is_modal();
 
         let edit_predictions_provider = all_language_settings(file, cx).edit_predictions.provider;
         let copilot_enabled = edit_predictions_provider
@@ -21252,13 +21252,6 @@ impl Editor {
         self.pull_diagnostics(for_buffer, window, cx);
         self.refresh_colors(ignore_cache, for_buffer, window, cx);
     }
-}
-
-fn vim_enabled(cx: &App) -> bool {
-    cx.global::<SettingsStore>()
-        .raw_user_settings()
-        .get("vim_mode")
-        == Some(&serde_json::Value::Bool(true))
 }
 
 fn process_completion_for_edit(
