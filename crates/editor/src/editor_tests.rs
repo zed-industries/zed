@@ -12237,7 +12237,7 @@ async fn test_completion_mode(cx: &mut TestAppContext) {
                 settings.defaults.completions = Some(CompletionSettings {
                     lsp_insert_mode,
                     words: WordsCompletionMode::Disabled,
-                    min_words_query_len: 0,
+                    words_min_length: 0,
                     lsp: true,
                     lsp_fetch_timeout_ms: 0,
                 });
@@ -12296,7 +12296,7 @@ async fn test_completion_with_mode_specified_by_action(cx: &mut TestAppContext) 
     update_test_language_settings(&mut cx, |settings| {
         settings.defaults.completions = Some(CompletionSettings {
             words: WordsCompletionMode::Disabled,
-            min_words_query_len: 0,
+            words_min_length: 0,
             // set the opposite here to ensure that the action is overriding the default behavior
             lsp_insert_mode: LspInsertMode::Insert,
             lsp: true,
@@ -12333,7 +12333,7 @@ async fn test_completion_with_mode_specified_by_action(cx: &mut TestAppContext) 
     update_test_language_settings(&mut cx, |settings| {
         settings.defaults.completions = Some(CompletionSettings {
             words: WordsCompletionMode::Disabled,
-            min_words_query_len: 0,
+            words_min_length: 0,
             // set the opposite here to ensure that the action is overriding the default behavior
             lsp_insert_mode: LspInsertMode::Replace,
             lsp: true,
@@ -13075,7 +13075,7 @@ async fn test_word_completion(cx: &mut TestAppContext) {
     init_test(cx, |language_settings| {
         language_settings.defaults.completions = Some(CompletionSettings {
             words: WordsCompletionMode::Fallback,
-            min_words_query_len: 0,
+            words_min_length: 0,
             lsp: true,
             lsp_fetch_timeout_ms: 10,
             lsp_insert_mode: LspInsertMode::Insert,
@@ -13172,7 +13172,7 @@ async fn test_word_completions_do_not_duplicate_lsp_ones(cx: &mut TestAppContext
     init_test(cx, |language_settings| {
         language_settings.defaults.completions = Some(CompletionSettings {
             words: WordsCompletionMode::Enabled,
-            min_words_query_len: 0,
+            words_min_length: 0,
             lsp: true,
             lsp_fetch_timeout_ms: 0,
             lsp_insert_mode: LspInsertMode::Insert,
@@ -13236,7 +13236,7 @@ async fn test_word_completions_continue_on_typing(cx: &mut TestAppContext) {
     init_test(cx, |language_settings| {
         language_settings.defaults.completions = Some(CompletionSettings {
             words: WordsCompletionMode::Disabled,
-            min_words_query_len: 0,
+            words_min_length: 0,
             lsp: true,
             lsp_fetch_timeout_ms: 0,
             lsp_insert_mode: LspInsertMode::Insert,
@@ -13310,7 +13310,7 @@ async fn test_word_completions_usually_skip_digits(cx: &mut TestAppContext) {
     init_test(cx, |language_settings| {
         language_settings.defaults.completions = Some(CompletionSettings {
             words: WordsCompletionMode::Fallback,
-            min_words_query_len: 0,
+            words_min_length: 0,
             lsp: false,
             lsp_fetch_timeout_ms: 0,
             lsp_insert_mode: LspInsertMode::Insert,
@@ -13373,7 +13373,7 @@ async fn test_word_completions_do_not_show_before_threshold(cx: &mut TestAppCont
     init_test(cx, |language_settings| {
         language_settings.defaults.completions = Some(CompletionSettings {
             words: WordsCompletionMode::Enabled,
-            min_words_query_len: 3,
+            words_min_length: 3,
             lsp: true,
             lsp_fetch_timeout_ms: 0,
             lsp_insert_mode: LspInsertMode::Insert,

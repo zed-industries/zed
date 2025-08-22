@@ -1507,7 +1507,7 @@
     // Before that value, it's still possible to trigger the words-based completion manually with the corresponding editor command.
     //
     // Default: 3
-    "min_words_query_len": 3,
+    "words_min_length": 3,
     // Whether to fetch LSP completions or not.
     //
     // Default: true

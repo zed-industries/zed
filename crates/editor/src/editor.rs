@@ -5577,8 +5577,8 @@ impl Editor {
             .is_none_or(|query| !query.chars().any(|c| c.is_digit(10)));
 
         let omit_word_completions = match &query {
-            Some(query) => query.chars().count() < completion_settings.min_words_query_len,
-            None => completion_settings.min_words_query_len != 0,
+            Some(query) => query.chars().count() < completion_settings.words_min_length,
+            None => completion_settings.words_min_length != 0,
         };
 
         let (mut words, provider_responses) = match &provider {

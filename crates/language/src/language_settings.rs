@@ -355,7 +355,7 @@ pub struct CompletionSettings {
     ///
     /// Default: 3
     #[serde(default = "default_3")]
-    pub min_words_query_len: usize,
+    pub words_min_length: usize,
     /// Whether to fetch LSP completions or not.
     ///
     /// Default: true
@@ -1474,7 +1474,7 @@ impl settings::Settings for AllLanguageSettings {
             } else {
                 d.completions = Some(CompletionSettings {
                     words: mode,
-                    min_words_query_len: 3,
+                    words_min_length: 3,
                     lsp: true,
                     lsp_fetch_timeout_ms: 0,
                     lsp_insert_mode: LspInsertMode::ReplaceSuffix,

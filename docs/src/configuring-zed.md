@@ -2425,7 +2425,7 @@ Examples:
 {
   "completions": {
     "words": "fallback",
-    "min_words_query_len": 3,
+    "words_min_length": 3,
     "lsp": true,
     "lsp_fetch_timeout_ms": 0,
     "lsp_insert_mode": "replace_suffix"
@@ -2449,7 +2449,7 @@ Examples:
 
 - Description: Minimum number of characters required to automatically trigger word-based completions.
   Before that value, it's still possible to trigger the words-based completion manually with the corresponding editor command.
-- Setting: `min_words_query_len`
+- Setting: `words_min_length`
 - Default: `3`
 
 **Options**
