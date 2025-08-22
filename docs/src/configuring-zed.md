@@ -2448,7 +2448,7 @@ Examples:
 ### Min Words Query Length
 
 - Description: Minimum number of characters required to automatically trigger word-based completions.
-               Before that value, it's still possible to trigger the words-based completion manually with the corresponding editor command.
+  Before that value, it's still possible to trigger the words-based completion manually with the corresponding editor command.
 - Setting: `min_words_query_len`
 - Default: `3`
 
