@@ -1,6 +1,7 @@
 use editor::{Editor, EditorSettings};
 use gpui::{
-    Context, Entity, IntoElement, ParentElement, Render, Styled, Subscription, WeakEntity, Window, div,
+    Context, Entity, IntoElement, ParentElement, Render, Styled, Subscription, WeakEntity, Window,
+    div,
 };
 use language::LanguageName;
 use settings::Settings as _;
@@ -54,22 +55,20 @@ impl Render for ActiveBufferLanguage {
                 "Unknown".to_string()
             };
 
-            el
-                .py(DynamicSpacing::Base04.rems(cx))
-                .child(
-                  Button::new("change-language", active_language_text)
-                      .label_size(LabelSize::Small)
-                      .on_click(cx.listener(|this, _, window, cx| {
-                          if let Some(workspace) = this.workspace.upgrade() {
-                              workspace.update(cx, |workspace, cx| {
-                                  LanguageSelector::toggle(workspace, window, cx)
-                              });
-                          }
-                      }))
-                      .tooltip(|window, cx| {
-                          Tooltip::for_action("Select Language", &Toggle, window, cx)
-                      }),
-                )
+            el.py(DynamicSpacing::Base04.rems(cx)).child(
+                Button::new("change-language", active_language_text)
+                    .label_size(LabelSize::Small)
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        if let Some(workspace) = this.workspace.upgrade() {
+                            workspace.update(cx, |workspace, cx| {
+                                LanguageSelector::toggle(workspace, window, cx)
+                            });
+                        }
+                    }))
+                    .tooltip(|window, cx| {
+                        Tooltip::for_action("Select Language", &Toggle, window, cx)
+                    }),
+            )
         })
     }
 }

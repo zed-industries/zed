@@ -21,23 +21,21 @@ impl Render for SearchButton {
             return button.w_0().invisible();
         }
 
-        button
-            .py(DynamicSpacing::Base04.rems(cx))
-            .child(
-                IconButton::new("project-search-indicator", SEARCH_ICON)
-                    .icon_size(IconSize::Small)
-                    .tooltip(|window, cx| {
-                        Tooltip::for_action(
-                            "Project Search",
-                            &workspace::DeploySearch::default(),
-                            window,
-                            cx,
-                        )
-                    })
-                    .on_click(cx.listener(|_this, _, window, cx| {
-                        window.dispatch_action(Box::new(workspace::DeploySearch::default()), cx);
-                    })),
-            )
+        button.py(DynamicSpacing::Base04.rems(cx)).child(
+            IconButton::new("project-search-indicator", SEARCH_ICON)
+                .icon_size(IconSize::Small)
+                .tooltip(|window, cx| {
+                    Tooltip::for_action(
+                        "Project Search",
+                        &workspace::DeploySearch::default(),
+                        window,
+                        cx,
+                    )
+                })
+                .on_click(cx.listener(|_this, _, window, cx| {
+                    window.dispatch_action(Box::new(workspace::DeploySearch::default()), cx);
+                })),
+        )
     }
 }
 

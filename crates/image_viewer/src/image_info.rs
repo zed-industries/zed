@@ -77,11 +77,9 @@ impl Render for ImageInfo {
             .to_string(),
         );
 
-        div()
-            .py(DynamicSpacing::Base04.rems(cx))
-            .child(
-                Button::new("image-metadata", components.join(" • ")).label_size(LabelSize::Small),
-            )
+        div().py(DynamicSpacing::Base04.rems(cx)).child(
+            Button::new("image-metadata", components.join(" • ")).label_size(LabelSize::Small),
+        )
     }
 }
 

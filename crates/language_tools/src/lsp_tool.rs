@@ -1007,28 +1007,26 @@ impl Render for LspTool {
 
         let lsp_tool = cx.entity();
 
-        div()
-            .py(DynamicSpacing::Base04.rems(cx))
-            .child(
-                PopoverMenu::new("lsp-tool")
-                    .menu(move |_, cx| lsp_tool.read(cx).lsp_menu.clone())
-                    .anchor(Corner::BottomLeft)
-                    .with_handle(self.popover_menu_handle.clone())
-                    .trigger_with_tooltip(
-                        IconButton::new("zed-lsp-tool-button", IconName::BoltOutlined)
-                            .when_some(indicator, IconButton::indicator)
-                            .icon_size(IconSize::Small)
-                            .indicator_border_color(Some(cx.theme().colors().status_bar_background)),
-                        move |window, cx| {
-                            Tooltip::with_meta(
-                                "Language Servers",
-                                Some(&ToggleMenu),
-                                description,
-                                window,
-                                cx,
-                            )
-                        },
-                    ),
-            )
+        div().py(DynamicSpacing::Base04.rems(cx)).child(
+            PopoverMenu::new("lsp-tool")
+                .menu(move |_, cx| lsp_tool.read(cx).lsp_menu.clone())
+                .anchor(Corner::BottomLeft)
+                .with_handle(self.popover_menu_handle.clone())
+                .trigger_with_tooltip(
+                    IconButton::new("zed-lsp-tool-button", IconName::BoltOutlined)
+                        .when_some(indicator, IconButton::indicator)
+                        .icon_size(IconSize::Small)
+                        .indicator_border_color(Some(cx.theme().colors().status_bar_background)),
+                    move |window, cx| {
+                        Tooltip::with_meta(
+                            "Language Servers",
+                            Some(&ToggleMenu),
+                            description,
+                            window,
+                            cx,
+                        )
+                    },
+                ),
+        )
     }
 }
