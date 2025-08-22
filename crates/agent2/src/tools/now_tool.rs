@@ -32,11 +32,11 @@ impl AgentTool for NowTool {
     type Input = NowToolInput;
     type Output = String;
 
-    fn name(&self) -> SharedString {
-        "now".into()
+    fn name() -> &'static str {
+        "now"
     }
 
-    fn kind(&self) -> acp::ToolKind {
+    fn kind() -> acp::ToolKind {
         acp::ToolKind::Other
     }
 

@@ -67,11 +67,11 @@ impl AgentTool for GrepTool {
     type Input = GrepToolInput;
     type Output = String;
 
-    fn name(&self) -> SharedString {
-        "grep".into()
+    fn name() -> &'static str {
+        "grep"
     }
 
-    fn kind(&self) -> acp::ToolKind {
+    fn kind() -> acp::ToolKind {
         acp::ToolKind::Search
     }
 
