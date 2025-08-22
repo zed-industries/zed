@@ -414,7 +414,7 @@ impl RulesLibrary {
         });
         Self {
             title_bar: if !cfg!(target_os = "macos") {
-                Some(cx.new(|_| PlatformTitleBar::new("rules-library-title-bar")))
+                Some(cx.new(|cx| PlatformTitleBar::new("rules-library-title-bar", cx)))
             } else {
                 None
             },

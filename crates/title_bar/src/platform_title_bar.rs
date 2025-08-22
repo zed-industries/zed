@@ -1,28 +1,35 @@
 use gpui::{
-    AnyElement, Context, Decorations, Hsla, InteractiveElement, IntoElement, MouseButton,
+    AnyElement, Context, Decorations, Entity, Hsla, InteractiveElement, IntoElement, MouseButton,
     ParentElement, Pixels, StatefulInteractiveElement, Styled, Window, WindowControlArea, div, px,
 };
 use smallvec::SmallVec;
 use std::mem;
 use ui::prelude::*;
 
-use crate::platforms::{platform_linux, platform_mac, platform_windows};
+use crate::{
+    platforms::{platform_linux, platform_mac, platform_windows},
+    system_window_tabs::SystemWindowTabs,
+};
 
 pub struct PlatformTitleBar {
     id: ElementId,
     platform_style: PlatformStyle,
     children: SmallVec<[AnyElement; 2]>,
     should_move: bool,
+    system_window_tabs: Entity<SystemWindowTabs>,
 }
 
 impl PlatformTitleBar {
-    pub fn new(id: impl Into<ElementId>) -> Self {
+    pub fn new(id: impl Into<ElementId>, cx: &mut Context<Self>) -> Self {
         let platform_style = PlatformStyle::platform();
+        let system_window_tabs = cx.new(|_cx| SystemWindowTabs::new());
+
         Self {
             id: id.into(),
             platform_style,
             children: SmallVec::new(),
             should_move: false,
+            system_window_tabs,
         }
     }
 
@@ -66,7 +73,7 @@ impl Render for PlatformTitleBar {
         let close_action = Box::new(workspace::CloseWindow);
         let children = mem::take(&mut self.children);
 
-        h_flex()
+        let title_bar = h_flex()
             .window_control_area(WindowControlArea::Drag)
             .w_full()
             .h(height)
@@ -162,7 +169,12 @@ impl Render for PlatformTitleBar {
                         title_bar.child(platform_windows::WindowsWindowControls::new(height))
                     }
                 }
-            })
+            });
+
+        v_flex()
+            .w_full()
+            .child(title_bar)
+            .child(self.system_window_tabs.clone().into_any_element())
     }
 }
 

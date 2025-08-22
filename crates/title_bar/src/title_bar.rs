@@ -3,6 +3,7 @@ mod collab;
 mod onboarding_banner;
 pub mod platform_title_bar;
 mod platforms;
+mod system_window_tabs;
 mod title_bar_settings;
 
 #[cfg(feature = "stories")]
@@ -11,6 +12,7 @@ mod stories;
 use crate::{
     application_menu::{ApplicationMenu, show_menus},
     platform_title_bar::PlatformTitleBar,
+    system_window_tabs::SystemWindowTabs,
 };
 
 #[cfg(not(target_os = "macos"))]
@@ -65,6 +67,7 @@ actions!(
 
 pub fn init(cx: &mut App) {
     TitleBarSettings::register(cx);
+    SystemWindowTabs::init(cx);
 
     cx.observe_new(|workspace: &mut Workspace, window, cx| {
         let Some(window) = window else {
@@ -284,7 +287,7 @@ impl TitleBar {
             )
         });
 
-        let platform_titlebar = cx.new(|_| PlatformTitleBar::new(id));
+        let platform_titlebar = cx.new(|cx| PlatformTitleBar::new(id, cx));
 
         Self {
             platform_titlebar,
