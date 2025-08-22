@@ -111,6 +111,10 @@
   // 2. Maps `Control` on Linux and Windows and to `Command` on MacOS:
   //    "cmd_or_ctrl" (alias: "cmd", "ctrl")
   "multi_cursor_modifier": "alt",
+  /// Weather to set editor mode to vim, vim insert, helix, etc.
+  ///
+  /// Default: default
+  "editor_mode": "default",
   // Whether to enable vim modes and key bindings.
   "vim_mode": false,
   // Whether to enable helix mode and key bindings.

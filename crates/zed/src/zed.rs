@@ -70,7 +70,7 @@ use ui::{PopoverMenuHandle, prelude::*};
 use util::markdown::MarkdownString;
 use util::{ResultExt, asset_str};
 use uuid::Uuid;
-use vim_mode_setting::{EditorMode, EditorModeSetting};
+use vim_mode_setting::EditorModeSetting;
 use workspace::notifications::{
     NotificationId, SuppressEvent, dismiss_app_notification, show_app_notification,
 };

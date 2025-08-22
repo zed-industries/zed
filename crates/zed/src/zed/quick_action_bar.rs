@@ -578,9 +578,9 @@ impl Render for QuickActionBar {
                                 {
                                     move |window, cx| {
                                         let new_value = if vim_mode_enabled {
-                                            EditorMode::Default
+                                            EditorMode::default()
                                         } else {
-                                            EditorMode::Vim
+                                            EditorMode::vim()
                                         };
                                         EditorModeSetting::override_global(EditorModeSetting(new_value), cx);
                                         window.refresh();
