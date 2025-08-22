@@ -116,7 +116,6 @@ pub struct UserStore {
     edit_prediction_usage: Option<EditPredictionUsage>,
     plan_info: Option<PlanInfo>,
     current_user: watch::Receiver<Option<Arc<User>>>,
-    accepted_tos_at: Option<Option<cloud_api_client::Timestamp>>,
     contacts: Vec<Arc<Contact>>,
     incoming_contact_requests: Vec<Arc<User>>,
     outgoing_contact_requests: Vec<Arc<User>>,
@@ -194,7 +193,6 @@ impl UserStore {
             plan_info: None,
             model_request_usage: None,
             edit_prediction_usage: None,
-            accepted_tos_at: None,
             contacts: Default::default(),
             incoming_contact_requests: Default::default(),
             participant_indices: Default::default(),
@@ -271,7 +269,6 @@ impl UserStore {
                         Status::SignedOut => {
                             current_user_tx.send(None).await.ok();
                             this.update(cx, |this, cx| {
-                                this.accepted_tos_at = None;
                                 cx.emit(Event::PrivateUserInfoUpdated);
                                 cx.notify();
                                 this.clear_contacts()
@@ -791,19 +788,6 @@ impl UserStore {
                 .set_authenticated_user_info(Some(response.user.metrics_id.clone()), staff);
         }
 
-        let accepted_tos_at = {
-            #[cfg(debug_assertions)]
-            if std::env::var("ZED_IGNORE_ACCEPTED_TOS").is_ok() {
-                None
-            } else {
-                response.user.accepted_tos_at
-            }
-
-            #[cfg(not(debug_assertions))]
-            response.user.accepted_tos_at
-        };
-
-        self.accepted_tos_at = Some(accepted_tos_at);
         self.model_request_usage = Some(ModelRequestUsage(RequestUsage {
             limit: response.plan.usage.model_requests.limit,
             amount: response.plan.usage.model_requests.used as i32,
