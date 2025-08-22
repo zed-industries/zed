@@ -271,7 +271,10 @@ impl AgentTool for EditFileTool {
                 })?
                 .await?;
 
-            let diff = cx.new(|cx| Diff::new(buffer.clone(), cx))?;
+            let base_text_snapshot = cx.update(|cx| {
+                language::Buffer::build_snapshot(buffer.read(cx).text_snapshot().as_rope().clone(), buffer.read(cx).language().cloned(), buffer.read(cx).language_registry(), cx)
+            })?.await;
+            let diff = cx.new(|cx| Diff::new(buffer.clone(), base_text_snapshot, cx))?;
             event_stream.update_diff(diff.clone());
 
             let old_snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot())?;

@@ -80,28 +80,23 @@ impl Diff {
         })
     }
 
-    pub fn new(buffer: Entity<Buffer>, cx: &mut Context<Self>) -> Self {
-        let buffer_snapshot = buffer.read(cx).snapshot();
-        let base_text = buffer_snapshot.text();
-        let language_registry = buffer.read(cx).language_registry();
-        let text_snapshot = buffer.read(cx).text_snapshot();
+    pub fn new(
+        buffer: Entity<Buffer>,
+        base_text_snapshot: language::BufferSnapshot,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let buffer_text_snapshot = buffer.read(cx).text_snapshot();
+        let base_text = base_text_snapshot.text();
+        debug_assert_eq!(buffer_text_snapshot.text(), base_text);
         let buffer_diff = cx.new(|cx| {
-            let mut diff = BufferDiff::new(&text_snapshot, cx);
-            let _ = diff.set_base_text(
-                buffer_snapshot.clone(),
-                language_registry,
-                text_snapshot,
-                cx,
-            );
+            let mut diff = BufferDiff::new_unchanged(&buffer_text_snapshot, base_text_snapshot);
             let snapshot = diff.snapshot(cx);
-
             let secondary_diff = cx.new(|cx| {
-                let mut diff = BufferDiff::new(&buffer_snapshot, cx);
-                diff.set_snapshot(snapshot, &buffer_snapshot, cx);
+                let mut diff = BufferDiff::new(&buffer_text_snapshot, cx);
+                diff.set_snapshot(snapshot, &buffer_text_snapshot, cx);
                 diff
             });
             diff.set_secondary_diff(secondary_diff);
-
             diff
         });
 
