@@ -834,8 +834,7 @@ message LspRunnable {
 
 message LspExtCancelFlycheck {
     uint64 project_id = 1;
-    reserved 2;
-    uint64 language_server_id = 3;
+    uint64 language_server_id = 2;
 }
 
 message LspExtRunFlycheck {
@@ -847,8 +846,7 @@ message LspExtRunFlycheck {
 
 message LspExtClearFlycheck {
     uint64 project_id = 1;
-    reserved 2;
-    uint64 language_server_id = 3;
+    uint64 language_server_id = 2;
 }
 
 message LspDiagnosticRelatedInformation {
