@@ -9,7 +9,6 @@ use std::{
 };
 
 use anyhow::{Context as _, Result, bail};
-use client::DevServerProjectId;
 use db::{define_connection, query, sqlez::connection::Connection, sqlez_macros::sql};
 use gpui::{Axis, Bounds, Task, WindowBounds, WindowId, point, size};
 use project::debugger::breakpoint_store::{BreakpointState, SourceBreakpoint};
@@ -501,8 +500,8 @@ define_connection! {
         CREATE TABLE ssh_connections (
             id INTEGER PRIMARY KEY,
             host TEXT NOT NULL,
-            port INTEGER NOT NULL,
-            user TEXT NOT NULL
+            port INTEGER,
+            user TEXT
         );
 
         INSERT INTO ssh_connections (host, port, user)
@@ -802,13 +801,13 @@ impl WorkspaceDb {
                     DELETE
                     FROM workspaces
                     WHERE
-                        workspace_id != ? AND
-                        paths = ? AND
-                        ((? IS NULL AND ssh_connection_id IS NULL) OR ssh_connection_id = ?)
+                        workspace_id != ?1 AND
+                        paths = ?2 AND
+                        ((?3 IS NULL AND ssh_connection_id IS NULL) OR ssh_connection_id = ?3)
                 ))?((
+                    workspace.id,
                     paths.paths.clone(),
                     ssh_connection_id,
-                    workspace.id,
                 ))
                 .context("clearing out old locations")?;
 
@@ -968,7 +967,7 @@ impl WorkspaceDb {
         fn session_workspaces_query(session_id: String) -> Result<Vec<(String, String, Option<u64>, Option<u64>)>> {
             SELECT paths, paths_order, window_id, ssh_connection_id
             FROM workspaces
-            WHERE session_id = ?1 AND dev_server_project_id IS NULL
+            WHERE session_id = ?1
             ORDER BY timestamp DESC
         }
     }
@@ -1004,7 +1003,7 @@ impl WorkspaceDb {
     query! {
         pub fn ssh_connections_query() -> Result<Vec<(u64, String, Option<u16>, Option<String>)>> {
             SELECT id, host, port, user
-            FROM ssh_projects
+            FROM ssh_connections
         }
     }
 
@@ -1021,7 +1020,7 @@ impl WorkspaceDb {
     query! {
         fn ssh_connection_query(id: u64) -> Result<(u64, String, Option<u16>, Option<String>)> {
             SELECT id, host, port, user
-            FROM ssh_projects
+            FROM ssh_connections
             WHERE id = ?
         }
     }
@@ -1052,23 +1051,6 @@ impl WorkspaceDb {
         }
     }
 
-    pub async fn delete_workspace_by_dev_server_project_id(
-        &self,
-        id: DevServerProjectId,
-    ) -> Result<()> {
-        self.write(move |conn| {
-            conn.exec_bound(sql!(
-                DELETE FROM dev_server_projects WHERE id = ?
-            ))?(id.0)?;
-            conn.exec_bound(sql!(
-                DELETE FROM toolchains WHERE workspace_id = ?1;
-                DELETE FROM workspaces
-                WHERE dev_server_project_id IS ?
-            ))?(id.0)
-        })
-        .await
-    }
-
     // Returns the recent locations which are still valid on disk and deletes ones which no longer
     // exist.
     pub async fn recent_workspaces_on_disk(
@@ -1076,12 +1058,12 @@ impl WorkspaceDb {
     ) -> Result<Vec<(WorkspaceId, SerializedWorkspaceLocation, PathList)>> {
         let mut result = Vec::new();
         let mut delete_tasks = Vec::new();
-        let ssh_projects = self.ssh_connections()?;
+        let ssh_connections = self.ssh_connections()?;
 
         for (id, paths, ssh_connection_id) in self.recent_workspaces()? {
             if let Some(ssh_connection_id) = ssh_connection_id.map(SshProjectId) {
                 if let Some(ssh_connection) =
-                    ssh_projects.iter().find(|rp| rp.id == ssh_connection_id)
+                    ssh_connections.iter().find(|rp| rp.id == ssh_connection_id)
                 {
                     result.push((
                         id,
@@ -1509,13 +1491,13 @@ pub fn delete_unloaded_items(
 
 #[cfg(test)]
 mod tests {
-    use std::thread;
-    use std::time::Duration;
-
     use super::*;
-    use crate::persistence::model::SerializedWorkspace;
-    use crate::persistence::model::{SerializedItem, SerializedPane, SerializedPaneGroup};
+    use crate::persistence::model::{
+        SerializedItem, SerializedPane, SerializedPaneGroup, SerializedWorkspace,
+    };
     use gpui;
+    use pretty_assertions::assert_eq;
+    use std::{thread, time::Duration};
 
     #[gpui::test]
     async fn test_breakpoints() {
@@ -2295,51 +2277,37 @@ mod tests {
             WindowId::from(4), // Bottom
         ]));
 
-        let have = db
+        let locations = db
             .last_session_workspace_locations("one-session", stack)
             .unwrap();
-        assert_eq!(have.len(), 6);
         assert_eq!(
-            have[0],
-            (
-                SerializedWorkspaceLocation::Local,
-                PathList::new(&[dir4.path()])
-            ),
-        );
-        assert_eq!(
-            have[1],
-            (
-                SerializedWorkspaceLocation::Local,
-                PathList::new(&[dir3.path()])
-            ),
-        );
-        assert_eq!(
-            have[2],
-            (
-                SerializedWorkspaceLocation::Local,
-                PathList::new(&[dir2.path()])
-            ),
-        );
-        assert_eq!(
-            have[3],
-            (
-                SerializedWorkspaceLocation::Local,
-                PathList::new(&[dir1.path()])
-            ),
-        );
-        assert_eq!(
-            have[4],
-            (
-                SerializedWorkspaceLocation::Local,
-                PathList::new(&[dir4.path(), dir3.path(), dir2.path()])
-            ),
-        );
-        assert_eq!(
-            have[5],
-            (
-                SerializedWorkspaceLocation::Local,
-                PathList::new(&[dir2.path(), dir3.path(), dir4.path()])
-            ),
+            locations,
+            [
+                (
+                    SerializedWorkspaceLocation::Local,
+                    PathList::new(&[dir4.path()])
+                ),
+                (
+                    SerializedWorkspaceLocation::Local,
+                    PathList::new(&[dir3.path()])
+                ),
+                (
+                    SerializedWorkspaceLocation::Local,
+                    PathList::new(&[dir2.path()])
+                ),
+                (
+                    SerializedWorkspaceLocation::Local,
+                    PathList::new(&[dir1.path()])
+                ),
+                (
+                    SerializedWorkspaceLocation::Local,
+                    PathList::new(&[dir1.path(), dir2.path(), dir3.path()])
+                ),
+                (
+                    SerializedWorkspaceLocation::Local,
+                    PathList::new(&[dir4.path(), dir3.path(), dir2.path()])
+                ),
+            ]
         );
     }
 
@@ -2350,7 +2318,7 @@ mod tests {
         )
         .await;
 
-        let ssh_projects = [
+        let ssh_connections = [
             ("host-1", "my-user-1"),
             ("host-2", "my-user-2"),
             ("host-3", "my-user-3"),
@@ -2371,7 +2339,7 @@ mod tests {
         })
         .collect::<Vec<_>>();
 
-        let ssh_connections = futures::future::join_all(ssh_projects).await;
+        let ssh_connections = futures::future::join_all(ssh_connections).await;
 
         let workspaces = [
             (1, ssh_connections[0].clone(), 9),
@@ -2494,10 +2462,10 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_get_ssh_projects() {
-        let db = WorkspaceDb::open_test_db("test_get_ssh_projects").await;
+    async fn test_get_ssh_connections() {
+        let db = WorkspaceDb::open_test_db("test_get_ssh_connections").await;
 
-        let projects = [
+        let connections = [
             ("example.com".to_string(), None, None),
             (
                 "anotherexample.com".to_string(),
@@ -2508,7 +2476,7 @@ mod tests {
         ];
 
         let mut ids = Vec::new();
-        for (host, port, user) in projects.iter() {
+        for (host, port, user) in connections.iter() {
             ids.push(
                 db.get_or_create_ssh_connection(host.clone(), *port, user.clone())
                     .await
