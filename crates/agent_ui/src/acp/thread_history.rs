@@ -188,7 +188,6 @@ impl AcpThreadHistory {
     ) -> Task<Vec<ListItemType>> {
         let query = self.search_query.clone();
         cx.background_spawn({
-            let query = query.clone();
             let executor = cx.background_executor().clone();
             async move {
                 let mut candidates = Vec::with_capacity(entries.len());
