@@ -32,6 +32,7 @@ const RECEIVE_LINE: &str = "\n// Receive:";
 const MAX_STORED_LOG_ENTRIES: usize = 2000;
 
 pub struct LogStore {
+    store_logs: bool,
     projects: HashMap<WeakEntity<Project>, ProjectState>,
     language_servers: HashMap<LanguageServerId, LanguageServerState>,
     copilot_log_subscription: Option<lsp::Subscription>,
@@ -228,11 +229,10 @@ pub struct GlobalLogStore(pub WeakEntity<LogStore>);
 
 impl Global for GlobalLogStore {}
 
-// todo! do separate headless and local cases here: headless cares only about the downstream_client() part, NO log storage is needed
-pub fn init(client: AnyProtoClient, cx: &mut App) {
+pub fn init(client: AnyProtoClient, store_logs: bool, cx: &mut App) {
     client.add_entity_message_handler(handle_toggle_lsp_logs);
 
-    let log_store = cx.new(LogStore::new);
+    let log_store = cx.new(|cx| LogStore::new(store_logs, cx));
     cx.set_global(GlobalLogStore(log_store.downgrade()));
 
     cx.observe_new(move |workspace: &mut Workspace, _, cx| {
@@ -263,7 +263,7 @@ pub fn init(client: AnyProtoClient, cx: &mut App) {
 }
 
 impl LogStore {
-    pub fn new(cx: &mut Context<Self>) -> Self {
+    pub fn new(store_logs: bool, cx: &mut Context<Self>) -> Self {
         let (io_tx, mut io_rx) = mpsc::unbounded();
 
         let copilot_subscription = Copilot::global(cx).map(|copilot| {
@@ -308,6 +308,7 @@ impl LogStore {
             _copilot_subscription: copilot_subscription,
             projects: HashMap::default(),
             language_servers: HashMap::default(),
+            store_logs,
             io_tx,
         };
 
@@ -484,15 +485,21 @@ impl LogStore {
         message: &str,
         cx: &mut Context<Self>,
     ) -> Option<()> {
+        let store_logs = self.store_logs;
         let language_server_state = self.get_language_server_state(id)?;
 
         let log_lines = &mut language_server_state.log_messages;
-        if let Some(new_message) = Self::push_new_message(
+        let message = message.trim_end().to_string();
+        if !store_logs {
+            // Send all messages regardless of the visiblity in case of not storing, to notify the receiver anyway
+            cx.emit(Event::NewServerLogEntry {
+                id,
+                kind: LanguageServerLogType::Log(typ),
+                text: message,
+            });
+        } else if let Some(new_message) = Self::push_new_message(
             log_lines,
-            LogMessage {
-                message: message.trim_end().to_string(),
-                typ,
-            },
+            LogMessage { message, typ },
             language_server_state.log_level,
         ) {
             cx.emit(Event::NewServerLogEntry {
@@ -501,7 +508,6 @@ impl LogStore {
                 text: new_message,
             });
         }
-
         Some(())
     }
 
@@ -511,10 +517,19 @@ impl LogStore {
         message: &str,
         cx: &mut Context<Self>,
     ) -> Option<()> {
+        let store_logs = self.store_logs;
         let language_server_state = self.get_language_server_state(id)?;
 
         let log_lines = &mut language_server_state.trace_messages;
-        if let Some(new_message) = Self::push_new_message(
+        if !store_logs {
+            // Send all messages regardless of the visiblity in case of not storing, to notify the receiver anyway
+            cx.emit(Event::NewServerLogEntry {
+                id,
+                // todo! Ben, fix this here too!
+                kind: LanguageServerLogType::Trace(project::lsp_store::TraceLevel::Verbose),
+                text: message.trim().to_string(),
+            });
+        } else if let Some(new_message) = Self::push_new_message(
             log_lines,
             TraceMessage {
                 message: message.trim().to_string(),
@@ -528,7 +543,6 @@ impl LogStore {
                 text: new_message,
             });
         }
-
         Some(())
     }
 
@@ -542,9 +556,9 @@ impl LogStore {
         }
         let visible = message.should_include(current_severity);
 
-        let re = visible.then(|| message.as_ref().to_string());
+        let visible_message = visible.then(|| message.as_ref().to_string());
         log_lines.push_back(message);
-        re
+        visible_message
     }
 
     fn add_language_server_rpc(
@@ -554,6 +568,7 @@ impl LogStore {
         message: &str,
         cx: &mut Context<'_, LogStore>,
     ) {
+        let store_logs = self.store_logs;
         let Some(state) = self
             .get_language_server_state(language_server_id)
             .and_then(|state| state.rpc_state.as_mut())
@@ -570,9 +585,11 @@ impl LogStore {
                 MessageKind::Send => SEND_LINE,
                 MessageKind::Receive => RECEIVE_LINE,
             };
-            rpc_log_lines.push_back(RpcMessage {
-                message: line_before_message.to_string(),
-            });
+            if store_logs {
+                rpc_log_lines.push_back(RpcMessage {
+                    message: line_before_message.to_string(),
+                });
+            }
             cx.emit(Event::NewServerLogEntry {
                 id: language_server_id,
                 kind: LanguageServerLogType::Rpc {
@@ -586,8 +603,17 @@ impl LogStore {
             rpc_log_lines.pop_front();
         }
 
-        rpc_log_lines.push_back(RpcMessage {
-            message: message.trim().to_owned(),
+        if store_logs {
+            rpc_log_lines.push_back(RpcMessage {
+                message: message.trim().to_owned(),
+            });
+        }
+        cx.emit(Event::NewServerLogEntry {
+            id: language_server_id,
+            kind: LanguageServerLogType::Rpc {
+                received: kind == MessageKind::Receive,
+            },
+            text: message.to_owned(),
         });
     }
 
@@ -775,13 +801,6 @@ impl LogStore {
         };
 
         self.add_language_server_rpc(language_server_id, kind, message, cx);
-        cx.emit(Event::NewServerLogEntry {
-            id: language_server_id,
-            kind: LanguageServerLogType::Rpc {
-                received: is_received,
-            },
-            text: message.to_owned(),
-        });
         cx.notify();
         Some(())
     }

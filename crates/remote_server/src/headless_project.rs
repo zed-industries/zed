@@ -80,8 +80,7 @@ impl HeadlessProject {
     ) -> Self {
         debug_adapter_extension::init(proxy.clone(), cx);
         languages::init(languages.clone(), node_runtime.clone(), cx);
-        // todo! avoid "memory leaks" here as we do not need to gather any logs locally, just proxy the to the client
-        language_tools::lsp_log::init(session.clone(), cx);
+        language_tools::lsp_log::init(session.clone(), false, cx);
 
         let worktree_store = cx.new(|cx| {
             let mut store = WorktreeStore::local(true, fs.clone());
