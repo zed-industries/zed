@@ -16,11 +16,11 @@ impl AgentTool for EchoTool {
     type Input = EchoToolInput;
     type Output = String;
 
-    fn name(&self) -> SharedString {
-        "echo".into()
+    fn name() -> &'static str {
+        "echo"
     }
 
-    fn kind(&self) -> acp::ToolKind {
+    fn kind() -> acp::ToolKind {
         acp::ToolKind::Other
     }
 
@@ -51,8 +51,8 @@ impl AgentTool for DelayTool {
     type Input = DelayToolInput;
     type Output = String;
 
-    fn name(&self) -> SharedString {
-        "delay".into()
+    fn name() -> &'static str {
+        "delay"
     }
 
     fn initial_title(&self, input: Result<Self::Input, serde_json::Value>) -> SharedString {
@@ -63,7 +63,7 @@ impl AgentTool for DelayTool {
         }
     }
 
-    fn kind(&self) -> acp::ToolKind {
+    fn kind() -> acp::ToolKind {
         acp::ToolKind::Other
     }
 
@@ -92,11 +92,11 @@ impl AgentTool for ToolRequiringPermission {
     type Input = ToolRequiringPermissionInput;
     type Output = String;
 
-    fn name(&self) -> SharedString {
-        "tool_requiring_permission".into()
+    fn name() -> &'static str {
+        "tool_requiring_permission"
     }
 
-    fn kind(&self) -> acp::ToolKind {
+    fn kind() -> acp::ToolKind {
         acp::ToolKind::Other
     }
 
@@ -127,11 +127,11 @@ impl AgentTool for InfiniteTool {
     type Input = InfiniteToolInput;
     type Output = String;
 
-    fn name(&self) -> SharedString {
-        "infinite".into()
+    fn name() -> &'static str {
+        "infinite"
     }
 
-    fn kind(&self) -> acp::ToolKind {
+    fn kind() -> acp::ToolKind {
         acp::ToolKind::Other
     }
 
@@ -178,11 +178,11 @@ impl AgentTool for WordListTool {
     type Input = WordListInput;
     type Output = String;
 
-    fn name(&self) -> SharedString {
-        "word_list".into()
+    fn name() -> &'static str {
+        "word_list"
     }
 
-    fn kind(&self) -> acp::ToolKind {
+    fn kind() -> acp::ToolKind {
         acp::ToolKind::Other
     }
 

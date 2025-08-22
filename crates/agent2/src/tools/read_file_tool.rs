@@ -59,11 +59,11 @@ impl AgentTool for ReadFileTool {
     type Input = ReadFileToolInput;
     type Output = LanguageModelToolResultContent;
 
-    fn name(&self) -> SharedString {
-        "read_file".into()
+    fn name() -> &'static str {
+        "read_file"
     }
 
-    fn kind(&self) -> acp::ToolKind {
+    fn kind() -> acp::ToolKind {
         acp::ToolKind::Read
     }
 

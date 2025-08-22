@@ -544,12 +544,12 @@ impl Thread {
         project: Entity<Project>,
         project_context: Entity<ProjectContext>,
         context_server_registry: Entity<ContextServerRegistry>,
-        action_log: Entity<ActionLog>,
         templates: Arc<Templates>,
         model: Option<Arc<dyn LanguageModel>>,
         cx: &mut Context<Self>,
     ) -> Self {
         let profile_id = AgentSettings::get_global(cx).default_profile.clone();
+        let action_log = cx.new(|_cx| ActionLog::new(project.clone()));
         Self {
             id: acp::SessionId(uuid::Uuid::new_v4().to_string().into()),
             prompt_id: PromptId::new(),
@@ -959,11 +959,11 @@ impl Thread {
         ));
         self.add_tool(TerminalTool::new(self.project.clone(), cx));
         self.add_tool(ThinkingTool);
-        self.add_tool(WebSearchTool); // TODO: Enable this only if it's a zed model.
+        self.add_tool(WebSearchTool);
     }
 
-    pub fn add_tool(&mut self, tool: impl AgentTool) {
-        self.tools.insert(tool.name(), tool.erase());
+    pub fn add_tool<T: AgentTool>(&mut self, tool: T) {
+        self.tools.insert(T::name().into(), tool.erase());
     }
 
     pub fn remove_tool(&mut self, name: &str) -> bool {
@@ -1989,7 +1989,7 @@ where
     type Input: for<'de> Deserialize<'de> + Serialize + JsonSchema;
     type Output: for<'de> Deserialize<'de> + Serialize + Into<LanguageModelToolResultContent>;
 
-    fn name(&self) -> SharedString;
+    fn name() -> &'static str;
 
     fn description(&self) -> SharedString {
         let schema = schemars::schema_for!(Self::Input);
@@ -2001,7 +2001,7 @@ where
         )
     }
 
-    fn kind(&self) -> acp::ToolKind;
+    fn kind() -> acp::ToolKind;
 
     /// The initial tool title to display. Can be updated during the tool run.
     fn initial_title(&self, input: Result<Self::Input, serde_json::Value>) -> SharedString;
@@ -2077,7 +2077,7 @@ where
     T: AgentTool,
 {
     fn name(&self) -> SharedString {
-        self.0.name()
+        T::name().into()
     }
 
     fn description(&self) -> SharedString {
@@ -2085,7 +2085,7 @@ where
     }
 
     fn kind(&self) -> agent_client_protocol::ToolKind {
-        self.0.kind()
+        T::kind()
     }
 
     fn initial_title(&self, input: serde_json::Value) -> SharedString {

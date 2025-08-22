@@ -21,11 +21,11 @@ impl AgentTool for ThinkingTool {
     type Input = ThinkingToolInput;
     type Output = String;
 
-    fn name(&self) -> SharedString {
-        "thinking".into()
+    fn name() -> &'static str {
+        "thinking"
     }
 
-    fn kind(&self) -> acp::ToolKind {
+    fn kind() -> acp::ToolKind {
         acp::ToolKind::Think
     }
 

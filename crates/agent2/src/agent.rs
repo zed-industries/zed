@@ -857,7 +857,6 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
         cx.spawn(async move |cx| {
             log::debug!("Starting thread creation in async context");
 
-            let action_log = cx.new(|_cx| ActionLog::new(project.clone()))?;
             // Create Thread
             let thread = agent.update(
                 cx,
@@ -878,7 +877,6 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
                             project.clone(),
                             agent.project_context.clone(),
                             agent.context_server_registry.clone(),
-                            action_log.clone(),
                             agent.templates.clone(),
                             default_model,
                             cx,

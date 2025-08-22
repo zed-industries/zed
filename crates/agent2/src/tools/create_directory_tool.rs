@@ -41,11 +41,11 @@ impl AgentTool for CreateDirectoryTool {
     type Input = CreateDirectoryToolInput;
     type Output = String;
 
-    fn name(&self) -> SharedString {
-        "create_directory".into()
+    fn name() -> &'static str {
+        "create_directory"
     }
 
-    fn kind(&self) -> ToolKind {
+    fn kind() -> ToolKind {
         ToolKind::Read
     }
 
