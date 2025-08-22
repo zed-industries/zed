@@ -275,11 +275,11 @@ impl TitleBar {
 
         let banner = cx.new(|cx| {
             OnboardingBanner::new(
-                "Debugger Onboarding",
-                IconName::Debug,
-                "The Debugger",
+                "Gemini CLI Onboarding",
+                IconName::AiGemini,
+                "Gemini CLI in Zed",
                 None,
-                zed_actions::debugger::OpenOnboardingModal.boxed_clone(),
+                zed_actions::agent::OpenAcpOnboardingModal.boxed_clone(),
                 cx,
             )
         });
