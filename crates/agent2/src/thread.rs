@@ -46,7 +46,6 @@ use serde::{Deserialize, Serialize};
 use settings::{Settings, update_settings_file};
 use smol::stream::StreamExt;
 use std::{
-    cmp,
     collections::BTreeMap,
     path::Path,
     sync::Arc,
@@ -1734,21 +1733,21 @@ impl Thread {
         cx: &mut App,
     ) -> Result<LanguageModelRequest> {
         let model = self.model().context("No language model configured")?;
-        let tools = self
-            .running_turn
-            .as_ref()
-            .context("No running turn")?
-            .tools
-            .iter()
-            .filter_map(|(tool_name, tool)| {
-                log::trace!("Including tool: {}", tool_name);
-                Some(LanguageModelRequestTool {
-                    name: tool_name.to_string(),
-                    description: tool.description().to_string(),
-                    input_schema: tool.input_schema(model.tool_input_format()).log_err()?,
+        let tools = if let Some(turn) = self.running_turn.as_ref() {
+            turn.tools
+                .iter()
+                .filter_map(|(tool_name, tool)| {
+                    log::trace!("Including tool: {}", tool_name);
+                    Some(LanguageModelRequestTool {
+                        name: tool_name.to_string(),
+                        description: tool.description().to_string(),
+                        input_schema: tool.input_schema(model.tool_input_format()).log_err()?,
+                    })
                 })
-            })
-            .collect::<Vec<_>>();
+                .collect::<Vec<_>>()
+        } else {
+            Vec::new()
+        };
 
         log::debug!("Building completion request");
         log::debug!("Completion intent: {:?}", completion_intent);
@@ -1805,39 +1804,41 @@ impl Thread {
             })
             .collect::<BTreeMap<_, _>>();
 
+        let mut context_server_tools = Vec::new();
         let mut seen_tools = tools
             .iter()
             .map(|(name, _)| name.clone())
             .collect::<HashSet<_>>();
         let mut duplicate_tool_names = HashSet::default();
         for (server_id, server_tools) in self.context_server_registry.read(cx).servers() {
-            for (tool_name, _) in server_tools {
+            for (tool_name, tool) in server_tools {
                 if profile.is_context_server_tool_enabled(&server_id.0, &tool_name) {
                     let tool_name = truncate(tool_name);
                     if !seen_tools.insert(tool_name.clone()) {
-                        duplicate_tool_names.insert(tool_name);
+                        duplicate_tool_names.insert(tool_name.clone());
                     }
+                    context_server_tools.push((server_id.clone(), tool_name, tool.clone()));
                 }
             }
         }
 
-        for (server_id, server_tools) in self.context_server_registry.read(cx).servers() {
-            for (tool_name, tool) in server_tools {
-                if profile.is_context_server_tool_enabled(&server_id.0, tool_name) {
-                    let tool_name = truncate(tool_name);
-                    if duplicate_tool_names.contains(&tool_name) {
-                        let mut disambiguated = tool_name.to_string();
-                        let ix = tool_name.len();
-                        disambiguated.push_str(&server_id.0);
-                        disambiguated.truncate(MAX_TOOL_NAME_LENGTH);
-                        let (name, server_id) = disambiguated.split_at(ix);
-                        disambiguated = format!("{}_{}", server_id, name);
-                        disambiguated.truncate(MAX_TOOL_NAME_LENGTH);
-                        tools.insert(disambiguated.into(), tool.clone());
-                    } else {
-                        tools.insert(tool_name.into(), tool.clone());
-                    }
+        // When there are duplicate tool names, disambiguate by prefixing them
+        // with the server ID. In the rare case there isn't enough space for the
+        // disambiguated tool name, keep only the last tool with this name.
+        for (server_id, tool_name, tool) in context_server_tools {
+            if duplicate_tool_names.contains(&tool_name) {
+                let available = MAX_TOOL_NAME_LENGTH.saturating_sub(tool_name.len());
+                if available >= 2 {
+                    let mut disambiguated = server_id.0.to_string();
+                    disambiguated.truncate(available - 1);
+                    disambiguated.push('_');
+                    disambiguated.push_str(&tool_name);
+                    tools.insert(disambiguated.into(), tool.clone());
+                } else {
+                    tools.insert(tool_name, tool.clone());
                 }
+            } else {
+                tools.insert(tool_name.into(), tool.clone());
             }
         }
 

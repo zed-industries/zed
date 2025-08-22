@@ -1195,14 +1195,14 @@ async fn test_mcp_tool_truncation(cx: &mut TestAppContext) {
                 annotations: None,
             },
             context_server::types::Tool {
-                name: "a".repeat(MAX_TOOL_NAME_LENGTH - 1),
+                name: "a".repeat(MAX_TOOL_NAME_LENGTH - 2),
                 description: None,
                 input_schema: json!({"type": "object", "properties": {}}),
                 output_schema: None,
                 annotations: None,
             },
             context_server::types::Tool {
-                name: "b".repeat(MAX_TOOL_NAME_LENGTH),
+                name: "b".repeat(MAX_TOOL_NAME_LENGTH - 1),
                 description: None,
                 input_schema: json!({"type": "object", "properties": {}}),
                 output_schema: None,
@@ -1216,14 +1216,14 @@ async fn test_mcp_tool_truncation(cx: &mut TestAppContext) {
         "zzz",
         vec![
             context_server::types::Tool {
-                name: "a".repeat(MAX_TOOL_NAME_LENGTH - 1),
+                name: "a".repeat(MAX_TOOL_NAME_LENGTH - 2),
                 description: None,
                 input_schema: json!({"type": "object", "properties": {}}),
                 output_schema: None,
                 annotations: None,
             },
             context_server::types::Tool {
-                name: "b".repeat(MAX_TOOL_NAME_LENGTH),
+                name: "b".repeat(MAX_TOOL_NAME_LENGTH - 1),
                 description: None,
                 input_schema: json!({"type": "object", "properties": {}}),
                 output_schema: None,
@@ -1248,7 +1248,24 @@ async fn test_mcp_tool_truncation(cx: &mut TestAppContext) {
         .unwrap();
     cx.run_until_parked();
     let completion = fake_model.pending_completions().pop().unwrap();
-    assert_eq!(tool_names_for_completion(&completion), vec![""]);
+    assert_eq!(
+        tool_names_for_completion(&completion),
+        vec![
+            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "delay",
+            "echo",
+            "infinite",
+            "tool_requiring_permission",
+            "unique_tool_1",
+            "unique_tool_2",
+            "word_list",
+            "xxx_echo",
+            "y_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "yyy_echo",
+            "z_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        ]
+    );
 }
 
 #[gpui::test]
@@ -2165,6 +2182,7 @@ async fn setup(cx: &mut TestAppContext, model: TestModel) -> ThreadTest {
                             WordListTool::name(): true,
                             ToolRequiringPermission::name(): true,
                             InfiniteTool::name(): true,
+                            ThinkingTool::name(): true,
                         }
                     }
                 }
