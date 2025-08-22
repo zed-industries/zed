@@ -1241,6 +1241,8 @@ impl AcpThreadView {
                     None
                 };
 
+                let agent_name = self.agent.name();
+
                 v_flex()
                     .id(("user_message", entry_ix))
                     .pt_2()
@@ -1306,7 +1308,7 @@ impl AcpThreadView {
                                     .bg(cx.theme().colors().editor_background)
                                     .overflow_hidden();
 
-                                if editing {
+                                if message.id.is_some() {
                                     this.child(
                                         base_container
                                             .child(
@@ -1342,7 +1344,7 @@ impl AcpThreadView {
                                                     .icon_color(Color::Muted)
                                                     .style(ButtonStyle::Transparent)
                                                     .tooltip(move |_window, cx| {
-                                                        cx.new(|_| UnavailableEditingTooltip::new())
+                                                        cx.new(|_| UnavailableEditingTooltip::new(agent_name.into()))
                                                             .into()
                                                     })
                                             )
