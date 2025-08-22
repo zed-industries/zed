@@ -160,17 +160,30 @@ impl AcpTools {
         let language_registry = self.project.read(cx).languages().clone();
         let index = connection.messages.len();
 
-        let method_map = match stream_message.direction {
-            acp::StreamMessageDirection::Incoming => &mut connection.incoming_request_methods,
-            acp::StreamMessageDirection::Outgoing => &mut connection.outgoing_request_methods,
-        };
-
         let (request_id, method, message_type, params) = match stream_message.message {
             acp::StreamMessageContent::Request { id, method, params } => {
+                let method_map = match stream_message.direction {
+                    acp::StreamMessageDirection::Incoming => {
+                        &mut connection.incoming_request_methods
+                    }
+                    acp::StreamMessageDirection::Outgoing => {
+                        &mut connection.outgoing_request_methods
+                    }
+                };
+
                 method_map.insert(id, method.clone());
                 (Some(id), method.into(), MessageType::Request, Ok(params))
             }
             acp::StreamMessageContent::Response { id, result } => {
+                let method_map = match stream_message.direction {
+                    acp::StreamMessageDirection::Incoming => {
+                        &mut connection.outgoing_request_methods
+                    }
+                    acp::StreamMessageDirection::Outgoing => {
+                        &mut connection.incoming_request_methods
+                    }
+                };
+
                 if let Some(method) = method_map.remove(&id) {
                     (Some(id), method.into(), MessageType::Response, result)
                 } else {
