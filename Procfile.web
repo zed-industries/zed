@@ -1,7 +1,2 @@
-collab: RUST_LOG=${RUST_LOG:-info} cargo run --package=collab serve all
-cloud: cd ../cloud; cargo make dev
-livekit: livekit-server --dev
-blob_store: ./script/run-local-minio
-postgrest_app: postgrest crates/collab/postgrest_app.conf
 postgrest_llm: postgrest crates/collab/postgrest_llm.conf
-website: cd ../zed.dev; npm run dev
+website: cd ../zed.dev; npm run dev -- --port=3000
