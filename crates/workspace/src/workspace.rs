@@ -74,10 +74,7 @@ use project::{
     DirectoryLister, Project, ProjectEntryId, ProjectPath, ResolvedPath, Worktree, WorktreeId,
     debugger::{breakpoint_store::BreakpointStoreEvent, session::ThreadStatus},
 };
-use remote::{
-    SshClientDelegate, SshConnectionOptions,
-    ssh_session::{ConnectionIdentifier, SshProjectId},
-};
+use remote::{SshClientDelegate, SshConnectionOptions, ssh_session::ConnectionIdentifier};
 use schemars::JsonSchema;
 use serde::Deserialize;
 use session::AppSession;
@@ -1128,7 +1125,6 @@ pub struct Workspace {
     terminal_provider: Option<Box<dyn TerminalProvider>>,
     debugger_provider: Option<Arc<dyn DebuggerProvider>>,
     serializable_items_tx: UnboundedSender<Box<dyn SerializableItemHandle>>,
-    serialized_ssh_connection_id: Option<SshProjectId>,
     _items_serializer: Task<Result<()>>,
     session_id: Option<String>,
     scheduled_tasks: Vec<Task<()>>,
@@ -1461,7 +1457,7 @@ impl Workspace {
             serializable_items_tx,
             _items_serializer,
             session_id: Some(session_id),
-            serialized_ssh_connection_id: None,
+
             scheduled_tasks: Vec::new(),
         }
     }
@@ -5288,11 +5284,9 @@ impl Workspace {
 
     fn serialize_workspace_location(&self, cx: &App) -> WorkspaceLocation {
         let paths = PathList::new(&self.root_paths(cx));
-        let connection = self.project.read(cx).ssh_connection_options(cx);
-        if let Some((id, connection)) = self.serialized_ssh_connection_id.zip(connection) {
+        if let Some(connection) = self.project.read(cx).ssh_connection_options(cx) {
             WorkspaceLocation::Location(
                 SerializedWorkspaceLocation::Ssh(SerializedSshConnection {
-                    id,
                     host: connection.host,
                     port: connection.port,
                     user: connection.username,
