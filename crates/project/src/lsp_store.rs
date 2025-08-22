@@ -9029,13 +9029,22 @@ impl LspStore {
         lsp_store.update(&mut cx, |lsp_store, cx| {
             if let Some(server) = lsp_store.language_server_for_id(server_id) {
                 let text_document = if envelope.payload.current_file_only {
-                    let buffer_id = BufferId::new(envelope.payload.buffer_id)?;
-                    lsp_store
-                        .buffer_store()
-                        .read(cx)
-                        .get(buffer_id)
-                        .and_then(|buffer| Some(buffer.read(cx).file()?.as_local()?.abs_path(cx)))
-                        .map(|path| make_text_document_identifier(&path))
+                    let buffer_id = envelope
+                        .payload
+                        .buffer_id
+                        .map(|id| BufferId::new(id))
+                        .transpose()?;
+                    buffer_id
+                        .and_then(|buffer_id| {
+                            lsp_store
+                                .buffer_store()
+                                .read(cx)
+                                .get(buffer_id)
+                                .and_then(|buffer| {
+                                    Some(buffer.read(cx).file()?.as_local()?.abs_path(cx))
+                                })
+                                .map(|path| make_text_document_identifier(&path))
+                        })
                         .transpose()?
                 } else {
                     None
