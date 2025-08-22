@@ -1907,13 +1907,10 @@ impl AcpThreadView {
             .text_color(cx.theme().colors().text_muted)
             .child(self.render_markdown(markdown, default_markdown_style(false, false, window, cx)))
             .child(
-                Button::new(button_id, "Collapse")
+                IconButton::new(button_id, IconName::ChevronUp)
                     .full_width()
                     .style(ButtonStyle::Outlined)
-                    .label_size(LabelSize::Small)
-                    .icon(IconName::ChevronUp)
                     .icon_color(Color::Muted)
-                    .icon_position(IconPosition::Start)
                     .on_click(cx.listener({
                         move |this: &mut Self, _, _, cx: &mut Context<Self>| {
                             this.expanded_tool_calls.remove(&tool_call_id);
@@ -2415,21 +2412,22 @@ impl AcpThreadView {
             return None;
         }
 
+        let has_both = user_rules_text.is_some() && rules_file_text.is_some();
+
         Some(
-            v_flex()
+            h_flex()
                 .px_2p5()
-                .gap_1()
+                .pb_1()
+                .child(
+                    Icon::new(IconName::Attach)
+                        .size(IconSize::XSmall)
+                        .color(Color::Disabled),
+                )
                 .when_some(user_rules_text, |parent, user_rules_text| {
                     parent.child(
                         h_flex()
-                            .group("user-rules")
                             .id("user-rules")
-                            .w_full()
-                            .child(
-                                Icon::new(IconName::Reader)
-                                    .size(IconSize::XSmall)
-                                    .color(Color::Disabled),
-                            )
+                            .mr_1()
                             .child(
                                 Label::new(user_rules_text)
                                     .size(LabelSize::XSmall)
@@ -2439,15 +2437,8 @@ impl AcpThreadView {
                                     .ml_1p5()
                                     .mr_0p5(),
                             )
-                            .child(
-                                IconButton::new("open-prompt-library", IconName::ArrowUpRight)
-                                    .shape(ui::IconButtonShape::Square)
-                                    .icon_size(IconSize::XSmall)
-                                    .icon_color(Color::Ignored)
-                                    .visible_on_hover("user-rules")
-                                    // TODO: Figure out a way to pass focus handle here so we can display the `OpenRulesLibrary`  keybinding
-                                    .tooltip(Tooltip::text("View User Rules")),
-                            )
+                            .hover(|s| s.bg(cx.theme().colors().element_hover))
+                            .tooltip(Tooltip::text("View User Rules"))
                             .on_click(move |_event, window, cx| {
                                 window.dispatch_action(
                                     Box::new(OpenRulesLibrary {
@@ -2458,17 +2449,12 @@ impl AcpThreadView {
                             }),
                     )
                 })
+                .when(has_both, |this| this.child(Divider::vertical()))
                 .when_some(rules_file_text, |parent, rules_file_text| {
                     parent.child(
                         h_flex()
-                            .group("project-rules")
                             .id("project-rules")
-                            .w_full()
-                            .child(
-                                Icon::new(IconName::Reader)
-                                    .size(IconSize::XSmall)
-                                    .color(Color::Disabled),
-                            )
+                            .ml_1()
                             .child(
                                 Label::new(rules_file_text)
                                     .size(LabelSize::XSmall)
@@ -2477,14 +2463,8 @@ impl AcpThreadView {
                                     .ml_1p5()
                                     .mr_0p5(),
                             )
-                            .child(
-                                IconButton::new("open-rule", IconName::ArrowUpRight)
-                                    .shape(ui::IconButtonShape::Square)
-                                    .icon_size(IconSize::XSmall)
-                                    .icon_color(Color::Ignored)
-                                    .visible_on_hover("project-rules")
-                                    .tooltip(Tooltip::text("View Project Rules")),
-                            )
+                            .hover(|s| s.bg(cx.theme().colors().element_hover))
+                            .tooltip(Tooltip::text("View Project Rules"))
                             .on_click(cx.listener(Self::handle_open_rules)),
                     )
                 })
