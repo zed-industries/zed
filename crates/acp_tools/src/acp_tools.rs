@@ -98,7 +98,6 @@ impl AcpTools {
         let connection_registry = AcpConnectionRegistry::default_global(cx);
 
         let subscription = cx.observe(&connection_registry, |this, _, cx| {
-            dbg!();
             this.update_connection(cx);
             cx.notify();
         });
