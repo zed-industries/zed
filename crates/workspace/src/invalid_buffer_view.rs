@@ -88,7 +88,7 @@ impl Render for InvalidBufferView {
                     v_flex()
                         .justify_center()
                         .gap_2()
-                        .child("Cannot display the file contents in Zed")
+                        .child(h_flex().justify_center().child("Unsupported file type"))
                         .when(self.is_local, |contents| {
                             contents.child(
                                 h_flex().justify_center().child(
