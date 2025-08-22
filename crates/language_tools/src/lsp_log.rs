@@ -11,8 +11,8 @@ use gpui::{
 use itertools::Itertools;
 use language::{LanguageServerId, language_settings::SoftWrap};
 use lsp::{
-    IoKind, LanguageServer, LanguageServerName, LanguageServerSelector, MessageType,
-    SetTraceParams, TraceValue, notification::SetTrace,
+    IoKind, LanguageServer, LanguageServerBinary, LanguageServerName, LanguageServerSelector,
+    MessageType, SetTraceParams, TraceValue, notification::SetTrace,
 };
 use project::{Project, WorktreeId, lsp_store::LanguageServerLogType, search::SearchQuery};
 use proto::TypedEnvelope;
@@ -951,7 +951,7 @@ impl LspLogView {
     }
 
     fn editor_for_server_info(
-        server: &LanguageServer,
+        info: ServerInfo,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> (Entity<Editor>, Vec<Subscription>) {
@@ -966,22 +966,21 @@ impl LspLogView {
 * Capabilities: {CAPABILITIES}
 
 * Configuration: {CONFIGURATION}",
-            NAME = server.name(),
-            ID = server.server_id(),
-            BINARY = server.binary(),
-            WORKSPACE_FOLDERS = server
-                .workspace_folders()
-                .into_iter()
-                .filter_map(|path| path
-                    .to_file_path()
-                    .ok()
-                    .map(|path| path.to_string_lossy().into_owned()))
-                .collect::<Vec<_>>()
-                .join(", "),
-            CAPABILITIES = serde_json::to_string_pretty(&server.capabilities())
+            NAME = info.name,
+            ID = info.id,
+            BINARY = info.binary.as_ref().map_or_else(
+                || "Unknown".to_string(),
+                |bin| bin.path.as_path().to_string_lossy().to_string()
+            ),
+            WORKSPACE_FOLDERS = info.workspace_folders.join(", "),
+            CAPABILITIES = serde_json::to_string_pretty(&info.capabilities)
                 .unwrap_or_else(|e| format!("Failed to serialize capabilities: {e}")),
-            CONFIGURATION = serde_json::to_string_pretty(server.configuration())
-                .unwrap_or_else(|e| format!("Failed to serialize configuration: {e}")),
+            CONFIGURATION = info
+                .configuration
+                .map(|configuration| serde_json::to_string_pretty(&configuration))
+                .transpose()
+                .unwrap_or_else(|e| Some(format!("Failed to serialize configuration: {e}")))
+                .unwrap_or_else(|| "Unknown".to_string()),
         );
         let editor = initialize_new_editor(server_info, false, window, cx);
         let editor_subscription = cx.subscribe(
@@ -1247,15 +1246,38 @@ impl LspLogView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        // todo! there's no language server for the remote case, hence no server info!
-        // BUT we do have the capabilities info within the LspStore.lsp_server_capabilities
-        let lsp_store = self.project.read(cx).lsp_store();
-        let Some(server) = lsp_store.read(cx).language_server_for_id(server_id) else {
+        let Some(server_info) = self
+            .project
+            .read(cx)
+            .lsp_store()
+            .update(cx, |lsp_store, _| {
+                lsp_store
+                    .language_server_for_id(server_id)
+                    .as_ref()
+                    .map(|language_server| ServerInfo::new(language_server))
+                    .or_else(move || {
+                        let capabilities =
+                            lsp_store.lsp_server_capabilities.get(&server_id)?.clone();
+                        let name = lsp_store
+                            .language_server_statuses
+                            .get(&server_id)
+                            .map(|status| status.name.clone())?;
+                        Some(ServerInfo {
+                            id: server_id,
+                            capabilities,
+                            binary: None,
+                            name,
+                            workspace_folders: Vec::new(),
+                            configuration: None,
+                        })
+                    })
+            })
+        else {
             return;
         };
         self.current_server_id = Some(server_id);
         self.active_entry_kind = LogKind::ServerInfo;
-        let (editor, editor_subscriptions) = Self::editor_for_server_info(&server, window, cx);
+        let (editor, editor_subscriptions) = Self::editor_for_server_info(server_info, window, cx);
         self.editor = editor;
         self.editor_subscriptions = editor_subscriptions;
         cx.notify();
@@ -1867,6 +1889,36 @@ impl LspLogToolbarItemView {
             });
         }
         cx.notify();
+    }
+}
+
+struct ServerInfo {
+    id: LanguageServerId,
+    capabilities: lsp::ServerCapabilities,
+    binary: Option<LanguageServerBinary>,
+    name: LanguageServerName,
+    workspace_folders: Vec<String>,
+    configuration: Option<serde_json::Value>,
+}
+
+impl ServerInfo {
+    fn new(server: &LanguageServer) -> Self {
+        Self {
+            id: server.server_id(),
+            capabilities: server.capabilities(),
+            binary: Some(server.binary().clone()),
+            name: server.name(),
+            workspace_folders: server
+                .workspace_folders()
+                .into_iter()
+                .filter_map(|path| {
+                    path.to_file_path()
+                        .ok()
+                        .map(|path| path.to_string_lossy().into_owned())
+                })
+                .collect::<Vec<_>>(),
+            configuration: Some(server.configuration().clone()),
+        }
     }
 }
 
