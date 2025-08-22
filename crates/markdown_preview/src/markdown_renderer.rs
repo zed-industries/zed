@@ -22,7 +22,7 @@ use ui::{
     ButtonCommon, Clickable, Color, FluentBuilder, IconButton, IconName, IconSize,
     InteractiveElement, Label, LabelCommon, LabelSize, LinkPreview, Pixels, Rems,
     StatefulInteractiveElement, StyledExt, StyledImage, ToggleState, Tooltip, VisibleOnHover,
-    h_flex, px, relative, tooltip_container, v_flex,
+    h_flex, relative, tooltip_container, v_flex,
 };
 use workspace::{OpenOptions, OpenVisible, Workspace};
 
@@ -758,8 +758,8 @@ fn render_markdown_image(image: &Image, cx: &mut RenderContext) -> AnyElement {
                     let alt_text = image.alt_text.clone();
                     move || div().children(alt_text.clone()).into_any_element()
                 })
-                .when_some(image.height, |this, height| this.h(px(height as f32)))
-                .when_some(image.width, |this, width| this.w(px(width as f32))),
+                .when_some(image.height, |this, height| this.h(height))
+                .when_some(image.width, |this, width| this.w(width)),
         )
         .tooltip({
             let link = image.link.clone();

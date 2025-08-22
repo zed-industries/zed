@@ -5,6 +5,7 @@ use gpui::FontWeight;
 use language::LanguageRegistry;
 use pulldown_cmark::{Alignment, Event, Options, Parser, Tag, TagEnd};
 use std::{ops::Range, path::PathBuf, sync::Arc, vec};
+use ui::{px, relative};
 
 pub async fn parse_markdown(
     markdown_input: &str,
@@ -774,6 +775,29 @@ impl<'a> MarkdownParser<'a> {
         elements
     }
 
+    /// Parses the width/height attribute value of an html element (e.g. img element)
+    fn parse_length(value: &str) -> Option<ui::DefiniteLength> {
+        if value.ends_with("px") {
+            value
+                .trim_end_matches("px")
+                .parse()
+                .ok()
+                .map(|value| px(value).into())
+        } else if value.ends_with("%") {
+            value
+                .trim_end_matches("%")
+                .parse::<f32>()
+                .ok()
+                .map(|value| relative(value / 100.))
+        } else {
+            value
+                .trim_end_matches("px")
+                .parse()
+                .ok()
+                .map(|value| px(value).into())
+        }
+    }
+
     fn parse_html_image(
         &self,
         html: scraper::Html,
@@ -801,14 +825,14 @@ impl<'a> MarkdownParser<'a> {
 
             if let Some(width) = element
                 .attr("width")
-                .and_then(|width| width.parse::<u32>().ok())
+                .and_then(|width| Self::parse_length(width))
             {
                 image.set_width(width);
             }
 
             if let Some(height) = element
                 .attr("height")
-                .and_then(|height| height.parse::<u32>().ok())
+                .and_then(|height| Self::parse_length(height))
             {
                 image.set_height(height);
             }
@@ -832,6 +856,7 @@ mod tests {
         HighlightId, Language, LanguageConfig, LanguageMatcher, LanguageRegistry, tree_sitter_rust,
     };
     use pretty_assertions::assert_eq;
+    use ui::{AbsoluteLength, DefiniteLength};
 
     async fn parse(input: &str) -> ParsedMarkdown {
         parse_markdown(input, None, None).await
@@ -1154,8 +1179,8 @@ mod tests {
                     url: "http://example.com/foo.png".to_string(),
                 },
                 alt_text: None,
-                height: Some(100),
-                width: Some(200),
+                height: Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(px(100.)))),
+                width: Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(px(200.)))),
             },
         );
     }

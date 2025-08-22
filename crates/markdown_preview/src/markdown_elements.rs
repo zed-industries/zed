@@ -3,6 +3,7 @@ use gpui::{
 };
 use language::HighlightId;
 use std::{fmt::Display, ops::Range, path::PathBuf};
+use ui::DefiniteLength;
 
 #[derive(Debug)]
 #[cfg_attr(test, derive(PartialEq))]
@@ -292,8 +293,8 @@ pub struct Image {
     pub link: Link,
     pub source_range: Range<usize>,
     pub alt_text: Option<SharedString>,
-    pub width: Option<u32>,
-    pub height: Option<u32>,
+    pub width: Option<DefiniteLength>,
+    pub height: Option<DefiniteLength>,
 }
 
 impl Image {
@@ -316,11 +317,11 @@ impl Image {
         self.alt_text = Some(alt_text);
     }
 
-    pub fn set_width(&mut self, width: u32) {
+    pub fn set_width(&mut self, width: DefiniteLength) {
         self.width = Some(width);
     }
 
-    pub fn set_height(&mut self, height: u32) {
+    pub fn set_height(&mut self, height: DefiniteLength) {
         self.height = Some(height);
     }
 }
