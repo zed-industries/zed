@@ -45,7 +45,7 @@ use std::{mem, ops::Range, sync::Arc};
 use surrounds::SurroundsType;
 use theme::ThemeSettings;
 use ui::{IntoElement, SharedString, px};
-use vim_mode_setting::{EditorMode, EditorModeSetting};
+use vim_mode_setting::{EditorMode, EditorModeSetting, ModalMode};
 use workspace::{self, Pane, Workspace};
 
 use crate::state::ReplayableAction;
@@ -249,7 +249,7 @@ pub fn init(cx: &mut App) {
                 *setting = Some(if currently_enabled {
                     EditorMode::Default
                 } else {
-                    EditorMode::Vim
+                    EditorMode::vim()
                 });
             })
         });
@@ -448,7 +448,7 @@ impl Vim {
         }
 
         let mut was_toggle = VimSettings::get_global(cx).toggle_relative_line_numbers;
-        cx.observe_global_in::<SettingsStore>(window, move |editor, window, cx| {
+        cx.observe_global_in::<SettingsStore>(window, move |editor, _window, cx| {
             let toggle = VimSettings::get_global(cx).toggle_relative_line_numbers;
             if toggle != was_toggle {
                 if toggle {
@@ -463,10 +463,6 @@ impl Vim {
             was_toggle = VimSettings::get_global(cx).toggle_relative_line_numbers;
         })
         .detach();
-
-        let mut was_enabled = true;
-        cx.observe::<Editor>(window, move |editor, window, cx| {})
-            .detach();
 
         Self::activate(editor, window, cx)
     }
@@ -487,12 +483,13 @@ impl Vim {
             entity: vim.clone(),
         });
 
+        let default_editor_mode = editor.default_editor_mode();
         vim.update(cx, move |_, cx| {
             Vim::action(
                 editor,
                 cx,
                 move |vim, _: &SwitchToNormalMode, window, cx| {
-                    if matches!(default_editor_mode, EditorMode::Helix) {
+                    if matches!(default_editor_mode, EditorMode::Helix(_)) {
                         vim.switch_mode(ModalMode::HelixNormal, false, window, cx)
                     } else {
                         vim.switch_mode(ModalMode::Normal, false, window, cx)
@@ -918,20 +915,21 @@ impl Vim {
                 });
             }
             EditorEvent::EditorModeChanged => {
-                self.update_editor(cx, |vim, editor, cx| {
-                    let enabled = editor.default_editor_mode().is_modal();
-                    if was_enabled == enabled {
-                        return;
-                    }
-                    if !enabled {
-                        editor.set_relative_line_number(None, cx);
-                    }
-                    was_enabled = enabled;
-                    if enabled {
-                        Self::activate(editor, window, cx)
-                    } else {
-                        Self::deactivate(editor, cx)
-                    }
+                self.update_editor(cx, |_vim, _editor, _cx| {
+                    // TODO
+                    // let enabled = editor.default_editor_mode().is_modal();
+                    // if was_enabled == enabled {
+                    //     return;
+                    // }
+                    // if !enabled {
+                    //     editor.set_relative_line_number(None, cx);
+                    // }
+                    // was_enabled = enabled;
+                    // if enabled {
+                    //     Self::activate(editor, window, cx)
+                    // } else {
+                    //     Self::deactivate(editor, cx)
+                    // }
                     //
                 });
             }

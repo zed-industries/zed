@@ -113,6 +113,7 @@ impl MessageEditor {
         });
         let mention_set = MentionSet::default();
 
+        let settings = agent_settings::AgentSettings::get_global(cx);
         let editor_mode = match settings.editor_mode {
             agent_settings::AgentEditorMode::EditorModeOverride(mode) => mode,
             agent_settings::AgentEditorMode::Inherit => {
@@ -128,7 +129,7 @@ impl MessageEditor {
             editor.set_placeholder_text(placeholder, cx);
             editor.set_show_indent_guides(false, cx);
             editor.set_soft_wrap();
-            editor.set_use_modal_editing(editor_mode);
+            editor.set_default_editor_mode(editor_mode);
             editor.set_completion_provider(Some(Rc::new(completion_provider)));
             editor.set_context_menu_options(ContextMenuOptions {
                 min_entries_visible: 12,

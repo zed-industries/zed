@@ -53,7 +53,7 @@ impl Vim {
             self.update_editor(cx, |_, editor, cx| {
                 editor.dismiss_menus_and_popups(false, window, cx);
 
-                if EditorModeSetting::get_global(cx).0 != EditorMode::Helix {
+                if !matches!(EditorModeSetting::get_global(cx).0, EditorMode::Helix(..)) {
                     editor.change_selections(Default::default(), window, cx, |s| {
                         s.move_cursors_with(|map, mut cursor, _| {
                             *cursor.column_mut() = cursor.column().saturating_sub(1);
@@ -63,7 +63,7 @@ impl Vim {
                 }
             });
 
-            if EditorModeSetting::get_global(cx).0 == EditorMode::Helix {
+            if matches!(EditorModeSetting::get_global(cx).0, EditorMode::Helix(..)) {
                 self.switch_mode(Mode::HelixNormal, false, window, cx);
             } else {
                 self.switch_mode(Mode::Normal, false, window, cx);

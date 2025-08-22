@@ -1337,7 +1337,7 @@ impl ExtensionsPage {
                         Label::new("Enable vim mode"),
                         {
                             let editor_mode = EditorModeSetting::get_global(cx).0;
-                            if matches!(editor_mode, EditorMode::Vim | EditorMode::Helix) {
+                            if editor_mode.is_modal() {
                                 ui::ToggleState::Selected
                             } else {
                                 ui::ToggleState::Unselected
@@ -1350,9 +1350,9 @@ impl ExtensionsPage {
                                 cx,
                                 |setting, value| {
                                     *setting = Some(if value {
-                                        EditorMode::Vim
+                                        EditorMode::vim()
                                     } else {
-                                        EditorMode::Default
+                                        EditorMode::default()
                                     });
                                 },
                             );

@@ -302,10 +302,7 @@ impl Render for QuickActionBar {
         let editor = editor.downgrade();
         let editor_settings_dropdown = {
             let editor_mode = EditorModeSetting::get_global(cx).0;
-            let vim_mode_enabled = matches!(
-                editor_mode,
-                EditorMode::Vim | EditorMode::Helix | EditorMode::VimInsert
-            );
+            let vim_mode_enabled = editor_mode.is_modal();
 
             PopoverMenu::new("editor-settings")
                 .trigger_with_tooltip(

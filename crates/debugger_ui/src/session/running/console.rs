@@ -26,7 +26,7 @@ use std::{cell::RefCell, ops::Range, rc::Rc, usize};
 use theme::{Theme, ThemeSettings};
 use ui::{ContextMenu, Divider, PopoverMenu, SplitButton, Tooltip, prelude::*};
 use util::ResultExt;
-use vim_mode_settings::EditorMode;
+use vim_mode_setting::EditorMode;
 
 actions!(
     console,

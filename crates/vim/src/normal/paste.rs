@@ -220,7 +220,7 @@ impl Vim {
             });
         });
 
-        if EditorModeSetting::get_global(cx).0 == EditorMode::Helix {
+        if matches!(EditorModeSetting::get_global(cx).0, EditorMode::Helix(_)) {
             self.switch_mode(Mode::HelixNormal, true, window, cx);
         } else {
             self.switch_mode(Mode::Normal, true, window, cx);

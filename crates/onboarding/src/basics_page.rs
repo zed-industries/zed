@@ -332,10 +332,7 @@ fn render_base_keymap_section(tab_index: &mut isize, cx: &mut App) -> impl IntoE
 
 fn render_vim_mode_switch(tab_index: &mut isize, cx: &mut App) -> impl IntoElement {
     let editor_mode = EditorModeSetting::get_global(cx).0;
-    let toggle_state = if matches!(
-        editor_mode,
-        EditorMode::Vim | EditorMode::Helix | EditorMode::VimInsert
-    ) {
+    let toggle_state = if editor_mode.is_modal() {
         ui::ToggleState::Selected
     } else {
         ui::ToggleState::Unselected
@@ -351,7 +348,7 @@ fn render_vim_mode_switch(tab_index: &mut isize, cx: &mut App) -> impl IntoEleme
             move |&selection, _, cx| {
                 update_settings_file::<EditorModeSetting>(fs.clone(), cx, move |setting, _| {
                     *setting = match selection {
-                        ToggleState::Selected => Some(EditorMode::Vim),
+                        ToggleState::Selected => Some(EditorMode::vim()),
                         ToggleState::Unselected => Some(EditorMode::Default),
                         ToggleState::Indeterminate => None,
                     }

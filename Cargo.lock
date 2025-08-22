@@ -322,6 +322,7 @@ dependencies = [
  "serde_json",
  "serde_json_lenient",
  "settings",
+ "vim_mode_setting",
  "workspace-hack",
 ]
 
@@ -13980,6 +13981,7 @@ dependencies = [
  "title_bar",
  "ui",
  "util",
+ "vim_mode_setting",
  "workspace",
  "workspace-hack",
  "zed_actions",

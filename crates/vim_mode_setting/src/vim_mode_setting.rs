@@ -64,7 +64,7 @@ impl Serialize for EditorMode {
             EditorMode::Vim(ModalMode::Visual) => "vim_visual",
             EditorMode::Vim(ModalMode::VisualLine) => "vim_visual_line",
             EditorMode::Vim(ModalMode::VisualBlock) => "vim_visual_block",
-            EditorMode::Helix(ModalMode::Normal) => "helix_experimental",
+            EditorMode::Helix(ModalMode::HelixNormal) => "helix_experimental",
             _ => return Err(serde::ser::Error::custom("unsupported editor mode variant")),
         };
         serializer.serialize_str(s)
@@ -135,5 +135,9 @@ impl Settings for EditorModeSetting {
 impl EditorMode {
     pub fn is_modal(&self) -> bool {
         matches!(self, EditorMode::Vim(_) | EditorMode::Helix(_))
+    }
+
+    pub fn vim() -> EditorMode {
+        EditorMode::Vim(ModalMode::default())
     }
 }

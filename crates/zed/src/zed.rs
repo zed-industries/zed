@@ -1492,11 +1492,8 @@ pub fn load_default_keymap(cx: &mut App) {
     if let Some(asset_path) = base_keymap.asset_path() {
         cx.bind_keys(KeymapFile::load_asset(asset_path, Some(KeybindSource::Base), cx).unwrap());
     }
-
-    if matches!(
-        EditorModeSetting::get_global(cx).0,
-        EditorMode::Vim | EditorMode::Helix | EditorMode::VimInsert
-    ) {
+    let editor_mode = EditorModeSetting::get_global(cx).0;
+    if editor_mode.is_modal() {
         cx.bind_keys(
             KeymapFile::load_asset(VIM_KEYMAP_PATH, Some(KeybindSource::Vim), cx).unwrap(),
         );

@@ -19,12 +19,11 @@ use language::{Buffer, BufferEvent, BufferId, Chunk, Point};
 use multi_buffer::MultiBufferRow;
 use picker::{Picker, PickerDelegate};
 use project::{Project, ProjectItem, ProjectPath};
-use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
 use std::borrow::BorrowMut;
 use std::collections::HashSet;
 use std::path::Path;
-use std::{fmt::Display, ops::Range, sync::Arc};
+use std::{ops::Range, sync::Arc};
 use text::{Bias, ToPoint};
 use theme::ThemeSettings;
 use ui::{
@@ -32,7 +31,7 @@ use ui::{
     StyledTypography, Window, h_flex, rems,
 };
 use util::ResultExt;
-use vim_mode_setting::ModalMode;
+pub use vim_mode_setting::ModalMode as Mode;
 use workspace::searchable::Direction;
 use workspace::{Workspace, WorkspaceDb, WorkspaceId};
 
@@ -937,7 +936,7 @@ pub struct SearchState {
 
     pub prior_selections: Vec<Range<Anchor>>,
     pub prior_operator: Option<Operator>,
-    pub prior_mode: ModalMode,
+    pub prior_mode: Mode,
 }
 
 impl Operator {
@@ -1004,7 +1003,7 @@ impl Operator {
         }
     }
 
-    pub fn is_waiting(&self, mode: ModalMode) -> bool {
+    pub fn is_waiting(&self, mode: Mode) -> bool {
         match self {
             Operator::AddSurrounds { target } => target.is_some() || mode.is_visual(),
             Operator::FindForward { .. }

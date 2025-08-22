@@ -3,8 +3,9 @@ use gpui::{Context, Window, actions};
 use language::Point;
 
 use crate::{
-    Mode, Vim,
+    Vim,
     motion::{Motion, MotionKind},
+    state::Mode,
 };
 
 actions!(

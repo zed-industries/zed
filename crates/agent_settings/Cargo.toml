@@ -21,6 +21,7 @@ schemars.workspace = true
 serde.workspace = true
 settings.workspace = true
 workspace-hack.workspace = true
+vim_mode_setting.workspace = true
 
 [dev-dependencies]
 fs.workspace = true

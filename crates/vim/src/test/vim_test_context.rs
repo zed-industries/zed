@@ -4,7 +4,7 @@ use editor::test::editor_lsp_test_context::EditorLspTestContext;
 use gpui::{Context, Entity, SemanticVersion, UpdateGlobal};
 use search::{BufferSearchBar, project_search::ProjectSearchBar};
 
-use crate::{state::Operator, *};
+use crate::{state::Operator, state::Mode, *};
 
 pub struct VimTestContext {
     cx: EditorLspTestContext,
@@ -66,7 +66,7 @@ impl VimTestContext {
         SettingsStore::update_global(cx, |store, cx| {
             store.update_user_settings::<EditorModeSetting>(cx, |s| {
                 *s = Some(if enabled {
-                    EditorMode::Vim
+                    EditorMode::vim()
                 } else {
                     EditorMode::Default
                 })
@@ -136,7 +136,9 @@ impl VimTestContext {
     pub fn enable_vim(&mut self) {
         self.cx.update(|_, cx| {
             SettingsStore::update_global(cx, |store, cx| {
-                store.update_user_settings::<EditorModeSetting>(cx, |s| *s = Some(EditorMode::Vim));
+                store.update_user_settings::<EditorModeSetting>(cx, |s| {
+                    *s = Some(EditorMode::vim())
+                });
             });
         })
     }
@@ -144,7 +146,9 @@ impl VimTestContext {
     pub fn disable_vim(&mut self) {
         self.cx.update(|_, cx| {
             SettingsStore::update_global(cx, |store, cx| {
-                store.update_user_settings::<EditorModeSetting>(cx, |s| *s = Some(EditorMode::Vim));
+                store.update_user_settings::<EditorModeSetting>(cx, |s| {
+                    *s = Some(EditorMode::vim())
+                });
             });
         })
     }
@@ -153,7 +157,7 @@ impl VimTestContext {
         self.cx.update(|_, cx| {
             SettingsStore::update_global(cx, |store, cx| {
                 store.update_user_settings::<vim_mode_setting::EditorModeSetting>(cx, |s| {
-                    *s = Some(EditorMode::Helix)
+                    *s = Some(EditorMode::Helix(ModalMode::HelixNormal))
                 });
             });
         })

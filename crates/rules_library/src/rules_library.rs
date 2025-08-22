@@ -26,6 +26,7 @@ use ui::{
     SharedString, Styled, Tooltip, Window, div, prelude::*,
 };
 use util::{ResultExt, TryFutureExt};
+use vim_mode_setting::EditorMode;
 use workspace::{Workspace, client_side_decorations};
 use zed_actions::assistant::InlineAssist;
 

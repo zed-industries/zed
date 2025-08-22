@@ -10,6 +10,7 @@ use schemars::{JsonSchema, json_schema};
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources};
 use std::borrow::Cow;
+use vim_mode_setting::EditorMode;
 
 pub use crate::agent_profile::*;
 
