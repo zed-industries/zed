@@ -70,8 +70,19 @@ impl Vim {
                     } else {
                         Point::new(row, 0)
                     };
+                    let end = if row == selection.end.row {
+                        selection.end
+                    } else {
+                        Point::new(row, snapshot.line_len(multi_buffer::MultiBufferRow(row)))
+                    };
 
-                    if let Some((range, num, radix)) = find_number(&snapshot, start) {
+                    let number_result = if !selection.is_empty() {
+                        find_number_in_range(&snapshot, start, end)
+                    } else {
+                        find_number(&snapshot, start)
+                    };
+
+                    if let Some((range, num, radix)) = number_result {
                         let replace = match radix {
                             10 => increment_decimal_string(&num, delta),
                             16 => increment_hex_string(&num, delta),
@@ -187,6 +198,90 @@ fn increment_binary_string(num: &str, delta: i64) -> String {
         u64::MAX
     };
     format!("{:0width$b}", result, width = num.len())
+}
+
+fn find_number_in_range(
+    snapshot: &MultiBufferSnapshot,
+    start: Point,
+    end: Point,
+) -> Option<(Range<Point>, String, u32)> {
+    let start_offset = start.to_offset(snapshot);
+    let end_offset = end.to_offset(snapshot);
+
+    let mut offset = start_offset;
+
+    // Backward scan to find the start of the number, but stop at start_offset
+    for ch in snapshot.reversed_chars_at(offset) {
+        if ch.is_ascii_hexdigit() || ch == '-' || ch == 'b' || ch == 'x' {
+            if offset == 0 {
+                break;
+            }
+            offset -= ch.len_utf8();
+            if offset < start_offset {
+                offset = start_offset;
+                break;
+            }
+        } else {
+            break;
+        }
+    }
+
+    let mut begin = None;
+    let mut end_num = None;
+    let mut num = String::new();
+    let mut radix = 10;
+
+    let mut chars = snapshot.chars_at(offset).peekable();
+
+    while let Some(ch) = chars.next() {
+        if offset >= end_offset {
+            break; // stop at end of selection
+        }
+
+        if num == "0" && ch == 'b' && chars.peek().is_some() && chars.peek().unwrap().is_digit(2) {
+            radix = 2;
+            begin = None;
+            num = String::new();
+        } else if num == "0"
+            && ch == 'x'
+            && chars.peek().is_some()
+            && chars.peek().unwrap().is_ascii_hexdigit()
+        {
+            radix = 16;
+            begin = None;
+            num = String::new();
+        }
+
+        if ch.is_digit(radix)
+            || (begin.is_none()
+                && ch == '-'
+                && chars.peek().is_some()
+                && chars.peek().unwrap().is_digit(radix))
+        {
+            if begin.is_none() {
+                begin = Some(offset);
+            }
+            num.push(ch);
+        } else if begin.is_some() {
+            end_num = Some(offset);
+            break;
+        } else if ch == '\n' {
+            break;
+        }
+
+        offset += ch.len_utf8();
+    }
+
+    if let Some(begin) = begin {
+        let end_num = end_num.unwrap_or(offset);
+        Some((
+            begin.to_point(snapshot)..end_num.to_point(snapshot),
+            num,
+            radix,
+        ))
+    } else {
+        None
+    }
 }
 
 fn find_number(
@@ -763,5 +858,19 @@ mod test {
         cx.set_state("let enabled = Onˇ;", Mode::Normal);
         cx.simulate_keystrokes("v b ctrl-a");
         cx.assert_state("let enabled = ˇOff;", Mode::Normal);
+    }
+
+    #[gpui::test]
+    async fn test_increment_visual_partial_number(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        cx.set_shared_state("ˇ123").await;
+        cx.simulate_shared_keystrokes("v l ctrl-a").await;
+        cx.shared_state().await.assert_eq(indoc! {"ˇ133"});
+        cx.simulate_shared_keystrokes("l v l ctrl-a").await;
+        cx.shared_state().await.assert_eq(indoc! {"1ˇ34"});
+        cx.simulate_shared_keystrokes("shift-v y p p ctrl-v k k l ctrl-a")
+            .await;
+        cx.shared_state().await.assert_eq(indoc! {"ˇ144\n144\n144"});
     }
 }
