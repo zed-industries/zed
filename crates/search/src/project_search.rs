@@ -3905,7 +3905,7 @@ pub mod tests {
                 assert_eq!(workspace.active_pane(), &second_pane);
                 second_pane.update(cx, |this, cx| {
                     assert_eq!(this.active_item_index(), 1);
-                    this.activate_prev_item(false, window, cx);
+                    this.activate_previous_item(&Default::default(), window, cx);
                     assert_eq!(this.active_item_index(), 0);
                 });
                 workspace.activate_pane_in_direction(workspace::SplitDirection::Left, window, cx);
@@ -3940,7 +3940,9 @@ pub mod tests {
         // Focus the second pane's non-search item
         window
             .update(cx, |_workspace, window, cx| {
-                second_pane.update(cx, |pane, cx| pane.activate_next_item(true, window, cx));
+                second_pane.update(cx, |pane, cx| {
+                    pane.activate_next_item(&Default::default(), window, cx)
+                });
             })
             .unwrap();
 

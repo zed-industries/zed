@@ -22715,7 +22715,7 @@ async fn test_invisible_worktree_servers(cx: &mut TestAppContext) {
     .await
     .unwrap();
     pane.update_in(cx, |pane, window, cx| {
-        pane.navigate_backward(window, cx);
+        pane.navigate_backward(&Default::default(), window, cx);
     });
     cx.run_until_parked();
     pane.update(cx, |pane, cx| {
@@ -24302,7 +24302,7 @@ async fn test_document_colors(cx: &mut TestAppContext) {
     workspace
         .update(cx, |workspace, window, cx| {
             workspace.active_pane().update(cx, |pane, cx| {
-                pane.navigate_backward(window, cx);
+                pane.navigate_backward(&Default::default(), window, cx);
             })
         })
         .unwrap();
