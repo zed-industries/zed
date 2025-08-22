@@ -26,6 +26,17 @@ fn is_rust_language(language: &Language) -> bool {
 }
 
 pub fn apply_related_actions(editor: &Entity<Editor>, window: &mut Window, cx: &mut App) {
+    if editor.read(cx).project().is_some_and(|project| {
+        project
+            .read(cx)
+            .language_server_statuses(cx)
+            .any(|(_, status)| status.name == RUST_ANALYZER_NAME)
+    }) {
+        register_action(editor, window, cancel_flycheck_action);
+        register_action(editor, window, run_flycheck_action);
+        register_action(editor, window, clear_flycheck_action);
+    }
+
     if editor
         .read(cx)
         .buffer()
@@ -38,9 +49,6 @@ pub fn apply_related_actions(editor: &Entity<Editor>, window: &mut Window, cx: &
         register_action(editor, window, go_to_parent_module);
         register_action(editor, window, expand_macro_recursively);
         register_action(editor, window, open_docs);
-        register_action(editor, window, cancel_flycheck_action);
-        register_action(editor, window, run_flycheck_action);
-        register_action(editor, window, clear_flycheck_action);
     }
 }
 
@@ -309,7 +317,7 @@ fn cancel_flycheck_action(
     let Some(project) = &editor.project else {
         return;
     };
-    let Some(buffer_id) = editor
+    let buffer_id = editor
         .selections
         .disjoint_anchors()
         .iter()
@@ -321,10 +329,7 @@ fn cancel_flycheck_action(
                 .read(cx)
                 .entry_id(cx)?;
             project.path_for_entry(entry_id, cx)
-        })
-    else {
-        return;
-    };
+        });
     cancel_flycheck(project.clone(), buffer_id, cx).detach_and_log_err(cx);
 }
 
@@ -337,7 +342,7 @@ fn run_flycheck_action(
     let Some(project) = &editor.project else {
         return;
     };
-    let Some(buffer_id) = editor
+    let buffer_id = editor
         .selections
         .disjoint_anchors()
         .iter()
@@ -349,10 +354,7 @@ fn run_flycheck_action(
                 .read(cx)
                 .entry_id(cx)?;
             project.path_for_entry(entry_id, cx)
-        })
-    else {
-        return;
-    };
+        });
     run_flycheck(project.clone(), buffer_id, cx).detach_and_log_err(cx);
 }
 
@@ -365,7 +367,7 @@ fn clear_flycheck_action(
     let Some(project) = &editor.project else {
         return;
     };
-    let Some(buffer_id) = editor
+    let buffer_id = editor
         .selections
         .disjoint_anchors()
         .iter()
@@ -377,9 +379,6 @@ fn clear_flycheck_action(
                 .read(cx)
                 .entry_id(cx)?;
             project.path_for_entry(entry_id, cx)
-        })
-    else {
-        return;
-    };
+        });
     clear_flycheck(project.clone(), buffer_id, cx).detach_and_log_err(cx);
 }

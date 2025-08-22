@@ -438,7 +438,7 @@ impl ProjectDiagnosticsEditor {
             for buffer_path in diagnostics_sources.iter().cloned() {
                 if cx
                     .update(|cx| {
-                        fetch_tasks.push(run_flycheck(project.clone(), buffer_path, cx));
+                        fetch_tasks.push(run_flycheck(project.clone(), Some(buffer_path), cx));
                     })
                     .is_err()
                 {
@@ -462,7 +462,7 @@ impl ProjectDiagnosticsEditor {
             .iter()
             .cloned()
         {
-            cancel_gasks.push(cancel_flycheck(self.project.clone(), buffer_path, cx));
+            cancel_gasks.push(cancel_flycheck(self.project.clone(), Some(buffer_path), cx));
         }
 
         self.cargo_diagnostics_fetch.cancel_task = Some(cx.background_spawn(async move {
