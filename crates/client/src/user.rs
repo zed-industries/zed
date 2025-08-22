@@ -46,11 +46,6 @@ impl ProjectId {
     }
 }
 
-#[derive(
-    Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, serde::Serialize, serde::Deserialize,
-)]
-pub struct DevServerProjectId(pub u64);
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ParticipantIndex(pub u32);
 
