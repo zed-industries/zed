@@ -1668,39 +1668,14 @@ impl AcpThreadView {
         let header_id = SharedString::from(format!("outer-tool-call-header-{}", entry_ix));
         let card_header_id = SharedString::from("inner-tool-call-header");
 
-        let status_icon = match &tool_call.status {
-            ToolCallStatus::Pending
-            | ToolCallStatus::WaitingForConfirmation { .. }
-            | ToolCallStatus::Completed => None,
-            ToolCallStatus::InProgress => Some(
-                div()
-                    .absolute()
-                    .right_2()
-                    .child(
-                        Icon::new(IconName::ArrowCircle)
-                            .color(Color::Muted)
-                            .size(IconSize::Small)
-                            .with_animation(
-                                "running",
-                                Animation::new(Duration::from_secs(3)).repeat(),
-                                |icon, delta| {
-                                    icon.transform(Transformation::rotate(percentage(delta)))
-                                },
-                            ),
-                    )
-                    .into_any(),
-            ),
-            ToolCallStatus::Rejected | ToolCallStatus::Canceled | ToolCallStatus::Failed => Some(
-                div()
-                    .absolute()
-                    .right_2()
-                    .child(
-                        Icon::new(IconName::Close)
-                            .color(Color::Error)
-                            .size(IconSize::Small),
-                    )
-                    .into_any_element(),
-            ),
+        let in_progress = match &tool_call.status {
+            ToolCallStatus::InProgress => true,
+            _ => false,
+        };
+
+        let failed_or_canceled = match &tool_call.status {
+            ToolCallStatus::Rejected | ToolCallStatus::Canceled | ToolCallStatus::Failed => true,
+            _ => false,
         };
 
         let failed_tool_call = matches!(
@@ -1884,7 +1859,33 @@ impl AcpThreadView {
                                     .into_any()
                             }),
                     )
-                    .children(status_icon),
+                    .when(in_progress && use_card_layout, |this| {
+                        this.child(
+                            div().absolute().right_2().child(
+                                Icon::new(IconName::ArrowCircle)
+                                    .color(Color::Muted)
+                                    .size(IconSize::Small)
+                                    .with_animation(
+                                        "running",
+                                        Animation::new(Duration::from_secs(3)).repeat(),
+                                        |icon, delta| {
+                                            icon.transform(Transformation::rotate(percentage(
+                                                delta,
+                                            )))
+                                        },
+                                    ),
+                            ),
+                        )
+                    })
+                    .when(failed_or_canceled, |this| {
+                        this.child(
+                            div().absolute().right_2().child(
+                                Icon::new(IconName::Close)
+                                    .color(Color::Error)
+                                    .size(IconSize::Small),
+                            ),
+                        )
+                    }),
             )
             .children(tool_output_display)
     }
@@ -2579,11 +2580,15 @@ impl AcpThreadView {
         window: &mut Window,
         cx: &Context<Self>,
     ) -> Div {
+        let show_description =
+            configuration_view.is_none() && description.is_none() && pending_auth_method.is_none();
+
         v_flex().flex_1().size_full().justify_end().child(
             v_flex()
                 .p_2()
                 .pr_3()
                 .w_full()
+                .gap_1()
                 .border_t_1()
                 .border_color(cx.theme().colors().border)
                 .bg(cx.theme().status().warning.opacity(0.04))
@@ -2595,7 +2600,7 @@ impl AcpThreadView {
                                 .color(Color::Warning)
                                 .size(IconSize::Small),
                         )
-                        .child(Label::new("Authentication Required")),
+                        .child(Label::new("Authentication Required").size(LabelSize::Small)),
                 )
                 .children(description.map(|desc| {
                     div().text_ui(cx).child(self.render_markdown(
@@ -2609,44 +2614,20 @@ impl AcpThreadView {
                         .map(|view| div().w_full().child(view)),
                 )
                 .when(
-                    configuration_view.is_none()
-                        && description.is_none()
-                        && pending_auth_method.is_none(),
+                    show_description,
                     |el| {
                         el.child(
                             Label::new(format!(
                                 "You are not currently authenticated with {}. Please choose one of the following options:",
                                 self.agent.name()
                             ))
+                            .size(LabelSize::Small)
                             .color(Color::Muted)
                             .mb_1()
                             .ml_5(),
                         )
                     },
                 )
-                .when(!connection.auth_methods().is_empty(), |this| {
-                    this.child(
-                        h_flex().justify_end().flex_wrap().gap_1().children(
-                            connection.auth_methods().iter().enumerate().rev().map(
-                                |(ix, method)| {
-                                    Button::new(
-                                        SharedString::from(method.id.0.clone()),
-                                        method.name.clone(),
-                                    )
-                                    .when(ix == 0, |el| {
-                                        el.style(ButtonStyle::Tinted(ui::TintColor::Warning))
-                                    })
-                                    .on_click({
-                                        let method_id = method.id.clone();
-                                        cx.listener(move |this, _, window, cx| {
-                                            this.authenticate(method_id.clone(), window, cx)
-                                        })
-                                    })
-                                },
-                            ),
-                        ),
-                    )
-                })
                 .when_some(pending_auth_method, |el, _| {
                     el.child(
                         h_flex()
@@ -2669,9 +2650,47 @@ impl AcpThreadView {
                                     )
                                     .into_any_element(),
                             )
-                            .child(Label::new("Authenticating…")),
+                            .child(Label::new("Authenticating…").size(LabelSize::Small)),
                     )
-                }),
+                })
+                .when(!connection.auth_methods().is_empty(), |this| {
+                    this.child(
+                        h_flex()
+                            .justify_end()
+                            .flex_wrap()
+                            .gap_1()
+                            .when(!show_description, |this| {
+                                this.border_t_1()
+                                    .mt_1()
+                                    .pt_2()
+                                    .border_color(cx.theme().colors().border.opacity(0.8))
+                            })
+                            .children(
+                                connection
+                                    .auth_methods()
+                                    .iter()
+                                    .enumerate()
+                                    .rev()
+                                    .map(|(ix, method)| {
+                                        Button::new(
+                                            SharedString::from(method.id.0.clone()),
+                                            method.name.clone(),
+                                        )
+                                        .when(ix == 0, |el| {
+                                            el.style(ButtonStyle::Tinted(ui::TintColor::Warning))
+                                        })
+                                        .label_size(LabelSize::Small)
+                                        .on_click({
+                                            let method_id = method.id.clone();
+                                            cx.listener(move |this, _, window, cx| {
+                                                this.authenticate(method_id.clone(), window, cx)
+                                            })
+                                        })
+                                    }),
+                            ),
+                    )
+                })
+
         )
     }
 
