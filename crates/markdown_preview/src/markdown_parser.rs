@@ -2,9 +2,11 @@ use crate::markdown_elements::*;
 use async_recursion::async_recursion;
 use collections::FxHashMap;
 use gpui::FontWeight;
+use html5ever::{ParseOpts, local_name, parse_document, tendril::TendrilSink};
 use language::LanguageRegistry;
+use markup5ever_rcdom::RcDom;
 use pulldown_cmark::{Alignment, Event, Options, Parser, Tag, TagEnd};
-use std::{ops::Range, path::PathBuf, sync::Arc, vec};
+use std::{cell::RefCell, ops::Range, path::PathBuf, rc::Rc, sync::Arc, vec};
 use ui::{px, relative};
 
 pub async fn parse_markdown(
@@ -757,10 +759,19 @@ impl<'a> MarkdownParser<'a> {
             let source_range = source_range.clone();
             match current {
                 Event::Html(html) => {
-                    let fragment = scraper::Html::parse_fragment(html);
+                    let mut cursor = std::io::Cursor::new(html.as_bytes());
+                    let Some(dom) = parse_document(RcDom::default(), ParseOpts::default())
+                        .from_utf8()
+                        .read_from(&mut cursor)
+                        .ok()
+                    else {
+                        self.cursor += 1;
+                        continue;
+                    };
+
                     self.cursor += 1;
 
-                    elements.extend(self.parse_html_image(fragment, source_range));
+                    self.parse_html_node(source_range, &dom.document, &mut elements);
                 }
                 Event::End(TagEnd::CodeBlock) => {
                     self.cursor += 1;
@@ -773,6 +784,92 @@ impl<'a> MarkdownParser<'a> {
         }
 
         elements
+    }
+
+    fn attr_value(
+        attrs: &RefCell<Vec<html5ever::Attribute>>,
+        name: html5ever::LocalName,
+    ) -> Option<String> {
+        attrs.borrow().iter().find_map(|attr| {
+            if attr.name.local == name {
+                Some(attr.value.to_string())
+            } else {
+                None
+            }
+        })
+    }
+
+    fn parse_html_node(
+        &self,
+        source_range: Range<usize>,
+        node: &Rc<markup5ever_rcdom::Node>,
+        elements: &mut Vec<ParsedMarkdownElement>,
+    ) {
+        match &node.data {
+            markup5ever_rcdom::NodeData::Document => {
+                self.consume_children(source_range, node, elements);
+            }
+            markup5ever_rcdom::NodeData::Doctype { .. } => {}
+            markup5ever_rcdom::NodeData::Text { contents } => {
+                elements.push(ParsedMarkdownElement::Paragraph(vec![
+                    MarkdownParagraphChunk::Text(ParsedMarkdownText {
+                        source_range,
+                        contents: contents.borrow().to_string(),
+                        highlights: Vec::default(),
+                        region_ranges: Vec::default(),
+                        regions: Vec::default(),
+                    }),
+                ]));
+            }
+            markup5ever_rcdom::NodeData::Comment { .. } => {}
+            markup5ever_rcdom::NodeData::Element { name, attrs, .. } => {
+                if local_name!("img") == name.local {
+                    let Some(src) = Self::attr_value(attrs, local_name!("src")) else {
+                        return;
+                    };
+
+                    let Some(mut image) = Image::identify(
+                        src.to_string(),
+                        source_range,
+                        self.file_location_directory.clone(),
+                    ) else {
+                        return;
+                    };
+
+                    if let Some(alt) = Self::attr_value(attrs, local_name!("alt")) {
+                        image.set_alt_text(alt.to_string().into());
+                    }
+
+                    if let Some(width) = Self::attr_value(attrs, local_name!("width"))
+                        .and_then(|width| Self::parse_length(&width))
+                    {
+                        image.set_width(width);
+                    }
+
+                    if let Some(height) = Self::attr_value(attrs, local_name!("height"))
+                        .and_then(|height| Self::parse_length(&height))
+                    {
+                        image.set_height(height);
+                    }
+
+                    elements.push(ParsedMarkdownElement::Image(image));
+                } else {
+                    self.consume_children(source_range, node, elements);
+                }
+            }
+            markup5ever_rcdom::NodeData::ProcessingInstruction { .. } => {}
+        }
+    }
+
+    fn consume_children(
+        &self,
+        source_range: Range<usize>,
+        node: &Rc<markup5ever_rcdom::Node>,
+        elements: &mut Vec<ParsedMarkdownElement>,
+    ) {
+        for node in node.children.borrow().iter() {
+            self.parse_html_node(source_range.clone(), node, elements);
+        }
     }
 
     /// Parses the width/height attribute value of an html element (e.g. img element)
@@ -796,51 +893,6 @@ impl<'a> MarkdownParser<'a> {
                 .ok()
                 .map(|value| px(value).into())
         }
-    }
-
-    fn parse_html_image(
-        &self,
-        html: scraper::Html,
-        source_range: Range<usize>,
-    ) -> Vec<ParsedMarkdownElement> {
-        let mut images = Vec::new();
-        let selector = scraper::Selector::parse("img").unwrap();
-
-        for element in html.select(&selector) {
-            let Some(src) = element.attr("src") else {
-                continue;
-            };
-
-            let Some(mut image) = Image::identify(
-                src.to_string(),
-                source_range.clone(),
-                self.file_location_directory.clone(),
-            ) else {
-                continue;
-            };
-
-            if let Some(alt) = element.attr("alt") {
-                image.set_alt_text(alt.to_string().into());
-            }
-
-            if let Some(width) = element
-                .attr("width")
-                .and_then(|width| Self::parse_length(width))
-            {
-                image.set_width(width);
-            }
-
-            if let Some(height) = element
-                .attr("height")
-                .and_then(|height| Self::parse_length(height))
-            {
-                image.set_height(height);
-            }
-
-            images.push(ParsedMarkdownElement::Image(image));
-        }
-
-        images
     }
 }
 
