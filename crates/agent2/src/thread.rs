@@ -52,7 +52,7 @@ use std::{
     time::{Duration, Instant},
 };
 use std::{fmt::Write, ops::Range};
-use util::{ResultExt, markdown::MarkdownCodeBlock};
+use util::{ResultExt, debug_panic, markdown::MarkdownCodeBlock};
 use uuid::Uuid;
 
 const TOOL_CANCELED_MESSAGE: &str = "Tool canceled by user";
@@ -220,6 +220,9 @@ impl UserMessage {
                                 }
                             )
                             .ok();
+                        }
+                        MentionUri::PastedImage => {
+                            debug_panic!("pasted image URI should not be used in mention content")
                         }
                         MentionUri::Directory { .. } => {
                             write!(&mut directory_context, "\n{}\n", content).ok();

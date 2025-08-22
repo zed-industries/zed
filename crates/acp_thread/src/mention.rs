@@ -17,7 +17,7 @@ pub enum MentionUri {
     File {
         abs_path: PathBuf,
     },
-    // FIXME pastedimage
+    PastedImage,
     Directory {
         abs_path: PathBuf,
     },
@@ -127,6 +127,7 @@ impl MentionUri {
                 .unwrap_or_default()
                 .to_string_lossy()
                 .into_owned(),
+            MentionUri::PastedImage => "Image".to_string(),
             MentionUri::Symbol { name, .. } => name.clone(),
             MentionUri::Thread { name, .. } => name.clone(),
             MentionUri::TextThread { name, .. } => name.clone(),
@@ -145,6 +146,7 @@ impl MentionUri {
             MentionUri::File { abs_path } => {
                 FileIcons::get_icon(abs_path, cx).unwrap_or_else(|| IconName::File.path().into())
             }
+            MentionUri::PastedImage => IconName::Image.path().into(),
             MentionUri::Directory { .. } => FileIcons::get_folder_icon(false, cx)
                 .unwrap_or_else(|| IconName::Folder.path().into()),
             MentionUri::Symbol { .. } => IconName::Code.path().into(),
@@ -165,15 +167,17 @@ impl MentionUri {
             MentionUri::File { abs_path } => {
                 Url::from_file_path(abs_path).expect("mention path should be absolute")
             }
+            MentionUri::PastedImage => Url::parse("zed:///agent/pasted-image").unwrap(),
             MentionUri::Directory { abs_path } => {
                 Url::from_directory_path(abs_path).expect("mention path should be absolute")
             }
             MentionUri::Symbol {
-                abs_path: path,
+                abs_path,
                 name,
                 line_range,
             } => {
-                let mut url = Url::from_file_path(path).expect("mention path should be absolute");
+                let mut url =
+                    Url::from_file_path(abs_path).expect("mention path should be absolute");
                 url.query_pairs_mut().append_pair("symbol", name);
                 url.set_fragment(Some(&format!(
                     "L{}:{}",
@@ -186,20 +190,17 @@ impl MentionUri {
                 abs_path: path,
                 line_range,
             } => {
-                if let Some(path) = path {
-                    let mut url =
-                        Url::from_file_path(path).expect("mention path should be absolute");
-                    url.set_fragment(Some(&format!(
-                        "L{}:{}",
-                        line_range.start + 1,
-                        line_range.end + 1
-                    )));
-                    url
+                let mut url = if let Some(path) = path {
+                    Url::from_file_path(path).expect("mention path should be absolute")
                 } else {
-                    let mut url = Url::parse("zed:///").unwrap();
-                    url.set_path("/agent/selection");
-                    url
-                }
+                    Url::parse("zed:///").unwrap()
+                };
+                url.set_fragment(Some(&format!(
+                    "L{}:{}",
+                    line_range.start + 1,
+                    line_range.end + 1
+                )));
+                url
             }
             MentionUri::Thread { name, id } => {
                 let mut url = Url::parse("zed:///").unwrap();

@@ -741,7 +741,7 @@ impl AcpThreadView {
 
         let contents = self
             .message_editor
-            .update(cx, |message_editor, cx| message_editor.contents(window, cx));
+            .update(cx, |message_editor, cx| message_editor.contents(cx));
         self.send_impl(contents, window, cx)
     }
 
@@ -754,7 +754,7 @@ impl AcpThreadView {
 
         let contents = self
             .message_editor
-            .update(cx, |message_editor, cx| message_editor.contents(window, cx));
+            .update(cx, |message_editor, cx| message_editor.contents(cx));
 
         cx.spawn_in(window, async move |this, cx| {
             cancelled.await;
@@ -862,8 +862,7 @@ impl AcpThreadView {
             return;
         };
 
-        let contents =
-            message_editor.update(cx, |message_editor, cx| message_editor.contents(window, cx));
+        let contents = message_editor.update(cx, |message_editor, cx| message_editor.contents(cx));
 
         let task = cx.foreground_executor().spawn(async move {
             rewind.await?;
@@ -3553,6 +3552,7 @@ impl AcpThreadView {
                         .open_path(path, None, true, window, cx)
                         .detach_and_log_err(cx);
                 }
+                MentionUri::PastedImage => {}
                 MentionUri::Directory { abs_path } => {
                     let project = workspace.project();
                     let Some(entry) = project.update(cx, |project, cx| {
