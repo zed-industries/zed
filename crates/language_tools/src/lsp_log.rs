@@ -80,6 +80,7 @@ impl Message for LogMessage {
 
 pub(super) struct TraceMessage {
     message: String,
+    is_verbose: bool,
 }
 
 impl AsRef<str> for TraceMessage {
@@ -89,7 +90,15 @@ impl AsRef<str> for TraceMessage {
 }
 
 impl Message for TraceMessage {
-    type Level = ();
+    type Level = TraceValue;
+
+    fn should_include(&self, level: Self::Level) -> bool {
+        match level {
+            TraceValue::Off => false,
+            TraceValue::Messages => !self.is_verbose,
+            TraceValue::Verbose => true,
+        }
+    }
 }
 
 struct RpcMessage {
@@ -192,7 +201,7 @@ impl LogKind {
     fn from_server_log_type(log_type: &LanguageServerLogType) -> Self {
         match log_type {
             LanguageServerLogType::Log(_) => Self::Logs,
-            LanguageServerLogType::Trace(_) => Self::Trace,
+            LanguageServerLogType::Trace { .. } => Self::Trace,
             LanguageServerLogType::Rpc { .. } => Self::Rpc,
         }
     }
@@ -383,9 +392,13 @@ impl LogStore {
                                     project::LanguageServerLogType::Log(typ) => {
                                         log_store.add_language_server_log(*id, *typ, message, cx);
                                     }
-                                    project::LanguageServerLogType::Trace(_) => {
-                                        // todo! do something with trace level
-                                        log_store.add_language_server_trace(*id, message, cx);
+                                    project::LanguageServerLogType::Trace { verbose_info } => {
+                                        log_store.add_language_server_trace(
+                                            *id,
+                                            message,
+                                            verbose_info.clone(),
+                                            cx,
+                                        );
                                     }
                                     project::LanguageServerLogType::Rpc { received } => {
                                         let kind = if *received {
@@ -491,7 +504,7 @@ impl LogStore {
         let log_lines = &mut language_server_state.log_messages;
         let message = message.trim_end().to_string();
         if !store_logs {
-            // Send all messages regardless of the visiblity in case of not storing, to notify the receiver anyway
+            // Send all messages regardless of the visibility in case of not storing, to notify the receiver anyway
             cx.emit(Event::NewServerLogEntry {
                 id,
                 kind: LanguageServerLogType::Log(typ),
@@ -515,6 +528,7 @@ impl LogStore {
         &mut self,
         id: LanguageServerId,
         message: &str,
+        verbose_info: Option<String>,
         cx: &mut Context<Self>,
     ) -> Option<()> {
         let store_logs = self.store_logs;
@@ -522,24 +536,33 @@ impl LogStore {
 
         let log_lines = &mut language_server_state.trace_messages;
         if !store_logs {
-            // Send all messages regardless of the visiblity in case of not storing, to notify the receiver anyway
+            // Send all messages regardless of the visibility in case of not storing, to notify the receiver anyway
             cx.emit(Event::NewServerLogEntry {
                 id,
-                // todo! Ben, fix this here too!
-                kind: LanguageServerLogType::Trace(project::lsp_store::TraceLevel::Verbose),
+                kind: LanguageServerLogType::Trace { verbose_info },
                 text: message.trim().to_string(),
             });
         } else if let Some(new_message) = Self::push_new_message(
             log_lines,
             TraceMessage {
                 message: message.trim().to_string(),
+                is_verbose: false,
             },
-            (),
+            TraceValue::Messages,
         ) {
+            if let Some(verbose_message) = verbose_info.as_ref() {
+                Self::push_new_message(
+                    log_lines,
+                    TraceMessage {
+                        message: verbose_message.clone(),
+                        is_verbose: true,
+                    },
+                    TraceValue::Verbose,
+                );
+            }
             cx.emit(Event::NewServerLogEntry {
                 id,
-                // todo! Ben, fix this here too!
-                kind: LanguageServerLogType::Trace(project::lsp_store::TraceLevel::Verbose),
+                kind: LanguageServerLogType::Trace { verbose_info },
                 text: new_message,
             });
         }
@@ -1115,11 +1138,17 @@ impl LspLogView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let trace_level = self
+            .log_store
+            .update(cx, |this, _| {
+                Some(this.get_language_server_state(server_id)?.trace_level)
+            })
+            .unwrap_or(TraceValue::Messages);
         let log_contents = self
             .log_store
             .read(cx)
             .server_trace(server_id)
-            .map(|v| log_contents(v, ()));
+            .map(|v| log_contents(v, trace_level));
         if let Some(log_contents) = log_contents {
             self.current_server_id = Some(server_id);
             self.active_entry_kind = LogKind::Trace;

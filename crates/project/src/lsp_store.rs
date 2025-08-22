@@ -977,13 +977,9 @@ impl LocalLspStore {
                         this.update(&mut cx, |_, cx| {
                             cx.emit(LspStoreEvent::LanguageServerLog(
                                 server_id,
-                                // todo! store verbose info on Verbose
-                                LanguageServerLogType::Trace(
-                                    params
-                                        .verbose
-                                        .map(|_verbose_info| TraceLevel::Verbose)
-                                        .unwrap_or(TraceLevel::Messages),
-                                ),
+                                LanguageServerLogType::Trace {
+                                    verbose_info: params.verbose,
+                                },
                                 params.message,
                             ));
                         })
@@ -12706,17 +12702,10 @@ impl PartialEq for LanguageServerPromptRequest {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TraceLevel {
-    Off,
-    Messages,
-    Verbose,
-}
-
 #[derive(Clone, Debug, PartialEq)]
 pub enum LanguageServerLogType {
     Log(MessageType),
-    Trace(TraceLevel),
+    Trace { verbose_info: Option<String> },
     Rpc { received: bool },
 }
 
@@ -12739,15 +12728,9 @@ impl LanguageServerLogType {
                     level: level as i32,
                 })
             }
-            Self::Trace(trace_level) => {
-                use proto::trace_message;
-                let level = match trace_level {
-                    TraceLevel::Off => trace_message::TraceLevel::Off,
-                    TraceLevel::Messages => trace_message::TraceLevel::Messages,
-                    TraceLevel::Verbose => trace_message::TraceLevel::Verbose,
-                };
+            Self::Trace { verbose_info } => {
                 proto::language_server_log::LogType::Trace(proto::TraceMessage {
-                    level: level as i32,
+                    verbose_info: verbose_info.to_owned(),
                 })
             }
             Self::Rpc { received } => {
@@ -12765,7 +12748,6 @@ impl LanguageServerLogType {
     pub fn from_proto(log_type: proto::language_server_log::LogType) -> Self {
         use proto::log_message::LogLevel;
         use proto::rpc_message;
-        use proto::trace_message;
         match log_type {
             proto::language_server_log::LogType::Log(message_type) => Self::Log(
                 match LogLevel::from_i32(message_type.level).unwrap_or(LogLevel::Log) {
@@ -12775,15 +12757,9 @@ impl LanguageServerLogType {
                     LogLevel::Log => MessageType::LOG,
                 },
             ),
-            proto::language_server_log::LogType::Trace(trace) => Self::Trace(
-                match trace_message::TraceLevel::from_i32(trace.level)
-                    .unwrap_or(trace_message::TraceLevel::Messages)
-                {
-                    trace_message::TraceLevel::Off => TraceLevel::Off,
-                    trace_message::TraceLevel::Messages => TraceLevel::Messages,
-                    trace_message::TraceLevel::Verbose => TraceLevel::Verbose,
-                },
-            ),
+            proto::language_server_log::LogType::Trace(trace_message) => Self::Trace {
+                verbose_info: trace_message.verbose_info,
+            },
             proto::language_server_log::LogType::Rpc(message) => Self::Rpc {
                 received: match rpc_message::Kind::from_i32(message.kind)
                     .unwrap_or(rpc_message::Kind::Received)
