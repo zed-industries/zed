@@ -50,10 +50,7 @@ use ui::{
     h_flex, px,
 };
 use util::{ResultExt, debug_panic};
-use workspace::{
-    Toast, Workspace,
-    notifications::{NotificationId, NotifyResultExt as _},
-};
+use workspace::{Workspace, notifications::NotifyResultExt as _};
 use zed_actions::agent::Chat;
 
 const PARSE_SLASH_COMMAND_DEBOUNCE: Duration = Duration::from_millis(50);
@@ -250,89 +247,51 @@ impl MessageEditor {
             .buffer_snapshot
             .anchor_before(start_anchor.to_offset(&snapshot.buffer_snapshot) + content_len + 1);
 
-        // FIXME can we get rid of this
-        if let MentionUri::File { abs_path, .. } = &mention_uri {
-            let extension = abs_path
-                .extension()
-                .and_then(OsStr::to_str)
-                .unwrap_or_default();
-
-            if Img::extensions().contains(&extension) && !extension.contains("svg") {
-                if !self.prompt_capabilities.get().image {
-                    struct ImagesNotAllowed;
-
-                    self.editor.update(cx, |editor, cx| {
-                        // Remove mention
-                        editor.edit([((start_anchor..end_anchor), "")], cx);
-                    });
-
-                    self.workspace
-                        .update(cx, |workspace, cx| {
-                            workspace.show_toast(
-                                Toast::new(
-                                    NotificationId::unique::<ImagesNotAllowed>(),
-                                    "This agent does not support images yet",
-                                )
-                                .autohide(),
-                                cx,
-                            );
-                        })
-                        .ok();
-                    return Task::ready(());
-                }
-
-                let project = self.project.clone();
-                let Some(project_path) = project
-                    .read(cx)
-                    .project_path_for_absolute_path(abs_path, cx)
-                else {
-                    return Task::ready(());
-                };
-                let image = cx
-                    .spawn(async move |_, cx| {
-                        let image = project
-                            .update(cx, |project, cx| project.open_image(project_path, cx))
-                            .map_err(|e| e.to_string())?
-                            .await
-                            .map_err(|e| e.to_string())?;
-                        image
-                            .read_with(cx, |image, _cx| image.image.clone())
-                            .map_err(|e| e.to_string())
-                    })
-                    .shared();
-                let Some(crease_id) = insert_crease_for_image(
-                    *excerpt_id,
-                    start,
-                    content_len,
-                    Some(abs_path.as_path().into()),
-                    image.clone(),
-                    self.editor.clone(),
-                    window,
-                    cx,
-                ) else {
-                    return Task::ready(());
-                };
-                return self.confirm_mention_for_image(
-                    crease_id,
-                    start_anchor,
-                    Some(abs_path.clone()),
-                    image,
-                    window,
-                    cx,
-                );
-            }
-        }
-
-        let Some(crease_id) = crate::context_picker::insert_crease_for_mention(
-            *excerpt_id,
-            start,
-            content_len,
-            crease_text,
-            mention_uri.icon_path(cx),
-            self.editor.clone(),
-            window,
-            cx,
-        ) else {
+        let crease_id = if let MentionUri::File { abs_path } = &mention_uri
+            && let Some(extension) = abs_path.extension()
+            && let Some(extension) = extension.to_str()
+            && Img::extensions().contains(&extension)
+            && !extension.contains("svg")
+        {
+            let Some(project_path) = self
+                .project
+                .read(cx)
+                .project_path_for_absolute_path(&abs_path, cx)
+            else {
+                log::error!("project path not found");
+                return Task::ready(());
+            };
+            let image = self
+                .project
+                .update(cx, |project, cx| project.open_image(project_path, cx));
+            let image = cx.spawn(async move |_, cx| {
+                let image = image.await?;
+                let image = image.update(cx, |image, _| image.image.clone())?;
+                Ok(image)
+            });
+            insert_crease_for_image(
+                *excerpt_id,
+                start,
+                content_len,
+                Some(abs_path.as_path().into()),
+                image,
+                self.editor.clone(),
+                window,
+                cx,
+            )
+        } else {
+            crate::context_picker::insert_crease_for_mention(
+                *excerpt_id,
+                start,
+                content_len,
+                crease_text,
+                mention_uri.icon_path(cx),
+                self.editor.clone(),
+                window,
+                cx,
+            )
+        };
+        let Some(crease_id) = crease_id else {
             return Task::ready(());
         };
 
@@ -382,7 +341,6 @@ impl MessageEditor {
         })
     }
 
-    // FIXME this should support images
     fn confirm_mention_for_file(
         &mut self,
         abs_path: PathBuf,
@@ -395,6 +353,36 @@ impl MessageEditor {
         else {
             return Task::ready(Err(anyhow!("project path not found")));
         };
+        let extension = abs_path
+            .extension()
+            .and_then(OsStr::to_str)
+            .unwrap_or_default();
+
+        if Img::extensions().contains(&extension) && !extension.contains("svg") {
+            if !self.prompt_capabilities.get().image {
+                return Task::ready(Err(anyhow!("This agent does not support images yet")));
+            }
+            let task = self
+                .project
+                .update(cx, |project, cx| project.open_image(project_path, cx));
+            return cx.spawn(async move |_, cx| {
+                let image = task.await?;
+                let image = image.update(cx, |image, cx| image.image.clone())?;
+                let format = image.format;
+                let image = cx
+                    .update(|cx| LanguageModelImage::from_image(image, cx))?
+                    .await;
+                if let Some(image) = image {
+                    Ok(Mention::Image(MentionImage {
+                        data: image.source,
+                        format,
+                    }))
+                } else {
+                    Err(anyhow!("Failed to convert image"))
+                }
+            });
+        }
+
         let buffer = self
             .project
             .update(cx, |project, cx| project.open_buffer(project_path, cx));
@@ -571,7 +559,6 @@ impl MessageEditor {
         })
     }
 
-    // FIXME can we clean this up?
     pub fn confirm_mention_for_selection(
         &mut self,
         source_range: Range<text::Anchor>,
@@ -628,6 +615,7 @@ impl MessageEditor {
                     uri,
                     Task::ready(Ok(Mention::Text {
                         content: text,
+                        // FIXME
                         tracked_buffers: Vec::new(),
                     }))
                     .shared(),
@@ -1245,7 +1233,7 @@ pub(crate) fn insert_crease_for_image(
     anchor: text::Anchor,
     content_len: usize,
     abs_path: Option<Arc<Path>>,
-    image: Shared<Task<Result<Arc<Image>, String>>>,
+    image: Task<Result<Arc<Image>>>,
     editor: Entity<Editor>,
     window: &mut Window,
     cx: &mut App,
@@ -1265,7 +1253,7 @@ pub(crate) fn insert_crease_for_image(
         let end = snapshot.anchor_before(start.to_offset(&snapshot) + content_len);
 
         let placeholder = FoldPlaceholder {
-            render: render_image_fold_icon_button(crease_label, image, cx.weak_entity()),
+            render: render_image_fold_icon_button(crease_label, image, cx.weak_entity(), cx),
             merge_adjacent: false,
             ..Default::default()
         };
@@ -1287,9 +1275,13 @@ pub(crate) fn insert_crease_for_image(
 
 fn render_image_fold_icon_button(
     label: SharedString,
-    image_task: Shared<Task<Result<Arc<Image>, String>>>,
+    image_task: Task<Result<Arc<Image>, String>>,
     editor: WeakEntity<Editor>,
+    cx: &mut App,
 ) -> Arc<dyn Send + Sync + Fn(FoldId, Range<Anchor>, &mut App) -> AnyElement> {
+    let image_task = cx
+        .spawn(async move |_| image_task.await.map_err(|e| e.to_string()))
+        .shared();
     Arc::new({
         move |fold_id, fold_range, cx| {
             let is_in_text_selection = editor
