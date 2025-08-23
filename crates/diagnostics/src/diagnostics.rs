@@ -13,7 +13,6 @@ use editor::{
     DEFAULT_MULTIBUFFER_CONTEXT, Editor, EditorEvent, ExcerptRange, MultiBuffer, PathKey,
     display_map::{BlockPlacement, BlockProperties, BlockStyle, CustomBlockId},
 };
-use futures::future::join_all;
 use gpui::{
     AnyElement, AnyView, App, AsyncApp, Context, Entity, EventEmitter, FocusHandle, Focusable,
     Global, InteractiveElement, IntoElement, ParentElement, Render, SharedString, Styled,
@@ -24,7 +23,6 @@ use language::{
 };
 use project::{
     DiagnosticSummary, Project, ProjectPath,
-    lsp_store::rust_analyzer_ext::{cancel_flycheck, run_flycheck},
     project_settings::{DiagnosticSeverity, ProjectSettings},
 };
 use settings::Settings;
@@ -79,15 +77,8 @@ pub(crate) struct ProjectDiagnosticsEditor {
     paths_to_update: BTreeSet<ProjectPath>,
     include_warnings: bool,
     update_excerpts_task: Option<Task<Result<()>>>,
-    cargo_diagnostics_fetch: CargoDiagnosticsFetchState,
     diagnostic_summary_update: Task<()>,
     _subscription: Subscription,
-}
-
-struct CargoDiagnosticsFetchState {
-    fetch_task: Option<Task<()>>,
-    cancel_task: Option<Task<()>>,
-    diagnostic_sources: Arc<Vec<ProjectPath>>,
 }
 
 impl EventEmitter<EditorEvent> for ProjectDiagnosticsEditor {}
@@ -260,11 +251,7 @@ impl ProjectDiagnosticsEditor {
                 )
             });
             this.diagnostics.clear();
-            this.update_all_diagnostics(false, window, cx);
-        })
-        .detach();
-        cx.observe_release(&cx.entity(), |editor, _, cx| {
-            editor.stop_cargo_diagnostics_fetch(cx);
+            this.update_all_excerpts(window, cx);
         })
         .detach();
 
@@ -281,15 +268,10 @@ impl ProjectDiagnosticsEditor {
             editor,
             paths_to_update: Default::default(),
             update_excerpts_task: None,
-            cargo_diagnostics_fetch: CargoDiagnosticsFetchState {
-                fetch_task: None,
-                cancel_task: None,
-                diagnostic_sources: Arc::new(Vec::new()),
-            },
             diagnostic_summary_update: Task::ready(()),
             _subscription: project_event_subscription,
         };
-        this.update_all_diagnostics(true, window, cx);
+        this.update_all_excerpts(window, cx);
         this
     }
 
@@ -373,20 +355,10 @@ impl ProjectDiagnosticsEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let fetch_cargo_diagnostics = ProjectSettings::get_global(cx)
-            .diagnostics
-            .fetch_cargo_diagnostics();
-
-        if fetch_cargo_diagnostics {
-            if self.cargo_diagnostics_fetch.fetch_task.is_some() {
-                self.stop_cargo_diagnostics_fetch(cx);
-            } else {
-                self.update_all_diagnostics(false, window, cx);
-            }
-        } else if self.update_excerpts_task.is_some() {
+        if self.update_excerpts_task.is_some() {
             self.update_excerpts_task = None;
         } else {
-            self.update_all_diagnostics(false, window, cx);
+            self.update_all_excerpts(window, cx);
         }
         cx.notify();
     }
@@ -402,73 +374,6 @@ impl ProjectDiagnosticsEditor {
         {
             self.update_stale_excerpts(window, cx);
         }
-    }
-
-    fn update_all_diagnostics(
-        &mut self,
-        first_launch: bool,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let cargo_diagnostics_sources = self.cargo_diagnostics_sources(cx);
-        if cargo_diagnostics_sources.is_empty() {
-            self.update_all_excerpts(window, cx);
-        } else if first_launch && !self.summary.is_empty() {
-            self.update_all_excerpts(window, cx);
-        } else {
-            self.fetch_cargo_diagnostics(Arc::new(cargo_diagnostics_sources), cx);
-        }
-    }
-
-    fn fetch_cargo_diagnostics(
-        &mut self,
-        diagnostics_sources: Arc<Vec<ProjectPath>>,
-        cx: &mut Context<Self>,
-    ) {
-        let project = self.project.clone();
-        self.cargo_diagnostics_fetch.cancel_task = None;
-        self.cargo_diagnostics_fetch.fetch_task = None;
-        self.cargo_diagnostics_fetch.diagnostic_sources = diagnostics_sources.clone();
-        if self.cargo_diagnostics_fetch.diagnostic_sources.is_empty() {
-            return;
-        }
-
-        self.cargo_diagnostics_fetch.fetch_task = Some(cx.spawn(async move |editor, cx| {
-            let mut fetch_tasks = Vec::new();
-            for buffer_path in diagnostics_sources.iter().cloned() {
-                if cx
-                    .update(|cx| {
-                        fetch_tasks.push(run_flycheck(project.clone(), Some(buffer_path), cx));
-                    })
-                    .is_err()
-                {
-                    break;
-                }
-            }
-
-            let _ = join_all(fetch_tasks).await;
-            editor
-                .update(cx, |editor, _| {
-                    editor.cargo_diagnostics_fetch.fetch_task = None;
-                })
-                .ok();
-        }));
-    }
-
-    fn stop_cargo_diagnostics_fetch(&mut self, cx: &mut App) {
-        self.cargo_diagnostics_fetch.fetch_task = None;
-        let mut cancel_gasks = Vec::new();
-        for buffer_path in std::mem::take(&mut self.cargo_diagnostics_fetch.diagnostic_sources)
-            .iter()
-            .cloned()
-        {
-            cancel_gasks.push(cancel_flycheck(self.project.clone(), Some(buffer_path), cx));
-        }
-
-        self.cargo_diagnostics_fetch.cancel_task = Some(cx.background_spawn(async move {
-            let _ = join_all(cancel_gasks).await;
-            log::info!("Finished fetching cargo diagnostics");
-        }));
     }
 
     /// Enqueue an update of all excerpts. Updates all paths that either
@@ -694,30 +599,6 @@ impl ProjectDiagnosticsEditor {
                 cx.notify()
             })
         })
-    }
-
-    pub fn cargo_diagnostics_sources(&self, cx: &App) -> Vec<ProjectPath> {
-        let fetch_cargo_diagnostics = ProjectSettings::get_global(cx)
-            .diagnostics
-            .fetch_cargo_diagnostics();
-        if !fetch_cargo_diagnostics {
-            return Vec::new();
-        }
-        self.project
-            .read(cx)
-            .worktrees(cx)
-            .filter_map(|worktree| {
-                let _cargo_toml_entry = worktree.read(cx).entry_for_path("Cargo.toml")?;
-                let rust_file_entry = worktree.read(cx).entries(false, 0).find(|entry| {
-                    entry
-                        .path
-                        .extension()
-                        .and_then(|extension| extension.to_str())
-                        == Some("rs")
-                })?;
-                self.project.read(cx).path_for_entry(rust_file_entry.id, cx)
-            })
-            .collect()
     }
 }
 
