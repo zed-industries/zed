@@ -23,7 +23,7 @@ impl AgentServer for Gemini {
     }
 
     fn empty_state_headline(&self) -> &'static str {
-        "Welcome to Gemini CLI"
+        self.name()
     }
 
     fn empty_state_message(&self) -> &'static str {

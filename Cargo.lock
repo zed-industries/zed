@@ -40,6 +40,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "acp_tools"
+version = "0.1.0"
+dependencies = [
+ "agent-client-protocol",
+ "collections",
+ "gpui",
+ "language",
+ "markdown",
+ "project",
+ "serde",
+ "serde_json",
+ "settings",
+ "theme",
+ "ui",
+ "util",
+ "workspace",
+ "workspace-hack",
+]
+
+[[package]]
 name = "action_log"
 version = "0.1.0"
 dependencies = [
@@ -171,11 +191,12 @@ dependencies = [
 
 [[package]]
 name = "agent-client-protocol"
-version = "0.0.30"
+version = "0.0.31"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5f792e009ba59b137ee1db560bc37e567887ad4b5af6f32181d381fff690e2d4"
+checksum = "289eb34ee17213dadcca47eedadd386a5e7678094095414e475965d1bcca2860"
 dependencies = [
  "anyhow",
+ "async-broadcast",
  "futures 0.3.31",
  "log",
  "parking_lot",
@@ -264,10 +285,10 @@ name = "agent_servers"
 version = "0.1.0"
 dependencies = [
  "acp_thread",
+ "acp_tools",
  "action_log",
  "agent-client-protocol",
  "agent_settings",
- "agentic-coding-protocol",
  "anyhow",
  "client",
  "collections",
@@ -419,24 +440,6 @@ dependencies = [
  "workspace",
  "workspace-hack",
  "zed_actions",
-]
-
-[[package]]
-name = "agentic-coding-protocol"
-version = "0.0.10"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a3e6ae951b36fa2f8d9dd6e1af6da2fcaba13d7c866cf6a9e65deda9dc6c5fe4"
-dependencies = [
- "anyhow",
- "chrono",
- "derive_more 2.0.1",
- "futures 0.3.31",
- "log",
- "parking_lot",
- "schemars",
- "semver",
- "serde",
- "serde_json",
 ]
 
 [[package]]
@@ -854,7 +857,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "collections",
- "derive_more 0.99.19",
+ "derive_more",
  "extension",
  "futures 0.3.31",
  "gpui",
@@ -917,7 +920,7 @@ dependencies = [
  "clock",
  "collections",
  "ctor",
- "derive_more 0.99.19",
+ "derive_more",
  "gpui",
  "icons",
  "indoc",
@@ -954,7 +957,7 @@ dependencies = [
  "cloud_llm_client",
  "collections",
  "component",
- "derive_more 0.99.19",
+ "derive_more",
  "diffy",
  "editor",
  "feature_flags",
@@ -3067,7 +3070,7 @@ dependencies = [
  "cocoa 0.26.0",
  "collections",
  "credentials_provider",
- "derive_more 0.99.19",
+ "derive_more",
  "feature_flags",
  "fs",
  "futures 0.3.31",
@@ -3499,7 +3502,7 @@ name = "command_palette_hooks"
 version = "0.1.0"
 dependencies = [
  "collections",
- "derive_more 0.99.19",
+ "derive_more",
  "gpui",
  "workspace-hack",
 ]
@@ -4660,27 +4663,6 @@ dependencies = [
  "quote",
  "rustc_version",
  "syn 2.0.101",
-]
-
-[[package]]
-name = "derive_more"
-version = "2.0.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "093242cf7570c207c83073cf82f79706fe7b8317e98620a47d5be7c3d8497678"
-dependencies = [
- "derive_more-impl",
-]
-
-[[package]]
-name = "derive_more-impl"
-version = "2.0.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bda628edc44c4bb645fbe0f758797143e4e07926f7ebf4e9bdfbd3d2ce621df3"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.101",
- "unicode-xid",
 ]
 
 [[package]]
@@ -6419,7 +6401,7 @@ dependencies = [
  "askpass",
  "async-trait",
  "collections",
- "derive_more 0.99.19",
+ "derive_more",
  "futures 0.3.31",
  "git2",
  "gpui",
@@ -7449,7 +7431,7 @@ dependencies = [
  "core-video",
  "cosmic-text",
  "ctor",
- "derive_more 0.99.19",
+ "derive_more",
  "embed-resource",
  "env_logger 0.11.8",
  "etagere",
@@ -7974,7 +7956,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "bytes 1.10.1",
- "derive_more 0.99.19",
+ "derive_more",
  "futures 0.3.31",
  "http 1.3.1",
  "http-body 1.0.1",
@@ -14377,12 +14359,10 @@ version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fe8c9d1c68d67dd9f97ecbc6f932b60eb289c5dbddd8aa1405484a8fd2fcd984"
 dependencies = [
- "chrono",
  "dyn-clone",
  "indexmap",
  "ref-cast",
  "schemars_derive",
- "semver",
  "serde",
  "serde_json",
 ]
@@ -16466,7 +16446,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "collections",
- "derive_more 0.99.19",
+ "derive_more",
  "fs",
  "futures 0.3.31",
  "gpui",
@@ -19807,7 +19787,6 @@ dependencies = [
  "any_vec",
  "anyhow",
  "async-recursion",
- "bincode",
  "call",
  "client",
  "clock",
@@ -19826,6 +19805,7 @@ dependencies = [
  "node_runtime",
  "parking_lot",
  "postage",
+ "pretty_assertions",
  "project",
  "remote",
  "schemars",
@@ -19981,7 +19961,6 @@ dependencies = [
  "rustix 1.0.7",
  "rustls 0.23.26",
  "rustls-webpki 0.103.1",
- "schemars",
  "scopeguard",
  "sea-orm",
  "sea-query-binder",
@@ -20417,6 +20396,7 @@ dependencies = [
 name = "zed"
 version = "0.202.0"
 dependencies = [
+ "acp_tools",
  "activity_indicator",
  "agent",
  "agent_servers",

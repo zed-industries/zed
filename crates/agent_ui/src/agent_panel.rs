@@ -54,9 +54,7 @@ use gpui::{
     Pixels, Subscription, Task, UpdateGlobal, WeakEntity, prelude::*, pulsating_between,
 };
 use language::LanguageRegistry;
-use language_model::{
-    ConfigurationError, ConfiguredModel, LanguageModelProviderTosView, LanguageModelRegistry,
-};
+use language_model::{ConfigurationError, ConfiguredModel, LanguageModelRegistry};
 use project::{DisableAiSettings, Project, ProjectPath, Worktree};
 use prompt_store::{PromptBuilder, PromptStore, UserPromptId};
 use rules_library::{RulesLibrary, open_rules_library};
@@ -2041,9 +2039,11 @@ impl AgentPanel {
                 match state {
                     ThreadSummary::Pending => Label::new(ThreadSummary::DEFAULT)
                         .truncate()
+                        .color(Color::Muted)
                         .into_any_element(),
                     ThreadSummary::Generating => Label::new(LOADING_SUMMARY_PLACEHOLDER)
                         .truncate()
+                        .color(Color::Muted)
                         .into_any_element(),
                     ThreadSummary::Ready(_) => div()
                         .w_full()
@@ -2097,7 +2097,8 @@ impl AgentPanel {
                         .child(title_editor)
                         .into_any_element()
                 } else {
-                    Label::new(thread_view.read(cx).title(cx))
+                    Label::new(thread_view.read(cx).title())
+                        .color(Color::Muted)
                         .truncate()
                         .into_any_element()
                 }
@@ -2111,6 +2112,7 @@ impl AgentPanel {
 
                 match summary {
                     ContextSummary::Pending => Label::new(ContextSummary::DEFAULT)
+                        .color(Color::Muted)
                         .truncate()
                         .into_any_element(),
                     ContextSummary::Content(summary) => {
@@ -2122,6 +2124,7 @@ impl AgentPanel {
                         } else {
                             Label::new(LOADING_SUMMARY_PLACEHOLDER)
                                 .truncate()
+                                .color(Color::Muted)
                                 .into_any_element()
                         }
                     }
@@ -3198,17 +3201,6 @@ impl AgentPanel {
             ConfigurationError::ModelNotFound
             | ConfigurationError::ProviderNotAuthenticated(_)
             | ConfigurationError::NoProvider => callout.into_any_element(),
-            ConfigurationError::ProviderPendingTermsAcceptance(provider) => {
-                Banner::new()
-                    .severity(Severity::Warning)
-                    .child(h_flex().w_full().children(
-                        provider.render_accept_terms(
-                            LanguageModelProviderTosView::ThreadEmptyState,
-                            cx,
-                        ),
-                    ))
-                    .into_any_element()
-            }
         }
     }
 

@@ -69,6 +69,7 @@ use workspace::{
     notifications::{DetachAndPromptErr, NotifyTaskExt},
 };
 use worktree::CreatedEntry;
+use zed_actions::workspace::OpenWithSystem;
 
 const PROJECT_PANEL_KEY: &str = "ProjectPanel";
 const NEW_ENTRY_ID: ProjectEntryId = ProjectEntryId::MAX;
@@ -255,8 +256,6 @@ actions!(
         RevealInFileManager,
         /// Removes the selected folder from the project.
         RemoveFromProject,
-        /// Opens the selected file with the system's default application.
-        OpenWithSystem,
         /// Cuts the selected file or directory.
         Cut,
         /// Pastes the previously cut or copied item.
