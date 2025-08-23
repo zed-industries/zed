@@ -1273,7 +1273,11 @@ impl AcpThreadView {
 
                 v_flex()
                     .id(("user_message", entry_ix))
-                    .pt_2()
+                    .map(|this| if rules_item.is_some() {
+                        this.pt_3()
+                    } else {
+                        this.pt_2()
+                    })
                     .pb_4()
                     .px_2()
                     .gap_1p5()
@@ -1282,6 +1286,7 @@ impl AcpThreadView {
                     .children(message.id.clone().and_then(|message_id| {
                         message.checkpoint.as_ref()?.show.then(|| {
                             h_flex()
+                                .px_3()
                                 .gap_2()
                                 .child(Divider::horizontal())
                                 .child(
@@ -2411,7 +2416,6 @@ impl AcpThreadView {
         Some(
             h_flex()
                 .px_2p5()
-                .pb_1()
                 .child(
                     Icon::new(IconName::Attach)
                         .size(IconSize::XSmall)
@@ -2427,8 +2431,7 @@ impl AcpThreadView {
                                 Label::new(user_rules_text)
                                     .size(LabelSize::XSmall)
                                     .color(Color::Muted)
-                                    .truncate()
-                                    .buffer_font(cx),
+                                    .truncate(),
                             )
                             .hover(|s| s.bg(cx.theme().colors().element_hover))
                             .tooltip(Tooltip::text("View User Rules"))
@@ -2442,7 +2445,13 @@ impl AcpThreadView {
                             }),
                     )
                 })
-                .when(has_both, |this| this.child(Divider::vertical()))
+                .when(has_both, |this| {
+                    this.child(
+                        Label::new("•")
+                            .size(LabelSize::XSmall)
+                            .color(Color::Disabled),
+                    )
+                })
                 .when_some(rules_file_text, |parent, rules_file_text| {
                     parent.child(
                         h_flex()
@@ -2451,8 +2460,7 @@ impl AcpThreadView {
                             .child(
                                 Label::new(rules_file_text)
                                     .size(LabelSize::XSmall)
-                                    .color(Color::Muted)
-                                    .buffer_font(cx),
+                                    .color(Color::Muted),
                             )
                             .hover(|s| s.bg(cx.theme().colors().element_hover))
                             .tooltip(Tooltip::text("View Project Rules"))
