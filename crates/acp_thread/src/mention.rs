@@ -50,28 +50,33 @@ pub enum MentionUri {
 
 impl MentionUri {
     pub fn parse(input: &str) -> Result<Self> {
+        fn parse_line_range(fragment: &str) -> Result<RangeInclusive<u32>> {
+            let range = fragment
+                .strip_prefix("L")
+                .context("Line range must start with \"L\"")?;
+            let (start, end) = range
+                .split_once(":")
+                .context("Line range must use colon as separator")?;
+            let range = start
+                .parse::<u32>()
+                .context("Parsing line range start")?
+                .checked_sub(1)
+                .context("Line numbers should be 1-based")?
+                ..=end
+                    .parse::<u32>()
+                    .context("Parsing line range end")?
+                    .checked_sub(1)
+                    .context("Line numbers should be 1-based")?;
+            Ok(range)
+        }
+
         let url = url::Url::parse(input)?;
         let path = url.path();
         match url.scheme() {
             "file" => {
                 let path = url.to_file_path().ok().context("Extracting file path")?;
                 if let Some(fragment) = url.fragment() {
-                    let range = fragment
-                        .strip_prefix("L")
-                        .context("Line range must start with \"L\"")?;
-                    let (start, end) = range
-                        .split_once(":")
-                        .context("Line range must use colon as separator")?;
-                    let line_range = start
-                        .parse::<u32>()
-                        .context("Parsing line range start")?
-                        .checked_sub(1)
-                        .context("Line numbers should be 1-based")?
-                        ..=end
-                            .parse::<u32>()
-                            .context("Parsing line range end")?
-                            .checked_sub(1)
-                            .context("Line numbers should be 1-based")?;
+                    let line_range = parse_line_range(fragment)?;
                     if let Some(name) = single_query_param(&url, "symbol")? {
                         Ok(Self::Symbol {
                             name,
@@ -109,6 +114,17 @@ impl MentionUri {
                     Ok(Self::Rule {
                         id: rule_id.into(),
                         name,
+                    })
+                } else if path.starts_with("/agent/pasted-image") {
+                    Ok(Self::PastedImage)
+                } else if path.starts_with("/agent/untitled-buffer") {
+                    let fragment = url
+                        .fragment()
+                        .context("Missing fragment for untitled buffer selection")?;
+                    let line_range = parse_line_range(fragment)?;
+                    Ok(Self::Selection {
+                        abs_path: None,
+                        line_range,
                     })
                 } else {
                     bail!("invalid zed url: {:?}", input);
@@ -192,7 +208,9 @@ impl MentionUri {
                 let mut url = if let Some(path) = path {
                     Url::from_file_path(path).expect("mention path should be absolute")
                 } else {
-                    Url::parse("zed:///").unwrap()
+                    let mut url = Url::parse("zed:///").unwrap();
+                    url.set_path("/agent/untitled-buffer");
+                    url
                 };
                 url.set_fragment(Some(&format!(
                     "L{}:{}",
