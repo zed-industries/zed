@@ -21,12 +21,13 @@ use futures::{
     future::{Shared, join_all},
 };
 use gpui::{
-    AppContext, ClipboardEntry, Context, Entity, EventEmitter, FocusHandle, Focusable,
-    HighlightStyle, Image, ImageFormat, Img, KeyContext, Subscription, Task, TextStyle,
-    UnderlineStyle, WeakEntity,
+    Animation, AnimationExt as _, AppContext, ClipboardEntry, Context, Entity, EntityId,
+    EventEmitter, FocusHandle, Focusable, HighlightStyle, Image, ImageFormat, Img, KeyContext,
+    Subscription, Task, TextStyle, UnderlineStyle, WeakEntity, pulsating_between,
 };
 use language::{Buffer, Language};
 use language_model::LanguageModelImage;
+use postage::stream::Stream as _;
 use project::{CompletionIntent, Project, ProjectItem, ProjectPath, Worktree};
 use prompt_store::{PromptId, PromptStore};
 use rope::Point;
@@ -44,10 +45,10 @@ use std::{
 use text::{OffsetRangeExt, ToOffset as _};
 use theme::ThemeSettings;
 use ui::{
-    ActiveTheme, AnyElement, App, ButtonCommon, ButtonLike, ButtonStyle, Color, Icon, IconName,
-    IconSize, InteractiveElement, IntoElement, Label, LabelCommon, LabelSize, ParentElement,
-    Render, SelectableButton, SharedString, Styled, TextSize, TintColor, Toggleable, Window, div,
-    h_flex, px,
+    ActiveTheme, AnyElement, App, ButtonCommon, ButtonLike, ButtonStyle, Color, Element as _,
+    FluentBuilder as _, Icon, IconName, IconSize, InteractiveElement, IntoElement, Label,
+    LabelCommon, LabelSize, ParentElement, Render, SelectableButton, SharedString, Styled,
+    TextSize, TintColor, Toggleable, Window, div, h_flex, px,
 };
 use util::{ResultExt, debug_panic};
 use workspace::{Workspace, notifications::NotifyResultExt as _};
@@ -246,7 +247,7 @@ impl MessageEditor {
             .buffer_snapshot
             .anchor_before(start_anchor.to_offset(&snapshot.buffer_snapshot) + content_len + 1);
 
-        let crease_id = if let MentionUri::File { abs_path } = &mention_uri
+        let crease = if let MentionUri::File { abs_path } = &mention_uri
             && let Some(extension) = abs_path.extension()
             && let Some(extension) = extension.to_str()
             && Img::extensions().contains(&extension)
@@ -272,29 +273,31 @@ impl MessageEditor {
                     Ok(image)
                 })
                 .shared();
-            insert_crease_for_image(
+            insert_crease_for_mention(
                 *excerpt_id,
                 start,
                 content_len,
-                Some(abs_path.as_path().into()),
-                image,
+                mention_uri.name().into(),
+                IconName::Image.path().into(),
+                Some(image),
                 self.editor.clone(),
                 window,
                 cx,
             )
         } else {
-            crate::context_picker::insert_crease_for_mention(
+            insert_crease_for_mention(
                 *excerpt_id,
                 start,
                 content_len,
                 crease_text,
                 mention_uri.icon_path(cx),
+                None,
                 self.editor.clone(),
                 window,
                 cx,
             )
         };
-        let Some(crease_id) = crease_id else {
+        let Some((crease_id, tx)) = crease else {
             return Task::ready(());
         };
 
@@ -331,7 +334,9 @@ impl MessageEditor {
 
         // Notify the user if we failed to load the mentioned context
         cx.spawn_in(window, async move |this, cx| {
-            if task.await.notify_async_err(cx).is_none() {
+            let result = task.await.notify_async_err(cx);
+            drop(tx);
+            if result.is_none() {
                 this.update(cx, |this, cx| {
                     this.editor.update(cx, |editor, cx| {
                         // Remove mention
@@ -857,12 +862,13 @@ impl MessageEditor {
                 snapshot.anchor_before(start_anchor.to_offset(&snapshot) + content_len)
             });
             let image = Arc::new(image);
-            let Some(crease_id) = insert_crease_for_image(
+            let Some((crease_id, tx)) = insert_crease_for_mention(
                 excerpt_id,
                 text_anchor,
                 content_len,
-                None.clone(),
-                Task::ready(Ok(image.clone())).shared(),
+                MentionUri::PastedImage.name().into(),
+                IconName::Image.path().into(),
+                Some(Task::ready(Ok(image.clone())).shared()),
                 self.editor.clone(),
                 window,
                 cx,
@@ -877,6 +883,7 @@ impl MessageEditor {
                             .update(|_, cx| LanguageModelImage::from_image(image, cx))
                             .map_err(|e| e.to_string())?
                             .await;
+                        drop(tx);
                         if let Some(image) = image {
                             Ok(Mention::Image(MentionImage {
                                 data: image.source,
@@ -1097,18 +1104,20 @@ impl MessageEditor {
 
         for (range, mention_uri, mention) in mentions {
             let anchor = snapshot.anchor_before(range.start);
-            let Some(crease_id) = crate::context_picker::insert_crease_for_mention(
+            let Some((crease_id, tx)) = insert_crease_for_mention(
                 anchor.excerpt_id,
                 anchor.text_anchor,
                 range.end - range.start,
                 mention_uri.name().into(),
                 mention_uri.icon_path(cx),
+                None,
                 self.editor.clone(),
                 window,
                 cx,
             ) else {
                 continue;
             };
+            drop(tx);
 
             self.mention_set.mentions.insert(
                 crease_id,
@@ -1227,23 +1236,21 @@ impl Render for MessageEditor {
     }
 }
 
-pub(crate) fn insert_crease_for_image(
+pub(crate) fn insert_crease_for_mention(
     excerpt_id: ExcerptId,
     anchor: text::Anchor,
     content_len: usize,
-    abs_path: Option<Arc<Path>>,
-    image: Shared<Task<Result<Arc<Image>, String>>>,
+    crease_label: SharedString,
+    crease_icon: SharedString,
+    // abs_path: Option<Arc<Path>>,
+    image: Option<Shared<Task<Result<Arc<Image>, String>>>>,
     editor: Entity<Editor>,
     window: &mut Window,
     cx: &mut App,
-) -> Option<CreaseId> {
-    let crease_label = abs_path
-        .as_ref()
-        .and_then(|path| path.file_name())
-        .map(|name| name.to_string_lossy().to_string().into())
-        .unwrap_or(SharedString::from("Image"));
+) -> Option<(CreaseId, postage::barrier::Sender)> {
+    let (tx, rx) = postage::barrier::channel();
 
-    editor.update(cx, |editor, cx| {
+    let crease_id = editor.update(cx, |editor, cx| {
         let snapshot = editor.buffer().read(cx).snapshot(cx);
 
         let start = snapshot.anchor_in_excerpt(excerpt_id, anchor)?;
@@ -1252,7 +1259,15 @@ pub(crate) fn insert_crease_for_image(
         let end = snapshot.anchor_before(start.to_offset(&snapshot) + content_len);
 
         let placeholder = FoldPlaceholder {
-            render: render_image_fold_icon_button(crease_label, image, cx.weak_entity()),
+            render: render_fold_icon_button(
+                crease_label,
+                crease_icon,
+                start..end,
+                rx,
+                image,
+                cx.weak_entity(),
+                cx,
+            ),
             merge_adjacent: false,
             ..Default::default()
         };
@@ -1269,63 +1284,112 @@ pub(crate) fn insert_crease_for_image(
         editor.fold_creases(vec![crease], false, window, cx);
 
         Some(ids[0])
-    })
+    })?;
+
+    Some((crease_id, tx))
 }
 
-fn render_image_fold_icon_button(
+fn render_fold_icon_button(
     label: SharedString,
-    image_task: Shared<Task<Result<Arc<Image>, String>>>,
+    icon: SharedString,
+    range: Range<Anchor>,
+    mut loading_finished: postage::barrier::Receiver,
+    image_task: Option<Shared<Task<Result<Arc<Image>, String>>>>,
     editor: WeakEntity<Editor>,
+    cx: &mut App,
 ) -> Arc<dyn Send + Sync + Fn(FoldId, Range<Anchor>, &mut App) -> AnyElement> {
-    Arc::new({
-        move |fold_id, fold_range, cx| {
-            let is_in_text_selection = editor
-                .update(cx, |editor, cx| editor.is_range_selected(&fold_range, cx))
-                .unwrap_or_default();
-
-            ButtonLike::new(fold_id)
-                .style(ButtonStyle::Filled)
-                .selected_style(ButtonStyle::Tinted(TintColor::Accent))
-                .toggle_state(is_in_text_selection)
-                .child(
-                    h_flex()
-                        .gap_1()
-                        .child(
-                            Icon::new(IconName::Image)
-                                .size(IconSize::XSmall)
-                                .color(Color::Muted),
-                        )
-                        .child(
-                            Label::new(label.clone())
-                                .size(LabelSize::Small)
-                                .buffer_font(cx)
-                                .single_line(),
-                        ),
-                )
-                .hoverable_tooltip({
-                    let image_task = image_task.clone();
-                    move |_, cx| {
-                        let image = image_task.peek().cloned().transpose().ok().flatten();
-                        let image_task = image_task.clone();
-                        cx.new::<ImageHover>(|cx| ImageHover {
-                            image,
-                            _task: cx.spawn(async move |this, cx| {
-                                if let Ok(image) = image_task.clone().await {
-                                    this.update(cx, |this, cx| {
-                                        if this.image.replace(image).is_none() {
-                                            cx.notify();
-                                        }
-                                    })
-                                    .ok();
-                                }
-                            }),
-                        })
-                        .into()
-                    }
-                })
-                .into_any_element()
+    let loading = cx.new(|cx| {
+        let loading = cx.spawn(async move |this, cx| {
+            loading_finished.recv().await;
+            this.update(cx, |this: &mut LoadingContext, cx| {
+                this.loading = None;
+                cx.notify();
+            })
+            .ok();
+        });
+        LoadingContext {
+            id: cx.entity_id(),
+            label,
+            icon,
+            range,
+            editor,
+            loading: Some(loading),
+            image: image_task.clone(),
         }
-    })
+    });
+    Arc::new(move |_fold_id, _fold_range, _cx| loading.clone().into_any_element())
+}
+
+struct LoadingContext {
+    id: EntityId,
+    label: SharedString,
+    icon: SharedString,
+    range: Range<Anchor>,
+    editor: WeakEntity<Editor>,
+    loading: Option<Task<()>>,
+    image: Option<Shared<Task<Result<Arc<Image>, String>>>>,
+}
+
+impl Render for LoadingContext {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let is_in_text_selection = self
+            .editor
+            .update(cx, |editor, cx| editor.is_range_selected(&self.range, cx))
+            .unwrap_or_default();
+        ButtonLike::new(("loading-context", self.id))
+            .style(ButtonStyle::Filled)
+            .selected_style(ButtonStyle::Tinted(TintColor::Accent))
+            .toggle_state(is_in_text_selection)
+            .when_some(self.image.clone(), |el, image_task| {
+                el.hoverable_tooltip(move |_, cx| {
+                    let image = image_task.peek().cloned().transpose().ok().flatten();
+                    let image_task = image_task.clone();
+                    cx.new::<ImageHover>(|cx| ImageHover {
+                        image,
+                        _task: cx.spawn(async move |this, cx| {
+                            if let Ok(image) = image_task.clone().await {
+                                this.update(cx, |this, cx| {
+                                    if this.image.replace(image).is_none() {
+                                        cx.notify();
+                                    }
+                                })
+                                .ok();
+                            }
+                        }),
+                    })
+                    .into()
+                })
+            })
+            .child(
+                h_flex()
+                    .gap_1()
+                    .child(
+                        Icon::from_path(self.icon.clone())
+                            .size(IconSize::XSmall)
+                            .color(Color::Muted),
+                    )
+                    .child(
+                        Label::new(self.label.clone())
+                            .size(LabelSize::Small)
+                            .buffer_font(cx)
+                            .single_line(),
+                    )
+                    .map(|el| {
+                        if self.loading.is_some() {
+                            el.with_animation(
+                                "loading-context-crease",
+                                Animation::new(Duration::from_secs(2))
+                                    .repeat()
+                                    .with_easing(pulsating_between(0.4, 0.8)),
+                                |label, delta| label.opacity(delta),
+                            )
+                            .into_any()
+                        } else {
+                            el.into_any()
+                        }
+                    }),
+            )
+    }
 }
 
 struct ImageHover {
