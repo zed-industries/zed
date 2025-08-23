@@ -5,6 +5,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use acp_thread::AcpThread;
+use agent_servers::AgentServerSettings;
 use agent2::{DbThreadMetadata, HistoryEntry};
 use db::kvp::{Dismissable, KEY_VALUE_STORE};
 use serde::{Deserialize, Serialize};
@@ -54,9 +55,7 @@ use gpui::{
     Pixels, Subscription, Task, UpdateGlobal, WeakEntity, prelude::*, pulsating_between,
 };
 use language::LanguageRegistry;
-use language_model::{
-    ConfigurationError, ConfiguredModel, LanguageModelProviderTosView, LanguageModelRegistry,
-};
+use language_model::{ConfigurationError, ConfiguredModel, LanguageModelRegistry};
 use project::{DisableAiSettings, Project, ProjectPath, Worktree};
 use prompt_store::{PromptBuilder, PromptStore, UserPromptId};
 use rules_library::{RulesLibrary, open_rules_library};
@@ -130,7 +129,7 @@ pub fn init(cx: &mut App) {
                     if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
                         workspace.focus_panel::<AgentPanel>(window, cx);
                         panel.update(cx, |panel, cx| {
-                            panel.external_thread(action.agent, None, None, window, cx)
+                            panel.external_thread(action.agent.clone(), None, None, window, cx)
                         });
                     }
                 })
@@ -241,7 +240,7 @@ enum WhichFontSize {
     None,
 }
 
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, PartialEq, Serialize, Deserialize)]
 pub enum AgentType {
     #[default]
     Zed,
@@ -249,23 +248,29 @@ pub enum AgentType {
     Gemini,
     ClaudeCode,
     NativeAgent,
+    Custom {
+        name: SharedString,
+        settings: AgentServerSettings,
+    },
 }
 
 impl AgentType {
-    fn label(self) -> impl Into<SharedString> {
+    fn label(&self) -> SharedString {
         match self {
-            Self::Zed | Self::TextThread => "Zed Agent",
-            Self::NativeAgent => "Agent 2",
-            Self::Gemini => "Gemini CLI",
-            Self::ClaudeCode => "Claude Code",
+            Self::Zed | Self::TextThread => "Zed Agent".into(),
+            Self::NativeAgent => "Agent 2".into(),
+            Self::Gemini => "Gemini CLI".into(),
+            Self::ClaudeCode => "Claude Code".into(),
+            Self::Custom { name, .. } => name.into(),
         }
     }
 
-    fn icon(self) -> Option<IconName> {
+    fn icon(&self) -> Option<IconName> {
         match self {
             Self::Zed | Self::NativeAgent | Self::TextThread => None,
             Self::Gemini => Some(IconName::AiGemini),
             Self::ClaudeCode => Some(IconName::AiClaude),
+            Self::Custom { .. } => Some(IconName::Terminal),
         }
     }
 }
@@ -519,7 +524,7 @@ pub struct AgentPanel {
 impl AgentPanel {
     fn serialize(&mut self, cx: &mut Context<Self>) {
         let width = self.width;
-        let selected_agent = self.selected_agent;
+        let selected_agent = self.selected_agent.clone();
         self.pending_serialization = Some(cx.background_spawn(async move {
             KEY_VALUE_STORE
                 .write_kvp(
@@ -609,7 +614,7 @@ impl AgentPanel {
                     panel.update(cx, |panel, cx| {
                         panel.width = serialized_panel.width.map(|w| w.round());
                         if let Some(selected_agent) = serialized_panel.selected_agent {
-                            panel.selected_agent = selected_agent;
+                            panel.selected_agent = selected_agent.clone();
                             panel.new_agent_thread(selected_agent, window, cx);
                         }
                         cx.notify();
@@ -905,7 +910,7 @@ impl AgentPanel {
 
     fn active_thread_view(&self) -> Option<&Entity<AcpThreadView>> {
         match &self.active_view {
-            ActiveView::ExternalAgentThread { thread_view } => Some(thread_view),
+            ActiveView::ExternalAgentThread { thread_view, .. } => Some(thread_view),
             ActiveView::Thread { .. }
             | ActiveView::TextThread { .. }
             | ActiveView::History
@@ -1079,14 +1084,17 @@ impl AgentPanel {
         cx.spawn_in(window, async move |this, cx| {
             let ext_agent = match agent_choice {
                 Some(agent) => {
-                    cx.background_spawn(async move {
-                        if let Some(serialized) =
-                            serde_json::to_string(&LastUsedExternalAgent { agent }).log_err()
-                        {
-                            KEY_VALUE_STORE
-                                .write_kvp(LAST_USED_EXTERNAL_AGENT_KEY.to_string(), serialized)
-                                .await
-                                .log_err();
+                    cx.background_spawn({
+                        let agent = agent.clone();
+                        async move {
+                            if let Some(serialized) =
+                                serde_json::to_string(&LastUsedExternalAgent { agent }).log_err()
+                            {
+                                KEY_VALUE_STORE
+                                    .write_kvp(LAST_USED_EXTERNAL_AGENT_KEY.to_string(), serialized)
+                                    .await
+                                    .log_err();
+                            }
                         }
                     })
                     .detach();
@@ -1112,7 +1120,9 @@ impl AgentPanel {
 
             this.update_in(cx, |this, window, cx| {
                 match ext_agent {
-                    crate::ExternalAgent::Gemini | crate::ExternalAgent::NativeAgent => {
+                    crate::ExternalAgent::Gemini
+                    | crate::ExternalAgent::NativeAgent
+                    | crate::ExternalAgent::Custom { .. } => {
                         if !cx.has_flag::<GeminiAndNativeFeatureFlag>() {
                             return;
                         }
@@ -1841,14 +1851,14 @@ impl AgentPanel {
         cx: &mut Context<Self>,
     ) {
         if self.selected_agent != agent {
-            self.selected_agent = agent;
+            self.selected_agent = agent.clone();
             self.serialize(cx);
         }
         self.new_agent_thread(agent, window, cx);
     }
 
     pub fn selected_agent(&self) -> AgentType {
-        self.selected_agent
+        self.selected_agent.clone()
     }
 
     pub fn new_agent_thread(
@@ -1882,6 +1892,13 @@ impl AgentPanel {
             }
             AgentType::ClaudeCode => self.external_thread(
                 Some(crate::ExternalAgent::ClaudeCode),
+                None,
+                None,
+                window,
+                cx,
+            ),
+            AgentType::Custom { name, settings } => self.external_thread(
+                Some(crate::ExternalAgent::Custom { name, settings }),
                 None,
                 None,
                 window,
@@ -2041,9 +2058,11 @@ impl AgentPanel {
                 match state {
                     ThreadSummary::Pending => Label::new(ThreadSummary::DEFAULT)
                         .truncate()
+                        .color(Color::Muted)
                         .into_any_element(),
                     ThreadSummary::Generating => Label::new(LOADING_SUMMARY_PLACEHOLDER)
                         .truncate()
+                        .color(Color::Muted)
                         .into_any_element(),
                     ThreadSummary::Ready(_) => div()
                         .w_full()
@@ -2075,9 +2094,33 @@ impl AgentPanel {
                 }
             }
             ActiveView::ExternalAgentThread { thread_view } => {
-                Label::new(thread_view.read(cx).title(cx))
-                    .truncate()
-                    .into_any_element()
+                if let Some(title_editor) = thread_view.read(cx).title_editor() {
+                    div()
+                        .w_full()
+                        .on_action({
+                            let thread_view = thread_view.downgrade();
+                            move |_: &menu::Confirm, window, cx| {
+                                if let Some(thread_view) = thread_view.upgrade() {
+                                    thread_view.focus_handle(cx).focus(window);
+                                }
+                            }
+                        })
+                        .on_action({
+                            let thread_view = thread_view.downgrade();
+                            move |_: &editor::actions::Cancel, window, cx| {
+                                if let Some(thread_view) = thread_view.upgrade() {
+                                    thread_view.focus_handle(cx).focus(window);
+                                }
+                            }
+                        })
+                        .child(title_editor)
+                        .into_any_element()
+                } else {
+                    Label::new(thread_view.read(cx).title())
+                        .color(Color::Muted)
+                        .truncate()
+                        .into_any_element()
+                }
             }
             ActiveView::TextThread {
                 title_editor,
@@ -2088,6 +2131,7 @@ impl AgentPanel {
 
                 match summary {
                     ContextSummary::Pending => Label::new(ContextSummary::DEFAULT)
+                        .color(Color::Muted)
                         .truncate()
                         .into_any_element(),
                     ContextSummary::Content(summary) => {
@@ -2099,6 +2143,7 @@ impl AgentPanel {
                         } else {
                             Label::new(LOADING_SUMMARY_PLACEHOLDER)
                                 .truncate()
+                                .color(Color::Muted)
                                 .into_any_element()
                         }
                     }
@@ -2584,13 +2629,55 @@ impl AgentPanel {
                                             }
                                         }),
                                 )
+                            })
+                            .when(cx.has_flag::<GeminiAndNativeFeatureFlag>(), |mut menu| {
+                                // Add custom agents from settings
+                                let settings =
+                                    agent_servers::AllAgentServersSettings::get_global(cx);
+                                for (agent_name, agent_settings) in &settings.custom {
+                                    menu = menu.item(
+                                        ContextMenuEntry::new(format!("New {} Thread", agent_name))
+                                            .icon(IconName::Terminal)
+                                            .icon_color(Color::Muted)
+                                            .handler({
+                                                let workspace = workspace.clone();
+                                                let agent_name = agent_name.clone();
+                                                let agent_settings = agent_settings.clone();
+                                                move |window, cx| {
+                                                    if let Some(workspace) = workspace.upgrade() {
+                                                        workspace.update(cx, |workspace, cx| {
+                                                            if let Some(panel) =
+                                                                workspace.panel::<AgentPanel>(cx)
+                                                            {
+                                                                panel.update(cx, |panel, cx| {
+                                                                    panel.set_selected_agent(
+                                                                        AgentType::Custom {
+                                                                            name: agent_name
+                                                                                .clone(),
+                                                                            settings:
+                                                                                agent_settings
+                                                                                    .clone(),
+                                                                        },
+                                                                        window,
+                                                                        cx,
+                                                                    );
+                                                                });
+                                                            }
+                                                        });
+                                                    }
+                                                }
+                                            }),
+                                    );
+                                }
+
+                                menu
                             });
                         menu
                     }))
                 }
             });
 
-        let selected_agent_label = self.selected_agent.label().into();
+        let selected_agent_label = self.selected_agent.label();
         let selected_agent = div()
             .id("selected_agent_icon")
             .when_some(self.selected_agent.icon(), |this, icon| {
@@ -3175,17 +3262,6 @@ impl AgentPanel {
             ConfigurationError::ModelNotFound
             | ConfigurationError::ProviderNotAuthenticated(_)
             | ConfigurationError::NoProvider => callout.into_any_element(),
-            ConfigurationError::ProviderPendingTermsAcceptance(provider) => {
-                Banner::new()
-                    .severity(Severity::Warning)
-                    .child(h_flex().w_full().children(
-                        provider.render_accept_terms(
-                            LanguageModelProviderTosView::ThreadEmptyState,
-                            cx,
-                        ),
-                    ))
-                    .into_any_element()
-            }
         }
     }
 

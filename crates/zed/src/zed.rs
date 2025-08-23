@@ -344,7 +344,17 @@ pub fn initialize_workspace(
 
         if let Some(specs) = window.gpu_specs() {
             log::info!("Using GPU: {:?}", specs);
-            show_software_emulation_warning_if_needed(specs, window, cx);
+            show_software_emulation_warning_if_needed(specs.clone(), window, cx);
+            if let Some((crash_server, message)) = crashes::CRASH_HANDLER
+                .get()
+                .zip(bincode::serialize(&specs).ok())
+                && let Err(err) = crash_server.send_message(3, message)
+            {
+                log::warn!(
+                    "Failed to store active gpu info for crash reporting: {}",
+                    err
+                );
+            }
         }
 
         let edit_prediction_menu_handle = PopoverMenuHandle::default();
@@ -4424,6 +4434,7 @@ mod tests {
             assert_eq!(actions_without_namespace, Vec::<&str>::new());
 
             let expected_namespaces = vec![
+                "acp",
                 "activity_indicator",
                 "agent",
                 #[cfg(not(target_os = "macos"))]
@@ -4614,7 +4625,7 @@ mod tests {
             gpui_tokio::init(cx);
             vim_mode_setting::init(cx);
             theme::init(theme::LoadThemes::JustBase, cx);
-            audio::init((), cx);
+            audio::init(cx);
             channel::init(&app_state.client, app_state.user_store.clone(), cx);
             call::init(app_state.client.clone(), app_state.user_store.clone(), cx);
             notifications::init(app_state.client.clone(), app_state.user_store.clone(), cx);

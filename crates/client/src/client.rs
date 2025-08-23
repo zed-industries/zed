@@ -66,6 +66,8 @@ pub static IMPERSONATE_LOGIN: LazyLock<Option<String>> = LazyLock::new(|| {
         .and_then(|s| if s.is_empty() { None } else { Some(s) })
 });
 
+pub static USE_WEB_LOGIN: LazyLock<bool> = LazyLock::new(|| std::env::var("ZED_WEB_LOGIN").is_ok());
+
 pub static ADMIN_API_TOKEN: LazyLock<Option<String>> = LazyLock::new(|| {
     std::env::var("ZED_ADMIN_API_TOKEN")
         .ok()
@@ -1290,19 +1292,21 @@ impl Client {
                 "http" => Http,
                 _ => Err(anyhow!("invalid rpc url: {}", rpc_url))?,
             };
-            let rpc_host = rpc_url
-                .host_str()
-                .zip(rpc_url.port_or_known_default())
-                .context("missing host in rpc url")?;
 
-            let stream = {
-                let handle = cx.update(|cx| gpui_tokio::Tokio::handle(cx)).ok().unwrap();
-                let _guard = handle.enter();
-                match proxy {
-                    Some(proxy) => connect_proxy_stream(&proxy, rpc_host).await?,
-                    None => Box::new(TcpStream::connect(rpc_host).await?),
+            let stream = gpui_tokio::Tokio::spawn_result(cx, {
+                let rpc_url = rpc_url.clone();
+                async move {
+                    let rpc_host = rpc_url
+                        .host_str()
+                        .zip(rpc_url.port_or_known_default())
+                        .context("missing host in rpc url")?;
+                    Ok(match proxy {
+                        Some(proxy) => connect_proxy_stream(&proxy, rpc_host).await?,
+                        None => Box::new(TcpStream::connect(rpc_host).await?),
+                    })
                 }
-            };
+            })?
+            .await?;
 
             log::info!("connected to rpc endpoint {}", rpc_url);
 
@@ -1390,11 +1394,13 @@ impl Client {
                     if let Some((login, token)) =
                         IMPERSONATE_LOGIN.as_ref().zip(ADMIN_API_TOKEN.as_ref())
                     {
-                        eprintln!("authenticate as admin {login}, {token}");
+                        if !*USE_WEB_LOGIN {
+                            eprintln!("authenticate as admin {login}, {token}");
 
-                        return this
-                            .authenticate_as_admin(http, login.clone(), token.clone())
-                            .await;
+                            return this
+                                .authenticate_as_admin(http, login.clone(), token.clone())
+                                .await;
+                        }
                     }
 
                     // Start an HTTP server to receive the redirect from Zed's sign-in page.

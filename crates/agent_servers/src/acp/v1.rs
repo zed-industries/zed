@@ -1,3 +1,4 @@
+use acp_tools::AcpConnectionRegistry;
 use action_log::ActionLog;
 use agent_client_protocol::{self as acp, Agent as _, ErrorCode};
 use anyhow::anyhow;
@@ -28,7 +29,7 @@ pub struct AcpConnection {
 
 pub struct AcpSession {
     thread: WeakEntity<AcpThread>,
-    pending_cancel: bool,
+    suppress_abort_err: bool,
 }
 
 const MINIMUM_SUPPORTED_VERSION: acp::ProtocolVersion = acp::V1;
@@ -101,6 +102,14 @@ impl AcpConnection {
         })
         .detach();
 
+        let connection = Rc::new(connection);
+
+        cx.update(|cx| {
+            AcpConnectionRegistry::default_global(cx).update(cx, |registry, cx| {
+                registry.set_active_connection(server_name, &connection, cx)
+            });
+        })?;
+
         let response = connection
             .initialize(acp::InitializeRequest {
                 protocol_version: acp::VERSION,
@@ -119,7 +128,7 @@ impl AcpConnection {
 
         Ok(Self {
             auth_methods: response.auth_methods,
-            connection: connection.into(),
+            connection,
             server_name,
             sessions,
             prompt_capabilities: response.agent_capabilities.prompt_capabilities,
@@ -173,7 +182,7 @@ impl AgentConnection for AcpConnection {
 
             let session = AcpSession {
                 thread: thread.downgrade(),
-                pending_cancel: false,
+                suppress_abort_err: false,
             };
             sessions.borrow_mut().insert(session_id, session);
 
@@ -208,7 +217,16 @@ impl AgentConnection for AcpConnection {
         let sessions = self.sessions.clone();
         let session_id = params.session_id.clone();
         cx.foreground_executor().spawn(async move {
-            match conn.prompt(params).await {
+            let result = conn.prompt(params).await;
+
+            let mut suppress_abort_err = false;
+
+            if let Some(session) = sessions.borrow_mut().get_mut(&session_id) {
+                suppress_abort_err = session.suppress_abort_err;
+                session.suppress_abort_err = false;
+            }
+
+            match result {
                 Ok(response) => Ok(response),
                 Err(err) => {
                     if err.code != ErrorCode::INTERNAL_ERROR.code {
@@ -230,14 +248,10 @@ impl AgentConnection for AcpConnection {
 
                     match serde_json::from_value(data.clone()) {
                         Ok(ErrorDetails { details }) => {
-                            if sessions
-                                .borrow()
-                                .get(&session_id)
-                                .is_some_and(|session| session.pending_cancel)
-                                && details.contains("This operation was aborted")
+                            if suppress_abort_err && details.contains("This operation was aborted")
                             {
                                 Ok(acp::PromptResponse {
-                                    stop_reason: acp::StopReason::Canceled,
+                                    stop_reason: acp::StopReason::Cancelled,
                                 })
                             } else {
                                 Err(anyhow!(details))
@@ -256,22 +270,14 @@ impl AgentConnection for AcpConnection {
 
     fn cancel(&self, session_id: &acp::SessionId, cx: &mut App) {
         if let Some(session) = self.sessions.borrow_mut().get_mut(session_id) {
-            session.pending_cancel = true;
+            session.suppress_abort_err = true;
         }
         let conn = self.connection.clone();
         let params = acp::CancelNotification {
             session_id: session_id.clone(),
         };
-        let sessions = self.sessions.clone();
-        let session_id = session_id.clone();
         cx.foreground_executor()
-            .spawn(async move {
-                let resp = conn.cancel(params).await;
-                if let Some(session) = sessions.borrow_mut().get_mut(&session_id) {
-                    session.pending_cancel = false;
-                }
-                resp
-            })
+            .spawn(async move { conn.cancel(params).await })
             .detach();
     }
 
@@ -305,7 +311,7 @@ impl acp::Client for ClientDelegate {
 
         let outcome = match result {
             Ok(option) => acp::RequestPermissionOutcome::Selected { option_id: option },
-            Err(oneshot::Canceled) => acp::RequestPermissionOutcome::Canceled,
+            Err(oneshot::Canceled) => acp::RequestPermissionOutcome::Cancelled,
         };
 
         Ok(acp::RequestPermissionResponse { outcome })

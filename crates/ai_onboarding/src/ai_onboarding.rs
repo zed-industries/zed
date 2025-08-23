@@ -19,7 +19,7 @@ use std::sync::Arc;
 
 use client::{Client, UserStore, zed_urls};
 use gpui::{AnyElement, Entity, IntoElement, ParentElement};
-use ui::{Divider, RegisterComponent, TintColor, Tooltip, prelude::*};
+use ui::{Divider, RegisterComponent, Tooltip, prelude::*};
 
 #[derive(PartialEq)]
 pub enum SignInStatus {
@@ -43,12 +43,10 @@ impl From<client::Status> for SignInStatus {
 #[derive(RegisterComponent, IntoElement)]
 pub struct ZedAiOnboarding {
     pub sign_in_status: SignInStatus,
-    pub has_accepted_terms_of_service: bool,
     pub plan: Option<Plan>,
     pub account_too_young: bool,
     pub continue_with_zed_ai: Arc<dyn Fn(&mut Window, &mut App)>,
     pub sign_in: Arc<dyn Fn(&mut Window, &mut App)>,
-    pub accept_terms_of_service: Arc<dyn Fn(&mut Window, &mut App)>,
     pub dismiss_onboarding: Option<Arc<dyn Fn(&mut Window, &mut App)>>,
 }
 
@@ -64,17 +62,9 @@ impl ZedAiOnboarding {
 
         Self {
             sign_in_status: status.into(),
-            has_accepted_terms_of_service: store.has_accepted_terms_of_service(),
             plan: store.plan(),
             account_too_young: store.account_too_young(),
             continue_with_zed_ai,
-            accept_terms_of_service: Arc::new({
-                let store = user_store.clone();
-                move |_window, cx| {
-                    let task = store.update(cx, |store, cx| store.accept_terms_of_service(cx));
-                    task.detach_and_log_err(cx);
-                }
-            }),
             sign_in: Arc::new(move |_window, cx| {
                 cx.spawn({
                     let client = client.clone();
@@ -92,42 +82,6 @@ impl ZedAiOnboarding {
     ) -> Self {
         self.dismiss_onboarding = Some(Arc::new(dismiss_callback));
         self
-    }
-
-    fn render_accept_terms_of_service(&self) -> AnyElement {
-        v_flex()
-            .gap_1()
-            .w_full()
-            .child(Headline::new("Accept Terms of Service"))
-            .child(
-                Label::new("We don’t sell your data, track you across the web, or compromise your privacy.")
-                    .color(Color::Muted)
-                    .mb_2(),
-            )
-            .child(
-                Button::new("terms_of_service", "Review Terms of Service")
-                    .full_width()
-                    .style(ButtonStyle::Outlined)
-                    .icon(IconName::ArrowUpRight)
-                    .icon_color(Color::Muted)
-                    .icon_size(IconSize::Small)
-                    .on_click(move |_, _window, cx| {
-                        telemetry::event!("Review Terms of Service Clicked");
-                        cx.open_url(&zed_urls::terms_of_service(cx))
-                    }),
-            )
-            .child(
-                Button::new("accept_terms", "Accept")
-                    .full_width()
-                    .style(ButtonStyle::Tinted(TintColor::Accent))
-                    .on_click({
-                        let callback = self.accept_terms_of_service.clone();
-                        move |_, window, cx| {
-                            telemetry::event!("Terms of Service Accepted");
-                            (callback)(window, cx)}
-                    }),
-            )
-            .into_any_element()
     }
 
     fn render_sign_in_disclaimer(&self, _cx: &mut App) -> AnyElement {
@@ -359,14 +313,10 @@ impl ZedAiOnboarding {
 impl RenderOnce for ZedAiOnboarding {
     fn render(self, _window: &mut ui::Window, cx: &mut App) -> impl IntoElement {
         if matches!(self.sign_in_status, SignInStatus::SignedIn) {
-            if self.has_accepted_terms_of_service {
-                match self.plan {
-                    None | Some(Plan::ZedFree) => self.render_free_plan_state(cx),
-                    Some(Plan::ZedProTrial) => self.render_trial_state(cx),
-                    Some(Plan::ZedPro) => self.render_pro_plan_state(cx),
-                }
-            } else {
-                self.render_accept_terms_of_service()
+            match self.plan {
+                None | Some(Plan::ZedFree) => self.render_free_plan_state(cx),
+                Some(Plan::ZedProTrial) => self.render_trial_state(cx),
+                Some(Plan::ZedPro) => self.render_pro_plan_state(cx),
             }
         } else {
             self.render_sign_in_disclaimer(cx)
@@ -390,18 +340,15 @@ impl Component for ZedAiOnboarding {
     fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
         fn onboarding(
             sign_in_status: SignInStatus,
-            has_accepted_terms_of_service: bool,
             plan: Option<Plan>,
             account_too_young: bool,
         ) -> AnyElement {
             ZedAiOnboarding {
                 sign_in_status,
-                has_accepted_terms_of_service,
                 plan,
                 account_too_young,
                 continue_with_zed_ai: Arc::new(|_, _| {}),
                 sign_in: Arc::new(|_, _| {}),
-                accept_terms_of_service: Arc::new(|_, _| {}),
                 dismiss_onboarding: None,
             }
             .into_any_element()
@@ -415,27 +362,23 @@ impl Component for ZedAiOnboarding {
                 .children(vec![
                     single_example(
                         "Not Signed-in",
-                        onboarding(SignInStatus::SignedOut, false, None, false),
-                    ),
-                    single_example(
-                        "Not Accepted ToS",
-                        onboarding(SignInStatus::SignedIn, false, None, false),
+                        onboarding(SignInStatus::SignedOut, None, false),
                     ),
                     single_example(
                         "Young Account",
-                        onboarding(SignInStatus::SignedIn, true, None, true),
+                        onboarding(SignInStatus::SignedIn, None, true),
                     ),
                     single_example(
                         "Free Plan",
-                        onboarding(SignInStatus::SignedIn, true, Some(Plan::ZedFree), false),
+                        onboarding(SignInStatus::SignedIn, Some(Plan::ZedFree), false),
                     ),
                     single_example(
                         "Pro Trial",
-                        onboarding(SignInStatus::SignedIn, true, Some(Plan::ZedProTrial), false),
+                        onboarding(SignInStatus::SignedIn, Some(Plan::ZedProTrial), false),
                     ),
                     single_example(
                         "Pro Plan",
-                        onboarding(SignInStatus::SignedIn, true, Some(Plan::ZedPro), false),
+                        onboarding(SignInStatus::SignedIn, Some(Plan::ZedPro), false),
                     ),
                 ])
                 .into_any_element(),

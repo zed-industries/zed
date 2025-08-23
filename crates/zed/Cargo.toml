@@ -20,6 +20,7 @@ path = "src/main.rs"
 
 [dependencies]
 activity_indicator.workspace = true
+acp_tools.workspace = true
 agent.workspace = true
 agent_ui.workspace = true
 agent_settings.workspace = true
@@ -33,6 +34,7 @@ audio.workspace = true
 auto_update.workspace = true
 auto_update_ui.workspace = true
 backtrace = "0.3"
+bincode.workspace = true
 breadcrumbs.workspace = true
 call.workspace = true
 channel.workspace = true
@@ -60,6 +62,7 @@ extensions_ui.workspace = true
 feature_flags.workspace = true
 feedback.workspace = true
 file_finder.workspace = true
+system_specs.workspace = true
 fs.workspace = true
 futures.workspace = true
 git.workspace = true

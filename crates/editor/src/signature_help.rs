@@ -182,7 +182,9 @@ impl Editor {
                 let signature_help = task.await;
                 editor
                     .update(cx, |editor, cx| {
-                        let Some(mut signature_help) = signature_help.into_iter().next() else {
+                        let Some(mut signature_help) =
+                            signature_help.unwrap_or_default().into_iter().next()
+                        else {
                             editor
                                 .signature_help_state
                                 .hide(SignatureHelpHiddenBy::AutoClose);

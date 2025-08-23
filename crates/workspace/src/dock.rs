@@ -915,6 +915,11 @@ impl Render for PanelButtons {
                                 .on_click({
                                     let action = action.boxed_clone();
                                     move |_, window, cx| {
+                                        telemetry::event!(
+                                            "Panel Button Clicked",
+                                            name = name,
+                                            toggle_state = !is_open
+                                        );
                                         window.focus(&focus_handle);
                                         window.dispatch_action(action.boxed_clone(), cx)
                                     }

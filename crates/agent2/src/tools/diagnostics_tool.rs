@@ -63,11 +63,11 @@ impl AgentTool for DiagnosticsTool {
     type Input = DiagnosticsToolInput;
     type Output = String;
 
-    fn name(&self) -> SharedString {
-        "diagnostics".into()
+    fn name() -> &'static str {
+        "diagnostics"
     }
 
-    fn kind(&self) -> acp::ToolKind {
+    fn kind() -> acp::ToolKind {
         acp::ToolKind::Read
     }
 

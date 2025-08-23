@@ -1,6 +1,7 @@
-use std::ops::Range;
+use std::{cell::Cell, ops::Range, rc::Rc};
 
 use acp_thread::{AcpThread, AgentThreadEntry};
+use agent_client_protocol::{PromptCapabilities, ToolCallId};
 use agent2::HistoryStore;
 use collections::HashMap;
 use editor::{Editor, EditorMode, MinimapVisibility};
@@ -26,6 +27,7 @@ pub struct EntryViewState {
     prompt_store: Option<Entity<PromptStore>>,
     entries: Vec<Entry>,
     prevent_slash_commands: bool,
+    prompt_capabilities: Rc<Cell<PromptCapabilities>>,
 }
 
 impl EntryViewState {
@@ -34,6 +36,7 @@ impl EntryViewState {
         project: Entity<Project>,
         history_store: Entity<HistoryStore>,
         prompt_store: Option<Entity<PromptStore>>,
+        prompt_capabilities: Rc<Cell<PromptCapabilities>>,
         prevent_slash_commands: bool,
     ) -> Self {
         Self {
@@ -43,6 +46,7 @@ impl EntryViewState {
             prompt_store,
             entries: Vec::new(),
             prevent_slash_commands,
+            prompt_capabilities,
         }
     }
 
@@ -80,6 +84,7 @@ impl EntryViewState {
                             self.project.clone(),
                             self.history_store.clone(),
                             self.prompt_store.clone(),
+                            self.prompt_capabilities.clone(),
                             "Edit message － @ to include context",
                             self.prevent_slash_commands,
                             editor::EditorMode::AutoHeight {
@@ -106,6 +111,7 @@ impl EntryViewState {
                 }
             }
             AgentThreadEntry::ToolCall(tool_call) => {
+                let id = tool_call.id.clone();
                 let terminals = tool_call.terminals().cloned().collect::<Vec<_>>();
                 let diffs = tool_call.diffs().cloned().collect::<Vec<_>>();
 
@@ -121,21 +127,31 @@ impl EntryViewState {
 
                 for terminal in terminals {
                     views.entry(terminal.entity_id()).or_insert_with(|| {
-                        create_terminal(
+                        let element = create_terminal(
                             self.workspace.clone(),
                             self.project.clone(),
                             terminal.clone(),
                             window,
                             cx,
                         )
-                        .into_any()
+                        .into_any();
+                        cx.emit(EntryViewEvent {
+                            entry_index: index,
+                            view_event: ViewEvent::NewTerminal(id.clone()),
+                        });
+                        element
                     });
                 }
 
                 for diff in diffs {
-                    views
-                        .entry(diff.entity_id())
-                        .or_insert_with(|| create_editor_diff(diff.clone(), window, cx).into_any());
+                    views.entry(diff.entity_id()).or_insert_with(|| {
+                        let element = create_editor_diff(diff.clone(), window, cx).into_any();
+                        cx.emit(EntryViewEvent {
+                            entry_index: index,
+                            view_event: ViewEvent::NewDiff(id.clone()),
+                        });
+                        element
+                    });
                 }
             }
             AgentThreadEntry::AssistantMessage(_) => {
@@ -187,6 +203,8 @@ pub struct EntryViewEvent {
 }
 
 pub enum ViewEvent {
+    NewDiff(ToolCallId),
+    NewTerminal(ToolCallId),
     MessageEditorEvent(Entity<MessageEditor>, MessageEditorEvent),
 }
 
@@ -389,6 +407,7 @@ mod tests {
                 project.clone(),
                 history_store,
                 None,
+                Default::default(),
                 false,
             )
         });

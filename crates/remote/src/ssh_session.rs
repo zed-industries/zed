@@ -52,11 +52,6 @@ use util::{
     paths::{PathStyle, RemotePathBuf},
 };
 
-#[derive(
-    Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, serde::Serialize, serde::Deserialize,
-)]
-pub struct SshProjectId(pub u64);
-
 #[derive(Clone)]
 pub struct SshSocket {
     connection_options: SshConnectionOptions,
@@ -89,9 +84,17 @@ pub struct SshConnectionOptions {
     pub upload_binary_over_ssh: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SshArgs {
     pub arguments: Vec<String>,
     pub envs: Option<HashMap<String, String>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SshInfo {
+    pub args: SshArgs,
+    pub path_style: PathStyle,
+    pub shell: String,
 }
 
 #[macro_export]
@@ -470,6 +473,16 @@ impl SshSocket {
         };
 
         Ok(SshPlatform { os, arch })
+    }
+
+    async fn shell(&self) -> String {
+        match self.run_command("sh", &["-c", "echo $SHELL"]).await {
+            Ok(shell) => shell.trim().to_owned(),
+            Err(e) => {
+                log::error!("Failed to get shell: {e}");
+                "sh".to_owned()
+            }
+        }
     }
 }
 
@@ -1152,12 +1165,16 @@ impl SshRemoteClient {
         cx.notify();
     }
 
-    pub fn ssh_info(&self) -> Option<(SshArgs, PathStyle)> {
+    pub fn ssh_info(&self) -> Option<SshInfo> {
         self.state
             .lock()
             .as_ref()
             .and_then(|state| state.ssh_connection())
-            .map(|ssh_connection| (ssh_connection.ssh_args(), ssh_connection.path_style()))
+            .map(|ssh_connection| SshInfo {
+                args: ssh_connection.ssh_args(),
+                path_style: ssh_connection.path_style(),
+                shell: ssh_connection.shell(),
+            })
     }
 
     pub fn upload_directory(
@@ -1392,6 +1409,7 @@ trait RemoteConnection: Send + Sync {
     fn ssh_args(&self) -> SshArgs;
     fn connection_options(&self) -> SshConnectionOptions;
     fn path_style(&self) -> PathStyle;
+    fn shell(&self) -> String;
 
     #[cfg(any(test, feature = "test-support"))]
     fn simulate_disconnect(&self, _: &AsyncApp) {}
@@ -1403,6 +1421,7 @@ struct SshRemoteConnection {
     remote_binary_path: Option<RemotePathBuf>,
     ssh_platform: SshPlatform,
     ssh_path_style: PathStyle,
+    ssh_shell: String,
     _temp_dir: TempDir,
 }
 
@@ -1427,6 +1446,10 @@ impl RemoteConnection for SshRemoteConnection {
 
     fn connection_options(&self) -> SshConnectionOptions {
         self.socket.connection_options.clone()
+    }
+
+    fn shell(&self) -> String {
+        self.ssh_shell.clone()
     }
 
     fn upload_directory(
@@ -1642,6 +1665,7 @@ impl SshRemoteConnection {
             "windows" => PathStyle::Windows,
             _ => PathStyle::Posix,
         };
+        let ssh_shell = socket.shell().await;
 
         let mut this = Self {
             socket,
@@ -1650,6 +1674,7 @@ impl SshRemoteConnection {
             remote_binary_path: None,
             ssh_path_style,
             ssh_platform,
+            ssh_shell,
         };
 
         let (release_channel, version, commit) = cx.update(|cx| {
@@ -2685,6 +2710,10 @@ mod fake {
 
         fn path_style(&self) -> PathStyle {
             PathStyle::current()
+        }
+
+        fn shell(&self) -> String {
+            "sh".to_owned()
         }
     }
 

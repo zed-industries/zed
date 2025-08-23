@@ -18,12 +18,15 @@ use livekit::webrtc::{
     video_stream::native::NativeVideoStream,
 };
 use parking_lot::Mutex;
+use rodio::Source;
 use std::cell::RefCell;
 use std::sync::Weak;
-use std::sync::atomic::{self, AtomicI32};
+use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::time::Duration;
 use std::{borrow::Cow, collections::VecDeque, sync::Arc, thread};
 use util::{ResultExt as _, maybe};
+
+mod source;
 
 pub(crate) struct AudioStack {
     executor: BackgroundExecutor,
@@ -39,6 +42,29 @@ pub(crate) struct AudioStack {
 // this; and downsample when we need to.
 const SAMPLE_RATE: u32 = 48000;
 const NUM_CHANNELS: u32 = 2;
+
+pub(crate) fn play_remote_audio_track(
+    track: &livekit::track::RemoteAudioTrack,
+    cx: &mut gpui::App,
+) -> Result<AudioStream> {
+    let stop_handle = Arc::new(AtomicBool::new(false));
+    let stop_handle_clone = stop_handle.clone();
+    let stream = source::LiveKitStream::new(cx.background_executor(), track)
+        .stoppable()
+        .periodic_access(Duration::from_millis(50), move |s| {
+            if stop_handle.load(Ordering::Relaxed) {
+                s.stop();
+            }
+        });
+    audio::Audio::play_source(stream, cx).context("Could not play audio")?;
+
+    let on_drop = util::defer(move || {
+        stop_handle_clone.store(true, Ordering::Relaxed);
+    });
+    Ok(AudioStream::Output {
+        _drop: Box::new(on_drop),
+    })
+}
 
 impl AudioStack {
     pub(crate) fn new(executor: BackgroundExecutor) -> Self {
@@ -61,7 +87,7 @@ impl AudioStack {
     ) -> AudioStream {
         let output_task = self.start_output();
 
-        let next_ssrc = self.next_ssrc.fetch_add(1, atomic::Ordering::Relaxed);
+        let next_ssrc = self.next_ssrc.fetch_add(1, Ordering::Relaxed);
         let source = AudioMixerSource {
             ssrc: next_ssrc,
             sample_rate: SAMPLE_RATE,
@@ -95,6 +121,23 @@ impl AudioStack {
         AudioStream::Output {
             _drop: Box::new(on_drop),
         }
+    }
+
+    fn start_output(&self) -> Arc<Task<()>> {
+        if let Some(task) = self._output_task.borrow().upgrade() {
+            return task;
+        }
+        let task = Arc::new(self.executor.spawn({
+            let apm = self.apm.clone();
+            let mixer = self.mixer.clone();
+            async move {
+                Self::play_output(apm, mixer, SAMPLE_RATE, NUM_CHANNELS)
+                    .await
+                    .log_err();
+            }
+        }));
+        *self._output_task.borrow_mut() = Arc::downgrade(&task);
+        task
     }
 
     pub(crate) fn capture_local_microphone_track(
@@ -137,23 +180,6 @@ impl AudioStack {
                 _drop: Box::new(on_drop),
             },
         ))
-    }
-
-    fn start_output(&self) -> Arc<Task<()>> {
-        if let Some(task) = self._output_task.borrow().upgrade() {
-            return task;
-        }
-        let task = Arc::new(self.executor.spawn({
-            let apm = self.apm.clone();
-            let mixer = self.mixer.clone();
-            async move {
-                Self::play_output(apm, mixer, SAMPLE_RATE, NUM_CHANNELS)
-                    .await
-                    .log_err();
-            }
-        }));
-        *self._output_task.borrow_mut() = Arc::downgrade(&task);
-        task
     }
 
     async fn play_output(
