@@ -9,6 +9,7 @@ pub mod pane_group;
 mod path_list;
 mod persistence;
 pub mod searchable;
+#[cfg(feature = "call")]
 pub mod shared_screen;
 mod status_bar;
 pub mod tasks;
@@ -22,11 +23,17 @@ pub use dock::Panel;
 pub use path_list::PathList;
 pub use toast_layer::{ToastAction, ToastLayer, ToastView};
 
-use anyhow::{Context as _, Result, anyhow};
+#[cfg(feature = "call")]
 use call::{ActiveCall, call_settings::CallSettings};
+#[cfg(feature = "call")]
+use client::{Status, proto::ErrorCode};
+#[cfg(feature = "call")]
+use shared_screen::SharedScreen;
+
+use anyhow::{Context as _, Result, anyhow};
 use client::{
-    ChannelId, Client, ErrorExt, Status, TypedEnvelope, UserStore,
-    proto::{self, ErrorCode, PanelId, PeerId},
+    ChannelId, Client, ErrorExt, TypedEnvelope, UserStore,
+    proto::{self, PanelId, PeerId},
 };
 use collections::{HashMap, HashSet, hash_map};
 use dock::{Dock, DockPosition, PanelButtons, PanelHandle, RESIZE_HANDLE_SIZE};
@@ -79,7 +86,6 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use session::AppSession;
 use settings::{Settings, update_settings_file};
-use shared_screen::SharedScreen;
 use sqlez::{
     bindable::{Bind, Column, StaticColumnCount},
     statement::Statement,
@@ -886,6 +892,7 @@ impl Global for GlobalAppState {}
 
 pub struct WorkspaceStore {
     workspaces: HashSet<WindowHandle<Workspace>>,
+    #[cfg(feature = "call")]
     client: Arc<Client>,
     _subscriptions: Vec<client::Subscription>,
 }
@@ -1117,6 +1124,7 @@ pub struct Workspace {
     window_edited: bool,
     last_window_title: Option<String>,
     dirty_items: HashMap<EntityId, Subscription>,
+    #[cfg(feature = "call")]
     active_call: Option<(Entity<ActiveCall>, Vec<Subscription>)>,
     leader_updates_tx: mpsc::UnboundedSender<(PeerId, proto::UpdateFollowers)>,
     database_id: Option<WorkspaceId>,
@@ -1158,6 +1166,7 @@ pub struct FollowerState {
 
 struct FollowerView {
     view: Box<dyn FollowableItemHandle>,
+    #[cfg(feature = "call")]
     location: Option<proto::PanelId>,
 }
 
@@ -1357,10 +1366,16 @@ impl Workspace {
 
         let session_id = app_state.session.read(cx).id().to_owned();
 
+        dbg!("?????????:", cfg!(feature = "call"));
+        #[cfg(feature = "call")]
         let mut active_call = None;
-        if let Some(call) = ActiveCall::try_global(cx) {
-            let subscriptions = vec![cx.subscribe_in(&call, window, Self::on_active_call_event)];
-            active_call = Some((call, subscriptions));
+        #[cfg(feature = "call")]
+        {
+            if let Some(call) = ActiveCall::try_global(cx) {
+                let subscriptions =
+                    vec![cx.subscribe_in(&call, window, Self::on_active_call_event)];
+                active_call = Some((call, subscriptions));
+            }
         }
 
         let (serializable_items_tx, serializable_items_rx) =
@@ -1446,6 +1461,7 @@ impl Workspace {
             window_edited: false,
             last_window_title: None,
             dirty_items: Default::default(),
+            #[cfg(feature = "call")]
             active_call,
             database_id: workspace_id,
             app_state,
@@ -2250,6 +2266,7 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<bool>> {
+        #[cfg(feature = "call")]
         let active_call = self.active_call().cloned();
 
         // On Linux and Windows, closing the last window should restore the last workspace.
@@ -2258,51 +2275,58 @@ impl Workspace {
             && cx.windows().len() == 1;
 
         cx.spawn_in(window, async move |this, cx| {
-            let workspace_count = cx.update(|_window, cx| {
-                cx.windows()
-                    .iter()
-                    .filter(|window| window.downcast::<Workspace>().is_some())
-                    .count()
-            })?;
-
-            if let Some(active_call) = active_call
-                && workspace_count == 1
-                && active_call.read_with(cx, |call, _| call.room().is_some())?
+            #[cfg(feature = "call")]
             {
-                if close_intent == CloseIntent::CloseWindow {
-                    let answer = cx.update(|window, cx| {
-                        window.prompt(
-                            PromptLevel::Warning,
-                            "Do you want to leave the current call?",
-                            None,
-                            &["Close window and hang up", "Cancel"],
-                            cx,
-                        )
-                    })?;
+                let workspace_count = cx.update(|_window, cx| {
+                    cx.windows()
+                        .iter()
+                        .filter(|window| window.downcast::<Workspace>().is_some())
+                        .count()
+                })?;
+                if let Some(active_call) = active_call
+                    && workspace_count == 1
+                    && active_call.read_with(cx, |call, _| call.room().is_some())?
+                {
+                    if close_intent == CloseIntent::CloseWindow {
+                        let answer = cx.update(|window, cx| {
+                            window.prompt(
+                                PromptLevel::Warning,
+                                "Do you want to leave the current call?",
+                                None,
+                                &["Close window and hang up", "Cancel"],
+                                cx,
+                            )
+                        })?;
 
-                    if answer.await.log_err() == Some(1) {
-                        return anyhow::Ok(false);
-                    } else {
-                        active_call
-                            .update(cx, |call, cx| call.hang_up(cx))?
-                            .await
-                            .log_err();
-                    }
-                }
-                if close_intent == CloseIntent::ReplaceWindow {
-                    _ = active_call.update(cx, |this, cx| {
-                        let workspace = cx
-                            .windows()
-                            .iter()
-                            .filter_map(|window| window.downcast::<Workspace>())
-                            .next()
-                            .unwrap();
-                        let project = workspace.read(cx)?.project.clone();
-                        if project.read(cx).is_shared() {
-                            this.unshare_project(project, cx)?;
+                        if answer.await.log_err() == Some(1) {
+                            return anyhow::Ok(false);
+                        } else {
+                            {
+                                active_call
+                                    .update(cx, |call, cx| call.hang_up(cx))?
+                                    .await
+                                    .log_err();
+                            }
                         }
-                        Ok::<_, anyhow::Error>(())
-                    })?;
+                    }
+                    if close_intent == CloseIntent::ReplaceWindow {
+                        #[cfg(feature = "call")]
+                        {
+                            _ = active_call.update(cx, |active_call, cx| {
+                                let workspace = cx
+                                    .windows()
+                                    .iter()
+                                    .filter_map(|window| window.downcast::<Workspace>())
+                                    .next()
+                                    .unwrap();
+                                let project = workspace.read(cx)?.project.clone();
+                                if project.read(cx).is_shared() {
+                                    active_call.unshare_project(project, cx)?;
+                                }
+                                anyhow::Ok(())
+                            })?;
+                        }
+                    }
                 }
             }
 
@@ -3486,6 +3510,7 @@ impl Workspace {
         item
     }
 
+    #[cfg(feature = "call")]
     pub fn open_shared_screen(
         &mut self,
         peer_id: PeerId,
@@ -3907,8 +3932,11 @@ impl Workspace {
                 pane.update(cx, |pane, _| {
                     pane.track_alternate_file_items();
                 });
-                if *local {
-                    self.unfollow_in_pane(pane, window, cx);
+                #[cfg(feature = "call")]
+                {
+                    if *local {
+                        self.unfollow_in_pane(pane, window, cx);
+                    }
                 }
                 serialize_workspace = *focus_changed || pane != self.active_pane();
                 if pane == self.active_pane() {
@@ -3973,6 +4001,17 @@ impl Workspace {
         }
     }
 
+    #[cfg(not(feature = "call"))]
+    pub fn unfollow_in_pane(
+        &mut self,
+        _pane: &Entity<Pane>,
+        _window: &mut Window,
+        _cx: &mut Context<Workspace>,
+    ) -> Option<CollaboratorId> {
+        None
+    }
+
+    #[cfg(feature = "call")]
     pub fn unfollow_in_pane(
         &mut self,
         pane: &Entity<Pane>,
@@ -4122,6 +4161,7 @@ impl Workspace {
         cx.notify();
     }
 
+    #[cfg(feature = "call")]
     pub fn start_following(
         &mut self,
         leader_id: impl Into<CollaboratorId>,
@@ -4185,6 +4225,16 @@ impl Workspace {
         }
     }
 
+    #[cfg(not(feature = "call"))]
+    pub fn follow_next_collaborator(
+        &mut self,
+        _: &FollowNextCollaborator,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) {
+    }
+
+    #[cfg(feature = "call")]
     pub fn follow_next_collaborator(
         &mut self,
         _: &FollowNextCollaborator,
@@ -4233,6 +4283,16 @@ impl Workspace {
         }
     }
 
+    #[cfg(not(feature = "call"))]
+    pub fn follow(
+        &mut self,
+        _leader_id: impl Into<CollaboratorId>,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) {
+    }
+
+    #[cfg(feature = "call")]
     pub fn follow(
         &mut self,
         leader_id: impl Into<CollaboratorId>,
@@ -4285,6 +4345,17 @@ impl Workspace {
         }
     }
 
+    #[cfg(not(feature = "call"))]
+    pub fn unfollow(
+        &mut self,
+        _leader_id: impl Into<CollaboratorId>,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) -> Option<()> {
+        None
+    }
+
+    #[cfg(feature = "call")]
     pub fn unfollow(
         &mut self,
         leader_id: impl Into<CollaboratorId>,
@@ -4595,6 +4666,7 @@ impl Workspace {
             anyhow::bail!("no id for view");
         };
         let id = ViewId::from_proto(id)?;
+        #[cfg(feature = "call")]
         let panel_id = view.panel_id.and_then(proto::PanelId::from_i32);
 
         let pane = this.update(cx, |this, _cx| {
@@ -4667,6 +4739,7 @@ impl Workspace {
                 id,
                 FollowerView {
                     view: item,
+                    #[cfg(feature = "call")]
                     location: panel_id,
                 },
             );
@@ -4721,6 +4794,7 @@ impl Workspace {
                     view.map(|view| {
                         entry.insert(FollowerView {
                             view,
+                            #[cfg(feature = "call")]
                             location: None,
                         })
                     })
@@ -4911,6 +4985,17 @@ impl Workspace {
         )
     }
 
+    #[cfg(not(feature = "call"))]
+    fn active_item_for_peer(
+        &self,
+        _peer_id: PeerId,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) -> Option<(Option<PanelId>, Box<dyn ItemHandle>)> {
+        None
+    }
+
+    #[cfg(feature = "call")]
     fn active_item_for_peer(
         &self,
         peer_id: PeerId,
@@ -4952,6 +5037,7 @@ impl Workspace {
         item_to_activate
     }
 
+    #[cfg(feature = "call")]
     fn shared_screen_for_peer(
         &self,
         peer_id: PeerId,
@@ -5002,10 +5088,12 @@ impl Workspace {
         }
     }
 
+    #[cfg(feature = "call")]
     pub fn active_call(&self) -> Option<&Entity<ActiveCall>> {
         self.active_call.as_ref().map(|(call, _)| call)
     }
 
+    #[cfg(feature = "call")]
     fn on_active_call_event(
         &mut self,
         _: &Entity<ActiveCall>,
@@ -5918,6 +6006,17 @@ impl Workspace {
     }
 }
 
+#[cfg(not(feature = "call"))]
+fn leader_border_for_pane(
+    _follower_states: &HashMap<CollaboratorId, FollowerState>,
+    _pane: &Entity<Pane>,
+    _: &Window,
+    _cx: &App,
+) -> Option<Div> {
+    None
+}
+
+#[cfg(feature = "call")]
 fn leader_border_for_pane(
     follower_states: &HashMap<CollaboratorId, FollowerState>,
     pane: &Entity<Pane>,
@@ -6384,6 +6483,7 @@ impl Render for Workspace {
                                                                         &PaneRenderContext {
                                                                             follower_states:
                                                                                 &self.follower_states,
+                                                                            #[cfg(feature = "call")]
                                                                             active_call: self.active_call(),
                                                                             active_pane: &self.active_pane,
                                                                             app_state: &self.app_state,
@@ -6448,6 +6548,7 @@ impl Render for Workspace {
                                                                                 &PaneRenderContext {
                                                                                     follower_states:
                                                                                         &self.follower_states,
+                                                                                    #[cfg(feature = "call")]
                                                                                     active_call: self.active_call(),
                                                                                     active_pane: &self.active_pane,
                                                                                     app_state: &self.app_state,
@@ -6510,6 +6611,7 @@ impl Render for Workspace {
                                                                                 &PaneRenderContext {
                                                                                     follower_states:
                                                                                         &self.follower_states,
+                                                                                    #[cfg(feature = "call")]
                                                                                     active_call: self.active_call(),
                                                                                     active_pane: &self.active_pane,
                                                                                     app_state: &self.app_state,
@@ -6558,6 +6660,7 @@ impl Render for Workspace {
                                                                 &PaneRenderContext {
                                                                     follower_states:
                                                                         &self.follower_states,
+                                                                    #[cfg(feature = "call")]
                                                                     active_call: self.active_call(),
                                                                     active_pane: &self.active_pane,
                                                                     app_state: &self.app_state,
@@ -6631,10 +6734,22 @@ impl WorkspaceStore {
                 client.add_request_handler(cx.weak_entity(), Self::handle_follow),
                 client.add_message_handler(cx.weak_entity(), Self::handle_update_followers),
             ],
+            #[cfg(feature = "call")]
             client,
         }
     }
 
+    #[cfg(not(feature = "call"))]
+    pub fn update_followers(
+        &self,
+        _project_id: Option<u64>,
+        _update: proto::update_followers::Variant,
+        _cx: &App,
+    ) -> Option<()> {
+        None
+    }
+
+    #[cfg(feature = "call")]
     pub fn update_followers(
         &self,
         project_id: Option<u64>,
@@ -6800,6 +6915,7 @@ actions!(
     ]
 );
 
+#[cfg(feature = "call")]
 async fn join_channel_internal(
     channel_id: ChannelId,
     app_state: &Arc<AppState>,
@@ -6947,6 +7063,17 @@ async fn join_channel_internal(
     anyhow::Ok(false)
 }
 
+#[cfg(not(feature = "call"))]
+pub fn join_channel(
+    _channel_id: ChannelId,
+    _app_state: Arc<AppState>,
+    _requesting_window: Option<WindowHandle<Workspace>>,
+    _cx: &mut App,
+) -> Task<Result<()>> {
+    Task::ready(Ok(()))
+}
+
+#[cfg(feature = "call")]
 pub fn join_channel(
     channel_id: ChannelId,
     app_state: Arc<AppState>,
@@ -7454,6 +7581,17 @@ fn serialize_ssh_project(
     })
 }
 
+#[cfg(not(feature = "call"))]
+pub fn join_in_room_project(
+    _project_id: u64,
+    _follow_user_id: u64,
+    _app_state: Arc<AppState>,
+    _cx: &mut App,
+) -> Task<Result<()>> {
+    Task::ready(Ok(()))
+}
+
+#[cfg(feature = "call")]
 pub fn join_in_room_project(
     project_id: u64,
     follow_user_id: u64,
