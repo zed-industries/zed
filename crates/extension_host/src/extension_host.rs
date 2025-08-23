@@ -1361,11 +1361,12 @@ impl ExtensionStore {
                 for (manifest, wasm_extension) in &wasm_extensions {
                     let extension = Arc::new(wasm_extension.clone());
 
-                    for (language_server_id, language_server_config) in &manifest.language_servers {
+                    for (language_server_name, language_server_config) in &manifest.language_servers
+                    {
                         for language in language_server_config.languages() {
                             this.proxy.register_language_server(
                                 extension.clone(),
-                                language_server_id.clone(),
+                                language_server_name.clone(),
                                 language.clone(),
                             );
                         }

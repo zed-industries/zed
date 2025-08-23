@@ -308,6 +308,7 @@ impl LocalLspStore {
             toolchain.clone(),
             delegate.clone(),
             true,
+            server_id,
             cx,
         );
         let pending_workspace_folders: Arc<Mutex<BTreeSet<Url>>> = Default::default();
@@ -351,11 +352,11 @@ impl LocalLspStore {
             }
         });
 
+        let server_name = adapter.name.clone();
         let startup = {
-            let server_name = adapter.name.0.clone();
+            let server_name = server_name.clone();
             let delegate = delegate as Arc<dyn LspAdapterDelegate>;
             let key = key.clone();
-            let adapter = adapter.clone();
             let lsp_store = self.weak.clone();
             let pending_workspace_folders = pending_workspace_folders.clone();
             let fs = self.fs.clone();
@@ -460,8 +461,10 @@ impl LocalLspStore {
 
                     Err(err) => {
                         let log = stderr_capture.lock().take().unwrap_or_default();
+                        log::error!("Failed to start language server {server_name:?}: {err:?}");
                         delegate.update_status(
-                            adapter.name(),
+                            server_id,
+                            server_name,
                             BinaryStatus::Failed {
                                 error: if log.is_empty() {
                                     format!("{err:#}")
@@ -470,7 +473,6 @@ impl LocalLspStore {
                                 },
                             },
                         );
-                        log::error!("Failed to start language server {server_name:?}: {err:?}");
                         if !log.is_empty() {
                             log::error!("server stderr: {log}");
                         }
@@ -485,7 +487,7 @@ impl LocalLspStore {
         };
 
         self.languages
-            .update_lsp_binary_status(adapter.name(), BinaryStatus::Starting);
+            .update_lsp_binary_status(server_id, server_name, BinaryStatus::Starting);
 
         self.language_servers.insert(server_id, state);
         self.language_server_ids
@@ -504,6 +506,7 @@ impl LocalLspStore {
         toolchain: Option<Toolchain>,
         delegate: Arc<dyn LspAdapterDelegate>,
         allow_binary_download: bool,
+        server_id: LanguageServerId,
         cx: &mut App,
     ) -> Task<Result<LanguageServerBinary>> {
         if let Some(settings) = settings.binary.as_ref()
@@ -539,10 +542,16 @@ impl LocalLspStore {
         cx.spawn(async move |cx| {
             let binary_result = adapter
                 .clone()
-                .get_language_server_command(delegate.clone(), toolchain, lsp_binary_options, cx)
+                .get_language_server_command(
+                    delegate.clone(),
+                    toolchain,
+                    lsp_binary_options,
+                    server_id,
+                    cx,
+                )
                 .await;
 
-            delegate.update_status(adapter.name.clone(), BinaryStatus::None);
+            delegate.update_status(server_id, adapter.name(), BinaryStatus::None);
 
             let mut binary = binary_result?;
             let mut shell_env = delegate.shell_env().await;
@@ -10409,17 +10418,22 @@ impl LspStore {
 
         if let Some(name) = name {
             log::info!("stopping language server {name}");
-            self.languages
-                .update_lsp_binary_status(name.clone(), BinaryStatus::Stopping);
+            self.languages.update_lsp_binary_status(
+                server_id,
+                name.clone(),
+                BinaryStatus::Stopping,
+            );
             cx.notify();
 
             return cx.spawn(async move |lsp_store, cx| {
                 Self::shutdown_language_server(server_state, name.clone(), cx).await;
                 lsp_store
                     .update(cx, |lsp_store, cx| {
-                        lsp_store
-                            .languages
-                            .update_lsp_binary_status(name, BinaryStatus::Stopped);
+                        lsp_store.languages.update_lsp_binary_status(
+                            server_id,
+                            name.clone(),
+                            BinaryStatus::Stopped,
+                        );
                         cx.emit(LspStoreEvent::LanguageServerRemoved(server_id));
                         cx.notify();
                     })
@@ -10882,7 +10896,7 @@ impl LspStore {
         );
         local
             .languages
-            .update_lsp_binary_status(adapter.name(), BinaryStatus::None);
+            .update_lsp_binary_status(server_id, adapter.name(), BinaryStatus::None);
         if let Some(file_ops_caps) = language_server
             .capabilities()
             .workspace
@@ -12197,7 +12211,7 @@ fn subscribe_to_binary_statuses(
 ) -> Task<()> {
     let mut server_statuses = languages.language_server_binary_statuses();
     cx.spawn(async move |lsp_store, cx| {
-        while let Some((server_name, binary_status)) = server_statuses.next().await {
+        while let Some((server_id, server_name, binary_status)) = server_statuses.next().await {
             if lsp_store
                 .update(cx, |_, cx| {
                     let mut message = None;
@@ -12216,9 +12230,7 @@ fn subscribe_to_binary_statuses(
                         }
                     };
                     cx.emit(LspStoreEvent::LanguageServerUpdate {
-                        // Binary updates are about the binary that might not have any language server id at that point.
-                        // Reuse `LanguageServerUpdate` for them and provide a fake id that won't be used on the receiver side.
-                        language_server_id: LanguageServerId(0),
+                        language_server_id: server_id,
                         name: Some(server_name),
                         message: proto::update_language_server::Variant::StatusUpdate(
                             proto::StatusUpdate {
@@ -13154,9 +13166,14 @@ impl LspAdapterDelegate for LocalLspAdapterDelegate {
         Ok(())
     }
 
-    fn update_status(&self, server_name: LanguageServerName, status: language::BinaryStatus) {
+    fn update_status(
+        &self,
+        server_id: LanguageServerId,
+        server_name: LanguageServerName,
+        status: language::BinaryStatus,
+    ) {
         self.language_registry
-            .update_lsp_binary_status(server_name, status);
+            .update_lsp_binary_status(server_id, server_name, status);
     }
 
     fn registered_lsp_adapters(&self) -> Vec<Arc<dyn LspAdapter>> {

@@ -65,7 +65,7 @@ impl std::fmt::Debug for ActiveEditor {
 #[derive(Debug, Default, Clone)]
 struct LanguageServers {
     health_statuses: HashMap<LanguageServerId, LanguageServerHealthStatus>,
-    binary_statuses: HashMap<LanguageServerName, LanguageServerBinaryStatus>,
+    binary_statuses: HashMap<LanguageServerId, LanguageServerBinaryStatus>,
     servers_per_buffer_abs_path: HashMap<PathBuf, ServersForPath>,
 }
 
@@ -85,6 +85,7 @@ struct LanguageServerHealthStatus {
 struct LanguageServerBinaryStatus {
     status: BinaryStatus,
     message: Option<SharedString>,
+    name: LanguageServerName,
 }
 
 #[derive(Debug)]
@@ -370,17 +371,19 @@ impl LanguageServers {
         binary_status: BinaryStatus,
         message: Option<&str>,
         name: LanguageServerName,
+        id: LanguageServerId,
     ) {
         let binary_status_message = message.map(SharedString::new);
         if matches!(
             binary_status,
             BinaryStatus::Stopped | BinaryStatus::Failed { .. }
         ) {
-            self.health_statuses.retain(|_, server| server.name != name);
+            self.health_statuses.remove(&id);
         }
         self.binary_statuses.insert(
-            name,
+            id,
             LanguageServerBinaryStatus {
+                name,
                 status: binary_status,
                 message: binary_status_message,
             },
@@ -583,18 +586,16 @@ impl LspTool {
                             proto::ServerBinaryStatus::Starting => BinaryStatus::Starting,
                             proto::ServerBinaryStatus::Stopping => BinaryStatus::Stopping,
                             proto::ServerBinaryStatus::Stopped => BinaryStatus::Stopped,
-                            proto::ServerBinaryStatus::Failed => {
-                                let Some(error) = status_update.message.clone() else {
-                                    return;
-                                };
-                                BinaryStatus::Failed { error }
-                            }
+                            proto::ServerBinaryStatus::Failed => BinaryStatus::Failed {
+                                error: status_update.message.clone().unwrap_or_default(),
+                            },
                         };
                         self.server_state.update(cx, |state, _| {
                             state.language_servers.update_binary_status(
                                 binary_status,
                                 status_update.message.as_deref(),
                                 name.clone(),
+                                *language_server_id,
                             );
                         });
                         updated = true;
@@ -684,27 +685,16 @@ impl LspTool {
                         })
                 })
                 .collect::<HashSet<_>>();
-
             let mut server_ids_to_worktrees =
                 HashMap::<LanguageServerId, Entity<Worktree>>::default();
-            let mut server_names_to_worktrees = HashMap::<
-                LanguageServerName,
-                HashSet<(Entity<Worktree>, LanguageServerId)>,
-            >::default();
             for servers_for_path in state.language_servers.servers_per_buffer_abs_path.values() {
                 if let Some(worktree) = servers_for_path
                     .worktree
                     .as_ref()
                     .and_then(|worktree| worktree.upgrade())
                 {
-                    for (server_id, server_name) in &servers_for_path.servers {
+                    for (server_id, _) in &servers_for_path.servers {
                         server_ids_to_worktrees.insert(*server_id, worktree.clone());
-                        if let Some(server_name) = server_name {
-                            server_names_to_worktrees
-                                .entry(server_name.clone())
-                                .or_default()
-                                .insert((worktree.clone(), *server_id));
-                        }
                     }
                 }
             }
@@ -714,19 +704,12 @@ impl LspTool {
             let mut servers_with_health_checks = HashSet::default();
 
             for (server_id, health) in &state.language_servers.health_statuses {
-                let worktree = server_ids_to_worktrees.get(server_id).or_else(|| {
-                    let worktrees = server_names_to_worktrees.get(&health.name)?;
-                    worktrees
-                        .iter()
-                        .find(|(worktree, _)| active_worktrees.contains(worktree))
-                        .or_else(|| worktrees.iter().next())
-                        .map(|(worktree, _)| worktree)
-                });
-                servers_with_health_checks.insert(&health.name);
+                let worktree = server_ids_to_worktrees.get(server_id);
+                servers_with_health_checks.insert(*server_id);
                 let worktree_name =
                     worktree.map(|worktree| SharedString::new(worktree.read(cx).root_name()));
 
-                let binary_status = state.language_servers.binary_statuses.get(&health.name);
+                let binary_status = state.language_servers.binary_statuses.get(server_id);
                 let server_data = ServerData::WithHealthCheck {
                     server_id: *server_id,
                     health,
@@ -743,11 +726,11 @@ impl LspTool {
 
             let mut can_stop_all = !state.language_servers.health_statuses.is_empty();
             let mut can_restart_all = state.language_servers.health_statuses.is_empty();
-            for (server_name, binary_status) in state
+            for (server_id, binary_status) in state
                 .language_servers
                 .binary_statuses
                 .iter()
-                .filter(|(name, _)| !servers_with_health_checks.contains(name))
+                .filter(|&(id, _)| !servers_with_health_checks.contains(id))
             {
                 match binary_status.status {
                     BinaryStatus::None => {
@@ -774,40 +757,25 @@ impl LspTool {
                     BinaryStatus::Failed { .. } => {}
                 }
 
-                match server_names_to_worktrees.get(server_name) {
-                    Some(worktrees_for_name) => {
-                        match worktrees_for_name
-                            .iter()
-                            .find(|(worktree, _)| active_worktrees.contains(worktree))
-                            .or_else(|| worktrees_for_name.iter().next())
-                        {
-                            Some((worktree, server_id)) => {
-                                let worktree_name =
-                                    SharedString::new(worktree.read(cx).root_name());
-                                servers_per_worktree
-                                    .entry(worktree_name.clone())
-                                    .or_default()
-                                    .push(ServerData::WithBinaryStatus {
-                                        server_name,
-                                        binary_status,
-                                        server_id: Some(*server_id),
-                                    });
-                            }
-                            None => servers_without_worktree.push(ServerData::WithBinaryStatus {
+                let server_name = &binary_status.name;
+                match server_ids_to_worktrees.get(server_id) {
+                    Some(worktree) if active_worktrees.contains(worktree) => {
+                        let worktree_name = SharedString::new(worktree.read(cx).root_name());
+                        servers_per_worktree.entry(worktree_name).or_default().push(
+                            ServerData::WithBinaryStatus {
                                 server_name,
                                 binary_status,
-                                server_id: None,
-                            }),
-                        }
+                                server_id: Some(*server_id),
+                            },
+                        );
                     }
-                    None => servers_without_worktree.push(ServerData::WithBinaryStatus {
+                    _ => servers_without_worktree.push(ServerData::WithBinaryStatus {
                         server_name,
                         binary_status,
-                        server_id: None,
+                        server_id: Some(*server_id),
                     }),
                 }
             }
-
             let mut new_lsp_items =
                 Vec::with_capacity(servers_per_worktree.len() + servers_without_worktree.len() + 2);
             for (worktree_name, worktree_servers) in servers_per_worktree {

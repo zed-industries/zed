@@ -177,21 +177,21 @@ impl HeadlessExtensionStore {
         let wasm_extension: Arc<dyn Extension> =
             Arc::new(WasmExtension::load(&extension_dir, &manifest, wasm_host.clone(), cx).await?);
 
-        for (language_server_id, language_server_config) in &manifest.language_servers {
+        for (language_server_name, language_server_config) in &manifest.language_servers {
             for language in language_server_config.languages() {
                 this.update(cx, |this, _cx| {
                     this.loaded_language_servers
                         .entry(manifest.id.clone())
                         .or_default()
-                        .push((language_server_id.clone(), language.clone()));
+                        .push((language_server_name.clone(), language.clone()));
                     this.proxy.register_language_server(
                         wasm_extension.clone(),
-                        language_server_id.clone(),
+                        language_server_name.clone(),
                         language.clone(),
                     );
                 })?;
             }
-            log::info!("Loaded language server: {}", language_server_id);
+            log::info!("Loaded language server: {}", language_server_name);
         }
 
         for (debug_adapter, meta) in &manifest.debug_adapters {

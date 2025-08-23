@@ -56,6 +56,7 @@ pub struct ActivityIndicator {
 #[derive(Debug)]
 struct ServerStatus {
     name: LanguageServerName,
+    id: LanguageServerId,
     status: LanguageServerStatusUpdate,
 }
 
@@ -86,11 +87,12 @@ impl ActivityIndicator {
         let this = cx.new(|cx| {
             let mut status_events = languages.language_server_binary_statuses();
             cx.spawn(async move |this, cx| {
-                while let Some((name, binary_status)) = status_events.next().await {
+                while let Some((id, name, binary_status)) = status_events.next().await {
                     this.update(cx, |this: &mut ActivityIndicator, cx| {
-                        this.statuses.retain(|s| s.name != name);
+                        this.statuses.retain(|s| s.id != id);
                         this.statuses.push(ServerStatus {
                             name,
+                            id,
                             status: LanguageServerStatusUpdate::Binary(binary_status),
                         });
                         cx.notify();
@@ -117,7 +119,13 @@ impl ActivityIndicator {
             cx.subscribe(
                 &project.read(cx).lsp_store(),
                 |activity_indicator, _, event, cx| {
-                    if let LspStoreEvent::LanguageServerUpdate { name, message, .. } = event {
+                    if let LspStoreEvent::LanguageServerUpdate {
+                        language_server_id,
+                        name,
+                        message,
+                        ..
+                    } = event
+                    {
                         if let proto::update_language_server::Variant::StatusUpdate(status_update) =
                             message
                         {
@@ -180,9 +188,11 @@ impl ActivityIndicator {
                             };
 
                             activity_indicator.statuses.retain(|s| s.name != name);
-                            activity_indicator
-                                .statuses
-                                .push(ServerStatus { name, status });
+                            activity_indicator.statuses.push(ServerStatus {
+                                name,
+                                id: *language_server_id,
+                                status,
+                            });
                         }
                         cx.notify()
                     }

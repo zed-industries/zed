@@ -16,8 +16,8 @@ use language::{
     Toolchain,
 };
 use lsp::{
-    CodeActionKind, LanguageServerBinary, LanguageServerBinaryOptions, LanguageServerName,
-    LanguageServerSelector,
+    CodeActionKind, LanguageServerBinary, LanguageServerBinaryOptions, LanguageServerId,
+    LanguageServerName, LanguageServerSelector,
 };
 use serde::Serialize;
 use serde_json::Value;
@@ -58,14 +58,14 @@ impl ExtensionLanguageServerProxy for LanguageServerRegistryProxy {
     fn register_language_server(
         &self,
         extension: Arc<dyn Extension>,
-        language_server_id: LanguageServerName,
+        language_server_name: LanguageServerName,
         language: LanguageName,
     ) {
         self.language_registry.register_lsp_adapter(
             language.clone(),
             Arc::new(ExtensionLspAdapter::new(
                 extension,
-                language_server_id,
+                language_server_name,
                 language,
             )),
         );
@@ -122,29 +122,29 @@ impl ExtensionLanguageServerProxy for LanguageServerRegistryProxy {
 
     fn update_language_server_status(
         &self,
-        language_server_id: LanguageServerName,
+        language_server_name: LanguageServerName,
         status: BinaryStatus,
     ) {
-        self.language_registry
-            .update_lsp_binary_status(language_server_id, status);
+        // self.language_registry
+        //     .update_lsp_binary_status(language_server_name, status);
     }
 }
 
 struct ExtensionLspAdapter {
     extension: Arc<dyn Extension>,
-    language_server_id: LanguageServerName,
+    language_server_name: LanguageServerName,
     language_name: LanguageName,
 }
 
 impl ExtensionLspAdapter {
     fn new(
         extension: Arc<dyn Extension>,
-        language_server_id: LanguageServerName,
+        language_server_name: LanguageServerName,
         language_name: LanguageName,
     ) -> Self {
         Self {
             extension,
-            language_server_id,
+            language_server_name,
             language_name,
         }
     }
@@ -153,7 +153,7 @@ impl ExtensionLspAdapter {
 #[async_trait(?Send)]
 impl LspAdapter for ExtensionLspAdapter {
     fn name(&self) -> LanguageServerName {
-        self.language_server_id.clone()
+        self.language_server_name.clone()
     }
 
     fn get_language_server_command<'a>(
@@ -162,6 +162,7 @@ impl LspAdapter for ExtensionLspAdapter {
         _: Option<Toolchain>,
         _: LanguageServerBinaryOptions,
         _: futures::lock::MutexGuard<'a, Option<LanguageServerBinary>>,
+        _: LanguageServerId,
         _: &'a mut AsyncApp,
     ) -> Pin<Box<dyn 'a + Future<Output = Result<LanguageServerBinary>>>> {
         async move {
@@ -169,7 +170,7 @@ impl LspAdapter for ExtensionLspAdapter {
             let command = self
                 .extension
                 .language_server_command(
-                    self.language_server_id.clone(),
+                    self.language_server_name.clone(),
                     self.language_name.clone(),
                     delegate,
                 )
@@ -230,7 +231,7 @@ impl LspAdapter for ExtensionLspAdapter {
             .extension
             .manifest()
             .language_servers
-            .get(&self.language_server_id)
+            .get(&self.language_server_name)
             .and_then(|server| server.code_action_kinds.clone());
 
         code_action_kinds.or(Some(vec![
@@ -256,7 +257,7 @@ impl LspAdapter for ExtensionLspAdapter {
         self.extension
             .manifest()
             .language_servers
-            .get(&self.language_server_id)
+            .get(&self.language_server_name)
             .map(|server| server.language_ids.clone())
             .unwrap_or_default()
     }
@@ -270,7 +271,7 @@ impl LspAdapter for ExtensionLspAdapter {
         let json_options = self
             .extension
             .language_server_initialization_options(
-                self.language_server_id.clone(),
+                self.language_server_name.clone(),
                 self.language_name.clone(),
                 delegate,
             )
@@ -294,7 +295,7 @@ impl LspAdapter for ExtensionLspAdapter {
         let delegate = Arc::new(WorktreeDelegateAdapter(delegate.clone())) as _;
         let json_options: Option<String> = self
             .extension
-            .language_server_workspace_configuration(self.language_server_id.clone(), delegate)
+            .language_server_workspace_configuration(self.language_server_name.clone(), delegate)
             .await?;
         Ok(if let Some(json_options) = json_options {
             serde_json::from_str(&json_options).with_context(|| {
@@ -315,7 +316,7 @@ impl LspAdapter for ExtensionLspAdapter {
         let json_options: Option<String> = self
             .extension
             .language_server_additional_initialization_options(
-                self.language_server_id.clone(),
+                self.language_server_name.clone(),
                 target_language_server_id.clone(),
                 delegate,
             )
@@ -343,7 +344,7 @@ impl LspAdapter for ExtensionLspAdapter {
         let json_options: Option<String> = self
             .extension
             .language_server_additional_workspace_configuration(
-                self.language_server_id.clone(),
+                self.language_server_name.clone(),
                 target_language_server_id.clone(),
                 delegate,
             )
@@ -370,7 +371,7 @@ impl LspAdapter for ExtensionLspAdapter {
 
         let labels = self
             .extension
-            .labels_for_completions(self.language_server_id.clone(), completions)
+            .labels_for_completions(self.language_server_name.clone(), completions)
             .await?;
 
         Ok(labels_from_extension(labels, language))
@@ -392,7 +393,7 @@ impl LspAdapter for ExtensionLspAdapter {
 
         let labels = self
             .extension
-            .labels_for_symbols(self.language_server_id.clone(), symbols)
+            .labels_for_symbols(self.language_server_name.clone(), symbols)
             .await?;
 
         Ok(labels_from_extension(labels, language))

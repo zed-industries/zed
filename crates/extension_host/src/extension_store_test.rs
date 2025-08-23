@@ -12,7 +12,7 @@ use gpui::{AppContext as _, SemanticVersion, TestAppContext};
 use http_client::{FakeHttpClient, Response};
 use language::{BinaryStatus, LanguageMatcher, LanguageName, LanguageRegistry};
 use language_extension::LspAccess;
-use lsp::LanguageServerName;
+use lsp::{LanguageServerId, LanguageServerName};
 use node_runtime::NodeRuntime;
 use parking_lot::Mutex;
 use project::{DEFAULT_COMPLETION_CONTEXT, Project};
@@ -737,18 +737,25 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
         ],
         [
             (
+                LanguageServerId(0),
                 LanguageServerName::new_static("gleam"),
                 BinaryStatus::Starting
             ),
             (
+                LanguageServerId(0),
                 LanguageServerName::new_static("gleam"),
                 BinaryStatus::CheckingForUpdate
             ),
             (
+                LanguageServerId(0),
                 LanguageServerName::new_static("gleam"),
                 BinaryStatus::Downloading
             ),
-            (LanguageServerName::new_static("gleam"), BinaryStatus::None)
+            (
+                LanguageServerId(0),
+                LanguageServerName::new_static("gleam"),
+                BinaryStatus::None
+            )
         ]
     );
 
