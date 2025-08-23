@@ -1,17 +1,15 @@
+use crate::AgentServer;
+use acp_thread::{AcpThread, AgentThreadEntry, ToolCall, ToolCallStatus};
+use agent_client_protocol as acp;
+use futures::{FutureExt, StreamExt, channel::mpsc, select};
+use gpui::{AppContext, Entity, TestAppContext};
+use indoc::indoc;
+use project::{FakeFs, Project};
 use std::{
     path::{Path, PathBuf},
     sync::Arc,
     time::Duration,
 };
-
-use crate::AgentServer;
-use acp_thread::{AcpThread, AgentThreadEntry, ToolCall, ToolCallStatus};
-use agent_client_protocol as acp;
-
-use futures::{FutureExt, StreamExt, channel::mpsc, select};
-use gpui::{AppContext, Entity, TestAppContext};
-use indoc::indoc;
-use project::{FakeFs, Project};
 use util::path;
 
 pub async fn test_basic<T, F>(server: F, cx: &mut TestAppContext)
@@ -479,6 +477,7 @@ pub async fn init_test(cx: &mut TestAppContext) -> Arc<FakeFs> {
                 gemini: Some(crate::AgentServerSettings {
                     command: crate::gemini::tests::local_command(),
                 }),
+                custom: collections::HashMap::default(),
             },
             cx,
         );

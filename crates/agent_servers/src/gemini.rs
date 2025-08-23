@@ -4,11 +4,10 @@ use std::{any::Any, path::Path};
 use crate::{AgentServer, AgentServerCommand};
 use acp_thread::{AgentConnection, LoadError};
 use anyhow::Result;
-use gpui::{Entity, Task};
+use gpui::{App, Entity, SharedString, Task};
 use language_models::provider::google::GoogleLanguageModelProvider;
 use project::Project;
 use settings::SettingsStore;
-use ui::App;
 
 use crate::AllAgentServersSettings;
 
@@ -18,16 +17,16 @@ pub struct Gemini;
 const ACP_ARG: &str = "--experimental-acp";
 
 impl AgentServer for Gemini {
-    fn name(&self) -> &'static str {
-        "Gemini CLI"
+    fn name(&self) -> SharedString {
+        "Gemini CLI".into()
     }
 
-    fn empty_state_headline(&self) -> &'static str {
+    fn empty_state_headline(&self) -> SharedString {
         self.name()
     }
 
-    fn empty_state_message(&self) -> &'static str {
-        "Ask questions, edit files, run commands"
+    fn empty_state_message(&self) -> SharedString {
+        "Ask questions, edit files, run commands".into()
     }
 
     fn logo(&self) -> ui::IconName {

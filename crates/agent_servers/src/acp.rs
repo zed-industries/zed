@@ -15,7 +15,7 @@ use std::{path::Path, rc::Rc};
 use thiserror::Error;
 
 use anyhow::{Context as _, Result};
-use gpui::{App, AppContext as _, AsyncApp, Entity, Task, WeakEntity};
+use gpui::{App, AppContext as _, AsyncApp, Entity, SharedString, Task, WeakEntity};
 
 use acp_thread::{AcpThread, AuthRequired, LoadError};
 
@@ -24,7 +24,7 @@ use acp_thread::{AcpThread, AuthRequired, LoadError};
 pub struct UnsupportedVersion;
 
 pub struct AcpConnection {
-    server_name: &'static str,
+    server_name: SharedString,
     connection: Rc<acp::ClientSideConnection>,
     sessions: Rc<RefCell<HashMap<acp::SessionId, AcpSession>>>,
     auth_methods: Vec<acp::AuthMethod>,
@@ -38,7 +38,7 @@ pub struct AcpSession {
 }
 
 pub async fn connect(
-    server_name: &'static str,
+    server_name: SharedString,
     command: AgentServerCommand,
     root_dir: &Path,
     cx: &mut AsyncApp,
@@ -51,7 +51,7 @@ const MINIMUM_SUPPORTED_VERSION: acp::ProtocolVersion = acp::V1;
 
 impl AcpConnection {
     pub async fn stdio(
-        server_name: &'static str,
+        server_name: SharedString,
         command: AgentServerCommand,
         root_dir: &Path,
         cx: &mut AsyncApp,
@@ -121,7 +121,7 @@ impl AcpConnection {
 
         cx.update(|cx| {
             AcpConnectionRegistry::default_global(cx).update(cx, |registry, cx| {
-                registry.set_active_connection(server_name, &connection, cx)
+                registry.set_active_connection(server_name.clone(), &connection, cx)
             });
         })?;
 
@@ -187,7 +187,7 @@ impl AgentConnection for AcpConnection {
             let action_log = cx.new(|_| ActionLog::new(project.clone()))?;
             let thread = cx.new(|_cx| {
                 AcpThread::new(
-                    self.server_name,
+                    self.server_name.clone(),
                     self.clone(),
                     project,
                     action_log,
