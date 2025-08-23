@@ -17,11 +17,11 @@ path = "src/agent_servers.rs"
 doctest = false
 
 [dependencies]
+acp_tools.workspace = true
 acp_thread.workspace = true
 action_log.workspace = true
 agent-client-protocol.workspace = true
 agent_settings.workspace = true
-agentic-coding-protocol.workspace = true
 anyhow.workspace = true
 client = { workspace = true, optional = true }
 collections.workspace = true

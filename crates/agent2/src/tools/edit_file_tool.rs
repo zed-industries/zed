@@ -186,11 +186,11 @@ impl AgentTool for EditFileTool {
     type Input = EditFileToolInput;
     type Output = EditFileToolOutput;
 
-    fn name(&self) -> SharedString {
-        "edit_file".into()
+    fn name() -> &'static str {
+        "edit_file"
     }
 
-    fn kind(&self) -> acp::ToolKind {
+    fn kind() -> acp::ToolKind {
         acp::ToolKind::Edit
     }
 
@@ -517,7 +517,6 @@ fn resolve_path(
 mod tests {
     use super::*;
     use crate::{ContextServerRegistry, Templates};
-    use action_log::ActionLog;
     use client::TelemetrySettings;
     use fs::Fs;
     use gpui::{TestAppContext, UpdateGlobal};
@@ -535,7 +534,6 @@ mod tests {
         fs.insert_tree("/root", json!({})).await;
         let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
         let language_registry = project.read_with(cx, |project, _cx| project.languages().clone());
-        let action_log = cx.new(|_| ActionLog::new(project.clone()));
         let context_server_registry =
             cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
         let model = Arc::new(FakeLanguageModel::default());
@@ -544,7 +542,6 @@ mod tests {
                 project,
                 cx.new(|_cx| ProjectContext::default()),
                 context_server_registry,
-                action_log,
                 Templates::new(),
                 Some(model),
                 cx,
@@ -735,7 +732,6 @@ mod tests {
             }
         });
 
-        let action_log = cx.new(|_| ActionLog::new(project.clone()));
         let context_server_registry =
             cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
         let model = Arc::new(FakeLanguageModel::default());
@@ -744,7 +740,6 @@ mod tests {
                 project,
                 cx.new(|_cx| ProjectContext::default()),
                 context_server_registry,
-                action_log.clone(),
                 Templates::new(),
                 Some(model.clone()),
                 cx,
@@ -801,7 +796,9 @@ mod tests {
             "Code should be formatted when format_on_save is enabled"
         );
 
-        let stale_buffer_count = action_log.read_with(cx, |log, cx| log.stale_buffers(cx).count());
+        let stale_buffer_count = thread
+            .read_with(cx, |thread, _cx| thread.action_log.clone())
+            .read_with(cx, |log, cx| log.stale_buffers(cx).count());
 
         assert_eq!(
             stale_buffer_count, 0,
@@ -879,14 +876,12 @@ mod tests {
         let context_server_registry =
             cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
         let language_registry = project.read_with(cx, |project, _cx| project.languages().clone());
-        let action_log = cx.new(|_| ActionLog::new(project.clone()));
         let model = Arc::new(FakeLanguageModel::default());
         let thread = cx.new(|cx| {
             Thread::new(
                 project,
                 cx.new(|_cx| ProjectContext::default()),
                 context_server_registry,
-                action_log.clone(),
                 Templates::new(),
                 Some(model.clone()),
                 cx,
@@ -1008,14 +1003,12 @@ mod tests {
         let context_server_registry =
             cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
         let language_registry = project.read_with(cx, |project, _cx| project.languages().clone());
-        let action_log = cx.new(|_| ActionLog::new(project.clone()));
         let model = Arc::new(FakeLanguageModel::default());
         let thread = cx.new(|cx| {
             Thread::new(
                 project,
                 cx.new(|_cx| ProjectContext::default()),
                 context_server_registry,
-                action_log.clone(),
                 Templates::new(),
                 Some(model.clone()),
                 cx,
@@ -1146,14 +1139,12 @@ mod tests {
         let language_registry = project.read_with(cx, |project, _cx| project.languages().clone());
         let context_server_registry =
             cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
-        let action_log = cx.new(|_| ActionLog::new(project.clone()));
         let model = Arc::new(FakeLanguageModel::default());
         let thread = cx.new(|cx| {
             Thread::new(
                 project,
                 cx.new(|_cx| ProjectContext::default()),
                 context_server_registry,
-                action_log.clone(),
                 Templates::new(),
                 Some(model.clone()),
                 cx,
@@ -1254,7 +1245,6 @@ mod tests {
         )
         .await;
         let language_registry = project.read_with(cx, |project, _cx| project.languages().clone());
-        let action_log = cx.new(|_| ActionLog::new(project.clone()));
         let context_server_registry =
             cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
         let model = Arc::new(FakeLanguageModel::default());
@@ -1263,7 +1253,6 @@ mod tests {
                 project.clone(),
                 cx.new(|_cx| ProjectContext::default()),
                 context_server_registry.clone(),
-                action_log.clone(),
                 Templates::new(),
                 Some(model.clone()),
                 cx,
@@ -1336,7 +1325,6 @@ mod tests {
         .await;
         let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
         let language_registry = project.read_with(cx, |project, _cx| project.languages().clone());
-        let action_log = cx.new(|_| ActionLog::new(project.clone()));
         let context_server_registry =
             cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
         let model = Arc::new(FakeLanguageModel::default());
@@ -1345,7 +1333,6 @@ mod tests {
                 project.clone(),
                 cx.new(|_cx| ProjectContext::default()),
                 context_server_registry.clone(),
-                action_log.clone(),
                 Templates::new(),
                 Some(model.clone()),
                 cx,
@@ -1421,7 +1408,6 @@ mod tests {
         .await;
         let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
         let language_registry = project.read_with(cx, |project, _cx| project.languages().clone());
-        let action_log = cx.new(|_| ActionLog::new(project.clone()));
         let context_server_registry =
             cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
         let model = Arc::new(FakeLanguageModel::default());
@@ -1430,7 +1416,6 @@ mod tests {
                 project.clone(),
                 cx.new(|_cx| ProjectContext::default()),
                 context_server_registry.clone(),
-                action_log.clone(),
                 Templates::new(),
                 Some(model.clone()),
                 cx,
@@ -1503,7 +1488,6 @@ mod tests {
         let fs = project::FakeFs::new(cx.executor());
         let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
         let language_registry = project.read_with(cx, |project, _cx| project.languages().clone());
-        let action_log = cx.new(|_| ActionLog::new(project.clone()));
         let context_server_registry =
             cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
         let model = Arc::new(FakeLanguageModel::default());
@@ -1512,7 +1496,6 @@ mod tests {
                 project.clone(),
                 cx.new(|_cx| ProjectContext::default()),
                 context_server_registry,
-                action_log.clone(),
                 Templates::new(),
                 Some(model.clone()),
                 cx,

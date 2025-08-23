@@ -74,6 +74,7 @@ use std::{
     fmt::{self, Write},
     iter, mem,
     ops::{Deref, Range},
+    path::Path,
     rc::Rc,
     sync::Arc,
     time::{Duration, Instant},
@@ -3693,7 +3694,12 @@ impl EditorElement {
                                 })
                                 .take(1),
                         )
-                        .children(indicator)
+                        .child(
+                            h_flex()
+                                .size(Pixels(12.0))
+                                .justify_center()
+                                .children(indicator),
+                        )
                         .child(
                             h_flex()
                                 .cursor_pointer()
@@ -3782,25 +3788,31 @@ impl EditorElement {
                         && let Some(worktree) =
                             project.read(cx).worktree_for_id(file.worktree_id(cx), cx)
                     {
+                        let worktree = worktree.read(cx);
                         let relative_path = file.path();
-                        let entry_for_path = worktree.read(cx).entry_for_path(relative_path);
-                        let abs_path = entry_for_path.and_then(|e| e.canonical_path.as_deref());
-                        let has_relative_path =
-                            worktree.read(cx).root_entry().is_some_and(Entry::is_dir);
+                        let entry_for_path = worktree.entry_for_path(relative_path);
+                        let abs_path = entry_for_path.map(|e| {
+                            e.canonical_path.as_deref().map_or_else(
+                                || worktree.abs_path().join(relative_path),
+                                Path::to_path_buf,
+                            )
+                        });
+                        let has_relative_path = worktree.root_entry().is_some_and(Entry::is_dir);
 
-                        let parent_abs_path =
-                            abs_path.and_then(|abs_path| Some(abs_path.parent()?.to_path_buf()));
+                        let parent_abs_path = abs_path
+                            .as_ref()
+                            .and_then(|abs_path| Some(abs_path.parent()?.to_path_buf()));
                         let relative_path = has_relative_path
                             .then_some(relative_path)
                             .map(ToOwned::to_owned);
 
                         let visible_in_project_panel =
-                            relative_path.is_some() && worktree.read(cx).is_visible();
+                            relative_path.is_some() && worktree.is_visible();
                         let reveal_in_project_panel = entry_for_path
                             .filter(|_| visible_in_project_panel)
                             .map(|entry| entry.id);
                         menu = menu
-                            .when_some(abs_path.map(ToOwned::to_owned), |menu, abs_path| {
+                            .when_some(abs_path, |menu, abs_path| {
                                 menu.entry(
                                     "Copy Path",
                                     Some(Box::new(zed_actions::workspace::CopyPath)),

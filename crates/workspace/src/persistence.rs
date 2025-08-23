@@ -9,15 +9,13 @@ use std::{
 };
 
 use anyhow::{Context as _, Result, bail};
-use client::DevServerProjectId;
+use collections::HashMap;
 use db::{define_connection, query, sqlez::connection::Connection, sqlez_macros::sql};
 use gpui::{Axis, Bounds, Task, WindowBounds, WindowId, point, size};
-use itertools::Itertools;
 use project::debugger::breakpoint_store::{BreakpointState, SourceBreakpoint};
 
 use language::{LanguageName, Toolchain};
 use project::WorktreeId;
-use remote::ssh_session::SshProjectId;
 use sqlez::{
     bindable::{Bind, Column, StaticColumnCount},
     statement::{SqlType, Statement},
@@ -28,14 +26,17 @@ use ui::{App, px};
 use util::{ResultExt, maybe};
 use uuid::Uuid;
 
-use crate::WorkspaceId;
-
-use model::{
-    GroupId, ItemId, LocalPaths, PaneId, SerializedItem, SerializedPane, SerializedPaneGroup,
-    SerializedSshProject, SerializedWorkspace,
+use crate::{
+    WorkspaceId,
+    path_list::{PathList, SerializedPathList},
 };
 
-use self::model::{DockStructure, LocalPathsOrder, SerializedWorkspaceLocation};
+use model::{
+    GroupId, ItemId, PaneId, SerializedItem, SerializedPane, SerializedPaneGroup,
+    SerializedSshConnection, SerializedWorkspace, SshConnectionId,
+};
+
+use self::model::{DockStructure, SerializedWorkspaceLocation};
 
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub(crate) struct SerializedAxis(pub(crate) gpui::Axis);
@@ -275,70 +276,9 @@ impl sqlez::bindable::Bind for SerializedPixels {
 }
 
 define_connection! {
-    // Current schema shape using pseudo-rust syntax:
-    //
-    // workspaces(
-    //   workspace_id: usize, // Primary key for workspaces
-    //   local_paths: Bincode<Vec<PathBuf>>,
-    //   local_paths_order: Bincode<Vec<usize>>,
-    //   dock_visible: bool, // Deprecated
-    //   dock_anchor: DockAnchor, // Deprecated
-    //   dock_pane: Option<usize>, // Deprecated
-    //   left_sidebar_open: boolean,
-    //   timestamp: String, // UTC YYYY-MM-DD HH:MM:SS
-    //   window_state: String, // WindowBounds Discriminant
-    //   window_x: Option<f32>, // WindowBounds::Fixed RectF x
-    //   window_y: Option<f32>, // WindowBounds::Fixed RectF y
-    //   window_width: Option<f32>, // WindowBounds::Fixed RectF width
-    //   window_height: Option<f32>, // WindowBounds::Fixed RectF height
-    //   display: Option<Uuid>, // Display id
-    //   fullscreen: Option<bool>, // Is the window fullscreen?
-    //   centered_layout: Option<bool>, // Is the Centered Layout mode activated?
-    //   session_id: Option<String>, // Session id
-    //   window_id: Option<u64>, // Window Id
-    // )
-    //
-    // pane_groups(
-    //   group_id: usize, // Primary key for pane_groups
-    //   workspace_id: usize, // References workspaces table
-    //   parent_group_id: Option<usize>, // None indicates that this is the root node
-    //   position: Option<usize>, // None indicates that this is the root node
-    //   axis: Option<Axis>, // 'Vertical', 'Horizontal'
-    //   flexes: Option<Vec<f32>>, // A JSON array of floats
-    // )
-    //
-    // panes(
-    //     pane_id: usize, // Primary key for panes
-    //     workspace_id: usize, // References workspaces table
-    //     active: bool,
-    // )
-    //
-    // center_panes(
-    //     pane_id: usize, // Primary key for center_panes
-    //     parent_group_id: Option<usize>, // References pane_groups. If none, this is the root
-    //     position: Option<usize>, // None indicates this is the root
-    // )
-    //
-    // CREATE TABLE items(
-    //     item_id: usize, // This is the item's view id, so this is not unique
-    //     workspace_id: usize, // References workspaces table
-    //     pane_id: usize, // References panes table
-    //     kind: String, // Indicates which view this connects to. This is the key in the item_deserializers global
-    //     position: usize, // Position of the item in the parent pane. This is equivalent to panes' position column
-    //     active: bool, // Indicates if this item is the active one in the pane
-    //     preview: bool // Indicates if this item is a preview item
-    // )
-    //
-    // CREATE TABLE breakpoints(
-    //      workspace_id: usize Foreign Key, // References workspace table
-    //      path: PathBuf, // The absolute path of the file that this breakpoint belongs to
-    //      breakpoint_location: Vec<u32>, // A list of the locations of breakpoints
-    //      kind: int, // The kind of breakpoint (standard, log)
-    //      log_message: String, // log message for log breakpoints, otherwise it's Null
-    // )
     pub static ref DB: WorkspaceDb<()> =
     &[
-        sql!(
+    sql!(
         CREATE TABLE workspaces(
             workspace_id INTEGER PRIMARY KEY,
             workspace_location BLOB UNIQUE,
@@ -555,7 +495,109 @@ define_connection! {
             SELECT * FROM toolchains;
         DROP TABLE toolchains;
         ALTER TABLE toolchains2 RENAME TO toolchains;
-    )
+    ),
+    sql!(
+        CREATE TABLE ssh_connections (
+            id INTEGER PRIMARY KEY,
+            host TEXT NOT NULL,
+            port INTEGER,
+            user TEXT
+        );
+
+        INSERT INTO ssh_connections (host, port, user)
+        SELECT DISTINCT host, port, user
+        FROM ssh_projects;
+
+        CREATE TABLE workspaces_2(
+            workspace_id INTEGER PRIMARY KEY,
+            paths TEXT,
+            paths_order TEXT,
+            ssh_connection_id INTEGER REFERENCES ssh_connections(id),
+            timestamp TEXT DEFAULT CURRENT_TIMESTAMP NOT NULL,
+            window_state TEXT,
+            window_x REAL,
+            window_y REAL,
+            window_width REAL,
+            window_height REAL,
+            display BLOB,
+            left_dock_visible INTEGER,
+            left_dock_active_panel TEXT,
+            right_dock_visible INTEGER,
+            right_dock_active_panel TEXT,
+            bottom_dock_visible INTEGER,
+            bottom_dock_active_panel TEXT,
+            left_dock_zoom INTEGER,
+            right_dock_zoom INTEGER,
+            bottom_dock_zoom INTEGER,
+            fullscreen INTEGER,
+            centered_layout INTEGER,
+            session_id TEXT,
+            window_id INTEGER
+        ) STRICT;
+
+        INSERT
+        INTO workspaces_2
+        SELECT
+            workspaces.workspace_id,
+            CASE
+                WHEN ssh_projects.id IS NOT NULL THEN ssh_projects.paths
+                ELSE
+                    CASE
+                        WHEN workspaces.local_paths_array IS NULL OR workspaces.local_paths_array = "" THEN
+                            NULL
+                        ELSE
+                            json('[' || '"' || replace(workspaces.local_paths_array, ',', '"' || "," || '"') || '"' || ']')
+                    END
+            END as paths,
+
+            CASE
+                WHEN ssh_projects.id IS NOT NULL THEN ""
+                ELSE workspaces.local_paths_order_array
+            END as paths_order,
+
+            CASE
+                WHEN ssh_projects.id IS NOT NULL THEN (
+                    SELECT ssh_connections.id
+                    FROM ssh_connections
+                    WHERE
+                        ssh_connections.host IS ssh_projects.host AND
+                        ssh_connections.port IS ssh_projects.port AND
+                        ssh_connections.user IS ssh_projects.user
+                )
+                ELSE NULL
+            END as ssh_connection_id,
+
+            workspaces.timestamp,
+            workspaces.window_state,
+            workspaces.window_x,
+            workspaces.window_y,
+            workspaces.window_width,
+            workspaces.window_height,
+            workspaces.display,
+            workspaces.left_dock_visible,
+            workspaces.left_dock_active_panel,
+            workspaces.right_dock_visible,
+            workspaces.right_dock_active_panel,
+            workspaces.bottom_dock_visible,
+            workspaces.bottom_dock_active_panel,
+            workspaces.left_dock_zoom,
+            workspaces.right_dock_zoom,
+            workspaces.bottom_dock_zoom,
+            workspaces.fullscreen,
+            workspaces.centered_layout,
+            workspaces.session_id,
+            workspaces.window_id
+        FROM
+            workspaces LEFT JOIN
+            ssh_projects ON
+            workspaces.ssh_project_id = ssh_projects.id;
+
+        DROP TABLE ssh_projects;
+        DROP TABLE workspaces;
+        ALTER TABLE workspaces_2 RENAME TO workspaces;
+
+        CREATE UNIQUE INDEX ix_workspaces_location ON workspaces(ssh_connection_id, paths);
+    ),
     ];
 }
 
@@ -567,16 +609,32 @@ impl WorkspaceDb {
         &self,
         worktree_roots: &[P],
     ) -> Option<SerializedWorkspace> {
+        self.workspace_for_roots_internal(worktree_roots, None)
+    }
+
+    pub(crate) fn ssh_workspace_for_roots<P: AsRef<Path>>(
+        &self,
+        worktree_roots: &[P],
+        ssh_project_id: SshConnectionId,
+    ) -> Option<SerializedWorkspace> {
+        self.workspace_for_roots_internal(worktree_roots, Some(ssh_project_id))
+    }
+
+    pub(crate) fn workspace_for_roots_internal<P: AsRef<Path>>(
+        &self,
+        worktree_roots: &[P],
+        ssh_connection_id: Option<SshConnectionId>,
+    ) -> Option<SerializedWorkspace> {
         // paths are sorted before db interactions to ensure that the order of the paths
         // doesn't affect the workspace selection for existing workspaces
-        let local_paths = LocalPaths::new(worktree_roots);
+        let root_paths = PathList::new(worktree_roots);
 
         // Note that we re-assign the workspace_id here in case it's empty
         // and we've grabbed the most recent workspace
         let (
             workspace_id,
-            local_paths,
-            local_paths_order,
+            paths,
+            paths_order,
             window_bounds,
             display,
             centered_layout,
@@ -584,8 +642,8 @@ impl WorkspaceDb {
             window_id,
         ): (
             WorkspaceId,
-            Option<LocalPaths>,
-            Option<LocalPathsOrder>,
+            String,
+            String,
             Option<SerializedWindowBounds>,
             Option<Uuid>,
             Option<bool>,
@@ -595,8 +653,8 @@ impl WorkspaceDb {
             .select_row_bound(sql! {
                 SELECT
                     workspace_id,
-                    local_paths,
-                    local_paths_order,
+                    paths,
+                    paths_order,
                     window_state,
                     window_x,
                     window_y,
@@ -615,25 +673,31 @@ impl WorkspaceDb {
                     bottom_dock_zoom,
                     window_id
                 FROM workspaces
-                WHERE local_paths = ?
+                WHERE
+                    paths IS ? AND
+                    ssh_connection_id IS ?
+                LIMIT 1
             })
-            .and_then(|mut prepared_statement| (prepared_statement)(&local_paths))
+            .map(|mut prepared_statement| {
+                (prepared_statement)((
+                    root_paths.serialize().paths,
+                    ssh_connection_id.map(|id| id.0 as i32),
+                ))
+                .unwrap()
+            })
             .context("No workspaces found")
             .warn_on_err()
             .flatten()?;
 
-        let local_paths = local_paths?;
-        let location = match local_paths_order {
-            Some(order) => SerializedWorkspaceLocation::Local(local_paths, order),
-            None => {
-                let order = LocalPathsOrder::default_for_paths(&local_paths);
-                SerializedWorkspaceLocation::Local(local_paths, order)
-            }
-        };
+        let paths = PathList::deserialize(&SerializedPathList {
+            paths,
+            order: paths_order,
+        });
 
         Some(SerializedWorkspace {
             id: workspace_id,
-            location,
+            location: SerializedWorkspaceLocation::Local,
+            paths,
             center_group: self
                 .get_center_pane_group(workspace_id)
                 .context("Getting center group")
@@ -644,63 +708,6 @@ impl WorkspaceDb {
             docks,
             session_id: None,
             breakpoints: self.breakpoints(workspace_id),
-            window_id,
-        })
-    }
-
-    pub(crate) fn workspace_for_ssh_project(
-        &self,
-        ssh_project: &SerializedSshProject,
-    ) -> Option<SerializedWorkspace> {
-        let (workspace_id, window_bounds, display, centered_layout, docks, window_id): (
-            WorkspaceId,
-            Option<SerializedWindowBounds>,
-            Option<Uuid>,
-            Option<bool>,
-            DockStructure,
-            Option<u64>,
-        ) = self
-            .select_row_bound(sql! {
-                SELECT
-                    workspace_id,
-                    window_state,
-                    window_x,
-                    window_y,
-                    window_width,
-                    window_height,
-                    display,
-                    centered_layout,
-                    left_dock_visible,
-                    left_dock_active_panel,
-                    left_dock_zoom,
-                    right_dock_visible,
-                    right_dock_active_panel,
-                    right_dock_zoom,
-                    bottom_dock_visible,
-                    bottom_dock_active_panel,
-                    bottom_dock_zoom,
-                    window_id
-                FROM workspaces
-                WHERE ssh_project_id = ?
-            })
-            .and_then(|mut prepared_statement| (prepared_statement)(ssh_project.id.0))
-            .context("No workspaces found")
-            .warn_on_err()
-            .flatten()?;
-
-        Some(SerializedWorkspace {
-            id: workspace_id,
-            location: SerializedWorkspaceLocation::Ssh(ssh_project.clone()),
-            center_group: self
-                .get_center_pane_group(workspace_id)
-                .context("Getting center group")
-                .log_err()?,
-            window_bounds,
-            centered_layout: centered_layout.unwrap_or(false),
-            breakpoints: self.breakpoints(workspace_id),
-            display,
-            docks,
-            session_id: None,
             window_id,
         })
     }
@@ -754,16 +761,34 @@ impl WorkspaceDb {
     /// Saves a workspace using the worktree roots. Will garbage collect any workspaces
     /// that used this workspace previously
     pub(crate) async fn save_workspace(&self, workspace: SerializedWorkspace) {
+        let paths = workspace.paths.serialize();
         log::debug!("Saving workspace at location: {:?}", workspace.location);
         self.write(move |conn| {
             conn.with_savepoint("update_worktrees", || {
+                let ssh_connection_id = match &workspace.location {
+                    SerializedWorkspaceLocation::Local => None,
+                    SerializedWorkspaceLocation::Ssh(connection) => {
+                        Some(Self::get_or_create_ssh_connection_query(
+                            conn,
+                            connection.host.clone(),
+                            connection.port,
+                            connection.user.clone(),
+                        )?.0)
+                    }
+                };
+
                 // Clear out panes and pane_groups
                 conn.exec_bound(sql!(
                     DELETE FROM pane_groups WHERE workspace_id = ?1;
                     DELETE FROM panes WHERE workspace_id = ?1;))?(workspace.id)
                     .context("Clearing old panes")?;
 
-                conn.exec_bound(sql!(DELETE FROM breakpoints WHERE workspace_id = ?1))?(workspace.id).context("Clearing old breakpoints")?;
+                conn.exec_bound(
+                    sql!(
+                        DELETE FROM breakpoints WHERE workspace_id = ?1;
+                        DELETE FROM toolchains WHERE workspace_id = ?1;
+                    )
+                )?(workspace.id).context("Clearing old breakpoints")?;
 
                 for (path, breakpoints) in workspace.breakpoints {
                     for bp in breakpoints {
@@ -790,115 +815,73 @@ impl WorkspaceDb {
                             }
                         }
                     }
-
                 }
 
+                conn.exec_bound(sql!(
+                    DELETE
+                    FROM workspaces
+                    WHERE
+                        workspace_id != ?1 AND
+                        paths IS ?2 AND
+                        ssh_connection_id IS ?3
+                ))?((
+                    workspace.id,
+                    paths.paths.clone(),
+                    ssh_connection_id,
+                ))
+                .context("clearing out old locations")?;
 
-                match workspace.location {
-                    SerializedWorkspaceLocation::Local(local_paths, local_paths_order) => {
-                        conn.exec_bound(sql!(
-                            DELETE FROM toolchains WHERE workspace_id = ?1;
-                            DELETE FROM workspaces WHERE local_paths = ? AND workspace_id != ?
-                        ))?((&local_paths, workspace.id))
-                        .context("clearing out old locations")?;
+                // Upsert
+                let query = sql!(
+                    INSERT INTO workspaces(
+                        workspace_id,
+                        paths,
+                        paths_order,
+                        ssh_connection_id,
+                        left_dock_visible,
+                        left_dock_active_panel,
+                        left_dock_zoom,
+                        right_dock_visible,
+                        right_dock_active_panel,
+                        right_dock_zoom,
+                        bottom_dock_visible,
+                        bottom_dock_active_panel,
+                        bottom_dock_zoom,
+                        session_id,
+                        window_id,
+                        timestamp
+                    )
+                    VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, CURRENT_TIMESTAMP)
+                    ON CONFLICT DO
+                    UPDATE SET
+                        paths = ?2,
+                        paths_order = ?3,
+                        ssh_connection_id = ?4,
+                        left_dock_visible = ?5,
+                        left_dock_active_panel = ?6,
+                        left_dock_zoom = ?7,
+                        right_dock_visible = ?8,
+                        right_dock_active_panel = ?9,
+                        right_dock_zoom = ?10,
+                        bottom_dock_visible = ?11,
+                        bottom_dock_active_panel = ?12,
+                        bottom_dock_zoom = ?13,
+                        session_id = ?14,
+                        window_id = ?15,
+                        timestamp = CURRENT_TIMESTAMP
+                );
+                let mut prepared_query = conn.exec_bound(query)?;
+                let args = (
+                    workspace.id,
+                    paths.paths.clone(),
+                    paths.order.clone(),
+                    ssh_connection_id,
+                    workspace.docks,
+                    workspace.session_id,
+                    workspace.window_id,
+                );
 
-                        // Upsert
-                        let query = sql!(
-                            INSERT INTO workspaces(
-                                workspace_id,
-                                local_paths,
-                                local_paths_order,
-                                left_dock_visible,
-                                left_dock_active_panel,
-                                left_dock_zoom,
-                                right_dock_visible,
-                                right_dock_active_panel,
-                                right_dock_zoom,
-                                bottom_dock_visible,
-                                bottom_dock_active_panel,
-                                bottom_dock_zoom,
-                                session_id,
-                                window_id,
-                                timestamp,
-                                local_paths_array,
-                                local_paths_order_array
-                            )
-                            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, CURRENT_TIMESTAMP, ?15, ?16)
-                            ON CONFLICT DO
-                            UPDATE SET
-                                local_paths = ?2,
-                                local_paths_order = ?3,
-                                left_dock_visible = ?4,
-                                left_dock_active_panel = ?5,
-                                left_dock_zoom = ?6,
-                                right_dock_visible = ?7,
-                                right_dock_active_panel = ?8,
-                                right_dock_zoom = ?9,
-                                bottom_dock_visible = ?10,
-                                bottom_dock_active_panel = ?11,
-                                bottom_dock_zoom = ?12,
-                                session_id = ?13,
-                                window_id = ?14,
-                                timestamp = CURRENT_TIMESTAMP,
-                                local_paths_array = ?15,
-                                local_paths_order_array = ?16
-                        );
-                        let mut prepared_query = conn.exec_bound(query)?;
-                        let args = (workspace.id, &local_paths, &local_paths_order, workspace.docks, workspace.session_id, workspace.window_id, local_paths.paths().iter().map(|path| path.to_string_lossy().to_string()).join(","), local_paths_order.order().iter().map(|order| order.to_string()).join(","));
-
-                        prepared_query(args).context("Updating workspace")?;
-                    }
-                    SerializedWorkspaceLocation::Ssh(ssh_project) => {
-                        conn.exec_bound(sql!(
-                            DELETE FROM toolchains WHERE workspace_id = ?1;
-                            DELETE FROM workspaces WHERE ssh_project_id = ? AND workspace_id != ?
-                        ))?((ssh_project.id.0, workspace.id))
-                        .context("clearing out old locations")?;
-
-                        // Upsert
-                        conn.exec_bound(sql!(
-                            INSERT INTO workspaces(
-                                workspace_id,
-                                ssh_project_id,
-                                left_dock_visible,
-                                left_dock_active_panel,
-                                left_dock_zoom,
-                                right_dock_visible,
-                                right_dock_active_panel,
-                                right_dock_zoom,
-                                bottom_dock_visible,
-                                bottom_dock_active_panel,
-                                bottom_dock_zoom,
-                                session_id,
-                                window_id,
-                                timestamp
-                            )
-                            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, CURRENT_TIMESTAMP)
-                            ON CONFLICT DO
-                            UPDATE SET
-                                ssh_project_id = ?2,
-                                left_dock_visible = ?3,
-                                left_dock_active_panel = ?4,
-                                left_dock_zoom = ?5,
-                                right_dock_visible = ?6,
-                                right_dock_active_panel = ?7,
-                                right_dock_zoom = ?8,
-                                bottom_dock_visible = ?9,
-                                bottom_dock_active_panel = ?10,
-                                bottom_dock_zoom = ?11,
-                                session_id = ?12,
-                                window_id = ?13,
-                                timestamp = CURRENT_TIMESTAMP
-                        ))?((
-                            workspace.id,
-                            ssh_project.id.0,
-                            workspace.docks,
-                            workspace.session_id,
-                            workspace.window_id
-                        ))
-                        .context("Updating workspace")?;
-                    }
-                }
+                prepared_query(args).context("Updating workspace")?;
 
                 // Save center pane group
                 Self::save_pane_group(conn, workspace.id, &workspace.center_group, None)
@@ -911,66 +894,40 @@ impl WorkspaceDb {
         .await;
     }
 
-    pub(crate) async fn get_or_create_ssh_project(
+    pub(crate) async fn get_or_create_ssh_connection(
         &self,
         host: String,
         port: Option<u16>,
-        paths: Vec<String>,
         user: Option<String>,
-    ) -> Result<SerializedSshProject> {
-        let paths = serde_json::to_string(&paths)?;
-        if let Some(project) = self
-            .get_ssh_project(host.clone(), port, paths.clone(), user.clone())
-            .await?
+    ) -> Result<SshConnectionId> {
+        self.write(move |conn| Self::get_or_create_ssh_connection_query(conn, host, port, user))
+            .await
+    }
+
+    fn get_or_create_ssh_connection_query(
+        this: &Connection,
+        host: String,
+        port: Option<u16>,
+        user: Option<String>,
+    ) -> Result<SshConnectionId> {
+        if let Some(id) = this.select_row_bound(sql!(
+            SELECT id FROM ssh_connections WHERE host IS ? AND port IS ? AND user IS ? LIMIT 1
+        ))?((host.clone(), port, user.clone()))?
         {
-            Ok(project)
+            Ok(SshConnectionId(id))
         } else {
             log::debug!("Inserting SSH project at host {host}");
-            self.insert_ssh_project(host, port, paths, user)
-                .await?
-                .context("failed to insert ssh project")
+            let id = this.select_row_bound(sql!(
+                INSERT INTO ssh_connections (
+                    host,
+                    port,
+                    user
+                ) VALUES (?1, ?2, ?3)
+                RETURNING id
+            ))?((host, port, user))?
+            .context("failed to insert ssh project")?;
+            Ok(SshConnectionId(id))
         }
-    }
-
-    query! {
-        async fn get_ssh_project(host: String, port: Option<u16>, paths: String, user: Option<String>) -> Result<Option<SerializedSshProject>> {
-            SELECT id, host, port, paths, user
-            FROM ssh_projects
-            WHERE host IS ? AND port IS ? AND paths IS ? AND user IS ?
-            LIMIT 1
-        }
-    }
-
-    query! {
-        async fn insert_ssh_project(host: String, port: Option<u16>, paths: String, user: Option<String>) -> Result<Option<SerializedSshProject>> {
-            INSERT INTO ssh_projects(
-                host,
-                port,
-                paths,
-                user
-            ) VALUES (?1, ?2, ?3, ?4)
-            RETURNING id, host, port, paths, user
-        }
-    }
-
-    query! {
-        pub async fn update_ssh_project_paths_query(ssh_project_id: u64, paths: String) -> Result<Option<SerializedSshProject>> {
-            UPDATE ssh_projects
-            SET paths = ?2
-            WHERE id = ?1
-            RETURNING id, host, port, paths, user
-        }
-    }
-
-    pub(crate) async fn update_ssh_project_paths(
-        &self,
-        ssh_project_id: SshProjectId,
-        new_paths: Vec<String>,
-    ) -> Result<SerializedSshProject> {
-        let paths = serde_json::to_string(&new_paths)?;
-        self.update_ssh_project_paths_query(ssh_project_id.0, paths)
-            .await?
-            .context("failed to update ssh project paths")
     }
 
     query! {
@@ -979,21 +936,53 @@ impl WorkspaceDb {
         }
     }
 
+    fn recent_workspaces(&self) -> Result<Vec<(WorkspaceId, PathList, Option<u64>)>> {
+        Ok(self
+            .recent_workspaces_query()?
+            .into_iter()
+            .map(|(id, paths, order, ssh_connection_id)| {
+                (
+                    id,
+                    PathList::deserialize(&SerializedPathList { paths, order }),
+                    ssh_connection_id,
+                )
+            })
+            .collect())
+    }
+
     query! {
-        fn recent_workspaces() -> Result<Vec<(WorkspaceId, LocalPaths, LocalPathsOrder, Option<u64>)>> {
-            SELECT workspace_id, local_paths, local_paths_order, ssh_project_id
+        fn recent_workspaces_query() -> Result<Vec<(WorkspaceId, String, String, Option<u64>)>> {
+            SELECT workspace_id, paths, paths_order, ssh_connection_id
             FROM workspaces
-            WHERE local_paths IS NOT NULL
-                OR ssh_project_id IS NOT NULL
+            WHERE
+                paths IS NOT NULL OR
+                ssh_connection_id IS NOT NULL
             ORDER BY timestamp DESC
         }
     }
 
+    fn session_workspaces(
+        &self,
+        session_id: String,
+    ) -> Result<Vec<(PathList, Option<u64>, Option<SshConnectionId>)>> {
+        Ok(self
+            .session_workspaces_query(session_id)?
+            .into_iter()
+            .map(|(paths, order, window_id, ssh_connection_id)| {
+                (
+                    PathList::deserialize(&SerializedPathList { paths, order }),
+                    window_id,
+                    ssh_connection_id.map(SshConnectionId),
+                )
+            })
+            .collect())
+    }
+
     query! {
-        fn session_workspaces(session_id: String) -> Result<Vec<(LocalPaths, LocalPathsOrder, Option<u64>, Option<u64>)>> {
-            SELECT local_paths, local_paths_order, window_id, ssh_project_id
+        fn session_workspaces_query(session_id: String) -> Result<Vec<(String, String, Option<u64>, Option<u64>)>> {
+            SELECT paths, paths_order, window_id, ssh_connection_id
             FROM workspaces
-            WHERE session_id = ?1 AND dev_server_project_id IS NULL
+            WHERE session_id = ?1
             ORDER BY timestamp DESC
         }
     }
@@ -1013,17 +1002,39 @@ impl WorkspaceDb {
         }
     }
 
-    query! {
-        fn ssh_projects() -> Result<Vec<SerializedSshProject>> {
-            SELECT id, host, port, paths, user
-            FROM ssh_projects
-        }
+    fn ssh_connections(&self) -> Result<HashMap<SshConnectionId, SerializedSshConnection>> {
+        Ok(self
+            .ssh_connections_query()?
+            .into_iter()
+            .map(|(id, host, port, user)| {
+                (
+                    SshConnectionId(id),
+                    SerializedSshConnection { host, port, user },
+                )
+            })
+            .collect())
     }
 
     query! {
-        fn ssh_project(id: u64) -> Result<SerializedSshProject> {
-            SELECT id, host, port, paths, user
-            FROM ssh_projects
+        pub fn ssh_connections_query() -> Result<Vec<(u64, String, Option<u16>, Option<String>)>> {
+            SELECT id, host, port, user
+            FROM ssh_connections
+        }
+    }
+
+    pub(crate) fn ssh_connection(&self, id: SshConnectionId) -> Result<SerializedSshConnection> {
+        let row = self.ssh_connection_query(id.0)?;
+        Ok(SerializedSshConnection {
+            host: row.0,
+            port: row.1,
+            user: row.2,
+        })
+    }
+
+    query! {
+        fn ssh_connection_query(id: u64) -> Result<(String, Option<u16>, Option<String>)> {
+            SELECT host, port, user
+            FROM ssh_connections
             WHERE id = ?
         }
     }
@@ -1037,7 +1048,7 @@ impl WorkspaceDb {
                 display,
                 window_state, window_x, window_y, window_width, window_height
                 FROM workspaces
-                WHERE local_paths
+                WHERE paths
                 IS NOT NULL
                 ORDER BY timestamp DESC
                 LIMIT 1
@@ -1054,46 +1065,33 @@ impl WorkspaceDb {
         }
     }
 
-    pub async fn delete_workspace_by_dev_server_project_id(
-        &self,
-        id: DevServerProjectId,
-    ) -> Result<()> {
-        self.write(move |conn| {
-            conn.exec_bound(sql!(
-                DELETE FROM dev_server_projects WHERE id = ?
-            ))?(id.0)?;
-            conn.exec_bound(sql!(
-                DELETE FROM toolchains WHERE workspace_id = ?1;
-                DELETE FROM workspaces
-                WHERE dev_server_project_id IS ?
-            ))?(id.0)
-        })
-        .await
-    }
-
     // Returns the recent locations which are still valid on disk and deletes ones which no longer
     // exist.
     pub async fn recent_workspaces_on_disk(
         &self,
-    ) -> Result<Vec<(WorkspaceId, SerializedWorkspaceLocation)>> {
+    ) -> Result<Vec<(WorkspaceId, SerializedWorkspaceLocation, PathList)>> {
         let mut result = Vec::new();
         let mut delete_tasks = Vec::new();
-        let ssh_projects = self.ssh_projects()?;
+        let ssh_connections = self.ssh_connections()?;
 
-        for (id, location, order, ssh_project_id) in self.recent_workspaces()? {
-            if let Some(ssh_project_id) = ssh_project_id.map(SshProjectId) {
-                if let Some(ssh_project) = ssh_projects.iter().find(|rp| rp.id == ssh_project_id) {
-                    result.push((id, SerializedWorkspaceLocation::Ssh(ssh_project.clone())));
+        for (id, paths, ssh_connection_id) in self.recent_workspaces()? {
+            if let Some(ssh_connection_id) = ssh_connection_id.map(SshConnectionId) {
+                if let Some(ssh_connection) = ssh_connections.get(&ssh_connection_id) {
+                    result.push((
+                        id,
+                        SerializedWorkspaceLocation::Ssh(ssh_connection.clone()),
+                        paths,
+                    ));
                 } else {
                     delete_tasks.push(self.delete_workspace_by_id(id));
                 }
                 continue;
             }
 
-            if location.paths().iter().all(|path| path.exists())
-                && location.paths().iter().any(|path| path.is_dir())
+            if paths.paths().iter().all(|path| path.exists())
+                && paths.paths().iter().any(|path| path.is_dir())
             {
-                result.push((id, SerializedWorkspaceLocation::Local(location, order)));
+                result.push((id, SerializedWorkspaceLocation::Local, paths));
             } else {
                 delete_tasks.push(self.delete_workspace_by_id(id));
             }
@@ -1103,13 +1101,13 @@ impl WorkspaceDb {
         Ok(result)
     }
 
-    pub async fn last_workspace(&self) -> Result<Option<SerializedWorkspaceLocation>> {
+    pub async fn last_workspace(&self) -> Result<Option<(SerializedWorkspaceLocation, PathList)>> {
         Ok(self
             .recent_workspaces_on_disk()
             .await?
             .into_iter()
             .next()
-            .map(|(_, location)| location))
+            .map(|(_, location, paths)| (location, paths)))
     }
 
     // Returns the locations of the workspaces that were still opened when the last
@@ -1120,25 +1118,31 @@ impl WorkspaceDb {
         &self,
         last_session_id: &str,
         last_session_window_stack: Option<Vec<WindowId>>,
-    ) -> Result<Vec<SerializedWorkspaceLocation>> {
+    ) -> Result<Vec<(SerializedWorkspaceLocation, PathList)>> {
         let mut workspaces = Vec::new();
 
-        for (location, order, window_id, ssh_project_id) in
+        for (paths, window_id, ssh_connection_id) in
             self.session_workspaces(last_session_id.to_owned())?
         {
-            if let Some(ssh_project_id) = ssh_project_id {
-                let location = SerializedWorkspaceLocation::Ssh(self.ssh_project(ssh_project_id)?);
-                workspaces.push((location, window_id.map(WindowId::from)));
-            } else if location.paths().iter().all(|path| path.exists())
-                && location.paths().iter().any(|path| path.is_dir())
+            if let Some(ssh_connection_id) = ssh_connection_id {
+                workspaces.push((
+                    SerializedWorkspaceLocation::Ssh(self.ssh_connection(ssh_connection_id)?),
+                    paths,
+                    window_id.map(WindowId::from),
+                ));
+            } else if paths.paths().iter().all(|path| path.exists())
+                && paths.paths().iter().any(|path| path.is_dir())
             {
-                let location = SerializedWorkspaceLocation::Local(location, order);
-                workspaces.push((location, window_id.map(WindowId::from)));
+                workspaces.push((
+                    SerializedWorkspaceLocation::Local,
+                    paths,
+                    window_id.map(WindowId::from),
+                ));
             }
         }
 
         if let Some(stack) = last_session_window_stack {
-            workspaces.sort_by_key(|(_, window_id)| {
+            workspaces.sort_by_key(|(_, _, window_id)| {
                 window_id
                     .and_then(|id| stack.iter().position(|&order_id| order_id == id))
                     .unwrap_or(usize::MAX)
@@ -1147,7 +1151,7 @@ impl WorkspaceDb {
 
         Ok(workspaces
             .into_iter()
-            .map(|(paths, _)| paths)
+            .map(|(location, paths, _)| (location, paths))
             .collect::<Vec<_>>())
     }
 
@@ -1499,13 +1503,13 @@ pub fn delete_unloaded_items(
 
 #[cfg(test)]
 mod tests {
-    use std::thread;
-    use std::time::Duration;
-
     use super::*;
-    use crate::persistence::model::SerializedWorkspace;
-    use crate::persistence::model::{SerializedItem, SerializedPane, SerializedPaneGroup};
+    use crate::persistence::model::{
+        SerializedItem, SerializedPane, SerializedPaneGroup, SerializedWorkspace,
+    };
     use gpui;
+    use pretty_assertions::assert_eq;
+    use std::{thread, time::Duration};
 
     #[gpui::test]
     async fn test_breakpoints() {
@@ -1558,7 +1562,8 @@ mod tests {
 
         let workspace = SerializedWorkspace {
             id,
-            location: SerializedWorkspaceLocation::from_local_paths(["/tmp"]),
+            paths: PathList::new(&["/tmp"]),
+            location: SerializedWorkspaceLocation::Local,
             center_group: Default::default(),
             window_bounds: Default::default(),
             display: Default::default(),
@@ -1711,7 +1716,8 @@ mod tests {
 
         let workspace = SerializedWorkspace {
             id,
-            location: SerializedWorkspaceLocation::from_local_paths(["/tmp"]),
+            paths: PathList::new(&["/tmp"]),
+            location: SerializedWorkspaceLocation::Local,
             center_group: Default::default(),
             window_bounds: Default::default(),
             display: Default::default(),
@@ -1757,7 +1763,8 @@ mod tests {
 
         let workspace_without_breakpoint = SerializedWorkspace {
             id,
-            location: SerializedWorkspaceLocation::from_local_paths(["/tmp"]),
+            paths: PathList::new(&["/tmp"]),
+            location: SerializedWorkspaceLocation::Local,
             center_group: Default::default(),
             window_bounds: Default::default(),
             display: Default::default(),
@@ -1851,7 +1858,8 @@ mod tests {
 
         let mut workspace_1 = SerializedWorkspace {
             id: WorkspaceId(1),
-            location: SerializedWorkspaceLocation::from_local_paths(["/tmp", "/tmp2"]),
+            paths: PathList::new(&["/tmp", "/tmp2"]),
+            location: SerializedWorkspaceLocation::Local,
             center_group: Default::default(),
             window_bounds: Default::default(),
             display: Default::default(),
@@ -1864,7 +1872,8 @@ mod tests {
 
         let workspace_2 = SerializedWorkspace {
             id: WorkspaceId(2),
-            location: SerializedWorkspaceLocation::from_local_paths(["/tmp"]),
+            paths: PathList::new(&["/tmp"]),
+            location: SerializedWorkspaceLocation::Local,
             center_group: Default::default(),
             window_bounds: Default::default(),
             display: Default::default(),
@@ -1893,7 +1902,7 @@ mod tests {
         })
         .await;
 
-        workspace_1.location = SerializedWorkspaceLocation::from_local_paths(["/tmp", "/tmp3"]);
+        workspace_1.paths = PathList::new(&["/tmp", "/tmp3"]);
         db.save_workspace(workspace_1.clone()).await;
         db.save_workspace(workspace_1).await;
         db.save_workspace(workspace_2).await;
@@ -1969,10 +1978,8 @@ mod tests {
 
         let workspace = SerializedWorkspace {
             id: WorkspaceId(5),
-            location: SerializedWorkspaceLocation::Local(
-                LocalPaths::new(["/tmp", "/tmp2"]),
-                LocalPathsOrder::new([1, 0]),
-            ),
+            paths: PathList::new(&["/tmp", "/tmp2"]),
+            location: SerializedWorkspaceLocation::Local,
             center_group,
             window_bounds: Default::default(),
             breakpoints: Default::default(),
@@ -2004,10 +2011,8 @@ mod tests {
 
         let workspace_1 = SerializedWorkspace {
             id: WorkspaceId(1),
-            location: SerializedWorkspaceLocation::Local(
-                LocalPaths::new(["/tmp", "/tmp2"]),
-                LocalPathsOrder::new([0, 1]),
-            ),
+            paths: PathList::new(&["/tmp", "/tmp2"]),
+            location: SerializedWorkspaceLocation::Local,
             center_group: Default::default(),
             window_bounds: Default::default(),
             breakpoints: Default::default(),
@@ -2020,7 +2025,8 @@ mod tests {
 
         let mut workspace_2 = SerializedWorkspace {
             id: WorkspaceId(2),
-            location: SerializedWorkspaceLocation::from_local_paths(["/tmp"]),
+            paths: PathList::new(&["/tmp"]),
+            location: SerializedWorkspaceLocation::Local,
             center_group: Default::default(),
             window_bounds: Default::default(),
             display: Default::default(),
@@ -2049,7 +2055,7 @@ mod tests {
         assert_eq!(db.workspace_for_roots(&["/tmp3", "/tmp2", "/tmp4"]), None);
 
         // Test 'mutate' case of updating a pre-existing id
-        workspace_2.location = SerializedWorkspaceLocation::from_local_paths(["/tmp", "/tmp2"]);
+        workspace_2.paths = PathList::new(&["/tmp", "/tmp2"]);
 
         db.save_workspace(workspace_2.clone()).await;
         assert_eq!(
@@ -2060,10 +2066,8 @@ mod tests {
         // Test other mechanism for mutating
         let mut workspace_3 = SerializedWorkspace {
             id: WorkspaceId(3),
-            location: SerializedWorkspaceLocation::Local(
-                LocalPaths::new(["/tmp", "/tmp2"]),
-                LocalPathsOrder::new([1, 0]),
-            ),
+            paths: PathList::new(&["/tmp2", "/tmp"]),
+            location: SerializedWorkspaceLocation::Local,
             center_group: Default::default(),
             window_bounds: Default::default(),
             breakpoints: Default::default(),
@@ -2081,8 +2085,7 @@ mod tests {
         );
 
         // Make sure that updating paths differently also works
-        workspace_3.location =
-            SerializedWorkspaceLocation::from_local_paths(["/tmp3", "/tmp4", "/tmp2"]);
+        workspace_3.paths = PathList::new(&["/tmp3", "/tmp4", "/tmp2"]);
         db.save_workspace(workspace_3.clone()).await;
         assert_eq!(db.workspace_for_roots(&["/tmp2", "tmp"]), None);
         assert_eq!(
@@ -2100,7 +2103,8 @@ mod tests {
 
         let workspace_1 = SerializedWorkspace {
             id: WorkspaceId(1),
-            location: SerializedWorkspaceLocation::from_local_paths(["/tmp1"]),
+            paths: PathList::new(&["/tmp1"]),
+            location: SerializedWorkspaceLocation::Local,
             center_group: Default::default(),
             window_bounds: Default::default(),
             display: Default::default(),
@@ -2113,7 +2117,8 @@ mod tests {
 
         let workspace_2 = SerializedWorkspace {
             id: WorkspaceId(2),
-            location: SerializedWorkspaceLocation::from_local_paths(["/tmp2"]),
+            paths: PathList::new(&["/tmp2"]),
+            location: SerializedWorkspaceLocation::Local,
             center_group: Default::default(),
             window_bounds: Default::default(),
             display: Default::default(),
@@ -2126,7 +2131,8 @@ mod tests {
 
         let workspace_3 = SerializedWorkspace {
             id: WorkspaceId(3),
-            location: SerializedWorkspaceLocation::from_local_paths(["/tmp3"]),
+            paths: PathList::new(&["/tmp3"]),
+            location: SerializedWorkspaceLocation::Local,
             center_group: Default::default(),
             window_bounds: Default::default(),
             display: Default::default(),
@@ -2139,7 +2145,8 @@ mod tests {
 
         let workspace_4 = SerializedWorkspace {
             id: WorkspaceId(4),
-            location: SerializedWorkspaceLocation::from_local_paths(["/tmp4"]),
+            paths: PathList::new(&["/tmp4"]),
+            location: SerializedWorkspaceLocation::Local,
             center_group: Default::default(),
             window_bounds: Default::default(),
             display: Default::default(),
@@ -2150,14 +2157,15 @@ mod tests {
             window_id: None,
         };
 
-        let ssh_project = db
-            .get_or_create_ssh_project("my-host".to_string(), Some(1234), vec![], None)
+        let connection_id = db
+            .get_or_create_ssh_connection("my-host".to_string(), Some(1234), None)
             .await
             .unwrap();
 
         let workspace_5 = SerializedWorkspace {
             id: WorkspaceId(5),
-            location: SerializedWorkspaceLocation::Ssh(ssh_project.clone()),
+            paths: PathList::default(),
+            location: SerializedWorkspaceLocation::Ssh(db.ssh_connection(connection_id).unwrap()),
             center_group: Default::default(),
             window_bounds: Default::default(),
             display: Default::default(),
@@ -2170,10 +2178,8 @@ mod tests {
 
         let workspace_6 = SerializedWorkspace {
             id: WorkspaceId(6),
-            location: SerializedWorkspaceLocation::Local(
-                LocalPaths::new(["/tmp6a", "/tmp6b", "/tmp6c"]),
-                LocalPathsOrder::new([2, 1, 0]),
-            ),
+            paths: PathList::new(&["/tmp6a", "/tmp6b", "/tmp6c"]),
+            location: SerializedWorkspaceLocation::Local,
             center_group: Default::default(),
             window_bounds: Default::default(),
             breakpoints: Default::default(),
@@ -2195,41 +2201,36 @@ mod tests {
 
         let locations = db.session_workspaces("session-id-1".to_owned()).unwrap();
         assert_eq!(locations.len(), 2);
-        assert_eq!(locations[0].0, LocalPaths::new(["/tmp2"]));
-        assert_eq!(locations[0].1, LocalPathsOrder::new([0]));
-        assert_eq!(locations[0].2, Some(20));
-        assert_eq!(locations[1].0, LocalPaths::new(["/tmp1"]));
-        assert_eq!(locations[1].1, LocalPathsOrder::new([0]));
-        assert_eq!(locations[1].2, Some(10));
+        assert_eq!(locations[0].0, PathList::new(&["/tmp2"]));
+        assert_eq!(locations[0].1, Some(20));
+        assert_eq!(locations[1].0, PathList::new(&["/tmp1"]));
+        assert_eq!(locations[1].1, Some(10));
 
         let locations = db.session_workspaces("session-id-2".to_owned()).unwrap();
         assert_eq!(locations.len(), 2);
-        let empty_paths: Vec<&str> = Vec::new();
-        assert_eq!(locations[0].0, LocalPaths::new(empty_paths.iter()));
-        assert_eq!(locations[0].1, LocalPathsOrder::new([]));
-        assert_eq!(locations[0].2, Some(50));
-        assert_eq!(locations[0].3, Some(ssh_project.id.0));
-        assert_eq!(locations[1].0, LocalPaths::new(["/tmp3"]));
-        assert_eq!(locations[1].1, LocalPathsOrder::new([0]));
-        assert_eq!(locations[1].2, Some(30));
+        assert_eq!(locations[0].0, PathList::default());
+        assert_eq!(locations[0].1, Some(50));
+        assert_eq!(locations[0].2, Some(connection_id));
+        assert_eq!(locations[1].0, PathList::new(&["/tmp3"]));
+        assert_eq!(locations[1].1, Some(30));
 
         let locations = db.session_workspaces("session-id-3".to_owned()).unwrap();
         assert_eq!(locations.len(), 1);
         assert_eq!(
             locations[0].0,
-            LocalPaths::new(["/tmp6a", "/tmp6b", "/tmp6c"]),
+            PathList::new(&["/tmp6a", "/tmp6b", "/tmp6c"]),
         );
-        assert_eq!(locations[0].1, LocalPathsOrder::new([2, 1, 0]));
-        assert_eq!(locations[0].2, Some(60));
+        assert_eq!(locations[0].1, Some(60));
     }
 
     fn default_workspace<P: AsRef<Path>>(
-        workspace_id: &[P],
+        paths: &[P],
         center_group: &SerializedPaneGroup,
     ) -> SerializedWorkspace {
         SerializedWorkspace {
             id: WorkspaceId(4),
-            location: SerializedWorkspaceLocation::from_local_paths(workspace_id),
+            paths: PathList::new(paths),
+            location: SerializedWorkspaceLocation::Local,
             center_group: center_group.clone(),
             window_bounds: Default::default(),
             display: Default::default(),
@@ -2252,30 +2253,18 @@ mod tests {
             WorkspaceDb::open_test_db("test_serializing_workspaces_last_session_workspaces").await;
 
         let workspaces = [
-            (1, vec![dir1.path()], vec![0], 9),
-            (2, vec![dir2.path()], vec![0], 5),
-            (3, vec![dir3.path()], vec![0], 8),
-            (4, vec![dir4.path()], vec![0], 2),
-            (
-                5,
-                vec![dir1.path(), dir2.path(), dir3.path()],
-                vec![0, 1, 2],
-                3,
-            ),
-            (
-                6,
-                vec![dir2.path(), dir3.path(), dir4.path()],
-                vec![2, 1, 0],
-                4,
-            ),
+            (1, vec![dir1.path()], 9),
+            (2, vec![dir2.path()], 5),
+            (3, vec![dir3.path()], 8),
+            (4, vec![dir4.path()], 2),
+            (5, vec![dir1.path(), dir2.path(), dir3.path()], 3),
+            (6, vec![dir4.path(), dir3.path(), dir2.path()], 4),
         ]
         .into_iter()
-        .map(|(id, locations, order, window_id)| SerializedWorkspace {
+        .map(|(id, paths, window_id)| SerializedWorkspace {
             id: WorkspaceId(id),
-            location: SerializedWorkspaceLocation::Local(
-                LocalPaths::new(locations),
-                LocalPathsOrder::new(order),
-            ),
+            paths: PathList::new(paths.as_slice()),
+            location: SerializedWorkspaceLocation::Local,
             center_group: Default::default(),
             window_bounds: Default::default(),
             display: Default::default(),
@@ -2300,39 +2289,37 @@ mod tests {
             WindowId::from(4), // Bottom
         ]));
 
-        let have = db
+        let locations = db
             .last_session_workspace_locations("one-session", stack)
             .unwrap();
-        assert_eq!(have.len(), 6);
         assert_eq!(
-            have[0],
-            SerializedWorkspaceLocation::from_local_paths(&[dir4.path()])
-        );
-        assert_eq!(
-            have[1],
-            SerializedWorkspaceLocation::from_local_paths([dir3.path()])
-        );
-        assert_eq!(
-            have[2],
-            SerializedWorkspaceLocation::from_local_paths([dir2.path()])
-        );
-        assert_eq!(
-            have[3],
-            SerializedWorkspaceLocation::from_local_paths([dir1.path()])
-        );
-        assert_eq!(
-            have[4],
-            SerializedWorkspaceLocation::Local(
-                LocalPaths::new([dir1.path(), dir2.path(), dir3.path()]),
-                LocalPathsOrder::new([0, 1, 2]),
-            ),
-        );
-        assert_eq!(
-            have[5],
-            SerializedWorkspaceLocation::Local(
-                LocalPaths::new([dir2.path(), dir3.path(), dir4.path()]),
-                LocalPathsOrder::new([2, 1, 0]),
-            ),
+            locations,
+            [
+                (
+                    SerializedWorkspaceLocation::Local,
+                    PathList::new(&[dir4.path()])
+                ),
+                (
+                    SerializedWorkspaceLocation::Local,
+                    PathList::new(&[dir3.path()])
+                ),
+                (
+                    SerializedWorkspaceLocation::Local,
+                    PathList::new(&[dir2.path()])
+                ),
+                (
+                    SerializedWorkspaceLocation::Local,
+                    PathList::new(&[dir1.path()])
+                ),
+                (
+                    SerializedWorkspaceLocation::Local,
+                    PathList::new(&[dir1.path(), dir2.path(), dir3.path()])
+                ),
+                (
+                    SerializedWorkspaceLocation::Local,
+                    PathList::new(&[dir4.path(), dir3.path(), dir2.path()])
+                ),
+            ]
         );
     }
 
@@ -2343,7 +2330,7 @@ mod tests {
         )
         .await;
 
-        let ssh_projects = [
+        let ssh_connections = [
             ("host-1", "my-user-1"),
             ("host-2", "my-user-2"),
             ("host-3", "my-user-3"),
@@ -2351,24 +2338,30 @@ mod tests {
         ]
         .into_iter()
         .map(|(host, user)| async {
-            db.get_or_create_ssh_project(host.to_string(), None, vec![], Some(user.to_string()))
+            db.get_or_create_ssh_connection(host.to_string(), None, Some(user.to_string()))
                 .await
-                .unwrap()
+                .unwrap();
+            SerializedSshConnection {
+                host: host.into(),
+                port: None,
+                user: Some(user.into()),
+            }
         })
         .collect::<Vec<_>>();
 
-        let ssh_projects = futures::future::join_all(ssh_projects).await;
+        let ssh_connections = futures::future::join_all(ssh_connections).await;
 
         let workspaces = [
-            (1, ssh_projects[0].clone(), 9),
-            (2, ssh_projects[1].clone(), 5),
-            (3, ssh_projects[2].clone(), 8),
-            (4, ssh_projects[3].clone(), 2),
+            (1, ssh_connections[0].clone(), 9),
+            (2, ssh_connections[1].clone(), 5),
+            (3, ssh_connections[2].clone(), 8),
+            (4, ssh_connections[3].clone(), 2),
         ]
         .into_iter()
-        .map(|(id, ssh_project, window_id)| SerializedWorkspace {
+        .map(|(id, ssh_connection, window_id)| SerializedWorkspace {
             id: WorkspaceId(id),
-            location: SerializedWorkspaceLocation::Ssh(ssh_project),
+            paths: PathList::default(),
+            location: SerializedWorkspaceLocation::Ssh(ssh_connection),
             center_group: Default::default(),
             window_bounds: Default::default(),
             display: Default::default(),
@@ -2397,19 +2390,31 @@ mod tests {
         assert_eq!(have.len(), 4);
         assert_eq!(
             have[0],
-            SerializedWorkspaceLocation::Ssh(ssh_projects[3].clone())
+            (
+                SerializedWorkspaceLocation::Ssh(ssh_connections[3].clone()),
+                PathList::default()
+            )
         );
         assert_eq!(
             have[1],
-            SerializedWorkspaceLocation::Ssh(ssh_projects[2].clone())
+            (
+                SerializedWorkspaceLocation::Ssh(ssh_connections[2].clone()),
+                PathList::default()
+            )
         );
         assert_eq!(
             have[2],
-            SerializedWorkspaceLocation::Ssh(ssh_projects[1].clone())
+            (
+                SerializedWorkspaceLocation::Ssh(ssh_connections[1].clone()),
+                PathList::default()
+            )
         );
         assert_eq!(
             have[3],
-            SerializedWorkspaceLocation::Ssh(ssh_projects[0].clone())
+            (
+                SerializedWorkspaceLocation::Ssh(ssh_connections[0].clone()),
+                PathList::default()
+            )
         );
     }
 
@@ -2417,116 +2422,110 @@ mod tests {
     async fn test_get_or_create_ssh_project() {
         let db = WorkspaceDb::open_test_db("test_get_or_create_ssh_project").await;
 
-        let (host, port, paths, user) = (
-            "example.com".to_string(),
-            Some(22_u16),
-            vec!["/home/user".to_string(), "/etc/nginx".to_string()],
-            Some("user".to_string()),
-        );
+        let host = "example.com".to_string();
+        let port = Some(22_u16);
+        let user = Some("user".to_string());
 
-        let project = db
-            .get_or_create_ssh_project(host.clone(), port, paths.clone(), user.clone())
+        let connection_id = db
+            .get_or_create_ssh_connection(host.clone(), port, user.clone())
             .await
             .unwrap();
-
-        assert_eq!(project.host, host);
-        assert_eq!(project.paths, paths);
-        assert_eq!(project.user, user);
 
         // Test that calling the function again with the same parameters returns the same project
-        let same_project = db
-            .get_or_create_ssh_project(host.clone(), port, paths.clone(), user.clone())
+        let same_connection = db
+            .get_or_create_ssh_connection(host.clone(), port, user.clone())
             .await
             .unwrap();
 
-        assert_eq!(project.id, same_project.id);
+        assert_eq!(connection_id, same_connection);
 
         // Test with different parameters
-        let (host2, paths2, user2) = (
-            "otherexample.com".to_string(),
-            vec!["/home/otheruser".to_string()],
-            Some("otheruser".to_string()),
-        );
+        let host2 = "otherexample.com".to_string();
+        let port2 = None;
+        let user2 = Some("otheruser".to_string());
 
-        let different_project = db
-            .get_or_create_ssh_project(host2.clone(), None, paths2.clone(), user2.clone())
+        let different_connection = db
+            .get_or_create_ssh_connection(host2.clone(), port2, user2.clone())
             .await
             .unwrap();
 
-        assert_ne!(project.id, different_project.id);
-        assert_eq!(different_project.host, host2);
-        assert_eq!(different_project.paths, paths2);
-        assert_eq!(different_project.user, user2);
+        assert_ne!(connection_id, different_connection);
     }
 
     #[gpui::test]
     async fn test_get_or_create_ssh_project_with_null_user() {
         let db = WorkspaceDb::open_test_db("test_get_or_create_ssh_project_with_null_user").await;
 
-        let (host, port, paths, user) = (
-            "example.com".to_string(),
-            None,
-            vec!["/home/user".to_string()],
-            None,
-        );
+        let (host, port, user) = ("example.com".to_string(), None, None);
 
-        let project = db
-            .get_or_create_ssh_project(host.clone(), port, paths.clone(), None)
+        let connection_id = db
+            .get_or_create_ssh_connection(host.clone(), port, None)
             .await
             .unwrap();
 
-        assert_eq!(project.host, host);
-        assert_eq!(project.paths, paths);
-        assert_eq!(project.user, None);
-
-        // Test that calling the function again with the same parameters returns the same project
-        let same_project = db
-            .get_or_create_ssh_project(host.clone(), port, paths.clone(), user.clone())
+        let same_connection_id = db
+            .get_or_create_ssh_connection(host.clone(), port, user.clone())
             .await
             .unwrap();
 
-        assert_eq!(project.id, same_project.id);
+        assert_eq!(connection_id, same_connection_id);
     }
 
     #[gpui::test]
-    async fn test_get_ssh_projects() {
-        let db = WorkspaceDb::open_test_db("test_get_ssh_projects").await;
+    async fn test_get_ssh_connections() {
+        let db = WorkspaceDb::open_test_db("test_get_ssh_connections").await;
 
-        let projects = vec![
-            (
-                "example.com".to_string(),
-                None,
-                vec!["/home/user".to_string()],
-                None,
-            ),
+        let connections = [
+            ("example.com".to_string(), None, None),
             (
                 "anotherexample.com".to_string(),
                 Some(123_u16),
-                vec!["/home/user2".to_string()],
                 Some("user2".to_string()),
             ),
-            (
-                "yetanother.com".to_string(),
-                Some(345_u16),
-                vec!["/home/user3".to_string(), "/proc/1234/exe".to_string()],
-                None,
-            ),
+            ("yetanother.com".to_string(), Some(345_u16), None),
         ];
 
-        for (host, port, paths, user) in projects.iter() {
-            let project = db
-                .get_or_create_ssh_project(host.clone(), *port, paths.clone(), user.clone())
-                .await
-                .unwrap();
-
-            assert_eq!(&project.host, host);
-            assert_eq!(&project.port, port);
-            assert_eq!(&project.paths, paths);
-            assert_eq!(&project.user, user);
+        let mut ids = Vec::new();
+        for (host, port, user) in connections.iter() {
+            ids.push(
+                db.get_or_create_ssh_connection(host.clone(), *port, user.clone())
+                    .await
+                    .unwrap(),
+            );
         }
 
-        let stored_projects = db.ssh_projects().unwrap();
-        assert_eq!(stored_projects.len(), projects.len());
+        let stored_projects = db.ssh_connections().unwrap();
+        assert_eq!(
+            stored_projects,
+            [
+                (
+                    ids[0],
+                    SerializedSshConnection {
+                        host: "example.com".into(),
+                        port: None,
+                        user: None,
+                    }
+                ),
+                (
+                    ids[1],
+                    SerializedSshConnection {
+                        host: "anotherexample.com".into(),
+                        port: Some(123),
+                        user: Some("user2".into()),
+                    }
+                ),
+                (
+                    ids[2],
+                    SerializedSshConnection {
+                        host: "yetanother.com".into(),
+                        port: Some(345),
+                        user: None,
+                    }
+                ),
+            ]
+            .into_iter()
+            .collect::<HashMap<_, _>>(),
+        );
     }
 
     #[gpui::test]
@@ -2658,57 +2657,5 @@ mod tests {
         let new_workspace = db.workspace_for_roots(id).unwrap();
 
         assert_eq!(workspace.center_group, new_workspace.center_group);
-    }
-
-    #[gpui::test]
-    async fn test_update_ssh_project_paths() {
-        zlog::init_test();
-
-        let db = WorkspaceDb::open_test_db("test_update_ssh_project_paths").await;
-
-        let (host, port, initial_paths, user) = (
-            "example.com".to_string(),
-            Some(22_u16),
-            vec!["/home/user".to_string(), "/etc/nginx".to_string()],
-            Some("user".to_string()),
-        );
-
-        let project = db
-            .get_or_create_ssh_project(host.clone(), port, initial_paths.clone(), user.clone())
-            .await
-            .unwrap();
-
-        assert_eq!(project.host, host);
-        assert_eq!(project.paths, initial_paths);
-        assert_eq!(project.user, user);
-
-        let new_paths = vec![
-            "/home/user".to_string(),
-            "/etc/nginx".to_string(),
-            "/var/log".to_string(),
-            "/opt/app".to_string(),
-        ];
-
-        let updated_project = db
-            .update_ssh_project_paths(project.id, new_paths.clone())
-            .await
-            .unwrap();
-
-        assert_eq!(updated_project.id, project.id);
-        assert_eq!(updated_project.paths, new_paths);
-
-        let retrieved_project = db
-            .get_ssh_project(
-                host.clone(),
-                port,
-                serde_json::to_string(&new_paths).unwrap(),
-                user.clone(),
-            )
-            .await
-            .unwrap()
-            .unwrap();
-
-        assert_eq!(retrieved_project.id, project.id);
-        assert_eq!(retrieved_project.paths, new_paths);
     }
 }

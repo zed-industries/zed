@@ -16,6 +16,29 @@ mod terminal_tool;
 mod thinking_tool;
 mod web_search_tool;
 
+/// A list of all built in tool names, for use in deduplicating MCP tool names
+pub fn default_tool_names() -> impl Iterator<Item = &'static str> {
+    [
+        CopyPathTool::name(),
+        CreateDirectoryTool::name(),
+        DeletePathTool::name(),
+        DiagnosticsTool::name(),
+        EditFileTool::name(),
+        FetchTool::name(),
+        FindPathTool::name(),
+        GrepTool::name(),
+        ListDirectoryTool::name(),
+        MovePathTool::name(),
+        NowTool::name(),
+        OpenTool::name(),
+        ReadFileTool::name(),
+        TerminalTool::name(),
+        ThinkingTool::name(),
+        WebSearchTool::name(),
+    ]
+    .into_iter()
+}
+
 pub use context_server_registry::*;
 pub use copy_path_tool::*;
 pub use create_directory_tool::*;
@@ -33,3 +56,5 @@ pub use read_file_tool::*;
 pub use terminal_tool::*;
 pub use thinking_tool::*;
 pub use web_search_tool::*;
+
+use crate::AgentTool;

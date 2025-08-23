@@ -127,6 +127,7 @@ unsafe fn suspend_all_other_threads() {
 pub struct CrashServer {
     initialization_params: OnceLock<InitCrashHandler>,
     panic_info: OnceLock<CrashPanic>,
+    active_gpu: OnceLock<system_specs::GpuSpecs>,
     has_connection: Arc<AtomicBool>,
 }
 
@@ -135,6 +136,8 @@ pub struct CrashInfo {
     pub init: InitCrashHandler,
     pub panic: Option<CrashPanic>,
     pub minidump_error: Option<String>,
+    pub gpus: Vec<system_specs::GpuInfo>,
+    pub active_gpu: Option<system_specs::GpuSpecs>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -143,7 +146,6 @@ pub struct InitCrashHandler {
     pub zed_version: String,
     pub release_channel: String,
     pub commit_sha: String,
-    // pub gpu: String,
 }
 
 #[derive(Deserialize, Serialize, Debug, Clone)]
@@ -178,6 +180,18 @@ impl minidumper::ServerHandler for CrashServer {
             Err(e) => Some(format!("{e:?}")),
         };
 
+        #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
+        let gpus = vec![];
+
+        #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+        let gpus = match system_specs::read_gpu_info_from_sys_class_drm() {
+            Ok(gpus) => gpus,
+            Err(err) => {
+                log::warn!("Failed to collect GPU information for crash report: {err}");
+                vec![]
+            }
+        };
+
         let crash_info = CrashInfo {
             init: self
                 .initialization_params
@@ -186,6 +200,8 @@ impl minidumper::ServerHandler for CrashServer {
                 .clone(),
             panic: self.panic_info.get().cloned(),
             minidump_error,
+            active_gpu: self.active_gpu.get().cloned(),
+            gpus,
         };
 
         let crash_data_path = paths::logs_dir()
@@ -210,6 +226,13 @@ impl minidumper::ServerHandler for CrashServer {
                 let panic_data =
                     serde_json::from_slice::<CrashPanic>(&buffer).expect("invalid panic data");
                 self.panic_info.set(panic_data).expect("already panicked");
+            }
+            3 => {
+                let gpu_specs: system_specs::GpuSpecs =
+                    bincode::deserialize(&buffer).expect("gpu specs");
+                self.active_gpu
+                    .set(gpu_specs)
+                    .expect("already set active gpu");
             }
             _ => {
                 panic!("invalid message kind");
@@ -287,6 +310,7 @@ pub fn crash_server(socket: &Path) {
                 initialization_params: OnceLock::new(),
                 panic_info: OnceLock::new(),
                 has_connection,
+                active_gpu: OnceLock::new(),
             }),
             &shutdown,
             Some(CRASH_HANDLER_PING_TIMEOUT),

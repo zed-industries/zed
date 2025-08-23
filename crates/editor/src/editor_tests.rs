@@ -57,7 +57,9 @@ use util::{
 use workspace::{
     CloseActiveItem, CloseAllItems, CloseOtherItems, MoveItemToPaneInDirection, NavigationEntry,
     OpenOptions, ViewId,
+    invalid_buffer_view::InvalidBufferView,
     item::{FollowEvent, FollowableItem, Item, ItemHandle, SaveOptions},
+    register_project_item,
 };
 
 #[gpui::test]
@@ -12237,6 +12239,7 @@ async fn test_completion_mode(cx: &mut TestAppContext) {
                 settings.defaults.completions = Some(CompletionSettings {
                     lsp_insert_mode,
                     words: WordsCompletionMode::Disabled,
+                    words_min_length: 0,
                     lsp: true,
                     lsp_fetch_timeout_ms: 0,
                 });
@@ -12295,6 +12298,7 @@ async fn test_completion_with_mode_specified_by_action(cx: &mut TestAppContext) 
     update_test_language_settings(&mut cx, |settings| {
         settings.defaults.completions = Some(CompletionSettings {
             words: WordsCompletionMode::Disabled,
+            words_min_length: 0,
             // set the opposite here to ensure that the action is overriding the default behavior
             lsp_insert_mode: LspInsertMode::Insert,
             lsp: true,
@@ -12331,6 +12335,7 @@ async fn test_completion_with_mode_specified_by_action(cx: &mut TestAppContext) 
     update_test_language_settings(&mut cx, |settings| {
         settings.defaults.completions = Some(CompletionSettings {
             words: WordsCompletionMode::Disabled,
+            words_min_length: 0,
             // set the opposite here to ensure that the action is overriding the default behavior
             lsp_insert_mode: LspInsertMode::Replace,
             lsp: true,
@@ -13072,6 +13077,7 @@ async fn test_word_completion(cx: &mut TestAppContext) {
     init_test(cx, |language_settings| {
         language_settings.defaults.completions = Some(CompletionSettings {
             words: WordsCompletionMode::Fallback,
+            words_min_length: 0,
             lsp: true,
             lsp_fetch_timeout_ms: 10,
             lsp_insert_mode: LspInsertMode::Insert,
@@ -13168,6 +13174,7 @@ async fn test_word_completions_do_not_duplicate_lsp_ones(cx: &mut TestAppContext
     init_test(cx, |language_settings| {
         language_settings.defaults.completions = Some(CompletionSettings {
             words: WordsCompletionMode::Enabled,
+            words_min_length: 0,
             lsp: true,
             lsp_fetch_timeout_ms: 0,
             lsp_insert_mode: LspInsertMode::Insert,
@@ -13231,6 +13238,7 @@ async fn test_word_completions_continue_on_typing(cx: &mut TestAppContext) {
     init_test(cx, |language_settings| {
         language_settings.defaults.completions = Some(CompletionSettings {
             words: WordsCompletionMode::Disabled,
+            words_min_length: 0,
             lsp: true,
             lsp_fetch_timeout_ms: 0,
             lsp_insert_mode: LspInsertMode::Insert,
@@ -13304,6 +13312,7 @@ async fn test_word_completions_usually_skip_digits(cx: &mut TestAppContext) {
     init_test(cx, |language_settings| {
         language_settings.defaults.completions = Some(CompletionSettings {
             words: WordsCompletionMode::Fallback,
+            words_min_length: 0,
             lsp: false,
             lsp_fetch_timeout_ms: 0,
             lsp_insert_mode: LspInsertMode::Insert,
@@ -13357,6 +13366,56 @@ async fn test_word_completions_usually_skip_digits(cx: &mut TestAppContext) {
                 return matching words with digits (`33`, `35f32`) but exclude query duplicates (`3`)");
         } else {
             panic!("expected completion menu to be open");
+        }
+    });
+}
+
+#[gpui::test]
+async fn test_word_completions_do_not_show_before_threshold(cx: &mut TestAppContext) {
+    init_test(cx, |language_settings| {
+        language_settings.defaults.completions = Some(CompletionSettings {
+            words: WordsCompletionMode::Enabled,
+            words_min_length: 3,
+            lsp: true,
+            lsp_fetch_timeout_ms: 0,
+            lsp_insert_mode: LspInsertMode::Insert,
+        });
+    });
+
+    let mut cx = EditorLspTestContext::new_rust(lsp::ServerCapabilities::default(), cx).await;
+    cx.set_state(indoc! {"ˇ
+        wow
+        wowen
+        wowser
+    "});
+    cx.simulate_keystroke("w");
+    cx.executor().run_until_parked();
+    cx.update_editor(|editor, _, _| {
+        if editor.context_menu.borrow_mut().is_some() {
+            panic!(
+                "expected completion menu to be hidden, as words completion threshold is not met"
+            );
+        }
+    });
+
+    cx.simulate_keystroke("o");
+    cx.executor().run_until_parked();
+    cx.update_editor(|editor, _, _| {
+        if editor.context_menu.borrow_mut().is_some() {
+            panic!(
+                "expected completion menu to be hidden, as words completion threshold is not met still"
+            );
+        }
+    });
+
+    cx.simulate_keystroke("w");
+    cx.executor().run_until_parked();
+    cx.update_editor(|editor, _, _| {
+        if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu.borrow_mut().as_ref()
+        {
+            assert_eq!(completion_menu_entries(menu), &["wowen", "wowser"], "After word completion threshold is met, matching words should be shown, excluding the already typed word");
+        } else {
+            panic!("expected completion menu to be open after the word completions threshold is met");
         }
     });
 }
@@ -22656,7 +22715,7 @@ async fn test_invisible_worktree_servers(cx: &mut TestAppContext) {
     .await
     .unwrap();
     pane.update_in(cx, |pane, window, cx| {
-        pane.navigate_backward(window, cx);
+        pane.navigate_backward(&Default::default(), window, cx);
     });
     cx.run_until_parked();
     pane.update(cx, |pane, cx| {
@@ -24243,7 +24302,7 @@ async fn test_document_colors(cx: &mut TestAppContext) {
     workspace
         .update(cx, |workspace, window, cx| {
             workspace.active_pane().update(cx, |pane, cx| {
-                pane.navigate_backward(window, cx);
+                pane.navigate_backward(&Default::default(), window, cx);
             })
         })
         .unwrap();
@@ -24289,6 +24348,41 @@ async fn test_newline_replacement_in_single_line(cx: &mut TestAppContext) {
     editor.update(cx, |editor, cx| {
         assert_eq!(editor.display_text(cx), "oop⋯wow⋯");
     });
+}
+
+#[gpui::test]
+async fn test_non_utf_8_opens(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    cx.update(|cx| {
+        register_project_item::<Editor>(cx);
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree("/root1", json!({})).await;
+    fs.insert_file("/root1/one.pdf", vec![0xff, 0xfe, 0xfd])
+        .await;
+
+    let project = Project::test(fs, ["/root1".as_ref()], cx).await;
+    let (workspace, cx) =
+        cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+    let worktree_id = project.update(cx, |project, cx| {
+        project.worktrees(cx).next().unwrap().read(cx).id()
+    });
+
+    let handle = workspace
+        .update_in(cx, |workspace, window, cx| {
+            let project_path = (worktree_id, "one.pdf");
+            workspace.open_path(project_path, None, true, window, cx)
+        })
+        .await
+        .unwrap();
+
+    assert_eq!(
+        handle.to_any().entity_type(),
+        TypeId::of::<InvalidBufferView>()
+    );
 }
 
 #[track_caller]
