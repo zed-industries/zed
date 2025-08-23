@@ -9,31 +9,49 @@ use terminal::PathLikeTarget;
 use util::{ResultExt, debug_panic, paths::PathWithPosition};
 use workspace::{OpenOptions, OpenVisible, Workspace};
 
+/// The way we found the open target. This is important to have for test assertions.
+/// For example, remote projects never look in the file system.
+#[cfg(test)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+enum OpenTargetFoundBy {
+    WorktreeForeground,
+    WorktreeBackground,
+    FileSystemBackground,
+}
+
 #[derive(Debug, Clone)]
 enum OpenTarget {
-    Worktree(PathWithPosition, Entry),
+    Worktree(PathWithPosition, Entry, #[cfg(test)] OpenTargetFoundBy),
     File(PathWithPosition, Metadata),
 }
 
 impl OpenTarget {
     fn is_file(&self) -> bool {
         match self {
-            OpenTarget::Worktree(_, entry) => entry.is_file(),
+            OpenTarget::Worktree(_, entry, ..) => entry.is_file(),
             OpenTarget::File(_, metadata) => !metadata.is_dir,
         }
     }
 
     fn is_dir(&self) -> bool {
         match self {
-            OpenTarget::Worktree(_, entry) => entry.is_dir(),
+            OpenTarget::Worktree(_, entry, ..) => entry.is_dir(),
             OpenTarget::File(_, metadata) => metadata.is_dir,
         }
     }
 
     fn path(&self) -> &PathWithPosition {
         match self {
-            OpenTarget::Worktree(path, _) => path,
+            OpenTarget::Worktree(path, ..) => path,
             OpenTarget::File(path, _) => path,
+        }
+    }
+
+    #[cfg(test)]
+    fn found_by(&self) -> OpenTargetFoundBy {
+        match self {
+            OpenTarget::Worktree(_, _, found_by) => *found_by,
+            OpenTarget::File(..) => OpenTargetFoundBy::FileSystemBackground,
         }
     }
 }
@@ -49,7 +67,7 @@ pub(super) fn hover_path_like_target(
         let file_to_open = file_to_open_task.await;
         terminal_view
             .update(cx, |terminal_view, _| match file_to_open {
-                Some(OpenTarget::File(path, _) | OpenTarget::Worktree(path, _)) => {
+                Some(OpenTarget::File(path, _) | OpenTarget::Worktree(path, ..)) => {
                     terminal_view.hover = Some(HoverTarget {
                         tooltip: path.to_string(|path| path.to_string_lossy().to_string()),
                         hovered_word,
@@ -133,6 +151,8 @@ fn possible_open_target(
                         return Task::ready(Some(OpenTarget::Worktree(
                             root_path_with_position,
                             root_entry.clone(),
+                            #[cfg(test)]
+                            OpenTargetFoundBy::WorktreeForeground,
                         )));
                     }
                     None => root_path_with_position,
@@ -150,8 +170,17 @@ fn possible_open_target(
             };
 
             if path_to_check.path.is_relative()
-                && let Some(entry) = worktree.read(cx).entry_for_path(&path_to_check.path)
+                && let Some(mut entry) = worktree.read(cx).entry_for_path(&path_to_check.path)
             {
+                if let Some(cwd) = cwd
+                    && let Ok(worktree_rel_cwd) = cwd.strip_prefix(&worktree_root)
+                    && let Some(cwd_rel_entry) = worktree
+                        .read(cx)
+                        .entry_for_path(&worktree_rel_cwd.join(&path_to_check.path))
+                {
+                    entry = cwd_rel_entry;
+                }
+
                 return Task::ready(Some(OpenTarget::Worktree(
                     PathWithPosition {
                         path: worktree_root.join(&entry.path),
@@ -159,6 +188,8 @@ fn possible_open_target(
                         column: path_to_check.column,
                     },
                     entry.clone(),
+                    #[cfg(test)]
+                    OpenTargetFoundBy::WorktreeForeground,
                 )));
             }
 
@@ -222,35 +253,52 @@ fn possible_open_target(
         Vec::new()
     };
 
+    let cwd = cwd.cloned();
     let worktree_check_task = cx.spawn(async move |cx| {
+        let mut found_candidate_open_targets = Vec::new();
         for (worktree, worktree_paths_to_check) in worktree_paths_to_check {
-            let found_entry = worktree
-                .update(cx, |worktree, _| {
-                    let worktree_root = worktree.abs_path();
-                    let traversal = worktree.traverse_from_path(true, true, false, "".as_ref());
-                    for entry in traversal {
-                        if let Some(path_in_worktree) = worktree_paths_to_check
-                            .iter()
-                            .find(|path_to_check| entry.path.ends_with(&path_to_check.path))
-                        {
-                            return Some(OpenTarget::Worktree(
-                                PathWithPosition {
-                                    path: worktree_root.join(&entry.path),
-                                    row: path_in_worktree.row,
-                                    column: path_in_worktree.column,
-                                },
-                                entry.clone(),
-                            ));
+            found_candidate_open_targets.append(
+                &mut worktree
+                    .update(cx, |worktree, _| {
+                        let worktree_root = worktree.abs_path();
+                        let traversal = worktree.traverse_from_path(true, true, false, "".as_ref());
+                        let mut candidate_open_targets: Vec<OpenTarget> = Vec::new();
+                        for entry in traversal {
+                            candidate_open_targets.append(
+                                &mut worktree_paths_to_check
+                                    .iter()
+                                    .filter_map(|path_to_check| {
+                                        entry.path.ends_with(&path_to_check.path).then(|| {
+                                            OpenTarget::Worktree(
+                                                PathWithPosition {
+                                                    path: worktree_root.join(&entry.path),
+                                                    row: path_to_check.row,
+                                                    column: path_to_check.column,
+                                                },
+                                                entry.clone(),
+                                                #[cfg(test)]
+                                                OpenTargetFoundBy::WorktreeBackground,
+                                            )
+                                        })
+                                    })
+                                    .collect(),
+                            );
                         }
-                    }
-                    None
-                })
-                .ok()?;
-            if let Some(found_entry) = found_entry {
-                return Some(found_entry);
-            }
+                        candidate_open_targets
+                    })
+                    .ok()?,
+            )
         }
-        None
+
+        if let Some(cwd) = cwd.as_ref()
+            && let Some(cwd_local_open_target) = found_candidate_open_targets
+                .iter()
+                .find(|&open_target| open_target.path().path.starts_with(cwd))
+        {
+            Some(cwd_local_open_target.clone())
+        } else {
+            found_candidate_open_targets.first().cloned()
+        }
     });
 
     let fs = workspace.read(cx).project().read(cx).fs().clone();
@@ -466,6 +514,7 @@ mod tests {
         maybe_path: &str,
         tooltip: &str,
         terminal_dir: Option<PathBuf>,
+        open_target_found_by: OpenTargetFoundBy,
         file: &str,
         line: u32,
     ) {
@@ -512,24 +561,31 @@ mod tests {
             Path::new(tooltip),
             "Open target path mismatch at {file}:{line}:"
         );
+
+        assert_eq!(
+            open_target.found_by(),
+            open_target_found_by,
+            "Open target found by mismatch at {file}:{line}:"
+        );
     }
 
-    macro_rules! none_or_some {
-        () => {
+    macro_rules! none_or_some_pathbuf {
+        (None) => {
             None
         };
-        ($some:expr) => {
-            Some($some)
+        ($cwd:literal) => {
+            Some($crate::PathBuf::from(path!($cwd)))
         };
     }
 
     macro_rules! test_path_like {
-        ($test_path_like:expr, $maybe_path:literal, $tooltip:literal $(, $cwd:literal)?) => {
+        ($test_path_like:expr, $maybe_path:literal, $tooltip:literal, $cwd:tt, $found_by:expr) => {
             test_path_like_simple(
                 &mut $test_path_like,
                 path!($maybe_path),
                 path!($tooltip),
-                none_or_some!($($crate::PathBuf::from(path!($cwd)))?),
+                none_or_some_pathbuf!($cwd),
+                $found_by,
                 std::file!(),
                 std::line!(),
             )
@@ -543,11 +599,11 @@ mod tests {
             let mut test_path_like = init_test($cx, $trees, $worktrees).await;
             #[doc ="test!(<hovered maybe_path>, <expected tooltip>, <terminal cwd>)"]
             macro_rules! test {
-                ($maybe_path:literal, $tooltip:literal) => {
-                    test_path_like!(test_path_like, $maybe_path, $tooltip)
+                ($maybe_path:literal, $tooltip:literal, $cwd:tt) => {
+                    test_path_like!(test_path_like, $maybe_path, $tooltip, $cwd, OpenTargetFoundBy::WorktreeForeground)
                 };
-                ($maybe_path:literal, $tooltip:literal, $cwd:literal) => {
-                    test_path_like!(test_path_like, $maybe_path, $tooltip, $cwd)
+                ($maybe_path:literal, $tooltip:literal, $cwd:tt, $found_by:ident) => {
+                    test_path_like!(test_path_like, $maybe_path, $tooltip, $cwd, OpenTargetFoundBy::$found_by)
                 }
             }
             $($tests);+
@@ -567,8 +623,8 @@ mod tests {
             )],
             vec![path!("/test")],
             {
-                test!("lib.rs", "/test/lib.rs");
-                test!("test.rs", "/test/test.rs");
+                test!("lib.rs", "/test/lib.rs", None);
+                test!("test.rs", "/test/test.rs", None);
             }
         )
     }
@@ -649,9 +705,19 @@ mod tests {
                 )],
                 vec![path!("/dir1")],
                 {
-                    test!("C.py", "/dir1/dir 2/C.py", "/dir1");
-                    test!("C.py", "/dir1/dir 2/C.py", "/dir1/dir 2");
-                    test!("C.py", "/dir1/dir 3/C.py", "/dir1/dir 3");
+                    test!("C.py", "/dir1/dir 2/C.py", "/dir1", WorktreeBackground);
+                    test!(
+                        "C.py",
+                        "/dir1/dir 2/C.py",
+                        "/dir1/dir 2",
+                        FileSystemBackground
+                    );
+                    test!(
+                        "C.py",
+                        "/dir1/dir 3/C.py",
+                        "/dir1/dir 3",
+                        FileSystemBackground
+                    );
                 }
             )
         }
@@ -736,32 +802,38 @@ mod tests {
                     test!(
                         "foo/./bar.txt",
                         "/tmp/issue28339/foo/bar.txt",
-                        "/tmp/issue28339"
+                        "/tmp/issue28339",
+                        FileSystemBackground
                     );
                     test!(
                         "foo/../foo/bar.txt",
                         "/tmp/issue28339/foo/bar.txt",
-                        "/tmp/issue28339"
+                        "/tmp/issue28339",
+                        FileSystemBackground
                     );
                     test!(
                         "foo/..///foo/bar.txt",
                         "/tmp/issue28339/foo/bar.txt",
-                        "/tmp/issue28339"
+                        "/tmp/issue28339",
+                        FileSystemBackground
                     );
                     test!(
                         "issue28339/../issue28339/foo/../foo/bar.txt",
                         "/tmp/issue28339/foo/bar.txt",
-                        "/tmp/issue28339"
+                        "/tmp/issue28339",
+                        FileSystemBackground
                     );
                     test!(
                         "./bar.txt",
                         "/tmp/issue28339/foo/bar.txt",
-                        "/tmp/issue28339/foo"
+                        "/tmp/issue28339/foo",
+                        FileSystemBackground
                     );
                     test!(
                         "../foo/bar.txt",
                         "/tmp/issue28339/foo/bar.txt",
-                        "/tmp/issue28339/foo"
+                        "/tmp/issue28339/foo",
+                        FileSystemBackground
                     );
                 }
             )
@@ -769,7 +841,6 @@ mod tests {
 
         // https://github.com/zed-industries/zed/issues/34027
         #[gpui::test]
-        #[should_panic(expected = "Tooltip mismatch")]
         async fn issue_34027(cx: &mut TestAppContext) {
             test_path_likes!(
                 cx,
@@ -789,6 +860,122 @@ mod tests {
                         "test.txt",
                         "/tmp/issue34027/foo/test.txt",
                         "/tmp/issue34027/foo"
+                    );
+                }
+            )
+        }
+
+        // https://github.com/zed-industries/zed/issues/34027
+        #[gpui::test]
+        async fn issue_34027_siblings(cx: &mut TestAppContext) {
+            test_path_likes!(
+                cx,
+                vec![(
+                    path!("/test"),
+                    json!({
+                        "sub1": {
+                            "file.txt": "",
+                        },
+                        "sub2": {
+                            "file.txt": "",
+                        }
+                    }),
+                ),],
+                vec![path!("/test")],
+                {
+                    test!(
+                        "file.txt",
+                        "/test/sub1/file.txt",
+                        "/test/sub1",
+                        FileSystemBackground
+                    );
+                    test!(
+                        "file.txt",
+                        "/test/sub2/file.txt",
+                        "/test/sub2",
+                        FileSystemBackground
+                    );
+                    test!("sub1/file.txt", "/test/sub1/file.txt", "/test/sub1");
+                    test!("sub2/file.txt", "/test/sub2/file.txt", "/test/sub2");
+                    test!("sub1/file.txt", "/test/sub1/file.txt", "/test/sub2");
+                    test!("sub2/file.txt", "/test/sub2/file.txt", "/test/sub1");
+                }
+            )
+        }
+
+        // https://github.com/zed-industries/zed/issues/34027
+        #[gpui::test]
+        async fn issue_34027_nesting(cx: &mut TestAppContext) {
+            test_path_likes!(
+                cx,
+                vec![(
+                    path!("/test"),
+                    json!({
+                        "sub1": {
+                            "file.txt": "",
+                            "subsub1": {
+                                "file.txt": "",
+                            }
+                        },
+                        "sub2": {
+                            "file.txt": "",
+                            "subsub1": {
+                                "file.txt": "",
+                            }
+                        }
+                    }),
+                ),],
+                vec![path!("/test")],
+                {
+                    test!(
+                        "file.txt",
+                        "/test/sub1/subsub1/file.txt",
+                        "/test/sub1/subsub1",
+                        FileSystemBackground
+                    );
+                    test!(
+                        "file.txt",
+                        "/test/sub2/subsub1/file.txt",
+                        "/test/sub2/subsub1",
+                        FileSystemBackground
+                    );
+                    test!(
+                        "subsub1/file.txt",
+                        "/test/sub1/subsub1/file.txt",
+                        "/test",
+                        WorktreeBackground
+                    );
+                    test!(
+                        "subsub1/file.txt",
+                        "/test/sub1/subsub1/file.txt",
+                        "/test",
+                        WorktreeBackground
+                    );
+                    test!(
+                        "subsub1/file.txt",
+                        "/test/sub1/subsub1/file.txt",
+                        "/test/sub1",
+                        FileSystemBackground
+                    );
+                    test!(
+                        "subsub1/file.txt",
+                        "/test/sub2/subsub1/file.txt",
+                        "/test/sub2",
+                        FileSystemBackground
+                    );
+                    // TODO(davewa): Should be FileSystemBackground
+                    test!(
+                        "subsub1/file.txt",
+                        "/test/sub1/subsub1/file.txt",
+                        "/test/sub1/subsub1",
+                        WorktreeBackground
+                    );
+                    // TODO(davewa): Should be FileSystemBackground
+                    test!(
+                        "subsub1/file.txt",
+                        "/test/sub2/subsub1/file.txt",
+                        "/test/sub2/subsub1",
+                        WorktreeBackground
                     );
                 }
             )
