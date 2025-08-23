@@ -618,8 +618,7 @@ impl MessageEditor {
                     uri,
                     Task::ready(Ok(Mention::Text {
                         content: text,
-                        // FIXME
-                        tracked_buffers: Vec::new(),
+                        tracked_buffers: vec![buffer],
                     }))
                     .shared(),
                 ),
