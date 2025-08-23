@@ -28,12 +28,6 @@ impl CreaseMap {
     }
 }
 
-impl From<CreaseId> for ui::ElementId {
-    fn from(id: CreaseId) -> Self {
-        id.0.into()
-    }
-}
-
 #[derive(Clone)]
 pub struct CreaseSnapshot {
     creases: SumTree<CreaseItem>,
