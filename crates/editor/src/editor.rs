@@ -4260,8 +4260,15 @@ impl Editor {
             let initial_buffer_versions =
                 jsx_tag_auto_close::construct_initial_buffer_versions_map(this, &edits, cx);
 
+            let should_apply_autoindent = this.should_apply_autoindent_for_input(&text, &edits);
+            let autoindent_mode = if should_apply_autoindent {
+                this.autoindent_mode.clone()
+            } else {
+                None
+            };
+
             this.buffer.update(cx, |buffer, cx| {
-                buffer.edit(edits, this.autoindent_mode.clone(), cx);
+                buffer.edit(edits, autoindent_mode, cx);
             });
             for (buffer, edits) in linked_edits {
                 buffer.update(cx, |buffer, cx| {
@@ -4369,6 +4376,24 @@ impl Editor {
             this.refresh_edit_prediction(true, false, window, cx);
             jsx_tag_auto_close::handle_from(this, initial_buffer_versions, window, cx);
         });
+    }
+
+    fn should_apply_autoindent_for_input(&self, text: &str, edits: &[(Range<Point>, Arc<str>)]) -> bool {
+        if self.autoindent_mode.is_none() {
+            return false;
+        }
+
+        if edits.len() <= 1 || text.is_empty() {
+            return true;
+        }
+
+        let contains_newlines = text.contains('\n');
+        let all_insertions = edits.iter().all(|(range, _)| range.start == range.end);
+        let contains_indent_triggers = text.chars().any(|c| {
+            matches!(c, ':' | '{' | '}' | '(' | ')' | '[' | ']')
+        });
+
+        contains_newlines || !all_insertions || contains_indent_triggers
     }
 
     fn find_possible_emoji_shortcode_at_position(
