@@ -948,6 +948,34 @@ mod tests {
                     name: "test case 2",
                     anotherStr: "bar",
                 },
+                {
+                    name: "test case 3",
+                    anotherStr: "fooo",
+                },
+                {
+                    name: "test case 4",
+                    anotherStr: "baar",
+                },
+                {
+                    name: "test case 5",
+                    anotherStr: "foooo",
+                },
+                {
+                    name: "test case 6",
+                    anotherStr: "baaar",
+                },
+                {
+                    name: "test case 7",
+                    anotherStr: "foooooo",
+                },
+                {
+                    name: "test case 8",
+                    anotherStr: "baaaar",
+                },
+                {
+                    name: "test case 9",
+                    anotherStr: "foooooooo",
+                },
             }
 
             notATableTest := []struct{
@@ -1007,8 +1035,8 @@ mod tests {
             go_test_count
         );
         assert!(
-            go_table_test_count == 2,
-            "Should find exactly 2 go-table-test-case, found: {}",
+            go_table_test_count == 9,
+            "Should find exactly 9 go-table-test-case, found: {}",
             go_table_test_count
         );
     }
