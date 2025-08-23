@@ -245,27 +245,21 @@ pub fn init(client: AnyProtoClient, store_logs: bool, cx: &mut App) {
     cx.set_global(GlobalLogStore(log_store.downgrade()));
 
     cx.observe_new(move |workspace: &mut Workspace, _, cx| {
-        let project = workspace.project();
-        if project.read(cx).is_local() || project.read(cx).is_via_remote_server() {
-            log_store.update(cx, |store, cx| {
-                store.add_project(project, cx);
-            });
-        }
+        log_store.update(cx, |store, cx| {
+            store.add_project(workspace.project(), cx);
+        });
 
         let log_store = log_store.clone();
         workspace.register_action(move |workspace, _: &OpenLanguageServerLogs, window, cx| {
-            let project = workspace.project().read(cx);
-            if project.is_local() || project.is_via_remote_server() {
-                let project = workspace.project().clone();
-                let log_store = log_store.clone();
-                get_or_create_tool(
-                    workspace,
-                    SplitDirection::Right,
-                    window,
-                    cx,
-                    move |window, cx| LspLogView::new(project, log_store, window, cx),
-                );
-            }
+            let log_store = log_store.clone();
+            let project = workspace.project().clone();
+            get_or_create_tool(
+                workspace,
+                SplitDirection::Right,
+                window,
+                cx,
+                move |window, cx| LspLogView::new(project, log_store, window, cx),
+            );
         });
     })
     .detach();
