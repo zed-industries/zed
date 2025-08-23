@@ -20,6 +20,9 @@ pub struct EditorSettings {
     pub lsp_highlight_debounce: u64,
     pub hover_popover_enabled: bool,
     pub hover_popover_delay: u64,
+    pub hover_translation_enabled: bool,
+    pub hover_translation_api_url: String,
+    pub hover_translation_api_key: Option<String>,
     pub status_bar: StatusBar,
     pub toolbar: Toolbar,
     pub scrollbar: Scrollbar,
@@ -453,6 +456,18 @@ pub struct EditorSettingsContent {
     ///
     /// Default: 300
     pub hover_popover_delay: Option<u64>,
+    /// Whether to translate hover box contents to Russian.
+    ///
+    /// Default: false
+    pub hover_translation_enabled: Option<bool>,
+    /// API URL for the translation service.
+    ///
+    /// Default: "https://libretranslate.de/translate"
+    pub hover_translation_api_url: Option<String>,
+    /// API key for the translation service.
+    ///
+    /// Default: null
+    pub hover_translation_api_key: Option<String>,
     /// Status bar related settings
     pub status_bar: Option<StatusBarContent>,
     /// Toolbar related settings

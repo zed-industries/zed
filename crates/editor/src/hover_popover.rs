@@ -5,6 +5,11 @@ use crate::{
     hover_links::{InlayHighlight, RangeInEditor},
     scroll::ScrollAmount,
 };
+use lru::LruCache;
+use once_cell::sync::Lazy;
+use parking_lot::Mutex;
+use serde::Deserialize;
+use std::num::NonZeroUsize;
 use anyhow::Context as _;
 use gpui::{
     AnyElement, AsyncWindowContext, Context, Entity, Focusable as _, FontWeight, Hsla,
@@ -33,6 +38,70 @@ pub const MIN_POPOVER_CHARACTER_WIDTH: f32 = 20.;
 pub const MIN_POPOVER_LINE_HEIGHT: f32 = 4.;
 pub const POPOVER_RIGHT_OFFSET: Pixels = px(8.0);
 pub const HOVER_POPOVER_GAP: Pixels = px(10.);
+
+#[derive(Deserialize)]
+struct TranslationResponse {
+    #[serde(rename = "translatedText")]
+    translated_text: String,
+}
+
+static TRANSLATION_CACHE: Lazy<Mutex<LruCache<String, Arc<str>>>> = Lazy::new(|| {
+    Mutex::new(LruCache::new(NonZeroUsize::new(100).unwrap()))
+});
+
+async fn translate_block(block: HoverBlock, settings: &EditorSettings) -> HoverBlock {
+    if block.text.is_empty() {
+        return block;
+    }
+
+    if let Some(cached) = TRANSLATION_CACHE.lock().get(&block.text) {
+        return HoverBlock {
+            text: cached.to_string(),
+            kind: block.kind,
+        };
+    }
+
+    let client = reqwest::Client::new();
+    let body = serde_json::json!({
+        "q": &block.text,
+        "source": "auto",
+        "target": "ru",
+        "format": "text",
+        "api_key": settings.hover_translation_api_key.as_deref().unwrap_or("")
+    });
+
+    match client.post(&settings.hover_translation_api_url).json(&body).send().await {
+        Ok(response) => {
+            if response.status().is_success() {
+                match response.json::<TranslationResponse>().await {
+                    Ok(payload) => {
+                        let translated_text = Arc::from(payload.translated_text.as_str());
+                        TRANSLATION_CACHE.lock().put(block.text.clone(), Arc::clone(&translated_text));
+                        HoverBlock {
+                            text: translated_text.to_string(),
+                            kind: block.kind,
+                        }
+                    }
+                    Err(e) => HoverBlock {
+                        text: format!("Error: Failed to parse translation API response: {}\n\nOriginal:\n{}", e, block.text),
+                        kind: HoverBlockKind::PlainText,
+                    }
+                }
+            } else {
+                let status = response.status();
+                let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
+                HoverBlock {
+                    text: format!("Error: Translation API request failed with status: {}\nBody: {}\n\nOriginal:\n{}", status, error_text, block.text),
+                    kind: HoverBlockKind::PlainText,
+                }
+            }
+        }
+        Err(e) => HoverBlock {
+            text: format!("Error: Failed to connect to translation API: {}\n\nOriginal:\n{}", e, block.text),
+            kind: HoverBlockKind::PlainText,
+        },
+    }
+}
 
 /// Bindable action which uses the most recent selection head to trigger a hover
 pub fn hover(editor: &mut Editor, _: &Hover, window: &mut Window, cx: &mut Context<Editor>) {
@@ -276,7 +345,8 @@ fn show_hover(
         return None;
     }
 
-    let hover_popover_delay = EditorSettings::get_global(cx).hover_popover_delay;
+    let settings = EditorSettings::get_global(cx).clone();
+    let hover_popover_delay = settings.hover_popover_delay;
     let all_diagnostics_active = editor.active_diagnostics == ActiveDiagnostic::All;
     let active_group_id = if let ActiveDiagnostic::Group(group) = &editor.active_diagnostics {
         Some(group.group_id)
@@ -431,6 +501,23 @@ fn show_hover(
                 hover_request.await.unwrap_or_default()
             } else {
                 Vec::new()
+            };
+
+            let hovers_response = if settings.hover_translation_enabled {
+                let mut new_hovers_response = Vec::new();
+                for hover_result in hovers_response {
+                    let translated_blocks = futures::future::join_all(
+                        hover_result.contents.into_iter().map(|block| translate_block(block, &settings))
+                    ).await;
+
+                    new_hovers_response.push(project::Hover {
+                        contents: translated_blocks,
+                        ..hover_result
+                    });
+                }
+                new_hovers_response
+            } else {
+                hovers_response
             };
             let snapshot = this.update_in(cx, |this, window, cx| this.snapshot(window, cx))?;
             let mut hover_highlights = Vec::with_capacity(hovers_response.len());
@@ -1919,5 +2006,104 @@ mod tests {
                 "Rendered markdown element should remove backticks from text"
             );
         });
+    }
+
+    #[gpui::test]
+    async fn test_translation() {
+        let settings = crate::EditorSettings {
+            cursor_blink: true,
+            cursor_shape: None,
+            current_line_highlight: crate::editor_settings::CurrentLineHighlight::All,
+            selection_highlight: true,
+            lsp_highlight_debounce: 75,
+            hover_popover_enabled: true,
+            hover_popover_delay: 300,
+            hover_translation_enabled: true,
+            hover_translation_api_url: "https://libretranslate.de/translate".to_string(),
+            hover_translation_api_key: None,
+            status_bar: crate::editor_settings::StatusBar {
+                active_language_button: true,
+                cursor_position_button: true,
+            },
+            toolbar: crate::editor_settings::Toolbar {
+                breadcrumbs: true,
+                quick_actions: true,
+                selections_menu: true,
+                agent_review: true,
+                code_actions: false,
+            },
+            scrollbar: crate::editor_settings::Scrollbar {
+                show: crate::editor_settings::ShowScrollbar::Auto,
+                git_diff: true,
+                selected_text: true,
+                selected_symbol: true,
+                search_results: true,
+                diagnostics: crate::editor_settings::ScrollbarDiagnostics::All,
+                cursors: true,
+                axes: crate::editor_settings::ScrollbarAxes {
+                    horizontal: true,
+                    vertical: true,
+                },
+            },
+            minimap: crate::editor_settings::Minimap {
+                show: crate::editor_settings::ShowMinimap::Never,
+                display_in: crate::editor_settings::DisplayIn::ActiveEditor,
+                thumb: crate::editor_settings::MinimapThumb::Always,
+                thumb_border: crate::editor_settings::MinimapThumbBorder::LeftOpen,
+                current_line_highlight: None,
+                max_width_columns: std::num::NonZeroU32::new(80).unwrap(),
+            },
+            gutter: crate::editor_settings::Gutter {
+                min_line_number_digits: 4,
+                line_numbers: true,
+                runnables: true,
+                breakpoints: true,
+                folds: true,
+            },
+            scroll_beyond_last_line: crate::editor_settings::ScrollBeyondLastLine::OnePage,
+            vertical_scroll_margin: 3.0,
+            autoscroll_on_clicks: false,
+            horizontal_scroll_margin: 5.0,
+            scroll_sensitivity: 1.0,
+            fast_scroll_sensitivity: 4.0,
+            relative_line_numbers: false,
+            seed_search_query_from_cursor: crate::editor_settings::SeedQuerySetting::Always,
+            use_smartcase_search: false,
+            multi_cursor_modifier: crate::editor_settings::MultiCursorModifier::Alt,
+            redact_private_values: false,
+            expand_excerpt_lines: 5,
+            middle_click_paste: true,
+            double_click_in_multibuffer: crate::editor_settings::DoubleClickInMultibuffer::Select,
+            search_wrap: true,
+            search: crate::editor_settings::SearchSettings {
+                button: true,
+                whole_word: false,
+                case_sensitive: false,
+                include_ignored: false,
+                regex: false,
+            },
+            auto_signature_help: false,
+            show_signature_help_after_edits: false,
+            go_to_definition_fallback: crate::editor_settings::GoToDefinitionFallback::FindAllReferences,
+            jupyter: crate::editor_settings::Jupyter { enabled: true },
+            hide_mouse: Some(crate::editor_settings::HideMouseMode::OnTypingAndMovement),
+            snippet_sort_order: crate::editor_settings::SnippetSortOrder::Inline,
+            diagnostics_max_severity: None,
+            inline_code_actions: true,
+            drag_and_drop_selection: crate::editor_settings::DragAndDropSelection {
+                enabled: true,
+                delay: 300,
+            },
+            lsp_document_colors: crate::editor_settings::DocumentColorsRenderMode::Inlay,
+        };
+
+        let block = HoverBlock {
+            text: "Hello".to_string(),
+            kind: HoverBlockKind::PlainText,
+        };
+
+        let translated_block = translate_block(block, &settings).await;
+
+        assert_eq!(translated_block.text, "Привет");
     }
 }
