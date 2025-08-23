@@ -1878,7 +1878,7 @@ impl<'a> Iterator for ByteChunks<'a> {
 impl QueryCursorHandle {
     pub fn new() -> Self {
         let mut cursor = QUERY_CURSORS.lock().pop().unwrap_or_default();
-        cursor.set_match_limit(64);
+        cursor.set_match_limit(256);
         QueryCursorHandle(Some(cursor))
     }
 }
