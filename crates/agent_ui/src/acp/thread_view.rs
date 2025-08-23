@@ -762,6 +762,7 @@ impl AcpThreadView {
             MessageEditorEvent::Focus => {
                 self.cancel_editing(&Default::default(), window, cx);
             }
+            MessageEditorEvent::LostFocus => {}
         }
     }
 
@@ -791,6 +792,18 @@ impl AcpThreadView {
                 {
                     self.editing_message = Some(event.entry_index);
                     cx.notify();
+                }
+            }
+            ViewEvent::MessageEditorEvent(editor, MessageEditorEvent::LostFocus) => {
+                if let Some(thread) = self.thread()
+                    && let Some(AgentThreadEntry::UserMessage(user_message)) =
+                        thread.read(cx).entries().get(event.entry_index)
+                    && user_message.id.is_some()
+                {
+                    if editor.read(cx).text(cx).as_str() == user_message.content.to_markdown(cx) {
+                        self.editing_message = None;
+                        cx.notify();
+                    }
                 }
             }
             ViewEvent::MessageEditorEvent(editor, MessageEditorEvent::Send) => {
