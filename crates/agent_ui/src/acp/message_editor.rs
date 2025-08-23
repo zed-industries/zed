@@ -264,11 +264,15 @@ impl MessageEditor {
             let image = self
                 .project
                 .update(cx, |project, cx| project.open_image(project_path, cx));
-            let image = cx.spawn(async move |_, cx| {
-                let image = image.await?;
-                let image = image.update(cx, |image, _| image.image.clone())?;
-                Ok(image)
-            });
+            let image = cx
+                .spawn(async move |_, cx| {
+                    let image = image.await.map_err(|e| e.to_string())?;
+                    let image = image
+                        .update(cx, |image, _| image.image.clone())
+                        .map_err(|e| e.to_string())?;
+                    Ok(image)
+                })
+                .shared();
             insert_crease_for_image(
                 *excerpt_id,
                 start,
@@ -367,7 +371,7 @@ impl MessageEditor {
                 .update(cx, |project, cx| project.open_image(project_path, cx));
             return cx.spawn(async move |_, cx| {
                 let image = task.await?;
-                let image = image.update(cx, |image, cx| image.image.clone())?;
+                let image = image.update(cx, |image, _| image.image.clone())?;
                 let format = image.format;
                 let image = cx
                     .update(|cx| LanguageModelImage::from_image(image, cx))?
@@ -817,7 +821,7 @@ impl MessageEditor {
         }
         cx.stop_propagation();
 
-        let replacement_text = "image";
+        let replacement_text = MentionUri::PastedImage.as_link().to_string();
         for image in images {
             let (excerpt_id, text_anchor, multibuffer_anchor) =
                 self.editor.update(cx, |message_editor, cx| {
@@ -840,24 +844,62 @@ impl MessageEditor {
                 });
 
             let content_len = replacement_text.len();
-            let Some(anchor) = multibuffer_anchor else {
-                return;
+            let Some(start_anchor) = multibuffer_anchor else {
+                continue;
             };
-            let task = Task::ready(Ok(Arc::new(image))).shared();
+            let end_anchor = self.editor.update(cx, |editor, cx| {
+                let snapshot = editor.buffer().read(cx).snapshot(cx);
+                snapshot.anchor_before(start_anchor.to_offset(&snapshot) + content_len)
+            });
+            let image = Arc::new(image);
             let Some(crease_id) = insert_crease_for_image(
                 excerpt_id,
                 text_anchor,
                 content_len,
                 None.clone(),
-                task.clone(),
+                Task::ready(Ok(image.clone())).shared(),
                 self.editor.clone(),
                 window,
                 cx,
             ) else {
-                return;
+                continue;
             };
-            self.confirm_mention_for_image(crease_id, anchor, None, task, window, cx)
-                .detach();
+            let task = cx
+                .spawn_in(window, {
+                    async move |_, cx| {
+                        let format = image.format;
+                        let image = cx
+                            .update(|_, cx| LanguageModelImage::from_image(image, cx))
+                            .map_err(|e| e.to_string())?
+                            .await;
+                        if let Some(image) = image {
+                            Ok(Mention::Image(MentionImage {
+                                data: image.source,
+                                format,
+                            }))
+                        } else {
+                            Err("Failed to convert image".into())
+                        }
+                    }
+                })
+                .shared();
+
+            self.mention_set
+                .mentions
+                .insert(crease_id, (MentionUri::PastedImage, task.clone()));
+
+            cx.spawn_in(window, async move |this, cx| {
+                if task.await.notify_async_err(cx).is_none() {
+                    this.update(cx, |this, cx| {
+                        this.editor.update(cx, |editor, cx| {
+                            editor.edit([(start_anchor..end_anchor, "")], cx);
+                        });
+                        this.mention_set.mentions.remove(&crease_id);
+                    })
+                    .ok();
+                }
+            })
+            .detach();
         }
     }
 
@@ -956,60 +998,6 @@ impl MessageEditor {
         self.editor.update(cx, |message_editor, cx| {
             message_editor.set_read_only(read_only);
             cx.notify()
-        })
-    }
-
-    fn confirm_mention_for_image(
-        &mut self,
-        crease_id: CreaseId,
-        anchor: Anchor,
-        abs_path: Option<PathBuf>,
-        image: Shared<Task<Result<Arc<Image>, String>>>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Task<()> {
-        let editor = self.editor.clone();
-        let task = cx
-            .spawn_in(window, {
-                let abs_path = abs_path.clone();
-                async move |_, cx| {
-                    let image = image.await?;
-                    let format = image.format;
-                    let image = cx
-                        .update(|_, cx| LanguageModelImage::from_image(image, cx))
-                        .map_err(|e| e.to_string())?
-                        .await;
-                    if let Some(image) = image {
-                        Ok(Mention::Image(MentionImage {
-                            data: image.source,
-                            format,
-                        }))
-                    } else {
-                        Err("Failed to convert image".into())
-                    }
-                }
-            })
-            .shared();
-
-        let uri = if let Some(abs_path) = abs_path {
-            MentionUri::File { abs_path }
-        } else {
-            MentionUri::PastedImage
-        };
-        self.mention_set
-            .mentions
-            .insert(crease_id, (uri, task.clone()));
-
-        cx.spawn_in(window, async move |this, cx| {
-            if task.await.notify_async_err(cx).is_none() {
-                this.update(cx, |this, cx| {
-                    this.editor.update(cx, |editor, cx| {
-                        // FIXME edit out the crease
-                    });
-                    this.mention_set.mentions.remove(&crease_id);
-                })
-                .ok();
-            }
         })
     }
 
@@ -1233,7 +1221,7 @@ pub(crate) fn insert_crease_for_image(
     anchor: text::Anchor,
     content_len: usize,
     abs_path: Option<Arc<Path>>,
-    image: Task<Result<Arc<Image>>>,
+    image: Shared<Task<Result<Arc<Image>, String>>>,
     editor: Entity<Editor>,
     window: &mut Window,
     cx: &mut App,
@@ -1253,7 +1241,7 @@ pub(crate) fn insert_crease_for_image(
         let end = snapshot.anchor_before(start.to_offset(&snapshot) + content_len);
 
         let placeholder = FoldPlaceholder {
-            render: render_image_fold_icon_button(crease_label, image, cx.weak_entity(), cx),
+            render: render_image_fold_icon_button(crease_label, image, cx.weak_entity()),
             merge_adjacent: false,
             ..Default::default()
         };
@@ -1275,13 +1263,9 @@ pub(crate) fn insert_crease_for_image(
 
 fn render_image_fold_icon_button(
     label: SharedString,
-    image_task: Task<Result<Arc<Image>, String>>,
+    image_task: Shared<Task<Result<Arc<Image>, String>>>,
     editor: WeakEntity<Editor>,
-    cx: &mut App,
 ) -> Arc<dyn Send + Sync + Fn(FoldId, Range<Anchor>, &mut App) -> AnyElement> {
-    let image_task = cx
-        .spawn(async move |_| image_task.await.map_err(|e| e.to_string()))
-        .shared();
     Arc::new({
         move |fold_id, fold_range, cx| {
             let is_in_text_selection = editor
