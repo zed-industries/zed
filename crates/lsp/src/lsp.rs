@@ -86,7 +86,7 @@ pub struct LanguageServer {
     name: LanguageServerName,
     process_name: Arc<str>,
     binary: LanguageServerBinary,
-    capabilities: RwLock<ServerCapabilities>,
+    static_capabilities: RwLock<ServerCapabilities>,
     /// Configuration sent to the server, stored for display in the language server logs
     /// buffer. This is represented as the message sent to the LSP in order to avoid cloning it (can
     /// be large in cases like sending schemas to the json server).
@@ -484,7 +484,7 @@ impl LanguageServer {
                 .map(|name| Arc::from(name.to_string_lossy()))
                 .unwrap_or_default(),
             binary,
-            capabilities: Default::default(),
+            static_capabilities: Default::default(),
             configuration,
             code_action_kinds,
             next_id: Default::default(),
@@ -898,7 +898,7 @@ impl LanguageServer {
             if let Some(info) = response.server_info {
                 self.process_name = info.name.into();
             }
-            self.capabilities = RwLock::new(response.capabilities);
+            self.static_capabilities = RwLock::new(response.capabilities);
             self.configuration = configuration;
 
             self.notify::<notification::Initialized>(&InitializedParams {})?;
@@ -1130,7 +1130,7 @@ impl LanguageServer {
 
     /// Get the reported capabilities of the running language server.
     pub fn capabilities(&self) -> ServerCapabilities {
-        self.capabilities.read().clone()
+        self.static_capabilities.read().clone()
     }
 
     /// Get the reported capabilities of the running language server and
@@ -1143,7 +1143,7 @@ impl LanguageServer {
     }
 
     pub fn update_capabilities(&self, update: impl FnOnce(&mut ServerCapabilities)) {
-        update(self.capabilities.write().deref_mut());
+        update(self.static_capabilities.write().deref_mut());
     }
 
     pub fn configuration(&self) -> &Value {
