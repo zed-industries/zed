@@ -379,6 +379,23 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_untitled_selection_uri() {
+        let selection_uri = uri!("zed:///agent/untitled-buffer#L1:10");
+        let parsed = MentionUri::parse(selection_uri).unwrap();
+        match &parsed {
+            MentionUri::Selection {
+                abs_path: None,
+                line_range,
+            } => {
+                assert_eq!(line_range.start(), &0);
+                assert_eq!(line_range.end(), &9);
+            }
+            _ => panic!("Expected Selection variant without path"),
+        }
+        assert_eq!(parsed.to_uri().to_string(), selection_uri);
+    }
+
+    #[test]
     fn test_parse_thread_uri() {
         let thread_uri = "zed:///agent/thread/session123?name=Thread+name";
         let parsed = MentionUri::parse(thread_uri).unwrap();
