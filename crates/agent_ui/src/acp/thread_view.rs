@@ -1686,6 +1686,7 @@ impl AcpThreadView {
             tool_call.status,
             ToolCallStatus::Rejected | ToolCallStatus::Canceled | ToolCallStatus::Failed
         );
+
         let needs_confirmation = matches!(
             tool_call.status,
             ToolCallStatus::WaitingForConfirmation { .. }
@@ -1693,11 +1694,8 @@ impl AcpThreadView {
         let is_edit =
             matches!(tool_call.kind, acp::ToolKind::Edit) || tool_call.diffs().next().is_some();
         let use_card_layout = needs_confirmation || is_edit;
-
-        let is_collapsible = !tool_call.content.is_empty() && !use_card_layout;
-
-        let is_open =
-            needs_confirmation || is_edit || self.expanded_tool_calls.contains(&tool_call.id);
+        let is_collapsible = !tool_call.content.is_empty() && !needs_confirmation;
+        let is_open = needs_confirmation || self.expanded_tool_calls.contains(&tool_call.id);
 
         let gradient_overlay = |color: Hsla| {
             div()
