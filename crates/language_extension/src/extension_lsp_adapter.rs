@@ -1,8 +1,8 @@
-use std::any::Any;
 use std::ops::Range;
 use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::Arc;
+use std::{any::Any, sync::OnceLock};
 
 use anyhow::{Context as _, Result};
 use async_trait::async_trait;
@@ -61,12 +61,18 @@ impl ExtensionLanguageServerProxy for LanguageServerRegistryProxy {
         language_server_name: LanguageServerName,
         language: LanguageName,
     ) {
+        let language_server_id = Arc::new(OnceLock::new());
+        self.language_server_ids
+            .write()
+            .unwrap()
+            .insert(language_server_name.clone(), language_server_id.clone());
         self.language_registry.register_lsp_adapter(
             language.clone(),
             Arc::new(ExtensionLspAdapter::new(
                 extension,
                 language_server_name,
                 language,
+                language_server_id,
             )),
         );
     }
@@ -125,8 +131,16 @@ impl ExtensionLanguageServerProxy for LanguageServerRegistryProxy {
         language_server_name: LanguageServerName,
         status: BinaryStatus,
     ) {
-        // self.language_registry
-        //     .update_lsp_binary_status(language_server_name, status);
+        if let Some(id) = self
+            .language_server_ids
+            .read()
+            .unwrap()
+            .get(&language_server_name)
+            && let Some(&id) = id.get()
+        {
+            self.language_registry
+                .update_lsp_binary_status(id, language_server_name, status);
+        }
     }
 }
 
@@ -134,6 +148,7 @@ struct ExtensionLspAdapter {
     extension: Arc<dyn Extension>,
     language_server_name: LanguageServerName,
     language_name: LanguageName,
+    language_server_id: Arc<OnceLock<LanguageServerId>>,
 }
 
 impl ExtensionLspAdapter {
@@ -141,11 +156,13 @@ impl ExtensionLspAdapter {
         extension: Arc<dyn Extension>,
         language_server_name: LanguageServerName,
         language_name: LanguageName,
+        language_server_id: Arc<OnceLock<LanguageServerId>>,
     ) -> Self {
         Self {
             extension,
             language_server_name,
             language_name,
+            language_server_id,
         }
     }
 }
@@ -162,7 +179,7 @@ impl LspAdapter for ExtensionLspAdapter {
         _: Option<Toolchain>,
         _: LanguageServerBinaryOptions,
         _: futures::lock::MutexGuard<'a, Option<LanguageServerBinary>>,
-        _: LanguageServerId,
+        language_server_id: LanguageServerId,
         _: &'a mut AsyncApp,
     ) -> Pin<Box<dyn 'a + Future<Output = Result<LanguageServerBinary>>>> {
         async move {
@@ -192,6 +209,10 @@ impl LspAdapter for ExtensionLspAdapter {
                     .await
                     .context("failed to set file permissions")?;
             }
+            self.language_server_id
+                .set(language_server_id)
+                .ok()
+                .context("failed to set language server id")?;
 
             Ok(LanguageServerBinary {
                 path,

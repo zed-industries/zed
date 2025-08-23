@@ -1,12 +1,14 @@
 mod extension_lsp_adapter;
 
-use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
+use std::{path::PathBuf, sync::RwLock};
 
 use anyhow::Result;
+use collections::FxHashMap;
 use extension::{ExtensionGrammarProxy, ExtensionHostProxy, ExtensionLanguageProxy};
 use gpui::{App, Entity};
 use language::{LanguageMatcher, LanguageName, LanguageRegistry, LoadedLanguage};
+use lsp::{LanguageServerId, LanguageServerName};
 use project::LspStore;
 
 #[derive(Clone)]
@@ -23,6 +25,7 @@ pub fn init(
 ) {
     let language_server_registry_proxy = LanguageServerRegistryProxy {
         language_registry,
+        language_server_ids: Default::default(),
         lsp_access,
     };
     extension_host_proxy.register_grammar_proxy(language_server_registry_proxy.clone());
@@ -33,6 +36,9 @@ pub fn init(
 #[derive(Clone)]
 struct LanguageServerRegistryProxy {
     language_registry: Arc<LanguageRegistry>,
+    // extensions can only spawn one language server currently
+    language_server_ids:
+        Arc<RwLock<FxHashMap<LanguageServerName, Arc<OnceLock<LanguageServerId>>>>>,
     lsp_access: LspAccess,
 }
 
