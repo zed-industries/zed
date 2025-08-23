@@ -118,11 +118,11 @@ impl AgentTool for FetchTool {
     type Input = FetchToolInput;
     type Output = String;
 
-    fn name(&self) -> SharedString {
-        "fetch".into()
+    fn name() -> &'static str {
+        "fetch"
     }
 
-    fn kind(&self) -> acp::ToolKind {
+    fn kind() -> acp::ToolKind {
         acp::ToolKind::Fetch
     }
 

@@ -59,7 +59,7 @@ jobs:
     timeout-minutes: 60
     name: Run tests on Windows
     if: github.repository_owner == 'zed-industries'
-    runs-on: [self-hosted, Windows, X64]
+    runs-on: [self-32vcpu-windows-2022]
     steps:
       - name: Checkout repo
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
@@ -248,7 +248,7 @@ jobs:
     timeout-minutes: 60
     name: Create a Windows installer
     if: github.repository_owner == 'zed-industries'
-    runs-on: [self-hosted, Windows, X64]
+    runs-on: [self-32vcpu-windows-2022]
     needs: windows-tests
     env:
       AZURE_TENANT_ID: ${{ secrets.AZURE_SIGNING_TENANT_ID }}
@@ -290,7 +290,7 @@ jobs:
   update-nightly-tag:
     name: Update nightly tag
     if: github.repository_owner == 'zed-industries'
-    runs-on: ubuntu-latest
+    runs-on: namespace-profile-2x4-ubuntu-2404
     needs:
       - bundle-mac
       - bundle-linux-x86

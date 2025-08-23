@@ -102,13 +102,7 @@ impl CloudApiClient {
         let credentials = credentials.as_ref().context("no credentials provided")?;
         let authorization_header = format!("{} {}", credentials.user_id, credentials.access_token);
 
-        Ok(cx.spawn(async move |cx| {
-            let handle = cx
-                .update(|cx| Tokio::handle(cx))
-                .ok()
-                .context("failed to get Tokio handle")?;
-            let _guard = handle.enter();
-
+        Ok(Tokio::spawn_result(cx, async move {
             let ws = WebSocket::connect(connect_url)
                 .with_request(
                     request::Builder::new()
@@ -119,34 +113,6 @@ impl CloudApiClient {
 
             Ok(Connection::new(ws))
         }))
-    }
-
-    pub async fn accept_terms_of_service(&self) -> Result<AcceptTermsOfServiceResponse> {
-        let request = self.build_request(
-            Request::builder().method(Method::POST).uri(
-                self.http_client
-                    .build_zed_cloud_url("/client/terms_of_service/accept", &[])?
-                    .as_ref(),
-            ),
-            AsyncBody::default(),
-        )?;
-
-        let mut response = self.http_client.send(request).await?;
-
-        if !response.status().is_success() {
-            let mut body = String::new();
-            response.body_mut().read_to_string(&mut body).await?;
-
-            anyhow::bail!(
-                "Failed to accept terms of service.\nStatus: {:?}\nBody: {body}",
-                response.status()
-            )
-        }
-
-        let mut body = String::new();
-        response.body_mut().read_to_string(&mut body).await?;
-
-        Ok(serde_json::from_str(&body)?)
     }
 
     pub async fn create_llm_token(

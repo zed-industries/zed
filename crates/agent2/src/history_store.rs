@@ -10,6 +10,7 @@ use itertools::Itertools;
 use paths::contexts_dir;
 use serde::{Deserialize, Serialize};
 use std::{collections::VecDeque, path::Path, sync::Arc, time::Duration};
+use ui::ElementId;
 use util::ResultExt as _;
 
 const MAX_RECENTLY_OPENED_ENTRIES: usize = 6;
@@ -68,6 +69,15 @@ pub enum HistoryEntryId {
     TextThread(Arc<Path>),
 }
 
+impl Into<ElementId> for HistoryEntryId {
+    fn into(self) -> ElementId {
+        match self {
+            HistoryEntryId::AcpThread(session_id) => ElementId::Name(session_id.0.into()),
+            HistoryEntryId::TextThread(path) => ElementId::Path(path),
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug)]
 enum SerializedRecentOpen {
     AcpThread(String),
@@ -76,6 +86,7 @@ enum SerializedRecentOpen {
 
 pub struct HistoryStore {
     threads: Vec<DbThreadMetadata>,
+    entries: Vec<HistoryEntry>,
     context_store: Entity<assistant_context::ContextStore>,
     recently_opened_entries: VecDeque<HistoryEntryId>,
     _subscriptions: Vec<gpui::Subscription>,
@@ -87,7 +98,7 @@ impl HistoryStore {
         context_store: Entity<assistant_context::ContextStore>,
         cx: &mut Context<Self>,
     ) -> Self {
-        let subscriptions = vec![cx.observe(&context_store, |_, _, cx| cx.notify())];
+        let subscriptions = vec![cx.observe(&context_store, |this, _, cx| this.update_entries(cx))];
 
         cx.spawn(async move |this, cx| {
             let entries = Self::load_recently_opened_entries(cx).await;
@@ -106,6 +117,7 @@ impl HistoryStore {
             context_store,
             recently_opened_entries: VecDeque::default(),
             threads: Vec::default(),
+            entries: Vec::default(),
             _subscriptions: subscriptions,
             _save_recently_opened_entries_task: Task::ready(()),
         }
@@ -171,20 +183,18 @@ impl HistoryStore {
                     }
                 }
                 this.threads = threads;
-                cx.notify();
+                this.update_entries(cx);
             })
         })
         .detach_and_log_err(cx);
     }
 
-    pub fn entries(&self, cx: &App) -> Vec<HistoryEntry> {
-        let mut history_entries = Vec::new();
-
+    fn update_entries(&mut self, cx: &mut Context<Self>) {
         #[cfg(debug_assertions)]
         if std::env::var("ZED_SIMULATE_NO_THREAD_HISTORY").is_ok() {
-            return history_entries;
+            return;
         }
-
+        let mut history_entries = Vec::new();
         history_entries.extend(self.threads.iter().cloned().map(HistoryEntry::AcpThread));
         history_entries.extend(
             self.context_store
@@ -195,17 +205,12 @@ impl HistoryStore {
         );
 
         history_entries.sort_unstable_by_key(|entry| std::cmp::Reverse(entry.updated_at()));
-        history_entries
+        self.entries = history_entries;
+        cx.notify()
     }
 
-    pub fn is_empty(&self, cx: &App) -> bool {
-        self.threads.is_empty()
-            && self
-                .context_store
-                .read(cx)
-                .unordered_contexts()
-                .next()
-                .is_none()
+    pub fn is_empty(&self, _cx: &App) -> bool {
+        self.entries.is_empty()
     }
 
     pub fn recently_opened_entries(&self, cx: &App) -> Vec<HistoryEntry> {
@@ -346,7 +351,7 @@ impl HistoryStore {
         self.save_recently_opened_entries(cx);
     }
 
-    pub fn recent_entries(&self, limit: usize, cx: &mut Context<Self>) -> Vec<HistoryEntry> {
-        self.entries(cx).into_iter().take(limit).collect()
+    pub fn entries(&self) -> impl Iterator<Item = HistoryEntry> {
+        self.entries.iter().cloned()
     }
 }

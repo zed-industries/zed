@@ -44,11 +44,11 @@ impl AgentTool for DeletePathTool {
     type Input = DeletePathToolInput;
     type Output = String;
 
-    fn name(&self) -> SharedString {
-        "delete_path".into()
+    fn name() -> &'static str {
+        "delete_path"
     }
 
-    fn kind(&self) -> ToolKind {
+    fn kind() -> ToolKind {
         ToolKind::Delete
     }
 

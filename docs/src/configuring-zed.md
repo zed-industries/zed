@@ -2425,6 +2425,7 @@ Examples:
 {
   "completions": {
     "words": "fallback",
+    "words_min_length": 3,
     "lsp": true,
     "lsp_fetch_timeout_ms": 0,
     "lsp_insert_mode": "replace_suffix"
@@ -2443,6 +2444,17 @@ Examples:
 1. `enabled` - Always fetch document's words for completions along with LSP completions
 2. `fallback` - Only if LSP response errors or times out, use document's words to show completions
 3. `disabled` - Never fetch or complete document's words for completions (word-based completions can still be queried via a separate action)
+
+### Min Words Query Length
+
+- Description: Minimum number of characters required to automatically trigger word-based completions.
+  Before that value, it's still possible to trigger the words-based completion manually with the corresponding editor command.
+- Setting: `words_min_length`
+- Default: `3`
+
+**Options**
+
+Positive integer values
 
 ### LSP
 
@@ -3234,6 +3246,7 @@ Run the `theme selector: toggle` action in the command palette to see a current 
     "scrollbar": {
       "show": null
     },
+    "sticky_scroll": true,
     "show_diagnostics": "all",
     "indent_guides": {
       "show": "always"

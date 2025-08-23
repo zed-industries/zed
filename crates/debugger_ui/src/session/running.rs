@@ -916,7 +916,10 @@ impl RunningState {
         let task_store = project.read(cx).task_store().downgrade();
         let weak_project = project.downgrade();
         let weak_workspace = workspace.downgrade();
-        let is_local = project.read(cx).is_local();
+        let ssh_info = project
+            .read(cx)
+            .ssh_client()
+            .and_then(|it| it.read(cx).ssh_info());
 
         cx.spawn_in(window, async move |this, cx| {
             let DebugScenario {
@@ -1000,7 +1003,7 @@ impl RunningState {
                     None
                 };
 
-                let builder = ShellBuilder::new(is_local, &task.resolved.shell);
+                let builder = ShellBuilder::new(ssh_info.as_ref().map(|info| &*info.shell), &task.resolved.shell);
                 let command_label = builder.command_label(&task.resolved.command_label);
                 let (command, args) =
                     builder.build(task.resolved.command.clone(), &task.resolved.args);

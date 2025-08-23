@@ -3,18 +3,18 @@ use crate::{AgentPanel, RemoveSelectedThread};
 use agent2::{HistoryEntry, HistoryStore};
 use chrono::{Datelike as _, Local, NaiveDate, TimeDelta};
 use editor::{Editor, EditorEvent};
-use fuzzy::{StringMatch, StringMatchCandidate};
+use fuzzy::StringMatchCandidate;
 use gpui::{
-    App, Empty, Entity, EventEmitter, FocusHandle, Focusable, ScrollStrategy, Stateful, Task,
+    App, Entity, EventEmitter, FocusHandle, Focusable, ScrollStrategy, Stateful, Task,
     UniformListScrollHandle, WeakEntity, Window, uniform_list,
 };
-use std::{fmt::Display, ops::Range, sync::Arc};
+use std::{fmt::Display, ops::Range};
+use text::Bias;
 use time::{OffsetDateTime, UtcOffset};
 use ui::{
     HighlightedLabel, IconButtonShape, ListItem, ListItemSpacing, Scrollbar, ScrollbarState,
     Tooltip, prelude::*,
 };
-use util::ResultExt;
 
 pub struct AcpThreadHistory {
     pub(crate) history_store: Entity<HistoryStore>,
@@ -22,38 +22,38 @@ pub struct AcpThreadHistory {
     selected_index: usize,
     hovered_index: Option<usize>,
     search_editor: Entity<Editor>,
-    all_entries: Arc<Vec<HistoryEntry>>,
-    // When the search is empty, we display date separators between history entries
-    // This vector contains an enum of either a separator or an actual entry
-    separated_items: Vec<ListItemType>,
-    // Maps entry indexes to list item indexes
-    separated_item_indexes: Vec<u32>,
-    _separated_items_task: Option<Task<()>>,
-    search_state: SearchState,
+    search_query: SharedString,
+
+    visible_items: Vec<ListItemType>,
+
     scrollbar_visibility: bool,
     scrollbar_state: ScrollbarState,
     local_timezone: UtcOffset,
-    _subscriptions: Vec<gpui::Subscription>,
-}
 
-enum SearchState {
-    Empty,
-    Searching {
-        query: SharedString,
-        _task: Task<()>,
-    },
-    Searched {
-        query: SharedString,
-        matches: Vec<StringMatch>,
-    },
+    _update_task: Task<()>,
+    _subscriptions: Vec<gpui::Subscription>,
 }
 
 enum ListItemType {
     BucketSeparator(TimeBucket),
     Entry {
-        index: usize,
+        entry: HistoryEntry,
         format: EntryTimeFormat,
     },
+    SearchResult {
+        entry: HistoryEntry,
+        positions: Vec<usize>,
+    },
+}
+
+impl ListItemType {
+    fn history_entry(&self) -> Option<&HistoryEntry> {
+        match self {
+            ListItemType::Entry { entry, .. } => Some(entry),
+            ListItemType::SearchResult { entry, .. } => Some(entry),
+            _ => None,
+        }
+    }
 }
 
 pub enum ThreadHistoryEvent {
@@ -78,12 +78,15 @@ impl AcpThreadHistory {
             cx.subscribe(&search_editor, |this, search_editor, event, cx| {
                 if let EditorEvent::BufferEdited = event {
                     let query = search_editor.read(cx).text(cx);
-                    this.search(query.into(), cx);
+                    if this.search_query != query {
+                        this.search_query = query.into();
+                        this.update_visible_items(false, cx);
+                    }
                 }
             });
 
         let history_store_subscription = cx.observe(&history_store, |this, _, cx| {
-            this.update_all_entries(cx);
+            this.update_visible_items(true, cx);
         });
 
         let scroll_handle = UniformListScrollHandle::default();
@@ -94,10 +97,7 @@ impl AcpThreadHistory {
             scroll_handle,
             selected_index: 0,
             hovered_index: None,
-            search_state: SearchState::Empty,
-            all_entries: Default::default(),
-            separated_items: Default::default(),
-            separated_item_indexes: Default::default(),
+            visible_items: Default::default(),
             search_editor,
             scrollbar_visibility: true,
             scrollbar_state,
@@ -105,29 +105,61 @@ impl AcpThreadHistory {
                 chrono::Local::now().offset().local_minus_utc(),
             )
             .unwrap(),
+            search_query: SharedString::default(),
             _subscriptions: vec![search_editor_subscription, history_store_subscription],
-            _separated_items_task: None,
+            _update_task: Task::ready(()),
         };
-        this.update_all_entries(cx);
+        this.update_visible_items(false, cx);
         this
     }
 
-    fn update_all_entries(&mut self, cx: &mut Context<Self>) {
-        let new_entries: Arc<Vec<HistoryEntry>> = self
+    fn update_visible_items(&mut self, preserve_selected_item: bool, cx: &mut Context<Self>) {
+        let entries = self
             .history_store
-            .update(cx, |store, cx| store.entries(cx))
-            .into();
+            .update(cx, |store, _| store.entries().collect());
+        let new_list_items = if self.search_query.is_empty() {
+            self.add_list_separators(entries, cx)
+        } else {
+            self.filter_search_results(entries, cx)
+        };
+        let selected_history_entry = if preserve_selected_item {
+            self.selected_history_entry().cloned()
+        } else {
+            None
+        };
 
-        self._separated_items_task.take();
+        self._update_task = cx.spawn(async move |this, cx| {
+            let new_visible_items = new_list_items.await;
+            this.update(cx, |this, cx| {
+                let new_selected_index = if let Some(history_entry) = selected_history_entry {
+                    let history_entry_id = history_entry.id();
+                    new_visible_items
+                        .iter()
+                        .position(|visible_entry| {
+                            visible_entry
+                                .history_entry()
+                                .is_some_and(|entry| entry.id() == history_entry_id)
+                        })
+                        .unwrap_or(0)
+                } else {
+                    0
+                };
 
-        let mut items = Vec::with_capacity(new_entries.len() + 1);
-        let mut indexes = Vec::with_capacity(new_entries.len() + 1);
+                this.visible_items = new_visible_items;
+                this.set_selected_index(new_selected_index, Bias::Right, cx);
+                cx.notify();
+            })
+            .ok();
+        });
+    }
 
-        let bg_task = cx.background_spawn(async move {
+    fn add_list_separators(&self, entries: Vec<HistoryEntry>, cx: &App) -> Task<Vec<ListItemType>> {
+        cx.background_spawn(async move {
+            let mut items = Vec::with_capacity(entries.len() + 1);
             let mut bucket = None;
             let today = Local::now().naive_local().date();
 
-            for (index, entry) in new_entries.iter().enumerate() {
+            for entry in entries.into_iter() {
                 let entry_date = entry
                     .updated_at()
                     .with_timezone(&Local)
@@ -140,75 +172,33 @@ impl AcpThreadHistory {
                     items.push(ListItemType::BucketSeparator(entry_bucket));
                 }
 
-                indexes.push(items.len() as u32);
                 items.push(ListItemType::Entry {
-                    index,
+                    entry,
                     format: entry_bucket.into(),
                 });
             }
-            (new_entries, items, indexes)
-        });
-
-        let task = cx.spawn(async move |this, cx| {
-            let (new_entries, items, indexes) = bg_task.await;
-            this.update(cx, |this, cx| {
-                let previously_selected_entry =
-                    this.all_entries.get(this.selected_index).map(|e| e.id());
-
-                this.all_entries = new_entries;
-                this.separated_items = items;
-                this.separated_item_indexes = indexes;
-
-                match &this.search_state {
-                    SearchState::Empty => {
-                        if this.selected_index >= this.all_entries.len() {
-                            this.set_selected_entry_index(
-                                this.all_entries.len().saturating_sub(1),
-                                cx,
-                            );
-                        } else if let Some(prev_id) = previously_selected_entry
-                            && let Some(new_ix) = this
-                                .all_entries
-                                .iter()
-                                .position(|probe| probe.id() == prev_id)
-                        {
-                            this.set_selected_entry_index(new_ix, cx);
-                        }
-                    }
-                    SearchState::Searching { query, .. } | SearchState::Searched { query, .. } => {
-                        this.search(query.clone(), cx);
-                    }
-                }
-
-                cx.notify();
-            })
-            .log_err();
-        });
-        self._separated_items_task = Some(task);
+            items
+        })
     }
 
-    fn search(&mut self, query: SharedString, cx: &mut Context<Self>) {
-        if query.is_empty() {
-            self.search_state = SearchState::Empty;
-            cx.notify();
-            return;
-        }
-
-        let all_entries = self.all_entries.clone();
-
-        let fuzzy_search_task = cx.background_spawn({
-            let query = query.clone();
+    fn filter_search_results(
+        &self,
+        entries: Vec<HistoryEntry>,
+        cx: &App,
+    ) -> Task<Vec<ListItemType>> {
+        let query = self.search_query.clone();
+        cx.background_spawn({
             let executor = cx.background_executor().clone();
             async move {
-                let mut candidates = Vec::with_capacity(all_entries.len());
+                let mut candidates = Vec::with_capacity(entries.len());
 
-                for (idx, entry) in all_entries.iter().enumerate() {
+                for (idx, entry) in entries.iter().enumerate() {
                     candidates.push(StringMatchCandidate::new(idx, entry.title()));
                 }
 
                 const MAX_MATCHES: usize = 100;
 
-                fuzzy::match_strings(
+                let matches = fuzzy::match_strings(
                     &candidates,
                     &query,
                     false,
@@ -217,74 +207,61 @@ impl AcpThreadHistory {
                     &Default::default(),
                     executor,
                 )
-                .await
+                .await;
+
+                matches
+                    .into_iter()
+                    .map(|search_match| ListItemType::SearchResult {
+                        entry: entries[search_match.candidate_id].clone(),
+                        positions: search_match.positions,
+                    })
+                    .collect()
             }
-        });
-
-        let task = cx.spawn({
-            let query = query.clone();
-            async move |this, cx| {
-                let matches = fuzzy_search_task.await;
-
-                this.update(cx, |this, cx| {
-                    let SearchState::Searching {
-                        query: current_query,
-                        _task,
-                    } = &this.search_state
-                    else {
-                        return;
-                    };
-
-                    if &query == current_query {
-                        this.search_state = SearchState::Searched {
-                            query: query.clone(),
-                            matches,
-                        };
-
-                        this.set_selected_entry_index(0, cx);
-                        cx.notify();
-                    };
-                })
-                .log_err();
-            }
-        });
-
-        self.search_state = SearchState::Searching { query, _task: task };
-        cx.notify();
-    }
-
-    fn matched_count(&self) -> usize {
-        match &self.search_state {
-            SearchState::Empty => self.all_entries.len(),
-            SearchState::Searching { .. } => 0,
-            SearchState::Searched { matches, .. } => matches.len(),
-        }
-    }
-
-    fn list_item_count(&self) -> usize {
-        match &self.search_state {
-            SearchState::Empty => self.separated_items.len(),
-            SearchState::Searching { .. } => 0,
-            SearchState::Searched { matches, .. } => matches.len(),
-        }
+        })
     }
 
     fn search_produced_no_matches(&self) -> bool {
-        match &self.search_state {
-            SearchState::Empty => false,
-            SearchState::Searching { .. } => false,
-            SearchState::Searched { matches, .. } => matches.is_empty(),
-        }
+        self.visible_items.is_empty() && !self.search_query.is_empty()
     }
 
-    fn get_match(&self, ix: usize) -> Option<&HistoryEntry> {
-        match &self.search_state {
-            SearchState::Empty => self.all_entries.get(ix),
-            SearchState::Searching { .. } => None,
-            SearchState::Searched { matches, .. } => matches
-                .get(ix)
-                .and_then(|m| self.all_entries.get(m.candidate_id)),
+    fn selected_history_entry(&self) -> Option<&HistoryEntry> {
+        self.get_history_entry(self.selected_index)
+    }
+
+    fn get_history_entry(&self, visible_items_ix: usize) -> Option<&HistoryEntry> {
+        self.visible_items.get(visible_items_ix)?.history_entry()
+    }
+
+    fn set_selected_index(&mut self, mut index: usize, bias: Bias, cx: &mut Context<Self>) {
+        if self.visible_items.len() == 0 {
+            self.selected_index = 0;
+            return;
         }
+        while matches!(
+            self.visible_items.get(index),
+            None | Some(ListItemType::BucketSeparator(..))
+        ) {
+            index = match bias {
+                Bias::Left => {
+                    if index == 0 {
+                        self.visible_items.len() - 1
+                    } else {
+                        index - 1
+                    }
+                }
+                Bias::Right => {
+                    if index >= self.visible_items.len() - 1 {
+                        0
+                    } else {
+                        index + 1
+                    }
+                }
+            };
+        }
+        self.selected_index = index;
+        self.scroll_handle
+            .scroll_to_item(index, ScrollStrategy::Top);
+        cx.notify()
     }
 
     pub fn select_previous(
@@ -293,13 +270,10 @@ impl AcpThreadHistory {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let count = self.matched_count();
-        if count > 0 {
-            if self.selected_index == 0 {
-                self.set_selected_entry_index(count - 1, cx);
-            } else {
-                self.set_selected_entry_index(self.selected_index - 1, cx);
-            }
+        if self.selected_index == 0 {
+            self.set_selected_index(self.visible_items.len() - 1, Bias::Left, cx);
+        } else {
+            self.set_selected_index(self.selected_index - 1, Bias::Left, cx);
         }
     }
 
@@ -309,13 +283,10 @@ impl AcpThreadHistory {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let count = self.matched_count();
-        if count > 0 {
-            if self.selected_index == count - 1 {
-                self.set_selected_entry_index(0, cx);
-            } else {
-                self.set_selected_entry_index(self.selected_index + 1, cx);
-            }
+        if self.selected_index == self.visible_items.len() - 1 {
+            self.set_selected_index(0, Bias::Right, cx);
+        } else {
+            self.set_selected_index(self.selected_index + 1, Bias::Right, cx);
         }
     }
 
@@ -325,35 +296,47 @@ impl AcpThreadHistory {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let count = self.matched_count();
-        if count > 0 {
-            self.set_selected_entry_index(0, cx);
-        }
+        self.set_selected_index(0, Bias::Right, cx);
     }
 
     fn select_last(&mut self, _: &menu::SelectLast, _window: &mut Window, cx: &mut Context<Self>) {
-        let count = self.matched_count();
-        if count > 0 {
-            self.set_selected_entry_index(count - 1, cx);
-        }
+        self.set_selected_index(self.visible_items.len() - 1, Bias::Left, cx);
     }
 
-    fn set_selected_entry_index(&mut self, entry_index: usize, cx: &mut Context<Self>) {
-        self.selected_index = entry_index;
+    fn confirm(&mut self, _: &menu::Confirm, _window: &mut Window, cx: &mut Context<Self>) {
+        self.confirm_entry(self.selected_index, cx);
+    }
 
-        let scroll_ix = match self.search_state {
-            SearchState::Empty | SearchState::Searching { .. } => self
-                .separated_item_indexes
-                .get(entry_index)
-                .map(|ix| *ix as usize)
-                .unwrap_or(entry_index + 1),
-            SearchState::Searched { .. } => entry_index,
+    fn confirm_entry(&mut self, ix: usize, cx: &mut Context<Self>) {
+        let Some(entry) = self.get_history_entry(ix) else {
+            return;
+        };
+        cx.emit(ThreadHistoryEvent::Open(entry.clone()));
+    }
+
+    fn remove_selected_thread(
+        &mut self,
+        _: &RemoveSelectedThread,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.remove_thread(self.selected_index, cx)
+    }
+
+    fn remove_thread(&mut self, visible_item_ix: usize, cx: &mut Context<Self>) {
+        let Some(entry) = self.get_history_entry(visible_item_ix) else {
+            return;
         };
 
-        self.scroll_handle
-            .scroll_to_item(scroll_ix, ScrollStrategy::Top);
-
-        cx.notify();
+        let task = match entry {
+            HistoryEntry::AcpThread(thread) => self
+                .history_store
+                .update(cx, |this, cx| this.delete_thread(thread.id.clone(), cx)),
+            HistoryEntry::TextThread(context) => self.history_store.update(cx, |this, cx| {
+                this.delete_text_thread(context.path.clone(), cx)
+            }),
+        };
+        task.detach_and_log_err(cx);
     }
 
     fn render_scrollbar(&self, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
@@ -393,91 +376,33 @@ impl AcpThreadHistory {
         )
     }
 
-    fn confirm(&mut self, _: &menu::Confirm, _window: &mut Window, cx: &mut Context<Self>) {
-        self.confirm_entry(self.selected_index, cx);
-    }
-
-    fn confirm_entry(&mut self, ix: usize, cx: &mut Context<Self>) {
-        let Some(entry) = self.get_match(ix) else {
-            return;
-        };
-        cx.emit(ThreadHistoryEvent::Open(entry.clone()));
-    }
-
-    fn remove_selected_thread(
-        &mut self,
-        _: &RemoveSelectedThread,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.remove_thread(self.selected_index, cx)
-    }
-
-    fn remove_thread(&mut self, ix: usize, cx: &mut Context<Self>) {
-        let Some(entry) = self.get_match(ix) else {
-            return;
-        };
-
-        let task = match entry {
-            HistoryEntry::AcpThread(thread) => self
-                .history_store
-                .update(cx, |this, cx| this.delete_thread(thread.id.clone(), cx)),
-            HistoryEntry::TextThread(context) => self.history_store.update(cx, |this, cx| {
-                this.delete_text_thread(context.path.clone(), cx)
-            }),
-        };
-        task.detach_and_log_err(cx);
-    }
-
-    fn list_items(
+    fn render_list_items(
         &mut self,
         range: Range<usize>,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Vec<AnyElement> {
-        match &self.search_state {
-            SearchState::Empty => self
-                .separated_items
-                .get(range)
-                .iter()
-                .flat_map(|items| {
-                    items
-                        .iter()
-                        .map(|item| self.render_list_item(item, vec![], cx))
-                })
-                .collect(),
-            SearchState::Searched { matches, .. } => matches[range]
-                .iter()
-                .filter_map(|m| {
-                    let entry = self.all_entries.get(m.candidate_id)?;
-                    Some(self.render_history_entry(
-                        entry,
-                        EntryTimeFormat::DateAndTime,
-                        m.candidate_id,
-                        m.positions.clone(),
-                        cx,
-                    ))
-                })
-                .collect(),
-            SearchState::Searching { .. } => {
-                vec![]
-            }
-        }
+        self.visible_items
+            .get(range.clone())
+            .into_iter()
+            .flatten()
+            .enumerate()
+            .map(|(ix, item)| self.render_list_item(item, range.start + ix, cx))
+            .collect()
     }
 
-    fn render_list_item(
-        &self,
-        item: &ListItemType,
-        highlight_positions: Vec<usize>,
-        cx: &Context<Self>,
-    ) -> AnyElement {
+    fn render_list_item(&self, item: &ListItemType, ix: usize, cx: &Context<Self>) -> AnyElement {
         match item {
-            ListItemType::Entry { index, format } => match self.all_entries.get(*index) {
-                Some(entry) => self
-                    .render_history_entry(entry, *format, *index, highlight_positions, cx)
-                    .into_any(),
-                None => Empty.into_any_element(),
-            },
+            ListItemType::Entry { entry, format } => self
+                .render_history_entry(entry, *format, ix, Vec::default(), cx)
+                .into_any(),
+            ListItemType::SearchResult { entry, positions } => self.render_history_entry(
+                entry,
+                EntryTimeFormat::DateAndTime,
+                ix,
+                positions.clone(),
+                cx,
+            ),
             ListItemType::BucketSeparator(bucket) => div()
                 .px(DynamicSpacing::Base06.rems(cx))
                 .pt_2()
@@ -495,12 +420,12 @@ impl AcpThreadHistory {
         &self,
         entry: &HistoryEntry,
         format: EntryTimeFormat,
-        list_entry_ix: usize,
+        ix: usize,
         highlight_positions: Vec<usize>,
         cx: &Context<Self>,
     ) -> AnyElement {
-        let selected = list_entry_ix == self.selected_index;
-        let hovered = Some(list_entry_ix) == self.hovered_index;
+        let selected = ix == self.selected_index;
+        let hovered = Some(ix) == self.hovered_index;
         let timestamp = entry.updated_at().timestamp();
         let thread_timestamp = format.format_timestamp(timestamp, self.local_timezone);
 
@@ -508,7 +433,7 @@ impl AcpThreadHistory {
             .w_full()
             .pb_1()
             .child(
-                ListItem::new(list_entry_ix)
+                ListItem::new(ix)
                     .rounded()
                     .toggle_state(selected)
                     .spacing(ListItemSpacing::Sparse)
@@ -530,8 +455,8 @@ impl AcpThreadHistory {
                     )
                     .on_hover(cx.listener(move |this, is_hovered, _window, cx| {
                         if *is_hovered {
-                            this.hovered_index = Some(list_entry_ix);
-                        } else if this.hovered_index == Some(list_entry_ix) {
+                            this.hovered_index = Some(ix);
+                        } else if this.hovered_index == Some(ix) {
                             this.hovered_index = None;
                         }
 
@@ -546,16 +471,14 @@ impl AcpThreadHistory {
                                 .tooltip(move |window, cx| {
                                     Tooltip::for_action("Delete", &RemoveSelectedThread, window, cx)
                                 })
-                                .on_click(cx.listener(move |this, _, _, cx| {
-                                    this.remove_thread(list_entry_ix, cx)
-                                })),
+                                .on_click(
+                                    cx.listener(move |this, _, _, cx| this.remove_thread(ix, cx)),
+                                ),
                         )
                     } else {
                         None
                     })
-                    .on_click(
-                        cx.listener(move |this, _, _, cx| this.confirm_entry(list_entry_ix, cx)),
-                    ),
+                    .on_click(cx.listener(move |this, _, _, cx| this.confirm_entry(ix, cx))),
             )
             .into_any_element()
     }
@@ -578,7 +501,7 @@ impl Render for AcpThreadHistory {
             .on_action(cx.listener(Self::select_last))
             .on_action(cx.listener(Self::confirm))
             .on_action(cx.listener(Self::remove_selected_thread))
-            .when(!self.all_entries.is_empty(), |parent| {
+            .when(!self.history_store.read(cx).is_empty(cx), |parent| {
                 parent.child(
                     h_flex()
                         .h(px(41.)) // Match the toolbar perfectly
@@ -604,7 +527,7 @@ impl Render for AcpThreadHistory {
                     .overflow_hidden()
                     .flex_grow();
 
-                if self.all_entries.is_empty() {
+                if self.history_store.read(cx).is_empty(cx) {
                     view.justify_center()
                         .child(
                             h_flex().w_full().justify_center().child(
@@ -623,9 +546,9 @@ impl Render for AcpThreadHistory {
                         .child(
                             uniform_list(
                                 "thread-history",
-                                self.list_item_count(),
+                                self.visible_items.len(),
                                 cx.processor(|this, range: Range<usize>, window, cx| {
-                                    this.list_items(range, window, cx)
+                                    this.render_list_items(range, window, cx)
                                 }),
                             )
                             .p_1()
@@ -673,18 +596,9 @@ impl AcpHistoryEntryElement {
 
 impl RenderOnce for AcpHistoryEntryElement {
     fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
-        let (id, title, timestamp) = match &self.entry {
-            HistoryEntry::AcpThread(thread) => (
-                thread.id.to_string(),
-                thread.title.clone(),
-                thread.updated_at,
-            ),
-            HistoryEntry::TextThread(context) => (
-                context.path.to_string_lossy().to_string(),
-                context.title.clone(),
-                context.mtime.to_utc(),
-            ),
-        };
+        let id = self.entry.id();
+        let title = self.entry.title();
+        let timestamp = self.entry.updated_at();
 
         let formatted_time = {
             let now = chrono::Utc::now();
@@ -701,7 +615,7 @@ impl RenderOnce for AcpHistoryEntryElement {
             }
         };
 
-        ListItem::new(SharedString::from(id))
+        ListItem::new(id)
             .rounded()
             .toggle_state(self.selected)
             .spacing(ListItemSpacing::Sparse)

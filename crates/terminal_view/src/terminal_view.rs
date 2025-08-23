@@ -1,22 +1,21 @@
-mod color_contrast;
 mod persistence;
 pub mod terminal_element;
 pub mod terminal_panel;
+mod terminal_path_like_target;
 pub mod terminal_scrollbar;
 mod terminal_slash_command;
 pub mod terminal_tab_tooltip;
 
 use assistant_slash_command::SlashCommandRegistry;
-use editor::{Editor, EditorSettings, actions::SelectAll, scroll::ScrollbarAutoHide};
+use editor::{EditorSettings, actions::SelectAll, scroll::ScrollbarAutoHide};
 use gpui::{
     Action, AnyElement, App, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
     KeyContext, KeyDownEvent, Keystroke, MouseButton, MouseDownEvent, Pixels, Render,
     ScrollWheelEvent, Stateful, Styled, Subscription, Task, WeakEntity, actions, anchored,
     deferred, div,
 };
-use itertools::Itertools;
 use persistence::TERMINAL_DB;
-use project::{Entry, Metadata, Project, search::SearchQuery, terminals::TerminalKind};
+use project::{Project, search::SearchQuery, terminals::TerminalKind};
 use schemars::JsonSchema;
 use task::TaskId;
 use terminal::{
@@ -31,16 +30,17 @@ use terminal::{
 };
 use terminal_element::TerminalElement;
 use terminal_panel::TerminalPanel;
+use terminal_path_like_target::{hover_path_like_target, open_path_like_target};
 use terminal_scrollbar::TerminalScrollHandle;
 use terminal_slash_command::TerminalSlashCommand;
 use terminal_tab_tooltip::TerminalTooltip;
 use ui::{
     ContextMenu, Icon, IconName, Label, Scrollbar, ScrollbarState, Tooltip, h_flex, prelude::*,
 };
-use util::{ResultExt, debug_panic, paths::PathWithPosition};
+use util::ResultExt;
 use workspace::{
-    CloseActiveItem, NewCenterTerminal, NewTerminal, OpenOptions, OpenVisible, ToolbarItemLocation,
-    Workspace, WorkspaceId, delete_unloaded_items,
+    CloseActiveItem, NewCenterTerminal, NewTerminal, ToolbarItemLocation, Workspace, WorkspaceId,
+    delete_unloaded_items,
     item::{
         BreadcrumbText, Item, ItemEvent, SerializableItem, TabContentParams, TabTooltipContent,
     },
@@ -48,7 +48,6 @@ use workspace::{
     searchable::{Direction, SearchEvent, SearchOptions, SearchableItem, SearchableItemHandle},
 };
 
-use anyhow::Context as _;
 use serde::Deserialize;
 use settings::{Settings, SettingsStore};
 use smol::Timer;
@@ -64,7 +63,6 @@ use std::{
 };
 
 const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(500);
-const GIT_DIFF_PATH_PREFIXES: &[&str] = &["a", "b"];
 const TERMINAL_SCROLLBAR_WIDTH: Pixels = px(12.);
 
 /// Event to transmit the scroll from the element to the view
@@ -181,6 +179,7 @@ impl ContentMode {
 }
 
 #[derive(Debug)]
+#[cfg_attr(test, derive(Clone, Eq, PartialEq))]
 struct HoverTarget {
     tooltip: String,
     hovered_word: HoveredWord,
@@ -1066,37 +1065,13 @@ fn subscribe_for_terminal_events(
                                     .as_ref()
                                     .map(|hover| &hover.hovered_word)
                             {
-                                let valid_files_to_open_task = possible_open_target(
+                                terminal_view.hover = None;
+                                terminal_view.hover_tooltip_update = hover_path_like_target(
                                     &workspace,
-                                    &path_like_target.terminal_dir,
-                                    &path_like_target.maybe_path,
+                                    hovered_word.clone(),
+                                    path_like_target,
                                     cx,
                                 );
-                                let hovered_word = hovered_word.clone();
-
-                                terminal_view.hover = None;
-                                terminal_view.hover_tooltip_update =
-                                    cx.spawn(async move |terminal_view, cx| {
-                                        let file_to_open = valid_files_to_open_task.await;
-                                        terminal_view
-                                            .update(cx, |terminal_view, _| match file_to_open {
-                                                Some(
-                                                    OpenTarget::File(path, _)
-                                                    | OpenTarget::Worktree(path, _),
-                                                ) => {
-                                                    terminal_view.hover = Some(HoverTarget {
-                                                        tooltip: path.to_string(|path| {
-                                                            path.to_string_lossy().to_string()
-                                                        }),
-                                                        hovered_word,
-                                                    });
-                                                }
-                                                None => {
-                                                    terminal_view.hover = None;
-                                                }
-                                            })
-                                            .ok();
-                                    });
                                 cx.notify();
                             }
                         }
@@ -1110,86 +1085,13 @@ fn subscribe_for_terminal_events(
 
                 Event::Open(maybe_navigation_target) => match maybe_navigation_target {
                     MaybeNavigationTarget::Url(url) => cx.open_url(url),
-
-                    MaybeNavigationTarget::PathLike(path_like_target) => {
-                        if terminal_view.hover.is_none() {
-                            return;
-                        }
-                        let task_workspace = workspace.clone();
-                        let path_like_target = path_like_target.clone();
-                        cx.spawn_in(window, async move |terminal_view, cx| {
-                            let open_target = terminal_view
-                                .update(cx, |_, cx| {
-                                    possible_open_target(
-                                        &task_workspace,
-                                        &path_like_target.terminal_dir,
-                                        &path_like_target.maybe_path,
-                                        cx,
-                                    )
-                                })?
-                                .await;
-                            if let Some(open_target) = open_target {
-                                let path_to_open = open_target.path();
-                                let opened_items = task_workspace
-                                    .update_in(cx, |workspace, window, cx| {
-                                        workspace.open_paths(
-                                            vec![path_to_open.path.clone()],
-                                            OpenOptions {
-                                                visible: Some(OpenVisible::OnlyDirectories),
-                                                ..Default::default()
-                                            },
-                                            None,
-                                            window,
-                                            cx,
-                                        )
-                                    })
-                                    .context("workspace update")?
-                                    .await;
-                                if opened_items.len() != 1 {
-                                    debug_panic!(
-                                        "Received {} items for one path {path_to_open:?}",
-                                        opened_items.len(),
-                                    );
-                                }
-
-                                if let Some(opened_item) = opened_items.first() {
-                                    if open_target.is_file() {
-                                        if let Some(Ok(opened_item)) = opened_item
-                                            && let Some(row) = path_to_open.row
-                                        {
-                                            let col = path_to_open.column.unwrap_or(0);
-                                            if let Some(active_editor) =
-                                                opened_item.downcast::<Editor>()
-                                            {
-                                                active_editor
-                                                    .downgrade()
-                                                    .update_in(cx, |editor, window, cx| {
-                                                        editor.go_to_singleton_buffer_point(
-                                                            language::Point::new(
-                                                                row.saturating_sub(1),
-                                                                col.saturating_sub(1),
-                                                            ),
-                                                            window,
-                                                            cx,
-                                                        )
-                                                    })
-                                                    .log_err();
-                                            }
-                                        }
-                                    } else if open_target.is_dir() {
-                                        task_workspace.update(cx, |workspace, cx| {
-                                            workspace.project().update(cx, |_, cx| {
-                                                cx.emit(project::Event::ActivateProjectPanel);
-                                            })
-                                        })?;
-                                    }
-                                }
-                            }
-
-                            anyhow::Ok(())
-                        })
-                        .detach_and_log_err(cx)
-                    }
+                    MaybeNavigationTarget::PathLike(path_like_target) => open_path_like_target(
+                        &workspace,
+                        terminal_view,
+                        path_like_target,
+                        window,
+                        cx,
+                    ),
                 },
                 Event::BreadcrumbsChanged => cx.emit(ItemEvent::UpdateBreadcrumbs),
                 Event::CloseTerminal => cx.emit(ItemEvent::CloseItem),
@@ -1201,241 +1103,6 @@ fn subscribe_for_terminal_events(
         },
     );
     vec![terminal_subscription, terminal_events_subscription]
-}
-
-#[derive(Debug, Clone)]
-enum OpenTarget {
-    Worktree(PathWithPosition, Entry),
-    File(PathWithPosition, Metadata),
-}
-
-impl OpenTarget {
-    fn is_file(&self) -> bool {
-        match self {
-            OpenTarget::Worktree(_, entry) => entry.is_file(),
-            OpenTarget::File(_, metadata) => !metadata.is_dir,
-        }
-    }
-
-    fn is_dir(&self) -> bool {
-        match self {
-            OpenTarget::Worktree(_, entry) => entry.is_dir(),
-            OpenTarget::File(_, metadata) => metadata.is_dir,
-        }
-    }
-
-    fn path(&self) -> &PathWithPosition {
-        match self {
-            OpenTarget::Worktree(path, _) => path,
-            OpenTarget::File(path, _) => path,
-        }
-    }
-}
-
-fn possible_open_target(
-    workspace: &WeakEntity<Workspace>,
-    cwd: &Option<PathBuf>,
-    maybe_path: &str,
-    cx: &App,
-) -> Task<Option<OpenTarget>> {
-    let Some(workspace) = workspace.upgrade() else {
-        return Task::ready(None);
-    };
-    // We have to check for both paths, as on Unix, certain paths with positions are valid file paths too.
-    // We can be on FS remote part, without real FS, so cannot canonicalize or check for existence the path right away.
-    let mut potential_paths = Vec::new();
-    let original_path = PathWithPosition::from_path(PathBuf::from(maybe_path));
-    let path_with_position = PathWithPosition::parse_str(maybe_path);
-    let worktree_candidates = workspace
-        .read(cx)
-        .worktrees(cx)
-        .sorted_by_key(|worktree| {
-            let worktree_root = worktree.read(cx).abs_path();
-            match cwd
-                .as_ref()
-                .and_then(|cwd| worktree_root.strip_prefix(cwd).ok())
-            {
-                Some(cwd_child) => cwd_child.components().count(),
-                None => usize::MAX,
-            }
-        })
-        .collect::<Vec<_>>();
-    // Since we do not check paths via FS and joining, we need to strip off potential `./`, `a/`, `b/` prefixes out of it.
-    for prefix_str in GIT_DIFF_PATH_PREFIXES.iter().chain(std::iter::once(&".")) {
-        if let Some(stripped) = original_path.path.strip_prefix(prefix_str).ok() {
-            potential_paths.push(PathWithPosition {
-                path: stripped.to_owned(),
-                row: original_path.row,
-                column: original_path.column,
-            });
-        }
-        if let Some(stripped) = path_with_position.path.strip_prefix(prefix_str).ok() {
-            potential_paths.push(PathWithPosition {
-                path: stripped.to_owned(),
-                row: path_with_position.row,
-                column: path_with_position.column,
-            });
-        }
-    }
-
-    let insert_both_paths = original_path != path_with_position;
-    potential_paths.insert(0, original_path);
-    if insert_both_paths {
-        potential_paths.insert(1, path_with_position);
-    }
-
-    // If we won't find paths "easily", we can traverse the entire worktree to look what ends with the potential path suffix.
-    // That will be slow, though, so do the fast checks first.
-    let mut worktree_paths_to_check = Vec::new();
-    for worktree in &worktree_candidates {
-        let worktree_root = worktree.read(cx).abs_path();
-        let mut paths_to_check = Vec::with_capacity(potential_paths.len());
-
-        for path_with_position in &potential_paths {
-            let path_to_check = if worktree_root.ends_with(&path_with_position.path) {
-                let root_path_with_position = PathWithPosition {
-                    path: worktree_root.to_path_buf(),
-                    row: path_with_position.row,
-                    column: path_with_position.column,
-                };
-                match worktree.read(cx).root_entry() {
-                    Some(root_entry) => {
-                        return Task::ready(Some(OpenTarget::Worktree(
-                            root_path_with_position,
-                            root_entry.clone(),
-                        )));
-                    }
-                    None => root_path_with_position,
-                }
-            } else {
-                PathWithPosition {
-                    path: path_with_position
-                        .path
-                        .strip_prefix(&worktree_root)
-                        .unwrap_or(&path_with_position.path)
-                        .to_owned(),
-                    row: path_with_position.row,
-                    column: path_with_position.column,
-                }
-            };
-
-            if path_to_check.path.is_relative()
-                && let Some(entry) = worktree.read(cx).entry_for_path(&path_to_check.path)
-            {
-                return Task::ready(Some(OpenTarget::Worktree(
-                    PathWithPosition {
-                        path: worktree_root.join(&entry.path),
-                        row: path_to_check.row,
-                        column: path_to_check.column,
-                    },
-                    entry.clone(),
-                )));
-            }
-
-            paths_to_check.push(path_to_check);
-        }
-
-        if !paths_to_check.is_empty() {
-            worktree_paths_to_check.push((worktree.clone(), paths_to_check));
-        }
-    }
-
-    // Before entire worktree traversal(s), make an attempt to do FS checks if available.
-    let fs_paths_to_check = if workspace.read(cx).project().read(cx).is_local() {
-        potential_paths
-            .into_iter()
-            .flat_map(|path_to_check| {
-                let mut paths_to_check = Vec::new();
-                let maybe_path = &path_to_check.path;
-                if maybe_path.starts_with("~") {
-                    if let Some(home_path) =
-                        maybe_path
-                            .strip_prefix("~")
-                            .ok()
-                            .and_then(|stripped_maybe_path| {
-                                Some(dirs::home_dir()?.join(stripped_maybe_path))
-                            })
-                    {
-                        paths_to_check.push(PathWithPosition {
-                            path: home_path,
-                            row: path_to_check.row,
-                            column: path_to_check.column,
-                        });
-                    }
-                } else {
-                    paths_to_check.push(PathWithPosition {
-                        path: maybe_path.clone(),
-                        row: path_to_check.row,
-                        column: path_to_check.column,
-                    });
-                    if maybe_path.is_relative() {
-                        if let Some(cwd) = &cwd {
-                            paths_to_check.push(PathWithPosition {
-                                path: cwd.join(maybe_path),
-                                row: path_to_check.row,
-                                column: path_to_check.column,
-                            });
-                        }
-                        for worktree in &worktree_candidates {
-                            paths_to_check.push(PathWithPosition {
-                                path: worktree.read(cx).abs_path().join(maybe_path),
-                                row: path_to_check.row,
-                                column: path_to_check.column,
-                            });
-                        }
-                    }
-                }
-                paths_to_check
-            })
-            .collect()
-    } else {
-        Vec::new()
-    };
-
-    let worktree_check_task = cx.spawn(async move |cx| {
-        for (worktree, worktree_paths_to_check) in worktree_paths_to_check {
-            let found_entry = worktree
-                .update(cx, |worktree, _| {
-                    let worktree_root = worktree.abs_path();
-                    let traversal = worktree.traverse_from_path(true, true, false, "".as_ref());
-                    for entry in traversal {
-                        if let Some(path_in_worktree) = worktree_paths_to_check
-                            .iter()
-                            .find(|path_to_check| entry.path.ends_with(&path_to_check.path))
-                        {
-                            return Some(OpenTarget::Worktree(
-                                PathWithPosition {
-                                    path: worktree_root.join(&entry.path),
-                                    row: path_in_worktree.row,
-                                    column: path_in_worktree.column,
-                                },
-                                entry.clone(),
-                            ));
-                        }
-                    }
-                    None
-                })
-                .ok()?;
-            if let Some(found_entry) = found_entry {
-                return Some(found_entry);
-            }
-        }
-        None
-    });
-
-    let fs = workspace.read(cx).project().read(cx).fs().clone();
-    cx.background_spawn(async move {
-        for mut path_to_check in fs_paths_to_check {
-            if let Some(fs_path_to_check) = fs.canonicalize(&path_to_check.path).await.ok()
-                && let Some(metadata) = fs.metadata(&fs_path_to_check).await.ok().flatten()
-            {
-                path_to_check.path = fs_path_to_check;
-                return Some(OpenTarget::File(path_to_check, metadata));
-            }
-        }
-
-        worktree_check_task.await
-    })
 }
 
 fn regex_search_for_query(query: &project::search::SearchQuery) -> Option<RegexSearch> {

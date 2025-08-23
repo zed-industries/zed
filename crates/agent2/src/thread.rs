@@ -9,15 +9,15 @@ use action_log::ActionLog;
 use agent::thread::{GitState, ProjectSnapshot, WorktreeSnapshot};
 use agent_client_protocol as acp;
 use agent_settings::{
-    AgentProfileId, AgentSettings, CompletionMode, SUMMARIZE_THREAD_DETAILED_PROMPT,
-    SUMMARIZE_THREAD_PROMPT,
+    AgentProfileId, AgentProfileSettings, AgentSettings, CompletionMode,
+    SUMMARIZE_THREAD_DETAILED_PROMPT, SUMMARIZE_THREAD_PROMPT,
 };
 use anyhow::{Context as _, Result, anyhow};
 use assistant_tool::adapt_schema_to_format;
 use chrono::{DateTime, Utc};
 use client::{ModelRequestUsage, RequestUsage};
 use cloud_llm_client::{CompletionIntent, CompletionRequestStatus, UsageLimit};
-use collections::{HashMap, IndexMap};
+use collections::{HashMap, HashSet, IndexMap};
 use fs::Fs;
 use futures::{
     FutureExt,
@@ -57,6 +57,7 @@ use util::{ResultExt, debug_panic, markdown::MarkdownCodeBlock};
 use uuid::Uuid;
 
 const TOOL_CANCELED_MESSAGE: &str = "Tool canceled by user";
+pub const MAX_TOOL_NAME_LENGTH: usize = 64;
 
 /// The ID of the user prompt that initiated a request.
 ///
@@ -517,7 +518,6 @@ pub enum ThreadEvent {
     ToolCall(acp::ToolCall),
     ToolCallUpdate(acp_thread::ToolCallUpdate),
     ToolCallAuthorization(ToolCallAuthorization),
-    TitleUpdate(SharedString),
     Retry(acp_thread::RetryStatus),
     Stop(acp::StopReason),
 }
@@ -529,11 +529,22 @@ pub struct ToolCallAuthorization {
     pub response: oneshot::Sender<acp::PermissionOptionId>,
 }
 
+#[derive(Debug, thiserror::Error)]
+enum CompletionError {
+    #[error("max tokens")]
+    MaxTokens,
+    #[error("refusal")]
+    Refusal,
+    #[error(transparent)]
+    Other(#[from] anyhow::Error),
+}
+
 pub struct Thread {
     id: acp::SessionId,
     prompt_id: PromptId,
     updated_at: DateTime<Utc>,
     title: Option<SharedString>,
+    pending_title_generation: Option<Task<()>>,
     summary: Option<SharedString>,
     messages: Vec<Message>,
     completion_mode: CompletionMode,
@@ -564,17 +575,18 @@ impl Thread {
         project: Entity<Project>,
         project_context: Entity<ProjectContext>,
         context_server_registry: Entity<ContextServerRegistry>,
-        action_log: Entity<ActionLog>,
         templates: Arc<Templates>,
         model: Option<Arc<dyn LanguageModel>>,
         cx: &mut Context<Self>,
     ) -> Self {
         let profile_id = AgentSettings::get_global(cx).default_profile.clone();
+        let action_log = cx.new(|_cx| ActionLog::new(project.clone()));
         Self {
             id: acp::SessionId(uuid::Uuid::new_v4().to_string().into()),
             prompt_id: PromptId::new(),
             updated_at: Utc::now(),
             title: None,
+            pending_title_generation: None,
             summary: None,
             messages: Vec::new(),
             completion_mode: AgentSettings::get_global(cx).preferred_completion_mode,
@@ -646,7 +658,20 @@ impl Thread {
         stream: &ThreadEventStream,
         cx: &mut Context<Self>,
     ) {
-        let Some(tool) = self.tools.get(tool_use.name.as_ref()) else {
+        let tool = self.tools.get(tool_use.name.as_ref()).cloned().or_else(|| {
+            self.context_server_registry
+                .read(cx)
+                .servers()
+                .find_map(|(_, tools)| {
+                    if let Some(tool) = tools.get(tool_use.name.as_ref()) {
+                        Some(tool.clone())
+                    } else {
+                        None
+                    }
+                })
+        });
+
+        let Some(tool) = tool else {
             stream
                 .0
                 .unbounded_send(Ok(ThreadEvent::ToolCall(acp::ToolCall {
@@ -725,6 +750,7 @@ impl Thread {
             } else {
                 Some(db_thread.title.clone())
             },
+            pending_title_generation: None,
             summary: db_thread.detailed_summary,
             messages: db_thread.messages,
             completion_mode: db_thread.completion_mode.unwrap_or_default(),
@@ -977,11 +1003,11 @@ impl Thread {
         ));
         self.add_tool(TerminalTool::new(self.project.clone(), cx));
         self.add_tool(ThinkingTool);
-        self.add_tool(WebSearchTool); // TODO: Enable this only if it's a zed model.
+        self.add_tool(WebSearchTool);
     }
 
-    pub fn add_tool(&mut self, tool: impl AgentTool) {
-        self.tools.insert(tool.name(), tool.erase());
+    pub fn add_tool<T: AgentTool>(&mut self, tool: T) {
+        self.tools.insert(T::name().into(), tool.erase());
     }
 
     pub fn remove_tool(&mut self, name: &str) -> bool {
@@ -1097,6 +1123,10 @@ impl Thread {
         self.cancel(cx);
 
         let model = self.model.clone().context("No language model configured")?;
+        let profile = AgentSettings::get_global(cx)
+            .profiles
+            .get(&self.profile_id)
+            .context("Profile not found")?;
         let (events_tx, events_rx) = mpsc::unbounded::<Result<ThreadEvent>>();
         let event_stream = ThreadEventStream(events_tx);
         let message_ix = self.messages.len().saturating_sub(1);
@@ -1104,82 +1134,37 @@ impl Thread {
         self.summary = None;
         self.running_turn = Some(RunningTurn {
             event_stream: event_stream.clone(),
+            tools: self.enabled_tools(profile, &model, cx),
             _task: cx.spawn(async move |this, cx| {
                 log::info!("Starting agent turn execution");
-                let mut update_title = None;
-                let turn_result: Result<StopReason> = async {
-                    let mut completion_intent = CompletionIntent::UserPrompt;
+
+                let turn_result: Result<()> = async {
+                    let mut intent = CompletionIntent::UserPrompt;
                     loop {
-                        log::debug!(
-                            "Building completion request with intent: {:?}",
-                            completion_intent
-                        );
-                        let request = this.update(cx, |this, cx| {
-                            this.build_completion_request(completion_intent, cx)
-                        })??;
+                        Self::stream_completion(&this, &model, intent, &event_stream, cx).await?;
 
-                        log::info!("Calling model.stream_completion");
-
-                        let mut tool_use_limit_reached = false;
-                        let mut refused = false;
-                        let mut reached_max_tokens = false;
-                        let mut tool_uses = Self::stream_completion_with_retries(
-                            this.clone(),
-                            model.clone(),
-                            request,
-                            &event_stream,
-                            &mut tool_use_limit_reached,
-                            &mut refused,
-                            &mut reached_max_tokens,
-                            cx,
-                        )
-                        .await?;
-
-                        if refused {
-                            return Ok(StopReason::Refusal);
-                        } else if reached_max_tokens {
-                            return Ok(StopReason::MaxTokens);
-                        }
-
-                        let end_turn = tool_uses.is_empty();
-                        while let Some(tool_result) = tool_uses.next().await {
-                            log::info!("Tool finished {:?}", tool_result);
-
-                            event_stream.update_tool_call_fields(
-                                &tool_result.tool_use_id,
-                                acp::ToolCallUpdateFields {
-                                    status: Some(if tool_result.is_error {
-                                        acp::ToolCallStatus::Failed
-                                    } else {
-                                        acp::ToolCallStatus::Completed
-                                    }),
-                                    raw_output: tool_result.output.clone(),
-                                    ..Default::default()
-                                },
-                            );
-                            this.update(cx, |this, _cx| {
-                                this.pending_message()
-                                    .tool_results
-                                    .insert(tool_result.tool_use_id.clone(), tool_result);
-                            })?;
-                        }
-
+                        let mut end_turn = true;
                         this.update(cx, |this, cx| {
-                            if this.title.is_none() && update_title.is_none() {
-                                update_title = Some(this.update_title(&event_stream, cx));
+                            // Generate title if needed.
+                            if this.title.is_none() && this.pending_title_generation.is_none() {
+                                this.generate_title(cx);
                             }
+
+                            // End the turn if the model didn't use tools.
+                            let message = this.pending_message.as_ref();
+                            end_turn =
+                                message.map_or(true, |message| message.tool_results.is_empty());
+                            this.flush_pending_message(cx);
                         })?;
 
-                        if tool_use_limit_reached {
+                        if this.read_with(cx, |this, _| this.tool_use_limit_reached)? {
                             log::info!("Tool use limit reached, completing turn");
-                            this.update(cx, |this, _cx| this.tool_use_limit_reached = true)?;
                             return Err(language_model::ToolUseLimitReachedError.into());
                         } else if end_turn {
                             log::info!("No tool uses found, completing turn");
-                            return Ok(StopReason::EndTurn);
+                            return Ok(());
                         } else {
-                            this.update(cx, |this, cx| this.flush_pending_message(cx))?;
-                            completion_intent = CompletionIntent::ToolResults;
+                            intent = CompletionIntent::ToolResults;
                         }
                     }
                 }
@@ -1187,21 +1172,24 @@ impl Thread {
                 _ = this.update(cx, |this, cx| this.flush_pending_message(cx));
 
                 match turn_result {
-                    Ok(reason) => {
-                        log::info!("Turn execution completed: {:?}", reason);
-
-                        if let Some(update_title) = update_title {
-                            update_title.await.context("update title failed").log_err();
-                        }
-
-                        event_stream.send_stop(reason);
-                        if reason == StopReason::Refusal {
-                            _ = this.update(cx, |this, _| this.messages.truncate(message_ix));
-                        }
+                    Ok(()) => {
+                        log::info!("Turn execution completed");
+                        event_stream.send_stop(acp::StopReason::EndTurn);
                     }
                     Err(error) => {
                         log::error!("Turn execution failed: {:?}", error);
-                        event_stream.send_error(error);
+                        match error.downcast::<CompletionError>() {
+                            Ok(CompletionError::Refusal) => {
+                                event_stream.send_stop(acp::StopReason::Refusal);
+                                _ = this.update(cx, |this, _| this.messages.truncate(message_ix));
+                            }
+                            Ok(CompletionError::MaxTokens) => {
+                                event_stream.send_stop(acp::StopReason::MaxTokens);
+                            }
+                            Ok(CompletionError::Other(error)) | Err(error) => {
+                                event_stream.send_error(error);
+                            }
+                        }
                     }
                 }
 
@@ -1211,17 +1199,17 @@ impl Thread {
         Ok(events_rx)
     }
 
-    async fn stream_completion_with_retries(
-        this: WeakEntity<Self>,
-        model: Arc<dyn LanguageModel>,
-        request: LanguageModelRequest,
+    async fn stream_completion(
+        this: &WeakEntity<Self>,
+        model: &Arc<dyn LanguageModel>,
+        completion_intent: CompletionIntent,
         event_stream: &ThreadEventStream,
-        tool_use_limit_reached: &mut bool,
-        refusal: &mut bool,
-        max_tokens_reached: &mut bool,
         cx: &mut AsyncApp,
-    ) -> Result<FuturesUnordered<Task<LanguageModelToolResult>>> {
+    ) -> Result<()> {
         log::debug!("Stream completion started successfully");
+        let request = this.update(cx, |this, cx| {
+            this.build_completion_request(completion_intent, cx)
+        })??;
 
         let mut attempt = None;
         'retry: loop {
@@ -1234,68 +1222,33 @@ impl Thread {
                 attempt
             );
 
-            let mut events = model.stream_completion(request.clone(), cx).await?;
-            let mut tool_uses = FuturesUnordered::new();
+            log::info!(
+                "Calling model.stream_completion, attempt {}",
+                attempt.unwrap_or(0)
+            );
+            let mut events = model
+                .stream_completion(request.clone(), cx)
+                .await
+                .map_err(|error| anyhow!(error))?;
+            let mut tool_results = FuturesUnordered::new();
+
             while let Some(event) = events.next().await {
                 match event {
-                    Ok(LanguageModelCompletionEvent::StatusUpdate(
-                        CompletionRequestStatus::ToolUseLimitReached,
-                    )) => {
-                        *tool_use_limit_reached = true;
-                    }
-                    Ok(LanguageModelCompletionEvent::StatusUpdate(
-                        CompletionRequestStatus::UsageUpdated { amount, limit },
-                    )) => {
-                        this.update(cx, |this, cx| {
-                            this.update_model_request_usage(amount, limit, cx)
-                        })?;
-                    }
-                    Ok(LanguageModelCompletionEvent::UsageUpdate(usage)) => {
-                        telemetry::event!(
-                            "Agent Thread Completion Usage Updated",
-                            thread_id = this.read_with(cx, |this, _| this.id.to_string())?,
-                            prompt_id = this.read_with(cx, |this, _| this.prompt_id.to_string())?,
-                            model = model.telemetry_id(),
-                            model_provider = model.provider_id().to_string(),
-                            attempt,
-                            input_tokens = usage.input_tokens,
-                            output_tokens = usage.output_tokens,
-                            cache_creation_input_tokens = usage.cache_creation_input_tokens,
-                            cache_read_input_tokens = usage.cache_read_input_tokens,
-                        );
-
-                        this.update(cx, |this, cx| this.update_token_usage(usage, cx))?;
-                    }
-                    Ok(LanguageModelCompletionEvent::Stop(StopReason::Refusal)) => {
-                        *refusal = true;
-                        return Ok(FuturesUnordered::default());
-                    }
-                    Ok(LanguageModelCompletionEvent::Stop(StopReason::MaxTokens)) => {
-                        *max_tokens_reached = true;
-                        return Ok(FuturesUnordered::default());
-                    }
-                    Ok(LanguageModelCompletionEvent::Stop(
-                        StopReason::ToolUse | StopReason::EndTurn,
-                    )) => break,
                     Ok(event) => {
                         log::trace!("Received completion event: {:?}", event);
-                        this.update(cx, |this, cx| {
-                            tool_uses.extend(this.handle_streamed_completion_event(
-                                event,
-                                event_stream,
-                                cx,
-                            ));
-                        })?;
+                        tool_results.extend(this.update(cx, |this, cx| {
+                            this.handle_streamed_completion_event(event, event_stream, cx)
+                        })??);
                     }
                     Err(error) => {
                         let completion_mode =
                             this.read_with(cx, |thread, _cx| thread.completion_mode())?;
                         if completion_mode == CompletionMode::Normal {
-                            return Err(error.into());
+                            return Err(anyhow!(error))?;
                         }
 
                         let Some(strategy) = Self::retry_strategy_for(&error) else {
-                            return Err(error.into());
+                            return Err(anyhow!(error))?;
                         };
 
                         let max_attempts = match &strategy {
@@ -1309,7 +1262,7 @@ impl Thread {
 
                         let attempt = *attempt;
                         if attempt > max_attempts {
-                            return Err(error.into());
+                            return Err(anyhow!(error))?;
                         }
 
                         let delay = match &strategy {
@@ -1336,7 +1289,29 @@ impl Thread {
                 }
             }
 
-            return Ok(tool_uses);
+            while let Some(tool_result) = tool_results.next().await {
+                log::info!("Tool finished {:?}", tool_result);
+
+                event_stream.update_tool_call_fields(
+                    &tool_result.tool_use_id,
+                    acp::ToolCallUpdateFields {
+                        status: Some(if tool_result.is_error {
+                            acp::ToolCallStatus::Failed
+                        } else {
+                            acp::ToolCallStatus::Completed
+                        }),
+                        raw_output: tool_result.output.clone(),
+                        ..Default::default()
+                    },
+                );
+                this.update(cx, |this, _cx| {
+                    this.pending_message()
+                        .tool_results
+                        .insert(tool_result.tool_use_id.clone(), tool_result);
+                })?;
+            }
+
+            return Ok(());
         }
     }
 
@@ -1358,14 +1333,14 @@ impl Thread {
     }
 
     /// A helper method that's called on every streamed completion event.
-    /// Returns an optional tool result task, which the main agentic loop in
-    /// send will send back to the model when it resolves.
+    /// Returns an optional tool result task, which the main agentic loop will
+    /// send back to the model when it resolves.
     fn handle_streamed_completion_event(
         &mut self,
         event: LanguageModelCompletionEvent,
         event_stream: &ThreadEventStream,
         cx: &mut Context<Self>,
-    ) -> Option<Task<LanguageModelToolResult>> {
+    ) -> Result<Option<Task<LanguageModelToolResult>>> {
         log::trace!("Handling streamed completion event: {:?}", event);
         use LanguageModelCompletionEvent::*;
 
@@ -1380,7 +1355,7 @@ impl Thread {
             }
             RedactedThinking { data } => self.handle_redacted_thinking_event(data, cx),
             ToolUse(tool_use) => {
-                return self.handle_tool_use_event(tool_use, event_stream, cx);
+                return Ok(self.handle_tool_use_event(tool_use, event_stream, cx));
             }
             ToolUseJsonParseError {
                 id,
@@ -1388,18 +1363,46 @@ impl Thread {
                 raw_input,
                 json_parse_error,
             } => {
-                return Some(Task::ready(self.handle_tool_use_json_parse_error_event(
-                    id,
-                    tool_name,
-                    raw_input,
-                    json_parse_error,
+                return Ok(Some(Task::ready(
+                    self.handle_tool_use_json_parse_error_event(
+                        id,
+                        tool_name,
+                        raw_input,
+                        json_parse_error,
+                    ),
                 )));
             }
-            StatusUpdate(_) => {}
-            UsageUpdate(_) | Stop(_) => unreachable!(),
+            UsageUpdate(usage) => {
+                telemetry::event!(
+                    "Agent Thread Completion Usage Updated",
+                    thread_id = self.id.to_string(),
+                    prompt_id = self.prompt_id.to_string(),
+                    model = self.model.as_ref().map(|m| m.telemetry_id()),
+                    model_provider = self.model.as_ref().map(|m| m.provider_id().to_string()),
+                    input_tokens = usage.input_tokens,
+                    output_tokens = usage.output_tokens,
+                    cache_creation_input_tokens = usage.cache_creation_input_tokens,
+                    cache_read_input_tokens = usage.cache_read_input_tokens,
+                );
+                self.update_token_usage(usage, cx);
+            }
+            StatusUpdate(CompletionRequestStatus::UsageUpdated { amount, limit }) => {
+                self.update_model_request_usage(amount, limit, cx);
+            }
+            StatusUpdate(
+                CompletionRequestStatus::Started
+                | CompletionRequestStatus::Queued { .. }
+                | CompletionRequestStatus::Failed { .. },
+            ) => {}
+            StatusUpdate(CompletionRequestStatus::ToolUseLimitReached) => {
+                self.tool_use_limit_reached = true;
+            }
+            Stop(StopReason::Refusal) => return Err(CompletionError::Refusal.into()),
+            Stop(StopReason::MaxTokens) => return Err(CompletionError::MaxTokens.into()),
+            Stop(StopReason::ToolUse | StopReason::EndTurn) => {}
         }
 
-        None
+        Ok(None)
     }
 
     fn handle_text_event(
@@ -1463,7 +1466,7 @@ impl Thread {
     ) -> Option<Task<LanguageModelToolResult>> {
         cx.notify();
 
-        let tool = self.tools.get(tool_use.name.as_ref()).cloned();
+        let tool = self.tool(tool_use.name.as_ref());
         let mut title = SharedString::from(&tool_use.name);
         let mut kind = acp::ToolKind::Other;
         if let Some(tool) = tool.as_ref() {
@@ -1651,19 +1654,15 @@ impl Thread {
         })
     }
 
-    fn update_title(
-        &mut self,
-        event_stream: &ThreadEventStream,
-        cx: &mut Context<Self>,
-    ) -> Task<Result<()>> {
+    fn generate_title(&mut self, cx: &mut Context<Self>) {
+        let Some(model) = self.summarization_model.clone() else {
+            return;
+        };
+
         log::info!(
             "Generating title with model: {:?}",
             self.summarization_model.as_ref().map(|model| model.name())
         );
-        let Some(model) = self.summarization_model.clone() else {
-            return Task::ready(Ok(()));
-        };
-        let event_stream = event_stream.clone();
         let mut request = LanguageModelRequest {
             intent: Some(CompletionIntent::ThreadSummarization),
             temperature: AgentSettings::temperature_for_model(&model, cx),
@@ -1679,42 +1678,51 @@ impl Thread {
             content: vec![SUMMARIZE_THREAD_PROMPT.into()],
             cache: false,
         });
-        cx.spawn(async move |this, cx| {
+        self.pending_title_generation = Some(cx.spawn(async move |this, cx| {
             let mut title = String::new();
-            let mut messages = model.stream_completion(request, cx).await?;
-            while let Some(event) = messages.next().await {
-                let event = event?;
-                let text = match event {
-                    LanguageModelCompletionEvent::Text(text) => text,
-                    LanguageModelCompletionEvent::StatusUpdate(
-                        CompletionRequestStatus::UsageUpdated { amount, limit },
-                    ) => {
-                        this.update(cx, |thread, cx| {
-                            thread.update_model_request_usage(amount, limit, cx);
-                        })?;
-                        continue;
+
+            let generate = async {
+                let mut messages = model.stream_completion(request, cx).await?;
+                while let Some(event) = messages.next().await {
+                    let event = event?;
+                    let text = match event {
+                        LanguageModelCompletionEvent::Text(text) => text,
+                        LanguageModelCompletionEvent::StatusUpdate(
+                            CompletionRequestStatus::UsageUpdated { amount, limit },
+                        ) => {
+                            this.update(cx, |thread, cx| {
+                                thread.update_model_request_usage(amount, limit, cx);
+                            })?;
+                            continue;
+                        }
+                        _ => continue,
+                    };
+
+                    let mut lines = text.lines();
+                    title.extend(lines.next());
+
+                    // Stop if the LLM generated multiple lines.
+                    if lines.next().is_some() {
+                        break;
                     }
-                    _ => continue,
-                };
-
-                let mut lines = text.lines();
-                title.extend(lines.next());
-
-                // Stop if the LLM generated multiple lines.
-                if lines.next().is_some() {
-                    break;
                 }
+                anyhow::Ok(())
+            };
+
+            if generate.await.context("failed to generate title").is_ok() {
+                _ = this.update(cx, |this, cx| this.set_title(title.into(), cx));
             }
+            _ = this.update(cx, |this, _| this.pending_title_generation = None);
+        }));
+    }
 
-            log::info!("Setting title: {}", title);
-
-            this.update(cx, |this, cx| {
-                let title = SharedString::from(title);
-                event_stream.send_title_update(title.clone());
-                this.title = Some(title);
-                cx.notify();
-            })
-        })
+    pub fn set_title(&mut self, title: SharedString, cx: &mut Context<Self>) {
+        self.pending_title_generation = None;
+        if Some(&title) != self.title.as_ref() {
+            self.title = Some(title);
+            cx.emit(TitleUpdated);
+            cx.notify();
+        }
     }
 
     fn last_user_message(&self) -> Option<&UserMessage> {
@@ -1768,6 +1776,21 @@ impl Thread {
         cx: &mut App,
     ) -> Result<LanguageModelRequest> {
         let model = self.model().context("No language model configured")?;
+        let tools = if let Some(turn) = self.running_turn.as_ref() {
+            turn.tools
+                .iter()
+                .filter_map(|(tool_name, tool)| {
+                    log::trace!("Including tool: {}", tool_name);
+                    Some(LanguageModelRequestTool {
+                        name: tool_name.to_string(),
+                        description: tool.description().to_string(),
+                        input_schema: tool.input_schema(model.tool_input_format()).log_err()?,
+                    })
+                })
+                .collect::<Vec<_>>()
+        } else {
+            Vec::new()
+        };
 
         log::debug!("Building completion request");
         log::debug!("Completion intent: {:?}", completion_intent);
@@ -1775,23 +1798,6 @@ impl Thread {
 
         let messages = self.build_request_messages(cx);
         log::info!("Request will include {} messages", messages.len());
-
-        let tools = if let Some(tools) = self.tools(cx).log_err() {
-            tools
-                .filter_map(|tool| {
-                    let tool_name = tool.name().to_string();
-                    log::trace!("Including tool: {}", tool_name);
-                    Some(LanguageModelRequestTool {
-                        name: tool_name,
-                        description: tool.description().to_string(),
-                        input_schema: tool.input_schema(model.tool_input_format()).log_err()?,
-                    })
-                })
-                .collect()
-        } else {
-            Vec::new()
-        };
-
         log::info!("Request includes {} tools", tools.len());
 
         let request = LanguageModelRequest {
@@ -1811,37 +1817,76 @@ impl Thread {
         Ok(request)
     }
 
-    fn tools<'a>(&'a self, cx: &'a App) -> Result<impl Iterator<Item = &'a Arc<dyn AnyAgentTool>>> {
-        let model = self.model().context("No language model configured")?;
+    fn enabled_tools(
+        &self,
+        profile: &AgentProfileSettings,
+        model: &Arc<dyn LanguageModel>,
+        cx: &App,
+    ) -> BTreeMap<SharedString, Arc<dyn AnyAgentTool>> {
+        fn truncate(tool_name: &SharedString) -> SharedString {
+            if tool_name.len() > MAX_TOOL_NAME_LENGTH {
+                let mut truncated = tool_name.to_string();
+                truncated.truncate(MAX_TOOL_NAME_LENGTH);
+                truncated.into()
+            } else {
+                tool_name.clone()
+            }
+        }
 
-        let profile = AgentSettings::get_global(cx)
-            .profiles
-            .get(&self.profile_id)
-            .context("profile not found")?;
-        let provider_id = model.provider_id();
-
-        Ok(self
+        let mut tools = self
             .tools
             .iter()
-            .filter(move |(_, tool)| tool.supported_provider(&provider_id))
             .filter_map(|(tool_name, tool)| {
-                if profile.is_tool_enabled(tool_name) {
-                    Some(tool)
+                if tool.supported_provider(&model.provider_id())
+                    && profile.is_tool_enabled(tool_name)
+                {
+                    Some((truncate(tool_name), tool.clone()))
                 } else {
                     None
                 }
             })
-            .chain(self.context_server_registry.read(cx).servers().flat_map(
-                |(server_id, tools)| {
-                    tools.iter().filter_map(|(tool_name, tool)| {
-                        if profile.is_context_server_tool_enabled(&server_id.0, tool_name) {
-                            Some(tool)
-                        } else {
-                            None
-                        }
-                    })
-                },
-            )))
+            .collect::<BTreeMap<_, _>>();
+
+        let mut context_server_tools = Vec::new();
+        let mut seen_tools = tools.keys().cloned().collect::<HashSet<_>>();
+        let mut duplicate_tool_names = HashSet::default();
+        for (server_id, server_tools) in self.context_server_registry.read(cx).servers() {
+            for (tool_name, tool) in server_tools {
+                if profile.is_context_server_tool_enabled(&server_id.0, &tool_name) {
+                    let tool_name = truncate(tool_name);
+                    if !seen_tools.insert(tool_name.clone()) {
+                        duplicate_tool_names.insert(tool_name.clone());
+                    }
+                    context_server_tools.push((server_id.clone(), tool_name, tool.clone()));
+                }
+            }
+        }
+
+        // When there are duplicate tool names, disambiguate by prefixing them
+        // with the server ID. In the rare case there isn't enough space for the
+        // disambiguated tool name, keep only the last tool with this name.
+        for (server_id, tool_name, tool) in context_server_tools {
+            if duplicate_tool_names.contains(&tool_name) {
+                let available = MAX_TOOL_NAME_LENGTH.saturating_sub(tool_name.len());
+                if available >= 2 {
+                    let mut disambiguated = server_id.0.to_string();
+                    disambiguated.truncate(available - 1);
+                    disambiguated.push('_');
+                    disambiguated.push_str(&tool_name);
+                    tools.insert(disambiguated.into(), tool.clone());
+                } else {
+                    tools.insert(tool_name, tool.clone());
+                }
+            } else {
+                tools.insert(tool_name, tool.clone());
+            }
+        }
+
+        tools
+    }
+
+    fn tool(&self, name: &str) -> Option<Arc<dyn AnyAgentTool>> {
+        self.running_turn.as_ref()?.tools.get(name).cloned()
     }
 
     fn build_request_messages(&self, cx: &App) -> Vec<LanguageModelRequestMessage> {
@@ -2006,6 +2051,8 @@ struct RunningTurn {
     /// The current event stream for the running turn. Used to report a final
     /// cancellation event if we cancel the turn.
     event_stream: ThreadEventStream,
+    /// The tools that were enabled for this turn.
+    tools: BTreeMap<SharedString, Arc<dyn AnyAgentTool>>,
 }
 
 impl RunningTurn {
@@ -2019,6 +2066,10 @@ pub struct TokenUsageUpdated(pub Option<acp_thread::TokenUsage>);
 
 impl EventEmitter<TokenUsageUpdated> for Thread {}
 
+pub struct TitleUpdated;
+
+impl EventEmitter<TitleUpdated> for Thread {}
+
 pub trait AgentTool
 where
     Self: 'static + Sized,
@@ -2026,7 +2077,7 @@ where
     type Input: for<'de> Deserialize<'de> + Serialize + JsonSchema;
     type Output: for<'de> Deserialize<'de> + Serialize + Into<LanguageModelToolResultContent>;
 
-    fn name(&self) -> SharedString;
+    fn name() -> &'static str;
 
     fn description(&self) -> SharedString {
         let schema = schemars::schema_for!(Self::Input);
@@ -2038,7 +2089,7 @@ where
         )
     }
 
-    fn kind(&self) -> acp::ToolKind;
+    fn kind() -> acp::ToolKind;
 
     /// The initial tool title to display. Can be updated during the tool run.
     fn initial_title(&self, input: Result<Self::Input, serde_json::Value>) -> SharedString;
@@ -2114,7 +2165,7 @@ where
     T: AgentTool,
 {
     fn name(&self) -> SharedString {
-        self.0.name()
+        T::name().into()
     }
 
     fn description(&self) -> SharedString {
@@ -2122,7 +2173,7 @@ where
     }
 
     fn kind(&self) -> agent_client_protocol::ToolKind {
-        self.0.kind()
+        T::kind()
     }
 
     fn initial_title(&self, input: serde_json::Value) -> SharedString {
@@ -2176,12 +2227,6 @@ where
 struct ThreadEventStream(mpsc::UnboundedSender<Result<ThreadEvent>>);
 
 impl ThreadEventStream {
-    fn send_title_update(&self, text: SharedString) {
-        self.0
-            .unbounded_send(Ok(ThreadEvent::TitleUpdate(text)))
-            .ok();
-    }
-
     fn send_user_message(&self, message: &UserMessage) {
         self.0
             .unbounded_send(Ok(ThreadEvent::UserMessage(message.clone())))
@@ -2255,25 +2300,8 @@ impl ThreadEventStream {
         self.0.unbounded_send(Ok(ThreadEvent::Retry(status))).ok();
     }
 
-    fn send_stop(&self, reason: StopReason) {
-        match reason {
-            StopReason::EndTurn => {
-                self.0
-                    .unbounded_send(Ok(ThreadEvent::Stop(acp::StopReason::EndTurn)))
-                    .ok();
-            }
-            StopReason::MaxTokens => {
-                self.0
-                    .unbounded_send(Ok(ThreadEvent::Stop(acp::StopReason::MaxTokens)))
-                    .ok();
-            }
-            StopReason::Refusal => {
-                self.0
-                    .unbounded_send(Ok(ThreadEvent::Stop(acp::StopReason::Refusal)))
-                    .ok();
-            }
-            StopReason::ToolUse => {}
-        }
+    fn send_stop(&self, reason: acp::StopReason) {
+        self.0.unbounded_send(Ok(ThreadEvent::Stop(reason))).ok();
     }
 
     fn send_canceled(&self) {
