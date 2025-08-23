@@ -1133,11 +1133,6 @@
       // The minimum severity of the diagnostics to show inline.
       // Inherits editor's diagnostics' max severity settings when `null`.
       "max_severity": null
-    },
-    "cargo": {
-      // When enabled, Zed disables rust-analyzer's check on save and starts to query
-      // Cargo diagnostics separately.
-      "fetch_cargo_diagnostics": false
     }
   },
   // Files or globs of files that will be excluded by Zed entirely. They will be skipped during file
