@@ -73,7 +73,7 @@ impl Render for AcpOnboardingModal {
             .id("acp-onboarding")
             .key_context("AcpOnboardingModal")
             .relative()
-            .w(rems(34.))
+            .w(rems(32.))
             .h_full()
             .p_4()
             .gap_2()
@@ -122,7 +122,7 @@ impl Render for AcpOnboardingModal {
                     .w_full()
                     .gap_1()
                     .child(
-                        Label::new("Introducing")
+                        Label::new("Now Available")
                             .size(LabelSize::Small)
                             .color(Color::Muted),
                     )
@@ -151,7 +151,7 @@ impl Render for AcpOnboardingModal {
             .full_width()
             .on_click(cx.listener(Self::view_docs));
 
-        let copy = "Zed now lets you bring the agent of your choice through the new Agent Client Protocol, starting with Google's Gemini CLI integration.";
+        let copy = "Zed now lets you bring the agent of your choice through the new\nAgent Client Protocol, starting with Google's Gemini CLI integration.";
 
         base.child(Label::new(copy).color(Color::Muted)).child(
             v_flex()

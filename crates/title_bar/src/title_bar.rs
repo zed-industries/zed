@@ -278,7 +278,7 @@ impl TitleBar {
                 "Gemini CLI Onboarding",
                 IconName::AiGemini,
                 "Gemini CLI in Zed",
-                None,
+                Some("News:".into()),
                 zed_actions::agent::OpenAcpOnboardingModal.boxed_clone(),
                 cx,
             )
