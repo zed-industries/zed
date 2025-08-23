@@ -238,7 +238,6 @@ activity_indicator = { path = "crates/activity_indicator" }
 agent_ui = { path = "crates/agent_ui" }
 agent_settings = { path = "crates/agent_settings" }
 agent_servers = { path = "crates/agent_servers" }
-ai = { path = "crates/ai" }
 ai_onboarding = { path = "crates/ai_onboarding" }
 anthropic = { path = "crates/anthropic" }
 askpass = { path = "crates/askpass" }
@@ -250,7 +249,6 @@ assistant_tool = { path = "crates/assistant_tool" }
 assistant_tools = { path = "crates/assistant_tools" }
 audio = { path = "crates/audio" }
 auto_update = { path = "crates/auto_update" }
-auto_update_helper = { path = "crates/auto_update_helper" }
 auto_update_ui = { path = "crates/auto_update_ui" }
 aws_http_client = { path = "crates/aws_http_client" }
 bedrock = { path = "crates/bedrock" }
@@ -264,7 +262,6 @@ clock = { path = "crates/clock" }
 cloud_api_client = { path = "crates/cloud_api_client" }
 cloud_api_types = { path = "crates/cloud_api_types" }
 cloud_llm_client = { path = "crates/cloud_llm_client" }
-collab = { path = "crates/collab" }
 collab_ui = { path = "crates/collab_ui" }
 collections = { path = "crates/collections" }
 command_palette = { path = "crates/command_palette" }
@@ -348,8 +345,6 @@ outline_panel = { path = "crates/outline_panel" }
 panel = { path = "crates/panel" }
 paths = { path = "crates/paths" }
 picker = { path = "crates/picker" }
-plugin = { path = "crates/plugin" }
-plugin_macros = { path = "crates/plugin_macros" }
 prettier = { path = "crates/prettier" }
 settings_profile_selector = { path = "crates/settings_profile_selector" }
 project = { path = "crates/project" }
@@ -370,7 +365,6 @@ rope = { path = "crates/rope" }
 rpc = { path = "crates/rpc" }
 rules_library = { path = "crates/rules_library" }
 search = { path = "crates/search" }
-semantic_index = { path = "crates/semantic_index" }
 semantic_version = { path = "crates/semantic_version" }
 session = { path = "crates/session" }
 settings = { path = "crates/settings" }
@@ -381,7 +375,6 @@ snippets_ui = { path = "crates/snippets_ui" }
 sqlez = { path = "crates/sqlez" }
 sqlez_macros = { path = "crates/sqlez_macros" }
 story = { path = "crates/story" }
-storybook = { path = "crates/storybook" }
 streaming_diff = { path = "crates/streaming_diff" }
 sum_tree = { path = "crates/sum_tree" }
 supermaven = { path = "crates/supermaven" }
@@ -397,7 +390,6 @@ terminal_view = { path = "crates/terminal_view" }
 text = { path = "crates/text" }
 theme = { path = "crates/theme" }
 theme_extension = { path = "crates/theme_extension" }
-theme_importer = { path = "crates/theme_importer" }
 theme_selector = { path = "crates/theme_selector" }
 time_format = { path = "crates/time_format" }
 title_bar = { path = "crates/title_bar" }
@@ -469,7 +461,6 @@ ciborium = "0.2"
 circular-buffer = "1.0"
 clap = { version = "4.4", features = ["derive"] }
 cocoa = "0.26"
-cocoa-foundation = "0.2.0"
 convert_case = "0.8.0"
 core-foundation = "0.10.0"
 core-foundation-sys = "0.8.6"
@@ -545,7 +536,6 @@ pet = { git = "https://github.com/microsoft/python-environment-tools.git", rev =
 pet-conda = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "845945b830297a50de0e24020b980a65e4820559" }
 pet-core = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "845945b830297a50de0e24020b980a65e4820559" }
 pet-fs = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "845945b830297a50de0e24020b980a65e4820559" }
-pet-pixi = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "845945b830297a50de0e24020b980a65e4820559" }
 pet-poetry = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "845945b830297a50de0e24020b980a65e4820559" }
 pet-reporter = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "845945b830297a50de0e24020b980a65e4820559" }
 portable-pty = "0.9.0"
@@ -668,7 +658,6 @@ wasmtime = { version = "29", default-features = false, features = [
 wasmtime-wasi = "29"
 which = "6.0.0"
 windows-core = "0.61"
-wit-component = "0.221"
 workspace-hack = "0.1.0"
 yawc = "0.2.5"
 zstd = "0.11"
@@ -742,11 +731,7 @@ codegen-units = 16
 [profile.dev.package]
 taffy = { opt-level = 3 }
 cranelift-codegen = { opt-level = 3 }
-cranelift-codegen-meta = { opt-level = 3 }
-cranelift-codegen-shared = { opt-level = 3 }
 resvg = { opt-level = 3 }
-rustybuzz = { opt-level = 3 }
-ttf-parser = { opt-level = 3 }
 wasmtime-cranelift = { opt-level = 3 }
 wasmtime = { opt-level = 3 }
 # Build single-source-file crates with cg=1 as it helps make `cargo build` of a whole workspace a bit faster
@@ -756,7 +741,6 @@ breadcrumbs = { codegen-units = 1 }
 collections = { codegen-units = 1 }
 command_palette = { codegen-units = 1 }
 command_palette_hooks = { codegen-units = 1 }
-extension_cli = { codegen-units = 1 }
 feature_flags = { codegen-units = 1 }
 file_icons = { codegen-units = 1 }
 fsevent = { codegen-units = 1 }
