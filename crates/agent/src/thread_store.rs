@@ -898,7 +898,7 @@ impl ThreadsDatabase {
         } else if cfg!(any(feature = "test-support", test)) {
             // rust stores the name of the test on the current thread.
             // We use this to automatically create a database that will
-            // be shared within the test (for the test_retreive_old_thread)
+            // be shared within the test (for the test_retrieve_old_thread)
             // but not with concurrent tests.
             let thread = std::thread::current();
             let test_name = thread.name();

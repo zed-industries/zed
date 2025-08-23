@@ -503,7 +503,7 @@ impl MessageEditor {
             .update(cx, |workspace, _| workspace.client().http_client())
         {
             Ok(http_client) => http_client,
-            Err(e) => return Task::ready(Err(e.into())),
+            Err(e) => return Task::ready(Err(e)),
         };
         cx.background_executor().spawn(async move {
             let content = fetch_url_content(http_client, url.to_string()).await?;
@@ -638,7 +638,6 @@ impl MessageEditor {
             self.history_store.clone(),
         ));
         let connection = server.connect(Path::new(""), &self.project, cx);
-        let id = id.clone();
         cx.spawn(async move |_, cx| {
             let agent = connection.await?;
             let agent = agent.downcast::<agent2::NativeAgentConnection>().unwrap();
