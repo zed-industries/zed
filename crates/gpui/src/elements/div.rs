@@ -3066,8 +3066,8 @@ impl ScrollHandle {
         if state.overflow.x == Overflow::Scroll {
             if bounds.left() + scroll_offset.x < state.bounds.left() {
                 scroll_offset.x = state.bounds.left() - bounds.left();
-            } else if bounds.right() + scroll_offset.x > state.bounds.right() {
-                scroll_offset.x = state.bounds.right() - bounds.right();
+            } else if bounds.right() + scroll_offset.x >= state.bounds.size.width {
+                scroll_offset.x = state.bounds.size.width - bounds.right();
             }
         }
     }
@@ -3104,5 +3104,82 @@ impl ScrollHandle {
     /// Get the count of children for scrollable item.
     pub fn children_count(&self) -> usize {
         self.0.borrow().child_bounds.len()
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use crate::{
+        self as gpui, div, point, px, size, AppContext, Context, InteractiveElement, IntoElement, ParentElement, Render, ScrollHandle, StatefulInteractiveElement, Styled, TestAppContext, Window
+    };
+
+    #[gpui::test]
+    fn test_scroll_to_item_horizontal(cx: &mut TestAppContext) {
+        let cx = cx.add_empty_window();
+
+        struct TestView {
+            scroll_handle: ScrollHandle,
+        }
+
+        impl Render for TestView {
+            // simple horizontal flex grid with 5 boxes
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                div()
+                    .child(div()
+                        // create a parent div less wide than all the children
+                        .w(px(200.))
+                        .child(
+                            div()
+                                .flex()
+                                .flex_row()
+                                .items_center()
+                                .id("unpinned tabs")
+                                // make it scrollable
+                                .overflow_x_scroll()
+                                .w_full()
+                                .track_scroll(&self.scroll_handle)
+                                .children(
+                                    (0..5).map(|i| {
+                                        div()
+                                            .id("tab_bar_drop_target")
+                                            .min_w(px(60.))
+                                            .m(px(10.))
+                                            .child("")
+                                            .h_full()
+                                            .flex_grow()
+                                            .bg(gpui::blue())
+                                    })
+                                )
+                        )).into_element()
+
+            }
+        }
+
+        let scrollable_handle = ScrollHandle::new();
+        let view = cx.new(|_| TestView {
+            scroll_handle: scrollable_handle.clone(),
+        });
+
+        cx.draw(point(px(0.), px(0.)), size(px(200.), px(100.)), |_, cx| {
+            view
+        });
+
+        // act: go to the third child which is already partially visible
+        scrollable_handle.scroll_to_item(2);
+        {
+            let state = scrollable_handle.0.borrow();
+            let scroll_offset = state.offset.borrow();
+            // assert: should now be completely visible
+            assert_eq!(scroll_offset.x, px(-30.));
+        }
+
+        // act: first item is also partially visible but to the left this time
+        scrollable_handle.scroll_to_item(0);
+        {
+            let state = scrollable_handle.0.borrow();
+            let scroll_offset = state.offset.borrow();
+            // assert: we should now move the offset back to the left, not including the margin
+            assert_eq!(scroll_offset.x, px(-10.));
+        }
     }
 }
