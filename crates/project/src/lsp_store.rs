@@ -11913,7 +11913,7 @@ impl LspStore {
                         notify_server_capabilities_updated(&server, cx);
                     }
                 }
-                "textDocument/colorProvider" => {
+                "textDocument/documentColor" => {
                     if let Some(caps) = reg
                         .register_options
                         .map(serde_json::from_value)
@@ -12064,7 +12064,7 @@ impl LspStore {
                     });
                     notify_server_capabilities_updated(&server, cx);
                 }
-                "textDocument/colorProvider" => {
+                "textDocument/documentColor" => {
                     server.update_capabilities(|capabilities| {
                         capabilities.color_provider = None;
                     });
