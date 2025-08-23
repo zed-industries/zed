@@ -8724,7 +8724,9 @@ dependencies = [
  "anyhow",
  "gpui",
  "jj-lib",
+ "project",
  "workspace-hack",
+ "worktree",
 ]
 
 [[package]]

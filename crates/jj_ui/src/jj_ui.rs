@@ -7,9 +7,9 @@ use jj::JujutsuStore;
 use workspace::Workspace;
 
 pub fn init(cx: &mut App) {
-    JujutsuStore::init_global(cx);
-
-    cx.observe_new(|workspace: &mut Workspace, _window, _cx| {
+    cx.observe_new(|workspace: &mut Workspace, _window, cx| {
+        let worktree_store = workspace.project().read(cx).worktree_store();
+        JujutsuStore::init_global(cx, worktree_store);
         bookmark_picker::register(workspace);
     })
     .detach();
