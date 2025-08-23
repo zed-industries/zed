@@ -1370,7 +1370,11 @@ impl AcpThreadView {
                                             )
                                             .child(
                                                 if self.is_loading_contents {
-                                                    loading_contents_spinner(IconSize::XSmall)
+                                                    div()
+                                                        .id("loading-edited-message-content")
+                                                        .tooltip(Tooltip::text("Loading Added Context…"))
+                                                        .child(loading_contents_spinner(IconSize::XSmall))
+                                                        .into_any_element()
                                                 } else {
                                                     IconButton::new("regenerate", IconName::Return)
                                                         .icon_color(Color::Muted)
@@ -3570,7 +3574,12 @@ impl AcpThreadView {
             .is_some_and(|thread| thread.read(cx).status() != ThreadStatus::Idle);
 
         if self.is_loading_contents {
-            loading_contents_spinner(IconSize::default())
+            div()
+                .id("loading-message-content")
+                .px_1()
+                .tooltip(Tooltip::text("Loading Added Context…"))
+                .child(loading_contents_spinner(IconSize::default()))
+                .into_any_element()
         } else if is_generating && is_editor_empty {
             IconButton::new("stop-generation", IconName::Stop)
                 .icon_color(Color::Error)
@@ -4673,20 +4682,15 @@ impl AcpThreadView {
 }
 
 fn loading_contents_spinner(size: IconSize) -> AnyElement {
-    div()
-        .id("loading-context")
-        .tooltip(Tooltip::text("Loading Context…"))
-        .child(
-            Icon::new(IconName::LoadCircle)
-                .size(size)
-                .color(Color::Accent)
-                .with_animation(
-                    "load_context_circle",
-                    Animation::new(Duration::from_secs(3)).repeat(),
-                    |icon, delta| icon.transform(Transformation::rotate(percentage(delta))),
-                ),
+    Icon::new(IconName::LoadCircle)
+        .size(size)
+        .color(Color::Accent)
+        .with_animation(
+            "load_context_circle",
+            Animation::new(Duration::from_secs(3)).repeat(),
+            |icon, delta| icon.transform(Transformation::rotate(percentage(delta))),
         )
-        .into_any()
+        .into_any_element()
 }
 
 impl Focusable for AcpThreadView {
