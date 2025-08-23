@@ -6,7 +6,7 @@ use html5ever::{ParseOpts, local_name, parse_document, tendril::TendrilSink};
 use language::LanguageRegistry;
 use markup5ever_rcdom::RcDom;
 use pulldown_cmark::{Alignment, Event, Options, Parser, Tag, TagEnd};
-use std::{cell::RefCell, ops::Range, path::PathBuf, rc::Rc, sync::Arc, vec};
+use std::{cell::RefCell, collections::HashMap, ops::Range, path::PathBuf, rc::Rc, sync::Arc, vec};
 use ui::{px, relative};
 
 pub async fn parse_markdown(
@@ -786,19 +786,6 @@ impl<'a> MarkdownParser<'a> {
         elements
     }
 
-    fn attr_value(
-        attrs: &RefCell<Vec<html5ever::Attribute>>,
-        name: html5ever::LocalName,
-    ) -> Option<String> {
-        attrs.borrow().iter().find_map(|attr| {
-            if attr.name.local == name {
-                Some(attr.value.to_string())
-            } else {
-                None
-            }
-        })
-    }
-
     fn parse_html_node(
         &self,
         source_range: Range<usize>,
@@ -824,33 +811,9 @@ impl<'a> MarkdownParser<'a> {
             markup5ever_rcdom::NodeData::Comment { .. } => {}
             markup5ever_rcdom::NodeData::Element { name, attrs, .. } => {
                 if local_name!("img") == name.local {
-                    let Some(src) = Self::attr_value(attrs, local_name!("src")) else {
-                        return;
-                    };
-
-                    let Some(mut image) =
-                        Image::identify(src, source_range, self.file_location_directory.clone())
-                    else {
-                        return;
-                    };
-
-                    if let Some(alt) = Self::attr_value(attrs, local_name!("alt")) {
-                        image.set_alt_text(alt.into());
+                    if let Some(image) = self.extract_image(source_range, attrs) {
+                        elements.push(ParsedMarkdownElement::Image(image));
                     }
-
-                    if let Some(width) = Self::attr_value(attrs, local_name!("width"))
-                        .and_then(|width| Self::parse_length(&width))
-                    {
-                        image.set_width(width);
-                    }
-
-                    if let Some(height) = Self::attr_value(attrs, local_name!("height"))
-                        .and_then(|height| Self::parse_length(&height))
-                    {
-                        image.set_height(height);
-                    }
-
-                    elements.push(ParsedMarkdownElement::Image(image));
                 } else {
                     self.consume_children(source_range, node, elements);
                 }
@@ -868,6 +831,71 @@ impl<'a> MarkdownParser<'a> {
         for node in node.children.borrow().iter() {
             self.parse_html_node(source_range.clone(), node, elements);
         }
+    }
+
+    fn attr_value(
+        attrs: &RefCell<Vec<html5ever::Attribute>>,
+        name: html5ever::LocalName,
+    ) -> Option<String> {
+        attrs.borrow().iter().find_map(|attr| {
+            if attr.name.local == name {
+                Some(attr.value.to_string())
+            } else {
+                None
+            }
+        })
+    }
+
+    fn extract_styles_from_attributes(
+        attrs: &RefCell<Vec<html5ever::Attribute>>,
+    ) -> HashMap<String, String> {
+        let mut styles = HashMap::new();
+
+        if let Some(style) = Self::attr_value(attrs, local_name!("style")) {
+            for decl in style.split(';') {
+                let mut parts = decl.splitn(2, ':');
+                if let Some((key, value)) = parts.next().zip(parts.next()) {
+                    styles.insert(
+                        key.trim().to_lowercase().to_string(),
+                        value.trim().to_string(),
+                    );
+                }
+            }
+        }
+
+        styles
+    }
+
+    fn extract_image(
+        &self,
+        source_range: Range<usize>,
+        attrs: &RefCell<Vec<html5ever::Attribute>>,
+    ) -> Option<Image> {
+        let src = Self::attr_value(attrs, local_name!("src"))?;
+
+        let mut image = Image::identify(src, source_range, self.file_location_directory.clone())?;
+
+        if let Some(alt) = Self::attr_value(attrs, local_name!("alt")) {
+            image.set_alt_text(alt.into());
+        }
+
+        let styles = Self::extract_styles_from_attributes(attrs);
+
+        if let Some(width) = Self::attr_value(attrs, local_name!("width"))
+            .or_else(|| styles.get("width").cloned())
+            .and_then(|width| Self::parse_length(&width))
+        {
+            image.set_width(width);
+        }
+
+        if let Some(height) = Self::attr_value(attrs, local_name!("height"))
+            .or_else(|| styles.get("height").cloned())
+            .and_then(|height| Self::parse_length(&height))
+        {
+            image.set_height(height);
+        }
+
+        Some(image)
     }
 
     /// Parses the width/height attribute value of an html element (e.g. img element)
