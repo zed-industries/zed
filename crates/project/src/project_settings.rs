@@ -181,17 +181,6 @@ pub struct DiagnosticsSettings {
 
     /// Settings for showing inline diagnostics.
     pub inline: InlineDiagnosticsSettings,
-
-    /// Configuration, related to Rust language diagnostics.
-    pub cargo: Option<CargoDiagnosticsSettings>,
-}
-
-impl DiagnosticsSettings {
-    pub fn fetch_cargo_diagnostics(&self) -> bool {
-        self.cargo
-            .as_ref()
-            .is_some_and(|cargo_diagnostics| cargo_diagnostics.fetch_cargo_diagnostics)
-    }
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema)]
@@ -258,7 +247,6 @@ impl Default for DiagnosticsSettings {
             include_warnings: true,
             lsp_pull_diagnostics: LspPullDiagnosticsSettings::default(),
             inline: InlineDiagnosticsSettings::default(),
-            cargo: None,
         }
     }
 }
@@ -290,16 +278,6 @@ impl Default for GlobalLspSettings {
             button: default_true(),
         }
     }
-}
-
-#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
-pub struct CargoDiagnosticsSettings {
-    /// When enabled, Zed disables rust-analyzer's check on save and starts to query
-    /// Cargo diagnostics separately.
-    ///
-    /// Default: false
-    #[serde(default)]
-    pub fetch_cargo_diagnostics: bool,
 }
 
 #[derive(
