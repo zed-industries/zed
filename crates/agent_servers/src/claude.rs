@@ -30,7 +30,7 @@ use futures::{
     io::BufReader,
     select_biased,
 };
-use gpui::{App, AppContext, AsyncApp, Entity, Task, WeakEntity};
+use gpui::{App, AppContext, AsyncApp, Entity, SharedString, Task, WeakEntity};
 use serde::{Deserialize, Serialize};
 use util::{ResultExt, debug_panic};
 
@@ -43,16 +43,16 @@ use acp_thread::{AcpThread, AgentConnection, AuthRequired, LoadError, MentionUri
 pub struct ClaudeCode;
 
 impl AgentServer for ClaudeCode {
-    fn name(&self) -> &'static str {
-        "Claude Code"
+    fn name(&self) -> SharedString {
+        "Claude Code".into()
     }
 
-    fn empty_state_headline(&self) -> &'static str {
+    fn empty_state_headline(&self) -> SharedString {
         self.name()
     }
 
-    fn empty_state_message(&self) -> &'static str {
-        "How can I help you today?"
+    fn empty_state_message(&self) -> SharedString {
+        "How can I help you today?".into()
     }
 
     fn logo(&self) -> ui::IconName {
