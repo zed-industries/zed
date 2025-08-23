@@ -19,6 +19,41 @@ use ui::{
 use util::maybe;
 
 use crate::ProjectDiagnosticsEditor;
+use crate::buffer_diagnostics::BufferDiagnosticsEditor;
+
+#[derive(Clone)]
+pub(crate) enum DiagnosticsEditorHandle {
+    Project(WeakEntity<ProjectDiagnosticsEditor>),
+    Buffer(WeakEntity<BufferDiagnosticsEditor>),
+}
+
+impl DiagnosticsEditorHandle {
+    fn get_diagnostics_for_buffer(
+        &self,
+        buffer_id: BufferId,
+        cx: &App,
+    ) -> Vec<DiagnosticEntry<text::Anchor>> {
+        match self {
+            // Not sure if possible, as currently there shouldn't be a way for this
+            // method to be called for a buffer other than the one the
+            // `BufferDiagnosticsEditor` is working with, but we should probably
+            // save the ID of the buffer that it is working with, so that, if it
+            // doesn't match the argument, we can return an empty vector.
+            Self::Buffer(editor) => editor
+                .read_with(cx, |editor, _cx| editor.diagnostics.clone())
+                .unwrap_or(vec![]),
+            Self::Project(editor) => editor
+                .read_with(cx, |editor, _cx| {
+                    editor
+                        .diagnostics
+                        .get(&buffer_id)
+                        .cloned()
+                        .unwrap_or_default()
+                })
+                .unwrap_or(vec![]),
+        }
+    }
+}
 
 pub struct DiagnosticRenderer;
 
@@ -26,7 +61,7 @@ impl DiagnosticRenderer {
     pub fn diagnostic_blocks_for_group(
         diagnostic_group: Vec<DiagnosticEntry<Point>>,
         buffer_id: BufferId,
-        diagnostics_editor: Option<WeakEntity<ProjectDiagnosticsEditor>>,
+        diagnostics_editor: Option<DiagnosticsEditorHandle>,
         cx: &mut App,
     ) -> Vec<DiagnosticBlock> {
         let Some(primary_ix) = diagnostic_group
@@ -130,6 +165,7 @@ impl editor::DiagnosticRenderer for DiagnosticRenderer {
         cx: &mut App,
     ) -> Vec<BlockProperties<Anchor>> {
         let blocks = Self::diagnostic_blocks_for_group(diagnostic_group, buffer_id, None, cx);
+
         blocks
             .into_iter()
             .map(|block| {
@@ -182,7 +218,7 @@ pub(crate) struct DiagnosticBlock {
     pub(crate) initial_range: Range<Point>,
     pub(crate) severity: DiagnosticSeverity,
     pub(crate) markdown: Entity<Markdown>,
-    pub(crate) diagnostics_editor: Option<WeakEntity<ProjectDiagnosticsEditor>>,
+    pub(crate) diagnostics_editor: Option<DiagnosticsEditorHandle>,
 }
 
 impl DiagnosticBlock {
@@ -233,7 +269,7 @@ impl DiagnosticBlock {
 
     pub fn open_link(
         editor: &mut Editor,
-        diagnostics_editor: &Option<WeakEntity<ProjectDiagnosticsEditor>>,
+        diagnostics_editor: &Option<DiagnosticsEditorHandle>,
         link: SharedString,
         window: &mut Window,
         cx: &mut Context<Editor>,
@@ -254,18 +290,10 @@ impl DiagnosticBlock {
 
         if let Some(diagnostics_editor) = diagnostics_editor {
             if let Some(diagnostic) = diagnostics_editor
-                .read_with(cx, |diagnostics, _| {
-                    diagnostics
-                        .diagnostics
-                        .get(&buffer_id)
-                        .cloned()
-                        .unwrap_or_default()
-                        .into_iter()
-                        .filter(|d| d.diagnostic.group_id == group_id)
-                        .nth(ix)
-                })
-                .ok()
-                .flatten()
+                .get_diagnostics_for_buffer(buffer_id, cx)
+                .into_iter()
+                .filter(|d| d.diagnostic.group_id == group_id)
+                .nth(ix)
             {
                 let multibuffer = editor.buffer().read(cx);
                 let Some(snapshot) = multibuffer
@@ -297,9 +325,9 @@ impl DiagnosticBlock {
         };
     }
 
-    fn jump_to<T: ToOffset>(
+    fn jump_to<I: ToOffset>(
         editor: &mut Editor,
-        range: Range<T>,
+        range: Range<I>,
         window: &mut Window,
         cx: &mut Context<Editor>,
     ) {
