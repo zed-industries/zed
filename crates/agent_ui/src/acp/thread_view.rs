@@ -1455,9 +1455,7 @@ impl AcpThreadView {
                 .child(self.render_thread_controls(cx))
                 .when_some(
                     self.thread_feedback.comments_editor.clone(),
-                    |this, editor| {
-                        this.child(Self::render_feedback_feedback_editor(editor, window, cx))
-                    },
+                    |this, editor| this.child(Self::render_feedback_feedback_editor(editor, cx)),
                 )
                 .into_any_element()
         } else {
@@ -4129,13 +4127,8 @@ impl AcpThreadView {
         container.child(open_as_markdown).child(scroll_to_top)
     }
 
-    fn render_feedback_feedback_editor(
-        editor: Entity<Editor>,
-        window: &mut Window,
-        cx: &Context<Self>,
-    ) -> Div {
-        let focus_handle = editor.focus_handle(cx);
-        v_flex()
+    fn render_feedback_feedback_editor(editor: Entity<Editor>, cx: &Context<Self>) -> Div {
+        h_flex()
             .key_context("AgentFeedbackMessageEditor")
             .on_action(cx.listener(move |this, _: &menu::Cancel, _, cx| {
                 this.thread_feedback.dismiss_comments();
@@ -4144,43 +4137,31 @@ impl AcpThreadView {
             .on_action(cx.listener(move |this, _: &menu::Confirm, _window, cx| {
                 this.submit_feedback_message(cx);
             }))
-            .mb_2()
-            .mx_4()
             .p_2()
+            .mb_2()
+            .mx_5()
+            .gap_1()
             .rounded_md()
             .border_1()
             .border_color(cx.theme().colors().border)
             .bg(cx.theme().colors().editor_background)
-            .child(editor)
+            .child(div().w_full().child(editor))
             .child(
                 h_flex()
-                    .gap_1()
-                    .justify_end()
                     .child(
-                        Button::new("dismiss-feedback-message", "Cancel")
-                            .label_size(LabelSize::Small)
-                            .key_binding(
-                                KeyBinding::for_action_in(&menu::Cancel, &focus_handle, window, cx)
-                                    .map(|kb| kb.size(rems_from_px(10.))),
-                            )
+                        IconButton::new("dismiss-feedback-message", IconName::Close)
+                            .icon_color(Color::Error)
+                            .icon_size(IconSize::XSmall)
+                            .shape(ui::IconButtonShape::Square)
                             .on_click(cx.listener(move |this, _, _window, cx| {
                                 this.thread_feedback.dismiss_comments();
                                 cx.notify();
                             })),
                     )
                     .child(
-                        Button::new("submit-feedback-message", "Share Feedback")
-                            .style(ButtonStyle::Tinted(ui::TintColor::Accent))
-                            .label_size(LabelSize::Small)
-                            .key_binding(
-                                KeyBinding::for_action_in(
-                                    &menu::Confirm,
-                                    &focus_handle,
-                                    window,
-                                    cx,
-                                )
-                                .map(|kb| kb.size(rems_from_px(10.))),
-                            )
+                        IconButton::new("submit-feedback-message", IconName::Return)
+                            .icon_size(IconSize::XSmall)
+                            .shape(ui::IconButtonShape::Square)
                             .on_click(cx.listener(move |this, _, _window, cx| {
                                 this.submit_feedback_message(cx);
                             })),
