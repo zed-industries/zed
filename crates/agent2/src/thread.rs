@@ -45,13 +45,14 @@ use schemars::{JsonSchema, Schema};
 use serde::{Deserialize, Serialize};
 use settings::{Settings, update_settings_file};
 use smol::stream::StreamExt;
+use std::fmt::Write;
 use std::{
     collections::BTreeMap,
+    ops::RangeInclusive,
     path::Path,
     sync::Arc,
     time::{Duration, Instant},
 };
-use std::{fmt::Write, ops::Range};
 use util::{ResultExt, debug_panic, markdown::MarkdownCodeBlock};
 use uuid::Uuid;
 
@@ -354,7 +355,7 @@ impl UserMessage {
     }
 }
 
-fn codeblock_tag(full_path: &Path, line_range: Option<&Range<u32>>) -> String {
+fn codeblock_tag(full_path: &Path, line_range: Option<&RangeInclusive<u32>>) -> String {
     let mut result = String::new();
 
     if let Some(extension) = full_path.extension().and_then(|ext| ext.to_str()) {
@@ -364,10 +365,10 @@ fn codeblock_tag(full_path: &Path, line_range: Option<&Range<u32>>) -> String {
     let _ = write!(result, "{}", full_path.display());
 
     if let Some(range) = line_range {
-        if range.start == range.end {
-            let _ = write!(result, ":{}", range.start + 1);
+        if range.start() == range.end() {
+            let _ = write!(result, ":{}", range.start() + 1);
         } else {
-            let _ = write!(result, ":{}-{}", range.start + 1, range.end + 1);
+            let _ = write!(result, ":{}-{}", range.start() + 1, range.end() + 1);
         }
     }
 

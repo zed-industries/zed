@@ -5,7 +5,7 @@ use prompt_store::{PromptId, UserPromptId};
 use serde::{Deserialize, Serialize};
 use std::{
     fmt,
-    ops::Range,
+    ops::RangeInclusive,
     path::{Path, PathBuf},
     str::FromStr,
 };
@@ -24,7 +24,7 @@ pub enum MentionUri {
     Symbol {
         abs_path: PathBuf,
         name: String,
-        line_range: Range<u32>,
+        line_range: RangeInclusive<u32>,
     },
     Thread {
         id: acp::SessionId,
@@ -41,7 +41,7 @@ pub enum MentionUri {
     Selection {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         abs_path: Option<PathBuf>,
-        line_range: Range<u32>,
+        line_range: RangeInclusive<u32>,
     },
     Fetch {
         url: Url,
@@ -67,7 +67,7 @@ impl MentionUri {
                         .context("Parsing line range start")?
                         .checked_sub(1)
                         .context("Line numbers should be 1-based")?
-                        ..end
+                        ..=end
                             .parse::<u32>()
                             .context("Parsing line range end")?
                             .checked_sub(1)
@@ -180,8 +180,8 @@ impl MentionUri {
                 url.query_pairs_mut().append_pair("symbol", name);
                 url.set_fragment(Some(&format!(
                     "L{}:{}",
-                    line_range.start + 1,
-                    line_range.end + 1
+                    line_range.start() + 1,
+                    line_range.end() + 1
                 )));
                 url
             }
@@ -196,8 +196,8 @@ impl MentionUri {
                 };
                 url.set_fragment(Some(&format!(
                     "L{}:{}",
-                    line_range.start + 1,
-                    line_range.end + 1
+                    line_range.start() + 1,
+                    line_range.end() + 1
                 )));
                 url
             }
@@ -258,14 +258,14 @@ fn single_query_param(url: &Url, name: &'static str) -> Result<Option<String>> {
     }
 }
 
-pub fn selection_name(path: Option<&Path>, line_range: &Range<u32>) -> String {
+pub fn selection_name(path: Option<&Path>, line_range: &RangeInclusive<u32>) -> String {
     format!(
         "{} ({}:{})",
         path.and_then(|path| path.file_name())
             .unwrap_or("Untitled".as_ref())
             .display(),
-        line_range.start + 1,
-        line_range.end + 1
+        *line_range.start() + 1,
+        *line_range.end() + 1
     )
 }
 
@@ -331,8 +331,8 @@ mod tests {
             } => {
                 assert_eq!(path.to_str().unwrap(), path!("/path/to/file.rs"));
                 assert_eq!(name, "MySymbol");
-                assert_eq!(line_range.start, 9);
-                assert_eq!(line_range.end, 19);
+                assert_eq!(line_range.start(), &9);
+                assert_eq!(line_range.end(), &19);
             }
             _ => panic!("Expected Symbol variant"),
         }
@@ -352,8 +352,8 @@ mod tests {
                     path.as_ref().unwrap().to_str().unwrap(),
                     path!("/path/to/file.rs")
                 );
-                assert_eq!(line_range.start, 4);
-                assert_eq!(line_range.end, 14);
+                assert_eq!(line_range.start(), &4);
+                assert_eq!(line_range.end(), &14);
             }
             _ => panic!("Expected Selection variant"),
         }

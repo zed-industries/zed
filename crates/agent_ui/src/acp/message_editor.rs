@@ -6,7 +6,7 @@ use acp_thread::{MentionUri, selection_name};
 use agent_client_protocol as acp;
 use agent_servers::AgentServer;
 use agent2::HistoryStore;
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{Result, anyhow};
 use assistant_slash_commands::codeblock_fence_for_path;
 use collections::{HashMap, HashSet};
 use editor::{
@@ -17,8 +17,8 @@ use editor::{
     display_map::{Crease, CreaseId, FoldId},
 };
 use futures::{
-    FutureExt as _, TryFutureExt as _,
-    future::{Shared, join_all, try_join_all},
+    FutureExt as _,
+    future::{Shared, join_all},
 };
 use gpui::{
     AppContext, ClipboardEntry, Context, Entity, EventEmitter, FocusHandle, Focusable,
@@ -35,7 +35,7 @@ use std::{
     cell::Cell,
     ffi::OsStr,
     fmt::Write,
-    ops::Range,
+    ops::{Range, RangeInclusive},
     path::{Path, PathBuf},
     rc::Rc,
     sync::Arc,
@@ -342,14 +342,18 @@ impl MessageEditor {
             MentionUri::Thread { id, .. } => self.confirm_mention_for_thread(id, cx),
             MentionUri::TextThread { path, .. } => self.confirm_mention_for_text_thread(path, cx),
             MentionUri::File { abs_path } => self.confirm_mention_for_file(abs_path, cx),
+            MentionUri::Symbol {
+                abs_path,
+                line_range,
+                ..
+            } => self.confirm_mention_for_symbol(abs_path, line_range, cx),
+            MentionUri::Rule { id, .. } => self.confirm_mention_for_rule(id, cx),
             MentionUri::PastedImage => {
                 debug_panic!("pasted image URI should not be included in completions");
                 Task::ready(Err(anyhow!(
                     "pasted imaged URI should not be included in completions"
                 )))
             }
-            MentionUri::Symbol { abs_path, .. } => self.confirm_mention_for_symbol(abs_path, cx),
-            MentionUri::Rule { id, .. } => self.confirm_mention_for_rule(id, cx),
             MentionUri::Selection { .. } => {
                 // Handled elsewhere
                 debug_panic!("unexpected selection URI");
@@ -521,6 +525,7 @@ impl MessageEditor {
     fn confirm_mention_for_symbol(
         &mut self,
         abs_path: PathBuf,
+        line_range: RangeInclusive<u32>,
         cx: &mut Context<Self>,
     ) -> Task<Result<Mention>> {
         let Some(project_path) = self
@@ -528,7 +533,6 @@ impl MessageEditor {
             .read(cx)
             .project_path_for_absolute_path(&abs_path, cx)
         else {
-            // FIXME
             return Task::ready(Err(anyhow!("project path not found")));
         };
         let buffer = self
@@ -536,9 +540,14 @@ impl MessageEditor {
             .update(cx, |project, cx| project.open_buffer(project_path, cx));
         cx.spawn(async move |_, cx| {
             let buffer = buffer.await?;
-            let mention = buffer.update(cx, |buffer, cx| Mention::Text {
-                content: buffer.text(),
-                tracked_buffers: vec![cx.entity()],
+            let mention = buffer.update(cx, |buffer, cx| {
+                let start = Point::new(*line_range.start(), 0).min(buffer.max_point());
+                let end = Point::new(*line_range.end() + 1, 0).min(buffer.max_point());
+                let content = buffer.text_for_range(start..end).collect();
+                Mention::Text {
+                    content,
+                    tracked_buffers: vec![cx.entity()],
+                }
             })?;
             anyhow::Ok(mention)
         })
@@ -550,7 +559,6 @@ impl MessageEditor {
         cx: &mut Context<Self>,
     ) -> Task<Result<Mention>> {
         let Some(prompt_store) = self.prompt_store.clone() else {
-            // FIXME
             return Task::ready(Err(anyhow!("missing prompt store")));
         };
         let prompt = prompt_store.read(cx).load(id, cx);
@@ -595,7 +603,7 @@ impl MessageEditor {
                 .text_for_range(selection_range.clone())
                 .collect::<String>();
             let point_range = selection_range.to_point(&snapshot);
-            let line_range = point_range.start.row..point_range.end.row;
+            let line_range = point_range.start.row..=point_range.end.row;
 
             let uri = MentionUri::Selection {
                 abs_path: abs_path.clone(),
@@ -729,15 +737,22 @@ impl MessageEditor {
                                 })
                             }
                             Mention::Image(mention_image) => {
+                                let uri = match uri {
+                                    MentionUri::File { .. } => Some(uri.to_uri().to_string()),
+                                    MentionUri::PastedImage => None,
+                                    other => {
+                                        debug_panic!(
+                                            "unexpected mention uri for image: {:?}",
+                                            other
+                                        );
+                                        None
+                                    }
+                                };
                                 acp::ContentBlock::Image(acp::ImageContent {
                                     annotations: None,
                                     data: mention_image.data.to_string(),
                                     mime_type: mention_image.format.mime_type().into(),
-                                    uri: mention_image
-                                        .abs_path
-                                        .as_ref()
-                                        // FIXME
-                                        .map(|path| format!("file://{}", path.display())),
+                                    uri,
                                 })
                             }
                         };
@@ -978,7 +993,6 @@ impl MessageEditor {
                         .await;
                     if let Some(image) = image {
                         Ok(Mention::Image(MentionImage {
-                            abs_path,
                             data: image.source,
                             format,
                         }))
@@ -1067,14 +1081,6 @@ impl MessageEditor {
                     let Some(mention_uri) = mention_uri.log_err() else {
                         continue;
                     };
-                    let abs_path = match &mention_uri {
-                        MentionUri::PastedImage => None,
-                        MentionUri::File { abs_path, .. } => Some(abs_path.clone()),
-                        other => {
-                            log::error!("unexpected URI for image: {other:?}");
-                            continue;
-                        }
-                    };
                     let Some(format) = ImageFormat::from_mime_type(&mime_type) else {
                         log::error!("failed to parse MIME type for image: {mime_type:?}");
                         continue;
@@ -1086,7 +1092,6 @@ impl MessageEditor {
                         start..end,
                         mention_uri,
                         Mention::Image(MentionImage {
-                            abs_path,
                             data: data.into(),
                             format,
                         }),
@@ -1362,7 +1367,6 @@ pub enum Mention {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MentionImage {
-    pub abs_path: Option<PathBuf>,
     pub data: SharedString,
     pub format: ImageFormat,
 }
@@ -1889,7 +1893,7 @@ mod tests {
         });
 
         let contents = message_editor
-            .update_in(&mut cx, |message_editor, window, cx| {
+            .update(&mut cx, |message_editor, cx| {
                 message_editor.mention_set().contents(cx)
             })
             .await
@@ -1898,7 +1902,7 @@ mod tests {
             .collect::<Vec<_>>();
 
         {
-            let [Mention::Text { content, uri, .. }] = contents.as_slice() else {
+            let [(uri, Mention::Text { content, .. })] = contents.as_slice() else {
                 panic!("Unexpected mentions");
             };
             pretty_assertions::assert_eq!(content, "1");
@@ -1939,7 +1943,7 @@ mod tests {
         cx.run_until_parked();
 
         let contents = message_editor
-            .update_in(&mut cx, |message_editor, window, cx| {
+            .update(&mut cx, |message_editor, cx| {
                 message_editor.mention_set().contents(cx)
             })
             .await
@@ -1950,7 +1954,7 @@ mod tests {
         let url_eight = uri!("file:///dir/b/eight.txt");
 
         {
-            let [_, Mention::Text { content, uri, .. }] = contents.as_slice() else {
+            let [_, (uri, Mention::Text { content, .. })] = contents.as_slice() else {
                 panic!("Unexpected mentions");
             };
             pretty_assertions::assert_eq!(content, "8");
@@ -2047,7 +2051,7 @@ mod tests {
         });
 
         let contents = message_editor
-            .update_in(&mut cx, |message_editor, window, cx| {
+            .update(&mut cx, |message_editor, cx| {
                 message_editor.mention_set().contents(cx)
             })
             .await
@@ -2056,7 +2060,7 @@ mod tests {
             .collect::<Vec<_>>();
 
         {
-            let [_, _, Mention::Text { content, uri, .. }] = contents.as_slice() else {
+            let [_, _, (uri, Mention::Text { content, .. })] = contents.as_slice() else {
                 panic!("Unexpected mentions");
             };
             pretty_assertions::assert_eq!(content, "1");
