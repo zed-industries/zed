@@ -33,6 +33,8 @@ tempfile.workspace = true
 text.workspace = true
 time.workspace = true
 util.workspace = true
+encoding = "0.2.33"
+
 
 [target.'cfg(target_os = "macos")'.dependencies]
 fsevent.workspace = true

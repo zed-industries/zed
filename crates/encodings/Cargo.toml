@@ -9,9 +9,9 @@ ui.workspace = true
 workspace.workspace = true
 gpui.workspace = true
 picker.workspace = true
-language.workspace = true
 util.workspace = true
 fuzzy.workspace = true
+editor.workspace = true
 
 [lints]
 workspace = true
