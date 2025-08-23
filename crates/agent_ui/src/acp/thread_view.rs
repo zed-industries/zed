@@ -274,6 +274,7 @@ pub struct AcpThreadView {
     edits_expanded: bool,
     plan_expanded: bool,
     editor_expanded: bool,
+    terminal_expanded: bool,
     editing_message: Option<usize>,
     prompt_capabilities: Rc<Cell<PromptCapabilities>>,
     _cancel_task: Option<Task<()>>,
@@ -384,6 +385,7 @@ impl AcpThreadView {
             edits_expanded: false,
             plan_expanded: false,
             editor_expanded: false,
+            terminal_expanded: true,
             history_store,
             hovered_recent_history_item: None,
             prompt_capabilities,
@@ -835,7 +837,7 @@ impl AcpThreadView {
 
         let contents = self
             .message_editor
-            .update(cx, |message_editor, cx| message_editor.contents(window, cx));
+            .update(cx, |message_editor, cx| message_editor.contents(cx));
         self.send_impl(contents, window, cx)
     }
 
@@ -848,7 +850,7 @@ impl AcpThreadView {
 
         let contents = self
             .message_editor
-            .update(cx, |message_editor, cx| message_editor.contents(window, cx));
+            .update(cx, |message_editor, cx| message_editor.contents(cx));
 
         cx.spawn_in(window, async move |this, cx| {
             cancelled.await;
@@ -956,8 +958,7 @@ impl AcpThreadView {
             return;
         };
 
-        let contents =
-            message_editor.update(cx, |message_editor, cx| message_editor.contents(window, cx));
+        let contents = message_editor.update(cx, |message_editor, cx| message_editor.contents(cx));
 
         let task = cx.foreground_executor().spawn(async move {
             rewind.await?;
@@ -1690,9 +1691,10 @@ impl AcpThreadView {
             matches!(tool_call.kind, acp::ToolKind::Edit) || tool_call.diffs().next().is_some();
         let use_card_layout = needs_confirmation || is_edit;
 
-        let is_collapsible = !tool_call.content.is_empty() && !needs_confirmation;
+        let is_collapsible = !tool_call.content.is_empty() && !use_card_layout;
 
-        let is_open = needs_confirmation || self.expanded_tool_calls.contains(&tool_call.id);
+        let is_open =
+            needs_confirmation || is_edit || self.expanded_tool_calls.contains(&tool_call.id);
 
         let gradient_overlay = |color: Hsla| {
             div()
@@ -2162,8 +2164,6 @@ impl AcpThreadView {
             .map(|path| format!("{}", path.display()))
             .unwrap_or_else(|| "current directory".to_string());
 
-        let is_expanded = self.expanded_tool_calls.contains(&tool_call.id);
-
         let header = h_flex()
             .id(SharedString::from(format!(
                 "terminal-tool-header-{}",
@@ -2297,19 +2297,12 @@ impl AcpThreadView {
                         "terminal-tool-disclosure-{}",
                         terminal.entity_id()
                     )),
-                    is_expanded,
+                    self.terminal_expanded,
                 )
                 .opened_icon(IconName::ChevronUp)
                 .closed_icon(IconName::ChevronDown)
-                .on_click(cx.listener({
-                    let id = tool_call.id.clone();
-                    move |this, _event, _window, _cx| {
-                        if is_expanded {
-                            this.expanded_tool_calls.remove(&id);
-                        } else {
-                            this.expanded_tool_calls.insert(id.clone());
-                        }
-                    }
+                .on_click(cx.listener(move |this, _event, _window, _cx| {
+                    this.terminal_expanded = !this.terminal_expanded;
                 })),
             );
 
@@ -2318,7 +2311,7 @@ impl AcpThreadView {
             .read(cx)
             .entry(entry_ix)
             .and_then(|entry| entry.terminal(terminal));
-        let show_output = is_expanded && terminal_view.is_some();
+        let show_output = self.terminal_expanded && terminal_view.is_some();
 
         v_flex()
             .mb_2()
@@ -3655,6 +3648,7 @@ impl AcpThreadView {
                         .open_path(path, None, true, window, cx)
                         .detach_and_log_err(cx);
                 }
+                MentionUri::PastedImage => {}
                 MentionUri::Directory { abs_path } => {
                     let project = workspace.project();
                     let Some(entry) = project.update(cx, |project, cx| {
@@ -3669,9 +3663,14 @@ impl AcpThreadView {
                     });
                 }
                 MentionUri::Symbol {
-                    path, line_range, ..
+                    abs_path: path,
+                    line_range,
+                    ..
                 }
-                | MentionUri::Selection { path, line_range } => {
+                | MentionUri::Selection {
+                    abs_path: Some(path),
+                    line_range,
+                } => {
                     let project = workspace.project();
                     let Some((path, _)) = project.update(cx, |project, cx| {
                         let path = project.find_project_path(path, cx)?;
@@ -3687,8 +3686,8 @@ impl AcpThreadView {
                             let Some(editor) = item.await?.downcast::<Editor>() else {
                                 return Ok(());
                             };
-                            let range =
-                                Point::new(line_range.start, 0)..Point::new(line_range.start, 0);
+                            let range = Point::new(*line_range.start(), 0)
+                                ..Point::new(*line_range.start(), 0);
                             editor
                                 .update_in(cx, |editor, window, cx| {
                                     editor.change_selections(
@@ -3703,6 +3702,7 @@ impl AcpThreadView {
                         })
                         .detach_and_log_err(cx);
                 }
+                MentionUri::Selection { abs_path: None, .. } => {}
                 MentionUri::Thread { id, name } => {
                     if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
                         panel.update(cx, |panel, cx| {
