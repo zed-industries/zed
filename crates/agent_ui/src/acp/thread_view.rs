@@ -600,7 +600,7 @@ impl AcpThreadView {
 
             let view = registry.read(cx).provider(&provider_id).map(|provider| {
                 provider.configuration_view(
-                    language_model::ConfigurationViewTargetAgent::Other(agent_name),
+                    language_model::ConfigurationViewTargetAgent::Other(agent_name.clone()),
                     window,
                     cx,
                 )
@@ -1372,7 +1372,7 @@ impl AcpThreadView {
                                                     .icon_color(Color::Muted)
                                                     .style(ButtonStyle::Transparent)
                                                     .tooltip(move |_window, cx| {
-                                                        cx.new(|_| UnavailableEditingTooltip::new(agent_name.into()))
+                                                        cx.new(|_| UnavailableEditingTooltip::new(agent_name.clone()))
                                                             .into()
                                                     })
                                             )
@@ -3911,13 +3911,13 @@ impl AcpThreadView {
         match AgentSettings::get_global(cx).notify_when_agent_waiting {
             NotifyWhenAgentWaiting::PrimaryScreen => {
                 if let Some(primary) = cx.primary_display() {
-                    self.pop_up(icon, caption.into(), title.into(), window, primary, cx);
+                    self.pop_up(icon, caption.into(), title, window, primary, cx);
                 }
             }
             NotifyWhenAgentWaiting::AllScreens => {
                 let caption = caption.into();
                 for screen in cx.displays() {
-                    self.pop_up(icon, caption.clone(), title.into(), window, screen, cx);
+                    self.pop_up(icon, caption.clone(), title.clone(), window, screen, cx);
                 }
             }
             NotifyWhenAgentWaiting::Never => {
@@ -5153,16 +5153,16 @@ pub(crate) mod tests {
             ui::IconName::Ai
         }
 
-        fn name(&self) -> &'static str {
-            "Test"
+        fn name(&self) -> SharedString {
+            "Test".into()
         }
 
-        fn empty_state_headline(&self) -> &'static str {
-            "Test"
+        fn empty_state_headline(&self) -> SharedString {
+            "Test".into()
         }
 
-        fn empty_state_message(&self) -> &'static str {
-            "Test"
+        fn empty_state_message(&self) -> SharedString {
+            "Test".into()
         }
 
         fn connect(
