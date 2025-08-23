@@ -14359,12 +14359,10 @@ version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fe8c9d1c68d67dd9f97ecbc6f932b60eb289c5dbddd8aa1405484a8fd2fcd984"
 dependencies = [
- "chrono",
  "dyn-clone",
  "indexmap",
  "ref-cast",
  "schemars_derive",
- "semver",
  "serde",
  "serde_json",
 ]
@@ -19963,7 +19961,6 @@ dependencies = [
  "rustix 1.0.7",
  "rustls 0.23.26",
  "rustls-webpki 0.103.1",
- "schemars",
  "scopeguard",
  "sea-orm",
  "sea-query-binder",
