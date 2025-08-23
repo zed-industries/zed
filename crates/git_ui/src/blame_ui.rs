@@ -90,6 +90,11 @@ impl BlameRenderer for GitBlameRenderer {
                                 sha: blame_entry.sha.to_string().into(),
                                 subject: blame_entry.summary.clone().unwrap_or_default().into(),
                                 commit_timestamp: blame_entry.committer_time.unwrap_or_default(),
+                                author_name: blame_entry
+                                    .committer_name
+                                    .clone()
+                                    .unwrap_or_default()
+                                    .into(),
                                 has_parent: true,
                             },
                             repository.downgrade(),
@@ -229,6 +234,7 @@ impl BlameRenderer for GitBlameRenderer {
                         .into()
                 }),
             commit_timestamp: commit_details.commit_time.unix_timestamp(),
+            author_name: commit_details.author_name.clone(),
             has_parent: false,
         };
 
@@ -374,6 +380,7 @@ impl BlameRenderer for GitBlameRenderer {
                 sha: blame_entry.sha.to_string().into(),
                 subject: blame_entry.summary.clone().unwrap_or_default().into(),
                 commit_timestamp: blame_entry.committer_time.unwrap_or_default(),
+                author_name: blame_entry.committer_name.unwrap_or_default().into(),
                 has_parent: true,
             },
             repository.downgrade(),
