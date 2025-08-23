@@ -1725,7 +1725,8 @@ mod tests {
                         "six.txt": "6",
                         "seven.txt": "7",
                         "eight.txt": "8",
-                    }
+                    },
+                    "x.png": "",
                 }),
             )
             .await;
@@ -2115,11 +2116,85 @@ mod tests {
         cx.run_until_parked();
 
         editor.read_with(&cx, |editor, cx| {
-                assert_eq!(
-                    editor.text(cx),
-                    format!("Lorem [@one.txt]({url_one})  Ipsum [@eight.txt]({url_eight}) [@MySymbol]({url_one}?symbol=MySymbol#L1:1) ")
-                );
-            });
+            assert_eq!(
+                editor.text(cx),
+                format!("Lorem [@one.txt]({url_one})  Ipsum [@eight.txt]({url_eight}) [@MySymbol]({url_one}?symbol=MySymbol#L1:1) ")
+            );
+        });
+
+        // Try to mention an "image" file that will fail to load
+        cx.simulate_input("@file x.png");
+
+        editor.update(&mut cx, |editor, cx| {
+            assert_eq!(
+                editor.text(cx),
+                format!("Lorem [@one.txt]({url_one})  Ipsum [@eight.txt]({url_eight}) [@MySymbol]({url_one}?symbol=MySymbol#L1:1) @file x.png")
+            );
+            assert!(editor.has_visible_completions_menu());
+            assert_eq!(current_completion_labels(editor), &["x.png dir/"]);
+        });
+
+        editor.update_in(&mut cx, |editor, window, cx| {
+            editor.confirm_completion(&editor::actions::ConfirmCompletion::default(), window, cx);
+        });
+
+        // Getting the message contents fails
+        message_editor
+            .update(&mut cx, |message_editor, cx| {
+                message_editor
+                    .mention_set()
+                    .contents(&all_prompt_capabilities, cx)
+            })
+            .await
+            .expect_err("Should fail to load x.png");
+
+        cx.run_until_parked();
+
+        // Mention was removed
+        editor.read_with(&cx, |editor, cx| {
+            assert_eq!(
+                editor.text(cx),
+                format!("Lorem [@one.txt]({url_one})  Ipsum [@eight.txt]({url_eight}) [@MySymbol]({url_one}?symbol=MySymbol#L1:1) ")
+            );
+        });
+
+        // Once more
+        cx.simulate_input("@file x.png");
+
+        editor.update(&mut cx, |editor, cx| {
+                    assert_eq!(
+                        editor.text(cx),
+                        format!("Lorem [@one.txt]({url_one})  Ipsum [@eight.txt]({url_eight}) [@MySymbol]({url_one}?symbol=MySymbol#L1:1) @file x.png")
+                    );
+                    assert!(editor.has_visible_completions_menu());
+                    assert_eq!(current_completion_labels(editor), &["x.png dir/"]);
+                });
+
+        editor.update_in(&mut cx, |editor, window, cx| {
+            editor.confirm_completion(&editor::actions::ConfirmCompletion::default(), window, cx);
+        });
+
+        // This time don't immediately get the contents, just let the confirmed completion settle
+        cx.run_until_parked();
+
+        // Mention was removed
+        editor.read_with(&cx, |editor, cx| {
+                    assert_eq!(
+                        editor.text(cx),
+                        format!("Lorem [@one.txt]({url_one})  Ipsum [@eight.txt]({url_eight}) [@MySymbol]({url_one}?symbol=MySymbol#L1:1) ")
+                    );
+                });
+
+        // Now getting the contents succeeds, because the invalid mention was removed
+        let contents = message_editor
+            .update(&mut cx, |message_editor, cx| {
+                message_editor
+                    .mention_set()
+                    .contents(&all_prompt_capabilities, cx)
+            })
+            .await
+            .unwrap();
+        assert_eq!(contents.len(), 3);
     }
 
     fn fold_ranges(editor: &Editor, cx: &mut App) -> Vec<Range<Point>> {
