@@ -1165,15 +1165,15 @@ impl MessageEditor {
         })
     }
 
+    pub fn text(&self, cx: &App) -> String {
+        self.editor.read(cx).text(cx)
+    }
+
     #[cfg(test)]
     pub fn set_text(&mut self, text: &str, window: &mut Window, cx: &mut Context<Self>) {
         self.editor.update(cx, |editor, cx| {
             editor.set_text(text, window, cx);
         });
-    }
-
-    pub fn text(&self, cx: &App) -> String {
-        self.editor.read(cx).text(cx)
     }
 }
 
