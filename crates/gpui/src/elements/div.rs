@@ -3110,7 +3110,9 @@ impl ScrollHandle {
 #[cfg(test)]
 mod test {
     use crate::{
-        self as gpui, div, point, px, size, AppContext, Context, InteractiveElement, IntoElement, ParentElement, Render, ScrollHandle, StatefulInteractiveElement, Styled, TestAppContext, Window
+        self as gpui, AppContext, Context, InteractiveElement, IntoElement, ParentElement, Render,
+        ScrollHandle, StatefulInteractiveElement, Styled, TestAppContext, Window, div, point, px,
+        size,
     };
 
     #[gpui::test]
@@ -3125,21 +3127,21 @@ mod test {
             // simple horizontal flex grid with 5 boxes
             fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
                 div()
-                    .child(div()
-                        // create a parent div less wide than all the children
-                        .w(px(200.))
-                        .child(
-                            div()
-                                .flex()
-                                .flex_row()
-                                .items_center()
-                                .id("unpinned tabs")
-                                // make it scrollable
-                                .overflow_x_scroll()
-                                .w_full()
-                                .track_scroll(&self.scroll_handle)
-                                .children(
-                                    (0..5).map(|i| {
+                    .child(
+                        div()
+                            // create a parent div less wide than all the children
+                            .w(px(200.))
+                            .child(
+                                div()
+                                    .flex()
+                                    .flex_row()
+                                    .items_center()
+                                    .id("unpinned tabs")
+                                    // make it scrollable
+                                    .overflow_x_scroll()
+                                    .w_full()
+                                    .track_scroll(&self.scroll_handle)
+                                    .children((0..5).map(|_| {
                                         div()
                                             .id("tab_bar_drop_target")
                                             .min_w(px(60.))
@@ -3148,10 +3150,10 @@ mod test {
                                             .h_full()
                                             .flex_grow()
                                             .bg(gpui::blue())
-                                    })
-                                )
-                        )).into_element()
-
+                                    })),
+                            ),
+                    )
+                    .into_element()
             }
         }
 
@@ -3160,9 +3162,7 @@ mod test {
             scroll_handle: scrollable_handle.clone(),
         });
 
-        cx.draw(point(px(0.), px(0.)), size(px(200.), px(100.)), |_, cx| {
-            view
-        });
+        cx.draw(point(px(0.), px(0.)), size(px(200.), px(100.)), |_, _| view);
 
         // act: go to the third child which is already partially visible
         scrollable_handle.scroll_to_item(2);
