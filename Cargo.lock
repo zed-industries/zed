@@ -5577,6 +5577,7 @@ dependencies = [
  "encoding",
  "fuzzy",
  "gpui",
+ "language",
  "picker",
  "ui",
  "util",
