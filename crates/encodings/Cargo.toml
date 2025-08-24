@@ -13,6 +13,7 @@ util.workspace = true
 fuzzy.workspace = true
 editor.workspace = true
 encoding = "0.2.33"
+language.workspace = true
 
 [lints]
 workspace = true
