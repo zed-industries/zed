@@ -1098,6 +1098,18 @@ MonochromeSpriteVertexOutput monochrome_sprite_vertex(uint vertex_id: SV_VertexI
 
 float4 monochrome_sprite_fragment(MonochromeSpriteFragmentInput input): SV_Target {
     float sample = t_sprite.Sample(s_sprite, input.tile_position).r;
+
+    float textLuminance = dot(input.color.rgb, float3(0.2126, 0.7152, 0.0722));
+    bool isLightText = textLuminance > 0.5;
+
+    if (isLightText) {
+        // Stronger gamma correction - try values from 0.4 to 0.6
+        sample = pow(sample, 0.45);
+
+        // More aggressive bias to strengthen thin features
+        sample = saturate(sample * 1.2 - 0.1);
+    }
+
     return float4(input.color.rgb, input.color.a * sample);
 }
 
