@@ -1,4 +1,5 @@
 pub mod save_or_reopen {
+    use editor::Editor;
     use gpui::Styled;
     use gpui::{AppContext, ParentElement};
     use picker::Picker;
@@ -103,24 +104,40 @@ pub mod save_or_reopen {
             &self,
             cx: &mut Context<Picker<EncodingSaveOrReopenDelegate>>,
             window: &mut Window,
-        ) {
+        ) -> Option<()> {
             if self.current_selection == 0 {
                 if let Some(workspace) = self.workspace.upgrade() {
+                    let (_, buffer, _) = workspace
+                        .read(cx)
+                        .active_item(cx)?
+                        .act_as::<Editor>(cx)?
+                        .read(cx)
+                        .active_excerpt(cx)?;
+
                     workspace.update(cx, |workspace, cx| {
                         workspace.toggle_modal(window, cx, |window, cx| {
-                            EncodingSelector::new(window, cx, Action::Save)
+                            EncodingSelector::new(window, cx, Action::Save, buffer.downgrade())
                         })
                     });
                 }
             } else if self.current_selection == 1 {
                 if let Some(workspace) = self.workspace.upgrade() {
+                    let (_, buffer, _) = workspace
+                        .read(cx)
+                        .active_item(cx)?
+                        .act_as::<Editor>(cx)?
+                        .read(cx)
+                        .active_excerpt(cx)?;
+
                     workspace.update(cx, |workspace, cx| {
                         workspace.toggle_modal(window, cx, |window, cx| {
-                            EncodingSelector::new(window, cx, Action::Reopen)
+                            EncodingSelector::new(window, cx, Action::Reopen, buffer.downgrade())
                         })
                     });
                 }
             }
+
+            Some(())
         }
     }
 
@@ -253,6 +270,7 @@ pub mod encoding {
         AppContext, BackgroundExecutor, DismissEvent, Entity, EventEmitter, Focusable, Length,
         WeakEntity, actions,
     };
+    use language::Buffer;
     use picker::{Picker, PickerDelegate};
     use ui::{
         Context, DefiniteLength, HighlightedLabel, Label, ListItem, ListItemSpacing, ParentElement,
@@ -260,6 +278,8 @@ pub mod encoding {
     };
     use util::{ResultExt, TryFutureExt};
     use workspace::{ModalView, Workspace};
+
+    use crate::encoding_from_index;
 
     pub struct EncodingSelector {
         picker: Entity<Picker<EncodingSelectorDelegate>>,
@@ -271,10 +291,14 @@ pub mod encoding {
         encodings: Vec<StringMatchCandidate>,
         matches: Vec<StringMatch>,
         selector: WeakEntity<EncodingSelector>,
+        buffer: WeakEntity<Buffer>,
     }
 
     impl EncodingSelectorDelegate {
-        pub fn new(selector: WeakEntity<EncodingSelector>) -> EncodingSelectorDelegate {
+        pub fn new(
+            selector: WeakEntity<EncodingSelector>,
+            buffer: WeakEntity<Buffer>,
+        ) -> EncodingSelectorDelegate {
             EncodingSelectorDelegate {
                 current_selection: 0,
                 encodings: vec![
@@ -309,17 +333,17 @@ pub mod encoding {
                     StringMatchCandidate::new(28, "Windows-1256"),
                     StringMatchCandidate::new(29, "Windows-1257"),
                     StringMatchCandidate::new(30, "Windows-1258"),
-                    StringMatchCandidate::new(31, "EUC-KR"),
+                    StringMatchCandidate::new(31, "Windows-949"),
                     StringMatchCandidate::new(32, "EUC-JP"),
-                    StringMatchCandidate::new(33, "Shift_JIS"),
-                    StringMatchCandidate::new(34, "ISO 2022-JP"),
-                    StringMatchCandidate::new(35, "GBK"),
-                    StringMatchCandidate::new(36, "GB18030"),
-                    StringMatchCandidate::new(37, "Big5"),
-                    StringMatchCandidate::new(38, "HZ-GB-2312"),
+                    StringMatchCandidate::new(33, "ISO 2022-JP"),
+                    StringMatchCandidate::new(34, "GBK"),
+                    StringMatchCandidate::new(35, "GB18030"),
+                    StringMatchCandidate::new(36, "Big5"),
+                    StringMatchCandidate::new(37, "HZ-GB-2312"),
                 ],
                 matches: Vec::new(),
                 selector,
+                buffer,
             }
         }
     }
@@ -403,6 +427,12 @@ pub mod encoding {
             window: &mut Window,
             cx: &mut Context<Picker<Self>>,
         ) {
+            if let Some(buffer) = self.buffer.upgrade() {
+                buffer.update(cx, |buffer, cx| {
+                    buffer.encoding = encoding_from_index(self.current_selection)
+                });
+            }
+            self.dismissed(window, cx);
         }
 
         fn dismissed(&mut self, window: &mut Window, cx: &mut Context<Picker<Self>>) {
@@ -439,8 +469,9 @@ pub mod encoding {
             window: &mut Window,
             cx: &mut Context<EncodingSelector>,
             action: Action,
+            buffer: WeakEntity<Buffer>,
         ) -> EncodingSelector {
-            let delegate = EncodingSelectorDelegate::new(cx.entity().downgrade());
+            let delegate = EncodingSelectorDelegate::new(cx.entity().downgrade(), buffer);
             let picker = cx.new(|cx| Picker::uniform_list(delegate, window, cx));
 
             EncodingSelector { picker, action }
