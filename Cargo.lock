@@ -8474,6 +8474,7 @@ dependencies = [
  "theme",
  "ui",
  "util",
+ "util_macros",
  "workspace",
  "workspace-hack",
  "zed_actions",

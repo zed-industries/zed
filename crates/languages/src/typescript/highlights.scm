@@ -248,6 +248,7 @@
   "is"
   "keyof"
   "let"
+  "module"
   "namespace"
   "new"
   "of"
