@@ -6,7 +6,7 @@ use gpui::{AnyWindowHandle, App, AppContext as _, Context, Entity, WeakEntity};
 
 use language::language_settings::{EditPredictionProvider, all_language_settings};
 use language_models::AllLanguageModelSettings;
-use ollama::{OllamaCompletionProvider, SettingsModel, State};
+use ollama::{OLLAMA_API_KEY_VAR, OllamaCompletionProvider, SettingsModel, State};
 use settings::{Settings as _, SettingsStore};
 use std::{cell::RefCell, rc::Rc, sync::Arc};
 use supermaven::{Supermaven, SupermavenCompletionProvider};
@@ -282,7 +282,7 @@ fn assign_edit_prediction_provider(
         }
         EditPredictionProvider::Ollama => {
             let settings = &AllLanguageModelSettings::get_global(cx).ollama;
-            let api_key = std::env::var("OLLAMA_API_KEY").ok();
+            let api_key = std::env::var(OLLAMA_API_KEY_VAR).ok();
 
             // Get model from settings or use discovered models
             let model = if let Some(first_model) = settings.available_models.first() {

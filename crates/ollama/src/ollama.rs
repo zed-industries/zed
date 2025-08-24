@@ -6,6 +6,7 @@ use serde_json::Value;
 use std::time::Duration;
 
 pub const OLLAMA_API_URL: &str = "http://localhost:11434";
+pub const OLLAMA_API_KEY_VAR: &str = "OLLAMA_API_KEY";
 
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[derive(Clone, Serialize, Deserialize, Debug, Eq, PartialEq)]
