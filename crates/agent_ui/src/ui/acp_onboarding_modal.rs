@@ -77,6 +77,7 @@ impl Render for AcpOnboardingModal {
             .border_b_1()
             .border_color(cx.theme().colors().border_variant)
             .justify_center()
+            .rounded_t_md()
             .child(
                 div().absolute().inset_0().w(px(515.)).h(px(126.)).child(
                     Vector::new(VectorName::AcpGrid, rems_from_px(515.), rems_from_px(126.))
