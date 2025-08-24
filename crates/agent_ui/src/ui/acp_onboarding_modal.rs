@@ -1,5 +1,6 @@
 use gpui::{
     ClickEvent, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, MouseDownEvent, Render,
+    linear_color_stop, linear_gradient,
 };
 use ui::{TintColor, Vector, VectorName, prelude::*};
 use workspace::{ModalView, Workspace};
@@ -46,10 +47,10 @@ impl AcpOnboardingModal {
     }
 
     fn view_docs(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
-        cx.open_url("https://zed.dev/blog/"); // TODO: Add link
+        cx.open_url("https://zed.dev/blog/extensible-agent-support-in-zed"); // TODO: Add final link
         cx.notify();
 
-        acp_onboarding_event!("Docs Link Clicked");
+        acp_onboarding_event!("Blog Post Link Clicked");
     }
 
     fn cancel(&mut self, _: &menu::Cancel, _: &mut Window, cx: &mut Context<Self>) {
@@ -69,74 +70,65 @@ impl ModalView for AcpOnboardingModal {}
 
 impl Render for AcpOnboardingModal {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let base = v_flex()
-            .id("acp-onboarding")
-            .key_context("AcpOnboardingModal")
+        let illustration = h_flex()
             .relative()
-            .w(rems(32.))
-            .h_full()
-            .p_4()
-            .gap_2()
-            .elevation_3(cx)
-            .track_focus(&self.focus_handle(cx))
-            .overflow_hidden()
-            .on_action(cx.listener(Self::cancel))
-            .on_action(cx.listener(|_, _: &menu::Cancel, _window, cx| {
-                acp_onboarding_event!("Canceled", trigger = "Action");
-                cx.emit(DismissEvent);
-            }))
-            .on_any_mouse_down(cx.listener(|this, _: &MouseDownEvent, window, _cx| {
-                this.focus_handle.focus(window);
-            }))
+            .h(rems_from_px(126.))
+            .bg(cx.theme().colors().editor_background)
+            .border_b_1()
+            .border_color(cx.theme().colors().border_variant)
+            .justify_center()
             .child(
-                div()
-                    .absolute()
-                    .top(px(-8.0))
-                    .right_0()
-                    .w(px(400.))
-                    .h(px(92.))
-                    .child(
-                        Vector::new(VectorName::AcpGrid, rems_from_px(400.), rems_from_px(92.))
-                            .color(ui::Color::Custom(cx.theme().colors().text.alpha(0.32))),
-                    ),
+                div().absolute().inset_0().w(px(515.)).h(px(126.)).child(
+                    Vector::new(VectorName::AcpGrid, rems_from_px(515.), rems_from_px(126.))
+                        .color(ui::Color::Custom(cx.theme().colors().text.opacity(0.02))),
+                ),
             )
-            .child(
-                div()
-                    .absolute()
-                    .inset_0()
-                    .size_full()
-                    .bg(gpui::linear_gradient(
-                        175.,
-                        gpui::linear_color_stop(
-                            cx.theme().colors().elevated_surface_background,
-                            0.,
-                        ),
-                        gpui::linear_color_stop(
-                            cx.theme().colors().elevated_surface_background.opacity(0.),
-                            0.8,
-                        ),
-                    )),
-            )
+            .child(div().absolute().inset_0().size_full().bg(linear_gradient(
+                0.,
+                linear_color_stop(
+                    cx.theme().colors().elevated_surface_background.opacity(0.4),
+                    0.9,
+                ),
+                linear_color_stop(
+                    cx.theme().colors().elevated_surface_background.opacity(0.),
+                    0.,
+                ),
+            )))
             .child(
                 v_flex()
-                    .w_full()
-                    .gap_1()
+                    .gap_px()
                     .child(
-                        Label::new("Now Available")
-                            .size(LabelSize::Small)
+                        Label::new("External Agents")
+                            .ml_1()
+                            .size(LabelSize::XSmall)
                             .color(Color::Muted),
                     )
-                    .child(Headline::new("Bring Your Own Agent to Zed").size(HeadlineSize::Large))
-                    .child(Headline::new("featuring Gemini CLI").size(HeadlineSize::Large)),
+                    .child(
+                        h_flex()
+                            .px_1()
+                            .py_0p5()
+                            .gap_1()
+                            .rounded_sm()
+                            .bg(cx.theme().colors().element_active.opacity(0.2))
+                            .child(
+                                Icon::new(IconName::AiGemini)
+                                    .size(IconSize::Small)
+                                    .color(Color::Muted),
+                            )
+                            .child(Label::new("New Gemini CLI Thread").size(LabelSize::Small)),
+                    ),
+            );
+
+        let heading = v_flex()
+            .w_full()
+            .gap_1()
+            .child(
+                Label::new("Now Available")
+                    .size(LabelSize::Small)
+                    .color(Color::Muted),
             )
-            .child(h_flex().absolute().top_2().right_2().child(
-                IconButton::new("cancel", IconName::Close).on_click(cx.listener(
-                    |_, _: &ClickEvent, _window, cx| {
-                        acp_onboarding_event!("Cancelled", trigger = "X click");
-                        cx.emit(DismissEvent);
-                    },
-                )),
-            ));
+            .child(Headline::new("Bring Your Own Agent to Zed").size(HeadlineSize::Large));
+        let copy = "Zed now lets you bring the agent of your choice through the new\nAgent Client Protocol, starting with Google's Gemini CLI integration.";
 
         let open_panel_button = Button::new("open-panel", "Start with Gemini CLI")
             .icon_size(IconSize::Indicator)
@@ -151,15 +143,48 @@ impl Render for AcpOnboardingModal {
             .full_width()
             .on_click(cx.listener(Self::view_docs));
 
-        let copy = "Zed now lets you bring the agent of your choice through the new\nAgent Client Protocol, starting with Google's Gemini CLI integration.";
+        let close_button = h_flex().absolute().top_2().right_2().child(
+            IconButton::new("cancel", IconName::Close).on_click(cx.listener(
+                |_, _: &ClickEvent, _window, cx| {
+                    acp_onboarding_event!("Canceled", trigger = "X click");
+                    cx.emit(DismissEvent);
+                },
+            )),
+        );
 
-        base.child(Label::new(copy).color(Color::Muted)).child(
-            v_flex()
-                .w_full()
-                .mt_2()
-                .gap_2()
-                .child(open_panel_button)
-                .child(docs_button),
-        )
+        v_flex()
+            .id("acp-onboarding")
+            .key_context("AcpOnboardingModal")
+            .relative()
+            .w(rems(32.))
+            .h_full()
+            .elevation_3(cx)
+            .track_focus(&self.focus_handle(cx))
+            .overflow_hidden()
+            .on_action(cx.listener(Self::cancel))
+            .on_action(cx.listener(|_, _: &menu::Cancel, _window, cx| {
+                acp_onboarding_event!("Canceled", trigger = "Action");
+                cx.emit(DismissEvent);
+            }))
+            .on_any_mouse_down(cx.listener(|this, _: &MouseDownEvent, window, _cx| {
+                this.focus_handle.focus(window);
+            }))
+            .child(illustration)
+            .child(
+                v_flex()
+                    .p_4()
+                    .gap_2()
+                    .child(heading)
+                    .child(Label::new(copy).color(Color::Muted))
+                    .child(
+                        v_flex()
+                            .w_full()
+                            .mt_2()
+                            .gap_2()
+                            .child(open_panel_button)
+                            .child(docs_button),
+                    ),
+            )
+            .child(close_button)
     }
 }
