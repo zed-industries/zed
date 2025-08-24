@@ -1,10 +1,11 @@
-use std::ops::Range;
+use std::{cmp::Ordering, ops::Range};
 
 use editor::{
     DisplayPoint,
     display_map::{DisplaySnapshot, ToDisplayPoint},
     movement,
 };
+use itertools::Itertools;
 use language::{CharClassifier, CharKind};
 use text::Bias;
 
@@ -538,6 +539,82 @@ impl FuzzyBoundary {
             }
         }
     }
+
+    // The boundary can be on the other side of `from` than the identifier, so the search needs to go both ways.
+    // Also, the distance (and direction) between identifier and boundary could vary, so a few ones need to be
+    // compared, even if one boundary was already found on the right side of `from`.
+    fn to_boundary(
+        &self,
+        map: &DisplaySnapshot,
+        from: DisplayPoint,
+        outer: bool,
+        backward: bool,
+        boundary_kind: Boundary,
+    ) -> Option<DisplayPoint> {
+        let generate_boundary_data = |left, right, point: DisplayPoint| {
+            let classifier = map
+                .buffer_snapshot
+                .char_classifier_at(point.to_offset(map, Bias::Left));
+            let reach_boundary = if outer && boundary_kind == Boundary::Start {
+                self.is_near_potential_outer_start(left, right, &classifier)
+            } else if !outer && boundary_kind == Boundary::Start {
+                self.is_near_potential_inner_start(left, right, &classifier)
+            } else if outer && boundary_kind == Boundary::End {
+                self.is_near_potential_outer_end(left, right, &classifier)
+            } else {
+                self.is_near_potential_inner_end(left, right, &classifier)
+            };
+
+            reach_boundary.map(|reach_start| (point, reach_start))
+        };
+
+        let forwards = std::iter::successors(
+            try_find_boundary_data(map, from, generate_boundary_data),
+            |(previous_identifier, _)| {
+                if *previous_identifier == map.max_point() {
+                    return None;
+                }
+                try_find_boundary_data(
+                    map,
+                    movement::right(map, *previous_identifier),
+                    generate_boundary_data,
+                )
+            },
+        );
+        let backwards = std::iter::successors(
+            try_find_preceding_boundary_data(map, from, generate_boundary_data),
+            |(previous_identifier, _)| {
+                if *previous_identifier == DisplayPoint::zero() {
+                    return None;
+                }
+                try_find_preceding_boundary_data(
+                    map,
+                    movement::left(map, *previous_identifier),
+                    generate_boundary_data,
+                )
+            },
+        );
+        let boundaries = forwards
+            .interleave(backwards)
+            .take(4)
+            .filter_map(|(identifier, reach_boundary)| reach_boundary(identifier, map))
+            .filter(|boundary| match boundary.cmp(&from) {
+                Ordering::Equal => true,
+                Ordering::Less => backward,
+                Ordering::Greater => !backward,
+            });
+        if backward {
+            boundaries.max()
+        } else {
+            boundaries.min()
+        }
+    }
+}
+
+#[derive(PartialEq)]
+enum Boundary {
+    Start,
+    End,
 }
 
 impl BoundedObject for FuzzyBoundary {
@@ -547,31 +624,7 @@ impl BoundedObject for FuzzyBoundary {
         from: DisplayPoint,
         outer: bool,
     ) -> Option<DisplayPoint> {
-        let mut previous_search_start = from;
-        while let Some((identifier, reach_start)) =
-            try_find_boundary_data(map, previous_search_start, |left, right, point| {
-                let classifier = map
-                    .buffer_snapshot
-                    .char_classifier_at(point.to_offset(map, Bias::Left));
-                if outer {
-                    self.is_near_potential_outer_start(left, right, &classifier)
-                        .map(|reach_start| (point, reach_start))
-                } else {
-                    self.is_near_potential_inner_start(left, right, &classifier)
-                        .map(|reach_start| (point, reach_start))
-                }
-            })
-        {
-            let Some(start) = reach_start(identifier, map) else {
-                continue;
-            };
-            if start < from {
-                previous_search_start = movement::right(map, identifier);
-            } else {
-                return Some(start);
-            }
-        }
-        None
+        self.to_boundary(map, from, outer, false, Boundary::Start)
     }
     fn next_end(
         &self,
@@ -579,31 +632,7 @@ impl BoundedObject for FuzzyBoundary {
         from: DisplayPoint,
         outer: bool,
     ) -> Option<DisplayPoint> {
-        let mut previous_search_start = from;
-        while let Some((identifier, reach_end)) =
-            try_find_boundary_data(map, previous_search_start, |left, right, point| {
-                let classifier = map
-                    .buffer_snapshot
-                    .char_classifier_at(point.to_offset(map, Bias::Left));
-                if outer {
-                    self.is_near_potential_outer_end(left, right, &classifier)
-                        .map(|reach_end| (point, reach_end))
-                } else {
-                    self.is_near_potential_inner_end(left, right, &classifier)
-                        .map(|reach_end| (point, reach_end))
-                }
-            })
-        {
-            let Some(end) = reach_end(identifier, map) else {
-                continue;
-            };
-            if end < from {
-                previous_search_start = movement::right(map, identifier);
-            } else {
-                return Some(end);
-            }
-        }
-        None
+        self.to_boundary(map, from, outer, false, Boundary::End)
     }
     fn previous_start(
         &self,
@@ -611,31 +640,7 @@ impl BoundedObject for FuzzyBoundary {
         from: DisplayPoint,
         outer: bool,
     ) -> Option<DisplayPoint> {
-        let mut previous_search_start = from;
-        while let Some((identifier, reach_start)) =
-            try_find_preceding_boundary_data(map, previous_search_start, |left, right, point| {
-                let classifier = map
-                    .buffer_snapshot
-                    .char_classifier_at(point.to_offset(map, Bias::Left));
-                if outer {
-                    self.is_near_potential_outer_start(left, right, &classifier)
-                        .map(|reach_start| (point, reach_start))
-                } else {
-                    self.is_near_potential_inner_start(left, right, &classifier)
-                        .map(|reach_start| (point, reach_start))
-                }
-            })
-        {
-            let Some(start) = reach_start(identifier, map) else {
-                continue;
-            };
-            if start > from {
-                previous_search_start = movement::left(map, identifier);
-            } else {
-                return Some(start);
-            }
-        }
-        None
+        self.to_boundary(map, from, outer, true, Boundary::Start)
     }
     fn previous_end(
         &self,
@@ -643,31 +648,7 @@ impl BoundedObject for FuzzyBoundary {
         from: DisplayPoint,
         outer: bool,
     ) -> Option<DisplayPoint> {
-        let mut previous_search_start = from;
-        while let Some((identifier, reach_end)) =
-            try_find_preceding_boundary_data(map, previous_search_start, |left, right, point| {
-                let classifier = map
-                    .buffer_snapshot
-                    .char_classifier_at(point.to_offset(map, Bias::Left));
-                if outer {
-                    self.is_near_potential_outer_end(left, right, &classifier)
-                        .map(|reach_end| (point, reach_end))
-                } else {
-                    self.is_near_potential_inner_end(left, right, &classifier)
-                        .map(|reach_end| (point, reach_end))
-                }
-            })
-        {
-            let Some(end) = reach_end(identifier, map) else {
-                continue;
-            };
-            if end > from {
-                previous_search_start = movement::left(map, identifier);
-            } else {
-                return Some(end);
-            }
-        }
-        None
+        self.to_boundary(map, from, outer, true, Boundary::End)
     }
     fn can_be_zero_width(&self, _: bool) -> bool {
         false
