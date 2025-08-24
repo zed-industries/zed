@@ -984,67 +984,78 @@ impl<S: ScrollbarVisibilitySetting, T: ScrollableHandle> Element for ScrollbarEl
             .not()
             .then(|| ScrollbarPrepaintState {
                 parent_bounds: bounds,
-                thumbs: self
-                    .state
-                    .read(cx)
-                    .thumb_ranges()
-                    .map(|(axis, thumb_range, reserved_space)| {
-                        let track_anchor = match axis {
-                            ScrollbarAxis::Horizontal => Corner::BottomLeft,
-                            ScrollbarAxis::Vertical => Corner::TopRight,
-                        };
-                        let Bounds { origin, size } = Bounds::from_corner_and_size(
-                            track_anchor,
-                            bounds
-                                .corner(track_anchor)
-                                .apply_along(axis.invert(), |corner| corner - SCROLLBAR_PADDING),
-                            bounds.size.apply_along(axis.invert(), |_| {
-                                self.state.read(cx).width.to_pixels()
-                            }),
-                        );
-                        let scroll_track_bounds = Bounds::new(self.origin + origin, size);
+                thumbs: {
+                    let thumb_ranges = self.state.read(cx).thumb_ranges().collect::<Vec<_>>();
+                    let width = self.state.read(cx).width.to_pixels();
 
-                        let padded_bounds = scroll_track_bounds.extend(match axis {
-                            ScrollbarAxis::Horizontal => Edges {
-                                right: -SCROLLBAR_PADDING,
-                                left: -SCROLLBAR_PADDING,
-                                ..Default::default()
-                            },
-                            ScrollbarAxis::Vertical => Edges {
-                                top: -SCROLLBAR_PADDING,
-                                bottom: -SCROLLBAR_PADDING,
-                                ..Default::default()
-                            },
-                        });
+                    let additional_padding = if thumb_ranges.len() == 2 {
+                        width + SCROLLBAR_PADDING
+                    } else {
+                        Pixels::ZERO
+                    };
 
-                        let thumb_offset = thumb_range.start * padded_bounds.size.along(axis);
-                        let thumb_end = thumb_range.end * padded_bounds.size.along(axis);
+                    thumb_ranges
+                        .into_iter()
+                        .map(|(axis, thumb_range, reserved_space)| {
+                            let track_anchor = match axis {
+                                ScrollbarAxis::Horizontal => Corner::BottomLeft,
+                                ScrollbarAxis::Vertical => Corner::TopRight,
+                            };
+                            let Bounds { origin, size } = Bounds::from_corner_and_size(
+                                track_anchor,
+                                bounds
+                                    .corner(track_anchor)
+                                    .apply_along(axis.invert(), |corner| {
+                                        corner - SCROLLBAR_PADDING
+                                    }),
+                                bounds.size.apply_along(axis.invert(), |_| width),
+                            );
+                            let scroll_track_bounds = Bounds::new(self.origin + origin, size);
 
-                        let thumb_bounds = Bounds::new(
-                            padded_bounds
-                                .origin
-                                .apply_along(axis, |origin| origin + thumb_offset),
-                            padded_bounds
-                                .size
-                                .apply_along(axis, |_| thumb_end - thumb_offset),
-                        );
-
-                        ScrollbarLayout {
-                            thumb_bounds,
-                            track_bounds: padded_bounds,
-                            axis,
-                            cursor_hitbox: window.insert_hitbox(
-                                if reserved_space.needs_scroll_track() {
-                                    padded_bounds
-                                } else {
-                                    thumb_bounds
+                            let padded_bounds = scroll_track_bounds.extend(match axis {
+                                ScrollbarAxis::Horizontal => Edges {
+                                    right: -SCROLLBAR_PADDING,
+                                    left: -SCROLLBAR_PADDING,
+                                    ..Default::default()
                                 },
-                                HitboxBehavior::BlockMouseExceptScroll,
-                            ),
-                            reserved_space,
-                        }
-                    })
-                    .collect(),
+                                ScrollbarAxis::Vertical => Edges {
+                                    top: -SCROLLBAR_PADDING,
+                                    bottom: -SCROLLBAR_PADDING,
+                                    ..Default::default()
+                                },
+                            });
+
+                            let available_space =
+                                padded_bounds.size.along(axis) - additional_padding;
+
+                            let thumb_offset = thumb_range.start * available_space;
+                            let thumb_end = thumb_range.end * available_space;
+                            let thumb_bounds = Bounds::new(
+                                padded_bounds
+                                    .origin
+                                    .apply_along(axis, |origin| origin + thumb_offset),
+                                padded_bounds
+                                    .size
+                                    .apply_along(axis, |_| thumb_end - thumb_offset),
+                            );
+
+                            ScrollbarLayout {
+                                thumb_bounds,
+                                track_bounds: padded_bounds,
+                                axis,
+                                cursor_hitbox: window.insert_hitbox(
+                                    if reserved_space.needs_scroll_track() {
+                                        padded_bounds
+                                    } else {
+                                        thumb_bounds
+                                    },
+                                    HitboxBehavior::BlockMouseExceptScroll,
+                                ),
+                                reserved_space,
+                            }
+                        })
+                        .collect()
+                },
             })
     }
 
