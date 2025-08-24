@@ -99,7 +99,7 @@ impl BlameRenderer for GitBlameRenderer {
                         )
                     }
                 })
-                .hoverable_tooltip(move |_window, cx| {
+                .tooltip(move |_window, cx| {
                     cx.new(|cx| {
                         CommitTooltip::blame_entry(
                             &blame_entry,
@@ -409,6 +409,8 @@ fn deploy_blame_entry_context_menu(
     });
 
     editor.update(cx, move |editor, cx| {
+        // Hide any existing blame popover immediately when context menu is deployed
+        editor.hide_blame_popover(cx);
         editor.deploy_mouse_context_menu(position, context_menu, window, cx);
         cx.notify();
     });

@@ -1164,10 +1164,12 @@ impl EditorElement {
                 .inline_blame_popover
                 .as_ref()
                 .is_some_and(|state| state.keyboard_grace);
+            let has_context_menu = editor.mouse_context_menu.is_some();
 
-            if mouse_over_inline_blame || mouse_over_popover {
+            // Don't show blame popover if there's an active context menu
+            if (mouse_over_inline_blame || mouse_over_popover) && !has_context_menu {
                 editor.show_blame_popover(blame_entry, event.position, false, cx);
-            } else if !keyboard_grace {
+            } else if !keyboard_grace || has_context_menu {
                 editor.hide_blame_popover(cx);
             }
         } else {
@@ -2532,32 +2534,41 @@ impl EditorElement {
         });
 
         if let Some(mut element) = maybe_element {
-            let size = element.layout_as_root(AvailableSpace::min_size(), window, cx);
-            let overall_height = size.height + HOVER_POPOVER_GAP;
-            let popover_origin = if target_point.y > overall_height {
-                point(target_point.x, target_point.y - size.height)
-            } else {
-                point(
-                    target_point.x,
-                    target_point.y + line_height + HOVER_POPOVER_GAP,
-                )
-            };
-
-            let horizontal_offset = (text_hitbox.top_right().x
-                - POPOVER_RIGHT_OFFSET
-                - (popover_origin.x + size.width))
-                .min(Pixels::ZERO);
-
-            let origin = point(popover_origin.x + horizontal_offset, popover_origin.y);
-            let popover_bounds = Bounds::new(origin, size);
-
-            self.editor.update(cx, |editor, _| {
-                if let Some(state) = &mut editor.inline_blame_popover {
-                    state.popover_bounds = Some(popover_bounds);
-                }
+            // Check if there's an active mouse context menu that would be obscured by the blame popover
+            let has_mouse_context_menu = self.editor.read_with(cx, |editor, _| {
+                editor.mouse_context_menu.is_some()
             });
 
-            window.defer_draw(element, origin, 2);
+            // If there's a mouse context menu active, don't render the blame popover
+            // to prevent it from appearing on top of the context menu
+            if !has_mouse_context_menu {
+                let size = element.layout_as_root(AvailableSpace::min_size(), window, cx);
+                let overall_height = size.height + HOVER_POPOVER_GAP;
+                let popover_origin = if target_point.y > overall_height {
+                    point(target_point.x, target_point.y - size.height)
+                } else {
+                    point(
+                        target_point.x,
+                        target_point.y + line_height + HOVER_POPOVER_GAP,
+                    )
+                };
+
+                let horizontal_offset = (text_hitbox.top_right().x
+                    - POPOVER_RIGHT_OFFSET
+                    - (popover_origin.x + size.width))
+                    .min(Pixels::ZERO);
+
+                let origin = point(popover_origin.x + horizontal_offset, popover_origin.y);
+                let popover_bounds = Bounds::new(origin, size);
+
+                self.editor.update(cx, |editor, _| {
+                    if let Some(state) = &mut editor.inline_blame_popover {
+                        state.popover_bounds = Some(popover_bounds);
+                    }
+                });
+
+                window.defer_draw(element, origin, 2);
+            }
         }
     }
 
@@ -4779,7 +4790,7 @@ impl EditorElement {
                             .anchor(Corner::TopLeft)
                             .snap_to_window_with_margin(px(8.)),
                     )
-                    .with_priority(1)
+                    .with_priority(3)
                     .into_any(),
                 )
             })?;
