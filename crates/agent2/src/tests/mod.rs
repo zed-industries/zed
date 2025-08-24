@@ -1802,7 +1802,7 @@ async fn test_building_request_with_pending_tools(cx: &mut TestAppContext) {
                 role: Role::User,
                 content: vec![MessageContent::ToolResult(LanguageModelToolResult {
                     tool_use_id: echo_tool_use.id.clone(),
-                    tool_name: echo_tool_use.name.clone(),
+                    tool_name: echo_tool_use.name,
                     is_error: false,
                     content: "test".into(),
                     output: Some("test".into())
