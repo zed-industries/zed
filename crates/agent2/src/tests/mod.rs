@@ -4,6 +4,7 @@ use agent_client_protocol::{self as acp};
 use agent_settings::AgentProfileId;
 use anyhow::Result;
 use client::{Client, UserStore};
+use cloud_llm_client::CompletionIntent;
 use context_server::{ContextServer, ContextServerCommand, ContextServerId};
 use fs::{FakeFs, Fs};
 use futures::{
@@ -1735,6 +1736,81 @@ async fn test_title_generation(cx: &mut TestAppContext) {
     assert_eq!(summary_model.pending_completions(), Vec::new());
     send.collect::<Vec<_>>().await;
     thread.read_with(cx, |thread, _| assert_eq!(thread.title(), "Hello world"));
+}
+
+#[gpui::test]
+async fn test_building_request_with_pending_tools(cx: &mut TestAppContext) {
+    let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
+    let fake_model = model.as_fake();
+
+    let _events = thread
+        .update(cx, |thread, cx| {
+            thread.add_tool(ToolRequiringPermission);
+            thread.add_tool(EchoTool);
+            thread.send(UserMessageId::new(), ["Hey!"], cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+
+    let permission_tool_use = LanguageModelToolUse {
+        id: "tool_id_1".into(),
+        name: ToolRequiringPermission::name().into(),
+        raw_input: "{}".into(),
+        input: json!({}),
+        is_input_complete: true,
+    };
+    let echo_tool_use = LanguageModelToolUse {
+        id: "tool_id_2".into(),
+        name: EchoTool::name().into(),
+        raw_input: json!({"text": "test"}).to_string(),
+        input: json!({"text": "test"}),
+        is_input_complete: true,
+    };
+    fake_model.send_last_completion_stream_text_chunk("Hi!");
+    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(
+        permission_tool_use,
+    ));
+    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(
+        echo_tool_use.clone(),
+    ));
+    fake_model.end_last_completion_stream();
+    cx.run_until_parked();
+
+    // Ensure pending tools are skipped when building a request.
+    let request = thread
+        .read_with(cx, |thread, cx| {
+            thread.build_completion_request(CompletionIntent::EditFile, cx)
+        })
+        .unwrap();
+    assert_eq!(
+        request.messages[1..],
+        vec![
+            LanguageModelRequestMessage {
+                role: Role::User,
+                content: vec!["Hey!".into()],
+                cache: true
+            },
+            LanguageModelRequestMessage {
+                role: Role::Assistant,
+                content: vec![
+                    MessageContent::Text("Hi!".into()),
+                    MessageContent::ToolUse(echo_tool_use.clone())
+                ],
+                cache: false
+            },
+            LanguageModelRequestMessage {
+                role: Role::User,
+                content: vec![MessageContent::ToolResult(LanguageModelToolResult {
+                    tool_use_id: echo_tool_use.id.clone(),
+                    tool_name: echo_tool_use.name,
+                    is_error: false,
+                    content: "test".into(),
+                    output: Some("test".into())
+                })],
+                cache: false
+            },
+        ],
+    );
 }
 
 #[gpui::test]
