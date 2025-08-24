@@ -2410,6 +2410,10 @@ impl Editor {
             .is_some_and(|menu| menu.context_menu.focus_handle(cx).is_focused(window))
     }
 
+    pub fn has_mouse_context_menu(&self) -> bool {
+        self.mouse_context_menu.is_some()
+    }
+
     pub fn is_range_selected(&mut self, range: &Range<Anchor>, cx: &mut Context<Self>) -> bool {
         if self
             .selections

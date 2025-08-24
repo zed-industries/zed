@@ -46,6 +46,9 @@ impl BlameRenderer for GitBlameRenderer {
         let author_name = blame_entry.author.as_deref().unwrap_or("<no name>");
         let name = util::truncate_and_trailoff(author_name, GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED);
 
+        let editor_for_mouse_down = editor.clone();
+        let editor_for_tooltip = editor.clone();
+
         Some(
             h_flex()
                 .w_full()
@@ -73,7 +76,7 @@ impl BlameRenderer for GitBlameRenderer {
                         deploy_blame_entry_context_menu(
                             &blame_entry,
                             details.as_ref(),
-                            editor.clone(),
+                            editor_for_mouse_down.clone(),
                             event.position,
                             window,
                             cx,
@@ -99,17 +102,19 @@ impl BlameRenderer for GitBlameRenderer {
                         )
                     }
                 })
-                .tooltip(move |_window, cx| {
-                    cx.new(|cx| {
-                        CommitTooltip::blame_entry(
-                            &blame_entry,
-                            details.clone(),
-                            repository.clone(),
-                            workspace.clone(),
-                            cx,
-                        )
+                .when(!editor_for_tooltip.read(cx).has_mouse_context_menu(), |el| {
+                    el.tooltip(move |_window, cx| {
+                        cx.new(|cx| {
+                            CommitTooltip::blame_entry(
+                                &blame_entry,
+                                details.clone(),
+                                repository.clone(),
+                                workspace.clone(),
+                                cx,
+                            )
+                        })
+                        .into()
                     })
-                    .into()
                 })
                 .into_any(),
         )
