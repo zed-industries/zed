@@ -1124,6 +1124,39 @@ impl Platform for MacPlatform {
                 }
             }
 
+            // Next, check for file URL flavors and convert to a file system path string.
+            // Some screenshot tools place only a file URL on the clipboard (no plain text).
+            {
+                // Try the modern UTType identifiers first.
+                let file_url_type: id = ns_string("public.file-url");
+                let url_type: id = ns_string("public.url");
+
+                let url_data = if msg_send![types, containsObject: file_url_type] {
+                    pasteboard.dataForType(file_url_type)
+                } else if msg_send![types, containsObject: url_type] {
+                    pasteboard.dataForType(url_type)
+                } else {
+                    nil
+                };
+
+                if url_data != nil && !url_data.bytes().is_null() {
+                    let bytes = slice::from_raw_parts(
+                        url_data.bytes() as *mut u8,
+                        url_data.length() as usize,
+                    );
+                    if let Ok(text) = std::str::from_utf8(bytes) {
+                        // Convert the URL string to a file path if possible.
+                        let ns = ns_string(text);
+                        let url: id = msg_send![class!(NSURL), URLWithString: ns];
+                        if url != nil && msg_send![url, isFileURL] {
+                            if let Ok(path) = ns_url_to_path(url) {
+                                return Some(ClipboardItem::new_string(path.to_string_lossy().into_owned()));
+                            }
+                        }
+                    }
+                }
+            }
+
             // If it wasn't a string, try the various supported image types.
             for format in ImageFormat::iter() {
                 if let Some(item) = try_clipboard_image(pasteboard, format) {
@@ -1704,6 +1737,43 @@ mod tests {
         assert_eq!(
             platform.read_from_clipboard(),
             Some(ClipboardItem::new_string(text_from_other_app.to_string()))
+        );
+    }
+
+    #[test]
+    fn test_file_url_converts_to_path() {
+        let platform = build_platform();
+
+        // Create a file URL for an arbitrary test path and write it to the pasteboard.
+        // This path does not need to exist; we only validate URL→path conversion.
+        let mock_path = "/tmp/zed-clipboard-file-url-test";
+        unsafe {
+            // Build an NSURL from the file path
+            let url: id = msg_send![class!(NSURL), fileURLWithPath: ns_string(mock_path)];
+            let abs: id = msg_send![url, absoluteString];
+
+            // Encode the URL string as UTF-8 bytes
+            let len: usize = msg_send![abs, lengthOfBytesUsingEncoding: NSUTF8StringEncoding];
+            let bytes_ptr = abs.UTF8String() as *const u8;
+            let data = NSData::dataWithBytes_length_(
+                nil,
+                bytes_ptr as *const c_void,
+                len as u64,
+            );
+
+            // Write as public.file-url to the unique pasteboard
+            let file_url_type: id = ns_string("public.file-url");
+            platform
+                .0
+                .lock()
+                .pasteboard
+                .setData_forType(data, file_url_type);
+        }
+
+        // Ensure the clipboard read maps the file URL to the expected path string
+        assert_eq!(
+            platform.read_from_clipboard(),
+            Some(ClipboardItem::new_string(mock_path.to_string()))
         );
     }
 
