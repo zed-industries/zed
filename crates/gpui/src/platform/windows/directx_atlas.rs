@@ -172,7 +172,7 @@ impl DirectXAtlasState {
                 bytes_per_pixel = 1;
             }
             AtlasTextureKind::Polychrome => {
-                pixel_format = DXGI_FORMAT_B8G8R8A8_UNORM;
+                pixel_format = DXGI_FORMAT_B8G8R8A8_UNORM_SRGB;
                 bind_flag = D3D11_BIND_SHADER_RESOURCE;
                 bytes_per_pixel = 4;
             }

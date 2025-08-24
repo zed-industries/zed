@@ -103,14 +103,20 @@ float4 distance_from_clip_rect(float2 unit_vertex, Bounds bounds, Bounds clip_bo
     return distance_from_clip_rect_impl(position, clip_bounds);
 }
 
-// Convert linear RGB to sRGB
+// Convert linear RGB to sRGB (piecewise sRGB OETF)
 float3 linear_to_srgb(float3 color) {
-    return pow(color, float3(2.2, 2.2, 2.2));
+    float3 lo = color * 12.92;
+    float3 hi = 1.055 * pow(color, 1.0 / 2.4) - 0.055;
+    float3 cond = saturate(sign(0.0031308 - color));
+    return cond * lo + (1.0 - cond) * hi;
 }
 
-// Convert sRGB to linear RGB
-float3 srgb_to_linear(float3 color) {
-    return pow(color, float3(1.0 / 2.2, 1.0 / 2.2, 1.0 / 2.2));
+// Convert sRGB to linear RGB (piecewise sRGB EOTF)
+float3 srgb_to_linear(float3 srgb) {
+    float3 lo = srgb / 12.92;
+    float3 hi = pow((srgb + 0.055) / 1.055, 2.4);
+    float3 cond = saturate(sign(0.04045 - srgb));
+    return cond * lo + (1.0 - cond) * hi;
 }
 
 /// Hsla to linear RGBA conversion.
@@ -154,12 +160,8 @@ float4 hsla_to_rgba(Hsla hsla) {
         b = x;
     }
 
-    float4 rgba;
-    rgba.x = (r + m);
-    rgba.y = (g + m);
-    rgba.z = (b + m);
-    rgba.w = a;
-    return rgba;
+    float3 srgb = float3(r + m, g + m, b + m);
+    return float4(srgb_to_linear(srgb), a);
 }
 
 // Converts a sRGB color to the Oklab color space.
@@ -200,8 +202,8 @@ float4 oklab_to_srgb(float4 color) {
         -0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s
     );
 
-    // Convert linear sRGB to non-linear sRGB
-    return float4(linear_to_srgb(linear_rgb), color.a);
+    // Return linear sRGB; output conversion to sRGB happens via SRGB render target view
+    return float4(linear_rgb, color.a);
 }
 
 // This approximates the error function, needed for the gaussian integral

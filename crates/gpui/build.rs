@@ -278,9 +278,15 @@ mod windows {
     fn compile_shaders() {
         let shader_path = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap())
             .join("src/platform/windows/shaders.hlsl");
+        let color_text_raster_path = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap())
+            .join("src/platform/windows/color_text_raster.hlsl");
         let out_dir = std::env::var("OUT_DIR").unwrap();
 
         println!("cargo:rerun-if-changed={}", shader_path.display());
+        println!(
+            "cargo:rerun-if-changed={}",
+            color_text_raster_path.display()
+        );
 
         // Check if fxc.exe is available
         let fxc_path = find_fxc_compiler();

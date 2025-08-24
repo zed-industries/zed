@@ -15,7 +15,6 @@ use windows::{
             DirectWrite::*,
             Dxgi::Common::*,
             Gdi::{IsRectEmpty, LOGFONTW},
-            Imaging::*,
         },
         System::SystemServices::LOCALE_NAME_MAX_LENGTH,
         UI::WindowsAndMessaging::*,
@@ -40,7 +39,6 @@ pub(crate) struct DirectWriteTextSystem(RwLock<DirectWriteState>);
 struct DirectWriteComponent {
     locale: String,
     factory: IDWriteFactory5,
-    bitmap_factory: AgileReference<IWICImagingFactory>,
     in_memory_loader: IDWriteInMemoryFontFileLoader,
     builder: IDWriteFontSetBuilder1,
     text_renderer: Arc<TextRendererWrapper>,
@@ -76,11 +74,10 @@ struct FontIdentifier {
 }
 
 impl DirectWriteComponent {
-    pub fn new(bitmap_factory: &IWICImagingFactory, gpu_context: &DirectXDevices) -> Result<Self> {
+    pub fn new(gpu_context: &DirectXDevices) -> Result<Self> {
         // todo: ideally this would not be a large unsafe block but smaller isolated ones for easier auditing
         unsafe {
             let factory: IDWriteFactory5 = DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED)?;
-            let bitmap_factory = AgileReference::new(bitmap_factory)?;
             // The `IDWriteInMemoryFontFileLoader` here is supported starting from
             // Windows 10 Creators Update, which consequently requires the entire
             // `DirectWriteTextSystem` to run on `win10 1703`+.
@@ -93,22 +90,14 @@ impl DirectWriteComponent {
             let text_renderer = Arc::new(TextRendererWrapper::new(&locale));
 
             let render_params = {
-                let default_params: IDWriteRenderingParams3 =
-                    factory.CreateRenderingParams()?.cast()?;
-                let gamma = default_params.GetGamma();
-                let enhanced_contrast = default_params.GetEnhancedContrast();
-                let gray_contrast = default_params.GetGrayscaleEnhancedContrast();
-                let cleartype_level = default_params.GetClearTypeLevel();
-                let grid_fit_mode = default_params.GetGridFitMode();
-
                 factory.CreateCustomRenderingParams(
-                    gamma,
-                    enhanced_contrast,
-                    gray_contrast,
-                    cleartype_level,
-                    DWRITE_PIXEL_GEOMETRY_RGB,
-                    DWRITE_RENDERING_MODE1_NATURAL_SYMMETRIC,
-                    grid_fit_mode,
+                    1.0,
+                    0.0,
+                    0.0,
+                    0.0,
+                    DWRITE_PIXEL_GEOMETRY_FLAT,
+                    DWRITE_RENDERING_MODE1_DEFAULT,
+                    DWRITE_GRID_FIT_MODE_DEFAULT,
                 )?
             };
 
@@ -117,7 +106,6 @@ impl DirectWriteComponent {
             Ok(DirectWriteComponent {
                 locale,
                 factory,
-                bitmap_factory,
                 in_memory_loader,
                 builder,
                 text_renderer,
@@ -141,10 +129,10 @@ impl GPUState {
                 RenderTarget: [
                     D3D11_RENDER_TARGET_BLEND_DESC {
                         BlendEnable: true.into(),
-                        SrcBlend: D3D11_BLEND_SRC_ALPHA,
+                        SrcBlend: D3D11_BLEND_ONE,
                         DestBlend: D3D11_BLEND_INV_SRC_ALPHA,
                         BlendOp: D3D11_BLEND_OP_ADD,
-                        SrcBlendAlpha: D3D11_BLEND_SRC_ALPHA,
+                        SrcBlendAlpha: D3D11_BLEND_ONE,
                         DestBlendAlpha: D3D11_BLEND_INV_SRC_ALPHA,
                         BlendOpAlpha: D3D11_BLEND_OP_ADD,
                         RenderTargetWriteMask: D3D11_COLOR_WRITE_ENABLE_ALL.0 as u8,
@@ -212,11 +200,8 @@ impl GPUState {
 }
 
 impl DirectWriteTextSystem {
-    pub(crate) fn new(
-        gpu_context: &DirectXDevices,
-        bitmap_factory: &IWICImagingFactory,
-    ) -> Result<Self> {
-        let components = DirectWriteComponent::new(bitmap_factory, gpu_context)?;
+    pub(crate) fn new(gpu_context: &DirectXDevices) -> Result<Self> {
+        let components = DirectWriteComponent::new(gpu_context)?;
         let system_font_collection = unsafe {
             let mut result = std::mem::zeroed();
             components
@@ -762,9 +747,8 @@ impl DirectWriteState {
         unsafe {
             font.font_face.GetRecommendedRenderingMode(
                 params.font_size.0,
-                // The dpi here seems that it has the same effect with `Some(&transform)`
-                1.0,
-                1.0,
+                96.0,
+                96.0,
                 Some(&transform),
                 false,
                 DWRITE_OUTLINE_THRESHOLD_ANTIALIASED,
@@ -782,8 +766,8 @@ impl DirectWriteState {
                 rendering_mode,
                 DWRITE_MEASURING_MODE_NATURAL,
                 grid_fit_mode,
-                // We're using cleartype not grayscale for monochrome is because it provides better quality
-                DWRITE_TEXT_ANTIALIAS_MODE_CLEARTYPE,
+                // Use grayscale antialiasing for consistent quality across all color combinations
+                DWRITE_TEXT_ANTIALIAS_MODE_GRAYSCALE,
                 baseline_origin_x,
                 baseline_origin_y,
             )
@@ -794,8 +778,8 @@ impl DirectWriteState {
     fn raster_bounds(&self, params: &RenderGlyphParams) -> Result<Bounds<DevicePixels>> {
         let glyph_analysis = self.create_glyph_run_analysis(params)?;
 
-        let bounds = unsafe { glyph_analysis.GetAlphaTextureBounds(DWRITE_TEXTURE_CLEARTYPE_3x1)? };
-        // Some glyphs cannot be drawn with ClearType, such as bitmap fonts. In that case
+        let bounds = unsafe { glyph_analysis.GetAlphaTextureBounds(DWRITE_TEXTURE_ALIASED_1x1)? };
+        // Some glyphs cannot be drawn with antialiasing, such as bitmap fonts. In that case
         // GetAlphaTextureBounds() supposedly returns an empty RECT, but I haven't tested that yet.
         if !unsafe { IsRectEmpty(&bounds) }.as_bool() {
             Ok(Bounds {
@@ -871,49 +855,25 @@ impl DirectWriteState {
         params: &RenderGlyphParams,
         glyph_bounds: Bounds<DevicePixels>,
     ) -> Result<Vec<u8>> {
-        let mut bitmap_data =
-            vec![0u8; glyph_bounds.size.width.0 as usize * glyph_bounds.size.height.0 as usize * 3];
+        // Use single-channel grayscale data directly from DirectWrite
+        let mut grayscale_data =
+            vec![0u8; glyph_bounds.size.width.0 as usize * glyph_bounds.size.height.0 as usize];
 
         let glyph_analysis = self.create_glyph_run_analysis(params)?;
         unsafe {
             glyph_analysis.CreateAlphaTexture(
-                // We're using cleartype not grayscale for monochrome is because it provides better quality
-                DWRITE_TEXTURE_CLEARTYPE_3x1,
+                DWRITE_TEXTURE_ALIASED_1x1,
                 &RECT {
                     left: glyph_bounds.origin.x.0,
                     top: glyph_bounds.origin.y.0,
                     right: glyph_bounds.size.width.0 + glyph_bounds.origin.x.0,
                     bottom: glyph_bounds.size.height.0 + glyph_bounds.origin.y.0,
                 },
-                &mut bitmap_data,
+                &mut grayscale_data,
             )?;
         }
 
-        let bitmap_factory = self.components.bitmap_factory.resolve()?;
-        let bitmap = unsafe {
-            bitmap_factory.CreateBitmapFromMemory(
-                glyph_bounds.size.width.0 as u32,
-                glyph_bounds.size.height.0 as u32,
-                &GUID_WICPixelFormat24bppRGB,
-                glyph_bounds.size.width.0 as u32 * 3,
-                &bitmap_data,
-            )
-        }?;
-
-        let grayscale_bitmap =
-            unsafe { WICConvertBitmapSource(&GUID_WICPixelFormat8bppGray, &bitmap) }?;
-
-        let mut bitmap_data =
-            vec![0u8; glyph_bounds.size.width.0 as usize * glyph_bounds.size.height.0 as usize];
-        unsafe {
-            grayscale_bitmap.CopyPixels(
-                std::ptr::null() as _,
-                glyph_bounds.size.width.0 as u32,
-                &mut bitmap_data,
-            )
-        }?;
-
-        Ok(bitmap_data)
+        Ok(grayscale_data)
     }
 
     fn rasterize_color(
@@ -981,25 +941,24 @@ impl DirectWriteState {
                         DWRITE_RENDERING_MODE1_NATURAL_SYMMETRIC,
                         DWRITE_MEASURING_MODE_NATURAL,
                         DWRITE_GRID_FIT_MODE_DEFAULT,
-                        DWRITE_TEXT_ANTIALIAS_MODE_CLEARTYPE,
+                        DWRITE_TEXT_ANTIALIAS_MODE_GRAYSCALE,
                         baseline_origin_x,
                         baseline_origin_y,
                     )
                 }?;
 
                 let color_bounds =
-                    unsafe { color_analysis.GetAlphaTextureBounds(DWRITE_TEXTURE_CLEARTYPE_3x1) }?;
+                    unsafe { color_analysis.GetAlphaTextureBounds(DWRITE_TEXTURE_ALIASED_1x1) }?;
 
                 let color_size = size(
                     color_bounds.right - color_bounds.left,
                     color_bounds.bottom - color_bounds.top,
                 );
                 if color_size.width > 0 && color_size.height > 0 {
-                    let mut alpha_data =
-                        vec![0u8; (color_size.width * color_size.height * 3) as usize];
+                    let mut alpha_data = vec![0u8; (color_size.width * color_size.height) as usize];
                     unsafe {
                         color_analysis.CreateAlphaTexture(
-                            DWRITE_TEXTURE_CLEARTYPE_3x1,
+                            DWRITE_TEXTURE_ALIASED_1x1,
                             &color_bounds,
                             &mut alpha_data,
                         )
@@ -1016,8 +975,8 @@ impl DirectWriteState {
                     };
                     let bounds = bounds(point(color_bounds.left, color_bounds.top), color_size);
                     let alpha_data = alpha_data
-                        .chunks_exact(3)
-                        .flat_map(|chunk| [chunk[0], chunk[1], chunk[2], 255])
+                        .chunks_exact(1)
+                        .flat_map(|chunk| [chunk[0]])
                         .collect::<Vec<_>>();
                     glyph_layers.push(GlyphLayerTexture::new(
                         &self.components.gpu_state,
@@ -1063,7 +1022,7 @@ impl DirectWriteState {
                 Height: bitmap_size.height.0 as u32,
                 MipLevels: 1,
                 ArraySize: 1,
-                Format: DXGI_FORMAT_B8G8R8A8_UNORM,
+                Format: DXGI_FORMAT_B8G8R8A8_UNORM_SRGB,
                 SampleDesc: DXGI_SAMPLE_DESC {
                     Count: 1,
                     Quality: 0,
@@ -1083,7 +1042,7 @@ impl DirectWriteState {
 
         let render_target_view = {
             let desc = D3D11_RENDER_TARGET_VIEW_DESC {
-                Format: DXGI_FORMAT_B8G8R8A8_UNORM,
+                Format: DXGI_FORMAT_B8G8R8A8_UNORM_SRGB,
                 ViewDimension: D3D11_RTV_DIMENSION_TEXTURE2D,
                 Anonymous: D3D11_RENDER_TARGET_VIEW_DESC_0 {
                     Texture2D: D3D11_TEX2D_RTV { MipSlice: 0 },
@@ -1107,7 +1066,7 @@ impl DirectWriteState {
                 Height: bitmap_size.height.0 as u32,
                 MipLevels: 1,
                 ArraySize: 1,
-                Format: DXGI_FORMAT_B8G8R8A8_UNORM,
+                Format: DXGI_FORMAT_B8G8R8A8_UNORM_SRGB,
                 SampleDesc: DXGI_SAMPLE_DESC {
                     Count: 1,
                     Quality: 0,
@@ -1134,6 +1093,12 @@ impl DirectWriteState {
         unsafe { device_context.OMSetRenderTargets(Some(&render_target_view), None) };
         unsafe { device_context.PSSetSamplers(0, Some(&gpu_state.sampler)) };
         unsafe { device_context.OMSetBlendState(&gpu_state.blend_state, None, 0xffffffff) };
+        unsafe {
+            device_context.ClearRenderTargetView(
+                render_target_view[0].as_ref().unwrap(),
+                &[0.0, 0.0, 0.0, 0.0],
+            )
+        };
 
         for layer in glyph_layers {
             let params = GlyphLayerTextureParams {
@@ -1298,7 +1263,7 @@ impl GlyphLayerTexture {
             Height: texture_size.height as u32,
             MipLevels: 1,
             ArraySize: 1,
-            Format: DXGI_FORMAT_R8G8B8A8_UNORM,
+            Format: DXGI_FORMAT_R8_UNORM,
             SampleDesc: DXGI_SAMPLE_DESC {
                 Count: 1,
                 Quality: 0,
@@ -1334,7 +1299,7 @@ impl GlyphLayerTexture {
                 0,
                 None,
                 alpha_data.as_ptr() as _,
-                (texture_size.width * 4) as u32,
+                texture_size.width as u32,
                 0,
             )
         };

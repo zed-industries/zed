@@ -1171,7 +1171,20 @@ fn create_render_target_and_its_view(
 )> {
     let render_target: ID3D11Texture2D = unsafe { swap_chain.GetBuffer(0) }?;
     let mut render_target_view = None;
-    unsafe { device.CreateRenderTargetView(&render_target, None, Some(&mut render_target_view))? };
+    let rtv_desc = D3D11_RENDER_TARGET_VIEW_DESC {
+        Format: DXGI_FORMAT_B8G8R8A8_UNORM_SRGB,
+        ViewDimension: D3D11_RTV_DIMENSION_TEXTURE2D,
+        Anonymous: D3D11_RENDER_TARGET_VIEW_DESC_0 {
+            Texture2D: D3D11_TEX2D_RTV { MipSlice: 0 },
+        },
+    };
+    unsafe {
+        device.CreateRenderTargetView(
+            &render_target,
+            Some(&rtv_desc),
+            Some(&mut render_target_view),
+        )?
+    };
     Ok((
         ManuallyDrop::new(render_target),
         [Some(render_target_view.unwrap())],
@@ -1295,7 +1308,7 @@ fn create_blend_state(device: &ID3D11Device) -> Result<ID3D11BlendState> {
     desc.RenderTarget[0].SrcBlend = D3D11_BLEND_SRC_ALPHA;
     desc.RenderTarget[0].SrcBlendAlpha = D3D11_BLEND_ONE;
     desc.RenderTarget[0].DestBlend = D3D11_BLEND_INV_SRC_ALPHA;
-    desc.RenderTarget[0].DestBlendAlpha = D3D11_BLEND_ONE;
+    desc.RenderTarget[0].DestBlendAlpha = D3D11_BLEND_INV_SRC_ALPHA;
     desc.RenderTarget[0].RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL.0 as u8;
     unsafe {
         let mut state = None;
@@ -1335,7 +1348,7 @@ fn create_blend_state_for_path_sprite(device: &ID3D11Device) -> Result<ID3D11Ble
     desc.RenderTarget[0].SrcBlend = D3D11_BLEND_ONE;
     desc.RenderTarget[0].SrcBlendAlpha = D3D11_BLEND_ONE;
     desc.RenderTarget[0].DestBlend = D3D11_BLEND_INV_SRC_ALPHA;
-    desc.RenderTarget[0].DestBlendAlpha = D3D11_BLEND_ONE;
+    desc.RenderTarget[0].DestBlendAlpha = D3D11_BLEND_INV_SRC_ALPHA;
     desc.RenderTarget[0].RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL.0 as u8;
     unsafe {
         let mut state = None;

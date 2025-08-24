@@ -23,7 +23,7 @@ struct Bounds {
     int2 size;
 };
 
-Texture2D<float4> t_layer : register(t0);
+Texture2D<float> t_layer : register(t0);
 SamplerState s_layer : register(s0);
 
 cbuffer GlyphLayerTextureParams : register(b0) {
@@ -32,8 +32,9 @@ cbuffer GlyphLayerTextureParams : register(b0) {
 };
 
 float4 emoji_rasterization_fragment(PixelInput input): SV_Target {
-    float3 sampled = t_layer.Sample(s_layer, input.texcoord.xy).rgb;
-    float alpha = (sampled.r + sampled.g + sampled.b) / 3;
+    float sampled = t_layer.Sample(s_layer, input.texcoord.xy);
+    float alpha = sampled * run_color.a;
 
-    return float4(run_color.rgb, alpha);
+    float3 color_linear = lerp(run_color.rgb / 12.92, pow((run_color.rgb + 0.055) / 1.055, 2.4), step(0.04045, run_color.rgb));
+    return float4(color_linear * alpha, alpha);
 }
