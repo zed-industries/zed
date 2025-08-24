@@ -6,7 +6,7 @@ use gpui::{AnyWindowHandle, App, AppContext as _, Context, Entity, WeakEntity};
 
 use language::language_settings::{EditPredictionProvider, all_language_settings};
 use language_models::AllLanguageModelSettings;
-use ollama::{OllamaCompletionProvider, OllamaService, SettingsModel};
+use ollama::{OllamaCompletionProvider, SettingsModel, State};
 use settings::{Settings as _, SettingsStore};
 use std::{cell::RefCell, rc::Rc, sync::Arc};
 use supermaven::{Supermaven, SupermavenCompletionProvider};
@@ -34,13 +34,13 @@ pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
         (api_url, settings_models)
     };
 
-    let ollama_service = OllamaService::new(client.http_client(), api_url, None, cx);
+    let ollama_service = State::new(client.http_client(), api_url, None, cx);
 
     ollama_service.update(cx, |service, cx| {
         service.set_settings_models(settings_models, cx);
     });
 
-    OllamaService::set_global(ollama_service, cx);
+    State::set_global(ollama_service, cx);
 
     let editors: Rc<RefCell<HashMap<WeakEntity<Editor>, AnyWindowHandle>>> = Rc::default();
     cx.observe_new({
@@ -122,7 +122,7 @@ pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
             } else if provider == EditPredictionProvider::Ollama {
                 // Update global Ollama service when settings change
                 let settings = &AllLanguageModelSettings::get_global(cx).ollama;
-                if let Some(service) = OllamaService::global(cx) {
+                if let Some(service) = State::global(cx) {
                     let settings_models: Vec<SettingsModel> = settings
                         .available_models
                         .iter()
@@ -287,7 +287,7 @@ fn assign_edit_prediction_provider(
             // Get model from settings or use discovered models
             let model = if let Some(first_model) = settings.available_models.first() {
                 Some(first_model.name.clone())
-            } else if let Some(service) = OllamaService::global(cx) {
+            } else if let Some(service) = State::global(cx) {
                 // Use first discovered model
                 service
                     .read(cx)

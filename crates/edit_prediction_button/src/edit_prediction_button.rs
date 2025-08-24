@@ -416,7 +416,7 @@ impl EditPredictionButton {
         cx.observe_global::<SettingsStore>(move |_, cx| cx.notify())
             .detach();
 
-        if let Some(service) = ollama::OllamaService::global(cx) {
+        if let Some(service) = ollama::State::global(cx) {
             cx.observe(&service, |_, _, cx| cx.notify()).detach();
         }
 
@@ -879,7 +879,7 @@ impl EditPredictionButton {
             let mut available_models = ollama_settings.available_models.clone();
 
             // Add discovered models from the global Ollama service
-            if let Some(service) = ollama::OllamaService::global(cx) {
+            if let Some(service) = ollama::State::global(cx) {
                 let discovered_models = service.read(cx).available_models();
                 for model in discovered_models {
                     // Convert from ollama::Model to language_models AvailableModel
@@ -1059,7 +1059,7 @@ impl EditPredictionButton {
                 models.insert(0, selected_model);
             } else {
                 // Model not in settings - check if it's a discovered model and add it
-                if let Some(service) = ollama::OllamaService::global(cx) {
+                if let Some(service) = ollama::State::global(cx) {
                     let discovered_models = service.read(cx).available_models();
                     if let Some(discovered_model) =
                         discovered_models.iter().find(|m| m.name == model_name)
@@ -1084,7 +1084,7 @@ impl EditPredictionButton {
     }
 
     fn refresh_ollama_models(cx: &mut App) {
-        if let Some(service) = ollama::OllamaService::global(cx) {
+        if let Some(service) = ollama::State::global(cx) {
             service.update(cx, |service, cx| {
                 service.refresh_models(cx);
             });
@@ -1282,7 +1282,7 @@ mod tests {
     use clock::FakeSystemClock;
     use gpui::TestAppContext;
     use http_client;
-    use ollama::{OllamaService, fake::FakeHttpClient};
+    use ollama::{State, fake::FakeHttpClient};
     use settings::SettingsStore;
     use std::sync::Arc;
 
@@ -1358,7 +1358,7 @@ mod tests {
 
         // Create and set global Ollama service
         let service = cx.update(|cx| {
-            OllamaService::new(
+            State::new(
                 fake_http_client.clone(),
                 "http://localhost:11434".to_string(),
                 None,
@@ -1367,7 +1367,7 @@ mod tests {
         });
 
         cx.update(|cx| {
-            OllamaService::set_global(service.clone(), cx);
+            State::set_global(service.clone(), cx);
         });
 
         // Wait for model discovery
@@ -1375,7 +1375,7 @@ mod tests {
 
         // Verify models are accessible through the service
         cx.update(|cx| {
-            if let Some(service) = OllamaService::global(cx) {
+            if let Some(service) = State::global(cx) {
                 let discovered_models = service.read(cx).available_models();
                 assert_eq!(discovered_models.len(), 2);
 
@@ -1432,7 +1432,7 @@ mod tests {
 
         // Create and set global service
         let service = cx.update(|cx| {
-            OllamaService::new(
+            State::new(
                 fake_http_client,
                 "http://localhost:11434".to_string(),
                 None,
@@ -1441,14 +1441,14 @@ mod tests {
         });
 
         cx.update(|cx| {
-            OllamaService::set_global(service.clone(), cx);
+            State::set_global(service.clone(), cx);
         });
 
         cx.background_executor.run_until_parked();
 
         // Test that discovered models are accessible
         cx.update(|cx| {
-            if let Some(service) = OllamaService::global(cx) {
+            if let Some(service) = State::global(cx) {
                 let discovered_models = service.read(cx).available_models();
                 assert_eq!(discovered_models.len(), 1);
                 assert_eq!(discovered_models[0].name, "qwen2.5-coder:7b");
@@ -1468,7 +1468,7 @@ mod tests {
         fake_http_client.set_response("/api/tags", serde_json::json!({"models": []}).to_string());
 
         let service = cx.update(|cx| {
-            OllamaService::new(
+            State::new(
                 fake_http_client.clone(),
                 "http://localhost:11434".to_string(),
                 None,
@@ -1477,7 +1477,7 @@ mod tests {
         });
 
         cx.update(|cx| {
-            OllamaService::set_global(service.clone(), cx);
+            State::set_global(service.clone(), cx);
         });
 
         cx.background_executor.run_until_parked();
@@ -1574,7 +1574,7 @@ mod tests {
         );
 
         let service = cx.update(|cx| {
-            OllamaService::new(
+            State::new(
                 fake_http_client.clone(),
                 "http://localhost:11434".to_string(),
                 None,
@@ -1583,7 +1583,7 @@ mod tests {
         });
 
         cx.update(|cx| {
-            OllamaService::set_global(service.clone(), cx);
+            State::set_global(service.clone(), cx);
         });
 
         cx.background_executor.run_until_parked();
@@ -1680,7 +1680,7 @@ mod tests {
 
         // Create and set global service
         let service = cx.update(|cx| {
-            OllamaService::new(
+            State::new(
                 fake_http_client.clone(),
                 "http://localhost:11434".to_string(),
                 None,
@@ -1689,14 +1689,14 @@ mod tests {
         });
 
         cx.update(|cx| {
-            OllamaService::set_global(service.clone(), cx);
+            State::set_global(service.clone(), cx);
         });
 
         cx.background_executor.run_until_parked();
 
         // Verify model is discovered by the service
         let discovered_model_exists = cx.update(|cx| {
-            if let Some(service) = OllamaService::global(cx) {
+            if let Some(service) = State::global(cx) {
                 let discovered_models = service.read(cx).available_models();
                 discovered_models
                     .iter()
@@ -1727,7 +1727,7 @@ mod tests {
             let mut available_models = ollama_settings.available_models.clone();
 
             // Add discovered models from the global Ollama service
-            if let Some(service) = ollama::OllamaService::global(cx) {
+            if let Some(service) = ollama::State::global(cx) {
                 let discovered_models = service.read(cx).available_models();
                 for model in discovered_models {
                     // Convert from ollama::Model to language_models AvailableModel
@@ -1793,7 +1793,7 @@ mod tests {
 
         // Create and set global service
         let service = cx.update(|cx| {
-            OllamaService::new(
+            State::new(
                 fake_http_client.clone(),
                 "http://localhost:11434".to_string(),
                 None,
@@ -1802,7 +1802,7 @@ mod tests {
         });
 
         cx.update(|cx| {
-            OllamaService::set_global(service.clone(), cx);
+            State::set_global(service.clone(), cx);
         });
 
         cx.background_executor.run_until_parked();
@@ -1817,7 +1817,7 @@ mod tests {
             let mut available_models = ollama_settings.available_models.clone();
 
             // Add discovered models from the global Ollama service
-            if let Some(service) = ollama::OllamaService::global(cx) {
+            if let Some(service) = ollama::State::global(cx) {
                 let discovered_models = service.read(cx).available_models();
                 for model in discovered_models {
                     // Convert from ollama::Model to language_models AvailableModel
@@ -1844,7 +1844,7 @@ mod tests {
 
             // Verify that the switch_ollama_model function can find the discovered model
             // by checking it exists in the service
-            if let Some(service) = ollama::OllamaService::global(cx) {
+            if let Some(service) = ollama::State::global(cx) {
                 let discovered_models = service.read(cx).available_models();
                 let found_model = discovered_models
                     .iter()
@@ -1891,7 +1891,7 @@ mod tests {
 
         // Create and set global service
         let service = cx.update(|cx| {
-            OllamaService::new(
+            State::new(
                 fake_http_client.clone(),
                 "http://localhost:11434".to_string(),
                 None,
@@ -1900,14 +1900,14 @@ mod tests {
         });
 
         cx.update(|cx| {
-            OllamaService::set_global(service.clone(), cx);
+            State::set_global(service.clone(), cx);
         });
 
         cx.background_executor.run_until_parked();
 
         // Verify model is discovered by service
         let discovered = cx.update(|cx| {
-            if let Some(service) = ollama::OllamaService::global(cx) {
+            if let Some(service) = ollama::State::global(cx) {
                 let models = service.read(cx).available_models();
                 models.iter().any(|m| m.name == "test-model:latest")
             } else {
@@ -1925,7 +1925,7 @@ mod tests {
         // We test this by verifying the function doesn't panic and can access the service
         cx.update(|cx| {
             // Verify the service is accessible within the function context
-            if let Some(service) = ollama::OllamaService::global(cx) {
+            if let Some(service) = ollama::State::global(cx) {
                 let discovered_models = service.read(cx).available_models();
                 let target_model = discovered_models
                     .iter()

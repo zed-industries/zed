@@ -57,10 +57,6 @@ pub struct AvailableModel {
     pub supports_thinking: Option<bool>,
 }
 
-// TODO
-// - Add API key authentication support. OllamaCompletionProvider already supports it
-// - Decide whether / how to integrate the new OllamaService into here, there seems to be
-//   some overlap with State here.
 pub struct OllamaLanguageModelProvider {
     http_client: Arc<dyn HttpClient>,
     state: gpui::Entity<State>,

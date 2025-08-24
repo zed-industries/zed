@@ -38,7 +38,7 @@ impl SettingsModel {
 }
 
 // Global Ollama service for managing models across all providers
-pub struct OllamaService {
+pub struct State {
     http_client: Arc<dyn HttpClient>,
     api_url: String,
     api_key: Option<String>,
@@ -47,7 +47,7 @@ pub struct OllamaService {
     _settings_subscription: Subscription,
 }
 
-impl OllamaService {
+impl State {
     pub fn new(
         http_client: Arc<dyn HttpClient>,
         api_url: String,
@@ -56,7 +56,7 @@ impl OllamaService {
     ) -> Entity<Self> {
         cx.new(|cx| {
             let subscription = cx.observe_global::<SettingsStore>({
-                move |this: &mut OllamaService, cx| {
+                move |this: &mut State, cx| {
                     this.restart_fetch_models_task(cx);
                 }
             });
@@ -77,12 +77,12 @@ impl OllamaService {
     }
 
     pub fn global(cx: &App) -> Option<Entity<Self>> {
-        cx.try_global::<GlobalOllamaService>()
+        cx.try_global::<GlobalOllamaState>()
             .map(|service| service.0.clone())
     }
 
     pub fn set_global(service: Entity<Self>, cx: &mut App) {
-        cx.set_global(GlobalOllamaService(service));
+        cx.set_global(GlobalOllamaState(service));
     }
 
     pub fn available_models(&self) -> &[Model] {
@@ -194,9 +194,9 @@ impl OllamaService {
     }
 }
 
-struct GlobalOllamaService(Entity<OllamaService>);
+struct GlobalOllamaState(Entity<State>);
 
-impl Global for GlobalOllamaService {}
+impl Global for GlobalOllamaState {}
 
 // TODO refactor to OllamaEditPredictionProvider
 pub struct OllamaCompletionProvider {
@@ -212,13 +212,13 @@ pub struct OllamaCompletionProvider {
 impl OllamaCompletionProvider {
     pub fn new(model: String, api_key: Option<String>, cx: &mut Context<Self>) -> Self {
         // Update the global service with the API key if one is provided
-        if let Some(service) = OllamaService::global(cx) {
+        if let Some(service) = State::global(cx) {
             service.update(cx, |service, cx| {
                 service.set_api_key(api_key.clone(), cx);
             });
         }
 
-        let subscription = if let Some(service) = OllamaService::global(cx) {
+        let subscription = if let Some(service) = State::global(cx) {
             Some(cx.observe(&service, |_this, _service, cx| {
                 cx.notify();
             }))
@@ -238,7 +238,7 @@ impl OllamaCompletionProvider {
     }
 
     pub fn available_models(&self, cx: &App) -> Vec<Model> {
-        if let Some(service) = OllamaService::global(cx) {
+        if let Some(service) = State::global(cx) {
             service.read(cx).available_models().to_vec()
         } else {
             Vec::new()
@@ -246,7 +246,7 @@ impl OllamaCompletionProvider {
     }
 
     pub fn refresh_models(&self, cx: &mut App) {
-        if let Some(service) = OllamaService::global(cx) {
+        if let Some(service) = State::global(cx) {
             service.update(cx, |service, cx| {
                 service.refresh_models(cx);
             });
@@ -323,7 +323,7 @@ impl EditPredictionProvider for OllamaCompletionProvider {
         cx: &mut Context<Self>,
     ) {
         // Get API settings from the global Ollama service or fallback
-        let (http_client, api_url) = if let Some(service) = OllamaService::global(cx) {
+        let (http_client, api_url) = if let Some(service) = State::global(cx) {
             let service_ref = service.read(cx);
             (service_ref.http_client.clone(), service_ref.api_url.clone())
         } else {
@@ -588,7 +588,7 @@ mod tests {
 
         // Create global Ollama service for testing
         let service = cx.update(|cx| {
-            OllamaService::new(
+            State::new(
                 fake_http_client.clone(),
                 "http://localhost:11434".to_string(),
                 None,
@@ -598,7 +598,7 @@ mod tests {
 
         // Set it as global
         cx.update(|cx| {
-            OllamaService::set_global(service.clone(), cx);
+            State::set_global(service.clone(), cx);
         });
 
         // Create completion provider
@@ -631,7 +631,7 @@ mod tests {
 
         // Create global Ollama service that will fail
         let service = cx.update(|cx| {
-            OllamaService::new(
+            State::new(
                 fake_http_client.clone(),
                 "http://localhost:11434".to_string(),
                 None,
@@ -640,7 +640,7 @@ mod tests {
         });
 
         cx.update(|cx| {
-            OllamaService::set_global(service.clone(), cx);
+            State::set_global(service.clone(), cx);
         });
 
         // Create completion provider
@@ -670,7 +670,7 @@ mod tests {
 
         // Create global Ollama service
         let service = cx.update(|cx| {
-            OllamaService::new(
+            State::new(
                 fake_http_client.clone(),
                 "http://localhost:11434".to_string(),
                 None,
@@ -679,7 +679,7 @@ mod tests {
         });
 
         cx.update(|cx| {
-            OllamaService::set_global(service.clone(), cx);
+            State::set_global(service.clone(), cx);
         });
 
         let provider = cx.update(|cx| {
@@ -751,7 +751,7 @@ mod tests {
 
         // Create global Ollama service
         let service = cx.update(|cx| {
-            OllamaService::new(
+            State::new(
                 fake_http_client.clone(),
                 "http://localhost:11434".to_string(),
                 None,
@@ -760,7 +760,7 @@ mod tests {
         });
 
         cx.update(|cx| {
-            OllamaService::set_global(service.clone(), cx);
+            State::set_global(service.clone(), cx);
         });
 
         // Create provider
@@ -824,7 +824,7 @@ mod tests {
 
         // Create global Ollama service
         let service = cx.update(|cx| {
-            OllamaService::new(
+            State::new(
                 fake_http_client.clone(),
                 "http://localhost:11434".to_string(),
                 None,
@@ -833,7 +833,7 @@ mod tests {
         });
 
         cx.update(|cx| {
-            OllamaService::set_global(service.clone(), cx);
+            State::set_global(service.clone(), cx);
         });
 
         // Create provider
@@ -876,7 +876,7 @@ mod tests {
 
         // Create global Ollama service
         let service = cx.update(|cx| {
-            OllamaService::new(
+            State::new(
                 fake_http_client.clone(),
                 "http://localhost:11434".to_string(),
                 None,
@@ -885,7 +885,7 @@ mod tests {
         });
 
         cx.update(|cx| {
-            OllamaService::set_global(service.clone(), cx);
+            State::set_global(service.clone(), cx);
         });
 
         // Create provider
@@ -957,7 +957,7 @@ mod tests {
 
         // Create global Ollama service
         let service = cx.update(|cx| {
-            OllamaService::new(
+            State::new(
                 fake_http_client.clone(),
                 "http://localhost:11434".to_string(),
                 None,
@@ -966,7 +966,7 @@ mod tests {
         });
 
         cx.update(|cx| {
-            OllamaService::set_global(service.clone(), cx);
+            State::set_global(service.clone(), cx);
         });
 
         // Create provider
@@ -1071,7 +1071,7 @@ mod tests {
 
         // Create service
         let service = cx.update(|cx| {
-            OllamaService::new(
+            State::new(
                 fake_http_client.clone(),
                 "http://localhost:11434".to_string(),
                 None,
@@ -1187,7 +1187,7 @@ mod tests {
         );
 
         let service = cx.update(|cx| {
-            OllamaService::new(
+            State::new(
                 fake_http_client.clone(),
                 "http://localhost:11434".to_string(),
                 Some("test-api-key".to_string()),
@@ -1196,7 +1196,7 @@ mod tests {
         });
 
         cx.update(|cx| {
-            OllamaService::set_global(service.clone(), cx);
+            State::set_global(service.clone(), cx);
         });
 
         // Wait for model fetching to complete
@@ -1227,7 +1227,7 @@ mod tests {
         );
 
         let service = cx.update(|cx| {
-            OllamaService::new(
+            State::new(
                 fake_http_client.clone(),
                 "http://localhost:11434".to_string(),
                 None,
@@ -1236,7 +1236,7 @@ mod tests {
         });
 
         cx.update(|cx| {
-            OllamaService::set_global(service.clone(), cx);
+            State::set_global(service.clone(), cx);
         });
 
         // Clear initial requests
