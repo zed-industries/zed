@@ -1166,7 +1166,6 @@ impl EditorElement {
                 .is_some_and(|state| state.keyboard_grace);
             let has_context_menu = editor.mouse_context_menu.is_some();
 
-            // Don't show blame popover if there's an active context menu
             if (mouse_over_inline_blame || mouse_over_popover) && !has_context_menu {
                 editor.show_blame_popover(blame_entry, event.position, false, cx);
             } else if !keyboard_grace || has_context_menu {
@@ -2534,13 +2533,10 @@ impl EditorElement {
         });
 
         if let Some(mut element) = maybe_element {
-            // Check if there's an active mouse context menu that would be obscured by the blame popover
             let has_mouse_context_menu = self.editor.read_with(cx, |editor, _| {
                 editor.mouse_context_menu.is_some()
             });
 
-            // If there's a mouse context menu active, don't render the blame popover
-            // to prevent it from appearing on top of the context menu
             if !has_mouse_context_menu {
                 let size = element.layout_as_root(AvailableSpace::min_size(), window, cx);
                 let overall_height = size.height + HOVER_POPOVER_GAP;
