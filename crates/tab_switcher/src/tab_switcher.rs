@@ -17,11 +17,14 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use settings::Settings;
 use std::{cmp::Reverse, sync::Arc};
-use ui::{DecoratedIcon, IconDecoration, ListItem, ListItemSpacing, Tooltip, prelude::*};
+use ui::{
+    DecoratedIcon, IconDecoration, IconDecorationKind, ListItem, ListItemSpacing, Tooltip,
+    prelude::*,
+};
 use util::ResultExt;
 use workspace::{
     ModalView, Pane, SaveIntent, Workspace,
-    item::{ItemHandle, ItemSettings, TabContentParams},
+    item::{ItemHandle, ItemSettings, ShowDiagnostics, TabContentParams},
     pane::{Event as PaneEvent, render_item_indicator, tab_details},
 };
 
@@ -600,29 +603,47 @@ impl PickerDelegate for TabSwitcherDelegate {
                 .flatten()
         };
 
-        let item_diagnostic = if let Some(pane) = tab_match.pane.upgrade().map(|p| p.read(cx)) {
-            tab_match
+        let show_diagnostics = ItemSettings::get_global(cx).show_diagnostics;
+
+        let item_diagnostics = || {
+            if show_diagnostics == ShowDiagnostics::Off {
+                return None;
+            }
+            let buffer_store = self.project.read(cx).buffer_store().read(cx);
+            let buffer = tab_match
                 .item
                 .project_path(cx)
-                .map_or(None, |project_path| pane.get_diagnostics(&project_path))
-        } else {
-            None
+                .and_then(|path| buffer_store.get_by_path(&path))
+                .map(|buffer| buffer.read(cx));
+            buffer.and_then(|buffer| {
+                buffer
+                    .snapshot()
+                    .diagnostic_groups(None)
+                    .iter()
+                    .map(|(_, diagnostic)| {
+                        diagnostic.entries[diagnostic.primary_ix]
+                            .diagnostic
+                            .severity
+                    })
+                    .min()
+            })
         };
 
-        let icon = if let Some(diagnostic) = item_diagnostic {
-            let icon = tab_match.item.tab_icon(window, cx).map(|icon| {
-                let git_status_color = git_status_color();
-                icon.color(git_status_color.unwrap_or_default())
-            })?;
+        let icon = tab_match.item.tab_icon(window, cx).map(|icon| {
+            let git_status_color = git_status_color();
+            let colored_icon = icon.color(git_status_color.unwrap_or_default());
 
-            let knockout_item_color = if selected {
-                cx.theme().colors().element_selected
-            } else {
-                cx.theme().colors().element_background
-            };
-
-            let decorations = entry_diagnostic_aware_icon_decoration_and_color(Some(*diagnostic))
+            let decorations = entry_diagnostic_aware_icon_decoration_and_color(item_diagnostics())
+                .filter(|(d, _)| {
+                    *d != IconDecorationKind::Triangle
+                        || show_diagnostics != ShowDiagnostics::Errors
+                })
                 .map(|(icon, color)| {
+                    let knockout_item_color = if selected {
+                        cx.theme().colors().element_selected
+                    } else {
+                        cx.theme().colors().element_background
+                    };
                     IconDecoration::new(icon, knockout_item_color, cx)
                         .color(color.color(cx))
                         .position(Point {
@@ -631,14 +652,8 @@ impl PickerDelegate for TabSwitcherDelegate {
                         })
                 });
 
-            Some(DecoratedIcon::new(icon, decorations).into_any_element())
-        } else {
-            tab_match.item.tab_icon(window, cx).map(|icon| {
-                let git_status_color = git_status_color();
-                icon.color(git_status_color.unwrap_or_default())
-                    .into_any_element()
-            })
-        };
+            DecoratedIcon::new(colored_icon, decorations).into_any_element()
+        });
 
         let indicator = render_item_indicator(tab_match.item.boxed_clone(), cx);
         let indicator_color = if let Some(ref indicator) = indicator {
