@@ -1,28 +1,16 @@
 use editor::Editor;
-use gpui::{ClickEvent, Entity, WeakEntity};
+use encoding::Encoding;
+use gpui::{ClickEvent, Entity, Subscription, WeakEntity};
 use ui::{Button, ButtonCommon, Context, LabelSize, Render, Tooltip, Window, div};
 use ui::{Clickable, ParentElement};
 use workspace::{ItemHandle, StatusItemView, Workspace};
 
 use crate::selectors::save_or_reopen::{EncodingSaveOrReopenSelector, get_current_encoding};
 
-pub enum Encoding {
-    Utf8,
-    Iso8859_1,
-}
-
-impl Encoding {
-    pub fn as_str(&self) -> &str {
-        match &self {
-            Encoding::Utf8 => "UTF-8",
-            Encoding::Iso8859_1 => "ISO 8859-1",
-        }
-    }
-}
-
 pub struct EncodingIndicator {
-    pub encoding: Encoding,
+    pub encoding: Option<&'static dyn Encoding>,
     pub workspace: WeakEntity<Workspace>,
+    observe: Option<Subscription>,
 }
 
 pub mod selectors;
@@ -49,14 +37,51 @@ impl Render for EncodingIndicator {
 
 impl EncodingIndicator {
     pub fn get_current_encoding(&self, cx: &mut Context<Self>, editor: WeakEntity<Editor>) {}
+
+    pub fn new(
+        encoding: Option<&'static dyn encoding::Encoding>,
+        workspace: WeakEntity<Workspace>,
+        observe: Option<Subscription>,
+    ) -> EncodingIndicator {
+        EncodingIndicator {
+            encoding,
+            workspace,
+            observe,
+        }
+    }
+
+    pub fn update(
+        &mut self,
+        editor: Entity<Editor>,
+        _: &mut Window,
+        cx: &mut Context<EncodingIndicator>,
+    ) {
+        let editor = editor.read(cx);
+        if let Some((_, buffer, _)) = editor.active_excerpt(cx) {
+            let encoding = buffer.read(cx).encoding;
+            self.encoding = Some(encoding);
+        }
+
+        cx.notify();
+    }
 }
 
 impl StatusItemView for EncodingIndicator {
     fn set_active_pane_item(
         &mut self,
-        _active_pane_item: Option<&dyn ItemHandle>,
-        _window: &mut Window,
-        _cx: &mut Context<Self>,
+        active_pane_item: Option<&dyn ItemHandle>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
     ) {
+        match active_pane_item.and_then(|item| item.downcast::<Editor>()) {
+            Some(editor) => {
+                self.observe = Some(cx.observe_in(&editor, window, Self::update));
+                self.update(editor, window, cx);
+            }
+            None => {
+                self.encoding = None;
+                self.observe = None;
+            }
+        }
     }
 }

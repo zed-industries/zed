@@ -443,10 +443,8 @@ pub fn initialize_workspace(
             }
         });
 
-        let encoding_indicator = cx.new(|_cx| encodings::EncodingIndicator {
-            encoding: encodings::Encoding::Utf8,
-            workspace: workspace_handle.downgrade(),
-        });
+        let encoding_indicator =
+            cx.new(|_cx| encodings::EncodingIndicator::new(None, workspace.weak_handle(), None));
 
         let cursor_position =
             cx.new(|_| go_to_line::cursor_position::CursorPosition::new(workspace));

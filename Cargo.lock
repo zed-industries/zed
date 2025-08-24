@@ -5589,6 +5589,7 @@ name = "encodings"
 version = "0.1.0"
 dependencies = [
  "editor",
+ "encoding",
  "fuzzy",
  "gpui",
  "picker",
@@ -21255,6 +21256,7 @@ dependencies = [
  "diagnostics",
  "edit_prediction_button",
  "editor",
+ "encoding",
  "encodings",
  "env_logger 0.11.8",
  "extension",
