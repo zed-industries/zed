@@ -3,31 +3,49 @@ pub mod save_or_reopen {
     use gpui::{AppContext, ParentElement};
     use picker::Picker;
     use picker::PickerDelegate;
+    use std::cell::RefCell;
+    use std::ops::{Deref, DerefMut};
+    use std::rc::Rc;
+    use std::sync::Arc;
     use std::sync::atomic::AtomicBool;
     use util::ResultExt;
 
     use fuzzy::{StringMatch, StringMatchCandidate};
     use gpui::{DismissEvent, Entity, EventEmitter, Focusable, WeakEntity};
 
-    use ui::{Context, Label, ListItem, Render, Window, rems, v_flex};
+    use ui::{Context, HighlightedLabel, Label, ListItem, Render, Window, rems, v_flex};
     use workspace::{ModalView, Workspace};
+
+    use crate::selectors::encoding::{Action, EncodingSelector, EncodingSelectorDelegate};
 
     pub struct EncodingSaveOrReopenSelector {
         picker: Entity<Picker<EncodingSaveOrReopenDelegate>>,
+        pub current_selection: usize,
+        workspace: WeakEntity<Workspace>,
     }
 
     impl EncodingSaveOrReopenSelector {
-        pub fn new(window: &mut Window, cx: &mut Context<EncodingSaveOrReopenSelector>) -> Self {
-            let delegate = EncodingSaveOrReopenDelegate::new(cx.entity().downgrade());
+        pub fn new(
+            window: &mut Window,
+            cx: &mut Context<EncodingSaveOrReopenSelector>,
+            workspace: WeakEntity<Workspace>,
+        ) -> Self {
+            let delegate =
+                EncodingSaveOrReopenDelegate::new(cx.entity().downgrade(), workspace.clone());
 
             let picker = cx.new(|cx| Picker::uniform_list(delegate, window, cx));
 
-            Self { picker }
+            Self {
+                picker,
+                current_selection: 0,
+                workspace,
+            }
         }
 
         pub fn toggle(workspace: &mut Workspace, window: &mut Window, cx: &mut Context<Workspace>) {
+            let weak_workspace = workspace.weak_handle();
             workspace.toggle_modal(window, cx, |window, cx| {
-                EncodingSaveOrReopenSelector::new(window, cx)
+                EncodingSaveOrReopenSelector::new(window, cx, weak_workspace)
             });
         }
     }
@@ -53,27 +71,56 @@ pub mod save_or_reopen {
     impl EventEmitter<DismissEvent> for EncodingSaveOrReopenSelector {}
 
     pub struct EncodingSaveOrReopenDelegate {
-        encoding_selector: WeakEntity<EncodingSaveOrReopenSelector>,
+        selector: WeakEntity<EncodingSaveOrReopenSelector>,
         current_selection: usize,
         matches: Vec<StringMatch>,
         pub actions: Vec<StringMatchCandidate>,
+        workspace: WeakEntity<Workspace>,
     }
 
     impl EncodingSaveOrReopenDelegate {
-        pub fn new(selector: WeakEntity<EncodingSaveOrReopenSelector>) -> Self {
+        pub fn new(
+            selector: WeakEntity<EncodingSaveOrReopenSelector>,
+            workspace: WeakEntity<Workspace>,
+        ) -> Self {
             Self {
-                encoding_selector: selector,
+                selector,
                 current_selection: 0,
                 matches: Vec::new(),
                 actions: vec![
                     StringMatchCandidate::new(0, "Save with encoding"),
                     StringMatchCandidate::new(1, "Reopen with encoding"),
                 ],
+                workspace,
             }
         }
 
         pub fn get_actions(&self) -> (&str, &str) {
             (&self.actions[0].string, &self.actions[1].string)
+        }
+
+        pub fn post_selection(
+            &self,
+            cx: &mut Context<Picker<EncodingSaveOrReopenDelegate>>,
+            window: &mut Window,
+        ) {
+            if self.current_selection == 0 {
+                if let Some(workspace) = self.workspace.upgrade() {
+                    workspace.update(cx, |workspace, cx| {
+                        workspace.toggle_modal(window, cx, |window, cx| {
+                            EncodingSelector::new(window, cx, Action::Save)
+                        })
+                    });
+                }
+            } else if self.current_selection == 1 {
+                if let Some(workspace) = self.workspace.upgrade() {
+                    workspace.update(cx, |workspace, cx| {
+                        workspace.toggle_modal(window, cx, |window, cx| {
+                            EncodingSelector::new(window, cx, Action::Reopen)
+                        })
+                    });
+                }
+            }
         }
     }
 
@@ -92,9 +139,14 @@ pub mod save_or_reopen {
             &mut self,
             ix: usize,
             _window: &mut Window,
-            _cx: &mut Context<Picker<Self>>,
+            cx: &mut Context<Picker<Self>>,
         ) {
             self.current_selection = ix;
+            self.selector
+                .update(cx, |selector, cx| {
+                    selector.current_selection = ix;
+                })
+                .log_err();
         }
 
         fn placeholder_text(&self, _window: &mut Window, _cx: &mut ui::App) -> std::sync::Arc<str> {
@@ -137,24 +189,31 @@ pub mod save_or_reopen {
 
                 this.update(cx, |picker, cx| {
                     let delegate = &mut picker.delegate;
-                    delegate.current_selection = matches.len().saturating_sub(1);
                     delegate.matches = matches;
+                    delegate.current_selection = delegate
+                        .current_selection
+                        .min(delegate.matches.len().saturating_sub(1));
+                    delegate
+                        .selector
+                        .update(cx, |selector, cx| {
+                            selector.current_selection = delegate.current_selection
+                        })
+                        .log_err();
                     cx.notify();
                 })
                 .log_err();
             })
         }
 
-        fn confirm(
-            &mut self,
-            secondary: bool,
-            window: &mut Window,
-            cx: &mut Context<Picker<Self>>,
-        ) {
+        fn confirm(&mut self, _: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
+            self.dismissed(window, cx);
+            if self.selector.is_upgradable() {
+                self.post_selection(cx, window);
+            }
         }
 
         fn dismissed(&mut self, _window: &mut Window, cx: &mut Context<Picker<Self>>) {
-            self.encoding_selector
+            self.selector
                 .update(cx, |_, cx| cx.emit(DismissEvent))
                 .log_err();
         }
@@ -162,11 +221,18 @@ pub mod save_or_reopen {
         fn render_match(
             &self,
             ix: usize,
-            selected: bool,
-            window: &mut Window,
-            cx: &mut Context<Picker<Self>>,
+            _: bool,
+            _: &mut Window,
+            _: &mut Context<Picker<Self>>,
         ) -> Option<Self::ListItem> {
-            Some(ListItem::new(ix).child(Label::new(&self.matches[ix].string)))
+            Some(
+                ListItem::new(ix)
+                    .child(HighlightedLabel::new(
+                        &self.matches[ix].string,
+                        self.matches[ix].positions.clone(),
+                    ))
+                    .spacing(ui::ListItemSpacing::Sparse),
+            )
         }
     }
 
@@ -176,19 +242,28 @@ pub mod save_or_reopen {
 }
 
 pub mod encoding {
-    use std::sync::atomic::AtomicBool;
+    use std::{
+        ops::DerefMut,
+        rc::{Rc, Weak},
+        sync::{Arc, atomic::AtomicBool},
+    };
 
     use fuzzy::{StringMatch, StringMatchCandidate};
     use gpui::{
-        AppContext, BackgroundExecutor, DismissEvent, Entity, EventEmitter, Focusable, WeakEntity,
+        AppContext, BackgroundExecutor, DismissEvent, Entity, EventEmitter, Focusable, Length,
+        WeakEntity, actions,
     };
     use picker::{Picker, PickerDelegate};
-    use ui::{Context, Label, ListItem, ParentElement, Render, Styled, Window, rems, v_flex};
+    use ui::{
+        Context, DefiniteLength, HighlightedLabel, Label, ListItem, ListItemSpacing, ParentElement,
+        Render, Styled, Window, rems, v_flex,
+    };
     use util::{ResultExt, TryFutureExt};
     use workspace::{ModalView, Workspace};
 
     pub struct EncodingSelector {
-        pub picker: Entity<Picker<EncodingSelectorDelegate>>,
+        picker: Entity<Picker<EncodingSelectorDelegate>>,
+        action: Action,
     }
 
     pub struct EncodingSelectorDelegate {
@@ -204,7 +279,44 @@ pub mod encoding {
                 current_selection: 0,
                 encodings: vec![
                     StringMatchCandidate::new(0, "UTF-8"),
-                    StringMatchCandidate::new(1, "ISO 8859-1"),
+                    StringMatchCandidate::new(1, "UTF-16 LE"),
+                    StringMatchCandidate::new(2, "UTF-16 BE"),
+                    StringMatchCandidate::new(3, "IBM866"),
+                    StringMatchCandidate::new(4, "ISO 8859-1"),
+                    StringMatchCandidate::new(5, "ISO 8859-2"),
+                    StringMatchCandidate::new(6, "ISO 8859-3"),
+                    StringMatchCandidate::new(7, "ISO 8859-4"),
+                    StringMatchCandidate::new(8, "ISO 8859-5"),
+                    StringMatchCandidate::new(9, "ISO 8859-6"),
+                    StringMatchCandidate::new(10, "ISO 8859-7"),
+                    StringMatchCandidate::new(11, "ISO 8859-8"),
+                    StringMatchCandidate::new(12, "ISO 8859-10"),
+                    StringMatchCandidate::new(13, "ISO 8859-13"),
+                    StringMatchCandidate::new(14, "ISO 8859-14"),
+                    StringMatchCandidate::new(15, "ISO 8859-15"),
+                    StringMatchCandidate::new(16, "ISO 8859-16"),
+                    StringMatchCandidate::new(17, "KOI8-R"),
+                    StringMatchCandidate::new(18, "KOI8-U"),
+                    StringMatchCandidate::new(19, "MacRoman"),
+                    StringMatchCandidate::new(20, "Mac Cyrillic"),
+                    StringMatchCandidate::new(21, "Windows-874"),
+                    StringMatchCandidate::new(22, "Windows-1250"),
+                    StringMatchCandidate::new(23, "Windows-1251"),
+                    StringMatchCandidate::new(24, "Windows-1252"),
+                    StringMatchCandidate::new(25, "Windows-1253"),
+                    StringMatchCandidate::new(26, "Windows-1254"),
+                    StringMatchCandidate::new(27, "Windows-1255"),
+                    StringMatchCandidate::new(28, "Windows-1256"),
+                    StringMatchCandidate::new(29, "Windows-1257"),
+                    StringMatchCandidate::new(30, "Windows-1258"),
+                    StringMatchCandidate::new(31, "EUC-KR"),
+                    StringMatchCandidate::new(32, "EUC-JP"),
+                    StringMatchCandidate::new(33, "Shift_JIS"),
+                    StringMatchCandidate::new(34, "ISO 2022-JP"),
+                    StringMatchCandidate::new(35, "GBK"),
+                    StringMatchCandidate::new(36, "GB18030"),
+                    StringMatchCandidate::new(37, "Big5"),
+                    StringMatchCandidate::new(38, "HZ-GB-2312"),
                 ],
                 matches: Vec::new(),
                 selector,
@@ -244,7 +356,6 @@ pub mod encoding {
         ) -> gpui::Task<()> {
             let executor = cx.background_executor().clone();
             let encodings = self.encodings.clone();
-            let current_selection = self.current_selection;
 
             cx.spawn_in(window, async move |picker, cx| {
                 let matches: Vec<StringMatch>;
@@ -264,14 +375,25 @@ pub mod encoding {
                     matches = fuzzy::match_strings(
                         &encodings,
                         &query,
+                        true,
                         false,
-                        false,
-                        0,
+                        38,
                         &AtomicBool::new(false),
                         executor,
                     )
                     .await
                 }
+
+                picker
+                    .update(cx, |picker, cx| {
+                        let delegate = &mut picker.delegate;
+                        delegate.matches = matches;
+                        delegate.current_selection = delegate
+                            .current_selection
+                            .min(delegate.matches.len().saturating_sub(1));
+                        cx.notify();
+                    })
+                    .log_err();
             })
         }
 
@@ -296,20 +418,32 @@ pub mod encoding {
             window: &mut Window,
             cx: &mut Context<Picker<Self>>,
         ) -> Option<Self::ListItem> {
-            Some(ListItem::new(ix).child(Label::new(&self.matches[ix].string)))
+            Some(
+                ListItem::new(ix)
+                    .child(HighlightedLabel::new(
+                        &self.matches[ix].string,
+                        self.matches[ix].positions.clone(),
+                    ))
+                    .spacing(ListItemSpacing::Sparse),
+            )
         }
     }
 
+    pub enum Action {
+        Save,
+        Reopen,
+    }
+
     impl EncodingSelector {
-        pub fn new(window: &mut Window, cx: &mut Context<EncodingSelector>) -> EncodingSelector {
+        pub fn new(
+            window: &mut Window,
+            cx: &mut Context<EncodingSelector>,
+            action: Action,
+        ) -> EncodingSelector {
             let delegate = EncodingSelectorDelegate::new(cx.entity().downgrade());
             let picker = cx.new(|cx| Picker::uniform_list(delegate, window, cx));
 
-            EncodingSelector { picker: picker }
-        }
-
-        pub fn toggle(workspace: &mut Workspace, window: &mut Window, cx: &mut Context<Workspace>) {
-            workspace.toggle_modal(window, cx, |window, cx| EncodingSelector::new(window, cx));
+            EncodingSelector { picker, action }
         }
     }
 

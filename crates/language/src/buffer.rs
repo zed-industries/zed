@@ -126,7 +126,7 @@ pub struct Buffer {
     has_unsaved_edits: Cell<(clock::Global, bool)>,
     change_bits: Vec<rc::Weak<Cell<bool>>>,
     _subscriptions: Vec<gpui::Subscription>,
-    encoding: &'static dyn encoding::Encoding,
+    pub encoding: &'static dyn encoding::Encoding,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
