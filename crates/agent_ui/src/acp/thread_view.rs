@@ -1746,7 +1746,7 @@ impl AcpThreadView {
                 .absolute()
                 .top_0()
                 .right_0()
-                .w_16()
+                .w_12()
                 .h_full()
                 .bg(linear_gradient(
                     90.,
@@ -1906,7 +1906,7 @@ impl AcpThreadView {
                                     .into_any()
                             }),
                     )
-                    .when(in_progress && use_card_layout, |this| {
+                    .when(in_progress && use_card_layout && !is_open, |this| {
                         this.child(
                             div().absolute().right_2().child(
                                 Icon::new(IconName::ArrowCircle)
