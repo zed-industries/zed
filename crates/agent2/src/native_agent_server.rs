@@ -3,7 +3,7 @@ use std::{any::Any, path::Path, rc::Rc, sync::Arc};
 use agent_servers::AgentServer;
 use anyhow::Result;
 use fs::Fs;
-use gpui::{App, Entity, Task};
+use gpui::{App, Entity, SharedString, Task};
 use project::Project;
 use prompt_store::PromptStore;
 
@@ -22,16 +22,16 @@ impl NativeAgentServer {
 }
 
 impl AgentServer for NativeAgentServer {
-    fn name(&self) -> &'static str {
-        "Zed Agent"
+    fn name(&self) -> SharedString {
+        "Zed Agent".into()
     }
 
-    fn empty_state_headline(&self) -> &'static str {
+    fn empty_state_headline(&self) -> SharedString {
         self.name()
     }
 
-    fn empty_state_message(&self) -> &'static str {
-        ""
+    fn empty_state_message(&self) -> SharedString {
+        "".into()
     }
 
     fn logo(&self) -> ui::IconName {
