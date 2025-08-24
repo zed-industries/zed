@@ -25,6 +25,9 @@ use util::split_str_with_ranges;
 
 /// Path used for unsaved buffer that contains style json. To support the json language server, this
 /// matches the name used in the generated schemas.
+#[cfg(target_os = "windows")]
+const ZED_INSPECTOR_STYLE_JSON: &str = r"C:\zed-inspector-style.json";
+#[cfg(not(target_os = "windows"))]
 const ZED_INSPECTOR_STYLE_JSON: &str = "/zed-inspector-style.json";
 
 pub(crate) struct DivInspector {
