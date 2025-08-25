@@ -42,10 +42,13 @@
       "shift-f11": "debugger::StepOut",
       "f11": "zed::ToggleFullScreen",
       // todo(windows)
-      "ctrl-alt-z": "edit_prediction::RateCompletions",
-      "ctrl-shift-i": "edit_prediction::ToggleMenu",
-      // todo(windows)
-      "ctrl-alt-l": "lsp_tool::ToggleMenu"
+      // win -> but nealy none app use this
+      // vscode save all action => ctrl-alt-s ctrl-k s
+      // ctrl-alt-z => shift-alt-z or ctrl-shift-z
+      // "ctrl-alt-z": "edit_prediction::RateCompletions",
+      "ctrl-shift-i": "edit_prediction::ToggleMenu"
+      // todo(windows) (probably remove binding)
+      // "ctrl-alt-l": "lsp_tool::ToggleMenu"
     }
   },
   {
@@ -146,7 +149,7 @@
       "ctrl-h": "buffer_search::DeployReplace",
       "ctrl-shift-.": "assistant::QuoteSelection",
       "ctrl-shift-,": "assistant::InsertIntoEditor",
-      // todo(windows)
+      // todo(windows) (if vs code has a similar action, use that, otherwise remove this binding)
       "ctrl-alt-e": "editor::SelectEnclosingSymbol",
       "ctrl-shift-backspace": "editor::GoToPreviousChange",
       "ctrl-shift-alt-backspace": "editor::GoToNextChange",
@@ -198,7 +201,7 @@
     "use_key_equivalents": true,
     "bindings": {
       "ctrl-k ctrl-r": "git::Restore",
-      // todo(windows)
+      // todo(windows) (find something, look at what vs code does)
       "ctrl-alt-y": "git::ToggleStaged",
       "alt-y": "git::StageAndNext",
       "shift-alt-y": "git::UnstageAndNext"
