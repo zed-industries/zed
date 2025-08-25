@@ -238,6 +238,85 @@ pub struct TabSwitcherDelegate {
     restored_items: bool,
 }
 
+impl TabMatch {
+    fn icon(
+        &self,
+        project: &Entity<Project>,
+        selected: bool,
+        window: &Window,
+        cx: &App,
+    ) -> Option<DecoratedIcon> {
+        self.item.tab_icon(window, cx).map(|icon| {
+            let show_diagnostics = ItemSettings::get_global(cx).show_diagnostics;
+            let git_status_color = {
+                ItemSettings::get_global(cx)
+                    .git_status
+                    .then(|| {
+                        self.item
+                            .project_path(cx)
+                            .as_ref()
+                            .and_then(|path| {
+                                let project = project.read(cx);
+                                let entry = project.entry_for_path(path, cx)?;
+                                let git_status = project
+                                    .project_path_git_status(path, cx)
+                                    .map(|status| status.summary())
+                                    .unwrap_or_default();
+                                Some((entry, git_status))
+                            })
+                            .map(|(entry, git_status)| {
+                                entry_git_aware_label_color(git_status, entry.is_ignored, selected)
+                            })
+                    })
+                    .flatten()
+            };
+            let colored_icon = icon.color(git_status_color.unwrap_or_default());
+
+            let item_diagnostics = {
+                if show_diagnostics == ShowDiagnostics::Off {
+                    None
+                } else {
+                    let buffer_store = project.read(cx).buffer_store().read(cx);
+                    let buffer = self
+                        .item
+                        .project_path(cx)
+                        .and_then(|path| buffer_store.get_by_path(&path))
+                        .map(|buffer| buffer.read(cx));
+                    buffer.and_then(|buffer| {
+                        buffer
+                            .get_diagnostics(None)
+                            .unwrap_or_default()
+                            .iter()
+                            .map(|diag| diag.diagnostic.severity)
+                            .min()
+                    })
+                }
+            };
+
+            let decorations = entry_diagnostic_aware_icon_decoration_and_color(item_diagnostics)
+                .filter(|(d, _)| {
+                    *d != IconDecorationKind::Triangle
+                        || show_diagnostics != ShowDiagnostics::Errors
+                })
+                .map(|(icon, color)| {
+                    let knockout_item_color = if selected {
+                        cx.theme().colors().element_selected
+                    } else {
+                        cx.theme().colors().element_background
+                    };
+                    IconDecoration::new(icon, knockout_item_color, cx)
+                        .color(color.color(cx))
+                        .position(Point {
+                            x: px(-2.),
+                            y: px(-2.),
+                        })
+                });
+
+            DecoratedIcon::new(colored_icon, decorations)
+        })
+    }
+}
+
 impl TabSwitcherDelegate {
     #[allow(clippy::complexity)]
     fn new(
@@ -579,81 +658,7 @@ impl PickerDelegate for TabSwitcherDelegate {
         };
         let label = tab_match.item.tab_content(params, window, cx);
 
-        let git_status_color = || {
-            ItemSettings::get_global(cx)
-                .git_status
-                .then(|| {
-                    tab_match
-                        .item
-                        .project_path(cx)
-                        .as_ref()
-                        .and_then(|path| {
-                            let project = self.project.read(cx);
-                            let entry = project.entry_for_path(path, cx)?;
-                            let git_status = project
-                                .project_path_git_status(path, cx)
-                                .map(|status| status.summary())
-                                .unwrap_or_default();
-                            Some((entry, git_status))
-                        })
-                        .map(|(entry, git_status)| {
-                            entry_git_aware_label_color(git_status, entry.is_ignored, selected)
-                        })
-                })
-                .flatten()
-        };
-
-        let show_diagnostics = ItemSettings::get_global(cx).show_diagnostics;
-
-        let item_diagnostics = || {
-            if show_diagnostics == ShowDiagnostics::Off {
-                return None;
-            }
-            let buffer_store = self.project.read(cx).buffer_store().read(cx);
-            let buffer = tab_match
-                .item
-                .project_path(cx)
-                .and_then(|path| buffer_store.get_by_path(&path))
-                .map(|buffer| buffer.read(cx));
-            buffer.and_then(|buffer| {
-                buffer
-                    .snapshot()
-                    .diagnostic_groups(None)
-                    .iter()
-                    .map(|(_, diagnostic)| {
-                        diagnostic.entries[diagnostic.primary_ix]
-                            .diagnostic
-                            .severity
-                    })
-                    .min()
-            })
-        };
-
-        let icon = tab_match.item.tab_icon(window, cx).map(|icon| {
-            let git_status_color = git_status_color();
-            let colored_icon = icon.color(git_status_color.unwrap_or_default());
-
-            let decorations = entry_diagnostic_aware_icon_decoration_and_color(item_diagnostics())
-                .filter(|(d, _)| {
-                    *d != IconDecorationKind::Triangle
-                        || show_diagnostics != ShowDiagnostics::Errors
-                })
-                .map(|(icon, color)| {
-                    let knockout_item_color = if selected {
-                        cx.theme().colors().element_selected
-                    } else {
-                        cx.theme().colors().element_background
-                    };
-                    IconDecoration::new(icon, knockout_item_color, cx)
-                        .color(color.color(cx))
-                        .position(Point {
-                            x: px(-2.),
-                            y: px(-2.),
-                        })
-                });
-
-            DecoratedIcon::new(colored_icon, decorations).into_any_element()
-        });
+        let icon = tab_match.icon(&self.project, selected, window, cx);
 
         let indicator = render_item_indicator(tab_match.item.boxed_clone(), cx);
         let indicator_color = if let Some(ref indicator) = indicator {
@@ -695,7 +700,7 @@ impl PickerDelegate for TabSwitcherDelegate {
                 .inset(true)
                 .toggle_state(selected)
                 .child(h_flex().w_full().child(label))
-                .start_slot::<AnyElement>(icon)
+                .start_slot::<DecoratedIcon>(icon)
                 .map(|el| {
                     if self.selected_index == ix {
                         el.end_slot::<AnyElement>(close_button)
