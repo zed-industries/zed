@@ -2,21 +2,21 @@
 use crate::Inspector;
 use crate::{
     Action, AnyDrag, AnyElement, AnyImageCache, AnyTooltip, AnyView, App, AppContext, Arena, Asset,
-    AsyncWindowContext, AvailableSpace, Background, BorderStyle, Bounds, BoxShadow, Capslock,
-    Context, Corners, CursorStyle, Decorations, DevicePixels, DispatchActionListener,
-    DispatchNodeId, DispatchTree, DisplayId, Edges, Effect, Entity, EntityId, EventEmitter,
-    FileDropEvent, FontId, Global, GlobalElementId, GlyphId, GpuSpecs, Hsla, InputHandler, IsZero,
-    KeyBinding, KeyContext, KeyDownEvent, KeyEvent, Keystroke, KeystrokeEvent, LayoutId,
-    LineLayoutIndex, Modifiers, ModifiersChangedEvent, MonochromeSprite, MouseButton, MouseEvent,
-    MouseMoveEvent, MouseUpEvent, Path, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
-    PlatformInputHandler, PlatformWindow, Point, PolychromeSprite, PromptButton, PromptLevel, Quad,
-    Render, RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams, Replay, ResizeEdge,
-    SMOOTH_SVG_SCALE_FACTOR, SUBPIXEL_VARIANTS, ScaledPixels, Scene, Shadow, SharedString, Size,
-    StrikethroughStyle, Style, SubscriberSet, Subscription, TabHandles, TaffyLayoutEngine, Task,
-    TextStyle, TextStyleRefinement, TransformationMatrix, Underline, UnderlineStyle,
-    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControls, WindowDecorations,
-    WindowOptions, WindowParams, WindowTextSystem, point, prelude::*, px, rems, size,
-    transparent_black,
+    AsyncWindowContext, AvailableSpace, Background, BidiStyle, BidiStyleRefinement, BorderStyle,
+    Bounds, BoxShadow, Capslock, Context, Corners, CursorStyle, Decorations, DevicePixels,
+    DispatchActionListener, DispatchNodeId, DispatchTree, DisplayId, Edges, Effect, Entity,
+    EntityId, EventEmitter, FileDropEvent, FontId, Global, GlobalElementId, GlyphId, GpuSpecs,
+    Hsla, InputHandler, IsZero, KeyBinding, KeyContext, KeyDownEvent, KeyEvent, Keystroke,
+    KeystrokeEvent, LayoutDirection, LayoutId, LineLayoutIndex, Modifiers, ModifiersChangedEvent,
+    MonochromeSprite, MouseButton, MouseEvent, MouseMoveEvent, MouseUpEvent, Path, Pixels,
+    PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point,
+    PolychromeSprite, PromptButton, PromptLevel, Quad, Render, RenderGlyphParams, RenderImage,
+    RenderImageParams, RenderSvgParams, Replay, ResizeEdge, SMOOTH_SVG_SCALE_FACTOR,
+    SUBPIXEL_VARIANTS, ScaledPixels, Scene, Shadow, SharedString, Size, StrikethroughStyle, Style,
+    SubscriberSet, Subscription, TabHandles, TaffyLayoutEngine, Task, TextStyle,
+    TextStyleRefinement, TransformationMatrix, Underline, UnderlineStyle, WindowAppearance,
+    WindowBackgroundAppearance, WindowBounds, WindowControls, WindowDecorations, WindowOptions,
+    WindowParams, WindowTextSystem, point, prelude::*, px, rems, size, transparent_black,
 };
 use anyhow::{Context as _, Result, anyhow};
 use collections::{FxHashMap, FxHashSet};
@@ -835,6 +835,8 @@ pub struct Window {
     pub(crate) root: Option<AnyView>,
     pub(crate) element_id_stack: SmallVec<[ElementId; 32]>,
     pub(crate) text_style_stack: Vec<TextStyleRefinement>,
+    root_layout_direction: LayoutDirection,
+    pub(crate) bidi_style_stack: Vec<BidiStyleRefinement>,
     pub(crate) rendered_entity_stack: Vec<EntityId>,
     pub(crate) element_offset_stack: Vec<Point<Pixels>>,
     pub(crate) element_opacity: Option<f32>,
@@ -944,6 +946,7 @@ impl Window {
             app_id,
             window_min_size,
             window_decorations,
+            layout_direction,
         } = options;
 
         let bounds = window_bounds
@@ -960,6 +963,7 @@ impl Window {
                 show,
                 display_id,
                 window_min_size,
+                layout_direction,
             },
         )?;
         let display_id = platform_window.display().map(|display| display.id());
@@ -1145,6 +1149,8 @@ impl Window {
             root: None,
             element_id_stack: SmallVec::default(),
             text_style_stack: Vec::new(),
+            root_layout_direction: layout_direction,
+            bidi_style_stack: Vec::new(),
             rendered_entity_stack: Vec::new(),
             element_offset_stack: Vec::new(),
             content_mask_stack: Vec::new(),
@@ -1369,6 +1375,18 @@ impl Window {
             style.refine(refinement);
         }
         style
+    }
+
+    /// The current layout direction. Which is composed of all the style refinements provided to
+    /// `with_bidi_style` on top of the default window layout direction.
+    pub fn current_layout_direction(&self) -> LayoutDirection {
+        let mut style = BidiStyle {
+            dir: self.root_layout_direction,
+        };
+        for refinement in &self.bidi_style_stack {
+            style.refine(refinement);
+        }
+        style.dir
     }
 
     /// Check if the platform window is maximized
@@ -2268,6 +2286,24 @@ impl Window {
             self.text_style_stack.push(style);
             let result = f(self);
             self.text_style_stack.pop();
+            result
+        } else {
+            f(self)
+        }
+    }
+
+    /// Push a bidi style onto the stack, and call a function with that style active.
+    /// Use [`Window::bidi_style`] to get the current, combined bidi style. This method
+    /// should only be called as part of element drawing.
+    pub fn with_bidi_style<F, R>(&mut self, style: Option<BidiStyleRefinement>, f: F) -> R
+    where
+        F: FnOnce(&mut Self) -> R,
+    {
+        self.invalidator.debug_assert_paint_or_prepaint();
+        if let Some(style) = style {
+            self.bidi_style_stack.push(style);
+            let result = f(self);
+            self.bidi_style_stack.pop();
             result
         } else {
             f(self)
