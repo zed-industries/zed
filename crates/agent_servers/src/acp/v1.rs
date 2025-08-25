@@ -1,3 +1,4 @@
+use acp_tools::AcpConnectionRegistry;
 use action_log::ActionLog;
 use agent_client_protocol::{self as acp, Agent as _, ErrorCode};
 use anyhow::anyhow;
@@ -101,6 +102,14 @@ impl AcpConnection {
         })
         .detach();
 
+        let connection = Rc::new(connection);
+
+        cx.update(|cx| {
+            AcpConnectionRegistry::default_global(cx).update(cx, |registry, cx| {
+                registry.set_active_connection(server_name, &connection, cx)
+            });
+        })?;
+
         let response = connection
             .initialize(acp::InitializeRequest {
                 protocol_version: acp::VERSION,
@@ -119,7 +128,7 @@ impl AcpConnection {
 
         Ok(Self {
             auth_methods: response.auth_methods,
-            connection: connection.into(),
+            connection,
             server_name,
             sessions,
             prompt_capabilities: response.agent_capabilities.prompt_capabilities,

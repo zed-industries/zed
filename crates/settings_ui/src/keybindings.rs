@@ -12,9 +12,11 @@ use fs::Fs;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     Action, AppContext as _, AsyncApp, Axis, ClickEvent, Context, DismissEvent, Entity,
-    EventEmitter, FocusHandle, Focusable, Global, IsZero, KeyContext, Keystroke, MouseButton,
-    Point, ScrollStrategy, ScrollWheelEvent, Stateful, StyledText, Subscription, Task,
-    TextStyleRefinement, WeakEntity, actions, anchored, deferred, div,
+    EventEmitter, FocusHandle, Focusable, Global, IsZero,
+    KeyBindingContextPredicate::{And, Descendant, Equal, Identifier, Not, NotEqual, Or},
+    KeyContext, Keystroke, MouseButton, Point, ScrollStrategy, ScrollWheelEvent, Stateful,
+    StyledText, Subscription, Task, TextStyleRefinement, WeakEntity, actions, anchored, deferred,
+    div,
 };
 use language::{Language, LanguageConfig, ToOffset as _};
 use notifications::status_toast::{StatusToast, ToastIcon};
@@ -182,15 +184,6 @@ struct KeybindConflict {
     remaining_conflict_amount: usize,
 }
 
-impl KeybindConflict {
-    fn from_iter<'a>(mut indices: impl Iterator<Item = &'a ConflictOrigin>) -> Option<Self> {
-        indices.next().map(|origin| Self {
-            first_conflict_index: origin.index,
-            remaining_conflict_amount: indices.count(),
-        })
-    }
-}
-
 #[derive(Clone, Copy, PartialEq)]
 struct ConflictOrigin {
     override_source: KeybindSource,
@@ -238,13 +231,21 @@ impl ConflictOrigin {
 #[derive(Default)]
 struct ConflictState {
     conflicts: Vec<Option<ConflictOrigin>>,
-    keybind_mapping: HashMap<ActionMapping, Vec<ConflictOrigin>>,
+    keybind_mapping: ConflictKeybindMapping,
     has_user_conflicts: bool,
 }
 
+type ConflictKeybindMapping = HashMap<
+    Vec<Keystroke>,
+    Vec<(
+        Option<gpui::KeyBindingContextPredicate>,
+        Vec<ConflictOrigin>,
+    )>,
+>;
+
 impl ConflictState {
     fn new(key_bindings: &[ProcessedBinding]) -> Self {
-        let mut action_keybind_mapping: HashMap<_, Vec<ConflictOrigin>> = HashMap::default();
+        let mut action_keybind_mapping = ConflictKeybindMapping::default();
 
         let mut largest_index = 0;
         for (index, binding) in key_bindings
@@ -252,29 +253,48 @@ impl ConflictState {
             .enumerate()
             .flat_map(|(index, binding)| Some(index).zip(binding.keybind_information()))
         {
-            action_keybind_mapping
-                .entry(binding.get_action_mapping())
-                .or_default()
-                .push(ConflictOrigin::new(binding.source, index));
+            let mapping = binding.get_action_mapping();
+            let predicate = mapping
+                .context
+                .and_then(|ctx| gpui::KeyBindingContextPredicate::parse(&ctx).ok());
+            let entry = action_keybind_mapping
+                .entry(mapping.keystrokes)
+                .or_default();
+            let origin = ConflictOrigin::new(binding.source, index);
+            if let Some((_, origins)) =
+                entry
+                    .iter_mut()
+                    .find(|(other_predicate, _)| match (&predicate, other_predicate) {
+                        (None, None) => true,
+                        (Some(a), Some(b)) => normalized_ctx_eq(a, b),
+                        _ => false,
+                    })
+            {
+                origins.push(origin);
+            } else {
+                entry.push((predicate, vec![origin]));
+            }
             largest_index = index;
         }
 
         let mut conflicts = vec![None; largest_index + 1];
         let mut has_user_conflicts = false;
 
-        for indices in action_keybind_mapping.values_mut() {
-            indices.sort_unstable_by_key(|origin| origin.override_source);
-            let Some((fst, snd)) = indices.get(0).zip(indices.get(1)) else {
-                continue;
-            };
+        for entries in action_keybind_mapping.values_mut() {
+            for (_, indices) in entries.iter_mut() {
+                indices.sort_unstable_by_key(|origin| origin.override_source);
+                let Some((fst, snd)) = indices.get(0).zip(indices.get(1)) else {
+                    continue;
+                };
 
-            for origin in indices.iter() {
-                conflicts[origin.index] =
-                    origin.get_conflict_with(if origin == fst { snd } else { fst })
+                for origin in indices.iter() {
+                    conflicts[origin.index] =
+                        origin.get_conflict_with(if origin == fst { snd } else { fst })
+                }
+
+                has_user_conflicts |= fst.override_source == KeybindSource::User
+                    && snd.override_source == KeybindSource::User;
             }
-
-            has_user_conflicts |= fst.override_source == KeybindSource::User
-                && snd.override_source == KeybindSource::User;
         }
 
         Self {
@@ -289,15 +309,34 @@ impl ConflictState {
         action_mapping: &ActionMapping,
         keybind_idx: Option<usize>,
     ) -> Option<KeybindConflict> {
-        self.keybind_mapping
-            .get(action_mapping)
-            .and_then(|indices| {
-                KeybindConflict::from_iter(
-                    indices
+        let ActionMapping {
+            keystrokes,
+            context,
+        } = action_mapping;
+        let predicate = context
+            .as_deref()
+            .and_then(|ctx| gpui::KeyBindingContextPredicate::parse(&ctx).ok());
+        self.keybind_mapping.get(keystrokes).and_then(|entries| {
+            entries
+                .iter()
+                .find_map(|(other_predicate, indices)| {
+                    match (&predicate, other_predicate) {
+                        (None, None) => true,
+                        (Some(pred), Some(other)) => normalized_ctx_eq(pred, other),
+                        _ => false,
+                    }
+                    .then_some(indices)
+                })
+                .and_then(|indices| {
+                    let mut indices = indices
                         .iter()
-                        .filter(|&conflict| Some(conflict.index) != keybind_idx),
-                )
-            })
+                        .filter(|&conflict| Some(conflict.index) != keybind_idx);
+                    indices.next().map(|origin| KeybindConflict {
+                        first_conflict_index: origin.index,
+                        remaining_conflict_amount: indices.count(),
+                    })
+                })
+        })
     }
 
     fn conflict_for_idx(&self, idx: usize) -> Option<ConflictOrigin> {
@@ -3089,29 +3128,29 @@ fn collect_contexts_from_assets() -> Vec<SharedString> {
             queue.push(root_context);
             while let Some(context) = queue.pop() {
                 match context {
-                    gpui::KeyBindingContextPredicate::Identifier(ident) => {
+                    Identifier(ident) => {
                         contexts.insert(ident);
                     }
-                    gpui::KeyBindingContextPredicate::Equal(ident_a, ident_b) => {
+                    Equal(ident_a, ident_b) => {
                         contexts.insert(ident_a);
                         contexts.insert(ident_b);
                     }
-                    gpui::KeyBindingContextPredicate::NotEqual(ident_a, ident_b) => {
+                    NotEqual(ident_a, ident_b) => {
                         contexts.insert(ident_a);
                         contexts.insert(ident_b);
                     }
-                    gpui::KeyBindingContextPredicate::Descendant(ctx_a, ctx_b) => {
+                    Descendant(ctx_a, ctx_b) => {
                         queue.push(*ctx_a);
                         queue.push(*ctx_b);
                     }
-                    gpui::KeyBindingContextPredicate::Not(ctx) => {
+                    Not(ctx) => {
                         queue.push(*ctx);
                     }
-                    gpui::KeyBindingContextPredicate::And(ctx_a, ctx_b) => {
+                    And(ctx_a, ctx_b) => {
                         queue.push(*ctx_a);
                         queue.push(*ctx_b);
                     }
-                    gpui::KeyBindingContextPredicate::Or(ctx_a, ctx_b) => {
+                    Or(ctx_a, ctx_b) => {
                         queue.push(*ctx_a);
                         queue.push(*ctx_b);
                     }
@@ -3124,6 +3163,127 @@ fn collect_contexts_from_assets() -> Vec<SharedString> {
     contexts.sort();
 
     contexts
+}
+
+fn normalized_ctx_eq(
+    a: &gpui::KeyBindingContextPredicate,
+    b: &gpui::KeyBindingContextPredicate,
+) -> bool {
+    use gpui::KeyBindingContextPredicate::*;
+    return match (a, b) {
+        (Identifier(_), Identifier(_)) => a == b,
+        (Equal(a_left, a_right), Equal(b_left, b_right)) => {
+            (a_left == b_left && a_right == b_right) || (a_left == b_right && a_right == b_left)
+        }
+        (NotEqual(a_left, a_right), NotEqual(b_left, b_right)) => {
+            (a_left == b_left && a_right == b_right) || (a_left == b_right && a_right == b_left)
+        }
+        (Descendant(a_parent, a_child), Descendant(b_parent, b_child)) => {
+            normalized_ctx_eq(a_parent, b_parent) && normalized_ctx_eq(a_child, b_child)
+        }
+        (Not(a_expr), Not(b_expr)) => normalized_ctx_eq(a_expr, b_expr),
+        // Handle double negation: !(!a) == a
+        (Not(a_expr), b) if matches!(a_expr.as_ref(), Not(_)) => {
+            let Not(a_inner) = a_expr.as_ref() else {
+                unreachable!();
+            };
+            normalized_ctx_eq(b, a_inner)
+        }
+        (a, Not(b_expr)) if matches!(b_expr.as_ref(), Not(_)) => {
+            let Not(b_inner) = b_expr.as_ref() else {
+                unreachable!();
+            };
+            normalized_ctx_eq(a, b_inner)
+        }
+        (And(a_left, a_right), And(b_left, b_right))
+            if matches!(a_left.as_ref(), And(_, _))
+                || matches!(a_right.as_ref(), And(_, _))
+                || matches!(b_left.as_ref(), And(_, _))
+                || matches!(b_right.as_ref(), And(_, _)) =>
+        {
+            let mut a_operands = Vec::new();
+            flatten_and(a, &mut a_operands);
+            let mut b_operands = Vec::new();
+            flatten_and(b, &mut b_operands);
+            compare_operand_sets(&a_operands, &b_operands)
+        }
+        (And(a_left, a_right), And(b_left, b_right)) => {
+            (normalized_ctx_eq(a_left, b_left) && normalized_ctx_eq(a_right, b_right))
+                || (normalized_ctx_eq(a_left, b_right) && normalized_ctx_eq(a_right, b_left))
+        }
+        (Or(a_left, a_right), Or(b_left, b_right))
+            if matches!(a_left.as_ref(), Or(_, _))
+                || matches!(a_right.as_ref(), Or(_, _))
+                || matches!(b_left.as_ref(), Or(_, _))
+                || matches!(b_right.as_ref(), Or(_, _)) =>
+        {
+            let mut a_operands = Vec::new();
+            flatten_or(a, &mut a_operands);
+            let mut b_operands = Vec::new();
+            flatten_or(b, &mut b_operands);
+            compare_operand_sets(&a_operands, &b_operands)
+        }
+        (Or(a_left, a_right), Or(b_left, b_right)) => {
+            (normalized_ctx_eq(a_left, b_left) && normalized_ctx_eq(a_right, b_right))
+                || (normalized_ctx_eq(a_left, b_right) && normalized_ctx_eq(a_right, b_left))
+        }
+        _ => false,
+    };
+
+    fn flatten_and<'a>(
+        pred: &'a gpui::KeyBindingContextPredicate,
+        operands: &mut Vec<&'a gpui::KeyBindingContextPredicate>,
+    ) {
+        use gpui::KeyBindingContextPredicate::*;
+        match pred {
+            And(left, right) => {
+                flatten_and(left, operands);
+                flatten_and(right, operands);
+            }
+            _ => operands.push(pred),
+        }
+    }
+
+    fn flatten_or<'a>(
+        pred: &'a gpui::KeyBindingContextPredicate,
+        operands: &mut Vec<&'a gpui::KeyBindingContextPredicate>,
+    ) {
+        use gpui::KeyBindingContextPredicate::*;
+        match pred {
+            Or(left, right) => {
+                flatten_or(left, operands);
+                flatten_or(right, operands);
+            }
+            _ => operands.push(pred),
+        }
+    }
+
+    fn compare_operand_sets(
+        a: &[&gpui::KeyBindingContextPredicate],
+        b: &[&gpui::KeyBindingContextPredicate],
+    ) -> bool {
+        if a.len() != b.len() {
+            return false;
+        }
+
+        // For each operand in a, find a matching operand in b
+        let mut b_matched = vec![false; b.len()];
+        for a_operand in a {
+            let mut found = false;
+            for (b_idx, b_operand) in b.iter().enumerate() {
+                if !b_matched[b_idx] && normalized_ctx_eq(a_operand, b_operand) {
+                    b_matched[b_idx] = true;
+                    found = true;
+                    break;
+                }
+            }
+            if !found {
+                return false;
+            }
+        }
+
+        true
+    }
 }
 
 impl SerializableItem for KeymapEditor {
@@ -3226,5 +3386,154 @@ mod persistence {
                 WHERE item_id = ? AND workspace_id = ?
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normalized_ctx_cmp() {
+        #[track_caller]
+        fn cmp(a: &str, b: &str) -> bool {
+            let a = gpui::KeyBindingContextPredicate::parse(a)
+                .expect("Failed to parse keybinding context a");
+            let b = gpui::KeyBindingContextPredicate::parse(b)
+                .expect("Failed to parse keybinding context b");
+            normalized_ctx_eq(&a, &b)
+        }
+
+        // Basic equality - identical expressions
+        assert!(cmp("a && b", "a && b"));
+        assert!(cmp("a || b", "a || b"));
+        assert!(cmp("a == b", "a == b"));
+        assert!(cmp("a != b", "a != b"));
+        assert!(cmp("a > b", "a > b"));
+        assert!(cmp("!a", "!a"));
+
+        // AND operator - associative/commutative
+        assert!(cmp("a && b", "b && a"));
+        assert!(cmp("a && b && c", "c && b && a"));
+        assert!(cmp("a && b && c", "b && a && c"));
+        assert!(cmp("a && b && c && d", "d && c && b && a"));
+
+        // OR operator - associative/commutative
+        assert!(cmp("a || b", "b || a"));
+        assert!(cmp("a || b || c", "c || b || a"));
+        assert!(cmp("a || b || c", "b || a || c"));
+        assert!(cmp("a || b || c || d", "d || c || b || a"));
+
+        // Equality operator - associative/commutative
+        assert!(cmp("a == b", "b == a"));
+        assert!(cmp("x == y", "y == x"));
+
+        // Inequality operator - associative/commutative
+        assert!(cmp("a != b", "b != a"));
+        assert!(cmp("x != y", "y != x"));
+
+        // Complex nested expressions with associative operators
+        assert!(cmp("(a && b) || c", "c || (a && b)"));
+        assert!(cmp("(a && b) || c", "c || (b && a)"));
+        assert!(cmp("(a || b) && c", "c && (a || b)"));
+        assert!(cmp("(a || b) && c", "c && (b || a)"));
+        assert!(cmp("(a && b) || (c && d)", "(c && d) || (a && b)"));
+        assert!(cmp("(a && b) || (c && d)", "(d && c) || (b && a)"));
+
+        // Multiple levels of nesting
+        assert!(cmp("((a && b) || c) && d", "d && ((a && b) || c)"));
+        assert!(cmp("((a && b) || c) && d", "d && (c || (b && a))"));
+        assert!(cmp("a && (b || (c && d))", "(b || (c && d)) && a"));
+        assert!(cmp("a && (b || (c && d))", "(b || (d && c)) && a"));
+
+        // Negation with associative operators
+        assert!(cmp("!a && b", "b && !a"));
+        assert!(cmp("!a || b", "b || !a"));
+        assert!(cmp("!(a && b) || c", "c || !(a && b)"));
+        assert!(cmp("!(a && b) || c", "c || !(b && a)"));
+
+        // Descendant operator (>) - NOT associative/commutative
+        assert!(cmp("a > b", "a > b"));
+        assert!(!cmp("a > b", "b > a"));
+        assert!(!cmp("a > b > c", "c > b > a"));
+        assert!(!cmp("a > b > c", "a > c > b"));
+
+        // Mixed operators with descendant
+        assert!(cmp("(a > b) && c", "c && (a > b)"));
+        assert!(!cmp("(a > b) && c", "c && (b > a)"));
+        assert!(cmp("(a > b) || (c > d)", "(c > d) || (a > b)"));
+        assert!(!cmp("(a > b) || (c > d)", "(b > a) || (d > c)"));
+
+        // Negative cases - different operators
+        assert!(!cmp("a && b", "a || b"));
+        assert!(!cmp("a == b", "a != b"));
+        assert!(!cmp("a && b", "a > b"));
+        assert!(!cmp("a || b", "a > b"));
+        assert!(!cmp("a == b", "a && b"));
+        assert!(!cmp("a != b", "a || b"));
+
+        // Negative cases - different operands
+        assert!(!cmp("a && b", "a && c"));
+        assert!(!cmp("a && b", "c && d"));
+        assert!(!cmp("a || b", "a || c"));
+        assert!(!cmp("a || b", "c || d"));
+        assert!(!cmp("a == b", "a == c"));
+        assert!(!cmp("a != b", "a != c"));
+        assert!(!cmp("a > b", "a > c"));
+        assert!(!cmp("a > b", "c > b"));
+
+        // Negative cases - with negation
+        assert!(!cmp("!a", "a"));
+        assert!(!cmp("!a && b", "a && b"));
+        assert!(!cmp("!(a && b)", "a && b"));
+        assert!(!cmp("!a || b", "a || b"));
+        assert!(!cmp("!(a || b)", "a || b"));
+
+        // Negative cases - complex expressions
+        assert!(!cmp("(a && b) || c", "(a || b) && c"));
+        assert!(!cmp("a && (b || c)", "a || (b && c)"));
+        assert!(!cmp("(a && b) || (c && d)", "(a || b) && (c || d)"));
+        assert!(!cmp("a > b && c", "a && b > c"));
+
+        // Edge cases - multiple same operands
+        assert!(cmp("a && a", "a && a"));
+        assert!(cmp("a || a", "a || a"));
+        assert!(cmp("a && a && b", "b && a && a"));
+        assert!(cmp("a || a || b", "b || a || a"));
+
+        // Edge cases - deeply nested
+        assert!(cmp(
+            "((a && b) || (c && d)) && ((e || f) && g)",
+            "((e || f) && g) && ((c && d) || (a && b))"
+        ));
+        assert!(cmp(
+            "((a && b) || (c && d)) && ((e || f) && g)",
+            "(g && (f || e)) && ((d && c) || (b && a))"
+        ));
+
+        // Edge cases - repeated patterns
+        assert!(cmp("(a && b) || (a && b)", "(b && a) || (b && a)"));
+        assert!(cmp("(a || b) && (a || b)", "(b || a) && (b || a)"));
+
+        // Negative cases - subtle differences
+        assert!(!cmp("a && b && c", "a && b"));
+        assert!(!cmp("a || b || c", "a || b"));
+        assert!(!cmp("(a && b) || c", "a && (b || c)"));
+
+        // a > b > c is not the same as a > c, should not be equal
+        assert!(!cmp("a > b > c", "a > c"));
+
+        // Double negation with complex expressions
+        assert!(cmp("!(!(a && b))", "a && b"));
+        assert!(cmp("!(!(a || b))", "a || b"));
+        assert!(cmp("!(!(a > b))", "a > b"));
+        assert!(cmp("!(!a) && b", "a && b"));
+        assert!(cmp("!(!a) || b", "a || b"));
+        assert!(cmp("!(!(a && b)) || c", "(a && b) || c"));
+        assert!(cmp("!(!(a && b)) || c", "(b && a) || c"));
+        assert!(cmp("!(!a)", "a"));
+        assert!(cmp("a", "!(!a)"));
+        assert!(cmp("!(!(!a))", "!a"));
+        assert!(cmp("!(!(!(!a)))", "a"));
     }
 }

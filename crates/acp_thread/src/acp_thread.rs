@@ -183,16 +183,15 @@ impl ToolCall {
         language_registry: Arc<LanguageRegistry>,
         cx: &mut App,
     ) -> Self {
+        let title = if let Some((first_line, _)) = tool_call.title.split_once("\n") {
+            first_line.to_owned() + "…"
+        } else {
+            tool_call.title
+        };
         Self {
             id: tool_call.id,
-            label: cx.new(|cx| {
-                Markdown::new(
-                    tool_call.title.into(),
-                    Some(language_registry.clone()),
-                    None,
-                    cx,
-                )
-            }),
+            label: cx
+                .new(|cx| Markdown::new(title.into(), Some(language_registry.clone()), None, cx)),
             kind: tool_call.kind,
             content: tool_call
                 .content
@@ -233,7 +232,11 @@ impl ToolCall {
 
         if let Some(title) = title {
             self.label.update(cx, |label, cx| {
-                label.replace(title, cx);
+                if let Some((first_line, _)) = title.split_once("\n") {
+                    label.replace(first_line.to_owned() + "…", cx)
+                } else {
+                    label.replace(title, cx);
+                }
             });
         }
 
@@ -509,7 +512,7 @@ impl ContentBlock {
         "`Image`".into()
     }
 
-    fn to_markdown<'a>(&'a self, cx: &'a App) -> &'a str {
+    pub fn to_markdown<'a>(&'a self, cx: &'a App) -> &'a str {
         match self {
             ContentBlock::Empty => "",
             ContentBlock::Markdown { markdown } => markdown.read(cx).source(),
@@ -756,6 +759,8 @@ pub struct AcpThread {
     connection: Rc<dyn AgentConnection>,
     session_id: acp::SessionId,
     token_usage: Option<TokenUsage>,
+    prompt_capabilities: acp::PromptCapabilities,
+    _observe_prompt_capabilities: Task<anyhow::Result<()>>,
 }
 
 #[derive(Debug)]
@@ -770,11 +775,12 @@ pub enum AcpThreadEvent {
     Stopped,
     Error,
     LoadError(LoadError),
+    PromptCapabilitiesUpdated,
 }
 
 impl EventEmitter<AcpThreadEvent> for AcpThread {}
 
-#[derive(PartialEq, Eq)]
+#[derive(PartialEq, Eq, Debug)]
 pub enum ThreadStatus {
     Idle,
     WaitingForToolConfirmation,
@@ -821,7 +827,20 @@ impl AcpThread {
         project: Entity<Project>,
         action_log: Entity<ActionLog>,
         session_id: acp::SessionId,
+        mut prompt_capabilities_rx: watch::Receiver<acp::PromptCapabilities>,
+        cx: &mut Context<Self>,
     ) -> Self {
+        let prompt_capabilities = *prompt_capabilities_rx.borrow();
+        let task = cx.spawn::<_, anyhow::Result<()>>(async move |this, cx| {
+            loop {
+                let caps = prompt_capabilities_rx.recv().await?;
+                this.update(cx, |this, cx| {
+                    this.prompt_capabilities = caps;
+                    cx.emit(AcpThreadEvent::PromptCapabilitiesUpdated);
+                })?;
+            }
+        });
+
         Self {
             action_log,
             shared_buffers: Default::default(),
@@ -833,7 +852,13 @@ impl AcpThread {
             connection,
             session_id,
             token_usage: None,
+            prompt_capabilities,
+            _observe_prompt_capabilities: task,
         }
+    }
+
+    pub fn prompt_capabilities(&self) -> acp::PromptCapabilities {
+        self.prompt_capabilities
     }
 
     pub fn connection(&self) -> &Rc<dyn AgentConnection> {
@@ -1371,6 +1396,10 @@ impl AcpThread {
             })?
             .await
         })
+    }
+
+    pub fn can_resume(&self, cx: &App) -> bool {
+        self.connection.resume(&self.session_id, cx).is_some()
     }
 
     pub fn resume(&mut self, cx: &mut Context<Self>) -> BoxFuture<'static, Result<()>> {
@@ -2595,13 +2624,19 @@ mod tests {
                     .into(),
             );
             let action_log = cx.new(|_| ActionLog::new(project.clone()));
-            let thread = cx.new(|_cx| {
+            let thread = cx.new(|cx| {
                 AcpThread::new(
                     "Test",
                     self.clone(),
                     project,
                     action_log,
                     session_id.clone(),
+                    watch::Receiver::constant(acp::PromptCapabilities {
+                        image: true,
+                        audio: true,
+                        embedded_context: true,
+                    }),
+                    cx,
                 )
             });
             self.sessions.lock().insert(session_id, thread.downgrade());
@@ -2635,14 +2670,6 @@ mod tests {
             }
         }
 
-        fn prompt_capabilities(&self) -> acp::PromptCapabilities {
-            acp::PromptCapabilities {
-                image: true,
-                audio: true,
-                embedded_context: true,
-            }
-        }
-
         fn cancel(&self, session_id: &acp::SessionId, cx: &mut App) {
             let sessions = self.sessions.lock();
             let thread = sessions.get(session_id).unwrap().clone();
@@ -2659,7 +2686,7 @@ mod tests {
         fn truncate(
             &self,
             session_id: &acp::SessionId,
-            _cx: &mut App,
+            _cx: &App,
         ) -> Option<Rc<dyn AgentSessionTruncate>> {
             Some(Rc::new(FakeAgentSessionEditor {
                 _session_id: session_id.clone(),

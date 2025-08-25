@@ -156,7 +156,10 @@ pub mod workspace {
             #[action(deprecated_aliases = ["editor::CopyPath", "outline_panel::CopyPath", "project_panel::CopyPath"])]
             CopyPath,
             #[action(deprecated_aliases = ["editor::CopyRelativePath", "outline_panel::CopyRelativePath", "project_panel::CopyRelativePath"])]
-            CopyRelativePath
+            CopyRelativePath,
+            /// Opens the selected file with the system's default application.
+            #[action(deprecated_aliases = ["project_panel::OpenWithSystem"])]
+            OpenWithSystem,
         ]
     );
 }
@@ -287,7 +290,9 @@ pub mod agent {
             Chat,
             /// Toggles the language model selector dropdown.
             #[action(deprecated_aliases = ["assistant::ToggleModelSelector", "assistant2::ToggleModelSelector"])]
-            ToggleModelSelector
+            ToggleModelSelector,
+            /// Triggers re-authentication on Gemini
+            ReauthenticateAgent
         ]
     );
 }

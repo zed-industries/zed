@@ -1595,11 +1595,6 @@ impl ActiveThread {
             return;
         };
 
-        if model.provider.must_accept_terms(cx) {
-            cx.notify();
-            return;
-        }
-
         let edited_text = state.editor.read(cx).text(cx);
 
         let creases = state.editor.update(cx, extract_message_creases);

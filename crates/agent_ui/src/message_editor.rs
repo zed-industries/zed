@@ -378,17 +378,12 @@ impl MessageEditor {
     }
 
     fn send_to_model(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(ConfiguredModel { model, provider }) = self
+        let Some(ConfiguredModel { model, .. }) = self
             .thread
             .update(cx, |thread, cx| thread.get_or_init_configured_model(cx))
         else {
             return;
         };
-
-        if provider.must_accept_terms(cx) {
-            cx.notify();
-            return;
-        }
 
         let (user_message, user_message_creases) = self.editor.update(cx, |editor, cx| {
             let creases = extract_message_creases(editor, cx);

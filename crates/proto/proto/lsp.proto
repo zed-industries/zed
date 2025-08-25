@@ -834,21 +834,19 @@ message LspRunnable {
 
 message LspExtCancelFlycheck {
     uint64 project_id = 1;
-    uint64 buffer_id = 2;
-    uint64 language_server_id = 3;
+    uint64 language_server_id = 2;
 }
 
 message LspExtRunFlycheck {
     uint64 project_id = 1;
-    uint64 buffer_id = 2;
+    optional uint64 buffer_id = 2;
     uint64 language_server_id = 3;
     bool current_file_only = 4;
 }
 
 message LspExtClearFlycheck {
     uint64 project_id = 1;
-    uint64 buffer_id = 2;
-    uint64 language_server_id = 3;
+    uint64 language_server_id = 2;
 }
 
 message LspDiagnosticRelatedInformation {

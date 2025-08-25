@@ -7588,19 +7588,16 @@ impl LspStore {
                 let snapshot = buffer_handle.read(cx).snapshot();
                 let buffer = buffer_handle.read(cx);
                 let reused_diagnostics = buffer
-                    .get_diagnostics(server_id)
-                    .into_iter()
-                    .flat_map(|diag| {
-                        diag.iter()
-                            .filter(|v| merge(buffer, &v.diagnostic, cx))
-                            .map(|v| {
-                                let start = Unclipped(v.range.start.to_point_utf16(&snapshot));
-                                let end = Unclipped(v.range.end.to_point_utf16(&snapshot));
-                                DiagnosticEntry {
-                                    range: start..end,
-                                    diagnostic: v.diagnostic.clone(),
-                                }
-                            })
+                    .buffer_diagnostics(Some(server_id))
+                    .iter()
+                    .filter(|v| merge(buffer, &v.diagnostic, cx))
+                    .map(|v| {
+                        let start = Unclipped(v.range.start.to_point_utf16(&snapshot));
+                        let end = Unclipped(v.range.end.to_point_utf16(&snapshot));
+                        DiagnosticEntry {
+                            range: start..end,
+                            diagnostic: v.diagnostic.clone(),
+                        }
                     })
                     .collect::<Vec<_>>();
 
@@ -9029,13 +9026,22 @@ impl LspStore {
         lsp_store.update(&mut cx, |lsp_store, cx| {
             if let Some(server) = lsp_store.language_server_for_id(server_id) {
                 let text_document = if envelope.payload.current_file_only {
-                    let buffer_id = BufferId::new(envelope.payload.buffer_id)?;
-                    lsp_store
-                        .buffer_store()
-                        .read(cx)
-                        .get(buffer_id)
-                        .and_then(|buffer| Some(buffer.read(cx).file()?.as_local()?.abs_path(cx)))
-                        .map(|path| make_text_document_identifier(&path))
+                    let buffer_id = envelope
+                        .payload
+                        .buffer_id
+                        .map(|id| BufferId::new(id))
+                        .transpose()?;
+                    buffer_id
+                        .and_then(|buffer_id| {
+                            lsp_store
+                                .buffer_store()
+                                .read(cx)
+                                .get(buffer_id)
+                                .and_then(|buffer| {
+                                    Some(buffer.read(cx).file()?.as_local()?.abs_path(cx))
+                                })
+                                .map(|path| make_text_document_identifier(&path))
+                        })
                         .transpose()?
                 } else {
                     None
@@ -11697,12 +11703,11 @@ impl LspStore {
                     // Ignore payload since we notify clients of setting changes unconditionally, relying on them pulling the latest settings.
                 }
                 "workspace/symbol" => {
-                    if let Some(options) = parse_register_capabilities(reg)? {
-                        server.update_capabilities(|capabilities| {
-                            capabilities.workspace_symbol_provider = Some(options);
-                        });
-                        notify_server_capabilities_updated(&server, cx);
-                    }
+                    let options = parse_register_capabilities(reg)?;
+                    server.update_capabilities(|capabilities| {
+                        capabilities.workspace_symbol_provider = Some(options);
+                    });
+                    notify_server_capabilities_updated(&server, cx);
                 }
                 "workspace/fileOperations" => {
                     if let Some(options) = reg.register_options {
@@ -11726,12 +11731,11 @@ impl LspStore {
                     }
                 }
                 "textDocument/rangeFormatting" => {
-                    if let Some(options) = parse_register_capabilities(reg)? {
-                        server.update_capabilities(|capabilities| {
-                            capabilities.document_range_formatting_provider = Some(options);
-                        });
-                        notify_server_capabilities_updated(&server, cx);
-                    }
+                    let options = parse_register_capabilities(reg)?;
+                    server.update_capabilities(|capabilities| {
+                        capabilities.document_range_formatting_provider = Some(options);
+                    });
+                    notify_server_capabilities_updated(&server, cx);
                 }
                 "textDocument/onTypeFormatting" => {
                     if let Some(options) = reg
@@ -11746,36 +11750,32 @@ impl LspStore {
                     }
                 }
                 "textDocument/formatting" => {
-                    if let Some(options) = parse_register_capabilities(reg)? {
-                        server.update_capabilities(|capabilities| {
-                            capabilities.document_formatting_provider = Some(options);
-                        });
-                        notify_server_capabilities_updated(&server, cx);
-                    }
+                    let options = parse_register_capabilities(reg)?;
+                    server.update_capabilities(|capabilities| {
+                        capabilities.document_formatting_provider = Some(options);
+                    });
+                    notify_server_capabilities_updated(&server, cx);
                 }
                 "textDocument/rename" => {
-                    if let Some(options) = parse_register_capabilities(reg)? {
-                        server.update_capabilities(|capabilities| {
-                            capabilities.rename_provider = Some(options);
-                        });
-                        notify_server_capabilities_updated(&server, cx);
-                    }
+                    let options = parse_register_capabilities(reg)?;
+                    server.update_capabilities(|capabilities| {
+                        capabilities.rename_provider = Some(options);
+                    });
+                    notify_server_capabilities_updated(&server, cx);
                 }
                 "textDocument/inlayHint" => {
-                    if let Some(options) = parse_register_capabilities(reg)? {
-                        server.update_capabilities(|capabilities| {
-                            capabilities.inlay_hint_provider = Some(options);
-                        });
-                        notify_server_capabilities_updated(&server, cx);
-                    }
+                    let options = parse_register_capabilities(reg)?;
+                    server.update_capabilities(|capabilities| {
+                        capabilities.inlay_hint_provider = Some(options);
+                    });
+                    notify_server_capabilities_updated(&server, cx);
                 }
                 "textDocument/documentSymbol" => {
-                    if let Some(options) = parse_register_capabilities(reg)? {
-                        server.update_capabilities(|capabilities| {
-                            capabilities.document_symbol_provider = Some(options);
-                        });
-                        notify_server_capabilities_updated(&server, cx);
-                    }
+                    let options = parse_register_capabilities(reg)?;
+                    server.update_capabilities(|capabilities| {
+                        capabilities.document_symbol_provider = Some(options);
+                    });
+                    notify_server_capabilities_updated(&server, cx);
                 }
                 "textDocument/codeAction" => {
                     if let Some(options) = reg
@@ -11791,12 +11791,11 @@ impl LspStore {
                     }
                 }
                 "textDocument/definition" => {
-                    if let Some(options) = parse_register_capabilities(reg)? {
-                        server.update_capabilities(|capabilities| {
-                            capabilities.definition_provider = Some(options);
-                        });
-                        notify_server_capabilities_updated(&server, cx);
-                    }
+                    let options = parse_register_capabilities(reg)?;
+                    server.update_capabilities(|capabilities| {
+                        capabilities.definition_provider = Some(options);
+                    });
+                    notify_server_capabilities_updated(&server, cx);
                 }
                 "textDocument/completion" => {
                     if let Some(caps) = reg
@@ -11904,7 +11903,7 @@ impl LspStore {
                         notify_server_capabilities_updated(&server, cx);
                     }
                 }
-                "textDocument/colorProvider" => {
+                "textDocument/documentColor" => {
                     if let Some(caps) = reg
                         .register_options
                         .map(serde_json::from_value)
@@ -12055,7 +12054,7 @@ impl LspStore {
                     });
                     notify_server_capabilities_updated(&server, cx);
                 }
-                "textDocument/colorProvider" => {
+                "textDocument/documentColor" => {
                     server.update_capabilities(|capabilities| {
                         capabilities.color_provider = None;
                     });
@@ -12175,10 +12174,10 @@ impl LspStore {
 // https://github.com/microsoft/vscode-languageserver-node/blob/d90a87f9557a0df9142cfb33e251cfa6fe27d970/client/src/common/client.ts#L2133
 fn parse_register_capabilities<T: serde::de::DeserializeOwned>(
     reg: lsp::Registration,
-) -> anyhow::Result<Option<OneOf<bool, T>>> {
+) -> Result<OneOf<bool, T>> {
     Ok(match reg.register_options {
-        Some(options) => Some(OneOf::Right(serde_json::from_value::<T>(options)?)),
-        None => Some(OneOf::Left(true)),
+        Some(options) => OneOf::Right(serde_json::from_value::<T>(options)?),
+        None => OneOf::Left(true),
     })
 }
 
