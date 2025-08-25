@@ -1306,7 +1306,11 @@ impl AcpThreadView {
 
                 v_flex()
                     .id(("user_message", entry_ix))
-                    .pt_2()
+                    .map(|this| if rules_item.is_some() {
+                        this.pt_3()
+                    } else {
+                        this.pt_2()
+                    })
                     .pb_4()
                     .px_2()
                     .gap_1p5()
@@ -1315,6 +1319,7 @@ impl AcpThreadView {
                     .children(message.id.clone().and_then(|message_id| {
                         message.checkpoint.as_ref()?.show.then(|| {
                             h_flex()
+                                .px_3()
                                 .gap_2()
                                 .child(Divider::horizontal())
                                 .child(
@@ -1492,9 +1497,7 @@ impl AcpThreadView {
                 .child(self.render_thread_controls(cx))
                 .when_some(
                     self.thread_feedback.comments_editor.clone(),
-                    |this, editor| {
-                        this.child(Self::render_feedback_feedback_editor(editor, window, cx))
-                    },
+                    |this, editor| this.child(Self::render_feedback_feedback_editor(editor, cx)),
                 )
                 .into_any_element()
         } else {
@@ -1725,6 +1728,7 @@ impl AcpThreadView {
             tool_call.status,
             ToolCallStatus::Rejected | ToolCallStatus::Canceled | ToolCallStatus::Failed
         );
+
         let needs_confirmation = matches!(
             tool_call.status,
             ToolCallStatus::WaitingForConfirmation { .. }
@@ -1742,7 +1746,7 @@ impl AcpThreadView {
                 .absolute()
                 .top_0()
                 .right_0()
-                .w_16()
+                .w_12()
                 .h_full()
                 .bg(linear_gradient(
                     90.,
@@ -1902,7 +1906,7 @@ impl AcpThreadView {
                                     .into_any()
                             }),
                     )
-                    .when(in_progress && use_card_layout, |this| {
+                    .when(in_progress && use_card_layout && !is_open, |this| {
                         this.child(
                             div().absolute().right_2().child(
                                 Icon::new(IconName::ArrowCircle)
@@ -2460,7 +2464,6 @@ impl AcpThreadView {
         Some(
             h_flex()
                 .px_2p5()
-                .pb_1()
                 .child(
                     Icon::new(IconName::Attach)
                         .size(IconSize::XSmall)
@@ -2476,8 +2479,7 @@ impl AcpThreadView {
                                 Label::new(user_rules_text)
                                     .size(LabelSize::XSmall)
                                     .color(Color::Muted)
-                                    .truncate()
-                                    .buffer_font(cx),
+                                    .truncate(),
                             )
                             .hover(|s| s.bg(cx.theme().colors().element_hover))
                             .tooltip(Tooltip::text("View User Rules"))
@@ -2491,7 +2493,13 @@ impl AcpThreadView {
                             }),
                     )
                 })
-                .when(has_both, |this| this.child(Divider::vertical()))
+                .when(has_both, |this| {
+                    this.child(
+                        Label::new("•")
+                            .size(LabelSize::XSmall)
+                            .color(Color::Disabled),
+                    )
+                })
                 .when_some(rules_file_text, |parent, rules_file_text| {
                     parent.child(
                         h_flex()
@@ -2500,8 +2508,7 @@ impl AcpThreadView {
                             .child(
                                 Label::new(rules_file_text)
                                     .size(LabelSize::XSmall)
-                                    .color(Color::Muted)
-                                    .buffer_font(cx),
+                                    .color(Color::Muted),
                             )
                             .hover(|s| s.bg(cx.theme().colors().element_hover))
                             .tooltip(Tooltip::text("View Project Rules"))
@@ -3078,13 +3085,13 @@ impl AcpThreadView {
         h_flex()
             .p_1()
             .justify_between()
+            .flex_wrap()
             .when(expanded, |this| {
                 this.border_b_1().border_color(cx.theme().colors().border)
             })
             .child(
                 h_flex()
                     .id("edits-container")
-                    .w_full()
                     .gap_1()
                     .child(Disclosure::new("edits-disclosure", expanded))
                     .map(|this| {
@@ -4177,13 +4184,8 @@ impl AcpThreadView {
         container.child(open_as_markdown).child(scroll_to_top)
     }
 
-    fn render_feedback_feedback_editor(
-        editor: Entity<Editor>,
-        window: &mut Window,
-        cx: &Context<Self>,
-    ) -> Div {
-        let focus_handle = editor.focus_handle(cx);
-        v_flex()
+    fn render_feedback_feedback_editor(editor: Entity<Editor>, cx: &Context<Self>) -> Div {
+        h_flex()
             .key_context("AgentFeedbackMessageEditor")
             .on_action(cx.listener(move |this, _: &menu::Cancel, _, cx| {
                 this.thread_feedback.dismiss_comments();
@@ -4192,43 +4194,31 @@ impl AcpThreadView {
             .on_action(cx.listener(move |this, _: &menu::Confirm, _window, cx| {
                 this.submit_feedback_message(cx);
             }))
-            .mb_2()
-            .mx_4()
             .p_2()
+            .mb_2()
+            .mx_5()
+            .gap_1()
             .rounded_md()
             .border_1()
             .border_color(cx.theme().colors().border)
             .bg(cx.theme().colors().editor_background)
-            .child(editor)
+            .child(div().w_full().child(editor))
             .child(
                 h_flex()
-                    .gap_1()
-                    .justify_end()
                     .child(
-                        Button::new("dismiss-feedback-message", "Cancel")
-                            .label_size(LabelSize::Small)
-                            .key_binding(
-                                KeyBinding::for_action_in(&menu::Cancel, &focus_handle, window, cx)
-                                    .map(|kb| kb.size(rems_from_px(10.))),
-                            )
+                        IconButton::new("dismiss-feedback-message", IconName::Close)
+                            .icon_color(Color::Error)
+                            .icon_size(IconSize::XSmall)
+                            .shape(ui::IconButtonShape::Square)
                             .on_click(cx.listener(move |this, _, _window, cx| {
                                 this.thread_feedback.dismiss_comments();
                                 cx.notify();
                             })),
                     )
                     .child(
-                        Button::new("submit-feedback-message", "Share Feedback")
-                            .style(ButtonStyle::Tinted(ui::TintColor::Accent))
-                            .label_size(LabelSize::Small)
-                            .key_binding(
-                                KeyBinding::for_action_in(
-                                    &menu::Confirm,
-                                    &focus_handle,
-                                    window,
-                                    cx,
-                                )
-                                .map(|kb| kb.size(rems_from_px(10.))),
-                            )
+                        IconButton::new("submit-feedback-message", IconName::Return)
+                            .icon_size(IconSize::XSmall)
+                            .shape(ui::IconButtonShape::Square)
                             .on_click(cx.listener(move |this, _, _window, cx| {
                                 this.submit_feedback_message(cx);
                             })),
