@@ -9,6 +9,7 @@ use agent_servers::AgentServerSettings;
 use agent2::{DbThreadMetadata, HistoryEntry};
 use db::kvp::{Dismissable, KEY_VALUE_STORE};
 use serde::{Deserialize, Serialize};
+use zed_actions::OpenBrowser;
 use zed_actions::agent::ReauthenticateAgent;
 
 use crate::acp::{AcpThreadHistory, ThreadHistoryEvent};
@@ -2679,6 +2680,15 @@ impl AgentPanel {
                                 }
 
                                 menu
+                            })
+                            .when(cx.has_flag::<GeminiAndNativeFeatureFlag>(), |menu| {
+                                menu.separator().link(
+                                    "Build Your Own Agent",
+                                    OpenBrowser {
+                                        url: zed_urls::account_url(cx), // TODO: Add final URL
+                                    }
+                                    .boxed_clone(),
+                                )
                             });
                         menu
                     }))
