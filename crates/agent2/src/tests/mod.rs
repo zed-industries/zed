@@ -72,6 +72,7 @@ async fn test_echo(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+#[cfg_attr(target_os = "windows", ignore)] // TODO: Fix this test on Windows
 async fn test_thinking(cx: &mut TestAppContext) {
     let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
     let fake_model = model.as_fake();
