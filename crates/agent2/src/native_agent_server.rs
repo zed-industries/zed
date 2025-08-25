@@ -44,7 +44,7 @@ impl AgentServer for NativeAgentServer {
         project: &Entity<Project>,
         cx: &mut App,
     ) -> Task<Result<Rc<dyn acp_thread::AgentConnection>>> {
-        log::info!(
+        log::debug!(
             "NativeAgentServer::connect called for path: {:?}",
             _root_dir
         );
@@ -63,7 +63,7 @@ impl AgentServer for NativeAgentServer {
 
             // Create the connection wrapper
             let connection = NativeAgentConnection(agent);
-            log::info!("NativeAgentServer connection established successfully");
+            log::debug!("NativeAgentServer connection established successfully");
 
             Ok(Rc::new(connection) as Rc<dyn acp_thread::AgentConnection>)
         })
