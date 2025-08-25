@@ -353,7 +353,7 @@ impl WaylandClientStatePtr {
             }
             changed
         } else {
-            let changed = &UNKNOWN_KEYBOARD_LAYOUT_NAME != state.keyboard_layout.name();
+            let changed: bool = &UNKNOWN_KEYBOARD_LAYOUT_NAME != state.keyboard_layout.name();
             if changed {
                 state.keyboard_layout = LinuxKeyboardLayout::new(UNKNOWN_KEYBOARD_LAYOUT_NAME);
             }
@@ -383,7 +383,8 @@ impl WaylandClientStatePtr {
         {
             state.keyboard_focused_window = Some(window);
         }
-        if state.windows.is_empty() {
+
+        if state.common.quit_when_last_window_closes && state.windows.is_empty() {
             state.common.signal.stop();
         }
     }

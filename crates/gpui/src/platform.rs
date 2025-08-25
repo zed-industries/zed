@@ -232,6 +232,7 @@ pub(crate) trait Platform: 'static {
     fn on_quit(&self, callback: Box<dyn FnMut()>);
     fn on_reopen(&self, callback: Box<dyn FnMut()>);
     fn on_keyboard_layout_change(&self, callback: Box<dyn FnMut()>);
+    fn set_quit_when_last_window_closes(&self, should_quit: bool);
 
     fn set_menus(&self, menus: Vec<Menu>, keymap: &Keymap);
     fn get_menus(&self) -> Option<Vec<OwnedMenu>> {
