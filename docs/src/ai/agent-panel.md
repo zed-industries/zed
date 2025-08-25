@@ -1,10 +1,10 @@
 # Agent Panel
 
-The Agent Panel provides you with a surface to interact with LLMs, enabling various types of tasks, such as generating code, asking questions about your codebase, and general inquiries like emails, documentation, and more.
+The Agent Panel allows you to interact with many LLMs and coding agents that can support you in various types of tasks, such as generating code, codebase understanding, and other general inquiries like writing emails, documentation, and more.
 
 To open it, use the `agent: new thread` action in [the Command Palette](../getting-started.md#command-palette) or click the ✨ (sparkles) icon in the status bar.
 
-If you're using the Agent Panel for the first time, you need to have at least one LLM provider configured.
+If you're using the Agent Panel for the first time, you need to have at least one LLM or agent provider configured.
 You can do that by:
 
 1. [subscribing to our Pro plan](https://zed.dev/pricing), so you have access to our hosted models
@@ -17,6 +17,9 @@ After you've configured one or more LLM providers, type at the message editor an
 If you need extra room to type, you can expand the message editor with {#kb agent::ExpandMessageEditor}.
 
 You should start to see the responses stream in with indications of [which tools](./tools.md) the model is using to fulfill your prompt.
+
+> Note that, currently, not all features outlined below work for external agents, like Gemini CLI.
+> Features like checkpoints, token usage display, and model selection may be supported in the future for them.
 
 ### Editing Messages {#editing-messages}
 
