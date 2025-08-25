@@ -123,7 +123,7 @@ impl Message {
         match self {
             Message::User(message) => message.to_markdown(),
             Message::Agent(message) => message.to_markdown(),
-            Message::Resume => "[resumed after tool use limit was reached]".into(),
+            Message::Resume => "[resume]\n".into(),
         }
     }
 
@@ -1213,7 +1213,7 @@ impl Thread {
         log::debug!("Stream completion started successfully");
 
         let mut attempt = None;
-        'retry: loop {
+        loop {
             let request = this.update(cx, |this, cx| {
                 this.build_completion_request(completion_intent, cx)
             })??;
@@ -1236,6 +1236,7 @@ impl Thread {
                 .await
                 .map_err(|error| anyhow!(error))?;
             let mut tool_results = FuturesUnordered::new();
+            let mut error = None;
 
             while let Some(event) = events.next().await {
                 match event {
@@ -1245,52 +1246,9 @@ impl Thread {
                             this.handle_streamed_completion_event(event, event_stream, cx)
                         })??);
                     }
-                    Err(error) => {
-                        let completion_mode =
-                            this.read_with(cx, |thread, _cx| thread.completion_mode())?;
-                        if completion_mode == CompletionMode::Normal {
-                            return Err(anyhow!(error))?;
-                        }
-
-                        let Some(strategy) = Self::retry_strategy_for(&error) else {
-                            return Err(anyhow!(error))?;
-                        };
-
-                        let max_attempts = match &strategy {
-                            RetryStrategy::ExponentialBackoff { max_attempts, .. } => *max_attempts,
-                            RetryStrategy::Fixed { max_attempts, .. } => *max_attempts,
-                        };
-
-                        let attempt = attempt.get_or_insert(0u8);
-
-                        *attempt += 1;
-
-                        let attempt = *attempt;
-                        if attempt > max_attempts {
-                            return Err(anyhow!(error))?;
-                        }
-
-                        let delay = match &strategy {
-                            RetryStrategy::ExponentialBackoff { initial_delay, .. } => {
-                                let delay_secs =
-                                    initial_delay.as_secs() * 2u64.pow((attempt - 1) as u32);
-                                Duration::from_secs(delay_secs)
-                            }
-                            RetryStrategy::Fixed { delay, .. } => *delay,
-                        };
-                        log::debug!("Retry attempt {attempt} with delay {delay:?}");
-
-                        event_stream.send_retry(acp_thread::RetryStatus {
-                            last_error: error.to_string().into(),
-                            attempt: attempt as usize,
-                            max_attempts: max_attempts as usize,
-                            started_at: Instant::now(),
-                            duration: delay,
-                        });
-                        this.update(cx, |this, _cx| this.pending_message.take())?;
-
-                        cx.background_executor().timer(delay).await;
-                        continue 'retry;
+                    Err(err) => {
+                        error = Some(err);
+                        break;
                     }
                 }
             }
@@ -1317,7 +1275,58 @@ impl Thread {
                 })?;
             }
 
-            return Ok(());
+            if let Some(error) = error {
+                let completion_mode = this.read_with(cx, |thread, _cx| thread.completion_mode())?;
+                if completion_mode == CompletionMode::Normal {
+                    return Err(anyhow!(error))?;
+                }
+
+                let Some(strategy) = Self::retry_strategy_for(&error) else {
+                    return Err(anyhow!(error))?;
+                };
+
+                let max_attempts = match &strategy {
+                    RetryStrategy::ExponentialBackoff { max_attempts, .. } => *max_attempts,
+                    RetryStrategy::Fixed { max_attempts, .. } => *max_attempts,
+                };
+
+                let attempt = attempt.get_or_insert(0u8);
+
+                *attempt += 1;
+
+                let attempt = *attempt;
+                if attempt > max_attempts {
+                    return Err(anyhow!(error))?;
+                }
+
+                let delay = match &strategy {
+                    RetryStrategy::ExponentialBackoff { initial_delay, .. } => {
+                        let delay_secs = initial_delay.as_secs() * 2u64.pow((attempt - 1) as u32);
+                        Duration::from_secs(delay_secs)
+                    }
+                    RetryStrategy::Fixed { delay, .. } => *delay,
+                };
+                log::debug!("Retry attempt {attempt} with delay {delay:?}");
+
+                event_stream.send_retry(acp_thread::RetryStatus {
+                    last_error: error.to_string().into(),
+                    attempt: attempt as usize,
+                    max_attempts: max_attempts as usize,
+                    started_at: Instant::now(),
+                    duration: delay,
+                });
+                cx.background_executor().timer(delay).await;
+                this.update(cx, |this, cx| {
+                    this.flush_pending_message(cx);
+                    if let Some(Message::Agent(message)) = this.messages.last() {
+                        if message.tool_results.is_empty() {
+                            this.messages.push(Message::Resume);
+                        }
+                    }
+                })?;
+            } else {
+                return Ok(());
+            }
         }
     }
 
