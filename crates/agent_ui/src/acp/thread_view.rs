@@ -2041,8 +2041,9 @@ impl AcpThreadView {
         cx: &Context<Self>,
     ) -> AnyElement {
         let uri: SharedString = resource_link.uri.clone().into();
+        let is_file = resource_link.uri.strip_prefix("file://");
 
-        let label: SharedString = if let Some(path) = resource_link.uri.strip_prefix("file://") {
+        let label: SharedString = if let Some(path) = is_file {
             path.to_string().into()
         } else {
             uri.clone()
@@ -2060,10 +2061,12 @@ impl AcpThreadView {
                 Button::new(button_id, label)
                     .label_size(LabelSize::Small)
                     .color(Color::Muted)
-                    .icon(IconName::ArrowUpRight)
-                    .icon_size(IconSize::XSmall)
-                    .icon_color(Color::Muted)
                     .truncate(true)
+                    .when(!is_file.is_some(), |this| {
+                        this.icon(IconName::ArrowUpRight)
+                            .icon_size(IconSize::XSmall)
+                            .icon_color(Color::Muted)
+                    })
                     .on_click(cx.listener({
                         let workspace = self.workspace.clone();
                         move |_, _, window, cx: &mut Context<Self>| {
