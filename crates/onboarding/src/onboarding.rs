@@ -494,7 +494,7 @@ impl Onboarding {
         window
             .spawn(cx, async move |cx| {
                 client
-                    .sign_in_with_optional_connect(true, &cx)
+                    .sign_in_with_optional_connect(true, cx)
                     .await
                     .notify_async_err(cx);
             })

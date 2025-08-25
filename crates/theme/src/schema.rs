@@ -225,6 +225,10 @@ pub struct ThemeColorsContent {
     #[serde(rename = "drop_target.background")]
     pub drop_target_background: Option<String>,
 
+    /// Border Color. Used for the border that shows where a dragged element will be dropped.
+    #[serde(rename = "drop_target.border")]
+    pub drop_target_border: Option<String>,
+
     /// Used for the background of a ghost element that should have the same background as the surface it's on.
     ///
     /// Elements might include: Buttons, Inputs, Checkboxes, Radio Buttons...
@@ -745,6 +749,10 @@ impl ThemeColorsContent {
                 .and_then(|color| try_parse_color(color).ok()),
             drop_target_background: self
                 .drop_target_background
+                .as_ref()
+                .and_then(|color| try_parse_color(color).ok()),
+            drop_target_border: self
+                .drop_target_border
                 .as_ref()
                 .and_then(|color| try_parse_color(color).ok()),
             ghost_element_background: self

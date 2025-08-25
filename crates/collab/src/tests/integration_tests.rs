@@ -3208,7 +3208,7 @@ async fn test_fs_operations(
         })
         .await
         .unwrap()
-        .to_included()
+        .into_included()
         .unwrap();
 
     worktree_a.read_with(cx_a, |worktree, _| {
@@ -3237,7 +3237,7 @@ async fn test_fs_operations(
         })
         .await
         .unwrap()
-        .to_included()
+        .into_included()
         .unwrap();
 
     worktree_a.read_with(cx_a, |worktree, _| {
@@ -3266,7 +3266,7 @@ async fn test_fs_operations(
         })
         .await
         .unwrap()
-        .to_included()
+        .into_included()
         .unwrap();
 
     worktree_a.read_with(cx_a, |worktree, _| {
@@ -3295,7 +3295,7 @@ async fn test_fs_operations(
         })
         .await
         .unwrap()
-        .to_included()
+        .into_included()
         .unwrap();
 
     project_b
@@ -3304,7 +3304,7 @@ async fn test_fs_operations(
         })
         .await
         .unwrap()
-        .to_included()
+        .into_included()
         .unwrap();
 
     project_b
@@ -3313,7 +3313,7 @@ async fn test_fs_operations(
         })
         .await
         .unwrap()
-        .to_included()
+        .into_included()
         .unwrap();
 
     worktree_a.read_with(cx_a, |worktree, _| {
@@ -4850,6 +4850,7 @@ async fn test_definition(
     let definitions_1 = project_b
         .update(cx_b, |p, cx| p.definitions(&buffer_b, 23, cx))
         .await
+        .unwrap()
         .unwrap();
     cx_b.read(|cx| {
         assert_eq!(
@@ -4885,6 +4886,7 @@ async fn test_definition(
     let definitions_2 = project_b
         .update(cx_b, |p, cx| p.definitions(&buffer_b, 33, cx))
         .await
+        .unwrap()
         .unwrap();
     cx_b.read(|cx| {
         assert_eq!(definitions_2.len(), 1);
@@ -4922,6 +4924,7 @@ async fn test_definition(
     let type_definitions = project_b
         .update(cx_b, |p, cx| p.type_definitions(&buffer_b, 7, cx))
         .await
+        .unwrap()
         .unwrap();
     cx_b.read(|cx| {
         assert_eq!(
@@ -4970,7 +4973,7 @@ async fn test_references(
         "Rust",
         FakeLspAdapter {
             name: "my-fake-lsp-adapter",
-            capabilities: capabilities,
+            capabilities,
             ..FakeLspAdapter::default()
         },
     );
@@ -5060,7 +5063,7 @@ async fn test_references(
         ])))
         .unwrap();
 
-    let references = references.await.unwrap();
+    let references = references.await.unwrap().unwrap();
     executor.run_until_parked();
     project_b.read_with(cx_b, |project, cx| {
         // User is informed that a request is no longer pending.
@@ -5104,7 +5107,7 @@ async fn test_references(
     lsp_response_tx
         .unbounded_send(Err(anyhow!("can't find references")))
         .unwrap();
-    assert_eq!(references.await.unwrap(), []);
+    assert_eq!(references.await.unwrap().unwrap(), []);
 
     // User is informed that the request is no longer pending.
     executor.run_until_parked();
@@ -5505,7 +5508,8 @@ async fn test_lsp_hover(
     // Request hover information as the guest.
     let mut hovers = project_b
         .update(cx_b, |p, cx| p.hover(&buffer_b, 22, cx))
-        .await;
+        .await
+        .unwrap();
     assert_eq!(
         hovers.len(),
         2,
@@ -5764,7 +5768,7 @@ async fn test_open_buffer_while_getting_definition_pointing_to_it(
         definitions = project_b.update(cx_b, |p, cx| p.definitions(&buffer_b1, 23, cx));
     }
 
-    let definitions = definitions.await.unwrap();
+    let definitions = definitions.await.unwrap().unwrap();
     assert_eq!(
         definitions.len(),
         1,

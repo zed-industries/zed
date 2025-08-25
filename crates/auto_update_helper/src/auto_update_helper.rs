@@ -18,7 +18,7 @@ fn main() {}
 
 #[cfg(target_os = "windows")]
 mod windows_impl {
-    use std::path::Path;
+    use std::{borrow::Cow, path::Path};
 
     use super::dialog::create_dialog_window;
     use super::updater::perform_update;
@@ -37,9 +37,9 @@ mod windows_impl {
     pub(crate) const WM_JOB_UPDATED: u32 = WM_USER + 1;
     pub(crate) const WM_TERMINATE: u32 = WM_USER + 2;
 
-    #[derive(Debug)]
+    #[derive(Debug, Default)]
     struct Args {
-        launch: Option<bool>,
+        launch: bool,
     }
 
     pub(crate) fn run() -> Result<()> {
@@ -56,9 +56,9 @@ mod windows_impl {
         log::info!("======= Starting Zed update =======");
         let (tx, rx) = std::sync::mpsc::channel();
         let hwnd = create_dialog_window(rx)?.0 as isize;
-        let args = parse_args();
+        let args = parse_args(std::env::args().skip(1));
         std::thread::spawn(move || {
-            let result = perform_update(app_dir.as_path(), Some(hwnd), args.launch.unwrap_or(true));
+            let result = perform_update(app_dir.as_path(), Some(hwnd), args.launch);
             tx.send(result).ok();
             unsafe { PostMessageW(Some(HWND(hwnd as _)), WM_TERMINATE, WPARAM(0), LPARAM(0)) }.ok();
         });
@@ -83,39 +83,27 @@ mod windows_impl {
         Ok(())
     }
 
-    fn parse_args() -> Args {
-        let mut result = Args { launch: None };
-        if let Some(candidate) = std::env::args().nth(1) {
-            parse_single_arg(&candidate, &mut result);
+    fn parse_args(input: impl IntoIterator<Item = String>) -> Args {
+        let mut args: Args = Args { launch: true };
+
+        let mut input = input.into_iter();
+        if let Some(arg) = input.next() {
+            let launch_arg;
+
+            if arg == "--launch" {
+                launch_arg = input.next().map(Cow::Owned);
+            } else if let Some(rest) = arg.strip_prefix("--launch=") {
+                launch_arg = Some(Cow::Borrowed(rest));
+            } else {
+                launch_arg = None;
+            }
+
+            if launch_arg.as_deref() == Some("false") {
+                args.launch = false;
+            }
         }
 
-        result
-    }
-
-    fn parse_single_arg(arg: &str, result: &mut Args) {
-        let Some((key, value)) = arg.strip_prefix("--").and_then(|arg| arg.split_once('=')) else {
-            log::error!(
-                "Invalid argument format: '{}'. Expected format: --key=value",
-                arg
-            );
-            return;
-        };
-
-        match key {
-            "launch" => parse_launch_arg(value, &mut result.launch),
-            _ => log::error!("Unknown argument: --{}", key),
-        }
-    }
-
-    fn parse_launch_arg(value: &str, arg: &mut Option<bool>) {
-        match value {
-            "true" => *arg = Some(true),
-            "false" => *arg = Some(false),
-            _ => log::error!(
-                "Invalid value for --launch: '{}'. Expected 'true' or 'false'",
-                value
-            ),
-        }
+        args
     }
 
     pub(crate) fn show_error(mut content: String) {
@@ -135,44 +123,25 @@ mod windows_impl {
 
     #[cfg(test)]
     mod tests {
-        use crate::windows_impl::{Args, parse_launch_arg, parse_single_arg};
+        use crate::windows_impl::parse_args;
 
         #[test]
-        fn test_parse_launch_arg() {
-            let mut arg = None;
-            parse_launch_arg("true", &mut arg);
-            assert_eq!(arg, Some(true));
+        fn test_parse_args() {
+            // launch can be specified via two separate arguments
+            assert!(parse_args(["--launch".into(), "true".into()]).launch);
+            assert!(!parse_args(["--launch".into(), "false".into()]).launch);
 
-            let mut arg = None;
-            parse_launch_arg("false", &mut arg);
-            assert_eq!(arg, Some(false));
+            // launch can be specified via one single argument
+            assert!(parse_args(["--launch=true".into()]).launch);
+            assert!(!parse_args(["--launch=false".into()]).launch);
 
-            let mut arg = None;
-            parse_launch_arg("invalid", &mut arg);
-            assert_eq!(arg, None);
-        }
+            // launch defaults to true on no arguments
+            assert!(parse_args([]).launch);
 
-        #[test]
-        fn test_parse_single_arg() {
-            let mut args = Args { launch: None };
-            parse_single_arg("--launch=true", &mut args);
-            assert_eq!(args.launch, Some(true));
-
-            let mut args = Args { launch: None };
-            parse_single_arg("--launch=false", &mut args);
-            assert_eq!(args.launch, Some(false));
-
-            let mut args = Args { launch: None };
-            parse_single_arg("--launch=invalid", &mut args);
-            assert_eq!(args.launch, None);
-
-            let mut args = Args { launch: None };
-            parse_single_arg("--launch", &mut args);
-            assert_eq!(args.launch, None);
-
-            let mut args = Args { launch: None };
-            parse_single_arg("--unknown", &mut args);
-            assert_eq!(args.launch, None);
+            // launch defaults to true on invalid arguments
+            assert!(parse_args(["--launch".into()]).launch);
+            assert!(parse_args(["--launch=".into()]).launch);
+            assert!(parse_args(["--launch=invalid".into()]).launch);
         }
     }
 }

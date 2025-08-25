@@ -86,7 +86,7 @@ pub fn serialize_operation(operation: &crate::Operation) -> proto::Operation {
                 proto::operation::UpdateCompletionTriggers {
                     replica_id: lamport_timestamp.replica_id as u32,
                     lamport_timestamp: lamport_timestamp.value,
-                    triggers: triggers.iter().cloned().collect(),
+                    triggers: triggers.clone(),
                     language_server_id: server_id.to_proto(),
                 },
             ),
@@ -385,12 +385,10 @@ pub fn deserialize_undo_map_entry(
 
 /// Deserializes selections from the RPC representation.
 pub fn deserialize_selections(selections: Vec<proto::Selection>) -> Arc<[Selection<Anchor>]> {
-    Arc::from(
-        selections
-            .into_iter()
-            .filter_map(deserialize_selection)
-            .collect::<Vec<_>>(),
-    )
+    selections
+        .into_iter()
+        .filter_map(deserialize_selection)
+        .collect()
 }
 
 /// Deserializes a [`Selection`] from the RPC representation.

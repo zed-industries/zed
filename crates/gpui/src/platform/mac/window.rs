@@ -653,7 +653,7 @@ impl MacWindow {
                     .and_then(|titlebar| titlebar.traffic_light_position),
                 transparent_titlebar: titlebar
                     .as_ref()
-                    .map_or(true, |titlebar| titlebar.appears_transparent),
+                    .is_none_or(|titlebar| titlebar.appears_transparent),
                 previous_modifiers_changed_event: None,
                 keystroke_for_do_command: None,
                 do_command_handled: None,
@@ -688,7 +688,7 @@ impl MacWindow {
                 });
             }
 
-            if titlebar.map_or(true, |titlebar| titlebar.appears_transparent) {
+            if titlebar.is_none_or(|titlebar| titlebar.appears_transparent) {
                 native_window.setTitlebarAppearsTransparent_(YES);
                 native_window.setTitleVisibility_(NSWindowTitleVisibility::NSWindowTitleHidden);
             }
@@ -1090,7 +1090,7 @@ impl PlatformWindow for MacWindow {
                         NSView::removeFromSuperview(blur_view);
                         this.blurred_view = None;
                     }
-                } else if this.blurred_view == None {
+                } else if this.blurred_view.is_none() {
                     let content_view = this.native_window.contentView();
                     let frame = NSView::bounds(content_view);
                     let mut blur_view: id = msg_send![BLURRED_VIEW_CLASS, alloc];
@@ -1478,18 +1478,18 @@ extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: 
                 return YES;
             }
 
-            if key_down_event.is_held {
-                if let Some(key_char) = key_down_event.keystroke.key_char.as_ref() {
-                    let handled = with_input_handler(&this, |input_handler| {
-                        if !input_handler.apple_press_and_hold_enabled() {
-                            input_handler.replace_text_in_range(None, &key_char);
-                            return YES;
-                        }
-                        NO
-                    });
-                    if handled == Some(YES) {
+            if key_down_event.is_held
+                && let Some(key_char) = key_down_event.keystroke.key_char.as_ref()
+            {
+                let handled = with_input_handler(this, |input_handler| {
+                    if !input_handler.apple_press_and_hold_enabled() {
+                        input_handler.replace_text_in_range(None, key_char);
                         return YES;
                     }
+                    NO
+                });
+                if handled == Some(YES) {
+                    return YES;
                 }
             }
 
@@ -1624,10 +1624,10 @@ extern "C" fn handle_view_event(this: &Object, _: Sel, native_event: id) {
                     modifiers: prev_modifiers,
                     capslock: prev_capslock,
                 })) = &lock.previous_modifiers_changed_event
+                    && prev_modifiers == modifiers
+                    && prev_capslock == capslock
                 {
-                    if prev_modifiers == modifiers && prev_capslock == capslock {
-                        return;
-                    }
+                    return;
                 }
 
                 lock.previous_modifiers_changed_event = Some(event.clone());
@@ -1949,7 +1949,7 @@ extern "C" fn insert_text(this: &Object, _: Sel, text: id, replacement_range: NS
         let text = text.to_str();
         let replacement_range = replacement_range.to_range();
         with_input_handler(this, |input_handler| {
-            input_handler.replace_text_in_range(replacement_range, &text)
+            input_handler.replace_text_in_range(replacement_range, text)
         });
     }
 }
@@ -1973,7 +1973,7 @@ extern "C" fn set_marked_text(
         let replacement_range = replacement_range.to_range();
         let text = text.to_str();
         with_input_handler(this, |input_handler| {
-            input_handler.replace_and_mark_text_in_range(replacement_range, &text, selected_range)
+            input_handler.replace_and_mark_text_in_range(replacement_range, text, selected_range)
         });
     }
 }
@@ -1995,10 +1995,10 @@ extern "C" fn attributed_substring_for_proposed_range(
         let mut adjusted: Option<Range<usize>> = None;
 
         let selected_text = input_handler.text_for_range(range.clone(), &mut adjusted)?;
-        if let Some(adjusted) = adjusted {
-            if adjusted != range {
-                unsafe { (actual_range as *mut NSRange).write(NSRange::from(adjusted)) };
-            }
+        if let Some(adjusted) = adjusted
+            && adjusted != range
+        {
+            unsafe { (actual_range as *mut NSRange).write(NSRange::from(adjusted)) };
         }
         unsafe {
             let string: id = msg_send![class!(NSAttributedString), alloc];
@@ -2063,8 +2063,8 @@ fn screen_point_to_gpui_point(this: &Object, position: NSPoint) -> Point<Pixels>
     let frame = get_frame(this);
     let window_x = position.x - frame.origin.x;
     let window_y = frame.size.height - (position.y - frame.origin.y);
-    let position = point(px(window_x as f32), px(window_y as f32));
-    position
+
+    point(px(window_x as f32), px(window_y as f32))
 }
 
 extern "C" fn dragging_entered(this: &Object, _: Sel, dragging_info: id) -> NSDragOperation {
@@ -2073,11 +2073,10 @@ extern "C" fn dragging_entered(this: &Object, _: Sel, dragging_info: id) -> NSDr
     let paths = external_paths_from_event(dragging_info);
     if let Some(event) =
         paths.map(|paths| PlatformInput::FileDrop(FileDropEvent::Entered { position, paths }))
+        && send_new_event(&window_state, event)
     {
-        if send_new_event(&window_state, event) {
-            window_state.lock().external_files_dragged = true;
-            return NSDragOperationCopy;
-        }
+        window_state.lock().external_files_dragged = true;
+        return NSDragOperationCopy;
     }
     NSDragOperationNone
 }

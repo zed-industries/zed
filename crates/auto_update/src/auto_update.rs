@@ -543,7 +543,7 @@ impl AutoUpdater {
 
     async fn update(this: Entity<Self>, mut cx: AsyncApp) -> Result<()> {
         let (client, installed_version, previous_status, release_channel) =
-            this.read_with(&mut cx, |this, cx| {
+            this.read_with(&cx, |this, cx| {
                 (
                     this.http_client.clone(),
                     this.current_version,

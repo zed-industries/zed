@@ -294,11 +294,11 @@ Define extensions which should be installed (`true`) or never installed (`false`
 
 - Description: The name of a font to use for rendering text in the editor.
 - Setting: `buffer_font_family`
-- Default: `Zed Plex Mono`
+- Default: `.ZedMono`. This currently aliases to [Lilex](https://lilex.myrt.co).
 
 **Options**
 
-The name of any font family installed on the user's system
+The name of any font family installed on the user's system, or `".ZedMono"`.
 
 ## Buffer Font Features
 
@@ -538,12 +538,6 @@ List of `string` values
 - Description: Whether to highlight all occurrences of the selected text in an editor.
 - Setting: `selection_highlight`
 - Default: `true`
-
-## LSP Highlight Debounce
-
-- Description: The debounce delay before querying highlights from the language server based on the current cursor location.
-- Setting: `lsp_highlight_debounce`
-- Default: `75`
 
 ## Cursor Blink
 
@@ -1284,6 +1278,7 @@ Each option controls displaying of a particular toolbar element. If all elements
 ```json
 "status_bar": {
   "active_language_button": true,
+  "cursor_position_button": true
 },
 ```
 
@@ -1337,6 +1332,18 @@ While other options may be changed at a runtime and should be placed under `sett
 - Description: The debounce delay in milliseconds before querying highlights from the language server based on the current cursor location.
 - Setting: `lsp_highlight_debounce`
 - Default: `75`
+
+## Global LSP Settings
+
+- Description: Common language server settings.
+- Setting: `global_lsp_settings`
+- Default:
+
+```json
+"global_lsp_settings": {
+  "button": true
+}
+```
 
 **Options**
 
@@ -2418,6 +2425,7 @@ Examples:
 {
   "completions": {
     "words": "fallback",
+    "words_min_length": 3,
     "lsp": true,
     "lsp_fetch_timeout_ms": 0,
     "lsp_insert_mode": "replace_suffix"
@@ -2436,6 +2444,17 @@ Examples:
 1. `enabled` - Always fetch document's words for completions along with LSP completions
 2. `fallback` - Only if LSP response errors or times out, use document's words to show completions
 3. `disabled` - Never fetch or complete document's words for completions (word-based completions can still be queried via a separate action)
+
+### Min Words Query Length
+
+- Description: Minimum number of characters required to automatically trigger word-based completions.
+  Before that value, it's still possible to trigger the words-based completion manually with the corresponding editor command.
+- Setting: `words_min_length`
+- Default: `3`
+
+**Options**
+
+Positive integer values
 
 ### LSP
 
@@ -3227,6 +3246,7 @@ Run the `theme selector: toggle` action in the command palette to see a current 
     "scrollbar": {
       "show": null
     },
+    "sticky_scroll": true,
     "show_diagnostics": "all",
     "indent_guides": {
       "show": "always"
@@ -3511,11 +3531,11 @@ Float values between `0.0` and `0.9`, where:
 
 - Description: The name of the font to use for text in the UI.
 - Setting: `ui_font_family`
-- Default: `Zed Plex Sans`
+- Default: `.ZedSans`. This currently aliases to [IBM Plex](https://www.ibm.com/plex/).
 
 **Options**
 
-The name of any font family installed on the system.
+The name of any font family installed on the system, `".ZedSans"` to use the Zed-provided default, or `".SystemUIFont"` to use the system's default UI font (on macOS and Windows).
 
 ## UI Font Features
 
@@ -3603,7 +3623,7 @@ For example, to use `Nerd Font` as a fallback, add the following to your setting
   "soft_wrap": "none",
 
   "buffer_font_size": 18,
-  "buffer_font_family": "Zed Plex Mono",
+  "buffer_font_family": ".ZedMono",
 
   "autosave": "on_focus_change",
   "format_on_save": "off",

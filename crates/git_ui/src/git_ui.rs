@@ -3,7 +3,7 @@ use std::any::Any;
 use ::settings::Settings;
 use command_palette_hooks::CommandPaletteFilter;
 use commit_modal::CommitModal;
-use editor::{Editor, EditorElement, EditorStyle, actions::DiffClipboardWithSelectionData};
+use editor::{Editor, actions::DiffClipboardWithSelectionData};
 mod blame_ui;
 use git::{
     repository::{Branch, Upstream, UpstreamTracking, UpstreamTrackingStatus},
@@ -11,12 +11,11 @@ use git::{
 };
 use git_panel_settings::GitPanelSettings;
 use gpui::{
-    Action, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, TextStyle,
-    Window, actions,
+    Action, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Window,
+    actions,
 };
 use onboarding::GitOnboardingModal;
 use project_diff::ProjectDiff;
-use theme::ThemeSettings;
 use ui::prelude::*;
 use workspace::{ModalView, Workspace};
 use zed_actions;
@@ -246,12 +245,12 @@ fn render_remote_button(
             }
             (0, 0) => None,
             (ahead, 0) => Some(remote_button::render_push_button(
-                keybinding_target.clone(),
+                keybinding_target,
                 id,
                 ahead,
             )),
             (ahead, behind) => Some(remote_button::render_pull_button(
-                keybinding_target.clone(),
+                keybinding_target,
                 id,
                 ahead,
                 behind,
@@ -426,16 +425,9 @@ mod remote_button {
         let command = command.into();
 
         if let Some(handle) = focus_handle {
-            Tooltip::with_meta_in(
-                label.clone(),
-                Some(action),
-                command.clone(),
-                &handle,
-                window,
-                cx,
-            )
+            Tooltip::with_meta_in(label, Some(action), command, &handle, window, cx)
         } else {
-            Tooltip::with_meta(label.clone(), Some(action), command.clone(), window, cx)
+            Tooltip::with_meta(label, Some(action), command, window, cx)
         }
     }
 
@@ -458,7 +450,7 @@ mod remote_button {
                 Some(ContextMenu::build(window, cx, |context_menu, _, _| {
                     context_menu
                         .when_some(keybinding_target.clone(), |el, keybinding_target| {
-                            el.context(keybinding_target.clone())
+                            el.context(keybinding_target)
                         })
                         .action("Fetch", git::Fetch.boxed_clone())
                         .action("Fetch From", git::FetchFrom.boxed_clone())
@@ -637,7 +629,7 @@ impl GitCloneModal {
     pub fn show(panel: Entity<GitPanel>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let repo_input = cx.new(|cx| {
             let mut editor = Editor::single_line(window, cx);
-            editor.set_placeholder_text("Enter repository", cx);
+            editor.set_placeholder_text("Enter repository URL…", cx);
             editor
         });
         let focus_handle = repo_input.focus_handle(cx);
@@ -650,46 +642,6 @@ impl GitCloneModal {
             focus_handle,
         }
     }
-
-    fn render_editor(&self, window: &Window, cx: &App) -> impl IntoElement {
-        let settings = ThemeSettings::get_global(cx);
-        let theme = cx.theme();
-
-        let text_style = TextStyle {
-            color: cx.theme().colors().text,
-            font_family: settings.buffer_font.family.clone(),
-            font_features: settings.buffer_font.features.clone(),
-            font_size: settings.buffer_font_size(cx).into(),
-            font_weight: settings.buffer_font.weight,
-            line_height: relative(settings.buffer_line_height.value()),
-            background_color: Some(theme.colors().editor_background),
-            ..Default::default()
-        };
-
-        let element = EditorElement::new(
-            &self.repo_input,
-            EditorStyle {
-                background: theme.colors().editor_background,
-                local_player: theme.players().local(),
-                text: text_style,
-                ..Default::default()
-            },
-        );
-
-        div()
-            .rounded_md()
-            .p_1()
-            .border_1()
-            .border_color(theme.colors().border_variant)
-            .when(
-                self.repo_input
-                    .focus_handle(cx)
-                    .contains_focused(window, cx),
-                |this| this.border_color(theme.colors().border_focused),
-            )
-            .child(element)
-            .bg(theme.colors().editor_background)
-    }
 }
 
 impl Focusable for GitCloneModal {
@@ -699,12 +651,42 @@ impl Focusable for GitCloneModal {
 }
 
 impl Render for GitCloneModal {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         div()
-            .size_full()
-            .w(rems(34.))
             .elevation_3(cx)
-            .child(self.render_editor(window, cx))
+            .w(rems(34.))
+            .flex_1()
+            .overflow_hidden()
+            .child(
+                div()
+                    .w_full()
+                    .p_2()
+                    .border_b_1()
+                    .border_color(cx.theme().colors().border_variant)
+                    .child(self.repo_input.clone()),
+            )
+            .child(
+                h_flex()
+                    .w_full()
+                    .p_2()
+                    .gap_0p5()
+                    .rounded_b_sm()
+                    .bg(cx.theme().colors().editor_background)
+                    .child(
+                        Label::new("Clone a repository from GitHub or other sources.")
+                            .color(Color::Muted)
+                            .size(LabelSize::Small),
+                    )
+                    .child(
+                        Button::new("learn-more", "Learn More")
+                            .label_size(LabelSize::Small)
+                            .icon(IconName::ArrowUpRight)
+                            .icon_size(IconSize::XSmall)
+                            .on_click(|_, _, cx| {
+                                cx.open_url("https://github.com/git-guides/git-clone");
+                            }),
+                    ),
+            )
             .on_action(cx.listener(|_, _: &menu::Cancel, _, cx| {
                 cx.emit(DismissEvent);
             }))

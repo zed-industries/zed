@@ -532,7 +532,7 @@ fn wasm_engine(executor: &BackgroundExecutor) -> wasmtime::Engine {
                     // `Future::poll`.
                     const EPOCH_INTERVAL: Duration = Duration::from_millis(100);
                     let mut timer = Timer::interval(EPOCH_INTERVAL);
-                    while let Some(_) = timer.next().await {
+                    while (timer.next().await).is_some() {
                         // Exit the loop and thread once the engine is dropped.
                         let Some(engine) = engine_ref.upgrade() else {
                             break;
@@ -701,16 +701,15 @@ pub fn parse_wasm_extension_version(
     for part in wasmparser::Parser::new(0).parse_all(wasm_bytes) {
         if let wasmparser::Payload::CustomSection(s) =
             part.context("error parsing wasm extension")?
+            && s.name() == "zed:api-version"
         {
-            if s.name() == "zed:api-version" {
-                version = parse_wasm_extension_version_custom_section(s.data());
-                if version.is_none() {
-                    bail!(
-                        "extension {} has invalid zed:api-version section: {:?}",
-                        extension_id,
-                        s.data()
-                    );
-                }
+            version = parse_wasm_extension_version_custom_section(s.data());
+            if version.is_none() {
+                bail!(
+                    "extension {} has invalid zed:api-version section: {:?}",
+                    extension_id,
+                    s.data()
+                );
             }
         }
     }

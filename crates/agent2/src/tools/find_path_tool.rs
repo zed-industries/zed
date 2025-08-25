@@ -31,7 +31,6 @@ pub struct FindPathToolInput {
     /// You can get back the first two paths by providing a glob of "*thing*.txt"
     /// </example>
     pub glob: String,
-
     /// Optional starting position for paginated results (0-based).
     /// When not provided, starts from the beginning.
     #[serde(default)]
@@ -86,11 +85,11 @@ impl AgentTool for FindPathTool {
     type Input = FindPathToolInput;
     type Output = FindPathToolOutput;
 
-    fn name(&self) -> SharedString {
-        "find_path".into()
+    fn name() -> &'static str {
+        "find_path"
     }
 
-    fn kind(&self) -> acp::ToolKind {
+    fn kind() -> acp::ToolKind {
         acp::ToolKind::Search
     }
 
@@ -116,7 +115,7 @@ impl AgentTool for FindPathTool {
                 ..cmp::min(input.offset + RESULTS_PER_PAGE, matches.len())];
 
             event_stream.update_fields(acp::ToolCallUpdateFields {
-                title: Some(if paginated_matches.len() == 0 {
+                title: Some(if paginated_matches.is_empty() {
                     "No matches".into()
                 } else if paginated_matches.len() == 1 {
                     "1 match".into()

@@ -321,7 +321,7 @@ impl CompletionsMenu {
         let match_candidates = choices
             .iter()
             .enumerate()
-            .map(|(id, completion)| StringMatchCandidate::new(id, &completion))
+            .map(|(id, completion)| StringMatchCandidate::new(id, completion))
             .collect();
         let entries = choices
             .iter()
@@ -514,7 +514,7 @@ impl CompletionsMenu {
         // Expand the range to resolve more completions than are predicted to be visible, to reduce
         // jank on navigation.
         let entry_indices = util::expanded_and_wrapped_usize_range(
-            entry_range.clone(),
+            entry_range,
             RESOLVE_BEFORE_ITEMS,
             RESOLVE_AFTER_ITEMS,
             entries.len(),
@@ -1111,10 +1111,8 @@ impl CompletionsMenu {
             let query_start_doesnt_match_split_words = query_start_lower
                 .map(|query_char| {
                     !split_words(&string_match.string).any(|word| {
-                        word.chars()
-                            .next()
-                            .and_then(|c| c.to_lowercase().next())
-                            .map_or(false, |word_char| word_char == query_char)
+                        word.chars().next().and_then(|c| c.to_lowercase().next())
+                            == Some(query_char)
                     })
                 })
                 .unwrap_or(false);

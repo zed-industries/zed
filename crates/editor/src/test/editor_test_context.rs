@@ -119,13 +119,7 @@ impl EditorTestContext {
             for excerpt in excerpts.into_iter() {
                 let (text, ranges) = marked_text_ranges(excerpt, false);
                 let buffer = cx.new(|cx| Buffer::local(text, cx));
-                multibuffer.push_excerpts(
-                    buffer,
-                    ranges
-                        .into_iter()
-                        .map(|range| ExcerptRange::new(range.clone())),
-                    cx,
-                );
+                multibuffer.push_excerpts(buffer, ranges.into_iter().map(ExcerptRange::new), cx);
             }
             multibuffer
         });
@@ -297,9 +291,8 @@ impl EditorTestContext {
 
     pub fn set_head_text(&mut self, diff_base: &str) {
         self.cx.run_until_parked();
-        let fs = self.update_editor(|editor, _, cx| {
-            editor.project.as_ref().unwrap().read(cx).fs().as_fake()
-        });
+        let fs =
+            self.update_editor(|editor, _, cx| editor.project().unwrap().read(cx).fs().as_fake());
         let path = self.update_buffer(|buffer, _| buffer.file().unwrap().path().clone());
         fs.set_head_for_repo(
             &Self::root_path().join(".git"),
@@ -311,18 +304,16 @@ impl EditorTestContext {
 
     pub fn clear_index_text(&mut self) {
         self.cx.run_until_parked();
-        let fs = self.update_editor(|editor, _, cx| {
-            editor.project.as_ref().unwrap().read(cx).fs().as_fake()
-        });
+        let fs =
+            self.update_editor(|editor, _, cx| editor.project().unwrap().read(cx).fs().as_fake());
         fs.set_index_for_repo(&Self::root_path().join(".git"), &[]);
         self.cx.run_until_parked();
     }
 
     pub fn set_index_text(&mut self, diff_base: &str) {
         self.cx.run_until_parked();
-        let fs = self.update_editor(|editor, _, cx| {
-            editor.project.as_ref().unwrap().read(cx).fs().as_fake()
-        });
+        let fs =
+            self.update_editor(|editor, _, cx| editor.project().unwrap().read(cx).fs().as_fake());
         let path = self.update_buffer(|buffer, _| buffer.file().unwrap().path().clone());
         fs.set_index_for_repo(
             &Self::root_path().join(".git"),
@@ -333,9 +324,8 @@ impl EditorTestContext {
 
     #[track_caller]
     pub fn assert_index_text(&mut self, expected: Option<&str>) {
-        let fs = self.update_editor(|editor, _, cx| {
-            editor.project.as_ref().unwrap().read(cx).fs().as_fake()
-        });
+        let fs =
+            self.update_editor(|editor, _, cx| editor.project().unwrap().read(cx).fs().as_fake());
         let path = self.update_buffer(|buffer, _| buffer.file().unwrap().path().clone());
         let mut found = None;
         fs.with_git_state(&Self::root_path().join(".git"), false, |git_state| {
@@ -430,7 +420,7 @@ impl EditorTestContext {
             if expected_text == "[FOLDED]\n" {
                 assert!(is_folded, "excerpt {} should be folded", ix);
                 let is_selected = selections.iter().any(|s| s.head().excerpt_id == excerpt_id);
-                if expected_selections.len() > 0 {
+                if !expected_selections.is_empty() {
                     assert!(
                         is_selected,
                         "excerpt {ix} should be selected. got {:?}",

@@ -131,7 +131,7 @@ async fn get_context(
 
     let (project, _lsp_open_handle, buffer) = if use_language_server {
         let (project, lsp_open_handle, buffer) =
-            open_buffer_with_language_server(&worktree_path, &cursor.path, &app_state, cx).await?;
+            open_buffer_with_language_server(&worktree_path, &cursor.path, app_state, cx).await?;
         (Some(project), Some(lsp_open_handle), buffer)
     } else {
         let abs_path = worktree_path.join(&cursor.path);
@@ -190,9 +190,8 @@ async fn get_context(
         .await;
 
     // Disable data collection for these requests, as this is currently just used for evals
-    match gather_context_output.as_mut() {
-        Ok(gather_context_output) => gather_context_output.body.can_collect_data = false,
-        Err(_) => {}
+    if let Ok(gather_context_output) = gather_context_output.as_mut() {
+        gather_context_output.body.can_collect_data = false
     }
 
     gather_context_output
@@ -260,7 +259,7 @@ pub fn wait_for_lang_server(
         .update(cx, |buffer, cx| {
             lsp_store.update(cx, |lsp_store, cx| {
                 lsp_store
-                    .language_servers_for_local_buffer(&buffer, cx)
+                    .language_servers_for_local_buffer(buffer, cx)
                     .next()
                     .is_some()
             })
@@ -277,8 +276,8 @@ pub fn wait_for_lang_server(
     let subscriptions = [
         cx.subscribe(&lsp_store, {
             let log_prefix = log_prefix.clone();
-            move |_, event, _| match event {
-                project::LspStoreEvent::LanguageServerUpdate {
+            move |_, event, _| {
+                if let project::LspStoreEvent::LanguageServerUpdate {
                     message:
                         client::proto::update_language_server::Variant::WorkProgress(
                             client::proto::LspWorkProgress {
@@ -287,11 +286,13 @@ pub fn wait_for_lang_server(
                             },
                         ),
                     ..
-                } => println!("{}⟲ {message}", log_prefix),
-                _ => {}
+                } = event
+                {
+                    println!("{}⟲ {message}", log_prefix)
+                }
             }
         }),
-        cx.subscribe(&project, {
+        cx.subscribe(project, {
             let buffer = buffer.clone();
             move |project, event, cx| match event {
                 project::Event::LanguageServerAdded(_, _, _) => {
