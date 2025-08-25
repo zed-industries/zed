@@ -209,7 +209,6 @@ pub struct WorkspaceSettingsContent {
     ///
     /// Default: true
     pub zoomed_padding: Option<bool>,
-
 }
 
 #[derive(Deserialize)]
