@@ -22,6 +22,10 @@ impl CustomAgentServer {
 }
 
 impl crate::AgentServer for CustomAgentServer {
+    fn telemetry_id(&self) -> &'static str {
+        "custom"
+    }
+
     fn name(&self) -> SharedString {
         self.name.clone()
     }
