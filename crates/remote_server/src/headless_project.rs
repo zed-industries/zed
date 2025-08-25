@@ -500,7 +500,7 @@ impl HeadlessProject {
         })
     }
 
-    pub async fn handle_open_server_settings(
+    async fn handle_open_server_settings(
         this: Entity<Self>,
         _: TypedEnvelope<proto::OpenServerSettings>,
         mut cx: AsyncApp,
@@ -553,7 +553,7 @@ impl HeadlessProject {
         })
     }
 
-    pub async fn handle_find_search_candidates(
+    async fn handle_find_search_candidates(
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::FindSearchCandidates>,
         mut cx: AsyncApp,
@@ -585,7 +585,7 @@ impl HeadlessProject {
         Ok(response)
     }
 
-    pub async fn handle_list_remote_directory(
+    async fn handle_list_remote_directory(
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::ListRemoteDirectory>,
         cx: AsyncApp,
@@ -617,7 +617,7 @@ impl HeadlessProject {
         })
     }
 
-    pub async fn handle_get_path_metadata(
+    async fn handle_get_path_metadata(
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::GetPathMetadata>,
         cx: AsyncApp,
@@ -635,7 +635,7 @@ impl HeadlessProject {
         })
     }
 
-    pub async fn handle_shutdown_remote_server(
+    async fn handle_shutdown_remote_server(
         _this: Entity<Self>,
         _envelope: TypedEnvelope<proto::ShutdownRemoteServer>,
         cx: AsyncApp,
