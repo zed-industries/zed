@@ -196,8 +196,8 @@ impl LanguageModelProvider for DeepSeekLanguageModelProvider {
     fn provided_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
         let mut models = BTreeMap::default();
 
-        models.insert("deepseek-chat", deepseek::Model::Chat);
-        models.insert("deepseek-reasoner", deepseek::Model::Reasoner);
+        models.insert("deepseek-v3.1", deepseek::Model::Chat);
+        models.insert("deepseek-v3.1(think)", deepseek::Model::Reasoner);
 
         for available_model in AllLanguageModelSettings::get_global(cx)
             .deepseek

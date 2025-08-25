@@ -48,10 +48,10 @@ impl From<Role> for String {
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 pub enum Model {
-    #[serde(rename = "deepseek-chat")]
+    #[serde(rename = "deepseek-v3.1")]
     #[default]
     Chat,
-    #[serde(rename = "deepseek-reasoner")]
+    #[serde(rename = "deepseek-v3.1(think)")]
     Reasoner,
     #[serde(rename = "custom")]
     Custom {
@@ -70,24 +70,24 @@ impl Model {
 
     pub fn from_id(id: &str) -> Result<Self> {
         match id {
-            "deepseek-chat" => Ok(Self::Chat),
-            "deepseek-reasoner" => Ok(Self::Reasoner),
+            "deepseek-v3.1" => Ok(Self::Chat),
+            "deepseek-v3.1(think)" => Ok(Self::Reasoner),
             _ => anyhow::bail!("invalid model id {id}"),
         }
     }
 
     pub fn id(&self) -> &str {
         match self {
-            Self::Chat => "deepseek-chat",
-            Self::Reasoner => "deepseek-reasoner",
+            Self::Chat => "deepseek-v3.1",
+            Self::Reasoner => "deepseek-v3.1(think)",
             Self::Custom { name, .. } => name,
         }
     }
 
     pub fn display_name(&self) -> &str {
         match self {
-            Self::Chat => "DeepSeek Chat",
-            Self::Reasoner => "DeepSeek Reasoner",
+            Self::Chat => "DeepSeek V3.1",
+            Self::Reasoner => "DeepSeek V3.1 (think)",
             Self::Custom {
                 name, display_name, ..
             } => display_name.as_ref().unwrap_or(name).as_str(),
