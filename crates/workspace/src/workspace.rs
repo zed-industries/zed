@@ -4011,52 +4011,6 @@ impl Workspace {
         maybe_pane_handle
     }
 
-    pub fn split_pane_with_item(
-        &mut self,
-        pane_to_split: WeakEntity<Pane>,
-        split_direction: SplitDirection,
-        from: WeakEntity<Pane>,
-        item_id_to_move: EntityId,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(pane_to_split) = pane_to_split.upgrade() else {
-            return;
-        };
-        let Some(from) = from.upgrade() else {
-            return;
-        };
-
-        let new_pane = self.add_pane(window, cx);
-        move_item(&from, &new_pane, item_id_to_move, 0, true, window, cx);
-        self.center
-            .split(&pane_to_split, &new_pane, split_direction)
-            .unwrap();
-        cx.notify();
-    }
-
-    pub fn split_pane_with_project_entry(
-        &mut self,
-        pane_to_split: WeakEntity<Pane>,
-        split_direction: SplitDirection,
-        project_entry: ProjectEntryId,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Option<Task<Result<()>>> {
-        let pane_to_split = pane_to_split.upgrade()?;
-        let new_pane = self.add_pane(window, cx);
-        self.center
-            .split(&pane_to_split, &new_pane, split_direction)
-            .unwrap();
-
-        let path = self.project.read(cx).path_for_entry(project_entry, cx)?;
-        let task = self.open_path(path, Some(new_pane.downgrade()), true, window, cx);
-        Some(cx.foreground_executor().spawn(async move {
-            task.await?;
-            Ok(())
-        }))
-    }
-
     pub fn join_all_panes(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let active_item = self.active_pane.read(cx).active_item();
         for pane in &self.panes {
