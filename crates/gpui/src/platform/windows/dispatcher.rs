@@ -9,10 +9,8 @@ use parking::Parker;
 use parking_lot::Mutex;
 use util::ResultExt;
 use windows::{
-    Foundation::TimeSpan,
     System::Threading::{
-        ThreadPool, ThreadPoolTimer, TimerElapsedHandler, WorkItemHandler, WorkItemOptions,
-        WorkItemPriority,
+        ThreadPool, ThreadPoolTimer, TimerElapsedHandler, WorkItemHandler, WorkItemPriority,
     },
     Win32::{
         Foundation::{LPARAM, WPARAM},
@@ -56,12 +54,7 @@ impl WindowsDispatcher {
                 Ok(())
             })
         };
-        ThreadPool::RunWithPriorityAndOptionsAsync(
-            &handler,
-            WorkItemPriority::High,
-            WorkItemOptions::TimeSliced,
-        )
-        .log_err();
+        ThreadPool::RunWithPriorityAsync(&handler, WorkItemPriority::High).log_err();
     }
 
     fn dispatch_on_threadpool_after(&self, runnable: Runnable, duration: Duration) {
@@ -72,12 +65,7 @@ impl WindowsDispatcher {
                 Ok(())
             })
         };
-        let delay = TimeSpan {
-            // A time period expressed in 100-nanosecond units.
-            // 10,000,000 ticks per second
-            Duration: (duration.as_nanos() / 100) as i64,
-        };
-        ThreadPoolTimer::CreateTimer(&handler, delay).log_err();
+        ThreadPoolTimer::CreateTimer(&handler, duration.into()).log_err();
     }
 }
 
