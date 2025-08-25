@@ -1,8 +1,9 @@
-use super::DynamicCapabilities;
 use lsp_types::{
     ServerCapabilities, TextDocumentSyncCapability, TextDocumentSyncKind,
     TextDocumentSyncSaveOptions,
 };
+
+use super::DynamicCapabilities;
 
 pub mod cap {
     pub struct DidChangeTextDocument;
@@ -30,11 +31,11 @@ impl EffectiveCapability for cap::DidChangeTextDocument {
                     return None;
                 }
                 let mut has_incremental = false;
-                for &kind in id_to_sync_kind_map.values() {
-                    if kind == TextDocumentSyncKind::FULL {
+                for data in id_to_sync_kind_map.values() {
+                    if data.sync_kind == TextDocumentSyncKind::FULL {
                         return Some(TextDocumentSyncKind::FULL);
                     }
-                    if kind == TextDocumentSyncKind::INCREMENTAL {
+                    if data.sync_kind == TextDocumentSyncKind::INCREMENTAL {
                         has_incremental = true;
                     }
                 }
@@ -73,7 +74,7 @@ impl EffectiveCapability for cap::DidSaveTextDocument {
                     Some(
                         id_to_save_options_map
                             .values()
-                            .any(|opts| opts.include_text.unwrap_or(false)),
+                            .any(|data| data.include_text),
                     )
                 }
             })

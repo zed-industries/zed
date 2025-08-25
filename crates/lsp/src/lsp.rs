@@ -307,8 +307,9 @@ pub struct AdapterServerCapabilities {
 
 #[derive(Debug, Default, Clone)]
 pub struct DynamicCapabilities {
-    pub text_document_sync_did_change: Option<HashMap<String, TextDocumentSyncKind>>,
-    pub text_document_sync_did_save: Option<HashMap<String, SaveOptions>>,
+    pub text_document_sync_did_change:
+        Option<HashMap<String, TextDocumentChangeRegistrationOptions>>,
+    pub text_document_sync_did_save: Option<HashMap<String, TextDocumentSaveRegistrationOptions>>,
 }
 
 impl LanguageServer {

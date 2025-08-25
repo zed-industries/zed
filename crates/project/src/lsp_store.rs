@@ -11832,42 +11832,27 @@ impl LspStore {
                     }
                 }
                 "textDocument/didChange" => {
-                    if let Some(sync_kind) = reg
-                        .register_options
-                        .and_then(|opts| opts.get("syncKind").cloned())
-                        .map(serde_json::from_value::<lsp::TextDocumentSyncKind>)
-                        .transpose()?
-                    {
+                    if let Some(options) = reg.register_options {
+                        let options: lsp::TextDocumentChangeRegistrationOptions =
+                            serde_json::from_value(options)?;
                         server.update_dynamic_capabilities(|dyn_caps| {
                             let map = dyn_caps
                                 .text_document_sync_did_change
                                 .get_or_insert_with(HashMap::default);
-                            map.insert(reg.id, sync_kind);
+                            map.insert(reg.id, options);
                         });
                         notify_server_capabilities_updated(&server, cx);
                     }
                 }
                 "textDocument/didSave" => {
-                    if let Some(include_text) = reg
-                        .register_options
-                        .map(|opts| {
-                            let transpose = opts
-                                .get("includeText")
-                                .cloned()
-                                .map(serde_json::from_value::<Option<bool>>)
-                                .transpose();
-                            match transpose {
-                                Ok(value) => Ok(value.flatten()),
-                                Err(e) => Err(e),
-                            }
-                        })
-                        .transpose()?
-                    {
+                    if let Some(options) = reg.register_options {
+                        let options: lsp::TextDocumentSaveRegistrationOptions =
+                            serde_json::from_value(options)?;
                         server.update_dynamic_capabilities(|dyn_caps| {
                             let map = dyn_caps
                                 .text_document_sync_did_save
                                 .get_or_insert_with(HashMap::default);
-                            map.insert(reg.id, lsp::SaveOptions { include_text });
+                            map.insert(reg.id, options);
                         });
                         notify_server_capabilities_updated(&server, cx);
                     }
