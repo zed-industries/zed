@@ -39,6 +39,7 @@ settings.workspace = true
 telemetry.workspace = true
 theme.workspace = true
 ui.workspace = true
+ui_input.workspace = true
 util.workspace = true
 vim_mode_setting.workspace = true
 workspace-hack.workspace = true
