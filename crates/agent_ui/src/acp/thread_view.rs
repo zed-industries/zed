@@ -2811,7 +2811,7 @@ impl AcpThreadView {
                                 let cwd = project.first_project_directory(cx);
                                 let shell = project.terminal_settings(&cwd, cx).shell.clone();
                                 let spawn_in_terminal = task::SpawnInTerminal {
-                                    id: task::TaskId("install".to_string()),
+                                    id: task::TaskId(install_command.clone()),
                                     full_label: install_command.clone(),
                                     label: install_command.clone(),
                                     command: Some(install_command.clone()),
@@ -2868,7 +2868,7 @@ impl AcpThreadView {
                                 let cwd = project.first_project_directory(cx);
                                 let shell = project.terminal_settings(&cwd, cx).shell.clone();
                                 let spawn_in_terminal = task::SpawnInTerminal {
-                                    id: task::TaskId("upgrade".to_string()),
+                                    id: task::TaskId(upgrade_command.to_string()),
                                     full_label: upgrade_command.clone(),
                                     label: upgrade_command.clone(),
                                     command: Some(upgrade_command.clone()),

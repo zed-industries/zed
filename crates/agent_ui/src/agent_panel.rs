@@ -241,6 +241,7 @@ enum WhichFontSize {
     None,
 }
 
+// TODO unify this with ExternalAgent
 #[derive(Debug, Default, Clone, PartialEq, Serialize, Deserialize)]
 pub enum AgentType {
     #[default]
@@ -1474,6 +1475,7 @@ impl AgentPanel {
                 tools,
                 self.language_registry.clone(),
                 self.workspace.clone(),
+                self.project.downgrade(),
                 window,
                 cx,
             )
