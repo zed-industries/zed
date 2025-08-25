@@ -331,14 +331,14 @@ pub fn update_inlay_link_and_hover_points(
             .max_by_key(|hint| hint.id)
         {
             let inlay_hint_cache = editor.inlay_hint_cache();
-            let excerpt_id = hovered_hint.position.excerpt_id;
+            let excerpt_id = previous_valid_anchor.excerpt_id;
             if let Some(cached_hint) = inlay_hint_cache.hint_by_id(excerpt_id, hovered_hint.id) {
                 // Check if we should process this hint for hover
                 match cached_hint.resolve_state {
                     ResolveState::CanResolve(_, _) => {
                         if let Some(buffer_id) = snapshot
                             .buffer_snapshot
-                            .buffer_id_for_anchor(hovered_hint.position)
+                            .buffer_id_for_anchor(previous_valid_anchor)
                         {
                             inlay_hint_cache.spawn_hint_resolve(
                                 buffer_id,
