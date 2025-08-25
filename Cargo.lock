@@ -1384,7 +1384,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "collections",
- "derive_more 0.99.19",
+ "derive_more",
  "gpui",
  "parking_lot",
  "rodio",
