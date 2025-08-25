@@ -2162,9 +2162,7 @@ async fn test_send_retry_cancels_tool_calls_on_error(cx: &mut TestAppContext) {
         input: json!({"text": "test"}),
         is_input_complete: true,
     };
-    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(
-        tool_use_1.clone(),
-    ));
+    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(tool_use_1));
     fake_model.send_last_completion_stream_error(LanguageModelCompletionError::ServerOverloaded {
         provider: LanguageModelProviderName::new("Anthropic"),
         retry_after: Some(Duration::from_secs(3)),
@@ -2227,7 +2225,7 @@ async fn test_send_retry_cancels_tool_calls_on_error(cx: &mut TestAppContext) {
             },
             LanguageModelRequestMessage {
                 role: Role::Assistant,
-                content: vec![MessageContent::ToolUse(tool_use_2.clone())],
+                content: vec![MessageContent::ToolUse(tool_use_2)],
                 cache: false
             },
             LanguageModelRequestMessage {
