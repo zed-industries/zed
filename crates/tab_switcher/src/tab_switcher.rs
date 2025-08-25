@@ -2,12 +2,14 @@
 mod tab_switcher_tests;
 
 use collections::HashMap;
-use editor::items::entry_git_aware_label_color;
+use editor::items::{
+    entry_diagnostic_aware_icon_decoration_and_color, entry_git_aware_label_color,
+};
 use fuzzy::StringMatchCandidate;
 use gpui::{
     Action, AnyElement, App, Context, DismissEvent, Entity, EntityId, EventEmitter, FocusHandle,
-    Focusable, Modifiers, ModifiersChangedEvent, MouseButton, MouseUpEvent, ParentElement, Render,
-    Styled, Task, WeakEntity, Window, actions, rems,
+    Focusable, Modifiers, ModifiersChangedEvent, MouseButton, MouseUpEvent, ParentElement, Point,
+    Render, Styled, Task, WeakEntity, Window, actions, rems,
 };
 use picker::{Picker, PickerDelegate};
 use project::Project;
@@ -15,11 +17,14 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use settings::Settings;
 use std::{cmp::Reverse, sync::Arc};
-use ui::{ListItem, ListItemSpacing, Tooltip, prelude::*};
+use ui::{
+    DecoratedIcon, IconDecoration, IconDecorationKind, ListItem, ListItemSpacing, Tooltip,
+    prelude::*,
+};
 use util::ResultExt;
 use workspace::{
     ModalView, Pane, SaveIntent, Workspace,
-    item::{ItemHandle, ItemSettings, TabContentParams},
+    item::{ItemHandle, ItemSettings, ShowDiagnostics, TabContentParams},
     pane::{Event as PaneEvent, render_item_indicator, tab_details},
 };
 
@@ -574,8 +579,8 @@ impl PickerDelegate for TabSwitcherDelegate {
         };
         let label = tab_match.item.tab_content(params, window, cx);
 
-        let icon = tab_match.item.tab_icon(window, cx).map(|icon| {
-            let git_status_color = ItemSettings::get_global(cx)
+        let git_status_color = || {
+            ItemSettings::get_global(cx)
                 .git_status
                 .then(|| {
                     tab_match
@@ -595,9 +600,59 @@ impl PickerDelegate for TabSwitcherDelegate {
                             entry_git_aware_label_color(git_status, entry.is_ignored, selected)
                         })
                 })
-                .flatten();
+                .flatten()
+        };
 
-            icon.color(git_status_color.unwrap_or_default())
+        let show_diagnostics = ItemSettings::get_global(cx).show_diagnostics;
+
+        let item_diagnostics = || {
+            if show_diagnostics == ShowDiagnostics::Off {
+                return None;
+            }
+            let buffer_store = self.project.read(cx).buffer_store().read(cx);
+            let buffer = tab_match
+                .item
+                .project_path(cx)
+                .and_then(|path| buffer_store.get_by_path(&path))
+                .map(|buffer| buffer.read(cx));
+            buffer.and_then(|buffer| {
+                buffer
+                    .snapshot()
+                    .diagnostic_groups(None)
+                    .iter()
+                    .map(|(_, diagnostic)| {
+                        diagnostic.entries[diagnostic.primary_ix]
+                            .diagnostic
+                            .severity
+                    })
+                    .min()
+            })
+        };
+
+        let icon = tab_match.item.tab_icon(window, cx).map(|icon| {
+            let git_status_color = git_status_color();
+            let colored_icon = icon.color(git_status_color.unwrap_or_default());
+
+            let decorations = entry_diagnostic_aware_icon_decoration_and_color(item_diagnostics())
+                .filter(|(d, _)| {
+                    *d != IconDecorationKind::Triangle
+                        || show_diagnostics != ShowDiagnostics::Errors
+                })
+                .map(|(icon, color)| {
+                    let knockout_item_color = if selected {
+                        cx.theme().colors().element_selected
+                    } else {
+                        cx.theme().colors().element_background
+                    };
+                    IconDecoration::new(icon, knockout_item_color, cx)
+                        .color(color.color(cx))
+                        .position(Point {
+                            x: px(-2.),
+                            y: px(-2.),
+                        })
+                });
+
+            DecoratedIcon::new(colored_icon, decorations).into_any_element()
         });
 
         let indicator = render_item_indicator(tab_match.item.boxed_clone(), cx);
@@ -640,7 +695,7 @@ impl PickerDelegate for TabSwitcherDelegate {
                 .inset(true)
                 .toggle_state(selected)
                 .child(h_flex().w_full().child(label))
-                .start_slot::<Icon>(icon)
+                .start_slot::<AnyElement>(icon)
                 .map(|el| {
                     if self.selected_index == ix {
                         el.end_slot::<AnyElement>(close_button)
