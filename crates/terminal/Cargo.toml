@@ -5,6 +5,13 @@ edition.workspace = true
 publish.workspace = true
 license = "GPL-3.0-or-later"
 
+[features]
+test-support = [
+    "collections/test-support",
+    "gpui/test-support",
+    "settings/test-support",
+]
+
 [lints]
 workspace = true
 
@@ -32,10 +39,13 @@ theme.workspace = true
 thiserror.workspace = true
 util.workspace = true
 regex.workspace = true
+urlencoding.workspace = true
 workspace-hack.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 windows.workspace = true
 
 [dev-dependencies]
+gpui = { workspace = true, features = ["test-support"] }
 rand.workspace = true
+url.workspace = true

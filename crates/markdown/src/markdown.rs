@@ -141,7 +141,15 @@ pub type CodeBlockRenderFn = Arc<
 pub type CodeBlockTransformFn =
     Arc<dyn Fn(AnyDiv, Range<usize>, CodeBlockMetadata, &mut Window, &App) -> AnyDiv>;
 
-actions!(markdown, [Copy, CopyAsMarkdown]);
+actions!(
+    markdown,
+    [
+        /// Copies the selected text to the clipboard.
+        Copy,
+        /// Copies the selected text as markdown to the clipboard.
+        CopyAsMarkdown
+    ]
+);
 
 impl Markdown {
     pub fn new(
@@ -231,7 +239,7 @@ impl Markdown {
         &self.parsed_markdown
     }
 
-    pub fn escape(s: &str) -> Cow<str> {
+    pub fn escape(s: &str) -> Cow<'_, str> {
         // Valid to use bytes since multi-byte UTF-8 doesn't use ASCII chars.
         let count = s
             .bytes()
@@ -332,27 +340,26 @@ impl Markdown {
             }
 
             for (range, event) in &events {
-                if let MarkdownEvent::Start(MarkdownTag::Image { dest_url, .. }) = event {
-                    if let Some(data_url) = dest_url.strip_prefix("data:") {
-                        let Some((mime_info, data)) = data_url.split_once(',') else {
-                            continue;
-                        };
-                        let Some((mime_type, encoding)) = mime_info.split_once(';') else {
-                            continue;
-                        };
-                        let Some(format) = ImageFormat::from_mime_type(mime_type) else {
-                            continue;
-                        };
-                        let is_base64 = encoding == "base64";
-                        if is_base64 {
-                            if let Some(bytes) = base64::prelude::BASE64_STANDARD
-                                .decode(data)
-                                .log_with_level(Level::Debug)
-                            {
-                                let image = Arc::new(Image::from_bytes(format, bytes));
-                                images_by_source_offset.insert(range.start, image);
-                            }
-                        }
+                if let MarkdownEvent::Start(MarkdownTag::Image { dest_url, .. }) = event
+                    && let Some(data_url) = dest_url.strip_prefix("data:")
+                {
+                    let Some((mime_info, data)) = data_url.split_once(',') else {
+                        continue;
+                    };
+                    let Some((mime_type, encoding)) = mime_info.split_once(';') else {
+                        continue;
+                    };
+                    let Some(format) = ImageFormat::from_mime_type(mime_type) else {
+                        continue;
+                    };
+                    let is_base64 = encoding == "base64";
+                    if is_base64
+                        && let Some(bytes) = base64::prelude::BASE64_STANDARD
+                            .decode(data)
+                            .log_with_level(Level::Debug)
+                    {
+                        let image = Arc::new(Image::from_bytes(format, bytes));
+                        images_by_source_offset.insert(range.start, image);
                     }
                 }
             }
@@ -421,7 +428,7 @@ impl Selection {
     }
 }
 
-#[derive(Clone, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct ParsedMarkdown {
     pub source: SharedString,
     pub events: Arc<[(Range<usize>, MarkdownEvent)]>,
@@ -504,7 +511,6 @@ impl MarkdownElement {
         let selection = self.markdown.read(cx).selection;
         let selection_start = rendered_text.position_for_source_index(selection.start);
         let selection_end = rendered_text.position_for_source_index(selection.end);
-
         if let Some(((start_position, start_line_height), (end_position, end_line_height))) =
             selection_start.zip(selection_end)
         {
@@ -576,9 +582,9 @@ impl MarkdownElement {
                 .is_some();
 
         if is_hovering_link {
-            window.set_cursor_style(CursorStyle::PointingHand, Some(hitbox));
+            window.set_cursor_style(CursorStyle::PointingHand, hitbox);
         } else {
-            window.set_cursor_style(CursorStyle::IBeam, Some(hitbox));
+            window.set_cursor_style(CursorStyle::IBeam, hitbox);
         }
 
         let on_open_url = self.on_url_click.take();
@@ -652,13 +658,13 @@ impl MarkdownElement {
             let rendered_text = rendered_text.clone();
             move |markdown, event: &MouseUpEvent, phase, window, cx| {
                 if phase.bubble() {
-                    if let Some(pressed_link) = markdown.pressed_link.take() {
-                        if Some(&pressed_link) == rendered_text.link_for_position(event.position) {
-                            if let Some(open_url) = on_open_url.as_ref() {
-                                open_url(pressed_link.destination_url, window, cx);
-                            } else {
-                                cx.open_url(&pressed_link.destination_url);
-                            }
+                    if let Some(pressed_link) = markdown.pressed_link.take()
+                        && Some(&pressed_link) == rendered_text.link_for_position(event.position)
+                    {
+                        if let Some(open_url) = on_open_url.as_ref() {
+                            open_url(pressed_link.destination_url, window, cx);
+                        } else {
+                            cx.open_url(&pressed_link.destination_url);
                         }
                     }
                 } else if markdown.selection.pending {
@@ -751,10 +757,10 @@ impl Element for MarkdownElement {
         let mut current_img_block_range: Option<Range<usize>> = None;
         for (range, event) in parsed_markdown.events.iter() {
             // Skip alt text for images that rendered
-            if let Some(current_img_block_range) = &current_img_block_range {
-                if current_img_block_range.end > range.end {
-                    continue;
-                }
+            if let Some(current_img_block_range) = &current_img_block_range
+                && current_img_block_range.end > range.end
+            {
+                continue;
             }
 
             match event {
@@ -868,7 +874,7 @@ impl Element for MarkdownElement {
                                 (CodeBlockRenderer::Custom { render, .. }, _) => {
                                     let parent_container = render(
                                         kind,
-                                        &parsed_markdown,
+                                        parsed_markdown,
                                         range.clone(),
                                         metadata.clone(),
                                         window,
@@ -1077,7 +1083,15 @@ impl Element for MarkdownElement {
                                     self.markdown.clone(),
                                     cx,
                                 );
-                                el.child(div().absolute().top_1().right_1().w_5().child(codeblock))
+                                el.child(
+                                    h_flex()
+                                        .w_4()
+                                        .absolute()
+                                        .top_1p5()
+                                        .right_1p5()
+                                        .justify_end()
+                                        .child(codeblock),
+                                )
                             });
                         }
 
@@ -1101,11 +1115,12 @@ impl Element for MarkdownElement {
                                     cx,
                                 );
                                 el.child(
-                                    div()
+                                    h_flex()
+                                        .w_4()
                                         .absolute()
                                         .top_0()
                                         .right_0()
-                                        .w_5()
+                                        .justify_end()
                                         .visible_on_hover("code_block")
                                         .child(codeblock),
                                 )
@@ -1305,11 +1320,12 @@ fn render_copy_code_block_button(
         },
     )
     .icon_color(Color::Muted)
+    .icon_size(IconSize::Small)
+    .style(ButtonStyle::Filled)
     .shape(ui::IconButtonShape::Square)
     .tooltip(Tooltip::text("Copy Code"))
     .on_click({
-        let id = id.clone();
-        let markdown = markdown.clone();
+        let markdown = markdown;
         move |_event, _window, cx| {
             let id = id.clone();
             markdown.update(cx, |this, cx| {
@@ -1673,7 +1689,7 @@ struct RenderedText {
     links: Rc<[RenderedLink]>,
 }
 
-#[derive(Clone, Eq, PartialEq)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 struct RenderedLink {
     source_range: Range<usize>,
     destination_url: SharedString,
@@ -1686,10 +1702,10 @@ impl RenderedText {
         while let Some(line) = lines.next() {
             let line_bounds = line.layout.bounds();
             if position.y > line_bounds.bottom() {
-                if let Some(next_line) = lines.peek() {
-                    if position.y < next_line.layout.bounds().top() {
-                        return Err(line.source_end);
-                    }
+                if let Some(next_line) = lines.peek()
+                    && position.y < next_line.layout.bounds().top()
+                {
+                    return Err(line.source_end);
                 }
 
                 continue;

@@ -1,6 +1,7 @@
 use crate::{
     CollaboratorId, DelayedDebouncedEditAction, FollowableViewRegistry, ItemNavHistory,
     SerializableItemRegistry, ToolbarItemLocation, ViewId, Workspace, WorkspaceId,
+    invalid_buffer_view::InvalidBufferView,
     pane::{self, Pane},
     persistence::model::ItemId,
     searchable::SearchableItemHandle,
@@ -22,6 +23,7 @@ use std::{
     any::{Any, TypeId},
     cell::RefCell,
     ops::Range,
+    path::PathBuf,
     rc::Rc,
     sync::Arc,
     time::Duration,
@@ -31,6 +33,21 @@ use ui::{Color, Icon, IntoElement, Label, LabelCommon};
 use util::ResultExt;
 
 pub const LEADER_UPDATE_THROTTLE: Duration = Duration::from_millis(200);
+
+#[derive(Clone, Copy, Debug)]
+pub struct SaveOptions {
+    pub format: bool,
+    pub autosave: bool,
+}
+
+impl Default for SaveOptions {
+    fn default() -> Self {
+        Self {
+            format: true,
+            autosave: false,
+        }
+    }
+}
 
 #[derive(Deserialize)]
 pub struct ItemSettings {
@@ -255,6 +272,12 @@ pub trait Item: Focusable + EventEmitter<Self::Event> + Render + Sized {
     /// Returns the textual contents of the tab.
     fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString;
 
+    /// Returns the suggested filename for saving this item.
+    /// By default, returns the tab content text.
+    fn suggested_filename(&self, cx: &App) -> SharedString {
+        self.tab_content_text(0, cx)
+    }
+
     fn tab_icon(&self, _window: &Window, _cx: &App) -> Option<Icon> {
         None
     }
@@ -278,6 +301,7 @@ pub trait Item: Focusable + EventEmitter<Self::Event> + Render + Sized {
 
     fn deactivated(&mut self, _window: &mut Window, _: &mut Context<Self>) {}
     fn discarded(&self, _project: Entity<Project>, _window: &mut Window, _cx: &mut Context<Self>) {}
+    fn on_removed(&self, _cx: &App) {}
     fn workspace_deactivated(&mut self, _window: &mut Window, _: &mut Context<Self>) {}
     fn navigate(&mut self, _: Box<dyn Any>, _window: &mut Window, _: &mut Context<Self>) -> bool {
         false
@@ -326,7 +350,7 @@ pub trait Item: Focusable + EventEmitter<Self::Event> + Render + Sized {
     }
     fn save(
         &mut self,
-        _format: bool,
+        _options: SaveOptions,
         _project: Entity<Project>,
         _window: &mut Window,
         _cx: &mut Context<Self>,
@@ -467,7 +491,7 @@ where
     fn should_serialize(&self, event: &dyn Any, cx: &App) -> bool {
         event
             .downcast_ref::<T::Event>()
-            .map_or(false, |event| self.read(cx).should_serialize(event))
+            .is_some_and(|event| self.read(cx).should_serialize(event))
     }
 }
 
@@ -481,6 +505,7 @@ pub trait ItemHandle: 'static + Send {
     ) -> gpui::Subscription;
     fn tab_content(&self, params: TabContentParams, window: &Window, cx: &App) -> AnyElement;
     fn tab_content_text(&self, detail: usize, cx: &App) -> SharedString;
+    fn suggested_filename(&self, cx: &App) -> SharedString;
     fn tab_icon(&self, window: &Window, cx: &App) -> Option<Icon>;
     fn tab_tooltip_text(&self, cx: &App) -> Option<SharedString>;
     fn tab_tooltip_content(&self, cx: &App) -> Option<TabTooltipContent>;
@@ -517,6 +542,7 @@ pub trait ItemHandle: 'static + Send {
     );
     fn deactivated(&self, window: &mut Window, cx: &mut App);
     fn discarded(&self, project: Entity<Project>, window: &mut Window, cx: &mut App);
+    fn on_removed(&self, cx: &App);
     fn workspace_deactivated(&self, window: &mut Window, cx: &mut App);
     fn navigate(&self, data: Box<dyn Any>, window: &mut Window, cx: &mut App) -> bool;
     fn item_id(&self) -> EntityId;
@@ -528,7 +554,7 @@ pub trait ItemHandle: 'static + Send {
     fn can_save_as(&self, cx: &App) -> bool;
     fn save(
         &self,
-        format: bool,
+        options: SaveOptions,
         project: Entity<Project>,
         window: &mut Window,
         cx: &mut App,
@@ -612,6 +638,10 @@ impl<T: Item> ItemHandle for Entity<T> {
     }
     fn tab_content_text(&self, detail: usize, cx: &App) -> SharedString {
         self.read(cx).tab_content_text(detail, cx)
+    }
+
+    fn suggested_filename(&self, cx: &App) -> SharedString {
+        self.read(cx).suggested_filename(cx)
     }
 
     fn tab_icon(&self, window: &Window, cx: &App) -> Option<Icon> {
@@ -804,10 +834,10 @@ impl<T: Item> ItemHandle for Entity<T> {
                     if let Some(item) = item.to_followable_item_handle(cx) {
                         let leader_id = workspace.leader_for_pane(&pane);
 
-                        if let Some(leader_id) = leader_id {
-                            if let Some(FollowEvent::Unfollow) = item.to_follow_event(event) {
-                                workspace.unfollow(leader_id, window, cx);
-                            }
+                        if let Some(leader_id) = leader_id
+                            && let Some(FollowEvent::Unfollow) = item.to_follow_event(event)
+                        {
+                            workspace.unfollow(leader_id, window, cx);
                         }
 
                         if item.item_focus_handle(cx).contains_focused(window, cx) {
@@ -835,10 +865,10 @@ impl<T: Item> ItemHandle for Entity<T> {
                         }
                     }
 
-                    if let Some(item) = item.to_serializable_item_handle(cx) {
-                        if item.should_serialize(event, cx) {
-                            workspace.enqueue_item_serialization(item).ok();
-                        }
+                    if let Some(item) = item.to_serializable_item_handle(cx)
+                        && item.should_serialize(event, cx)
+                    {
+                        workspace.enqueue_item_serialization(item).ok();
                     }
 
                     T::to_item_events(event, |event| match event {
@@ -856,10 +886,36 @@ impl<T: Item> ItemHandle for Entity<T> {
 
                         ItemEvent::UpdateTab => {
                             workspace.update_item_dirty_state(item, window, cx);
-                            pane.update(cx, |_, cx| {
-                                cx.emit(pane::Event::ChangeItemTitle);
-                                cx.notify();
-                            });
+
+                            if item.has_deleted_file(cx)
+                                && !item.is_dirty(cx)
+                                && item.workspace_settings(cx).close_on_file_delete
+                            {
+                                let item_id = item.item_id();
+                                let close_item_task = pane.update(cx, |pane, cx| {
+                                    pane.close_item_by_id(
+                                        item_id,
+                                        crate::SaveIntent::Close,
+                                        window,
+                                        cx,
+                                    )
+                                });
+                                cx.spawn_in(window, {
+                                    let pane = pane.clone();
+                                    async move |_workspace, cx| {
+                                        close_item_task.await?;
+                                        pane.update(cx, |pane, _cx| {
+                                            pane.nav_history_mut().remove_item(item_id);
+                                        })
+                                    }
+                                })
+                                .detach_and_log_err(cx);
+                            } else {
+                                pane.update(cx, |_, cx| {
+                                    cx.emit(pane::Event::ChangeItemTitle);
+                                    cx.notify();
+                                });
+                            }
                         }
 
                         ItemEvent::Edit => {
@@ -894,11 +950,11 @@ impl<T: Item> ItemHandle for Entity<T> {
                 &self.read(cx).focus_handle(cx),
                 window,
                 move |workspace, window, cx| {
-                    if let Some(item) = weak_item.upgrade() {
-                        if item.workspace_settings(cx).autosave == AutosaveSetting::OnFocusChange {
-                            Pane::autosave_item(&item, workspace.project.clone(), window, cx)
-                                .detach_and_log_err(cx);
-                        }
+                    if let Some(item) = weak_item.upgrade()
+                        && item.workspace_settings(cx).autosave == AutosaveSetting::OnFocusChange
+                    {
+                        Pane::autosave_item(&item, workspace.project.clone(), window, cx)
+                            .detach_and_log_err(cx);
                     }
                 },
             )
@@ -925,6 +981,10 @@ impl<T: Item> ItemHandle for Entity<T> {
 
     fn deactivated(&self, window: &mut Window, cx: &mut App) {
         self.update(cx, |this, cx| this.deactivated(window, cx));
+    }
+
+    fn on_removed(&self, cx: &App) {
+        self.read(cx).on_removed(cx);
     }
 
     fn workspace_deactivated(&self, window: &mut Window, cx: &mut App) {
@@ -965,12 +1025,12 @@ impl<T: Item> ItemHandle for Entity<T> {
 
     fn save(
         &self,
-        format: bool,
+        options: SaveOptions,
         project: Entity<Project>,
         window: &mut Window,
         cx: &mut App,
     ) -> Task<Result<()>> {
-        self.update(cx, |item, cx| item.save(format, project, window, cx))
+        self.update(cx, |item, cx| item.save(options, project, window, cx))
     }
 
     fn save_as(
@@ -1103,6 +1163,22 @@ pub trait ProjectItem: Item {
     ) -> Self
     where
         Self: Sized;
+
+    /// A fallback handler, which will be called after [`project::ProjectItem::try_open`] fails,
+    /// with the error from that failure as an argument.
+    /// Allows to open an item that can gracefully display and handle errors.
+    fn for_broken_project_item(
+        _abs_path: PathBuf,
+        _is_local: bool,
+        _e: &anyhow::Error,
+        _window: &mut Window,
+        _cx: &mut App,
+    ) -> Option<InvalidBufferView>
+    where
+        Self: Sized,
+    {
+        None
+    }
 }
 
 #[derive(Debug)]
@@ -1279,7 +1355,7 @@ impl<T: FollowableItem> WeakFollowableItemHandle for WeakEntity<T> {
 #[cfg(any(test, feature = "test-support"))]
 pub mod test {
     use super::{Item, ItemEvent, SerializableItem, TabContentParams};
-    use crate::{ItemId, ItemNavHistory, Workspace, WorkspaceId};
+    use crate::{ItemId, ItemNavHistory, Workspace, WorkspaceId, item::SaveOptions};
     use gpui::{
         AnyElement, App, AppContext as _, Context, Entity, EntityId, EventEmitter, Focusable,
         InteractiveElement, IntoElement, Render, SharedString, Task, WeakEntity, Window,
@@ -1303,6 +1379,7 @@ pub mod test {
         pub is_dirty: bool,
         pub is_singleton: bool,
         pub has_conflict: bool,
+        pub has_deleted_file: bool,
         pub project_items: Vec<Entity<TestProjectItem>>,
         pub nav_history: Option<ItemNavHistory>,
         pub tab_descriptions: Option<Vec<&'static str>>,
@@ -1382,6 +1459,7 @@ pub mod test {
                 reload_count: 0,
                 is_dirty: false,
                 has_conflict: false,
+                has_deleted_file: false,
                 project_items: Vec::new(),
                 is_singleton: true,
                 nav_history: None,
@@ -1407,6 +1485,10 @@ pub mod test {
         pub fn with_singleton(mut self, singleton: bool) -> Self {
             self.is_singleton = singleton;
             self
+        }
+
+        pub fn set_has_deleted_file(&mut self, deleted: bool) {
+            self.has_deleted_file = deleted;
         }
 
         pub fn with_dirty(mut self, dirty: bool) -> Self {
@@ -1546,6 +1628,7 @@ pub mod test {
                 is_dirty: self.is_dirty,
                 is_singleton: self.is_singleton,
                 has_conflict: self.has_conflict,
+                has_deleted_file: self.has_deleted_file,
                 project_items: self.project_items.clone(),
                 nav_history: None,
                 tab_descriptions: None,
@@ -1564,6 +1647,10 @@ pub mod test {
             self.has_conflict
         }
 
+        fn has_deleted_file(&self, _: &App) -> bool {
+            self.has_deleted_file
+        }
+
         fn can_save(&self, cx: &App) -> bool {
             !self.project_items.is_empty()
                 && self
@@ -1578,7 +1665,7 @@ pub mod test {
 
         fn save(
             &mut self,
-            _: bool,
+            _: SaveOptions,
             _: Entity<Project>,
             _window: &mut Window,
             cx: &mut Context<Self>,

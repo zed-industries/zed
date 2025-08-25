@@ -4,7 +4,6 @@ use editor::{
     Anchor, Editor, EditorSnapshot, ToOffset,
     display_map::{BlockContext, BlockPlacement, BlockProperties, BlockStyle},
     hover_popover::diagnostics_markdown_style,
-    scroll::Autoscroll,
 };
 use gpui::{AppContext, Entity, Focusable, WeakEntity};
 use language::{BufferId, Diagnostic, DiagnosticEntry};
@@ -47,7 +46,7 @@ impl DiagnosticRenderer {
                     markdown.push_str(" (");
                 }
                 if let Some(source) = diagnostic.source.as_ref() {
-                    markdown.push_str(&Markdown::escape(&source));
+                    markdown.push_str(&Markdown::escape(source));
                 }
                 if diagnostic.source.is_some() && diagnostic.code.is_some() {
                     markdown.push(' ');
@@ -145,7 +144,6 @@ impl editor::DiagnosticRenderer for DiagnosticRenderer {
                     style: BlockStyle::Flex,
                     render: Arc::new(move |bcx| block.render_block(editor.clone(), bcx)),
                     priority: 1,
-                    render_in_minimap: false,
                 }
             })
             .collect()
@@ -289,15 +287,13 @@ impl DiagnosticBlock {
                     }
                 }
             }
-        } else {
-            if let Some(diagnostic) = editor
-                .snapshot(window, cx)
-                .buffer_snapshot
-                .diagnostic_group(buffer_id, group_id)
-                .nth(ix)
-            {
-                Self::jump_to(editor, diagnostic.range, window, cx)
-            }
+        } else if let Some(diagnostic) = editor
+            .snapshot(window, cx)
+            .buffer_snapshot
+            .diagnostic_group(buffer_id, group_id)
+            .nth(ix)
+        {
+            Self::jump_to(editor, diagnostic.range, window, cx)
         };
     }
 
@@ -308,10 +304,10 @@ impl DiagnosticBlock {
         cx: &mut Context<Editor>,
     ) {
         let snapshot = &editor.buffer().read(cx).snapshot(cx);
-        let range = range.start.to_offset(&snapshot)..range.end.to_offset(&snapshot);
+        let range = range.start.to_offset(snapshot)..range.end.to_offset(snapshot);
 
         editor.unfold_ranges(&[range.start..range.end], true, false, cx);
-        editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+        editor.change_selections(Default::default(), window, cx, |s| {
             s.select_ranges([range.start..range.start]);
         });
         window.focus(&editor.focus_handle(cx));

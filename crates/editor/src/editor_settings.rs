@@ -1,3 +1,6 @@
+use core::num;
+use std::num::NonZeroU32;
+
 use gpui::App;
 use language::CursorShape;
 use project::project_settings::DiagnosticSeverity;
@@ -17,6 +20,7 @@ pub struct EditorSettings {
     pub lsp_highlight_debounce: u64,
     pub hover_popover_enabled: bool,
     pub hover_popover_delay: u64,
+    pub status_bar: StatusBar,
     pub toolbar: Toolbar,
     pub scrollbar: Scrollbar,
     pub minimap: Minimap,
@@ -49,6 +53,23 @@ pub struct EditorSettings {
     #[serde(default)]
     pub diagnostics_max_severity: Option<DiagnosticSeverity>,
     pub inline_code_actions: bool,
+    pub drag_and_drop_selection: DragAndDropSelection,
+    pub lsp_document_colors: DocumentColorsRenderMode,
+}
+
+/// How to render LSP `textDocument/documentColor` colors in the editor.
+#[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum DocumentColorsRenderMode {
+    /// Do not query and render document colors.
+    None,
+    /// Render document colors as inlay hints near the color text.
+    #[default]
+    Inlay,
+    /// Draw a border around the color text.
+    Border,
+    /// Draw a background behind the color text.
+    Background,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
@@ -105,6 +126,18 @@ pub struct JupyterContent {
     pub enabled: Option<bool>,
 }
 
+#[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct StatusBar {
+    /// Whether to display the active language button in the status bar.
+    ///
+    /// Default: true
+    pub active_language_button: bool,
+    /// Whether to show the cursor position button in the status bar.
+    ///
+    /// Default: true
+    pub cursor_position_button: bool,
+}
+
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct Toolbar {
     pub breadcrumbs: bool,
@@ -129,14 +162,21 @@ pub struct Scrollbar {
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 pub struct Minimap {
     pub show: ShowMinimap,
+    pub display_in: DisplayIn,
     pub thumb: MinimapThumb,
     pub thumb_border: MinimapThumbBorder,
     pub current_line_highlight: Option<CurrentLineHighlight>,
+    pub max_width_columns: num::NonZeroU32,
 }
 
 impl Minimap {
     pub fn minimap_enabled(&self) -> bool {
         self.show != ShowMinimap::Never
+    }
+
+    #[inline]
+    pub fn on_active_editor(&self) -> bool {
+        self.display_in == DisplayIn::ActiveEditor
     }
 
     pub fn with_show_override(self) -> Self {
@@ -149,6 +189,7 @@ impl Minimap {
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct Gutter {
+    pub min_line_number_digits: usize,
     pub line_numbers: bool,
     pub runnables: bool,
     pub breakpoints: bool,
@@ -185,6 +226,19 @@ pub enum ShowMinimap {
     /// Never show the minimap.
     #[default]
     Never,
+}
+
+/// Where to show the minimap in the editor.
+///
+/// Default: all_editors
+#[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum DisplayIn {
+    /// Show on all open editors.
+    AllEditors,
+    /// Show the minimap on the active editor only.
+    #[default]
+    ActiveEditor,
 }
 
 /// When to show the minimap thumb.
@@ -232,6 +286,26 @@ pub struct ScrollbarAxes {
     ///
     /// Default: true
     pub vertical: bool,
+}
+
+/// Whether to allow drag and drop text selection in buffer.
+#[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct DragAndDropSelection {
+    /// When true, enables drag and drop text selection in buffer.
+    ///
+    /// Default: true
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+
+    /// The delay in milliseconds that must elapse before drag and drop is allowed. Otherwise, a new text selection is created.
+    ///
+    /// Default: 300
+    #[serde(default = "default_drag_and_drop_selection_delay_ms")]
+    pub delay: u64,
+}
+
+fn default_drag_and_drop_selection_delay_ms() -> u64 {
+    300
 }
 
 /// Which diagnostic indicators to show in the scrollbar.
@@ -334,10 +408,11 @@ pub enum SnippetSortOrder {
     Inline,
     /// Place snippets at the bottom of the completion list
     Bottom,
+    /// Do not show snippets in the completion list
+    None,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
-#[schemars(deny_unknown_fields)]
 pub struct EditorSettingsContent {
     /// Whether the cursor blinks in the editor.
     ///
@@ -378,6 +453,8 @@ pub struct EditorSettingsContent {
     ///
     /// Default: 300
     pub hover_popover_delay: Option<u64>,
+    /// Status bar related settings
+    pub status_bar: Option<StatusBarContent>,
     /// Toolbar related settings
     pub toolbar: Option<ToolbarContent>,
     /// Scrollbar related settings
@@ -422,7 +499,7 @@ pub struct EditorSettingsContent {
     /// Default: always
     pub seed_search_query_from_cursor: Option<SeedQuerySetting>,
     pub use_smartcase_search: Option<bool>,
-    /// The key to use for adding multiple cursors
+    /// Determines the modifier to be used to add multiple cursors with the mouse. The open hover link mouse gestures will adapt such that it do not conflict with the multicursor modifier.
     ///
     /// Default: alt
     pub multi_cursor_modifier: Option<MultiCursorModifier>,
@@ -495,6 +572,27 @@ pub struct EditorSettingsContent {
     ///
     /// Default: true
     pub inline_code_actions: Option<bool>,
+
+    /// Drag and drop related settings
+    pub drag_and_drop_selection: Option<DragAndDropSelection>,
+
+    /// How to render LSP `textDocument/documentColor` colors in the editor.
+    ///
+    /// Default: [`DocumentColorsRenderMode::Inlay`]
+    pub lsp_document_colors: Option<DocumentColorsRenderMode>,
+}
+
+// Status bar related settings
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct StatusBarContent {
+    /// Whether to display the active language button in the status bar.
+    ///
+    /// Default: true
+    pub active_language_button: Option<bool>,
+    /// Whether to show the cursor position button in the status bar.
+    ///
+    /// Default: true
+    pub cursor_position_button: Option<bool>,
 }
 
 // Toolbar related settings
@@ -566,6 +664,11 @@ pub struct MinimapContent {
     /// Default: never
     pub show: Option<ShowMinimap>,
 
+    /// Where to show the minimap in the editor.
+    ///
+    /// Default: [`DisplayIn::ActiveEditor`]
+    pub display_in: Option<DisplayIn>,
+
     /// When to show the minimap thumb.
     ///
     /// Default: always
@@ -580,6 +683,11 @@ pub struct MinimapContent {
     ///
     /// Default: inherits editor line highlights setting
     pub current_line_highlight: Option<Option<CurrentLineHighlight>>,
+
+    /// Maximum number of columns to display in the minimap.
+    ///
+    /// Default: 80
+    pub max_width_columns: Option<num::NonZeroU32>,
 }
 
 /// Forcefully enable or disable the scrollbar for each axis
@@ -603,6 +711,10 @@ pub struct GutterContent {
     ///
     /// Default: true
     pub line_numbers: Option<bool>,
+    /// Minimum number of characters to reserve space for in the gutter.
+    ///
+    /// Default: 4
+    pub min_line_number_digits: Option<usize>,
     /// Whether to show runnable buttons in the gutter.
     ///
     /// Default: true
@@ -698,10 +810,8 @@ impl Settings for EditorSettings {
             if gutter.line_numbers.is_some() {
                 old_gutter.line_numbers = gutter.line_numbers
             }
-        } else {
-            if gutter != GutterContent::default() {
-                current.gutter = Some(gutter)
-            }
+        } else if gutter != GutterContent::default() {
+            current.gutter = Some(gutter)
         }
         if let Some(b) = vscode.read_bool("editor.scrollBeyondLastLine") {
             current.scroll_beyond_last_line = Some(if b {
@@ -798,6 +908,8 @@ impl Settings for EditorSettings {
         let mut minimap = MinimapContent::default();
         let minimap_enabled = vscode.read_bool("editor.minimap.enabled").unwrap_or(true);
         let autohide = vscode.read_bool("editor.minimap.autohide");
+        let mut max_width_columns: Option<u32> = None;
+        vscode.u32_setting("editor.minimap.maxColumn", &mut max_width_columns);
         if minimap_enabled {
             if let Some(false) = autohide {
                 minimap.show = Some(ShowMinimap::Always);
@@ -806,6 +918,9 @@ impl Settings for EditorSettings {
             }
         } else {
             minimap.show = Some(ShowMinimap::Never);
+        }
+        if let Some(max_width_columns) = max_width_columns {
+            minimap.max_width_columns = NonZeroU32::new(max_width_columns);
         }
 
         vscode.enum_setting(

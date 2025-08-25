@@ -98,7 +98,9 @@ impl Database {
                 user_id: ActiveValue::set(participant.user_id),
                 replica_id: ActiveValue::set(ReplicaId(replica_id)),
                 is_host: ActiveValue::set(true),
-                ..Default::default()
+                id: ActiveValue::NotSet,
+                committer_name: ActiveValue::Set(None),
+                committer_email: ActiveValue::Set(None),
             }
             .insert(&*tx)
             .await?;
@@ -110,7 +112,7 @@ impl Database {
     }
 
     pub async fn delete_project(&self, project_id: ProjectId) -> Result<()> {
-        self.weak_transaction(|tx| async move {
+        self.transaction(|tx| async move {
             project::Entity::delete_by_id(project_id).exec(&*tx).await?;
             Ok(())
         })
@@ -347,11 +349,11 @@ impl Database {
                                     serde_json::to_string(&repository.current_merge_conflicts)
                                         .unwrap(),
                                 )),
-
-                                // Old clients do not use abs path, entry ids or head_commit_details.
+                                // Old clients do not use abs path, entry ids, head_commit_details, or merge_message.
                                 abs_path: ActiveValue::set(String::new()),
                                 entry_ids: ActiveValue::set("[]".into()),
                                 head_commit_details: ActiveValue::set(None),
+                                merge_message: ActiveValue::set(None),
                             }
                         }),
                     )
@@ -500,6 +502,7 @@ impl Database {
                 current_merge_conflicts: ActiveValue::Set(Some(
                     serde_json::to_string(&update.current_merge_conflicts).unwrap(),
                 )),
+                merge_message: ActiveValue::set(update.merge_message.clone()),
             })
             .on_conflict(
                 OnConflict::columns([
@@ -513,6 +516,7 @@ impl Database {
                     project_repository::Column::AbsPath,
                     project_repository::Column::CurrentMergeConflicts,
                     project_repository::Column::HeadCommitDetails,
+                    project_repository::Column::MergeMessage,
                 ])
                 .to_owned(),
             )
@@ -690,13 +694,17 @@ impl Database {
                 project_id: ActiveValue::set(project_id),
                 id: ActiveValue::set(server.id as i64),
                 name: ActiveValue::set(server.name.clone()),
+                capabilities: ActiveValue::set(update.capabilities.clone()),
             })
             .on_conflict(
                 OnConflict::columns([
                     language_server::Column::ProjectId,
                     language_server::Column::Id,
                 ])
-                .update_column(language_server::Column::Name)
+                .update_columns([
+                    language_server::Column::Name,
+                    language_server::Column::Capabilities,
+                ])
                 .to_owned(),
             )
             .exec(&*tx)
@@ -784,13 +792,27 @@ impl Database {
         project_id: ProjectId,
         connection: ConnectionId,
         user_id: UserId,
+        committer_name: Option<String>,
+        committer_email: Option<String>,
     ) -> Result<TransactionGuard<(Project, ReplicaId)>> {
-        self.project_transaction(project_id, |tx| async move {
-            let (project, role) = self
-                .access_project(project_id, connection, Capability::ReadOnly, &tx)
-                .await?;
-            self.join_project_internal(project, user_id, connection, role, &tx)
+        self.project_transaction(project_id, move |tx| {
+            let committer_name = committer_name.clone();
+            let committer_email = committer_email.clone();
+            async move {
+                let (project, role) = self
+                    .access_project(project_id, connection, Capability::ReadOnly, &tx)
+                    .await?;
+                self.join_project_internal(
+                    project,
+                    user_id,
+                    committer_name,
+                    committer_email,
+                    connection,
+                    role,
+                    &tx,
+                )
                 .await
+            }
         })
         .await
     }
@@ -799,6 +821,8 @@ impl Database {
         &self,
         project: project::Model,
         user_id: UserId,
+        committer_name: Option<String>,
+        committer_email: Option<String>,
         connection: ConnectionId,
         role: ChannelRole,
         tx: &DatabaseTransaction,
@@ -822,7 +846,9 @@ impl Database {
             user_id: ActiveValue::set(user_id),
             replica_id: ActiveValue::set(replica_id),
             is_host: ActiveValue::set(false),
-            ..Default::default()
+            id: ActiveValue::NotSet,
+            committer_name: ActiveValue::set(committer_name),
+            committer_email: ActiveValue::set(committer_email),
         }
         .insert(tx)
         .await?;
@@ -919,21 +945,21 @@ impl Database {
                 let current_merge_conflicts = db_repository_entry
                     .current_merge_conflicts
                     .as_ref()
-                    .map(|conflicts| serde_json::from_str(&conflicts))
+                    .map(|conflicts| serde_json::from_str(conflicts))
                     .transpose()?
                     .unwrap_or_default();
 
                 let branch_summary = db_repository_entry
                     .branch_summary
                     .as_ref()
-                    .map(|branch_summary| serde_json::from_str(&branch_summary))
+                    .map(|branch_summary| serde_json::from_str(branch_summary))
                     .transpose()?
                     .unwrap_or_default();
 
                 let head_commit_details = db_repository_entry
                     .head_commit_details
                     .as_ref()
-                    .map(|head_commit_details| serde_json::from_str(&head_commit_details))
+                    .map(|head_commit_details| serde_json::from_str(head_commit_details))
                     .transpose()?
                     .unwrap_or_default();
 
@@ -966,6 +992,7 @@ impl Database {
                         head_commit_details,
                         scan_id: db_repository_entry.scan_id as u64,
                         is_last_update: true,
+                        merge_message: db_repository_entry.merge_message,
                     });
                 }
             }
@@ -1026,16 +1053,21 @@ impl Database {
                     user_id: collaborator.user_id,
                     replica_id: collaborator.replica_id,
                     is_host: collaborator.is_host,
+                    committer_name: collaborator.committer_name,
+                    committer_email: collaborator.committer_email,
                 })
                 .collect(),
             worktrees,
             repositories,
             language_servers: language_servers
                 .into_iter()
-                .map(|language_server| proto::LanguageServer {
-                    id: language_server.id as u64,
-                    name: language_server.name,
-                    worktree_id: None,
+                .map(|language_server| LanguageServer {
+                    server: proto::LanguageServer {
+                        id: language_server.id as u64,
+                        name: language_server.name,
+                        worktree_id: None,
+                    },
+                    capabilities: language_server.capabilities,
                 })
                 .collect(),
         };
@@ -1289,10 +1321,10 @@ impl Database {
             .await?;
 
         let mut connection_ids = HashSet::default();
-        if let Some(host_connection) = project.host_connection().log_err() {
-            if !exclude_dev_server {
-                connection_ids.insert(host_connection);
-            }
+        if let Some(host_connection) = project.host_connection().log_err()
+            && !exclude_dev_server
+        {
+            connection_ids.insert(host_connection);
         }
 
         while let Some(collaborator) = collaborators.next().await {

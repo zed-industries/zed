@@ -82,7 +82,7 @@ impl UserBackfiller {
             {
                 Ok(github_user) => {
                     self.db
-                        .get_or_create_user_by_github_account(
+                        .update_or_create_user_by_github_account(
                             &user.github_login,
                             github_user.id,
                             user.email_address.as_deref(),
@@ -130,17 +130,17 @@ impl UserBackfiller {
             .and_then(|value| value.parse::<i64>().ok())
             .and_then(|value| DateTime::from_timestamp(value, 0));
 
-        if rate_limit_remaining == Some(0) {
-            if let Some(reset_at) = rate_limit_reset {
-                let now = Utc::now();
-                if reset_at > now {
-                    let sleep_duration = reset_at - now;
-                    log::info!(
-                        "rate limit reached. Sleeping for {} seconds",
-                        sleep_duration.num_seconds()
-                    );
-                    self.executor.sleep(sleep_duration.to_std().unwrap()).await;
-                }
+        if rate_limit_remaining == Some(0)
+            && let Some(reset_at) = rate_limit_reset
+        {
+            let now = Utc::now();
+            if reset_at > now {
+                let sleep_duration = reset_at - now;
+                log::info!(
+                    "rate limit reached. Sleeping for {} seconds",
+                    sleep_duration.num_seconds()
+                );
+                self.executor.sleep(sleep_duration.to_std().unwrap()).await;
             }
         }
 

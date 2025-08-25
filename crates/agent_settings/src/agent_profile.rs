@@ -17,29 +17,6 @@ pub mod builtin_profiles {
     }
 }
 
-#[derive(Default)]
-pub struct GroupedAgentProfiles {
-    pub builtin: IndexMap<AgentProfileId, AgentProfile>,
-    pub custom: IndexMap<AgentProfileId, AgentProfile>,
-}
-
-impl GroupedAgentProfiles {
-    pub fn from_settings(settings: &crate::AgentSettings) -> Self {
-        let mut builtin = IndexMap::default();
-        let mut custom = IndexMap::default();
-
-        for (profile_id, profile) in settings.profiles.clone() {
-            if builtin_profiles::is_builtin(&profile_id) {
-                builtin.insert(profile_id, profile);
-            } else {
-                custom.insert(profile_id, profile);
-            }
-        }
-
-        Self { builtin, custom }
-    }
-}
-
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct AgentProfileId(pub Arc<str>);
 
@@ -63,12 +40,26 @@ impl Default for AgentProfileId {
 
 /// A profile for the Zed Agent that controls its behavior.
 #[derive(Debug, Clone)]
-pub struct AgentProfile {
+pub struct AgentProfileSettings {
     /// The name of the profile.
     pub name: SharedString,
     pub tools: IndexMap<Arc<str>, bool>,
     pub enable_all_context_servers: bool,
     pub context_servers: IndexMap<Arc<str>, ContextServerPreset>,
+}
+
+impl AgentProfileSettings {
+    pub fn is_tool_enabled(&self, tool_name: &str) -> bool {
+        self.tools.get(tool_name) == Some(&true)
+    }
+
+    pub fn is_context_server_tool_enabled(&self, server_id: &str, tool_name: &str) -> bool {
+        self.enable_all_context_servers
+            || self
+                .context_servers
+                .get(server_id)
+                .is_some_and(|preset| preset.tools.get(tool_name) == Some(&true))
+    }
 }
 
 #[derive(Debug, Clone, Default)]

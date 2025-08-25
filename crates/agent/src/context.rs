@@ -1,31 +1,26 @@
-use std::fmt::{self, Display, Formatter, Write as _};
-use std::hash::{Hash, Hasher};
-use std::path::PathBuf;
-use std::{ops::Range, path::Path, sync::Arc};
-
-use assistant_context_editor::AssistantContext;
+use crate::thread::Thread;
+use assistant_context::AssistantContext;
 use assistant_tool::outline;
-use collections::{HashMap, HashSet};
-use editor::display_map::CreaseId;
-use editor::{Addon, Editor};
+use collections::HashSet;
 use futures::future;
 use futures::{FutureExt, future::Shared};
-use gpui::{App, AppContext as _, Entity, SharedString, Subscription, Task};
+use gpui::{App, AppContext as _, ElementId, Entity, SharedString, Task};
+use icons::IconName;
 use language::{Buffer, ParseStatus};
 use language_model::{LanguageModelImage, LanguageModelRequestMessage, MessageContent};
 use project::{Project, ProjectEntryId, ProjectPath, Worktree};
 use prompt_store::{PromptStore, UserPromptId};
 use ref_cast::RefCast;
 use rope::Point;
+use std::fmt::{self, Display, Formatter, Write as _};
+use std::hash::{Hash, Hasher};
+use std::path::PathBuf;
+use std::{ops::Range, path::Path, sync::Arc};
 use text::{Anchor, OffsetRangeExt as _};
-use ui::{Context, ElementId, IconName};
 use util::markdown::MarkdownCodeBlock;
 use util::{ResultExt as _, post_inc};
 
-use crate::context_store::{ContextStore, ContextStoreEvent};
-use crate::thread::Thread;
-
-pub const RULES_ICON: IconName = IconName::Context;
+pub const RULES_ICON: IconName = IconName::Reader;
 
 pub enum ContextKind {
     File,
@@ -45,10 +40,10 @@ impl ContextKind {
             ContextKind::File => IconName::File,
             ContextKind::Directory => IconName::Folder,
             ContextKind::Symbol => IconName::Code,
-            ContextKind::Selection => IconName::Context,
-            ContextKind::FetchedUrl => IconName::Globe,
-            ContextKind::Thread => IconName::MessageBubbles,
-            ContextKind::TextThread => IconName::MessageBubbles,
+            ContextKind::Selection => IconName::Reader,
+            ContextKind::FetchedUrl => IconName::ToolWeb,
+            ContextKind::Thread => IconName::Thread,
+            ContextKind::TextThread => IconName::TextThread,
             ContextKind::Rules => RULES_ICON,
             ContextKind::Image => IconName::Image,
         }
@@ -206,24 +201,24 @@ impl FileContextHandle {
                         parse_status.changed().await.log_err();
                     }
 
-                    if let Ok(snapshot) = buffer.read_with(cx, |buffer, _| buffer.snapshot()) {
-                        if let Some(outline) = snapshot.outline(None) {
-                            let items = outline
-                                .items
-                                .into_iter()
-                                .map(|item| item.to_point(&snapshot));
+                    if let Ok(snapshot) = buffer.read_with(cx, |buffer, _| buffer.snapshot())
+                        && let Some(outline) = snapshot.outline(None)
+                    {
+                        let items = outline
+                            .items
+                            .into_iter()
+                            .map(|item| item.to_point(&snapshot));
 
-                            if let Ok(outline_text) =
-                                outline::render_outline(items, None, 0, usize::MAX).await
-                            {
-                                let context = AgentContext::File(FileContext {
-                                    handle: self,
-                                    full_path,
-                                    text: outline_text.into(),
-                                    is_outline: true,
-                                });
-                                return Some((context, vec![buffer]));
-                            }
+                        if let Ok(outline_text) =
+                            outline::render_outline(items, None, 0, usize::MAX).await
+                        {
+                            let context = AgentContext::File(FileContext {
+                                handle: self,
+                                full_path,
+                                text: outline_text.into(),
+                                is_outline: true,
+                            });
+                            return Some((context, vec![buffer]));
                         }
                     }
                 }
@@ -367,7 +362,7 @@ impl Display for DirectoryContext {
         let mut is_first = true;
         for descendant in &self.descendants {
             if !is_first {
-                write!(f, "\n")?;
+                writeln!(f)?;
             } else {
                 is_first = false;
             }
@@ -655,7 +650,7 @@ impl TextThreadContextHandle {
 impl Display for TextThreadContext {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         // TODO: escape title?
-        write!(f, "<text_thread title=\"{}\">\n", self.title)?;
+        writeln!(f, "<text_thread title=\"{}\">", self.title)?;
         write!(f, "{}", self.text.trim())?;
         write!(f, "\n</text_thread>")
     }
@@ -721,7 +716,7 @@ impl RulesContextHandle {
 impl Display for RulesContext {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         if let Some(title) = &self.title {
-            write!(f, "Rules title: {}\n", title)?;
+            writeln!(f, "Rules title: {}", title)?;
         }
         let code_block = MarkdownCodeBlock {
             tag: "",
@@ -734,6 +729,7 @@ impl Display for RulesContext {
 #[derive(Debug, Clone)]
 pub struct ImageContext {
     pub project_path: Option<ProjectPath>,
+    pub full_path: Option<Arc<Path>>,
     pub original_image: Arc<gpui::Image>,
     // TODO: handle this elsewhere and remove `ignore-interior-mutability` opt-out in clippy.toml
     // needed due to a false positive of `clippy::mutable_key_type`.
@@ -744,6 +740,7 @@ pub struct ImageContext {
 pub enum ImageStatus {
     Loading,
     Error,
+    Warning,
     Ready,
 }
 
@@ -760,11 +757,17 @@ impl ImageContext {
         self.image_task.clone().now_or_never().flatten()
     }
 
-    pub fn status(&self) -> ImageStatus {
+    pub fn status(&self, model: Option<&Arc<dyn language_model::LanguageModel>>) -> ImageStatus {
         match self.image_task.clone().now_or_never() {
             None => ImageStatus::Loading,
             Some(None) => ImageStatus::Error,
-            Some(Some(_)) => ImageStatus::Ready,
+            Some(Some(_)) => {
+                if model.is_some_and(|model| !model.supports_images()) {
+                    ImageStatus::Warning
+                } else {
+                    ImageStatus::Ready
+                }
+            }
         }
     }
 
@@ -1106,69 +1109,6 @@ impl Hash for AgentContextKey {
             AgentContextHandle::Rules(context) => context.hash_for_key(state),
             AgentContextHandle::Image(context) => context.hash_for_key(state),
         }
-    }
-}
-
-#[derive(Default)]
-pub struct ContextCreasesAddon {
-    creases: HashMap<AgentContextKey, Vec<(CreaseId, SharedString)>>,
-    _subscription: Option<Subscription>,
-}
-
-impl Addon for ContextCreasesAddon {
-    fn to_any(&self) -> &dyn std::any::Any {
-        self
-    }
-
-    fn to_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
-        Some(self)
-    }
-}
-
-impl ContextCreasesAddon {
-    pub fn new() -> Self {
-        Self {
-            creases: HashMap::default(),
-            _subscription: None,
-        }
-    }
-
-    pub fn add_creases(
-        &mut self,
-        context_store: &Entity<ContextStore>,
-        key: AgentContextKey,
-        creases: impl IntoIterator<Item = (CreaseId, SharedString)>,
-        cx: &mut Context<Editor>,
-    ) {
-        self.creases.entry(key).or_default().extend(creases);
-        self._subscription = Some(cx.subscribe(
-            &context_store,
-            |editor, _, event, cx| match event {
-                ContextStoreEvent::ContextRemoved(key) => {
-                    let Some(this) = editor.addon_mut::<Self>() else {
-                        return;
-                    };
-                    let (crease_ids, replacement_texts): (Vec<_>, Vec<_>) = this
-                        .creases
-                        .remove(key)
-                        .unwrap_or_default()
-                        .into_iter()
-                        .unzip();
-                    let ranges = editor
-                        .remove_creases(crease_ids, cx)
-                        .into_iter()
-                        .map(|(_, range)| range)
-                        .collect::<Vec<_>>();
-                    editor.unfold_ranges(&ranges, false, false, cx);
-                    editor.edit(ranges.into_iter().zip(replacement_texts), cx);
-                    cx.notify();
-                }
-            },
-        ))
-    }
-
-    pub fn into_inner(self) -> HashMap<AgentContextKey, Vec<(CreaseId, SharedString)>> {
-        self.creases
     }
 }
 

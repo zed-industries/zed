@@ -1,12 +1,13 @@
 use std::sync::Arc;
 
+use action_log::ActionLog;
 use anyhow::{Result, anyhow, bail};
-use assistant_tool::{ActionLog, Tool, ToolResult, ToolSource};
+use assistant_tool::{Tool, ToolResult, ToolSource};
 use context_server::{ContextServerId, types};
 use gpui::{AnyWindowHandle, App, Entity, Task};
+use icons::IconName;
 use language_model::{LanguageModel, LanguageModelRequest, LanguageModelToolSchemaFormat};
 use project::{Project, context_server_store::ContextServerStore};
-use ui::IconName;
 
 pub struct ContextServerTool {
     store: Entity<ContextServerStore>,
@@ -38,7 +39,7 @@ impl Tool for ContextServerTool {
     }
 
     fn icon(&self) -> IconName {
-        IconName::Cog
+        IconName::ToolHammer
     }
 
     fn source(&self) -> ToolSource {
@@ -47,7 +48,11 @@ impl Tool for ContextServerTool {
         }
     }
 
-    fn needs_confirmation(&self, _: &serde_json::Value, _: &App) -> bool {
+    fn needs_confirmation(&self, _: &serde_json::Value, _: &Entity<Project>, _: &App) -> bool {
+        true
+    }
+
+    fn may_perform_edits(&self) -> bool {
         true
     }
 
@@ -81,15 +86,13 @@ impl Tool for ContextServerTool {
     ) -> ToolResult {
         if let Some(server) = self.store.read(cx).get_running_server(&self.server_id) {
             let tool_name = self.tool.name.clone();
-            let server_clone = server.clone();
-            let input_clone = input.clone();
 
             cx.spawn(async move |_cx| {
-                let Some(protocol) = server_clone.client() else {
+                let Some(protocol) = server.client() else {
                     bail!("Context server not initialized");
                 };
 
-                let arguments = if let serde_json::Value::Object(map) = input_clone {
+                let arguments = if let serde_json::Value::Object(map) = input {
                     Some(map.into_iter().collect())
                 } else {
                     None
@@ -100,7 +103,15 @@ impl Tool for ContextServerTool {
                     tool_name,
                     arguments
                 );
-                let response = protocol.run_tool(tool_name, arguments).await?;
+                let response = protocol
+                    .request::<context_server::types::requests::CallTool>(
+                        context_server::types::CallToolParams {
+                            name: tool_name,
+                            arguments,
+                            meta: None,
+                        },
+                    )
+                    .await?;
 
                 let mut result = String::new();
                 for content in response.content {
@@ -110,6 +121,9 @@ impl Tool for ContextServerTool {
                         }
                         types::ToolResponseContent::Image { .. } => {
                             log::warn!("Ignoring image content from tool response");
+                        }
+                        types::ToolResponseContent::Audio { .. } => {
+                            log::warn!("Ignoring audio content from tool response");
                         }
                         types::ToolResponseContent::Resource { .. } => {
                             log::warn!("Ignoring resource content from tool response");

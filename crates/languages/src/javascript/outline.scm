@@ -14,6 +14,15 @@
       "(" @context
       ")" @context)) @item
 
+(generator_function_declaration
+    "async"? @context
+    "function" @context
+    "*" @context
+    name: (_) @name
+    parameters: (formal_parameters
+      "(" @context
+      ")" @context)) @item
+
 (interface_declaration
     "interface" @context
     name: (_) @name) @item
@@ -22,12 +31,16 @@
     (export_statement
         (lexical_declaration
             ["let" "const"] @context
+            ; Multiple names may be exported - @item is on the declarator to keep
+            ; ranges distinct.
             (variable_declarator
                 name: (_) @name) @item)))
 
 (program
     (lexical_declaration
         ["let" "const"] @context
+        ; Multiple names may be defined - @item is on the declarator to keep
+        ; ranges distinct.
         (variable_declarator
             name: (_) @name) @item))
 
@@ -75,7 +88,30 @@
         ] @context
         (#any-of? @_name "it" "test" "describe" "context" "suite")
         arguments: (
-            arguments . (string (string_fragment) @name)
+            arguments . [
+                (string (string_fragment) @name)
+                (identifier) @name
+            ]
+        )
+    )
+) @item
+
+; Add support for parameterized tests
+(
+    (call_expression
+        function: (call_expression
+            function: (member_expression
+                object: [(identifier) @_name (member_expression object: (identifier) @_name)]
+                property: (property_identifier) @_property
+            )
+            (#any-of? @_name "it" "test" "describe" "context" "suite")
+            (#eq? @_property "each")
+        )
+        arguments: (
+            arguments . [
+                (string (string_fragment) @name)
+                (identifier) @name
+            ]
         )
     )
 ) @item

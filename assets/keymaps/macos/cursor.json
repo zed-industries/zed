@@ -8,8 +8,7 @@
       "cmd-shift-i": "agent::ToggleFocus",
       "cmd-l": "agent::ToggleFocus",
       "cmd-shift-l": "agent::ToggleFocus",
-      "cmd-alt-b": "agent::ToggleFocus",
-      "cmd-shift-j": "agent::OpenConfiguration"
+      "cmd-shift-j": "agent::OpenSettings"
     }
   },
   {
@@ -18,8 +17,8 @@
     "bindings": {
       "cmd-i": "agent::ToggleFocus",
       "cmd-shift-i": "agent::ToggleFocus",
-      "cmd-shift-l": "assistant::QuoteSelection", // In cursor uses "Ask" mode
-      "cmd-l": "assistant::QuoteSelection", // In cursor uses "Agent" mode
+      "cmd-shift-l": "agent::QuoteSelection", // In cursor uses "Ask" mode
+      "cmd-l": "agent::QuoteSelection", // In cursor uses "Agent" mode
       "cmd-k": "assistant::InlineAssist",
       "cmd-shift-k": "assistant::InsertIntoEditor"
     }
@@ -28,7 +27,8 @@
     "context": "InlineAssistEditor",
     "use_key_equivalents": true,
     "bindings": {
-      "cmd-shift-backspace": "editor::Cancel"
+      "cmd-shift-backspace": "editor::Cancel",
+      "cmd-enter": "menu::Confirm"
       // "alt-enter": // Quick Question
       // "cmd-shift-enter": // Full File Context
       // "cmd-shift-k": // Toggle input focus (editor <> inline assist)
@@ -42,7 +42,6 @@
       "cmd-shift-i": "workspace::ToggleRightDock",
       "cmd-l": "workspace::ToggleRightDock",
       "cmd-shift-l": "workspace::ToggleRightDock",
-      "cmd-alt-b": "workspace::ToggleRightDock",
       "cmd-w": "workspace::ToggleRightDock", // technically should close chat
       "cmd-.": "agent::ToggleProfileSelector",
       "cmd-/": "agent::ToggleModelSelector",

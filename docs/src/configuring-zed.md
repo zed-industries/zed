@@ -38,22 +38,11 @@ Extensions that provide language servers may also provide default settings for t
 ```json
 {
   "active_pane_modifiers": {
-    "magnification": 1.0,
     "border_size": 0.0,
     "inactive_opacity": 1.0
   }
 }
 ```
-
-### Magnification
-
-- Description: Scale by which to zoom the active pane. When set to `1.0`, the active pane has the same size as others, but when set to a larger value, the active pane takes up more space.
-- Setting: `magnification`
-- Default: `1.0`
-
-**Options**
-
-`float` values
 
 ### Border size
 
@@ -123,7 +112,7 @@ Non-negative `float` values
 
 **Options**
 
-You can find the names of your currently installed extensions by listing the subfolders under the [extension installation location](./extensions/installing-extensions#installation-location):
+You can find the names of your currently installed extensions by listing the subfolders under the [extension installation location](./extensions/installing-extensions.md#installation-location):
 
 On MacOS:
 
@@ -305,11 +294,11 @@ Define extensions which should be installed (`true`) or never installed (`false`
 
 - Description: The name of a font to use for rendering text in the editor.
 - Setting: `buffer_font_family`
-- Default: `Zed Plex Mono`
+- Default: `.ZedMono`. This currently aliases to [Lilex](https://lilex.myrt.co).
 
 **Options**
 
-The name of any font family installed on the user's system
+The name of any font family installed on the user's system, or `".ZedMono"`.
 
 ## Buffer Font Features
 
@@ -388,6 +377,20 @@ For example, to use `Nerd Font` as a fallback, add the following to your setting
 **Options**
 
 `"standard"`, `"comfortable"` or `{ "custom": float }` (`1` is compact, `2` is loose)
+
+## Close on File Delete
+
+- Description: Whether to automatically close editor tabs when their corresponding files are deleted from disk.
+- Setting: `close_on_file_delete`
+- Default: `false`
+
+**Options**
+
+`boolean` values
+
+When enabled, this setting will automatically close tabs for files that have been deleted from the file system. This is particularly useful for workflows involving temporary or scratch files that are frequently created and deleted. When disabled (default), deleted files remain open with a strikethrough through their tab title.
+
+Note: Dirty files (files with unsaved changes) will not be automatically closed even when this setting is enabled, ensuring you don't lose unsaved work.
 
 ## Confirm Quit
 
@@ -536,12 +539,6 @@ List of `string` values
 - Setting: `selection_highlight`
 - Default: `true`
 
-## LSP Highlight Debounce
-
-- Description: The debounce delay before querying highlights from the language server based on the current cursor location.
-- Setting: `lsp_highlight_debounce`
-- Default: `75`
-
 ## Cursor Blink
 
 - Description: Whether or not the cursor blinks.
@@ -634,6 +631,12 @@ List of `string` values
 
 ```json
 "snippet_sort_order": "bottom"
+```
+
+4. Do not show snippets in the completion list at all:
+
+```json
+"snippet_sort_order": "none"
 ```
 
 ## Editor Scrollbar
@@ -1213,6 +1216,19 @@ or
 
 `boolean` values
 
+### Drag And Drop Selection
+
+- Description: Whether to allow drag and drop text selection in buffer. `delay` is the milliseconds that must elapse before drag and drop is allowed. Otherwise, a new text selection is created.
+- Setting: `drag_and_drop_selection`
+- Default:
+
+```json
+"drag_and_drop_selection": {
+  "enabled": true,
+  "delay": 300
+}
+```
+
 ## Editor Toolbar
 
 - Description: Whether or not to show various elements in the editor toolbar.
@@ -1252,6 +1268,19 @@ Each option controls displaying of a particular toolbar element. If all elements
 **Options**
 
 `boolean` values
+
+## Status Bar
+
+- Description: Control various elements in the status bar. Note that some items in the status bar have their own settings set elsewhere.
+- Setting: `status_bar`
+- Default:
+
+```json
+"status_bar": {
+  "active_language_button": true,
+  "cursor_position_button": true
+},
+```
 
 ## LSP
 
@@ -1303,6 +1332,18 @@ While other options may be changed at a runtime and should be placed under `sett
 - Description: The debounce delay in milliseconds before querying highlights from the language server based on the current cursor location.
 - Setting: `lsp_highlight_debounce`
 - Default: `75`
+
+## Global LSP Settings
+
+- Description: Common language server settings.
+- Setting: `global_lsp_settings`
+- Default:
+
+```json
+"global_lsp_settings": {
+  "button": true
+}
+```
 
 **Options**
 
@@ -1773,7 +1814,6 @@ Example:
 {
   "git": {
     "inline_blame": {
-      "enabled": true,
       "delay_ms": 500
     }
   }
@@ -1786,7 +1826,6 @@ Example:
 {
   "git": {
     "inline_blame": {
-      "enabled": true,
       "show_commit_summary": true
     }
   }
@@ -1799,8 +1838,19 @@ Example:
 {
   "git": {
     "inline_blame": {
-      "enabled": true,
       "min_column": 80
+    }
+  }
+}
+```
+
+5. Set the padding between the end of the line and the inline blame hint, in ems:
+
+```json
+{
+  "git": {
+    "inline_blame": {
+      "padding": 10
     }
   }
 }
@@ -1920,6 +1970,30 @@ Example:
 **Options**
 
 `boolean` values
+
+## Multi Cursor Modifier
+
+- Description: Determines the modifier to be used to add multiple cursors with the mouse. The open hover link mouse gestures will adapt such that it do not conflict with the multicursor modifier.
+- Setting: `multi_cursor_modifier`
+- Default: `alt`
+
+**Options**
+
+1. Maps to `Alt` on Linux and Windows and to `Option` on MacOS:
+
+```json
+{
+  "multi_cursor_modifier": "alt"
+}
+```
+
+2. Maps `Control` on Linux and Windows and to `Command` on MacOS:
+
+```json
+{
+  "multi_cursor_modifier": "cmd_or_ctrl" // alias: "cmd", "ctrl"
+}
+```
 
 ## Hover Popover Enabled
 
@@ -2175,7 +2249,7 @@ The following URI schemes are supported:
 
 `http` will be used when no scheme is specified.
 
-By default no proxy will be used, or Zed will attempt to retrieve proxy settings from environment variables, such as `http_proxy`, `HTTP_PROXY`, `https_proxy`, `HTTPS_PROXY`, `all_proxy`, `ALL_PROXY`.
+By default no proxy will be used, or Zed will attempt to retrieve proxy settings from environment variables, such as `http_proxy`, `HTTP_PROXY`, `https_proxy`, `HTTPS_PROXY`, `all_proxy`, `ALL_PROXY`, `no_proxy` and `NO_PROXY`.
 
 For example, to set an `http` proxy, add the following to your settings:
 
@@ -2192,6 +2266,8 @@ Or to set a `socks5` proxy:
   "proxy": "socks5h://localhost:10808"
 }
 ```
+
+If you wish to exclude certain hosts from using the proxy, set the `NO_PROXY` environment variable. This accepts a comma-separated list of hostnames, host suffixes, IPv4/IPv6 addresses or blocks that should not use the proxy. For example if your environment included `NO_PROXY="google.com, 192.168.1.0/24"` all hosts in `192.168.1.*`, `google.com` and `*.google.com` would bypass the proxy. See [reqwest NoProxy docs](https://docs.rs/reqwest/latest/reqwest/struct.NoProxy.html#method.from_string) for more.
 
 ## Preview tabs
 
@@ -2349,6 +2425,7 @@ Examples:
 {
   "completions": {
     "words": "fallback",
+    "words_min_length": 3,
     "lsp": true,
     "lsp_fetch_timeout_ms": 0,
     "lsp_insert_mode": "replace_suffix"
@@ -2367,6 +2444,17 @@ Examples:
 1. `enabled` - Always fetch document's words for completions along with LSP completions
 2. `fallback` - Only if LSP response errors or times out, use document's words to show completions
 3. `disabled` - Never fetch or complete document's words for completions (word-based completions can still be queried via a separate action)
+
+### Min Words Query Length
+
+- Description: Minimum number of characters required to automatically trigger word-based completions.
+  Before that value, it's still possible to trigger the words-based completion manually with the corresponding editor command.
+- Setting: `words_min_length`
+- Default: `3`
+
+**Options**
+
+Positive integer values
 
 ### LSP
 
@@ -2525,6 +2613,7 @@ List of `integer` column numbers
     "alternate_scroll": "off",
     "blinking": "terminal_controlled",
     "copy_on_select": false,
+    "keep_selection_on_copy": false,
     "dock": "bottom",
     "default_width": 640,
     "default_height": 320,
@@ -2539,6 +2628,7 @@ List of `integer` column numbers
     "font_features": null,
     "font_size": null,
     "line_height": "comfortable",
+    "minimum_contrast": 45,
     "option_as_meta": false,
     "button": true,
     "shell": "system",
@@ -2645,6 +2735,74 @@ List of `integer` column numbers
 {
   "terminal": {
     "copy_on_select": true
+  }
+}
+```
+
+### Terminal: Cursor Shape
+
+- Description: Whether or not selecting text in the terminal will automatically copy to the system clipboard.
+- Setting: `cursor_shape`
+- Default: `null` (defaults to block)
+
+**Options**
+
+1. A block that surrounds the following character
+
+```json
+{
+  "terminal": {
+    "cursor_shape": "block"
+  }
+}
+```
+
+2. A vertical bar
+
+```json
+{
+  "terminal": {
+    "cursor_shape": "bar"
+  }
+}
+```
+
+3. An underline / underscore that runs along the following character
+
+```json
+{
+  "terminal": {
+    "cursor_shape": "underline"
+  }
+}
+```
+
+4. A box drawn around the following character
+
+```json
+{
+  "terminal": {
+    "cursor_shape": "hollow"
+  }
+}
+```
+
+### Terminal: Keep Selection On Copy
+
+- Description: Whether or not to keep the selection in the terminal after copying text.
+- Setting: `keep_selection_on_copy`
+- Default: `false`
+
+**Options**
+
+`boolean` values
+
+**Example**
+
+```json
+{
+  "terminal": {
+    "keep_selection_on_copy": true
   }
 }
 ```
@@ -2762,6 +2920,30 @@ See Buffer Font Features
     "line_height": {
       "custom": 2
     }
+  }
+}
+```
+
+### Terminal: Minimum Contrast
+
+- Description: Controls the minimum contrast between foreground and background colors in the terminal. Uses the APCA (Accessible Perceptual Contrast Algorithm) for color adjustments. Set this to 0 to disable this feature.
+- Setting: `minimum_contrast`
+- Default: `45`
+
+**Options**
+
+`integer` values from 0 to 106. Common recommended values:
+
+- `0`: No contrast adjustment
+- `45`: Minimum for large fluent text (default)
+- `60`: Minimum for other content text
+- `75`: Minimum for body text
+- `90`: Preferred for body text
+
+```json
+{
+  "terminal": {
+    "minimum_contrast": 45
   }
 }
 ```
@@ -3032,8 +3214,14 @@ Run the `theme selector: toggle` action in the command palette to see a current 
 
 ## Vim
 
-- Description: Whether or not to enable vim mode (work in progress).
+- Description: Whether or not to enable vim mode. See the [Vim documentation](./vim.md) for more details on configuration.
 - Setting: `vim_mode`
+- Default: `false`
+
+## Helix Mode
+
+- Description: Whether or not to enable Helix mode. Enabling `helix_mode` also enables `vim_mode`. See the [Helix documentation](./helix.md) for more details.
+- Setting: `helix_mode`
 - Default: `false`
 
 ## Project Panel
@@ -3058,10 +3246,13 @@ Run the `theme selector: toggle` action in the command palette to see a current 
     "scrollbar": {
       "show": null
     },
+    "sticky_scroll": true,
     "show_diagnostics": "all",
     "indent_guides": {
       "show": "always"
-    }
+    },
+    "hide_root": false,
+    "starts_open": true
   }
 }
 ```
@@ -3272,30 +3463,7 @@ Run the `theme selector: toggle` action in the command palette to see a current 
 
 ## Agent
 
-- Description: Customize agent behavior
-- Setting: `agent`
-- Default:
-
-```json
-"agent": {
-  "version": "2",
-  "enabled": true,
-  "button": true,
-  "dock": "right",
-  "default_width": 640,
-  "default_height": 320,
-  "default_view": "thread",
-  "default_model": {
-    "provider": "zed.dev",
-    "model": "claude-sonnet-4"
-  },
-  "editor_model": {
-    "provider": "zed.dev",
-    "model": "claude-sonnet-4"
-  },
-  "single_file_review": true,
-}
-```
+Visit [the Configuration page](./ai/configuration.md) under the AI section to learn more about all the agent-related settings.
 
 ## Outline Panel
 
@@ -3363,11 +3531,11 @@ Float values between `0.0` and `0.9`, where:
 
 - Description: The name of the font to use for text in the UI.
 - Setting: `ui_font_family`
-- Default: `Zed Plex Sans`
+- Default: `.ZedSans`. This currently aliases to [IBM Plex](https://www.ibm.com/plex/).
 
 **Options**
 
-The name of any font family installed on the system.
+The name of any font family installed on the system, `".ZedSans"` to use the Zed-provided default, or `".SystemUIFont"` to use the system's default UI font (on macOS and Windows).
 
 ## UI Font Features
 
@@ -3455,7 +3623,7 @@ For example, to use `Nerd Font` as a fallback, add the following to your setting
   "soft_wrap": "none",
 
   "buffer_font_size": 18,
-  "buffer_font_family": "Zed Plex Mono",
+  "buffer_font_family": ".ZedMono",
 
   "autosave": "on_focus_change",
   "format_on_save": "off",

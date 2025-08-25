@@ -196,7 +196,7 @@ async fn test_matching_paths(cx: &mut TestAppContext) {
 
     cx.simulate_input("bna");
     picker.update(cx, |picker, _| {
-        assert_eq!(picker.delegate.matches.len(), 2);
+        assert_eq!(picker.delegate.matches.len(), 3);
     });
     cx.dispatch_action(SelectNext);
     cx.dispatch_action(Confirm);
@@ -209,7 +209,7 @@ async fn test_matching_paths(cx: &mut TestAppContext) {
         "bandana",
         "./bandana",
         ".\\bandana",
-        util::separator!("a/bandana"),
+        util::path!("a/bandana"),
         "b/bandana",
         "b\\bandana",
         " bandana",
@@ -218,6 +218,7 @@ async fn test_matching_paths(cx: &mut TestAppContext) {
         " ndan ",
         " band ",
         "a bandana",
+        "bandana:",
     ] {
         picker
             .update_in(cx, |picker, window, cx| {
@@ -229,7 +230,12 @@ async fn test_matching_paths(cx: &mut TestAppContext) {
         picker.update(cx, |picker, _| {
             assert_eq!(
                 picker.delegate.matches.len(),
-                1,
+                // existence of CreateNew option depends on whether path already exists
+                if bandana_query == util::path!("a/bandana") {
+                    1
+                } else {
+                    2
+                },
                 "Wrong number of matches for bandana query '{bandana_query}'. Matches: {:?}",
                 picker.delegate.matches
             );
@@ -245,6 +251,53 @@ async fn test_matching_paths(cx: &mut TestAppContext) {
             );
         });
     }
+}
+
+#[gpui::test]
+async fn test_matching_paths_with_colon(cx: &mut TestAppContext) {
+    let app_state = init_test(cx);
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(
+            path!("/root"),
+            json!({
+                "a": {
+                    "foo:bar.rs": "",
+                    "foo.rs": "",
+                }
+            }),
+        )
+        .await;
+
+    let project = Project::test(app_state.fs.clone(), [path!("/root").as_ref()], cx).await;
+
+    let (picker, _, cx) = build_find_picker(project, cx);
+
+    // 'foo:' matches both files
+    cx.simulate_input("foo:");
+    picker.update(cx, |picker, _| {
+        assert_eq!(picker.delegate.matches.len(), 3);
+        assert_match_at_position(picker, 0, "foo.rs");
+        assert_match_at_position(picker, 1, "foo:bar.rs");
+    });
+
+    // 'foo:b' matches one of the files
+    cx.simulate_input("b");
+    picker.update(cx, |picker, _| {
+        assert_eq!(picker.delegate.matches.len(), 2);
+        assert_match_at_position(picker, 0, "foo:bar.rs");
+    });
+
+    cx.dispatch_action(editor::actions::Backspace);
+
+    // 'foo:1' matches both files, specifying which row to jump to
+    cx.simulate_input("1");
+    picker.update(cx, |picker, _| {
+        assert_eq!(picker.delegate.matches.len(), 3);
+        assert_match_at_position(picker, 0, "foo.rs");
+        assert_match_at_position(picker, 1, "foo:bar.rs");
+    });
 }
 
 #[gpui::test]
@@ -269,9 +322,9 @@ async fn test_unicode_paths(cx: &mut TestAppContext) {
 
     cx.simulate_input("g");
     picker.update(cx, |picker, _| {
-        assert_eq!(picker.delegate.matches.len(), 1);
+        assert_eq!(picker.delegate.matches.len(), 2);
+        assert_match_at_position(picker, 1, "g");
     });
-    cx.dispatch_action(SelectNext);
     cx.dispatch_action(Confirm);
     cx.read(|cx| {
         let active_editor = workspace.read(cx).active_item_as::<Editor>(cx).unwrap();
@@ -365,13 +418,12 @@ async fn test_complex_path(cx: &mut TestAppContext) {
 
     cx.simulate_input("t");
     picker.update(cx, |picker, _| {
-        assert_eq!(picker.delegate.matches.len(), 1);
+        assert_eq!(picker.delegate.matches.len(), 2);
         assert_eq!(
             collect_search_matches(picker).search_paths_only(),
             vec![PathBuf::from("其他/S数据表格/task.xlsx")],
         )
     });
-    cx.dispatch_action(SelectNext);
     cx.dispatch_action(Confirm);
     cx.read(|cx| {
         let active_editor = workspace.read(cx).active_item_as::<Editor>(cx).unwrap();
@@ -416,8 +468,9 @@ async fn test_row_column_numbers_query_inside_file(cx: &mut TestAppContext) {
         })
         .await;
     picker.update(cx, |finder, _| {
+        assert_match_at_position(finder, 1, &query_inside_file.to_string());
         let finder = &finder.delegate;
-        assert_eq!(finder.matches.len(), 1);
+        assert_eq!(finder.matches.len(), 2);
         let latest_search_query = finder
             .latest_search_query
             .as_ref()
@@ -431,7 +484,6 @@ async fn test_row_column_numbers_query_inside_file(cx: &mut TestAppContext) {
         );
     });
 
-    cx.dispatch_action(SelectNext);
     cx.dispatch_action(Confirm);
 
     let editor = cx.update(|_, cx| workspace.read(cx).active_item_as::<Editor>(cx).unwrap());
@@ -491,8 +543,9 @@ async fn test_row_column_numbers_query_outside_file(cx: &mut TestAppContext) {
         })
         .await;
     picker.update(cx, |finder, _| {
+        assert_match_at_position(finder, 1, &query_outside_file.to_string());
         let delegate = &finder.delegate;
-        assert_eq!(delegate.matches.len(), 1);
+        assert_eq!(delegate.matches.len(), 2);
         let latest_search_query = delegate
             .latest_search_query
             .as_ref()
@@ -506,7 +559,6 @@ async fn test_row_column_numbers_query_outside_file(cx: &mut TestAppContext) {
         );
     });
 
-    cx.dispatch_action(SelectNext);
     cx.dispatch_action(Confirm);
 
     let editor = cx.update(|_, cx| workspace.read(cx).active_item_as::<Editor>(cx).unwrap());
@@ -561,7 +613,8 @@ async fn test_matching_cancellation(cx: &mut TestAppContext) {
         .await;
 
     picker.update(cx, |picker, _cx| {
-        assert_eq!(picker.delegate.matches.len(), 5)
+        // CreateNew option not shown in this case since file already exists
+        assert_eq!(picker.delegate.matches.len(), 5);
     });
 
     picker.update_in(cx, |picker, window, cx| {
@@ -739,7 +792,6 @@ async fn test_ignored_root(cx: &mut TestAppContext) {
         .update_in(cx, |workspace, window, cx| {
             workspace.active_pane().update(cx, |pane, cx| {
                 pane.close_active_item(&CloseActiveItem::default(), window, cx)
-                    .unwrap()
             })
         })
         .await
@@ -878,6 +930,148 @@ async fn test_single_file_worktrees(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_create_file_for_multiple_worktrees(cx: &mut TestAppContext) {
+    let app_state = init_test(cx);
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(
+            path!("/roota"),
+            json!({ "the-parent-dira": { "filea": "" } }),
+        )
+        .await;
+
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(
+            path!("/rootb"),
+            json!({ "the-parent-dirb": { "fileb": "" } }),
+        )
+        .await;
+
+    let project = Project::test(
+        app_state.fs.clone(),
+        [path!("/roota").as_ref(), path!("/rootb").as_ref()],
+        cx,
+    )
+    .await;
+
+    let (workspace, cx) = cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+    let (_worktree_id1, worktree_id2) = cx.read(|cx| {
+        let worktrees = workspace.read(cx).worktrees(cx).collect::<Vec<_>>();
+        (
+            WorktreeId::from_usize(worktrees[0].entity_id().as_u64() as usize),
+            WorktreeId::from_usize(worktrees[1].entity_id().as_u64() as usize),
+        )
+    });
+
+    let b_path = ProjectPath {
+        worktree_id: worktree_id2,
+        path: Arc::from(Path::new(path!("the-parent-dirb/fileb"))),
+    };
+    workspace
+        .update_in(cx, |workspace, window, cx| {
+            workspace.open_path(b_path, None, true, window, cx)
+        })
+        .await
+        .unwrap();
+
+    let finder = open_file_picker(&workspace, cx);
+
+    finder
+        .update_in(cx, |f, window, cx| {
+            f.delegate.spawn_search(
+                test_path_position(path!("the-parent-dirb/filec")),
+                window,
+                cx,
+            )
+        })
+        .await;
+    cx.run_until_parked();
+    finder.update_in(cx, |picker, window, cx| {
+        assert_eq!(picker.delegate.matches.len(), 1);
+        picker.delegate.confirm(false, window, cx)
+    });
+    cx.run_until_parked();
+    cx.read(|cx| {
+        let active_editor = workspace.read(cx).active_item_as::<Editor>(cx).unwrap();
+        let project_path = active_editor.read(cx).project_path(cx);
+        assert_eq!(
+            project_path,
+            Some(ProjectPath {
+                worktree_id: worktree_id2,
+                path: Arc::from(Path::new(path!("the-parent-dirb/filec")))
+            })
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_create_file_no_focused_with_multiple_worktrees(cx: &mut TestAppContext) {
+    let app_state = init_test(cx);
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(
+            path!("/roota"),
+            json!({ "the-parent-dira": { "filea": "" } }),
+        )
+        .await;
+
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(
+            path!("/rootb"),
+            json!({ "the-parent-dirb": { "fileb": "" } }),
+        )
+        .await;
+
+    let project = Project::test(
+        app_state.fs.clone(),
+        [path!("/roota").as_ref(), path!("/rootb").as_ref()],
+        cx,
+    )
+    .await;
+
+    let (workspace, cx) = cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+    let (_worktree_id1, worktree_id2) = cx.read(|cx| {
+        let worktrees = workspace.read(cx).worktrees(cx).collect::<Vec<_>>();
+        (
+            WorktreeId::from_usize(worktrees[0].entity_id().as_u64() as usize),
+            WorktreeId::from_usize(worktrees[1].entity_id().as_u64() as usize),
+        )
+    });
+
+    let finder = open_file_picker(&workspace, cx);
+
+    finder
+        .update_in(cx, |f, window, cx| {
+            f.delegate
+                .spawn_search(test_path_position(path!("rootb/filec")), window, cx)
+        })
+        .await;
+    cx.run_until_parked();
+    finder.update_in(cx, |picker, window, cx| {
+        assert_eq!(picker.delegate.matches.len(), 1);
+        picker.delegate.confirm(false, window, cx)
+    });
+    cx.run_until_parked();
+    cx.read(|cx| {
+        let active_editor = workspace.read(cx).active_item_as::<Editor>(cx).unwrap();
+        let project_path = active_editor.read(cx).project_path(cx);
+        assert_eq!(
+            project_path,
+            Some(ProjectPath {
+                worktree_id: worktree_id2,
+                path: Arc::from(Path::new("filec"))
+            })
+        );
+    });
+}
+
+#[gpui::test]
 async fn test_path_distance_ordering(cx: &mut TestAppContext) {
     let app_state = init_test(cx);
     app_state
@@ -960,7 +1154,8 @@ async fn test_search_worktree_without_files(cx: &mut TestAppContext) {
         .await;
     cx.read(|cx| {
         let finder = picker.read(cx);
-        assert_eq!(finder.delegate.matches.len(), 0);
+        assert_eq!(finder.delegate.matches.len(), 1);
+        assert_match_at_position(finder, 0, "dir");
     });
 }
 
@@ -1467,7 +1662,7 @@ async fn test_select_current_open_file_when_no_history(cx: &mut gpui::TestAppCon
 
     let picker = open_file_picker(&workspace, cx);
     picker.update(cx, |finder, _| {
-        assert_match_selection(&finder, 0, "1_qw");
+        assert_match_selection(finder, 0, "1_qw");
     });
 }
 
@@ -1519,12 +1714,13 @@ async fn test_keep_opened_file_on_top_of_search_results_and_select_next_one(
         })
         .await;
     picker.update(cx, |finder, _| {
-        assert_eq!(finder.delegate.matches.len(), 5);
+        assert_eq!(finder.delegate.matches.len(), 6);
         assert_match_at_position(finder, 0, "main.rs");
         assert_match_selection(finder, 1, "bar.rs");
         assert_match_at_position(finder, 2, "lib.rs");
         assert_match_at_position(finder, 3, "moo.rs");
         assert_match_at_position(finder, 4, "maaa.rs");
+        assert_match_at_position(finder, 5, ".rs");
     });
 
     // main.rs is not among matches, select top item
@@ -1534,9 +1730,10 @@ async fn test_keep_opened_file_on_top_of_search_results_and_select_next_one(
         })
         .await;
     picker.update(cx, |finder, _| {
-        assert_eq!(finder.delegate.matches.len(), 2);
+        assert_eq!(finder.delegate.matches.len(), 3);
         assert_match_at_position(finder, 0, "bar.rs");
         assert_match_at_position(finder, 1, "lib.rs");
+        assert_match_at_position(finder, 2, "b");
     });
 
     // main.rs is back, put it on top and select next item
@@ -1546,10 +1743,11 @@ async fn test_keep_opened_file_on_top_of_search_results_and_select_next_one(
         })
         .await;
     picker.update(cx, |finder, _| {
-        assert_eq!(finder.delegate.matches.len(), 3);
+        assert_eq!(finder.delegate.matches.len(), 4);
         assert_match_at_position(finder, 0, "main.rs");
         assert_match_selection(finder, 1, "moo.rs");
         assert_match_at_position(finder, 2, "maaa.rs");
+        assert_match_at_position(finder, 3, "m");
     });
 
     // get back to the initial state
@@ -1624,12 +1822,13 @@ async fn test_setting_auto_select_first_and_select_active_file(cx: &mut TestAppC
         })
         .await;
     picker.update(cx, |finder, _| {
-        assert_eq!(finder.delegate.matches.len(), 5);
+        assert_eq!(finder.delegate.matches.len(), 6);
         assert_match_selection(finder, 0, "main.rs");
         assert_match_at_position(finder, 1, "bar.rs");
         assert_match_at_position(finder, 2, "lib.rs");
         assert_match_at_position(finder, 3, "moo.rs");
         assert_match_at_position(finder, 4, "maaa.rs");
+        assert_match_at_position(finder, 5, ".rs");
     });
 }
 
@@ -1680,12 +1879,13 @@ async fn test_non_separate_history_items(cx: &mut TestAppContext) {
         })
         .await;
     picker.update(cx, |finder, _| {
-        assert_eq!(finder.delegate.matches.len(), 5);
+        assert_eq!(finder.delegate.matches.len(), 6);
         assert_match_at_position(finder, 0, "main.rs");
         assert_match_selection(finder, 1, "moo.rs");
         assert_match_at_position(finder, 2, "bar.rs");
         assert_match_at_position(finder, 3, "lib.rs");
         assert_match_at_position(finder, 4, "maaa.rs");
+        assert_match_at_position(finder, 5, ".rs");
     });
 
     // main.rs is not among matches, select top item
@@ -1695,9 +1895,10 @@ async fn test_non_separate_history_items(cx: &mut TestAppContext) {
         })
         .await;
     picker.update(cx, |finder, _| {
-        assert_eq!(finder.delegate.matches.len(), 2);
+        assert_eq!(finder.delegate.matches.len(), 3);
         assert_match_at_position(finder, 0, "bar.rs");
         assert_match_at_position(finder, 1, "lib.rs");
+        assert_match_at_position(finder, 2, "b");
     });
 
     // main.rs is back, put it on top and select next item
@@ -1707,10 +1908,11 @@ async fn test_non_separate_history_items(cx: &mut TestAppContext) {
         })
         .await;
     picker.update(cx, |finder, _| {
-        assert_eq!(finder.delegate.matches.len(), 3);
+        assert_eq!(finder.delegate.matches.len(), 4);
         assert_match_at_position(finder, 0, "main.rs");
         assert_match_selection(finder, 1, "moo.rs");
         assert_match_at_position(finder, 2, "maaa.rs");
+        assert_match_at_position(finder, 3, "m");
     });
 
     // get back to the initial state
@@ -1966,9 +2168,10 @@ async fn test_search_results_refreshed_on_worktree_updates(cx: &mut gpui::TestAp
     let picker = open_file_picker(&workspace, cx);
     cx.simulate_input("rs");
     picker.update(cx, |finder, _| {
-        assert_eq!(finder.delegate.matches.len(), 2);
+        assert_eq!(finder.delegate.matches.len(), 3);
         assert_match_at_position(finder, 0, "lib.rs");
         assert_match_at_position(finder, 1, "main.rs");
+        assert_match_at_position(finder, 2, "rs");
     });
 
     // Delete main.rs
@@ -1981,8 +2184,9 @@ async fn test_search_results_refreshed_on_worktree_updates(cx: &mut gpui::TestAp
 
     // main.rs is in not among search results anymore
     picker.update(cx, |finder, _| {
-        assert_eq!(finder.delegate.matches.len(), 1);
+        assert_eq!(finder.delegate.matches.len(), 2);
         assert_match_at_position(finder, 0, "lib.rs");
+        assert_match_at_position(finder, 1, "rs");
     });
 
     // Create util.rs
@@ -1995,9 +2199,10 @@ async fn test_search_results_refreshed_on_worktree_updates(cx: &mut gpui::TestAp
 
     // util.rs is among search results
     picker.update(cx, |finder, _| {
-        assert_eq!(finder.delegate.matches.len(), 2);
+        assert_eq!(finder.delegate.matches.len(), 3);
         assert_match_at_position(finder, 0, "lib.rs");
         assert_match_at_position(finder, 1, "util.rs");
+        assert_match_at_position(finder, 2, "rs");
     });
 }
 
@@ -2037,9 +2242,10 @@ async fn test_search_results_refreshed_on_adding_and_removing_worktrees(
     let picker = open_file_picker(&workspace, cx);
     cx.simulate_input("rs");
     picker.update(cx, |finder, _| {
-        assert_eq!(finder.delegate.matches.len(), 2);
+        assert_eq!(finder.delegate.matches.len(), 3);
         assert_match_at_position(finder, 0, "bar.rs");
         assert_match_at_position(finder, 1, "lib.rs");
+        assert_match_at_position(finder, 2, "rs");
     });
 
     // Add new worktree
@@ -2055,10 +2261,11 @@ async fn test_search_results_refreshed_on_adding_and_removing_worktrees(
 
     // main.rs is among search results
     picker.update(cx, |finder, _| {
-        assert_eq!(finder.delegate.matches.len(), 3);
+        assert_eq!(finder.delegate.matches.len(), 4);
         assert_match_at_position(finder, 0, "bar.rs");
         assert_match_at_position(finder, 1, "lib.rs");
         assert_match_at_position(finder, 2, "main.rs");
+        assert_match_at_position(finder, 3, "rs");
     });
 
     // Remove the first worktree
@@ -2069,8 +2276,9 @@ async fn test_search_results_refreshed_on_adding_and_removing_worktrees(
 
     // Files from the first worktree are not in the search results anymore
     picker.update(cx, |finder, _| {
-        assert_eq!(finder.delegate.matches.len(), 1);
+        assert_eq!(finder.delegate.matches.len(), 2);
         assert_match_at_position(finder, 0, "main.rs");
+        assert_match_at_position(finder, 1, "rs");
     });
 }
 
@@ -2415,7 +2623,7 @@ async fn test_repeat_toggle_action(cx: &mut gpui::TestAppContext) {
     cx.run_until_parked();
 
     picker.update(cx, |picker, _| {
-        assert_eq!(picker.delegate.matches.len(), 6);
+        assert_eq!(picker.delegate.matches.len(), 7);
         assert_eq!(picker.delegate.selected_index, 0);
     });
 
@@ -2427,7 +2635,7 @@ async fn test_repeat_toggle_action(cx: &mut gpui::TestAppContext) {
     cx.run_until_parked();
 
     picker.update(cx, |picker, _| {
-        assert_eq!(picker.delegate.matches.len(), 6);
+        assert_eq!(picker.delegate.matches.len(), 7);
         assert_eq!(picker.delegate.selected_index, 3);
     });
 }
@@ -2463,13 +2671,13 @@ async fn open_queried_buffer(
     workspace: &Entity<Workspace>,
     cx: &mut gpui::VisualTestContext,
 ) -> Vec<FoundPath> {
-    let picker = open_file_picker(&workspace, cx);
+    let picker = open_file_picker(workspace, cx);
     cx.simulate_input(input);
 
     let history_items = picker.update(cx, |finder, _| {
         assert_eq!(
             finder.delegate.matches.len(),
-            expected_matches,
+            expected_matches + 1, // +1 from CreateNew option
             "Unexpected number of matches found for query `{input}`, matches: {:?}",
             finder.delegate.matches
         );
@@ -2618,6 +2826,7 @@ fn collect_search_matches(picker: &Picker<FileFinderDelegate>) -> SearchEntries 
                     .push(Path::new(path_match.0.path_prefix.as_ref()).join(&path_match.0.path));
                 search_entries.search_matches.push(path_match.0.clone());
             }
+            Match::CreateNew(_) => {}
         }
     }
     search_entries
@@ -2651,6 +2860,7 @@ fn assert_match_at_position(
     let match_file_name = match &match_item {
         Match::History { path, .. } => path.absolute.as_deref().unwrap().file_name(),
         Match::Search(path_match) => path_match.0.path.file_name(),
+        Match::CreateNew(project_path) => project_path.path.file_name(),
     }
     .unwrap()
     .to_string_lossy();

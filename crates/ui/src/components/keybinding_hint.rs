@@ -206,7 +206,7 @@ impl RenderOnce for KeybindingHint {
 
 impl Component for KeybindingHint {
     fn scope() -> ComponentScope {
-        ComponentScope::None
+        ComponentScope::DataDisplay
     }
 
     fn description() -> Option<&'static str> {
@@ -216,7 +216,7 @@ impl Component for KeybindingHint {
     fn preview(window: &mut Window, cx: &mut App) -> Option<AnyElement> {
         let enter_fallback = gpui::KeyBinding::new("enter", menu::Confirm, None);
         let enter = KeyBinding::for_action(&menu::Confirm, window, cx)
-            .unwrap_or(KeyBinding::new(enter_fallback, cx));
+            .unwrap_or(KeyBinding::new_from_gpui(enter_fallback, cx));
 
         let bg_color = cx.theme().colors().surface_background;
 
@@ -269,7 +269,7 @@ impl Component for KeybindingHint {
                             ),
                             single_example(
                                 "Large",
-                                KeybindingHint::new(enter.clone(), bg_color)
+                                KeybindingHint::new(enter, bg_color)
                                     .size(Pixels::from(20.0))
                                     .prefix("Large:")
                                     .suffix("Size")

@@ -86,9 +86,11 @@ pub enum Operator {
     },
     FindForward {
         before: bool,
+        multiline: bool,
     },
     FindBackward {
         after: bool,
+        multiline: bool,
     },
     Sneak {
         first_char: Option<char>,
@@ -253,16 +255,11 @@ impl MarksState {
     pub fn new(workspace: &Workspace, cx: &mut App) -> Entity<MarksState> {
         cx.new(|cx| {
             let buffer_store = workspace.project().read(cx).buffer_store().clone();
-            let subscription =
-                cx.subscribe(
-                    &buffer_store,
-                    move |this: &mut Self, _, event, cx| match event {
-                        project::buffer_store::BufferStoreEvent::BufferAdded(buffer) => {
-                            this.on_buffer_loaded(buffer, cx);
-                        }
-                        _ => {}
-                    },
-                );
+            let subscription = cx.subscribe(&buffer_store, move |this: &mut Self, _, event, cx| {
+                if let project::buffer_store::BufferStoreEvent::BufferAdded(buffer) = event {
+                    this.on_buffer_loaded(buffer, cx);
+                }
+            });
 
             let mut this = Self {
                 workspace: workspace.weak_handle(),
@@ -403,27 +400,27 @@ impl MarksState {
             } else {
                 HashMap::default()
             };
-        let old_points = self.serialized_marks.get(&path.clone());
+        let old_points = self.serialized_marks.get(&path);
         if old_points == Some(&new_points) {
             return;
         }
         let mut to_write = HashMap::default();
 
         for (key, value) in &new_points {
-            if self.is_global_mark(key) {
-                if self.global_marks.get(key) != Some(&MarkLocation::Path(path.clone())) {
-                    if let Some(workspace_id) = self.workspace_id(cx) {
-                        let path = path.clone();
-                        let key = key.clone();
-                        cx.background_spawn(async move {
-                            DB.set_global_mark_path(workspace_id, key, path).await
-                        })
-                        .detach_and_log_err(cx);
-                    }
-
-                    self.global_marks
-                        .insert(key.clone(), MarkLocation::Path(path.clone()));
+            if self.is_global_mark(key)
+                && self.global_marks.get(key) != Some(&MarkLocation::Path(path.clone()))
+            {
+                if let Some(workspace_id) = self.workspace_id(cx) {
+                    let path = path.clone();
+                    let key = key.clone();
+                    cx.background_spawn(async move {
+                        DB.set_global_mark_path(workspace_id, key, path).await
+                    })
+                    .detach_and_log_err(cx);
                 }
+
+                self.global_marks
+                    .insert(key.clone(), MarkLocation::Path(path.clone()));
             }
             if old_points.and_then(|o| o.get(key)) != Some(value) {
                 to_write.insert(key.clone(), value.clone());
@@ -454,15 +451,15 @@ impl MarksState {
         buffer: &Entity<Buffer>,
         cx: &mut Context<Self>,
     ) {
-        if let MarkLocation::Buffer(entity_id) = old_path {
-            if let Some(old_marks) = self.multibuffer_marks.remove(&entity_id) {
-                let buffer_marks = old_marks
-                    .into_iter()
-                    .map(|(k, v)| (k, v.into_iter().map(|anchor| anchor.text_anchor).collect()))
-                    .collect();
-                self.buffer_marks
-                    .insert(buffer.read(cx).remote_id(), buffer_marks);
-            }
+        if let MarkLocation::Buffer(entity_id) = old_path
+            && let Some(old_marks) = self.multibuffer_marks.remove(&entity_id)
+        {
+            let buffer_marks = old_marks
+                .into_iter()
+                .map(|(k, v)| (k, v.into_iter().map(|anchor| anchor.text_anchor).collect()))
+                .collect();
+            self.buffer_marks
+                .insert(buffer.read(cx).remote_id(), buffer_marks);
         }
         self.watch_buffer(MarkLocation::Path(new_path.clone()), buffer, cx);
         self.serialize_buffer_marks(new_path, buffer, cx);
@@ -510,10 +507,9 @@ impl MarksState {
                     .watched_buffers
                     .get(&buffer_id.clone())
                     .map(|(path, _, _)| path.clone())
+                    && let Some(new_path) = this.path_for_buffer(&buffer, cx)
                 {
-                    if let Some(new_path) = this.path_for_buffer(&buffer, cx) {
-                        this.rename_buffer(old_path, new_path, &buffer, cx)
-                    }
+                    this.rename_buffer(old_path, new_path, &buffer, cx)
                 }
             }
             _ => {}
@@ -538,7 +534,7 @@ impl MarksState {
         cx: &mut Context<Self>,
     ) {
         let buffer = multibuffer.read(cx).as_singleton();
-        let abs_path = buffer.as_ref().and_then(|b| self.path_for_buffer(&b, cx));
+        let abs_path = buffer.as_ref().and_then(|b| self.path_for_buffer(b, cx));
 
         let Some(abs_path) = abs_path else {
             self.multibuffer_marks
@@ -547,7 +543,7 @@ impl MarksState {
                 .insert(name.clone(), anchors);
             if self.is_global_mark(&name) {
                 self.global_marks
-                    .insert(name.clone(), MarkLocation::Buffer(multibuffer.entity_id()));
+                    .insert(name, MarkLocation::Buffer(multibuffer.entity_id()));
             }
             if let Some(buffer) = buffer {
                 let buffer_id = buffer.read(cx).remote_id();
@@ -557,11 +553,13 @@ impl MarksState {
             }
             return;
         };
-        let buffer = buffer.unwrap();
+        let Some(buffer) = buffer else {
+            return;
+        };
 
         let buffer_id = buffer.read(cx).remote_id();
         self.buffer_marks.entry(buffer_id).or_default().insert(
-            name.clone(),
+            name,
             anchors
                 .into_iter()
                 .map(|anchor| anchor.text_anchor)
@@ -588,12 +586,12 @@ impl MarksState {
             }
 
             let singleton = multi_buffer.read(cx).as_singleton()?;
-            let excerpt_id = *multi_buffer.read(cx).excerpt_ids().first().unwrap();
+            let excerpt_id = *multi_buffer.read(cx).excerpt_ids().first()?;
             let buffer_id = singleton.read(cx).remote_id();
             if let Some(anchors) = self.buffer_marks.get(&buffer_id) {
                 let text_anchors = anchors.get(name)?;
                 let anchors = text_anchors
-                    .into_iter()
+                    .iter()
                     .map(|anchor| Anchor::in_buffer(excerpt_id, buffer_id, *anchor))
                     .collect();
                 return Some(Mark::Local(anchors));
@@ -602,13 +600,67 @@ impl MarksState {
 
         match target? {
             MarkLocation::Buffer(entity_id) => {
-                let anchors = self.multibuffer_marks.get(&entity_id)?;
-                return Some(Mark::Buffer(*entity_id, anchors.get(name)?.clone()));
+                let anchors = self.multibuffer_marks.get(entity_id)?;
+                Some(Mark::Buffer(*entity_id, anchors.get(name)?.clone()))
             }
             MarkLocation::Path(path) => {
                 let points = self.serialized_marks.get(path)?;
-                return Some(Mark::Path(path.clone(), points.get(name)?.clone()));
+                Some(Mark::Path(path.clone(), points.get(name)?.clone()))
             }
+        }
+    }
+    pub fn delete_mark(
+        &mut self,
+        mark_name: String,
+        multi_buffer: &Entity<MultiBuffer>,
+        cx: &mut Context<Self>,
+    ) {
+        let path = if let Some(target) = self.global_marks.get(&mark_name.clone()) {
+            let name = mark_name.clone();
+            if let Some(workspace_id) = self.workspace_id(cx) {
+                cx.background_spawn(async move {
+                    DB.delete_global_marks_path(workspace_id, name).await
+                })
+                .detach_and_log_err(cx);
+            }
+            self.buffer_marks.iter_mut().for_each(|(_, m)| {
+                m.remove(&mark_name.clone());
+            });
+
+            match target {
+                MarkLocation::Buffer(entity_id) => {
+                    self.multibuffer_marks
+                        .get_mut(entity_id)
+                        .map(|m| m.remove(&mark_name.clone()));
+                    return;
+                }
+                MarkLocation::Path(path) => path.clone(),
+            }
+        } else {
+            self.multibuffer_marks
+                .get_mut(&multi_buffer.entity_id())
+                .map(|m| m.remove(&mark_name.clone()));
+
+            if let Some(singleton) = multi_buffer.read(cx).as_singleton() {
+                let buffer_id = singleton.read(cx).remote_id();
+                self.buffer_marks
+                    .get_mut(&buffer_id)
+                    .map(|m| m.remove(&mark_name.clone()));
+                let Some(path) = self.path_for_buffer(&singleton, cx) else {
+                    return;
+                };
+                path
+            } else {
+                return;
+            }
+        };
+        self.global_marks.remove(&mark_name);
+        self.serialized_marks
+            .get_mut(&path)
+            .map(|m| m.remove(&mark_name.clone()));
+        if let Some(workspace_id) = self.workspace_id(cx) {
+            cx.background_spawn(async move { DB.delete_mark(workspace_id, path, mark_name).await })
+                .detach_and_log_err(cx);
         }
     }
 }
@@ -839,13 +891,13 @@ impl VimGlobals {
                 self.stop_recording_after_next_action = false;
             }
         }
-        if self.replayer.is_none() {
-            if let Some(recording_register) = self.recording_register {
-                self.recordings
-                    .entry(recording_register)
-                    .or_default()
-                    .push(ReplayableAction::Action(action));
-            }
+        if self.replayer.is_none()
+            && let Some(recording_register) = self.recording_register
+        {
+            self.recordings
+                .entry(recording_register)
+                .or_default()
+                .push(ReplayableAction::Action(action));
         }
     }
 
@@ -938,12 +990,12 @@ impl Operator {
             Operator::Replace => "r",
             Operator::Digraph { .. } => "^K",
             Operator::Literal { .. } => "^V",
-            Operator::FindForward { before: false } => "f",
-            Operator::FindForward { before: true } => "t",
+            Operator::FindForward { before: false, .. } => "f",
+            Operator::FindForward { before: true, .. } => "t",
             Operator::Sneak { .. } => "s",
             Operator::SneakBackward { .. } => "S",
-            Operator::FindBackward { after: false } => "F",
-            Operator::FindBackward { after: true } => "T",
+            Operator::FindBackward { after: false, .. } => "F",
+            Operator::FindBackward { after: true, .. } => "T",
             Operator::AddSurrounds { .. } => "ys",
             Operator::ChangeSurrounds { .. } => "cs",
             Operator::DeleteSurrounds => "ds",
@@ -970,13 +1022,21 @@ impl Operator {
     }
 
     pub fn status(&self) -> String {
+        fn make_visible(c: &str) -> &str {
+            match c {
+                "\n" => "enter",
+                "\t" => "tab",
+                " " => "space",
+                c => c,
+            }
+        }
         match self {
             Operator::Digraph {
                 first_char: Some(first_char),
-            } => format!("^K{first_char}"),
+            } => format!("^K{}", make_visible(&first_char.to_string())),
             Operator::Literal {
                 prefix: Some(prefix),
-            } => format!("^V{prefix}"),
+            } => format!("^V{}", make_visible(prefix)),
             Operator::AutoIndent => "=".to_string(),
             Operator::ShellCommand => "=".to_string(),
             _ => self.id().to_string(),
@@ -1222,7 +1282,7 @@ impl RegistersView {
                 if let Some(register) = register {
                     matches.push(RegisterMatch {
                         name: '%',
-                        contents: register.text.clone(),
+                        contents: register.text,
                     })
                 }
             }
@@ -1264,10 +1324,10 @@ impl MarksMatchInfo {
         let mut offset = 0;
         for chunk in chunks {
             line.push_str(chunk.text);
-            if let Some(highlight_style) = chunk.syntax_highlight_id {
-                if let Some(highlight) = highlight_style.style(cx.theme().syntax()) {
-                    highlights.push((offset..offset + chunk.text.len(), highlight))
-                }
+            if let Some(highlight_style) = chunk.syntax_highlight_id
+                && let Some(highlight) = highlight_style.style(cx.theme().syntax())
+            {
+                highlights.push((offset..offset + chunk.text.len(), highlight))
             }
             offset += chunk.text.len();
         }
@@ -1314,7 +1374,7 @@ impl PickerDelegate for MarksViewDelegate {
         _: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> gpui::Task<()> {
-        let Some(workspace) = self.workspace.upgrade().clone() else {
+        let Some(workspace) = self.workspace.upgrade() else {
             return Task::ready(());
         };
         cx.spawn(async move |picker, cx| {
@@ -1645,26 +1705,25 @@ impl VimDb {
         marks: HashMap<String, Vec<Point>>,
     ) -> Result<()> {
         log::debug!("Setting path {path:?} for {} marks", marks.len());
-        let result = self
-            .write(move |conn| {
-                let mut query = conn.exec_bound(sql!(
-                    INSERT OR REPLACE INTO vim_marks
-                        (workspace_id, mark_name, path, value)
-                    VALUES
-                        (?, ?, ?, ?)
-                ))?;
-                for (mark_name, value) in marks {
-                    let pairs: Vec<(u32, u32)> = value
-                        .into_iter()
-                        .map(|point| (point.row, point.column))
-                        .collect();
-                    let serialized = serde_json::to_string(&pairs)?;
-                    query((workspace_id, mark_name, path.clone(), serialized))?;
-                }
-                Ok(())
-            })
-            .await;
-        result
+
+        self.write(move |conn| {
+            let mut query = conn.exec_bound(sql!(
+                INSERT OR REPLACE INTO vim_marks
+                    (workspace_id, mark_name, path, value)
+                VALUES
+                    (?, ?, ?, ?)
+            ))?;
+            for (mark_name, value) in marks {
+                let pairs: Vec<(u32, u32)> = value
+                    .into_iter()
+                    .map(|point| (point.row, point.column))
+                    .collect();
+                let serialized = serde_json::to_string(&pairs)?;
+                query((workspace_id, mark_name, path.clone(), serialized))?;
+            }
+            Ok(())
+        })
+        .await
     }
 
     fn get_marks(&self, workspace_id: WorkspaceId) -> Result<Vec<SerializedMark>> {
@@ -1687,6 +1746,21 @@ impl VimDb {
                 })
             })
             .collect())
+    }
+
+    pub(crate) async fn delete_mark(
+        &self,
+        workspace_id: WorkspaceId,
+        path: Arc<Path>,
+        mark_name: String,
+    ) -> Result<()> {
+        self.write(move |conn| {
+            conn.exec_bound(sql!(
+                DELETE FROM vim_marks
+                WHERE workspace_id = ? AND mark_name = ? AND path = ?
+            ))?((workspace_id, mark_name, path))
+        })
+        .await
     }
 
     pub(crate) async fn set_global_mark_path(
@@ -1715,5 +1789,19 @@ impl VimDb {
         SELECT mark_name, path FROM vim_global_marks_paths
             WHERE workspace_id = ?
         ))?(workspace_id)
+    }
+
+    pub(crate) async fn delete_global_marks_path(
+        &self,
+        workspace_id: WorkspaceId,
+        mark_name: String,
+    ) -> Result<()> {
+        self.write(move |conn| {
+            conn.exec_bound(sql!(
+                DELETE FROM vim_global_marks_paths
+                WHERE workspace_id = ? AND mark_name = ?
+            ))?((workspace_id, mark_name))
+        })
+        .await
     }
 }

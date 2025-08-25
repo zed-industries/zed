@@ -16,3 +16,9 @@ brackets = [
   { start = "{", end = "}", close = true, newline = false },
   { start = "[", end = "]", close = true, newline = false },
 ]
+rewrap_prefixes = [
+    "[-*+]\\s+",
+    "\\d+\\.\\s+",
+    ">\\s*",
+    "[-*+]\\s+\\[[\\sx]\\]\\s+"
+]

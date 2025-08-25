@@ -1,14 +1,19 @@
 use std::{borrow::Borrow, path::Path, sync::Arc};
 
 use gpui::SharedString;
-
-use crate::LspAdapterDelegate;
+use settings::WorktreeId;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct ManifestName(SharedString);
 
 impl Borrow<SharedString> for ManifestName {
     fn borrow(&self) -> &SharedString {
+        &self.0
+    }
+}
+
+impl Borrow<str> for ManifestName {
+    fn borrow(&self) -> &str {
         &self.0
     }
 }
@@ -39,10 +44,15 @@ pub struct ManifestQuery {
     /// Path to the file, relative to worktree root.
     pub path: Arc<Path>,
     pub depth: usize,
-    pub delegate: Arc<dyn LspAdapterDelegate>,
+    pub delegate: Arc<dyn ManifestDelegate>,
 }
 
 pub trait ManifestProvider {
     fn name(&self) -> ManifestName;
     fn search(&self, query: ManifestQuery) -> Option<Arc<Path>>;
+}
+
+pub trait ManifestDelegate: Send + Sync {
+    fn worktree_id(&self) -> WorktreeId;
+    fn exists(&self, path: &Path, is_dir: Option<bool>) -> bool;
 }

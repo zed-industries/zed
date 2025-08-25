@@ -2,7 +2,9 @@ use std::sync::Arc;
 
 use gpui::{App, FontFeatures, FontWeight};
 use settings::{EditableSettingControl, Settings};
-use theme::{FontFamilyCache, SystemAppearance, ThemeMode, ThemeRegistry, ThemeSettings};
+use theme::{
+    FontFamilyCache, FontFamilyName, SystemAppearance, ThemeMode, ThemeRegistry, ThemeSettings,
+};
 use ui::{
     CheckboxWithLabel, ContextMenu, DropdownMenu, NumericStepper, SettingsContainer, SettingsGroup,
     ToggleButton, prelude::*,
@@ -81,7 +83,7 @@ impl RenderOnce for ThemeControl {
 
         DropdownMenu::new(
             "theme",
-            value.clone(),
+            value,
             ContextMenu::build(window, cx, |mut menu, _, cx| {
                 let theme_registry = ThemeRegistry::global(cx);
 
@@ -189,7 +191,7 @@ impl EditableSettingControl for UiFontFamilyControl {
         value: Self::Value,
         _cx: &App,
     ) {
-        settings.ui_font_family = Some(value.to_string());
+        settings.ui_font_family = Some(FontFamilyName(value.into()));
     }
 }
 
@@ -202,7 +204,7 @@ impl RenderOnce for UiFontFamilyControl {
             .child(Icon::new(IconName::Font))
             .child(DropdownMenu::new(
                 "ui-font-family",
-                value.clone(),
+                value,
                 ContextMenu::build(window, cx, |mut menu, _, cx| {
                     let font_family_cache = FontFamilyCache::global(cx);
 

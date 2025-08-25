@@ -1,5 +1,6 @@
 use collab_ui::collab_panel;
 use gpui::{Menu, MenuItem, OsAction};
+use settings_ui::keybindings;
 use terminal_view::terminal_panel;
 
 pub fn app_menus() -> Vec<Menu> {
@@ -16,7 +17,7 @@ pub fn app_menus() -> Vec<Menu> {
                     name: "Settings".into(),
                     items: vec![
                         MenuItem::action("Open Settings", super::OpenSettings),
-                        MenuItem::action("Open Key Bindings", zed_actions::OpenKeymap),
+                        MenuItem::action("Open Key Bindings", keybindings::OpenKeymapEditor),
                         MenuItem::action("Open Default Settings", super::OpenDefaultSettings),
                         MenuItem::action(
                             "Open Default Key Bindings",
@@ -24,16 +25,18 @@ pub fn app_menus() -> Vec<Menu> {
                         ),
                         MenuItem::action("Open Project Settings", super::OpenProjectSettings),
                         MenuItem::action(
+                            "Select Settings Profile...",
+                            zed_actions::settings_profile_selector::Toggle,
+                        ),
+                        MenuItem::action(
                             "Select Theme...",
                             zed_actions::theme_selector::Toggle::default(),
                         ),
                     ],
                 }),
                 MenuItem::separator(),
-                MenuItem::submenu(Menu {
-                    name: "Services".into(),
-                    items: vec![],
-                }),
+                #[cfg(target_os = "macos")]
+                MenuItem::os_submenu("Services", gpui::SystemMenuType::Services),
                 MenuItem::separator(),
                 MenuItem::action("Extensions", zed_actions::Extensions::default()),
                 MenuItem::action("Install CLI", install_cli::Install),
@@ -67,12 +70,13 @@ pub fn app_menus() -> Vec<Menu> {
                 MenuItem::action(
                     "Open Recent...",
                     zed_actions::OpenRecent {
-                        create_new_window: true,
+                        create_new_window: false,
                     },
                 ),
                 MenuItem::action(
                     "Open Remote...",
                     zed_actions::OpenRemote {
+                        create_new_window: false,
                         from_existing_connection: false,
                     },
                 ),
@@ -143,15 +147,15 @@ pub fn app_menus() -> Vec<Menu> {
             items: vec![
                 MenuItem::action(
                     "Zoom In",
-                    zed_actions::IncreaseBufferFontSize { persist: true },
+                    zed_actions::IncreaseBufferFontSize { persist: false },
                 ),
                 MenuItem::action(
                     "Zoom Out",
-                    zed_actions::DecreaseBufferFontSize { persist: true },
+                    zed_actions::DecreaseBufferFontSize { persist: false },
                 ),
                 MenuItem::action(
                     "Reset Zoom",
-                    zed_actions::ResetBufferFontSize { persist: true },
+                    zed_actions::ResetBufferFontSize { persist: false },
                 ),
                 MenuItem::separator(),
                 MenuItem::action("Toggle Left Dock", workspace::ToggleLeftDock),
@@ -198,8 +202,35 @@ pub fn app_menus() -> Vec<Menu> {
                 MenuItem::action("Go to Type Definition", editor::actions::GoToTypeDefinition),
                 MenuItem::action("Find All References", editor::actions::FindAllReferences),
                 MenuItem::separator(),
-                MenuItem::action("Next Problem", editor::actions::GoToDiagnostic),
-                MenuItem::action("Previous Problem", editor::actions::GoToPreviousDiagnostic),
+                MenuItem::action("Next Problem", editor::actions::GoToDiagnostic::default()),
+                MenuItem::action(
+                    "Previous Problem",
+                    editor::actions::GoToPreviousDiagnostic::default(),
+                ),
+            ],
+        },
+        Menu {
+            name: "Run".into(),
+            items: vec![
+                MenuItem::action(
+                    "Spawn Task",
+                    zed_actions::Spawn::ViaModal {
+                        reveal_target: None,
+                    },
+                ),
+                MenuItem::action("Start Debugger", debugger_ui::Start),
+                MenuItem::separator(),
+                MenuItem::action("Edit tasks.json...", crate::zed::OpenProjectTasks),
+                MenuItem::action("Edit debug.json...", zed_actions::OpenProjectDebugTasks),
+                MenuItem::separator(),
+                MenuItem::action("Continue", debugger_ui::Continue),
+                MenuItem::action("Step Over", debugger_ui::StepOver),
+                MenuItem::action("Step Into", debugger_ui::StepInto),
+                MenuItem::action("Step Out", debugger_ui::StepOut),
+                MenuItem::separator(),
+                MenuItem::action("Toggle Breakpoint", editor::actions::ToggleBreakpoint),
+                MenuItem::action("Edit Breakpoint", editor::actions::EditLogBreakpoint),
+                MenuItem::action("Clear all Breakpoints", debugger_ui::ClearAllBreakpoints),
             ],
         },
         Menu {
@@ -219,7 +250,7 @@ pub fn app_menus() -> Vec<Menu> {
                 ),
                 MenuItem::action("View Telemetry", zed_actions::OpenTelemetryLog),
                 MenuItem::action("View Dependency Licenses", zed_actions::OpenLicenses),
-                MenuItem::action("Show Welcome", workspace::Welcome),
+                MenuItem::action("Show Welcome", onboarding::ShowWelcome),
                 MenuItem::action("Give Feedback...", zed_actions::feedback::GiveFeedback),
                 MenuItem::separator(),
                 MenuItem::action(

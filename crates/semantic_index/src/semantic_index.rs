@@ -174,14 +174,13 @@ impl SemanticDb {
                 file_content[start_line_byte_offset..end_line_byte_offset].to_string();
             LineEnding::normalize(&mut excerpt_content);
 
-            if let Some(prev_result) = loaded_results.last_mut() {
-                if prev_result.full_path == full_path {
-                    if *prev_result.row_range.end() + 1 == start_row {
-                        prev_result.row_range = *prev_result.row_range.start()..=end_row;
-                        prev_result.excerpt_content.push_str(&excerpt_content);
-                        continue;
-                    }
-                }
+            if let Some(prev_result) = loaded_results.last_mut()
+                && prev_result.full_path == full_path
+                && *prev_result.row_range.end() + 1 == start_row
+            {
+                prev_result.row_range = *prev_result.row_range.start()..=end_row;
+                prev_result.excerpt_content.push_str(&excerpt_content);
+                continue;
             }
 
             loaded_results.push(LoadedSearchResult {
@@ -277,7 +276,7 @@ mod tests {
     use settings::SettingsStore;
     use smol::channel;
     use std::{future, path::Path, sync::Arc};
-    use util::separator;
+    use util::path;
 
     fn init_test(cx: &mut TestAppContext) {
         zlog::init_test();
@@ -422,7 +421,7 @@ mod tests {
 
         assert_eq!(
             search_result.path.to_string_lossy(),
-            separator!("fixture/needle.md")
+            path!("fixture/needle.md")
         );
 
         let content = cx
@@ -435,7 +434,7 @@ mod tests {
             .await;
 
         let range = search_result.range.clone();
-        let content = content[range.clone()].to_owned();
+        let content = content[range].to_owned();
 
         assert!(content.contains("garbage in, garbage out"));
     }

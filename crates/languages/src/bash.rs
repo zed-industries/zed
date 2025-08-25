@@ -49,6 +49,14 @@ mod tests {
                     assert_eq!(buffer.text(), expected);
                 };
 
+            // Do not indent after shebang
+            expect_indents_to(
+                &mut buffer,
+                cx,
+                "#!/usr/bin/env bash\n#",
+                "#!/usr/bin/env bash\n#",
+            );
+
             // indent function correctly
             expect_indents_to(
                 &mut buffer,

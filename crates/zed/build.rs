@@ -23,22 +23,20 @@ fn main() {
         "cargo:rustc-env=TARGET={}",
         std::env::var("TARGET").unwrap()
     );
-    if let Ok(output) = Command::new("git").args(["rev-parse", "HEAD"]).output() {
-        if output.status.success() {
-            let git_sha = String::from_utf8_lossy(&output.stdout);
-            let git_sha = git_sha.trim();
+    if let Ok(output) = Command::new("git").args(["rev-parse", "HEAD"]).output()
+        && output.status.success()
+    {
+        let git_sha = String::from_utf8_lossy(&output.stdout);
+        let git_sha = git_sha.trim();
 
-            println!("cargo:rustc-env=ZED_COMMIT_SHA={git_sha}");
+        println!("cargo:rustc-env=ZED_COMMIT_SHA={git_sha}");
 
-            if let Ok(build_profile) = std::env::var("PROFILE") {
-                if build_profile == "release" {
-                    // This is currently the best way to make `cargo build ...`'s build script
-                    // to print something to stdout without extra verbosity.
-                    println!(
-                        "cargo:warning=Info: using '{git_sha}' hash for ZED_COMMIT_SHA env var"
-                    );
-                }
-            }
+        if let Ok(build_profile) = std::env::var("PROFILE")
+            && build_profile == "release"
+        {
+            // This is currently the best way to make `cargo build ...`'s build script
+            // to print something to stdout without extra verbosity.
+            println!("cargo:warning=Info: using '{git_sha}' hash for ZED_COMMIT_SHA env var");
         }
     }
 
@@ -50,7 +48,17 @@ fn main() {
             println!("cargo:rustc-link-arg=/stack:{}", 8 * 1024 * 1024);
         }
 
-        let icon = std::path::Path::new("resources/windows/app-icon.ico");
+        let release_channel = option_env!("RELEASE_CHANNEL").unwrap_or("dev");
+        let icon = match release_channel {
+            "stable" => "resources/windows/app-icon.ico",
+            "preview" => "resources/windows/app-icon-preview.ico",
+            "nightly" => "resources/windows/app-icon-nightly.ico",
+            "dev" => "resources/windows/app-icon-dev.ico",
+            _ => "resources/windows/app-icon-dev.ico",
+        };
+        let icon = std::path::Path::new(icon);
+
+        println!("cargo:rerun-if-env-changed=RELEASE_CHANNEL");
         println!("cargo:rerun-if-changed={}", icon.display());
 
         let mut res = winresource::WindowsResource::new();

@@ -39,12 +39,12 @@ impl SlashCommand for ContextServerSlashCommand {
 
     fn label(&self, cx: &App) -> language::CodeLabel {
         let mut parts = vec![self.prompt.name.as_str()];
-        if let Some(args) = &self.prompt.arguments {
-            if let Some(arg) = args.first() {
-                parts.push(arg.name.as_str());
-            }
+        if let Some(args) = &self.prompt.arguments
+            && let Some(arg) = args.first()
+        {
+            parts.push(arg.name.as_str());
         }
-        create_label_for_command(&parts[0], &parts[1..], cx)
+        create_label_for_command(parts[0], &parts[1..], cx)
     }
 
     fn description(&self) -> String {
@@ -62,9 +62,10 @@ impl SlashCommand for ContextServerSlashCommand {
     }
 
     fn requires_argument(&self) -> bool {
-        self.prompt.arguments.as_ref().map_or(false, |args| {
-            args.iter().any(|arg| arg.required == Some(true))
-        })
+        self.prompt
+            .arguments
+            .as_ref()
+            .is_some_and(|args| args.iter().any(|arg| arg.required == Some(true)))
     }
 
     fn complete_argument(
@@ -86,20 +87,26 @@ impl SlashCommand for ContextServerSlashCommand {
             cx.foreground_executor().spawn(async move {
                 let protocol = server.client().context("Context server not initialized")?;
 
-                let completion_result = protocol
-                    .completion(
-                        context_server::types::CompletionReference::Prompt(
-                            context_server::types::PromptReference {
-                                r#type: context_server::types::PromptReferenceType::Prompt,
-                                name: prompt_name,
+                let response = protocol
+                    .request::<context_server::types::requests::CompletionComplete>(
+                        context_server::types::CompletionCompleteParams {
+                            reference: context_server::types::CompletionReference::Prompt(
+                                context_server::types::PromptReference {
+                                    ty: context_server::types::PromptReferenceType::Prompt,
+                                    name: prompt_name,
+                                },
+                            ),
+                            argument: context_server::types::CompletionArgument {
+                                name: arg_name,
+                                value: arg_value,
                             },
-                        ),
-                        arg_name,
-                        arg_value,
+                            meta: None,
+                        },
                     )
                     .await?;
 
-                let completions = completion_result
+                let completions = response
+                    .completion
                     .values
                     .into_iter()
                     .map(|value| ArgumentCompletion {
@@ -138,10 +145,18 @@ impl SlashCommand for ContextServerSlashCommand {
         if let Some(server) = store.get_running_server(&server_id) {
             cx.foreground_executor().spawn(async move {
                 let protocol = server.client().context("Context server not initialized")?;
-                let result = protocol.run_prompt(&prompt_name, prompt_args).await?;
+                let response = protocol
+                    .request::<context_server::types::requests::PromptsGet>(
+                        context_server::types::PromptsGetParams {
+                            name: prompt_name.clone(),
+                            arguments: Some(prompt_args),
+                            meta: None,
+                        },
+                    )
+                    .await?;
 
                 anyhow::ensure!(
-                    result
+                    response
                         .messages
                         .iter()
                         .all(|msg| matches!(msg.role, context_server::types::Role::User)),
@@ -149,7 +164,7 @@ impl SlashCommand for ContextServerSlashCommand {
                 );
 
                 // Extract text from user messages into a single prompt string
-                let mut prompt = result
+                let mut prompt = response
                     .messages
                     .into_iter()
                     .filter_map(|msg| match msg.content {
@@ -167,7 +182,7 @@ impl SlashCommand for ContextServerSlashCommand {
                         range: 0..(prompt.len()),
                         icon: IconName::ZedAssistant,
                         label: SharedString::from(
-                            result
+                            response
                                 .description
                                 .unwrap_or(format!("Result from {}", prompt_name)),
                         ),
@@ -176,7 +191,7 @@ impl SlashCommand for ContextServerSlashCommand {
                     text: prompt,
                     run_commands_in_text: false,
                 }
-                .to_event_stream())
+                .into_event_stream())
             })
         } else {
             Task::ready(Err(anyhow!("Context server not found")))

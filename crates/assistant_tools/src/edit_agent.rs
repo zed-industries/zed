@@ -5,9 +5,11 @@ mod evals;
 mod streaming_fuzzy_matcher;
 
 use crate::{Template, Templates};
+use action_log::ActionLog;
 use anyhow::Result;
-use assistant_tool::ActionLog;
+use cloud_llm_client::CompletionIntent;
 use create_file_parser::{CreateFileParser, CreateFileParserEvent};
+pub use edit_parser::EditFormat;
 use edit_parser::{EditParser, EditParserEvent, EditParserMetrics};
 use futures::{
     Stream, StreamExt,
@@ -27,8 +29,6 @@ use serde::{Deserialize, Serialize};
 use std::{cmp, iter, mem, ops::Range, path::PathBuf, pin::Pin, sync::Arc, task::Poll};
 use streaming_diff::{CharOperation, StreamingDiff};
 use streaming_fuzzy_matcher::StreamingFuzzyMatcher;
-use util::debug_panic;
-use zed_llm_client::CompletionIntent;
 
 #[derive(Serialize)]
 struct CreateFilePromptTemplate {
@@ -41,20 +41,31 @@ impl Template for CreateFilePromptTemplate {
 }
 
 #[derive(Serialize)]
-struct EditFilePromptTemplate {
+struct EditFileXmlPromptTemplate {
     path: Option<PathBuf>,
     edit_description: String,
 }
 
-impl Template for EditFilePromptTemplate {
-    const TEMPLATE_NAME: &'static str = "edit_file_prompt.hbs";
+impl Template for EditFileXmlPromptTemplate {
+    const TEMPLATE_NAME: &'static str = "edit_file_prompt_xml.hbs";
+}
+
+#[derive(Serialize)]
+struct EditFileDiffFencedPromptTemplate {
+    path: Option<PathBuf>,
+    edit_description: String,
+}
+
+impl Template for EditFileDiffFencedPromptTemplate {
+    const TEMPLATE_NAME: &'static str = "edit_file_prompt_diff_fenced.hbs";
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum EditAgentOutputEvent {
     ResolvingEditRange(Range<Anchor>),
     UnresolvedEditRange,
-    Edited,
+    AmbiguousEditRange(Vec<Range<usize>>),
+    Edited(Range<Anchor>),
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
@@ -69,6 +80,7 @@ pub struct EditAgent {
     action_log: Entity<ActionLog>,
     project: Entity<Project>,
     templates: Arc<Templates>,
+    edit_format: EditFormat,
 }
 
 impl EditAgent {
@@ -77,12 +89,14 @@ impl EditAgent {
         project: Entity<Project>,
         action_log: Entity<ActionLog>,
         templates: Arc<Templates>,
+        edit_format: EditFormat,
     ) -> Self {
         EditAgent {
             model,
             project,
             action_log,
             templates,
+            edit_format,
         }
     }
 
@@ -164,7 +178,9 @@ impl EditAgent {
                 )
             });
             output_events_tx
-                .unbounded_send(EditAgentOutputEvent::Edited)
+                .unbounded_send(EditAgentOutputEvent::Edited(
+                    language::Anchor::MIN..language::Anchor::MAX,
+                ))
                 .ok();
         })?;
 
@@ -186,7 +202,9 @@ impl EditAgent {
                         });
                     })?;
                     output_events_tx
-                        .unbounded_send(EditAgentOutputEvent::Edited)
+                        .unbounded_send(EditAgentOutputEvent::Edited(
+                            language::Anchor::MIN..language::Anchor::MAX,
+                        ))
                         .ok();
                 }
             }
@@ -208,14 +226,23 @@ impl EditAgent {
         let this = self.clone();
         let (events_tx, events_rx) = mpsc::unbounded();
         let conversation = conversation.clone();
+        let edit_format = self.edit_format;
         let output = cx.spawn(async move |cx| {
             let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot())?;
             let path = cx.update(|cx| snapshot.resolve_file_path(cx, true))?;
-            let prompt = EditFilePromptTemplate {
-                path,
-                edit_description,
-            }
-            .render(&this.templates)?;
+            let prompt = match edit_format {
+                EditFormat::XmlTags => EditFileXmlPromptTemplate {
+                    path,
+                    edit_description,
+                }
+                .render(&this.templates)?,
+                EditFormat::DiffFenced => EditFileDiffFencedPromptTemplate {
+                    path,
+                    edit_description,
+                }
+                .render(&this.templates)?,
+            };
+
             let edit_chunks = this
                 .request(conversation, CompletionIntent::EditFile, prompt, cx)
                 .await?;
@@ -235,7 +262,7 @@ impl EditAgent {
         self.action_log
             .update(cx, |log, cx| log.buffer_read(buffer.clone(), cx))?;
 
-        let (output, edit_events) = Self::parse_edit_chunks(edit_chunks, cx);
+        let (output, edit_events) = Self::parse_edit_chunks(edit_chunks, self.edit_format, cx);
         let mut edit_events = edit_events.peekable();
         while let Some(edit_event) = Pin::new(&mut edit_events).peek().await {
             // Skip events until we're at the start of a new edit.
@@ -269,16 +296,35 @@ impl EditAgent {
                 }
             }
 
-            let (edit_events_, resolved_old_text) = resolve_old_text.await?;
+            let (edit_events_, mut resolved_old_text) = resolve_old_text.await?;
             edit_events = edit_events_;
 
             // If we can't resolve the old text, restart the loop waiting for a
             // new edit (or for the stream to end).
-            let Some(resolved_old_text) = resolved_old_text else {
-                output_events
-                    .unbounded_send(EditAgentOutputEvent::UnresolvedEditRange)
-                    .ok();
-                continue;
+            let resolved_old_text = match resolved_old_text.len() {
+                1 => resolved_old_text.pop().unwrap(),
+                0 => {
+                    output_events
+                        .unbounded_send(EditAgentOutputEvent::UnresolvedEditRange)
+                        .ok();
+                    continue;
+                }
+                _ => {
+                    let ranges = resolved_old_text
+                        .into_iter()
+                        .map(|text| {
+                            let start_line =
+                                (snapshot.offset_to_point(text.range.start).row + 1) as usize;
+                            let end_line =
+                                (snapshot.offset_to_point(text.range.end).row + 1) as usize;
+                            start_line..end_line
+                        })
+                        .collect();
+                    output_events
+                        .unbounded_send(EditAgentOutputEvent::AmbiguousEditRange(ranges))
+                        .ok();
+                    continue;
+                }
             };
 
             // Compute edits in the background and apply them as they become
@@ -294,8 +340,8 @@ impl EditAgent {
                 // Edit the buffer and report edits to the action log as part of the
                 // same effect cycle, otherwise the edit will be reported as if the
                 // user made it.
-                cx.update(|cx| {
-                    let max_edit_end = buffer.update(cx, |buffer, cx| {
+                let (min_edit_start, max_edit_end) = cx.update(|cx| {
+                    let (min_edit_start, max_edit_end) = buffer.update(cx, |buffer, cx| {
                         buffer.edit(edits.iter().cloned(), None, cx);
                         let max_edit_end = buffer
                             .summaries_for_anchors::<Point, _>(
@@ -303,7 +349,16 @@ impl EditAgent {
                             )
                             .max()
                             .unwrap();
-                        buffer.anchor_before(max_edit_end)
+                        let min_edit_start = buffer
+                            .summaries_for_anchors::<Point, _>(
+                                edits.iter().map(|(range, _)| &range.start),
+                            )
+                            .min()
+                            .unwrap();
+                        (
+                            buffer.anchor_after(min_edit_start),
+                            buffer.anchor_before(max_edit_end),
+                        )
                     });
                     self.action_log
                         .update(cx, |log, cx| log.buffer_edited(buffer.clone(), cx));
@@ -316,9 +371,10 @@ impl EditAgent {
                             cx,
                         );
                     });
+                    (min_edit_start, max_edit_end)
                 })?;
                 output_events
-                    .unbounded_send(EditAgentOutputEvent::Edited)
+                    .unbounded_send(EditAgentOutputEvent::Edited(min_edit_start..max_edit_end))
                     .ok();
             }
 
@@ -330,6 +386,7 @@ impl EditAgent {
 
     fn parse_edit_chunks(
         chunks: impl 'static + Send + Stream<Item = Result<String, LanguageModelCompletionError>>,
+        edit_format: EditFormat,
         cx: &mut AsyncApp,
     ) -> (
         Task<Result<EditAgentOutput>>,
@@ -339,7 +396,7 @@ impl EditAgent {
         let output = cx.background_spawn(async move {
             pin_mut!(chunks);
 
-            let mut parser = EditParser::new();
+            let mut parser = EditParser::new(edit_format);
             let mut raw_edits = String::new();
             while let Some(chunk) = chunks.next().await {
                 match chunk {
@@ -405,41 +462,57 @@ impl EditAgent {
         mut edit_events: T,
         cx: &mut AsyncApp,
     ) -> (
-        Task<Result<(T, Option<ResolvedOldText>)>>,
-        async_watch::Receiver<Option<Range<usize>>>,
+        Task<Result<(T, Vec<ResolvedOldText>)>>,
+        watch::Receiver<Option<Range<usize>>>,
     )
     where
         T: 'static + Send + Unpin + Stream<Item = Result<EditParserEvent>>,
     {
-        let (old_range_tx, old_range_rx) = async_watch::channel(None);
+        let (mut old_range_tx, old_range_rx) = watch::channel(None);
         let task = cx.background_spawn(async move {
             let mut matcher = StreamingFuzzyMatcher::new(snapshot);
             while let Some(edit_event) = edit_events.next().await {
-                let EditParserEvent::OldTextChunk { chunk, done } = edit_event? else {
+                let EditParserEvent::OldTextChunk {
+                    chunk,
+                    done,
+                    line_hint,
+                } = edit_event?
+                else {
                     break;
                 };
 
-                old_range_tx.send(matcher.push(&chunk))?;
+                old_range_tx.send(matcher.push(&chunk, line_hint))?;
                 if done {
                     break;
                 }
             }
 
-            let old_range = matcher.finish();
-            old_range_tx.send(old_range.clone())?;
-            if let Some(old_range) = old_range {
-                let line_indent =
-                    LineIndent::from_iter(matcher.query_lines().first().unwrap().chars());
-                Ok((
-                    edit_events,
-                    Some(ResolvedOldText {
-                        range: old_range,
-                        indent: line_indent,
-                    }),
-                ))
+            let matches = matcher.finish();
+            let best_match = matcher.select_best_match();
+
+            old_range_tx.send(best_match.clone())?;
+
+            let indent = LineIndent::from_iter(
+                matcher
+                    .query_lines()
+                    .first()
+                    .unwrap_or(&String::new())
+                    .chars(),
+            );
+
+            let resolved_old_texts = if let Some(best_match) = best_match {
+                vec![ResolvedOldText {
+                    range: best_match,
+                    indent,
+                }]
             } else {
-                Ok((edit_events, None))
-            }
+                matches
+                    .into_iter()
+                    .map(|range| ResolvedOldText { range, indent })
+                    .collect::<Vec<_>>()
+            };
+
+            Ok((edit_events, resolved_old_texts))
         });
 
         (task, old_range_rx)
@@ -599,34 +672,30 @@ impl EditAgent {
         cx: &mut AsyncApp,
     ) -> Result<BoxStream<'static, Result<String, LanguageModelCompletionError>>> {
         let mut messages_iter = conversation.messages.iter_mut();
-        if let Some(last_message) = messages_iter.next_back() {
-            if last_message.role == Role::Assistant {
-                let old_content_len = last_message.content.len();
-                last_message
-                    .content
-                    .retain(|content| !matches!(content, MessageContent::ToolUse(_)));
-                let new_content_len = last_message.content.len();
+        if let Some(last_message) = messages_iter.next_back()
+            && last_message.role == Role::Assistant
+        {
+            let old_content_len = last_message.content.len();
+            last_message
+                .content
+                .retain(|content| !matches!(content, MessageContent::ToolUse(_)));
+            let new_content_len = last_message.content.len();
 
-                // We just removed pending tool uses from the content of the
-                // last message, so it doesn't make sense to cache it anymore
-                // (e.g., the message will look very different on the next
-                // request). Thus, we move the flag to the message prior to it,
-                // as it will still be a valid prefix of the conversation.
-                if old_content_len != new_content_len && last_message.cache {
-                    if let Some(prev_message) = messages_iter.next_back() {
-                        last_message.cache = false;
-                        prev_message.cache = true;
-                    }
-                }
+            // We just removed pending tool uses from the content of the
+            // last message, so it doesn't make sense to cache it anymore
+            // (e.g., the message will look very different on the next
+            // request). Thus, we move the flag to the message prior to it,
+            // as it will still be a valid prefix of the conversation.
+            if old_content_len != new_content_len
+                && last_message.cache
+                && let Some(prev_message) = messages_iter.next_back()
+            {
+                last_message.cache = false;
+                prev_message.cache = true;
+            }
 
-                if last_message.content.is_empty() {
-                    conversation.messages.pop();
-                }
-            } else {
-                debug_panic!(
-                    "Last message must be an Assistant tool calling! Got {:?}",
-                    last_message.content
-                );
+            if last_message.content.is_empty() {
+                conversation.messages.pop();
             }
         }
 
@@ -659,6 +728,7 @@ impl EditAgent {
             tools,
             stop: Vec::new(),
             temperature: None,
+            thinking_allowed: true,
         };
 
         Ok(self.model.stream_completion_text(request, cx).await?.stream)
@@ -700,6 +770,7 @@ mod tests {
     use gpui::{AppContext, TestAppContext};
     use indoc::indoc;
     use language_model::fake_provider::FakeLanguageModel;
+    use pretty_assertions::assert_matches;
     use project::{AgentLocation, Project};
     use rand::prelude::*;
     use rand::rngs::StdRng;
@@ -901,7 +972,7 @@ mod tests {
         );
         cx.run_until_parked();
 
-        model.stream_last_completion_response("<old_text>a");
+        model.send_last_completion_stream_text_chunk("<old_text>a");
         cx.run_until_parked();
         assert_eq!(drain_events(&mut events), vec![]);
         assert_eq!(
@@ -913,7 +984,7 @@ mod tests {
             None
         );
 
-        model.stream_last_completion_response("bc</old_text>");
+        model.send_last_completion_stream_text_chunk("bc</old_text>");
         cx.run_until_parked();
         assert_eq!(
             drain_events(&mut events),
@@ -935,9 +1006,12 @@ mod tests {
             })
         );
 
-        model.stream_last_completion_response("<new_text>abX");
+        model.send_last_completion_stream_text_chunk("<new_text>abX");
         cx.run_until_parked();
-        assert_eq!(drain_events(&mut events), [EditAgentOutputEvent::Edited]);
+        assert_matches!(
+            drain_events(&mut events).as_slice(),
+            [EditAgentOutputEvent::Edited(_)]
+        );
         assert_eq!(
             buffer.read_with(cx, |buffer, _| buffer.snapshot().text()),
             "abXc\ndef\nghi\njkl"
@@ -950,9 +1024,12 @@ mod tests {
             })
         );
 
-        model.stream_last_completion_response("cY");
+        model.send_last_completion_stream_text_chunk("cY");
         cx.run_until_parked();
-        assert_eq!(drain_events(&mut events), [EditAgentOutputEvent::Edited]);
+        assert_matches!(
+            drain_events(&mut events).as_slice(),
+            [EditAgentOutputEvent::Edited { .. }]
+        );
         assert_eq!(
             buffer.read_with(cx, |buffer, _| buffer.snapshot().text()),
             "abXcY\ndef\nghi\njkl"
@@ -965,8 +1042,8 @@ mod tests {
             })
         );
 
-        model.stream_last_completion_response("</new_text>");
-        model.stream_last_completion_response("<old_text>hall");
+        model.send_last_completion_stream_text_chunk("</new_text>");
+        model.send_last_completion_stream_text_chunk("<old_text>hall");
         cx.run_until_parked();
         assert_eq!(drain_events(&mut events), vec![]);
         assert_eq!(
@@ -981,8 +1058,8 @@ mod tests {
             })
         );
 
-        model.stream_last_completion_response("ucinated old</old_text>");
-        model.stream_last_completion_response("<new_text>");
+        model.send_last_completion_stream_text_chunk("ucinated old</old_text>");
+        model.send_last_completion_stream_text_chunk("<new_text>");
         cx.run_until_parked();
         assert_eq!(
             drain_events(&mut events),
@@ -1000,8 +1077,8 @@ mod tests {
             })
         );
 
-        model.stream_last_completion_response("hallucinated new</new_");
-        model.stream_last_completion_response("text>");
+        model.send_last_completion_stream_text_chunk("hallucinated new</new_");
+        model.send_last_completion_stream_text_chunk("text>");
         cx.run_until_parked();
         assert_eq!(drain_events(&mut events), vec![]);
         assert_eq!(
@@ -1016,7 +1093,7 @@ mod tests {
             })
         );
 
-        model.stream_last_completion_response("<old_text>\nghi\nj");
+        model.send_last_completion_stream_text_chunk("<old_text>\nghi\nj");
         cx.run_until_parked();
         assert_eq!(
             drain_events(&mut events),
@@ -1038,8 +1115,8 @@ mod tests {
             })
         );
 
-        model.stream_last_completion_response("kl</old_text>");
-        model.stream_last_completion_response("<new_text>");
+        model.send_last_completion_stream_text_chunk("kl</old_text>");
+        model.send_last_completion_stream_text_chunk("<new_text>");
         cx.run_until_parked();
         assert_eq!(
             drain_events(&mut events),
@@ -1061,11 +1138,11 @@ mod tests {
             })
         );
 
-        model.stream_last_completion_response("GHI</new_text>");
+        model.send_last_completion_stream_text_chunk("GHI</new_text>");
         cx.run_until_parked();
-        assert_eq!(
-            drain_events(&mut events),
-            vec![EditAgentOutputEvent::Edited]
+        assert_matches!(
+            drain_events(&mut events).as_slice(),
+            [EditAgentOutputEvent::Edited { .. }]
         );
         assert_eq!(
             buffer.read_with(cx, |buffer, _| buffer.snapshot().text()),
@@ -1110,9 +1187,9 @@ mod tests {
         );
 
         cx.run_until_parked();
-        assert_eq!(
-            drain_events(&mut events),
-            vec![EditAgentOutputEvent::Edited]
+        assert_matches!(
+            drain_events(&mut events).as_slice(),
+            [EditAgentOutputEvent::Edited(_)]
         );
         assert_eq!(
             buffer.read_with(cx, |buffer, _| buffer.snapshot().text()),
@@ -1128,9 +1205,9 @@ mod tests {
 
         chunks_tx.unbounded_send("```\njkl\n").unwrap();
         cx.run_until_parked();
-        assert_eq!(
-            drain_events(&mut events),
-            vec![EditAgentOutputEvent::Edited]
+        assert_matches!(
+            drain_events(&mut events).as_slice(),
+            [EditAgentOutputEvent::Edited { .. }]
         );
         assert_eq!(
             buffer.read_with(cx, |buffer, _| buffer.snapshot().text()),
@@ -1146,9 +1223,9 @@ mod tests {
 
         chunks_tx.unbounded_send("mno\n").unwrap();
         cx.run_until_parked();
-        assert_eq!(
-            drain_events(&mut events),
-            vec![EditAgentOutputEvent::Edited]
+        assert_matches!(
+            drain_events(&mut events).as_slice(),
+            [EditAgentOutputEvent::Edited { .. }]
         );
         assert_eq!(
             buffer.read_with(cx, |buffer, _| buffer.snapshot().text()),
@@ -1164,9 +1241,9 @@ mod tests {
 
         chunks_tx.unbounded_send("pqr\n```").unwrap();
         cx.run_until_parked();
-        assert_eq!(
-            drain_events(&mut events),
-            vec![EditAgentOutputEvent::Edited]
+        assert_matches!(
+            drain_events(&mut events).as_slice(),
+            [EditAgentOutputEvent::Edited(_)],
         );
         assert_eq!(
             buffer.read_with(cx, |buffer, _| buffer.snapshot().text()),
@@ -1306,7 +1383,9 @@ mod tests {
         cx.background_spawn(async move {
             for chunk in chunks {
                 executor.simulate_random_delay().await;
-                model.as_fake().stream_last_completion_response(chunk);
+                model
+                    .as_fake()
+                    .send_last_completion_stream_text_chunk(chunk);
             }
             model.as_fake().end_last_completion_stream();
         })
@@ -1319,7 +1398,85 @@ mod tests {
         let project = Project::test(FakeFs::new(cx.executor()), [], cx).await;
         let model = Arc::new(FakeLanguageModel::default());
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
-        EditAgent::new(model, project, action_log, Templates::new())
+        EditAgent::new(
+            model,
+            project,
+            action_log,
+            Templates::new(),
+            EditFormat::XmlTags,
+        )
+    }
+
+    #[gpui::test(iterations = 10)]
+    async fn test_non_unique_text_error(cx: &mut TestAppContext, mut rng: StdRng) {
+        let agent = init_test(cx).await;
+        let original_text = indoc! {"
+                function foo() {
+                    return 42;
+                }
+
+                function bar() {
+                    return 42;
+                }
+
+                function baz() {
+                    return 42;
+                }
+            "};
+        let buffer = cx.new(|cx| Buffer::local(original_text, cx));
+        let (apply, mut events) = agent.edit(
+            buffer.clone(),
+            String::new(),
+            &LanguageModelRequest::default(),
+            &mut cx.to_async(),
+        );
+        cx.run_until_parked();
+
+        // When <old_text> matches text in more than one place
+        simulate_llm_output(
+            &agent,
+            indoc! {"
+                <old_text>
+                    return 42;
+                }
+                </old_text>
+                <new_text>
+                    return 100;
+                }
+                </new_text>
+            "},
+            &mut rng,
+            cx,
+        );
+        apply.await.unwrap();
+
+        // Then the text should remain unchanged
+        let result_text = buffer.read_with(cx, |buffer, _| buffer.snapshot().text());
+        assert_eq!(
+            result_text,
+            indoc! {"
+                function foo() {
+                    return 42;
+                }
+
+                function bar() {
+                    return 42;
+                }
+
+                function baz() {
+                    return 42;
+                }
+            "},
+            "Text should remain unchanged when there are multiple matches"
+        );
+
+        // And AmbiguousEditRange even should be emitted
+        let events = drain_events(&mut events);
+        let ambiguous_ranges = vec![2..3, 6..7, 10..11];
+        assert!(
+            events.contains(&EditAgentOutputEvent::AmbiguousEditRange(ambiguous_ranges)),
+            "Should emit AmbiguousEditRange for non-unique text"
+        );
     }
 
     fn drain_events(

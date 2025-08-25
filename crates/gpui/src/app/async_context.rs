@@ -3,7 +3,7 @@ use crate::{
     Entity, EventEmitter, Focusable, ForegroundExecutor, Global, PromptButton, PromptLevel, Render,
     Reservation, Result, Subscription, Task, VisualContext, Window, WindowHandle,
 };
-use anyhow::Context as _;
+use anyhow::{Context as _, anyhow};
 use derive_more::{Deref, DerefMut};
 use futures::channel::oneshot;
 use std::{future::Future, rc::Weak};
@@ -56,6 +56,15 @@ impl AppContext for AsyncApp {
         let app = self.app.upgrade().context("app was released")?;
         let mut app = app.borrow_mut();
         Ok(app.update_entity(handle, update))
+    }
+
+    fn as_mut<'a, T>(&'a mut self, _handle: &Entity<T>) -> Self::Result<super::GpuiBorrow<'a, T>>
+    where
+        T: 'static,
+    {
+        Err(anyhow!(
+            "Cannot as_mut with an async context. Try calling update() first"
+        ))
     }
 
     fn read_entity<T, R>(
@@ -364,6 +373,15 @@ impl AppContext for AsyncWindowContext {
             .update(self, |_, _, cx| cx.update_entity(handle, update))
     }
 
+    fn as_mut<'a, T>(&'a mut self, _: &Entity<T>) -> Self::Result<super::GpuiBorrow<'a, T>>
+    where
+        T: 'static,
+    {
+        Err(anyhow!(
+            "Cannot use as_mut() from an async context, call `update`"
+        ))
+    }
+
     fn read_entity<T, R>(
         &self,
         handle: &Entity<T>,
@@ -447,7 +465,7 @@ impl VisualContext for AsyncWindowContext {
         V: Focusable,
     {
         self.window.update(self, |_, window, cx| {
-            view.read(cx).focus_handle(cx).clone().focus(window);
+            view.read(cx).focus_handle(cx).focus(window);
         })
     }
 }

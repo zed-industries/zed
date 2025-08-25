@@ -2,8 +2,8 @@ pub mod cursor_position;
 
 use cursor_position::{LineIndicatorFormat, UserCaretPosition};
 use editor::{
-    Anchor, Editor, MultiBufferSnapshot, RowHighlightOptions, ToOffset, ToPoint, actions::Tab,
-    scroll::Autoscroll,
+    Anchor, Editor, MultiBufferSnapshot, RowHighlightOptions, SelectionEffects, ToOffset, ToPoint,
+    actions::Tab, scroll::Autoscroll,
 };
 use gpui::{
     App, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Render, SharedString, Styled,
@@ -103,11 +103,11 @@ impl GoToLine {
                             return;
                         };
                         editor.update(cx, |editor, cx| {
-                            if let Some(placeholder_text) = editor.placeholder_text() {
-                                if editor.text(cx).is_empty() {
-                                    let placeholder_text = placeholder_text.to_string();
-                                    editor.set_text(placeholder_text, window, cx);
-                                }
+                            if let Some(placeholder_text) = editor.placeholder_text()
+                                && editor.text(cx).is_empty()
+                            {
+                                let placeholder_text = placeholder_text.to_string();
+                                editor.set_text(placeholder_text, window, cx);
                             }
                         });
                     }
@@ -157,7 +157,7 @@ impl GoToLine {
                 self.prev_scroll_position.take();
                 cx.emit(DismissEvent)
             }
-            editor::EditorEvent::BufferEdited { .. } => self.highlight_current_line(cx),
+            editor::EditorEvent::BufferEdited => self.highlight_current_line(cx),
             _ => {}
         }
     }
@@ -249,9 +249,12 @@ impl GoToLine {
             let Some(start) = self.anchor_from_query(&snapshot, cx) else {
                 return;
             };
-            editor.change_selections(Some(Autoscroll::center()), window, cx, |s| {
-                s.select_anchor_ranges([start..start])
-            });
+            editor.change_selections(
+                SelectionEffects::scroll(Autoscroll::center()),
+                window,
+                cx,
+                |s| s.select_anchor_ranges([start..start]),
+            );
             editor.focus_handle(cx).focus(window);
             cx.notify()
         });
@@ -709,7 +712,7 @@ mod tests {
     ) -> Entity<GoToLine> {
         cx.dispatch_action(editor::actions::ToggleGoToLine);
         workspace.update(cx, |workspace, cx| {
-            workspace.active_modal::<GoToLine>(cx).unwrap().clone()
+            workspace.active_modal::<GoToLine>(cx).unwrap()
         })
     }
 

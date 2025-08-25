@@ -30,7 +30,7 @@ pub fn main() {
 
         let node_runtime = NodeRuntime::unavailable();
         let language_registry = Arc::new(LanguageRegistry::new(cx.background_executor().clone()));
-        languages::init(language_registry.clone(), node_runtime, cx);
+        languages::init(language_registry, node_runtime, cx);
         theme::init(LoadThemes::JustBase, cx);
         Assets.load_fonts(cx).unwrap();
 
@@ -91,11 +91,7 @@ impl Render for HelloWorld {
                 ..Default::default()
             },
             syntax: cx.theme().syntax().clone(),
-            selection_background_color: {
-                let mut selection = cx.theme().players().local().selection;
-                selection.fade_out(0.7);
-                selection
-            },
+            selection_background_color: cx.theme().colors().element_selection_background,
             heading: Default::default(),
             ..Default::default()
         };

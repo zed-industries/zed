@@ -1,16 +1,16 @@
 use anyhow::{Context as _, bail};
 use collections::{HashMap, HashSet};
-use schemars::{JsonSchema, r#gen::SchemaSettings};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::path::PathBuf;
+use util::schemars::DefaultDenyUnknownFields;
 use util::serde::default_true;
 use util::{ResultExt, truncate_and_remove_front};
 
 use crate::{
     AttachRequest, ResolvedTask, RevealTarget, Shell, SpawnInTerminal, TaskContext, TaskId,
-    VariableName, ZED_VARIABLE_NAME_PREFIX,
-    serde_helpers::{non_empty_string_vec, non_empty_string_vec_json_schema},
+    VariableName, ZED_VARIABLE_NAME_PREFIX, serde_helpers::non_empty_string_vec,
 };
 
 /// A template definition of a Zed task to run.
@@ -61,7 +61,7 @@ pub struct TaskTemplate {
     /// Represents the tags which this template attaches to.
     /// Adding this removes this task from other UI and gives you ability to run it by tag.
     #[serde(default, deserialize_with = "non_empty_string_vec")]
-    #[schemars(schema_with = "non_empty_string_vec_json_schema")]
+    #[schemars(length(min = 1))]
     pub tags: Vec<String>,
     /// Which shell to use when spawning the task.
     #[serde(default)]
@@ -116,10 +116,10 @@ pub struct TaskTemplates(pub Vec<TaskTemplate>);
 impl TaskTemplates {
     /// Generates JSON schema of Tasks JSON template format.
     pub fn generate_json_schema() -> serde_json_lenient::Value {
-        let schema = SchemaSettings::draft07()
-            .with(|settings| settings.option_add_null_type = false)
+        let schema = schemars::generate::SchemaSettings::draft2019_09()
+            .with_transform(DefaultDenyUnknownFields)
             .into_generator()
-            .into_root_schema_for::<Self>();
+            .root_schema_for::<Self>();
 
         serde_json_lenient::to_value(schema).unwrap()
     }
@@ -183,6 +183,10 @@ impl TaskTemplate {
                 &mut substituted_variables,
             )?
         } else {
+            #[allow(
+                clippy::redundant_clone,
+                reason = "We want to clone the full_label to avoid borrowing it in the fold closure"
+            )]
             full_label.clone()
         }
         .lines()
@@ -255,8 +259,8 @@ impl TaskTemplate {
                         command_label
                     },
                 ),
-                command,
-                args: self.args.clone(),
+                command: Some(command),
+                args: args_with_substitutions,
                 env,
                 use_new_terminal: self.use_new_terminal,
                 allow_concurrent_runs: self.allow_concurrent_runs,
@@ -453,7 +457,7 @@ mod tests {
             TaskTemplate {
                 label: "".to_string(),
                 command: "".to_string(),
-                ..task_with_all_properties.clone()
+                ..task_with_all_properties
             },
         ] {
             assert_eq!(
@@ -521,7 +525,7 @@ mod tests {
         );
 
         let cx = TaskContext {
-            cwd: Some(context_cwd.clone()),
+            cwd: Some(context_cwd),
             task_variables: TaskVariables::default(),
             project_env: HashMap::default(),
         };
@@ -635,24 +639,24 @@ mod tests {
                 "Human-readable label should have long substitutions trimmed"
             );
             assert_eq!(
-                spawn_in_terminal.command,
+                spawn_in_terminal.command.clone().unwrap(),
                 format!("echo test_file {long_value}"),
                 "Command should be substituted with variables and those should not be shortened"
             );
             assert_eq!(
                 spawn_in_terminal.args,
                 &[
-                    "arg1 $ZED_SELECTED_TEXT",
-                    "arg2 $ZED_COLUMN",
-                    "arg3 $ZED_SYMBOL",
+                    "arg1 test_selected_text",
+                    "arg2 5678",
+                    "arg3 010101010101010101010101010101010101010101010101010101010101",
                 ],
-                "Args should not be substituted with variables"
+                "Args should be substituted with variables"
             );
             assert_eq!(
                 spawn_in_terminal.command_label,
                 format!(
                     "{} arg1 test_selected_text arg2 5678 arg3 {long_value}",
-                    spawn_in_terminal.command
+                    spawn_in_terminal.command.clone().unwrap()
                 ),
                 "Command label args should be substituted with variables and those should not be shortened"
             );
@@ -711,7 +715,7 @@ mod tests {
         assert_substituted_variables(&resolved_task, Vec::new());
         let resolved = resolved_task.resolved;
         assert_eq!(resolved.label, task.label);
-        assert_eq!(resolved.command, task.command);
+        assert_eq!(resolved.command, Some(task.command));
         assert_eq!(resolved.args, task.args);
     }
 
@@ -768,7 +772,7 @@ mod tests {
                     "test_env_key".to_string(),
                     format!("test_env_var_{}", VariableName::Symbol.template_value()),
                 )]),
-                ..task_with_all_properties.clone()
+                ..task_with_all_properties
             },
         ]
         .into_iter()
@@ -871,7 +875,7 @@ mod tests {
 
         let context = TaskContext {
             cwd: None,
-            task_variables: TaskVariables::from_iter(all_variables.clone()),
+            task_variables: TaskVariables::from_iter(all_variables),
             project_env,
         };
 

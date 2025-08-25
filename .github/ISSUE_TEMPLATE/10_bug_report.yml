@@ -18,14 +18,16 @@ body:
           - Issues with insufficient detail may be summarily closed.
         -->
 
+        DESCRIPTION_HERE
+
         Steps to reproduce:
         1.
         2.
         3.
         4.
 
-        Expected Behavior:
-        Actual Behavior:
+        **Expected Behavior**:
+        **Actual Behavior**:
 
         <!-- Before Submitting, did you:
           1. Include settings.json, keymap.json, .editorconfig if relevant?

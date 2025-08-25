@@ -92,7 +92,7 @@ pub fn python_env_kernel_specifications(
     let background_executor = cx.background_executor().clone();
 
     async move {
-        let toolchains = if let Some(toolchains) = toolchains.await {
+        let toolchains = if let Some((toolchains, _)) = toolchains.await {
             toolchains
         } else {
             return Ok(Vec::new());
@@ -169,10 +169,7 @@ pub enum KernelStatus {
 
 impl KernelStatus {
     pub fn is_connected(&self) -> bool {
-        match self {
-            KernelStatus::Idle | KernelStatus::Busy => true,
-            _ => false,
-        }
+        matches!(self, KernelStatus::Idle | KernelStatus::Busy)
     }
 }
 

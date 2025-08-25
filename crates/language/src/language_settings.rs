@@ -3,27 +3,25 @@
 use crate::{File, Language, LanguageName, LanguageServerName};
 use anyhow::Result;
 use collections::{FxHashMap, HashMap, HashSet};
-use core::slice;
 use ec4rs::{
     Properties as EditorconfigProperties,
-    property::{FinalNewline, IndentSize, IndentStyle, TabWidth, TrimTrailingWs},
+    property::{FinalNewline, IndentSize, IndentStyle, MaxLineLen, TabWidth, TrimTrailingWs},
 };
 use globset::{Glob, GlobMatcher, GlobSet, GlobSetBuilder};
 use gpui::{App, Modifiers};
 use itertools::{Either, Itertools};
-use schemars::{
-    JsonSchema,
-    schema::{InstanceType, ObjectValidation, Schema, SchemaObject, SingleOrVec},
-};
+use schemars::{JsonSchema, json_schema};
 use serde::{
     Deserialize, Deserializer, Serialize,
     de::{self, IntoDeserializer, MapAccess, SeqAccess, Visitor},
 };
-use serde_json::Value;
+
 use settings::{
-    Settings, SettingsLocation, SettingsSources, SettingsStore, add_references_to_properties,
+    ParameterizedJsonSchema, Settings, SettingsLocation, SettingsSources, SettingsStore,
 };
-use std::{borrow::Cow, num::NonZeroU32, path::Path, sync::Arc};
+use shellexpand;
+use std::{borrow::Cow, num::NonZeroU32, path::Path, slice, sync::Arc};
+use util::schemars::replace_subschema;
 use util::serde::default_true;
 
 /// Initializes the language settings.
@@ -135,6 +133,8 @@ pub struct LanguageSettings {
     /// Whether to use additional LSP queries to format (and amend) the code after
     /// every "trigger" symbol input, defined by LSP server capabilities.
     pub use_on_type_format: bool,
+    /// Whether indentation should be adjusted based on the context whilst typing.
+    pub auto_indent: bool,
     /// Whether indentation of pasted content should be adjusted based on the context.
     pub auto_indent_on_paste: bool,
     /// Controls how the editor handles the autoclosed characters.
@@ -187,8 +187,8 @@ impl LanguageSettings {
         let rest = available_language_servers
             .iter()
             .filter(|&available_language_server| {
-                !disabled_language_servers.contains(&available_language_server)
-                    && !enabled_language_servers.contains(&available_language_server)
+                !disabled_language_servers.contains(available_language_server)
+                    && !enabled_language_servers.contains(available_language_server)
             })
             .cloned()
             .collect::<Vec<_>>();
@@ -199,7 +199,7 @@ impl LanguageSettings {
                 if language_server.0.as_ref() == Self::REST_OF_LANGUAGE_SERVERS {
                     rest.clone()
                 } else {
-                    vec![language_server.clone()]
+                    vec![language_server]
                 }
             })
             .collect::<Vec<_>>()
@@ -253,7 +253,7 @@ impl EditPredictionSettings {
         !self.disabled_globs.iter().any(|glob| {
             if glob.is_absolute {
                 file.as_local()
-                    .map_or(false, |local| glob.matcher.is_match(local.abs_path(cx)))
+                    .is_some_and(|local| glob.matcher.is_match(local.abs_path(cx)))
             } else {
                 glob.matcher.is_match(file.path())
             }
@@ -287,6 +287,8 @@ pub struct CopilotSettings {
     pub proxy: Option<String>,
     /// Disable certificate verification for proxy (not recommended).
     pub proxy_no_verify: Option<bool>,
+    /// Enterprise URI for Copilot.
+    pub enterprise_uri: Option<String>,
 }
 
 /// The settings for all languages.
@@ -303,11 +305,39 @@ pub struct AllLanguageSettingsContent {
     pub defaults: LanguageSettingsContent,
     /// The settings for individual languages.
     #[serde(default)]
-    pub languages: HashMap<LanguageName, LanguageSettingsContent>,
+    pub languages: LanguageToSettingsMap,
     /// Settings for associating file extensions and filenames
     /// with languages.
     #[serde(default)]
     pub file_types: HashMap<Arc<str>, Vec<String>>,
+}
+
+/// Map from language name to settings. Its `ParameterizedJsonSchema` allows only known language
+/// names in the keys.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct LanguageToSettingsMap(pub HashMap<LanguageName, LanguageSettingsContent>);
+
+inventory::submit! {
+    ParameterizedJsonSchema {
+        add_and_get_ref: |generator, params, _cx| {
+            let language_settings_content_ref = generator
+                .subschema_for::<LanguageSettingsContent>()
+                .to_value();
+            replace_subschema::<LanguageToSettingsMap>(generator, || json_schema!({
+                "type": "object",
+                "properties": params
+                    .language_names
+                    .iter()
+                    .map(|name| {
+                        (
+                            name.clone(),
+                            language_settings_content_ref.clone(),
+                        )
+                    })
+                    .collect::<serde_json::Map<_, _>>()
+            }))
+        }
+    }
 }
 
 /// Controls how completions are processed for this language.
@@ -320,6 +350,12 @@ pub struct CompletionSettings {
     /// Default: `fallback`
     #[serde(default = "default_words_completion_mode")]
     pub words: WordsCompletionMode,
+    /// How many characters has to be in the completions query to automatically show the words-based completions.
+    /// Before that value, it's still possible to trigger the words-based completion manually with the corresponding editor command.
+    ///
+    /// Default: 3
+    #[serde(default = "default_3")]
+    pub words_min_length: usize,
     /// Whether to fetch LSP completions or not.
     ///
     /// Default: true
@@ -329,7 +365,7 @@ pub struct CompletionSettings {
     /// When set to 0, waits indefinitely.
     ///
     /// Default: 0
-    #[serde(default = "default_lsp_fetch_timeout_ms")]
+    #[serde(default)]
     pub lsp_fetch_timeout_ms: u64,
     /// Controls how LSP completions are inserted.
     ///
@@ -375,13 +411,12 @@ fn default_lsp_insert_mode() -> LspInsertMode {
     LspInsertMode::ReplaceSuffix
 }
 
-fn default_lsp_fetch_timeout_ms() -> u64 {
-    0
+fn default_3() -> usize {
+    3
 }
 
 /// The settings for a particular language.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
-#[schemars(deny_unknown_fields)]
 pub struct LanguageSettingsContent {
     /// How many columns a tab should occupy.
     ///
@@ -534,6 +569,10 @@ pub struct LanguageSettingsContent {
     ///
     /// Default: true
     pub linked_edits: Option<bool>,
+    /// Whether indentation should be adjusted based on the context whilst typing.
+    ///
+    /// Default: true
+    pub auto_indent: Option<bool>,
     /// Whether indentation of pasted content should be adjusted based on the context.
     ///
     /// Default: true
@@ -606,6 +645,11 @@ pub struct CopilotSettingsContent {
     /// Default: false
     #[serde(default)]
     pub proxy_no_verify: Option<bool>,
+    /// Enterprise URI for Copilot.
+    ///
+    /// Default: none
+    #[serde(default)]
+    pub enterprise_uri: Option<String>,
 }
 
 /// The settings for enabling/disabling features.
@@ -644,41 +688,26 @@ pub enum FormatOnSave {
 }
 
 impl JsonSchema for FormatOnSave {
-    fn schema_name() -> String {
+    fn schema_name() -> Cow<'static, str> {
         "OnSaveFormatter".into()
     }
 
-    fn json_schema(generator: &mut schemars::r#gen::SchemaGenerator) -> Schema {
-        let mut schema = SchemaObject::default();
+    fn json_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
         let formatter_schema = Formatter::json_schema(generator);
-        schema.instance_type = Some(
-            vec![
-                InstanceType::Object,
-                InstanceType::String,
-                InstanceType::Array,
+
+        json_schema!({
+            "oneOf": [
+                {
+                    "type": "array",
+                    "items": formatter_schema
+                },
+                {
+                    "type": "string",
+                    "enum": ["on", "off", "language_server"]
+                },
+                formatter_schema
             ]
-            .into(),
-        );
-
-        let valid_raw_values = SchemaObject {
-            enum_values: Some(vec![
-                Value::String("on".into()),
-                Value::String("off".into()),
-                Value::String("prettier".into()),
-                Value::String("language_server".into()),
-            ]),
-            ..Default::default()
-        };
-        let mut nested_values = SchemaObject::default();
-
-        nested_values.array().items = Some(formatter_schema.clone().into());
-
-        schema.subschemas().any_of = Some(vec![
-            nested_values.into(),
-            valid_raw_values.into(),
-            formatter_schema,
-        ]);
-        schema.into()
+        })
     }
 }
 
@@ -717,8 +746,8 @@ impl<'de> Deserialize<'de> for FormatOnSave {
                 } else if v == "off" {
                     Ok(Self::Value::Off)
                 } else if v == "language_server" {
-                    Ok(Self::Value::List(FormatterList(
-                        Formatter::LanguageServer { name: None }.into(),
+                    Ok(Self::Value::List(FormatterList::Single(
+                        Formatter::LanguageServer { name: None },
                     )))
                 } else {
                     let ret: Result<FormatterList, _> =
@@ -764,6 +793,8 @@ pub enum ShowWhitespaceSetting {
     /// - It is adjacent to an edge (start or end)
     /// - It is adjacent to a whitespace (left or right)
     Boundary,
+    /// Draw whitespaces only after non-whitespace characters.
+    Trailing,
 }
 
 /// Controls which formatter should be used when formatting code.
@@ -777,41 +808,26 @@ pub enum SelectedFormatter {
 }
 
 impl JsonSchema for SelectedFormatter {
-    fn schema_name() -> String {
+    fn schema_name() -> Cow<'static, str> {
         "Formatter".into()
     }
 
-    fn json_schema(generator: &mut schemars::r#gen::SchemaGenerator) -> Schema {
-        let mut schema = SchemaObject::default();
+    fn json_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
         let formatter_schema = Formatter::json_schema(generator);
-        schema.instance_type = Some(
-            vec![
-                InstanceType::Object,
-                InstanceType::String,
-                InstanceType::Array,
+
+        json_schema!({
+            "oneOf": [
+                {
+                    "type": "array",
+                    "items": formatter_schema
+                },
+                {
+                    "type": "string",
+                    "enum": ["auto", "language_server"]
+                },
+                formatter_schema
             ]
-            .into(),
-        );
-
-        let valid_raw_values = SchemaObject {
-            enum_values: Some(vec![
-                Value::String("auto".into()),
-                Value::String("prettier".into()),
-                Value::String("language_server".into()),
-            ]),
-            ..Default::default()
-        };
-
-        let mut nested_values = SchemaObject::default();
-
-        nested_values.array().items = Some(formatter_schema.clone().into());
-
-        schema.subschemas().any_of = Some(vec![
-            nested_values.into(),
-            valid_raw_values.into(),
-            formatter_schema,
-        ]);
-        schema.into()
+        })
     }
 }
 
@@ -826,6 +842,7 @@ impl Serialize for SelectedFormatter {
         }
     }
 }
+
 impl<'de> Deserialize<'de> for SelectedFormatter {
     fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
     where
@@ -846,8 +863,8 @@ impl<'de> Deserialize<'de> for SelectedFormatter {
                 if v == "auto" {
                     Ok(Self::Value::Auto)
                 } else if v == "language_server" {
-                    Ok(Self::Value::List(FormatterList(
-                        Formatter::LanguageServer { name: None }.into(),
+                    Ok(Self::Value::List(FormatterList::Single(
+                        Formatter::LanguageServer { name: None },
                     )))
                 } else {
                     let ret: Result<FormatterList, _> =
@@ -875,16 +892,20 @@ impl<'de> Deserialize<'de> for SelectedFormatter {
         deserializer.deserialize_any(FormatDeserializer)
     }
 }
-/// Controls which formatter should be used when formatting code.
+
+/// Controls which formatters should be used when formatting code.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
-#[serde(rename_all = "snake_case", transparent)]
-pub struct FormatterList(pub SingleOrVec<Formatter>);
+#[serde(untagged)]
+pub enum FormatterList {
+    Single(Formatter),
+    Vec(Vec<Formatter>),
+}
 
 impl AsRef<[Formatter]> for FormatterList {
     fn as_ref(&self) -> &[Formatter] {
-        match &self.0 {
-            SingleOrVec::Single(single) => slice::from_ref(single),
-            SingleOrVec::Vec(v) => v,
+        match &self {
+            Self::Single(single) => slice::from_ref(single),
+            Self::Vec(v) => v,
         }
     }
 }
@@ -978,7 +999,7 @@ pub struct InlayHintSettings {
     /// Default: false
     #[serde(default)]
     pub enabled: bool,
-    /// Global switch to toggle inline values on and off.
+    /// Global switch to toggle inline values on and off when debugging.
     ///
     /// Default: true
     #[serde(default = "default_true")]
@@ -1116,6 +1137,10 @@ impl AllLanguageSettings {
 }
 
 fn merge_with_editorconfig(settings: &mut LanguageSettings, cfg: &EditorconfigProperties) {
+    let preferred_line_length = cfg.get::<MaxLineLen>().ok().and_then(|v| match v {
+        MaxLineLen::Value(u) => Some(u as u32),
+        MaxLineLen::Off => None,
+    });
     let tab_size = cfg.get::<IndentSize>().ok().and_then(|v| match v {
         IndentSize::Value(u) => NonZeroU32::new(u as u32),
         IndentSize::UseTabWidth => cfg.get::<TabWidth>().ok().and_then(|w| match w {
@@ -1143,6 +1168,7 @@ fn merge_with_editorconfig(settings: &mut LanguageSettings, cfg: &EditorconfigPr
             *target = value;
         }
     }
+    merge(&mut settings.preferred_line_length, preferred_line_length);
     merge(&mut settings.tab_size, tab_size);
     merge(&mut settings.hard_tabs, hard_tabs);
     merge(
@@ -1199,7 +1225,7 @@ impl settings::Settings for AllLanguageSettings {
             serde_json::from_value(serde_json::to_value(&default_value.defaults)?)?;
 
         let mut languages = HashMap::default();
-        for (language_name, settings) in &default_value.languages {
+        for (language_name, settings) in &default_value.languages.0 {
             let mut language_settings = defaults.clone();
             merge_settings(&mut language_settings, settings);
             languages.insert(language_name.clone(), language_settings);
@@ -1225,10 +1251,10 @@ impl settings::Settings for AllLanguageSettings {
         let mut copilot_settings = default_value
             .edit_predictions
             .as_ref()
-            .map(|settings| settings.copilot.clone())
-            .map(|copilot| CopilotSettings {
-                proxy: copilot.proxy,
-                proxy_no_verify: copilot.proxy_no_verify,
+            .map(|settings| CopilotSettings {
+                proxy: settings.copilot.proxy.clone(),
+                proxy_no_verify: settings.copilot.proxy_no_verify,
+                enterprise_uri: settings.copilot.enterprise_uri.clone(),
             })
             .unwrap_or_default();
 
@@ -1284,6 +1310,14 @@ impl settings::Settings for AllLanguageSettings {
                 copilot_settings.proxy_no_verify = Some(proxy_no_verify);
             }
 
+            if let Some(enterprise_uri) = user_settings
+                .edit_predictions
+                .as_ref()
+                .and_then(|settings| settings.copilot.enterprise_uri.clone())
+            {
+                copilot_settings.enterprise_uri = Some(enterprise_uri);
+            }
+
             // A user's global settings override the default global settings and
             // all default language-specific settings.
             merge_settings(&mut defaults, &user_settings.defaults);
@@ -1292,7 +1326,7 @@ impl settings::Settings for AllLanguageSettings {
             }
 
             // A user's language-specific settings override default language-specific settings.
-            for (language_name, user_language_settings) in &user_settings.languages {
+            for (language_name, user_language_settings) in &user_settings.languages.0 {
                 merge_settings(
                     languages
                         .entry(language_name.clone())
@@ -1331,9 +1365,10 @@ impl settings::Settings for AllLanguageSettings {
                 disabled_globs: completion_globs
                     .iter()
                     .filter_map(|g| {
+                        let expanded_g = shellexpand::tilde(g).into_owned();
                         Some(DisabledGlob {
-                            matcher: globset::Glob::new(g).ok()?.compile_matcher(),
-                            is_absolute: Path::new(g).is_absolute(),
+                            matcher: globset::Glob::new(&expanded_g).ok()?.compile_matcher(),
+                            is_absolute: Path::new(&expanded_g).is_absolute(),
                         })
                     })
                     .collect(),
@@ -1345,51 +1380,6 @@ impl settings::Settings for AllLanguageSettings {
             languages,
             file_types,
         })
-    }
-
-    fn json_schema(
-        generator: &mut schemars::r#gen::SchemaGenerator,
-        params: &settings::SettingsJsonSchemaParams,
-        _: &App,
-    ) -> schemars::schema::RootSchema {
-        let mut root_schema = generator.root_schema_for::<Self::FileContent>();
-
-        // Create a schema for a 'languages overrides' object, associating editor
-        // settings with specific languages.
-        assert!(
-            root_schema
-                .definitions
-                .contains_key("LanguageSettingsContent")
-        );
-
-        let languages_object_schema = SchemaObject {
-            instance_type: Some(InstanceType::Object.into()),
-            object: Some(Box::new(ObjectValidation {
-                properties: params
-                    .language_names
-                    .iter()
-                    .map(|name| {
-                        (
-                            name.clone(),
-                            Schema::new_ref("#/definitions/LanguageSettingsContent".into()),
-                        )
-                    })
-                    .collect(),
-                ..Default::default()
-            })),
-            ..Default::default()
-        };
-
-        root_schema
-            .definitions
-            .extend([("Languages".into(), languages_object_schema.into())]);
-
-        add_references_to_properties(
-            &mut root_schema,
-            &[("languages", "#/definitions/Languages")],
-        );
-
-        root_schema
     }
 
     fn import_from_vscode(vscode: &settings::VsCodeSettings, current: &mut Self::FileContent) {
@@ -1450,7 +1440,8 @@ impl settings::Settings for AllLanguageSettings {
         vscode.bool_setting("editor.inlineSuggest.enabled", &mut d.show_edit_predictions);
         vscode.enum_setting("editor.renderWhitespace", &mut d.show_whitespaces, |s| {
             Some(match s {
-                "boundary" | "trailing" => ShowWhitespaceSetting::Boundary,
+                "boundary" => ShowWhitespaceSetting::Boundary,
+                "trailing" => ShowWhitespaceSetting::Trailing,
                 "selection" => ShowWhitespaceSetting::Selection,
                 "all" => ShowWhitespaceSetting::All,
                 _ => ShowWhitespaceSetting::None,
@@ -1483,6 +1474,7 @@ impl settings::Settings for AllLanguageSettings {
             } else {
                 d.completions = Some(CompletionSettings {
                     words: mode,
+                    words_min_length: 3,
                     lsp: true,
                     lsp_fetch_timeout_ms: 0,
                     lsp_insert_mode: LspInsertMode::ReplaceSuffix,
@@ -1543,6 +1535,7 @@ fn merge_settings(settings: &mut LanguageSettings, src: &LanguageSettingsContent
     merge(&mut settings.use_autoclose, src.use_autoclose);
     merge(&mut settings.use_auto_surround, src.use_auto_surround);
     merge(&mut settings.use_on_type_format, src.use_on_type_format);
+    merge(&mut settings.auto_indent, src.auto_indent);
     merge(&mut settings.auto_indent_on_paste, src.auto_indent_on_paste);
     merge(
         &mut settings.always_treat_brackets_as_autoclosed,
@@ -1654,29 +1647,26 @@ mod tests {
         let settings: LanguageSettingsContent = serde_json::from_str(raw).unwrap();
         assert_eq!(
             settings.formatter,
-            Some(SelectedFormatter::List(FormatterList(
-                Formatter::LanguageServer { name: None }.into()
+            Some(SelectedFormatter::List(FormatterList::Single(
+                Formatter::LanguageServer { name: None }
             )))
         );
         let raw = "{\"formatter\": [{\"language_server\": {\"name\": null}}]}";
         let settings: LanguageSettingsContent = serde_json::from_str(raw).unwrap();
         assert_eq!(
             settings.formatter,
-            Some(SelectedFormatter::List(FormatterList(
-                vec![Formatter::LanguageServer { name: None }].into()
-            )))
+            Some(SelectedFormatter::List(FormatterList::Vec(vec![
+                Formatter::LanguageServer { name: None }
+            ])))
         );
         let raw = "{\"formatter\": [{\"language_server\": {\"name\": null}}, \"prettier\"]}";
         let settings: LanguageSettingsContent = serde_json::from_str(raw).unwrap();
         assert_eq!(
             settings.formatter,
-            Some(SelectedFormatter::List(FormatterList(
-                vec![
-                    Formatter::LanguageServer { name: None },
-                    Formatter::Prettier
-                ]
-                .into()
-            )))
+            Some(SelectedFormatter::List(FormatterList::Vec(vec![
+                Formatter::LanguageServer { name: None },
+                Formatter::Prettier
+            ])))
         );
     }
 
@@ -1712,10 +1702,12 @@ mod tests {
                         };
                         #[cfg(windows)]
                         let glob_str = glob_str.as_str();
-
+                        let expanded_glob_str = shellexpand::tilde(glob_str).into_owned();
                         DisabledGlob {
-                            matcher: globset::Glob::new(glob_str).unwrap().compile_matcher(),
-                            is_absolute: Path::new(glob_str).is_absolute(),
+                            matcher: globset::Glob::new(&expanded_glob_str)
+                                .unwrap()
+                                .compile_matcher(),
+                            is_absolute: Path::new(&expanded_glob_str).is_absolute(),
                         }
                     })
                     .collect(),
@@ -1811,10 +1803,16 @@ mod tests {
         let dot_env_file = make_test_file(&[".env"]);
         let settings = build_settings(&[".env"]);
         assert!(!settings.enabled_for_file(&dot_env_file, &cx));
+
+        // Test tilde expansion
+        let home = shellexpand::tilde("~").into_owned();
+        let home_file = make_test_file(&[&home, "test.rs"]);
+        let settings = build_settings(&["~/test.rs"]);
+        assert!(!settings.enabled_for_file(&home_file, &cx));
     }
 
     #[test]
-    pub fn test_resolve_language_servers() {
+    fn test_resolve_language_servers() {
         fn language_server_names(names: &[&str]) -> Vec<LanguageServerName> {
             names
                 .iter()

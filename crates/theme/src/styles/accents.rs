@@ -7,7 +7,7 @@ use crate::{
 };
 
 /// A collection of colors that are used to color indent aware lines in the editor.
-#[derive(Clone, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Deserialize, PartialEq)]
 pub struct AccentColors(pub Vec<Hsla>);
 
 impl Default for AccentColors {

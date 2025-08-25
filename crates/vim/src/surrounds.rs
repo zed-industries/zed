@@ -4,7 +4,7 @@ use crate::{
     object::Object,
     state::Mode,
 };
-use editor::{Bias, movement, scroll::Autoscroll};
+use editor::{Bias, movement};
 use gpui::{Context, Window};
 use language::BracketPair;
 
@@ -29,7 +29,7 @@ impl Vim {
         let count = Vim::take_count(cx);
         let forced_motion = Vim::take_forced_motion(cx);
         let mode = self.mode;
-        self.update_editor(window, cx, |_, editor, window, cx| {
+        self.update_editor(cx, |_, editor, cx| {
             let text_layout_details = editor.text_layout_details(window);
             editor.transact(window, cx, |editor, window, cx| {
                 editor.set_clip_at_line_ends(false, cx);
@@ -52,7 +52,7 @@ impl Vim {
                 for selection in &display_selections {
                     let range = match &target {
                         SurroundsType::Object(object, around) => {
-                            object.range(&display_map, selection.clone(), *around)
+                            object.range(&display_map, selection.clone(), *around, None)
                         }
                         SurroundsType::Motion(motion) => {
                             motion
@@ -109,7 +109,7 @@ impl Vim {
 
                 editor.edit(edits, cx);
                 editor.set_clip_at_line_ends(true, cx);
-                editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+                editor.change_selections(Default::default(), window, cx, |s| {
                     if mode == Mode::VisualBlock {
                         s.select_anchor_ranges(anchors.into_iter().take(1))
                     } else {
@@ -140,7 +140,7 @@ impl Vim {
         };
         let surround = pair.end != *text;
 
-        self.update_editor(window, cx, |_, editor, window, cx| {
+        self.update_editor(cx, |_, editor, cx| {
             editor.transact(window, cx, |editor, window, cx| {
                 editor.set_clip_at_line_ends(false, cx);
 
@@ -150,7 +150,9 @@ impl Vim {
 
                 for selection in &display_selections {
                     let start = selection.start.to_offset(&display_map, Bias::Left);
-                    if let Some(range) = pair_object.range(&display_map, selection.clone(), true) {
+                    if let Some(range) =
+                        pair_object.range(&display_map, selection.clone(), true, None)
+                    {
                         // If the current parenthesis object is single-line,
                         // then we need to filter whether it is the current line or not
                         if !pair_object.is_multiline() {
@@ -172,12 +174,11 @@ impl Vim {
                             if ch.to_string() == pair.start {
                                 let start = offset;
                                 let mut end = start + 1;
-                                if surround {
-                                    if let Some((next_ch, _)) = chars_and_offset.peek() {
-                                        if next_ch.eq(&' ') {
-                                            end += 1;
-                                        }
-                                    }
+                                if surround
+                                    && let Some((next_ch, _)) = chars_and_offset.peek()
+                                    && next_ch.eq(&' ')
+                                {
+                                    end += 1;
                                 }
                                 edits.push((start..end, ""));
                                 anchors.push(start..start);
@@ -191,12 +192,11 @@ impl Vim {
                             if ch.to_string() == pair.end {
                                 let mut start = offset;
                                 let end = start + 1;
-                                if surround {
-                                    if let Some((next_ch, _)) = reverse_chars_and_offsets.peek() {
-                                        if next_ch.eq(&' ') {
-                                            start -= 1;
-                                        }
-                                    }
+                                if surround
+                                    && let Some((next_ch, _)) = reverse_chars_and_offsets.peek()
+                                    && next_ch.eq(&' ')
+                                {
+                                    start -= 1;
                                 }
                                 edits.push((start..end, ""));
                                 break;
@@ -207,7 +207,7 @@ impl Vim {
                     }
                 }
 
-                editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+                editor.change_selections(Default::default(), window, cx, |s| {
                     s.select_ranges(anchors);
                 });
                 edits.sort_by_key(|(range, _)| range.start);
@@ -226,7 +226,7 @@ impl Vim {
     ) {
         if let Some(will_replace_pair) = object_to_bracket_pair(target) {
             self.stop_recording(cx);
-            self.update_editor(window, cx, |_, editor, window, cx| {
+            self.update_editor(cx, |_, editor, cx| {
                 editor.transact(window, cx, |editor, window, cx| {
                     editor.set_clip_at_line_ends(false, cx);
 
@@ -247,7 +247,9 @@ impl Vim {
 
                     for selection in &selections {
                         let start = selection.start.to_offset(&display_map, Bias::Left);
-                        if let Some(range) = target.range(&display_map, selection.clone(), true) {
+                        if let Some(range) =
+                            target.range(&display_map, selection.clone(), true, None)
+                        {
                             if !target.is_multiline() {
                                 let is_same_row = selection.start.row() == range.start.row()
                                     && selection.end.row() == range.end.row();
@@ -317,7 +319,7 @@ impl Vim {
                     edits.sort_by_key(|(range, _)| range.start);
                     editor.edit(edits, cx);
                     editor.set_clip_at_line_ends(true, cx);
-                    editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+                    editor.change_selections(Default::default(), window, cx, |s| {
                         s.select_anchor_ranges(stable_anchors);
                     });
                 });
@@ -340,7 +342,7 @@ impl Vim {
     ) -> bool {
         let mut valid = false;
         if let Some(pair) = object_to_bracket_pair(object) {
-            self.update_editor(window, cx, |_, editor, window, cx| {
+            self.update_editor(cx, |_, editor, cx| {
                 editor.transact(window, cx, |editor, window, cx| {
                     editor.set_clip_at_line_ends(false, cx);
                     let (display_map, selections) = editor.selections.all_adjusted_display(cx);
@@ -348,7 +350,9 @@ impl Vim {
 
                     for selection in &selections {
                         let start = selection.start.to_offset(&display_map, Bias::Left);
-                        if let Some(range) = object.range(&display_map, selection.clone(), true) {
+                        if let Some(range) =
+                            object.range(&display_map, selection.clone(), true, None)
+                        {
                             // If the current parenthesis object is single-line,
                             // then we need to filter whether it is the current line or not
                             if object.is_multiline()
@@ -375,7 +379,7 @@ impl Vim {
                             anchors.push(start..start)
                         }
                     }
-                    editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+                    editor.change_selections(Default::default(), window, cx, |s| {
                         s.select_ranges(anchors);
                     });
                     editor.set_clip_at_line_ends(true, cx);

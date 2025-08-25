@@ -27,7 +27,7 @@ async fn test_direct_attach_to_process(executor: BackgroundExecutor, cx: &mut Te
     let workspace = init_test_workspace(&project, cx).await;
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
 
-    let session = start_debug_session_with(
+    let _session = start_debug_session_with(
         &workspace,
         cx,
         DebugTaskDefinition {
@@ -59,14 +59,6 @@ async fn test_direct_attach_to_process(executor: BackgroundExecutor, cx: &mut Te
             assert!(workspace.active_modal::<AttachModal>(cx).is_none());
         })
         .unwrap();
-
-    let shutdown_session = project.update(cx, |project, cx| {
-        project.dap_store().update(cx, |dap_store, cx| {
-            dap_store.shutdown_session(session.read(cx).session_id(), cx)
-        })
-    });
-
-    shutdown_session.await.unwrap();
 }
 
 #[gpui::test]
@@ -147,7 +139,7 @@ async fn test_show_attach_modal_and_select_process(
     workspace
         .update(cx, |_, window, cx| {
             let names =
-                attach_modal.update(cx, |modal, cx| attach_modal::_process_names(&modal, cx));
+                attach_modal.update(cx, |modal, cx| attach_modal::_process_names(modal, cx));
             // Initially all processes are visible.
             assert_eq!(3, names.len());
             attach_modal.update(cx, |this, cx| {
@@ -162,7 +154,7 @@ async fn test_show_attach_modal_and_select_process(
     workspace
         .update(cx, |_, _, cx| {
             let names =
-                attach_modal.update(cx, |modal, cx| attach_modal::_process_names(&modal, cx));
+                attach_modal.update(cx, |modal, cx| attach_modal::_process_names(modal, cx));
             // Initially all processes are visible.
             assert_eq!(2, names.len());
         })

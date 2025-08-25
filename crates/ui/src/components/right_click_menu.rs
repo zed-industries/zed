@@ -9,7 +9,7 @@ use gpui::{
 
 pub struct RightClickMenu<M: ManagedView> {
     id: ElementId,
-    child_builder: Option<Box<dyn FnOnce(bool) -> AnyElement + 'static>>,
+    child_builder: Option<Box<dyn FnOnce(bool, &mut Window, &mut App) -> AnyElement + 'static>>,
     menu_builder: Option<Rc<dyn Fn(&mut Window, &mut App) -> Entity<M> + 'static>>,
     anchor: Option<Corner>,
     attach: Option<Corner>,
@@ -23,11 +23,11 @@ impl<M: ManagedView> RightClickMenu<M> {
 
     pub fn trigger<F, E>(mut self, e: F) -> Self
     where
-        F: FnOnce(bool) -> E + 'static,
+        F: FnOnce(bool, &mut Window, &mut App) -> E + 'static,
         E: IntoElement + 'static,
     {
-        self.child_builder = Some(Box::new(move |is_menu_active| {
-            e(is_menu_active).into_any_element()
+        self.child_builder = Some(Box::new(move |is_menu_active, window, cx| {
+            e(is_menu_active, window, cx).into_any_element()
         }));
         self
     }
@@ -149,10 +149,9 @@ impl<M: ManagedView> Element for RightClickMenu<M> {
                     element
                 });
 
-                let mut child_element = this
-                    .child_builder
-                    .take()
-                    .map(|child_builder| (child_builder)(element_state.menu.borrow().is_some()));
+                let mut child_element = this.child_builder.take().map(|child_builder| {
+                    (child_builder)(element_state.menu.borrow().is_some(), window, cx)
+                });
 
                 let child_layout_id = child_element
                     .as_mut()
@@ -251,12 +250,11 @@ impl<M: ManagedView> Element for RightClickMenu<M> {
 
                         window
                             .subscribe(&new_menu, cx, move |modal, _: &DismissEvent, window, cx| {
-                                if modal.focus_handle(cx).contains_focused(window, cx) {
-                                    if let Some(previous_focus_handle) =
+                                if modal.focus_handle(cx).contains_focused(window, cx)
+                                    && let Some(previous_focus_handle) =
                                         previous_focus_handle.as_ref()
-                                    {
-                                        window.focus(previous_focus_handle);
-                                    }
+                                {
+                                    window.focus(previous_focus_handle);
                                 }
                                 *menu2.borrow_mut() = None;
                                 window.refresh();

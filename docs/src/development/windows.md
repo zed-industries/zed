@@ -66,20 +66,9 @@ The list can be obtained as follows:
 - Click on `More` in the `Installed` tab
 - Click on `Export configuration`
 
-## Backend dependencies
+### Backend Dependencies (optional) {#backend-dependencies}
 
-> This section is still in development. The instructions are not yet complete.
-
-If you are developing collaborative features of Zed, you'll need to install the dependencies of zed's `collab` server:
-
-- Install [Postgres](https://www.postgresql.org/download/windows/)
-- Install [Livekit](https://github.com/livekit/livekit), optionally you can add the `livekit-server` binary to your `PATH`.
-
-Alternatively, if you have [Docker](https://www.docker.com/) installed you can bring up all the `collab` dependencies using Docker Compose:
-
-```sh
-docker compose up -d
-```
+If you are looking to develop Zed collaboration features using a local collabortation server, please see: [Local Collaboration](./local-collaboration.md) docs.
 
 ### Notes
 
@@ -125,18 +114,18 @@ cargo test --workspace
 
 ## Installing from msys2
 
-[MSYS2](https://msys2.org/) distribution provides Zed as a package [mingw-w64-zed](https://packages.msys2.org/base/mingw-w64-zed). The package is available for UCRT64, MINGW64 and CLANG64 repositories. To download it, run
+[MSYS2](https://msys2.org/) distribution provides Zed as a package [mingw-w64-zed](https://packages.msys2.org/base/mingw-w64-zed). The package is available for UCRT64, CLANG64 and CLANGARM64 repositories. To download it, run
 
 ```sh
 pacman -Syu
 pacman -S $MINGW_PACKAGE_PREFIX-zed
 ```
 
-then you can run `zeditor` CLI. Editor executable is installed under `$MINGW_PREFIX/lib/zed` directory
-
 You can see the [build script](https://github.com/msys2/MINGW-packages/blob/master/mingw-w64-zed/PKGBUILD) for more details on build process.
 
 > Please, report any issue in [msys2/MINGW-packages/issues](https://github.com/msys2/MINGW-packages/issues?q=is%3Aissue+is%3Aopen+zed) first.
+
+See also MSYS2 [documentation page](https://www.msys2.org/docs/ides-editors).
 
 Note that `collab` is not supported for MSYS2.
 
@@ -259,3 +248,23 @@ New-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem" -Name
 For more information on this, please see [win32 docs](https://learn.microsoft.com/en-us/windows/win32/fileio/maximum-file-path-limitation?tabs=powershell)
 
 (note that you will need to restart your system after enabling longpath support)
+
+### Graphics issues
+
+#### Zed fails to launch
+
+Currently, Zed uses Vulkan as its graphics API on Windows. However, Vulkan isn't always the most reliable on Windows, so if Zed fails to launch, it's likely a Vulkan-related issue.
+
+You can check the Zed log at:
+`C:\Users\YOU\AppData\Local\Zed\logs\Zed.log`
+
+If you see messages like:
+
+- `Zed failed to open a window: NoSupportedDeviceFound`
+- `ERROR_INITIALIZATION_FAILED`
+- `GPU Crashed`
+- `ERROR_SURFACE_LOST_KHR`
+
+Then Vulkan might not be working properly on your system. In most cases, updating your GPU drivers may help resolve this.
+
+If there's nothing Vulkan-related in the logs and you happen to have Bandicam installed, try uninstalling it. Zed is currently not compatible with Bandicam.

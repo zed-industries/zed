@@ -5,13 +5,19 @@ use theme::all_theme_colors;
 use ui::{
     AudioStatus, Avatar, AvatarAudioStatusIndicator, AvatarAvailabilityIndicator, ButtonLike,
     Checkbox, CheckboxWithLabel, CollaboratorAvailability, ContentGroup, DecoratedIcon,
-    ElevationIndex, Facepile, IconDecoration, Indicator, KeybindingHint, Switch, Table, TintColor,
-    Tooltip, element_cell, prelude::*, string_cell, utils::calculate_contrast_ratio,
+    ElevationIndex, Facepile, IconDecoration, Indicator, KeybindingHint, Switch, TintColor,
+    Tooltip, prelude::*, utils::calculate_contrast_ratio,
 };
 
 use crate::{Item, Workspace};
 
-actions!(dev, [OpenThemePreview]);
+actions!(
+    dev,
+    [
+        /// Opens the theme preview window.
+        OpenThemePreview
+    ]
+);
 
 pub fn init(cx: &mut App) {
     cx.observe_new(|workspace: &mut Workspace, _, _| {
@@ -297,7 +303,6 @@ impl ThemePreview {
                     .gap_1()
                     .children(all_colors.into_iter().map(|(color, name)| {
                         let id = ElementId::Name(format!("{:?}-preview", color).into());
-                        let name = name.clone();
                         div().size_8().flex_none().child(
                             ButtonLike::new(id)
                                 .child(

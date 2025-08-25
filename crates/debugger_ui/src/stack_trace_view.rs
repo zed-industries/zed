@@ -4,7 +4,7 @@ use collections::HashMap;
 use dap::StackFrameId;
 use editor::{
     Anchor, Bias, DebugStackFrameLine, Editor, EditorEvent, ExcerptId, ExcerptRange, MultiBuffer,
-    RowHighlightOptions, ToPoint, scroll::Autoscroll,
+    RowHighlightOptions, SelectionEffects, ToPoint, scroll::Autoscroll,
 };
 use gpui::{
     AnyView, App, AppContext, Entity, EventEmitter, Focusable, IntoElement, Render, SharedString,
@@ -16,7 +16,7 @@ use ui::{ActiveTheme as _, Context, ParentElement as _, Styled as _, div};
 use util::ResultExt as _;
 use workspace::{
     Item, ItemHandle as _, ItemNavHistory, ToolbarItemLocation, Workspace,
-    item::{BreadcrumbText, ItemEvent},
+    item::{BreadcrumbText, ItemEvent, SaveOptions},
     searchable::SearchableItemHandle,
 };
 
@@ -99,10 +99,11 @@ impl StackTraceView {
                             if frame_anchor.excerpt_id
                                 != editor.selections.newest_anchor().head().excerpt_id
                             {
-                                let auto_scroll =
-                                    Some(Autoscroll::center().for_anchor(frame_anchor));
+                                let effects = SelectionEffects::scroll(
+                                    Autoscroll::center().for_anchor(frame_anchor),
+                                );
 
-                                editor.change_selections(auto_scroll, window, cx, |selections| {
+                                editor.change_selections(effects, window, cx, |selections| {
                                     let selection_id = selections.new_selection_id();
 
                                     let selection = Selection {
@@ -148,7 +149,7 @@ impl StackTraceView {
 
         let stack_frames = self
             .stack_frame_list
-            .read_with(cx, |list, _| list.flatten_entries(false));
+            .read_with(cx, |list, _| list.flatten_entries(false, false));
 
         let frames_to_open: Vec<_> = stack_frames
             .into_iter()
@@ -237,7 +238,7 @@ impl StackTraceView {
 
         let stack_frames = self
             .stack_frame_list
-            .read_with(cx, |session, _| session.flatten_entries(false));
+            .read_with(cx, |session, _| session.flatten_entries(false, false));
 
         let active_idx = self
             .selected_stack_frame_id
@@ -386,12 +387,12 @@ impl Item for StackTraceView {
 
     fn save(
         &mut self,
-        format: bool,
+        options: SaveOptions,
         project: Entity<Project>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
-        self.editor.save(format, project, window, cx)
+        self.editor.save(options, project, window, cx)
     }
 
     fn save_as(

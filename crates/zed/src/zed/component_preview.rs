@@ -5,19 +5,14 @@
 mod persistence;
 mod preview_support;
 
-use std::sync::Arc;
-
-use std::iter::Iterator;
-
-use agent::{ActiveThread, TextThreadStore, ThreadStore};
+use agent::{TextThreadStore, ThreadStore};
+use agent_ui::ActiveThread;
 use client::UserStore;
+use collections::HashMap;
 use component::{ComponentId, ComponentMetadata, ComponentStatus, components};
 use gpui::{
     App, Entity, EventEmitter, FocusHandle, Focusable, Task, WeakEntity, Window, list, prelude::*,
 };
-
-use collections::HashMap;
-
 use gpui::{ListState, ScrollHandle, ScrollStrategy, UniformListScrollHandle};
 use languages::LanguageRegistry;
 use notifications::status_toast::{StatusToast, ToastIcon};
@@ -26,16 +21,17 @@ use preview_support::active_thread::{
     load_preview_text_thread_store, load_preview_thread_store, static_active_thread,
 };
 use project::Project;
+use std::{iter::Iterator, ops::Range, sync::Arc};
 use ui::{ButtonLike, Divider, HighlightedLabel, ListItem, ListSubHeader, Tooltip, prelude::*};
 use ui_input::SingleLineInput;
 use util::ResultExt as _;
-use workspace::{AppState, ItemId, SerializableItem, delete_unloaded_items};
-use workspace::{Item, Workspace, WorkspaceId, item::ItemEvent};
+use workspace::{
+    AppState, Item, ItemId, SerializableItem, Workspace, WorkspaceId, delete_unloaded_items,
+    item::ItemEvent,
+};
 
 pub fn init(app_state: Arc<AppState>, cx: &mut App) {
     workspace::register_serializable_item::<ComponentPreview>(cx);
-
-    let app_state = app_state.clone();
 
     cx.observe_new(move |workspace: &mut Workspace, _window, cx| {
         let app_state = app_state.clone();
@@ -107,7 +103,9 @@ enum PreviewPage {
 struct ComponentPreview {
     active_page: PreviewPage,
     active_thread: Option<Entity<ActiveThread>>,
+    reset_key: usize,
     component_list: ListState,
+    entries: Vec<PreviewEntry>,
     component_map: HashMap<ComponentId, ComponentMetadata>,
     components: Vec<ComponentMetadata>,
     cursor_index: usize,
@@ -140,8 +138,7 @@ impl ComponentPreview {
         let project_clone = project.clone();
 
         cx.spawn_in(window, async move |entity, cx| {
-            let thread_store_future =
-                load_preview_thread_store(workspace_clone.clone(), project_clone.clone(), cx);
+            let thread_store_future = load_preview_thread_store(project_clone.clone(), cx);
             let text_thread_store_future =
                 load_preview_text_thread_store(workspace_clone.clone(), project_clone.clone(), cx);
 
@@ -174,23 +171,14 @@ impl ComponentPreview {
             sorted_components.len(),
             gpui::ListAlignment::Top,
             px(1500.0),
-            {
-                let this = cx.entity().downgrade();
-                move |ix, window: &mut Window, cx: &mut App| {
-                    this.update(cx, |this, cx| {
-                        let component = this.get_component(ix);
-                        this.render_preview(&component, window, cx)
-                            .into_any_element()
-                    })
-                    .unwrap()
-                }
-            },
         );
 
         let mut component_preview = Self {
             active_page,
             active_thread: None,
+            reset_key: 0,
             component_list,
+            entries: Vec::new(),
             component_map: component_registry.component_map(),
             components: sorted_components,
             cursor_index: selected_index,
@@ -267,13 +255,14 @@ impl ComponentPreview {
     }
 
     fn set_active_page(&mut self, page: PreviewPage, cx: &mut Context<Self>) {
-        self.active_page = page;
-        cx.emit(ItemEvent::UpdateTab);
+        if self.active_page == page {
+            // Force the current preview page to render again
+            self.reset_key = self.reset_key.wrapping_add(1);
+        } else {
+            self.active_page = page;
+            cx.emit(ItemEvent::UpdateTab);
+        }
         cx.notify();
-    }
-
-    fn get_component(&self, ix: usize) -> ComponentMetadata {
-        self.components[ix].clone()
     }
 
     fn filtered_components(&self) -> Vec<ComponentMetadata> {
@@ -327,25 +316,25 @@ impl ComponentPreview {
             let lowercase_scope = scope_name.to_lowercase();
             let lowercase_desc = description.to_lowercase();
 
-            if lowercase_scopeless.contains(&lowercase_filter) {
-                if let Some(index) = lowercase_scopeless.find(&lowercase_filter) {
-                    let end = index + lowercase_filter.len();
+            if lowercase_scopeless.contains(&lowercase_filter)
+                && let Some(index) = lowercase_scopeless.find(&lowercase_filter)
+            {
+                let end = index + lowercase_filter.len();
 
-                    if end <= scopeless_name.len() {
-                        let mut positions = Vec::new();
-                        for i in index..end {
-                            if scopeless_name.is_char_boundary(i) {
-                                positions.push(i);
-                            }
+                if end <= scopeless_name.len() {
+                    let mut positions = Vec::new();
+                    for i in index..end {
+                        if scopeless_name.is_char_boundary(i) {
+                            positions.push(i);
                         }
+                    }
 
-                        if !positions.is_empty() {
-                            scope_groups
-                                .entry(component.scope())
-                                .or_insert_with(Vec::new)
-                                .push((component.clone(), Some(positions)));
-                            continue;
-                        }
+                    if !positions.is_empty() {
+                        scope_groups
+                            .entry(component.scope())
+                            .or_insert_with(Vec::new)
+                            .push((component.clone(), Some(positions)));
+                        continue;
                     }
                 }
             }
@@ -371,7 +360,6 @@ impl ComponentPreview {
         // Always show all components first
         entries.push(PreviewEntry::AllComponents);
         entries.push(PreviewEntry::ActiveThread);
-        entries.push(PreviewEntry::Separator);
 
         let mut scopes: Vec<_> = scope_groups
             .keys()
@@ -382,30 +370,32 @@ impl ComponentPreview {
         scopes.sort_by_key(|s| s.to_string());
 
         for scope in scopes {
-            if let Some(components) = scope_groups.remove(&scope) {
-                if !components.is_empty() {
-                    entries.push(PreviewEntry::SectionHeader(scope.to_string().into()));
-                    let mut sorted_components = components;
-                    sorted_components.sort_by_key(|(component, _)| component.sort_name());
+            if let Some(components) = scope_groups.remove(&scope)
+                && !components.is_empty()
+            {
+                entries.push(PreviewEntry::Separator);
+                entries.push(PreviewEntry::SectionHeader(scope.to_string().into()));
 
-                    for (component, positions) in sorted_components {
-                        entries.push(PreviewEntry::Component(component, positions));
-                    }
+                let mut sorted_components = components;
+                sorted_components.sort_by_key(|(component, _)| component.sort_name());
+
+                for (component, positions) in sorted_components {
+                    entries.push(PreviewEntry::Component(component, positions));
                 }
             }
         }
 
         // Add uncategorized components last
-        if let Some(components) = scope_groups.get(&ComponentScope::None) {
-            if !components.is_empty() {
-                entries.push(PreviewEntry::Separator);
-                entries.push(PreviewEntry::SectionHeader("Uncategorized".into()));
-                let mut sorted_components = components.clone();
-                sorted_components.sort_by_key(|(c, _)| c.sort_name());
+        if let Some(components) = scope_groups.get(&ComponentScope::None)
+            && !components.is_empty()
+        {
+            entries.push(PreviewEntry::Separator);
+            entries.push(PreviewEntry::SectionHeader("Uncategorized".into()));
+            let mut sorted_components = components.clone();
+            sorted_components.sort_by_key(|(c, _)| c.sort_name());
 
-                for (component, positions) in sorted_components {
-                    entries.push(PreviewEntry::Component(component, positions));
-                }
+            for (component, positions) in sorted_components {
+                entries.push(PreviewEntry::Component(component, positions));
             }
         }
 
@@ -415,7 +405,6 @@ impl ComponentPreview {
     fn update_component_list(&mut self, cx: &mut Context<Self>) {
         let entries = self.scope_ordered_entries();
         let new_len = entries.len();
-        let weak_entity = cx.entity().downgrade();
 
         if new_len > 0 {
             self.nav_scroll_handle
@@ -424,73 +413,27 @@ impl ComponentPreview {
 
         let filtered_components = self.filtered_components();
 
-        if !self.filter_text.is_empty() && !matches!(self.active_page, PreviewPage::AllComponents) {
-            if let PreviewPage::Component(ref component_id) = self.active_page {
-                let component_still_visible = filtered_components
-                    .iter()
-                    .any(|component| component.id() == *component_id);
+        if !self.filter_text.is_empty()
+            && !matches!(self.active_page, PreviewPage::AllComponents)
+            && let PreviewPage::Component(ref component_id) = self.active_page
+        {
+            let component_still_visible = filtered_components
+                .iter()
+                .any(|component| component.id() == *component_id);
 
-                if !component_still_visible {
-                    if !filtered_components.is_empty() {
-                        let first_component = &filtered_components[0];
-                        self.set_active_page(PreviewPage::Component(first_component.id()), cx);
-                    } else {
-                        self.set_active_page(PreviewPage::AllComponents, cx);
-                    }
+            if !component_still_visible {
+                if !filtered_components.is_empty() {
+                    let first_component = &filtered_components[0];
+                    self.set_active_page(PreviewPage::Component(first_component.id()), cx);
+                } else {
+                    self.set_active_page(PreviewPage::AllComponents, cx);
                 }
             }
         }
 
-        self.component_list = ListState::new(
-            filtered_components.len(),
-            gpui::ListAlignment::Top,
-            px(1500.0),
-            {
-                let components = filtered_components.clone();
-                let this = cx.entity().downgrade();
-                move |ix, window: &mut Window, cx: &mut App| {
-                    if ix >= components.len() {
-                        return div().w_full().h_0().into_any_element();
-                    }
+        self.component_list = ListState::new(new_len, gpui::ListAlignment::Top, px(1500.0));
+        self.entries = entries;
 
-                    this.update(cx, |this, cx| {
-                        let component = &components[ix];
-                        this.render_preview(component, window, cx)
-                            .into_any_element()
-                    })
-                    .unwrap()
-                }
-            },
-        );
-
-        let new_list = ListState::new(
-            new_len,
-            gpui::ListAlignment::Top,
-            px(1500.0),
-            move |ix, window, cx| {
-                if ix >= entries.len() {
-                    return div().w_full().h_0().into_any_element();
-                }
-
-                let entry = &entries[ix];
-
-                weak_entity
-                    .update(cx, |this, cx| match entry {
-                        PreviewEntry::Component(component, _) => this
-                            .render_preview(component, window, cx)
-                            .into_any_element(),
-                        PreviewEntry::SectionHeader(shared_string) => this
-                            .render_scope_header(ix, shared_string.clone(), window, cx)
-                            .into_any_element(),
-                        PreviewEntry::AllComponents => div().w_full().h_0().into_any_element(),
-                        PreviewEntry::ActiveThread => div().w_full().h_0().into_any_element(),
-                        PreviewEntry::Separator => div().w_full().h_0().into_any_element(),
-                    })
-                    .unwrap()
-            },
-        );
-
-        self.component_list = new_list;
         cx.emit(ItemEvent::UpdateTab);
     }
 
@@ -517,16 +460,12 @@ impl ComponentPreview {
                             Vec::new()
                         };
                         if valid_positions.is_empty() {
-                            Label::new(name.clone())
-                                .color(Color::Default)
-                                .into_any_element()
+                            Label::new(name).into_any_element()
                         } else {
-                            HighlightedLabel::new(name.clone(), valid_positions).into_any_element()
+                            HighlightedLabel::new(name, valid_positions).into_any_element()
                         }
                     } else {
-                        Label::new(name.clone())
-                            .color(Color::Default)
-                            .into_any_element()
+                        Label::new(name).into_any_element()
                     })
                     .selectable(true)
                     .toggle_state(selected)
@@ -544,7 +483,7 @@ impl ComponentPreview {
                 let selected = self.active_page == PreviewPage::AllComponents;
 
                 ListItem::new(ix)
-                    .child(Label::new("All Components").color(Color::Default))
+                    .child(Label::new("All Components"))
                     .selectable(true)
                     .toggle_state(selected)
                     .inset(true)
@@ -557,7 +496,7 @@ impl ComponentPreview {
                 let selected = self.active_page == PreviewPage::ActiveThread;
 
                 ListItem::new(ix)
-                    .child(Label::new("Active Thread").color(Color::Default))
+                    .child(Label::new("Active Thread"))
                     .selectable(true)
                     .toggle_state(selected)
                     .inset(true)
@@ -567,12 +506,8 @@ impl ComponentPreview {
                     .into_any_element()
             }
             PreviewEntry::Separator => ListItem::new(ix)
-                .child(
-                    h_flex()
-                        .occlude()
-                        .pt_3()
-                        .child(Divider::horizontal_dashed()),
-                )
+                .disabled(true)
+                .child(div().w_full().py_2().child(Divider::horizontal()))
                 .into_any_element(),
         }
     }
@@ -587,7 +522,6 @@ impl ComponentPreview {
         h_flex()
             .w_full()
             .h_10()
-            .items_center()
             .child(Headline::new(title).size(HeadlineSize::XSmall))
             .child(Divider::horizontal())
     }
@@ -641,7 +575,7 @@ impl ComponentPreview {
         // Check if the component's scope is Agent
         if scope == ComponentScope::Agent {
             if let Some(active_thread) = self.active_thread.clone() {
-                if let Some(element) = agent::get_agent_preview(
+                if let Some(element) = agent_ui::get_agent_preview(
                     &component.id(),
                     self.workspace.clone(),
                     active_thread,
@@ -676,10 +610,35 @@ impl ComponentPreview {
                         .child(format!("No components matching '{}'.", self.filter_text))
                         .into_any_element()
                 } else {
-                    list(self.component_list.clone())
-                        .flex_grow()
-                        .with_sizing_behavior(gpui::ListSizingBehavior::Auto)
-                        .into_any_element()
+                    list(
+                        self.component_list.clone(),
+                        cx.processor(|this, ix, window, cx| {
+                            if ix >= this.entries.len() {
+                                return div().w_full().h_0().into_any_element();
+                            }
+
+                            let entry = &this.entries[ix];
+
+                            match entry {
+                                PreviewEntry::Component(component, _) => this
+                                    .render_preview(component, window, cx)
+                                    .into_any_element(),
+                                PreviewEntry::SectionHeader(shared_string) => this
+                                    .render_scope_header(ix, shared_string.clone(), window, cx)
+                                    .into_any_element(),
+                                PreviewEntry::AllComponents => {
+                                    div().w_full().h_0().into_any_element()
+                                }
+                                PreviewEntry::ActiveThread => {
+                                    div().w_full().h_0().into_any_element()
+                                }
+                                PreviewEntry::Separator => div().w_full().h_0().into_any_element(),
+                            }
+                        }),
+                    )
+                    .flex_grow()
+                    .with_sizing_behavior(gpui::ListSizingBehavior::Auto)
+                    .into_any_element()
                 },
             )
     }
@@ -690,7 +649,7 @@ impl ComponentPreview {
         _window: &mut Window,
         _cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let component = self.component_map.get(&component_id);
+        let component = self.component_map.get(component_id);
 
         if let Some(component) = component {
             v_flex()
@@ -700,6 +659,7 @@ impl ComponentPreview {
                     component.clone(),
                     self.workspace.clone(),
                     self.active_thread.clone(),
+                    self.reset_key,
                 ))
                 .into_any_element()
         } else {
@@ -723,7 +683,7 @@ impl ComponentPreview {
                     .h_full()
                     .py_8()
                     .bg(cx.theme().colors().panel_background)
-                    .children(self.active_thread.clone().map(|thread| thread.clone()))
+                    .children(self.active_thread.clone())
                     .when_none(&self.active_thread.clone(), |this| {
                         this.child("No active thread")
                     }),
@@ -736,7 +696,7 @@ impl ComponentPreview {
             workspace.update(cx, |workspace, cx| {
                 let status_toast =
                     StatusToast::new("`zed/new-notification-system` created!", cx, |this, _cx| {
-                        this.icon(ToastIcon::new(IconName::GitBranchSmall).color(Color::Muted))
+                        this.icon(ToastIcon::new(IconName::GitBranchAlt).color(Color::Muted))
                             .action("Open Pull Request", |_, cx| {
                                 cx.open_url("https://github.com/")
                             })
@@ -754,7 +714,7 @@ impl Render for ComponentPreview {
             if input.is_empty(cx) {
                 String::new()
             } else {
-                input.editor().read(cx).text(cx).to_string()
+                input.editor().read(cx).text(cx)
             }
         });
 
@@ -775,15 +735,14 @@ impl Render for ComponentPreview {
             .bg(cx.theme().colors().editor_background)
             .child(
                 v_flex()
+                    .h_full()
                     .border_r_1()
                     .border_color(cx.theme().colors().border)
-                    .h_full()
                     .child(
                         gpui::uniform_list(
-                            cx.entity().clone(),
                             "component-nav",
                             sidebar_entries.len(),
-                            move |this, range, _window, cx| {
+                            cx.processor(move |this, range: Range<usize>, _window, cx| {
                                 range
                                     .filter_map(|ix| {
                                         if ix < sidebar_entries.len() {
@@ -797,26 +756,30 @@ impl Render for ComponentPreview {
                                         }
                                     })
                                     .collect()
-                            },
+                            }),
                         )
                         .track_scroll(self.nav_scroll_handle.clone())
-                        .pt_4()
-                        .px_4()
-                        .w(px(240.))
+                        .p_2p5()
+                        .w(px(231.)) // Matches perfectly with the size of the "Component Preview" tab, if that's the first one in the pane
                         .h_full()
                         .flex_1(),
                     )
                     .child(
-                        div().w_full().pb_4().child(
-                            Button::new("toast-test", "Launch Toast")
-                                .on_click(cx.listener({
-                                    move |this, _, _window, cx| {
-                                        this.test_status_toast(cx);
-                                        cx.notify();
-                                    }
-                                }))
-                                .full_width(),
-                        ),
+                        div()
+                            .w_full()
+                            .p_2p5()
+                            .border_t_1()
+                            .border_color(cx.theme().colors().border)
+                            .child(
+                                Button::new("toast-test", "Launch Toast")
+                                    .full_width()
+                                    .on_click(cx.listener({
+                                        move |this, _, _window, cx| {
+                                            this.test_status_toast(cx);
+                                            cx.notify();
+                                        }
+                                    })),
+                            ),
                     ),
             )
             .child(
@@ -824,7 +787,7 @@ impl Render for ComponentPreview {
                     .id("content-area")
                     .flex_1()
                     .size_full()
-                    .overflow_hidden()
+                    .overflow_y_scroll()
                     .child(
                         div()
                             .p_2()
@@ -964,7 +927,7 @@ impl SerializableItem for ComponentPreview {
                 Err(_) => ActivePageId::default(),
             };
 
-        let user_store = project.read(cx).user_store().clone();
+        let user_store = project.read(cx).user_store();
         let language_registry = project.read(cx).languages().clone();
         let preview_page = if deserialized_active_page.0 == ActivePageId::default().0 {
             Some(PreviewPage::default())
@@ -975,7 +938,7 @@ impl SerializableItem for ComponentPreview {
             let found_component = all_components.iter().find(|c| c.id().0 == component_str);
 
             if let Some(component) = found_component {
-                Some(PreviewPage::Component(component.id().clone()))
+                Some(PreviewPage::Component(component.id()))
             } else {
                 Some(PreviewPage::default())
             }
@@ -1048,6 +1011,7 @@ pub struct ComponentPreviewPage {
     component: ComponentMetadata,
     workspace: WeakEntity<Workspace>,
     active_thread: Option<Entity<ActiveThread>>,
+    reset_key: usize,
 }
 
 impl ComponentPreviewPage {
@@ -1055,6 +1019,7 @@ impl ComponentPreviewPage {
         component: ComponentMetadata,
         workspace: WeakEntity<Workspace>,
         active_thread: Option<Entity<ActiveThread>>,
+        reset_key: usize,
         // languages: Arc<LanguageRegistry>
     ) -> Self {
         Self {
@@ -1062,6 +1027,7 @@ impl ComponentPreviewPage {
             component,
             workspace,
             active_thread,
+            reset_key,
         }
     }
 
@@ -1089,7 +1055,7 @@ impl ComponentPreviewPage {
                             .rounded_sm()
                             .bg(color.color(cx).alpha(0.12))
                             .child(
-                                Label::new(status.clone().to_string())
+                                Label::new(status.to_string())
                                     .size(LabelSize::Small)
                                     .color(color),
                             ),
@@ -1104,9 +1070,8 @@ impl ComponentPreviewPage {
 
     fn render_header(&self, _: &Window, cx: &App) -> impl IntoElement {
         v_flex()
-            .px_12()
-            .pt_16()
-            .pb_12()
+            .py_12()
+            .px_16()
             .gap_6()
             .bg(cx.theme().colors().surface_background)
             .border_b_1()
@@ -1121,7 +1086,6 @@ impl ComponentPreviewPage {
                     )
                     .child(
                         h_flex()
-                            .items_center()
                             .gap_2()
                             .child(
                                 Headline::new(self.component.scopeless_name())
@@ -1138,7 +1102,7 @@ impl ComponentPreviewPage {
     fn render_preview(&self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         // Try to get agent preview first if we have an active thread
         let maybe_agent_preview = if let Some(active_thread) = self.active_thread.as_ref() {
-            agent::get_agent_preview(
+            agent_ui::get_agent_preview(
                 &self.component.id(),
                 self.workspace.clone(),
                 active_thread.clone(),
@@ -1149,34 +1113,37 @@ impl ComponentPreviewPage {
             None
         };
 
+        let content = if let Some(ag_preview) = maybe_agent_preview {
+            // Use agent preview if available
+            ag_preview
+        } else if let Some(preview) = self.component.preview() {
+            // Fall back to component preview
+            preview(window, cx).unwrap_or_else(|| {
+                div()
+                    .child("Failed to load preview. This path should be unreachable")
+                    .into_any_element()
+            })
+        } else {
+            div().child("No preview available").into_any_element()
+        };
+
         v_flex()
+            .id(("component-preview", self.reset_key))
+            .size_full()
             .flex_1()
             .px_12()
             .py_6()
             .bg(cx.theme().colors().editor_background)
-            .child(if let Some(element) = maybe_agent_preview {
-                // Use agent preview if available
-                element
-            } else if let Some(preview) = self.component.preview() {
-                // Fall back to component preview
-                preview(window, cx).unwrap_or_else(|| {
-                    div()
-                        .child("Failed to load preview. This path should be unreachable")
-                        .into_any_element()
-                })
-            } else {
-                div().child("No preview available").into_any_element()
-            })
+            .child(content)
     }
 }
 
 impl RenderOnce for ComponentPreviewPage {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         v_flex()
-            .id("component-preview-page")
-            .overflow_y_scroll()
+            .size_full()
+            .flex_1()
             .overflow_x_hidden()
-            .w_full()
             .child(self.render_header(window, cx))
             .child(self.render_preview(window, cx))
     }

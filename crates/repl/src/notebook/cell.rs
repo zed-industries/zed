@@ -38,7 +38,7 @@ pub enum CellControlType {
 impl CellControlType {
     fn icon_name(&self) -> IconName {
         match self {
-            CellControlType::RunCell => IconName::Play,
+            CellControlType::RunCell => IconName::PlayFilled,
             CellControlType::RerunCell => IconName::ArrowCircle,
             CellControlType::ClearCell => IconName::ListX,
             CellControlType::CellOptions => IconName::Ellipsis,
@@ -91,7 +91,7 @@ fn convert_outputs(
     cx: &mut App,
 ) -> Vec<Output> {
     outputs
-        .into_iter()
+        .iter()
         .map(|output| match output {
             nbformat::v4::Output::Stream { text, .. } => Output::Stream {
                 content: cx.new(|cx| TerminalOutput::from(&text.0, window, cx)),
@@ -177,7 +177,10 @@ impl Cell {
 
                 let editor_view = cx.new(|cx| {
                     let mut editor = Editor::new(
-                        EditorMode::AutoHeight { max_lines: 1024 },
+                        EditorMode::AutoHeight {
+                            min_lines: 1,
+                            max_lines: Some(1024),
+                        },
                         multi_buffer,
                         None,
                         window,
@@ -653,7 +656,7 @@ impl Render for CodeCell {
                                             // .bg(cx.theme().colors().editor_background)
                                             // .border(px(1.))
                                             // .border_color(cx.theme().colors().border)
-                                            // .shadow_sm()
+                                            // .shadow_xs()
                                             .children(content)
                                     },
                                 ))),

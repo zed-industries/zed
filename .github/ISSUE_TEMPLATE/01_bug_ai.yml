@@ -1,4 +1,4 @@
-name: Bug Report (AI Related)
+name: Bug Report (AI)
 description: Zed Agent Panel Bugs
 type: "Bug"
 labels: ["ai"]
@@ -19,15 +19,14 @@ body:
         2.
         3.
 
-        Actual Behavior:
-        Expected Behavior:
+        **Expected Behavior**:
+        **Actual Behavior**:
 
         ### Model Provider Details
         - Provider: (Anthropic via ZedPro, Anthropic via API key, Copilot Chat, Mistral, OpenAI, etc)
         - Model Name:
         - Mode: (Agent Panel, Inline Assistant, Terminal Assistant or Text Threads)
-        - MCP Servers in-use:
-        - Other Details:
+        - Other Details (MCPs, other settings, etc):
     validations:
       required: true
 

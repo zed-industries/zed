@@ -4,6 +4,7 @@ Rust support is available natively in Zed.
 
 - Tree-sitter: [tree-sitter/tree-sitter-rust](https://github.com/tree-sitter/tree-sitter-rust)
 - Language Server: [rust-lang/rust-analyzer](https://github.com/rust-lang/rust-analyzer)
+- Debug Adapter: [CodeLLDB](https://github.com/vadimcn/codelldb) (primary), [GDB](https://sourceware.org/gdb/) (secondary, not available on Apple silicon)
 
 <!--
 TBD: Polish Rust Docs. Zed is a good rust editor, good Rust docs make it look like we care about Rust (we do!)
@@ -78,7 +79,7 @@ If you want to disable Zed looking for a `rust-analyzer` binary, you can set `ig
 }
 ```
 
-If you want to use a binary in a custom location, you can specify a `path` and optional `args`:
+If you want to use a binary in a custom location, you can specify a `path` and optional `arguments`:
 
 ```json
 {
@@ -86,7 +87,7 @@ If you want to use a binary in a custom location, you can specify a `path` and o
     "rust-analyzer": {
       "binary": {
         "path": "/Users/example/bin/rust-analyzer",
-        "args": []
+        "arguments": []
       }
     }
   }
@@ -135,22 +136,7 @@ This is enabled by default and can be configured as
 ## Manual Cargo Diagnostics fetch
 
 By default, rust-analyzer has `checkOnSave: true` enabled, which causes every buffer save to trigger a `cargo check --workspace --all-targets` command.
-For lager projects this might introduce excessive wait times, so a more fine-grained triggering could be enabled by altering the
-
-```json
-"diagnostics": {
-  "cargo": {
-    // When enabled, Zed disables rust-analyzer's check on save and starts to query
-    // Cargo diagnostics separately.
-    "fetch_cargo_diagnostics": false
-  }
-}
-```
-
-default settings.
-
-This will stop rust-analyzer from running `cargo check ...` on save, yet still allow to run
-`editor: run/clear/cancel flycheck` commands in Rust files to refresh cargo diagnostics; the project diagnostics editor will also refresh cargo diagnostics with `editor: run flycheck` command when the setting is enabled.
+If disabled with `checkOnSave: false` (see the example of the server configuration json above), it's still possible to fetch the diagnostics manually, with the `editor: run/clear/cancel flycheck` commands in Rust files to refresh cargo diagnostics; the project diagnostics editor will also refresh cargo diagnostics with `editor: run flycheck` command when the setting is enabled.
 
 ## More server configuration
 
@@ -290,4 +276,48 @@ There's a way get custom completion items from rust-analyzer, that will transfor
     }
   }
 }
+```
+
+## Debugging
+
+Zed supports debugging Rust binaries and tests out of the box. Run {#action debugger::Start} ({#kb debugger::Start}) to launch one of these preconfigured debug tasks.
+
+For more control, you can add debug configurations to `.zed/debug.json`. See the examples below.
+
+### Build binary then debug
+
+```json
+[
+  {
+    "label": "Build & Debug native binary",
+    "build": {
+      "command": "cargo",
+      "args": ["build"]
+    },
+    "program": "$ZED_WORKTREE_ROOT/target/debug/binary",
+    // sourceLanguages is required for CodeLLDB (not GDB) when using Rust
+    "sourceLanguages": ["rust"],
+    "request": "launch",
+    "adapter": "CodeLLDB"
+  }
+]
+```
+
+### Automatically locate a debug target based on build command
+
+When you use `cargo build` or `cargo test` as the build command, Zed can infer the path to the output binary.
+
+```json
+[
+  {
+    "label": "Build & Debug native binary",
+    "adapter": "CodeLLDB",
+    "build": {
+      "command": "cargo",
+      "args": ["build"]
+    },
+    // sourceLanguages is required for CodeLLDB (not GDB) when using Rust
+    "sourceLanguages": ["rust"]
+  }
+]
 ```

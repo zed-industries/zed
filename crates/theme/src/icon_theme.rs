@@ -81,6 +81,7 @@ const FILE_SUFFIXES_BY_ICON_KEY: &[(&str, &[&str])] = &[
     ("bicep", &["bicep"]),
     ("bun", &["lockb"]),
     ("c", &["c", "h"]),
+    ("cairo", &["cairo"]),
     ("code", &["handlebars", "metadata", "rkt", "scm"]),
     ("coffeescript", &["coffee"]),
     (
@@ -151,6 +152,7 @@ const FILE_SUFFIXES_BY_ICON_KEY: &[(&str, &[&str])] = &[
     ("javascript", &["cjs", "js", "mjs"]),
     ("json", &["json"]),
     ("julia", &["jl"]),
+    ("kdl", &["kdl"]),
     ("kotlin", &["kt"]),
     ("lock", &["lock"]),
     ("log", &["log"]),
@@ -181,6 +183,7 @@ const FILE_SUFFIXES_BY_ICON_KEY: &[(&str, &[&str])] = &[
         ],
     ),
     ("prisma", &["prisma"]),
+    ("puppet", &["pp"]),
     ("python", &["py"]),
     ("r", &["r", "R"]),
     ("react", &["cjsx", "ctsx", "jsx", "mjsx", "mtsx", "tsx"]),
@@ -215,6 +218,7 @@ const FILE_SUFFIXES_BY_ICON_KEY: &[(&str, &[&str])] = &[
             "stylelintrc.yml",
         ],
     ),
+    ("surrealql", &["surql"]),
     ("svelte", &["svelte"]),
     ("swift", &["swift"]),
     ("tcl", &["tcl"]),
@@ -279,6 +283,7 @@ const FILE_ICONS: &[(&str, &str)] = &[
     ("bicep", "icons/file_icons/file.svg"),
     ("bun", "icons/file_icons/bun.svg"),
     ("c", "icons/file_icons/c.svg"),
+    ("cairo", "icons/file_icons/cairo.svg"),
     ("code", "icons/file_icons/code.svg"),
     ("coffeescript", "icons/file_icons/coffeescript.svg"),
     ("cpp", "icons/file_icons/cpp.svg"),
@@ -312,6 +317,7 @@ const FILE_ICONS: &[(&str, &str)] = &[
     ("javascript", "icons/file_icons/javascript.svg"),
     ("json", "icons/file_icons/code.svg"),
     ("julia", "icons/file_icons/julia.svg"),
+    ("kdl", "icons/file_icons/kdl.svg"),
     ("kotlin", "icons/file_icons/kotlin.svg"),
     ("lock", "icons/file_icons/lock.svg"),
     ("log", "icons/file_icons/info.svg"),
@@ -326,6 +332,7 @@ const FILE_ICONS: &[(&str, &str)] = &[
     ("php", "icons/file_icons/php.svg"),
     ("prettier", "icons/file_icons/prettier.svg"),
     ("prisma", "icons/file_icons/prisma.svg"),
+    ("puppet", "icons/file_icons/puppet.svg"),
     ("python", "icons/file_icons/python.svg"),
     ("r", "icons/file_icons/r.svg"),
     ("react", "icons/file_icons/react.svg"),
@@ -338,6 +345,7 @@ const FILE_ICONS: &[(&str, &str)] = &[
     ("solidity", "icons/file_icons/file.svg"),
     ("storage", "icons/file_icons/database.svg"),
     ("stylelint", "icons/file_icons/javascript.svg"),
+    ("surrealql", "icons/file_icons/surrealql.svg"),
     ("svelte", "icons/file_icons/html.svg"),
     ("swift", "icons/file_icons/swift.svg"),
     ("tcl", "icons/file_icons/tcl.svg"),
@@ -390,7 +398,7 @@ static DEFAULT_ICON_THEME: LazyLock<Arc<IconTheme>> = LazyLock::new(|| {
         },
         file_stems: icon_keys_by_association(FILE_STEMS_BY_ICON_KEY),
         file_suffixes: icon_keys_by_association(FILE_SUFFIXES_BY_ICON_KEY),
-        file_icons: HashMap::from_iter(FILE_ICONS.into_iter().map(|(ty, path)| {
+        file_icons: HashMap::from_iter(FILE_ICONS.iter().map(|(ty, path)| {
             (
                 ty.to_string(),
                 IconDefinition {

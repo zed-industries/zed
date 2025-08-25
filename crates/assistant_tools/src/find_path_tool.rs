@@ -1,7 +1,8 @@
 use crate::{schema::json_schema_for, ui::ToolCallCardHeader};
+use action_log::ActionLog;
 use anyhow::{Result, anyhow};
 use assistant_tool::{
-    ActionLog, Tool, ToolCard, ToolResult, ToolResultContent, ToolResultOutput, ToolUseStatus,
+    Tool, ToolCard, ToolResult, ToolResultContent, ToolResultOutput, ToolUseStatus,
 };
 use editor::Editor;
 use futures::channel::oneshot::{self, Receiver};
@@ -55,7 +56,11 @@ impl Tool for FindPathTool {
         "find_path".into()
     }
 
-    fn needs_confirmation(&self, _: &serde_json::Value, _: &App) -> bool {
+    fn needs_confirmation(&self, _: &serde_json::Value, _: &Entity<Project>, _: &App) -> bool {
+        false
+    }
+
+    fn may_perform_edits(&self) -> bool {
         false
     }
 
@@ -64,7 +69,7 @@ impl Tool for FindPathTool {
     }
 
     fn icon(&self) -> IconName {
-        IconName::SearchCode
+        IconName::ToolSearch
     }
 
     fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> Result<serde_json::Value> {
@@ -229,7 +234,7 @@ impl ToolCard for FindPathToolCard {
         workspace: WeakEntity<Workspace>,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let matches_label: SharedString = if self.paths.len() == 0 {
+        let matches_label: SharedString = if self.paths.is_empty() {
             "No matches".into()
         } else if self.paths.len() == 1 {
             "1 match".into()
@@ -253,7 +258,7 @@ impl ToolCard for FindPathToolCard {
 
                         Button::new(("path", index), button_label)
                             .icon(IconName::ArrowUpRight)
-                            .icon_size(IconSize::XSmall)
+                            .icon_size(IconSize::Small)
                             .icon_position(IconPosition::End)
                             .label_size(LabelSize::Small)
                             .color(Color::Muted)
@@ -309,7 +314,7 @@ impl ToolCard for FindPathToolCard {
             .mb_2()
             .gap_1()
             .child(
-                ToolCallCardHeader::new(IconName::SearchCode, matches_label)
+                ToolCallCardHeader::new(IconName::ToolSearch, matches_label)
                     .with_code_path(&self.glob)
                     .disclosure_slot(
                         Disclosure::new("path-search-disclosure", self.expanded)

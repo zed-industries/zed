@@ -54,9 +54,17 @@ impl Prettier {
         ".prettierrc.toml",
         ".prettierrc.js",
         ".prettierrc.cjs",
+        ".prettierrc.mjs",
+        ".prettierrc.ts",
+        ".prettierrc.cts",
+        ".prettierrc.mts",
         "package.json",
         "prettier.config.js",
         "prettier.config.cjs",
+        "prettier.config.mjs",
+        "prettier.config.ts",
+        "prettier.config.cts",
+        "prettier.config.mts",
         ".editorconfig",
         ".prettierignore",
     ];
@@ -111,7 +119,7 @@ impl Prettier {
                                             None
                                         }
                                     }).any(|workspace_definition| {
-                                        workspace_definition == subproject_path.to_string_lossy() || PathMatcher::new(&[workspace_definition]).ok().map_or(false, |path_matcher| path_matcher.is_match(subproject_path))
+                                        workspace_definition == subproject_path.to_string_lossy() || PathMatcher::new(&[workspace_definition]).ok().is_some_and(|path_matcher| path_matcher.is_match(subproject_path))
                                     }) {
                                         anyhow::ensure!(has_prettier_in_node_modules(fs, &path_to_check).await?, "Path {path_to_check:?} is the workspace root for project in {closest_package_json_path:?}, but it has no prettier installed");
                                         log::info!("Found prettier path {path_to_check:?} in the workspace root for project in {closest_package_json_path:?}");
@@ -177,11 +185,11 @@ impl Prettier {
                     .metadata(&ignore_path)
                     .await
                     .with_context(|| format!("fetching metadata for {ignore_path:?}"))?
+                    && !metadata.is_dir
+                    && !metadata.is_symlink
                 {
-                    if !metadata.is_dir && !metadata.is_symlink {
-                        log::info!("Found prettier ignore at {ignore_path:?}");
-                        return Ok(ControlFlow::Continue(Some(path_to_check)));
-                    }
+                    log::info!("Found prettier ignore at {ignore_path:?}");
+                    return Ok(ControlFlow::Continue(Some(path_to_check)));
                 }
                 match &closest_package_json_path {
                     None => closest_package_json_path = Some(path_to_check.clone()),
@@ -209,19 +217,19 @@ impl Prettier {
                                     workspace_definition == subproject_path.to_string_lossy()
                                         || PathMatcher::new(&[workspace_definition])
                                             .ok()
-                                            .map_or(false, |path_matcher| {
+                                            .is_some_and(|path_matcher| {
                                                 path_matcher.is_match(subproject_path)
                                             })
                                 })
                             {
                                 let workspace_ignore = path_to_check.join(".prettierignore");
-                                if let Some(metadata) = fs.metadata(&workspace_ignore).await? {
-                                    if !metadata.is_dir {
-                                        log::info!(
-                                            "Found prettier ignore at workspace root {workspace_ignore:?}"
-                                        );
-                                        return Ok(ControlFlow::Continue(Some(path_to_check)));
-                                    }
+                                if let Some(metadata) = fs.metadata(&workspace_ignore).await?
+                                    && !metadata.is_dir
+                                {
+                                    log::info!(
+                                        "Found prettier ignore at workspace root {workspace_ignore:?}"
+                                    );
+                                    return Ok(ControlFlow::Continue(Some(path_to_check)));
                                 }
                             }
                         }
@@ -292,7 +300,7 @@ impl Prettier {
 
         let server = cx
             .update(|cx| {
-                let params = server.default_initialize_params(cx);
+                let params = server.default_initialize_params(false, cx);
                 let configuration = lsp::DidChangeConfigurationParams {
                     settings: Default::default(),
                 };
@@ -343,6 +351,8 @@ impl Prettier {
                                 prettier_plugin_dir.join("plugin.js"),
                                 // this one is for @prettier/plugin-php
                                 prettier_plugin_dir.join("standalone.js"),
+                                // this one is for prettier-plugin-latex
+                                prettier_plugin_dir.join("dist").join("prettier-plugin-latex.js"),
                                 prettier_plugin_dir,
                             ]
                             .into_iter()
@@ -450,14 +460,13 @@ impl Prettier {
                             },
                         })
                     })?
-                    .context("prettier params calculation")?;
+                    .context("building prettier request")?;
 
                 let response = local
                     .server
                     .request::<Format>(params)
                     .await
-                    .into_response()
-                    .context("prettier format")?;
+                    .into_response()?;
                 let diff_task = buffer.update(cx, |buffer, cx| buffer.diff(response.text, cx))?;
                 Ok(diff_task.await)
             }
@@ -540,18 +549,16 @@ async fn read_package_json(
         .metadata(&possible_package_json)
         .await
         .with_context(|| format!("fetching metadata for package json {possible_package_json:?}"))?
+        && !package_json_metadata.is_dir
+        && !package_json_metadata.is_symlink
     {
-        if !package_json_metadata.is_dir && !package_json_metadata.is_symlink {
-            let package_json_contents = fs
-                .load(&possible_package_json)
-                .await
-                .with_context(|| format!("reading {possible_package_json:?} file contents"))?;
-            return serde_json::from_str::<HashMap<String, serde_json::Value>>(
-                &package_json_contents,
-            )
+        let package_json_contents = fs
+            .load(&possible_package_json)
+            .await
+            .with_context(|| format!("reading {possible_package_json:?} file contents"))?;
+        return serde_json::from_str::<HashMap<String, serde_json::Value>>(&package_json_contents)
             .map(Some)
             .with_context(|| format!("parsing {possible_package_json:?} file contents"));
-        }
     }
     Ok(None)
 }

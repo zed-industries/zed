@@ -45,6 +45,7 @@ pub enum ExtensionProvides {
     SlashCommands,
     IndexedDocsProviders,
     Snippets,
+    DebugAdapters,
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]

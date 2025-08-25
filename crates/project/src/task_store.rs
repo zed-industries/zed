@@ -71,7 +71,7 @@ impl TaskStore {
             .payload
             .location
             .context("no location given for task context handling")?;
-        let (buffer_store, is_remote) = store.read_with(&mut cx, |store, _| {
+        let (buffer_store, is_remote) = store.read_with(&cx, |store, _| {
             Ok(match store {
                 TaskStore::Functional(state) => (
                     state.buffer_store.clone(),
@@ -159,6 +159,7 @@ impl TaskStore {
     }
 
     pub fn local(
+        fs: Arc<dyn Fs>,
         buffer_store: WeakEntity<BufferStore>,
         worktree_store: Entity<WorktreeStore>,
         toolchain_store: Arc<dyn LanguageToolchainStore>,
@@ -170,7 +171,7 @@ impl TaskStore {
                 downstream_client: None,
                 environment,
             },
-            task_inventory: Inventory::new(cx),
+            task_inventory: Inventory::new(fs, cx),
             buffer_store,
             toolchain_store,
             worktree_store,
@@ -178,6 +179,7 @@ impl TaskStore {
     }
 
     pub fn remote(
+        fs: Arc<dyn Fs>,
         buffer_store: WeakEntity<BufferStore>,
         worktree_store: Entity<WorktreeStore>,
         toolchain_store: Arc<dyn LanguageToolchainStore>,
@@ -190,7 +192,7 @@ impl TaskStore {
                 upstream_client,
                 project_id,
             },
-            task_inventory: Inventory::new(cx),
+            task_inventory: Inventory::new(fs, cx),
             buffer_store,
             toolchain_store,
             worktree_store,

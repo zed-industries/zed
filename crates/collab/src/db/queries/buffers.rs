@@ -118,6 +118,8 @@ impl Database {
                         user_id: collaborator.user_id.to_proto(),
                         replica_id: collaborator.replica_id.0 as u32,
                         is_host: false,
+                        committer_name: None,
+                        committer_email: None,
                     })
                     .collect(),
             })
@@ -225,6 +227,8 @@ impl Database {
                                 user_id: collaborator.user_id.to_proto(),
                                 replica_id: collaborator.replica_id.0 as u32,
                                 is_host: false,
+                                committer_name: None,
+                                committer_email: None,
                             })
                             .collect(),
                     },
@@ -261,6 +265,8 @@ impl Database {
                         replica_id: db_collaborator.replica_id.0 as u32,
                         user_id: db_collaborator.user_id.to_proto(),
                         is_host: false,
+                        committer_name: None,
+                        committer_email: None,
                     })
                 } else {
                     collaborator_ids_to_remove.push(db_collaborator.id);
@@ -390,6 +396,8 @@ impl Database {
                 replica_id: row.replica_id.0 as u32,
                 user_id: row.user_id.to_proto(),
                 is_host: false,
+                committer_name: None,
+                committer_email: None,
             });
         }
 
@@ -777,6 +785,32 @@ impl Database {
                 })
             })
             .collect())
+    }
+
+    /// Update language server capabilities for a given id.
+    pub async fn update_server_capabilities(
+        &self,
+        project_id: ProjectId,
+        server_id: u64,
+        new_capabilities: String,
+    ) -> Result<()> {
+        self.transaction(|tx| {
+            let new_capabilities = new_capabilities.clone();
+            async move {
+                Ok(
+                    language_server::Entity::update(language_server::ActiveModel {
+                        project_id: ActiveValue::unchanged(project_id),
+                        id: ActiveValue::unchanged(server_id as i64),
+                        capabilities: ActiveValue::set(new_capabilities),
+                        ..Default::default()
+                    })
+                    .exec(&*tx)
+                    .await?,
+                )
+            }
+        })
+        .await?;
+        Ok(())
     }
 }
 

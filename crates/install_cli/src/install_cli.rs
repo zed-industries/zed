@@ -8,7 +8,15 @@ use util::ResultExt;
 use workspace::notifications::{DetachAndPromptErr, NotificationId};
 use workspace::{Toast, Workspace};
 
-actions!(cli, [Install, RegisterZedScheme]);
+actions!(
+    cli,
+    [
+        /// Installs the Zed CLI tool to the system PATH.
+        Install,
+        /// Registers the zed:// URL scheme handler.
+        RegisterZedScheme
+    ]
+);
 
 async fn install_script(cx: &AsyncApp) -> Result<PathBuf> {
     let cli_path = cx.update(|cx| cx.path_for_auxiliary_executable("cli"))??;
@@ -97,7 +105,7 @@ pub fn install_cli(window: &mut Window, cx: &mut Context<Workspace>) {
                 cx,
             )
         })?;
-        register_zed_scheme(&cx).await.log_err();
+        register_zed_scheme(cx).await.log_err();
         Ok(())
     })
     .detach_and_prompt_err("Error installing zed cli", window, cx, |_, _, _| None);

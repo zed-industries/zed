@@ -3,7 +3,7 @@ use std::sync::Arc;
 use gpui::{App, FontFeatures, FontWeight};
 use project::project_settings::{InlineBlameSettings, ProjectSettings};
 use settings::{EditableSettingControl, Settings};
-use theme::{FontFamilyCache, ThemeSettings};
+use theme::{FontFamilyCache, FontFamilyName, ThemeSettings};
 use ui::{
     CheckboxWithLabel, ContextMenu, DropdownMenu, NumericStepper, SettingsContainer, SettingsGroup,
     prelude::*,
@@ -75,7 +75,7 @@ impl EditableSettingControl for BufferFontFamilyControl {
         value: Self::Value,
         _cx: &App,
     ) {
-        settings.buffer_font_family = Some(value.to_string());
+        settings.buffer_font_family = Some(FontFamilyName(value.into()));
     }
 }
 
@@ -88,7 +88,7 @@ impl RenderOnce for BufferFontFamilyControl {
             .child(Icon::new(IconName::Font))
             .child(DropdownMenu::new(
                 "buffer-font-family",
-                value.clone(),
+                value,
                 ContextMenu::build(window, cx, |mut menu, _, cx| {
                     let font_family_cache = FontFamilyCache::global(cx);
 

@@ -1,4 +1,4 @@
-use editor::{Editor, MultiBufferSnapshot};
+use editor::{Editor, EditorSettings, MultiBufferSnapshot};
 use gpui::{App, Entity, FocusHandle, Focusable, Subscription, Task, WeakEntity};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -39,15 +39,32 @@ pub struct UserCaretPosition {
 }
 
 impl UserCaretPosition {
-    pub fn at_selection_end(selection: &Selection<Point>, snapshot: &MultiBufferSnapshot) -> Self {
+    pub(crate) fn at_selection_end(
+        selection: &Selection<Point>,
+        snapshot: &MultiBufferSnapshot,
+    ) -> Self {
         let selection_end = selection.head();
-        let line_start = Point::new(selection_end.row, 0);
-        let chars_to_last_position = snapshot
-            .text_summary_for_range::<text::TextSummary, _>(line_start..selection_end)
-            .chars as u32;
+        let (line, character) = if let Some((buffer_snapshot, point, _)) =
+            snapshot.point_to_buffer_point(selection_end)
+        {
+            let line_start = Point::new(point.row, 0);
+
+            let chars_to_last_position = buffer_snapshot
+                .text_summary_for_range::<text::TextSummary, _>(line_start..point)
+                .chars as u32;
+            (line_start.row, chars_to_last_position)
+        } else {
+            let line_start = Point::new(selection_end.row, 0);
+
+            let chars_to_last_position = snapshot
+                .text_summary_for_range::<text::TextSummary, _>(line_start..selection_end)
+                .chars as u32;
+            (selection_end.row, chars_to_last_position)
+        };
+
         Self {
-            line: NonZeroU32::new(selection_end.row + 1).expect("added 1"),
-            character: NonZeroU32::new(chars_to_last_position + 1).expect("added 1"),
+            line: NonZeroU32::new(line + 1).expect("added 1"),
+            character: NonZeroU32::new(character + 1).expect("added 1"),
         }
     }
 }
@@ -78,10 +95,8 @@ impl CursorPosition {
                 .ok()
                 .unwrap_or(true);
 
-            if !is_singleton {
-                if let Some(debounce) = debounce {
-                    cx.background_executor().timer(debounce).await;
-                }
+            if !is_singleton && let Some(debounce) = debounce {
+                cx.background_executor().timer(debounce).await;
             }
 
             editor
@@ -91,7 +106,7 @@ impl CursorPosition {
                         cursor_position.selected_count.selections = editor.selections.count();
                         match editor.mode() {
                             editor::EditorMode::AutoHeight { .. }
-                            | editor::EditorMode::SingleLine { .. }
+                            | editor::EditorMode::SingleLine
                             | editor::EditorMode::Minimap { .. } => {
                                 cursor_position.position = None;
                                 cursor_position.context = None;
@@ -114,7 +129,7 @@ impl CursorPosition {
                                                 cursor_position.selected_count.lines += 1;
                                             }
                                         }
-                                        if last_selection.as_ref().map_or(true, |last_selection| {
+                                        if last_selection.as_ref().is_none_or(|last_selection| {
                                             selection.id > last_selection.id
                                         }) {
                                             last_selection = Some(selection);
@@ -192,6 +207,13 @@ impl CursorPosition {
 
 impl Render for CursorPosition {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if !EditorSettings::get_global(cx)
+            .status_bar
+            .cursor_position_button
+        {
+            return div();
+        }
+
         div().when_some(self.position, |el, position| {
             let mut text = format!(
                 "{}{FILE_ROW_COLUMN_DELIMITER}{}",
@@ -210,13 +232,11 @@ impl Render for CursorPosition {
                                 if let Some(editor) = workspace
                                     .active_item(cx)
                                     .and_then(|item| item.act_as::<Editor>(cx))
+                                    && let Some((_, buffer, _)) = editor.read(cx).active_excerpt(cx)
                                 {
-                                    if let Some((_, buffer, _)) = editor.read(cx).active_excerpt(cx)
-                                    {
-                                        workspace.toggle_modal(window, cx, |window, cx| {
-                                            crate::GoToLine::new(editor, buffer, window, cx)
-                                        })
-                                    }
+                                    workspace.toggle_modal(window, cx, |window, cx| {
+                                        crate::GoToLine::new(editor, buffer, window, cx)
+                                    })
                                 }
                             });
                         }
@@ -291,10 +311,14 @@ impl Settings for LineIndicatorFormat {
     type FileContent = Option<LineIndicatorFormatContent>;
 
     fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> anyhow::Result<Self> {
-        let format = [sources.release_channel, sources.user]
-            .into_iter()
-            .find_map(|value| value.copied().flatten())
-            .unwrap_or(sources.default.ok_or_else(Self::missing_default)?);
+        let format = [
+            sources.release_channel,
+            sources.operating_system,
+            sources.user,
+        ]
+        .into_iter()
+        .find_map(|value| value.copied().flatten())
+        .unwrap_or(sources.default.ok_or_else(Self::missing_default)?);
 
         Ok(format.0)
     }
