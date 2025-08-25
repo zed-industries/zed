@@ -27,7 +27,8 @@ use futures::{
 };
 use git::repository::DiffType;
 use gpui::{
-    App, AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Task, WeakEntity,
+    App, AppContext, AsyncApp, Context, Entity, EventEmitter, FutureExt as _, SharedString, Task,
+    WeakEntity,
 };
 use language_model::{
     LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelExt,
@@ -1085,11 +1086,6 @@ impl Thread {
         &mut self,
         cx: &mut Context<Self>,
     ) -> Result<mpsc::UnboundedReceiver<Result<ThreadEvent>>> {
-        anyhow::ensure!(
-            self.tool_use_limit_reached,
-            "can only resume after tool use limit is reached"
-        );
-
         self.messages.push(Message::Resume);
         cx.notify();
 
@@ -1216,12 +1212,13 @@ impl Thread {
         cx: &mut AsyncApp,
     ) -> Result<()> {
         log::debug!("Stream completion started successfully");
-        let request = this.update(cx, |this, cx| {
-            this.build_completion_request(completion_intent, cx)
-        })??;
 
         let mut attempt = None;
         'retry: loop {
+            let request = this.update(cx, |this, cx| {
+                this.build_completion_request(completion_intent, cx)
+            })??;
+
             telemetry::event!(
                 "Agent Thread Completion",
                 thread_id = this.read_with(cx, |this, _| this.id.to_string())?,
@@ -1236,7 +1233,7 @@ impl Thread {
                 attempt.unwrap_or(0)
             );
             let mut events = model
-                .stream_completion(request.clone(), cx)
+                .stream_completion(request, cx)
                 .await
                 .map_err(|error| anyhow!(error))?;
             let mut tool_results = FuturesUnordered::new();
@@ -1291,6 +1288,7 @@ impl Thread {
                             started_at: Instant::now(),
                             duration: delay,
                         });
+                        this.update(cx, |this, cx| this.flush_pending_message(cx))?;
 
                         cx.background_executor().timer(delay).await;
                         continue 'retry;
@@ -1736,6 +1734,10 @@ impl Thread {
         let Some(mut message) = self.pending_message.take() else {
             return;
         };
+
+        if message.content.is_empty() {
+            return;
+        }
 
         for content in &message.content {
             let AgentMessageContent::ToolUse(tool_use) = content else {
