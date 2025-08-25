@@ -274,6 +274,7 @@ pub struct AcpThreadView {
     edits_expanded: bool,
     plan_expanded: bool,
     editor_expanded: bool,
+    should_be_following: bool,
     editing_message: Option<usize>,
     prompt_capabilities: Rc<Cell<PromptCapabilities>>,
     is_loading_contents: bool,
@@ -385,6 +386,7 @@ impl AcpThreadView {
             edits_expanded: false,
             plan_expanded: false,
             editor_expanded: false,
+            should_be_following: false,
             history_store,
             hovered_recent_history_item: None,
             prompt_capabilities,
@@ -897,6 +899,13 @@ impl AcpThreadView {
         let Some(thread) = self.thread().cloned() else {
             return;
         };
+        if self.should_be_following {
+            self.workspace
+                .update(cx, |workspace, cx| {
+                    workspace.follow(CollaboratorId::Agent, window, cx);
+                })
+                .ok();
+        }
 
         self.is_loading_contents = true;
         let guard = cx.new(|_| ());
@@ -936,6 +945,16 @@ impl AcpThreadView {
             if let Err(err) = task.await {
                 this.update(cx, |this, cx| {
                     this.handle_thread_error(err, cx);
+                })
+                .ok();
+            } else {
+                this.update(cx, |this, cx| {
+                    this.should_be_following = this
+                        .workspace
+                        .update(cx, |workspace, _| {
+                            workspace.is_being_followed(CollaboratorId::Agent)
+                        })
+                        .unwrap_or_default();
                 })
                 .ok();
             }
@@ -1254,6 +1273,7 @@ impl AcpThreadView {
         tool_call_id: acp::ToolCallId,
         option_id: acp::PermissionOptionId,
         option_kind: acp::PermissionOptionKind,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let Some(thread) = self.thread() else {
@@ -1262,6 +1282,13 @@ impl AcpThreadView {
         thread.update(cx, |thread, cx| {
             thread.authorize_tool_call(tool_call_id, option_id, option_kind, cx);
         });
+        if self.should_be_following {
+            self.workspace
+                .update(cx, |workspace, cx| {
+                    workspace.follow(CollaboratorId::Agent, window, cx);
+                })
+                .ok();
+        }
         cx.notify();
     }
 
@@ -2095,11 +2122,12 @@ impl AcpThreadView {
                         let tool_call_id = tool_call_id.clone();
                         let option_id = option.id.clone();
                         let option_kind = option.kind;
-                        move |this, _, _, cx| {
+                        move |this, _, window, cx| {
                             this.authorize_tool_call(
                                 tool_call_id.clone(),
                                 option_id.clone(),
                                 option_kind,
+                                window,
                                 cx,
                             );
                         }
@@ -3652,13 +3680,34 @@ impl AcpThreadView {
         }
     }
 
-    fn render_follow_toggle(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let following = self
-            .workspace
-            .read_with(cx, |workspace, _| {
-                workspace.is_being_followed(CollaboratorId::Agent)
+    fn is_following(&self, cx: &App) -> bool {
+        match self.thread().map(|thread| thread.read(cx).status()) {
+            Some(ThreadStatus::Generating) => self
+                .workspace
+                .read_with(cx, |workspace, _| {
+                    workspace.is_being_followed(CollaboratorId::Agent)
+                })
+                .unwrap_or(false),
+            _ => self.should_be_following,
+        }
+    }
+
+    fn toggle_following(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let following = self.is_following(cx);
+        self.should_be_following = !following;
+        self.workspace
+            .update(cx, |workspace, cx| {
+                if following {
+                    workspace.unfollow(CollaboratorId::Agent, window, cx);
+                } else {
+                    workspace.follow(CollaboratorId::Agent, window, cx);
+                }
             })
-            .unwrap_or(false);
+            .ok();
+    }
+
+    fn render_follow_toggle(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let following = self.is_following(cx);
 
         IconButton::new("follow-agent", IconName::Crosshair)
             .icon_size(IconSize::Small)
@@ -3679,15 +3728,7 @@ impl AcpThreadView {
                 }
             })
             .on_click(cx.listener(move |this, _, window, cx| {
-                this.workspace
-                    .update(cx, |workspace, cx| {
-                        if following {
-                            workspace.unfollow(CollaboratorId::Agent, window, cx);
-                        } else {
-                            workspace.follow(CollaboratorId::Agent, window, cx);
-                        }
-                    })
-                    .ok();
+                this.toggle_following(window, cx);
             }))
     }
 

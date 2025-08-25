@@ -774,7 +774,7 @@ pub enum AcpThreadEvent {
 
 impl EventEmitter<AcpThreadEvent> for AcpThread {}
 
-#[derive(PartialEq, Eq)]
+#[derive(PartialEq, Eq, Debug)]
 pub enum ThreadStatus {
     Idle,
     WaitingForToolConfirmation,
