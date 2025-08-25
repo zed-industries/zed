@@ -1,9 +1,9 @@
+use gpui::DefiniteLength;
 use gpui::{
     FontStyle, FontWeight, HighlightStyle, SharedString, StrikethroughStyle, UnderlineStyle, px,
 };
 use language::HighlightId;
 use std::{fmt::Display, ops::Range, path::PathBuf};
-use ui::DefiniteLength;
 
 #[derive(Debug)]
 #[cfg_attr(test, derive(PartialEq))]
