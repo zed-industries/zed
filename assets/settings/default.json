@@ -1629,6 +1629,9 @@
         "allowed": true
       }
     },
+    "Kotlin": {
+      "language_servers": ["kotlin-language-server", "!kotlin-lsp", "..."]
+    },
     "LaTeX": {
       "formatter": "language_server",
       "language_servers": ["texlab", "..."],
