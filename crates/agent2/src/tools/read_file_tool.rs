@@ -247,7 +247,7 @@ impl AgentTool for ReadFileTool {
                     if let Ok(LanguageModelToolResultContent::Text(text)) = &result {
                         let markdown = MarkdownCodeBlock {
                             tag: &input.path,
-                            text: &*text,
+                            text,
                         }
                         .to_string();
                         event_stream.update_fields(ToolCallUpdateFields {
