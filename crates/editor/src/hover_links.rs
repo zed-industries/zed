@@ -332,11 +332,7 @@ pub fn update_inlay_link_and_hover_points(
         {
             let inlay_hint_cache = editor.inlay_hint_cache();
             let excerpt_id = hovered_hint.position.excerpt_id;
-
-            // Extract the hint ID from the inlay
-            if let InlayId::Hint(_hint_id) = hovered_hint.id
-                && let Some(cached_hint) = inlay_hint_cache.hint_by_id(excerpt_id, hovered_hint.id)
-            {
+            if let Some(cached_hint) = inlay_hint_cache.hint_by_id(excerpt_id, hovered_hint.id) {
                 // Check if we should process this hint for hover
                 let should_process_hint = match cached_hint.resolve_state {
                     ResolveState::CanResolve(_, _) => {
