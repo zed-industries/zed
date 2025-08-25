@@ -220,7 +220,7 @@
       "ctrl-n": "agent::Reject",
       "ctrl-shift-y": "agent::KeepAll",
       "ctrl-shift-n": "agent::RejectAll",
-      "shift-ctrl-r": "agent::OpenAgentDiff"
+      "ctrl-shift-r": "agent::OpenAgentDiff"
     }
   },
   {
@@ -328,7 +328,7 @@
       "enter": "agent::Chat",
       "ctrl-enter": "agent::ChatWithFollow",
       "ctrl-i": "agent::ToggleProfileSelector",
-      "shift-ctrl-r": "agent::OpenAgentDiff",
+      "ctrl-shift-r": "agent::OpenAgentDiff",
       "ctrl-shift-y": "agent::KeepAll",
       "ctrl-shift-n": "agent::RejectAll"
     }
@@ -340,7 +340,7 @@
       "ctrl-enter": "agent::Chat",
       "enter": "editor::Newline",
       "ctrl-i": "agent::ToggleProfileSelector",
-      "shift-ctrl-r": "agent::OpenAgentDiff",
+      "ctrl-shift-r": "agent::OpenAgentDiff",
       "ctrl-shift-y": "agent::KeepAll",
       "ctrl-shift-n": "agent::RejectAll"
     }
@@ -380,7 +380,7 @@
     "use_key_equivalents": true,
     "bindings": {
       "enter": "agent::Chat",
-      "shift-ctrl-r": "agent::OpenAgentDiff",
+      "ctrl-shift-r": "agent::OpenAgentDiff",
       "ctrl-shift-y": "agent::KeepAll",
       "ctrl-shift-n": "agent::RejectAll"
     }
@@ -650,7 +650,7 @@
     "bindings": {
       "alt-open": ["projects::OpenRecent", { "create_new_window": false }],
       // Change the default action on `menu::Confirm` by setting the parameter
-      // "alt-ctrl-o": ["projects::OpenRecent", { "create_new_window": true }],
+      // "ctrl-alt-o": ["projects::OpenRecent", { "create_new_window": true }],
       // todo(windows)
       // vscode: ctrl-r
       // "ctrl-alt-o": ["projects::OpenRecent", { "create_new_window": false }],
@@ -1400,7 +1400,7 @@
       "ctrl-3": "onboarding::ActivateAISetupPage",
       "ctrl-escape": "onboarding::Finish",
       "alt-tab": "onboarding::SignIn",
-      "alt-shift-a": "onboarding::OpenAccount"
+      "shift-alt-a": "onboarding::OpenAccount"
     }
   }
 ]
