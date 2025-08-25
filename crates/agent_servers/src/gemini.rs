@@ -17,6 +17,10 @@ pub struct Gemini;
 const ACP_ARG: &str = "--experimental-acp";
 
 impl AgentServer for Gemini {
+    fn telemetry_id(&self) -> &'static str {
+        "gemini-cli"
+    }
+
     fn name(&self) -> SharedString {
         "Gemini CLI".into()
     }

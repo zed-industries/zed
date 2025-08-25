@@ -175,6 +175,15 @@ enum ExternalAgent {
 }
 
 impl ExternalAgent {
+    fn name(&self) -> &'static str {
+        match self {
+            Self::NativeAgent => "zed",
+            Self::Gemini => "gemini-cli",
+            Self::ClaudeCode => "claude-code",
+            Self::Custom { .. } => "custom",
+        }
+    }
+
     pub fn server(
         &self,
         fs: Arc<dyn fs::Fs>,

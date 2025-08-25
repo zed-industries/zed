@@ -36,6 +36,7 @@ pub trait AgentServer: Send {
     fn name(&self) -> SharedString;
     fn empty_state_headline(&self) -> SharedString;
     fn empty_state_message(&self) -> SharedString;
+    fn telemetry_id(&self) -> &'static str;
 
     fn connect(
         &self,
