@@ -746,6 +746,7 @@
     //
     // Default: false
     "collapse_untracked_diff": false,
+    "display_mode": "tracked_untracked",
     "scrollbar": {
       // When to show the scrollbar in the git panel.
       //
