@@ -1586,7 +1586,14 @@ impl MultiBuffer {
             };
 
             let buffer_snapshot = buffer.read(cx).snapshot();
-            self.update_path_excerpts(path.clone(), buffer, &buffer_snapshot, merged_ranges, cx);
+            self.update_path_excerpts(
+                path.clone(),
+                buffer,
+                &buffer_snapshot,
+                merged_ranges,
+                false,
+                cx,
+            );
         }
     }
 
@@ -1610,6 +1617,7 @@ impl MultiBuffer {
             &buffer_snapshot,
             new,
             counts,
+            false,
             cx,
         )
     }
@@ -1620,6 +1628,7 @@ impl MultiBuffer {
         buffer: Entity<Buffer>,
         buffer_snapshot: &BufferSnapshot,
         excerpt_ranges: Vec<ExcerptRange<Point>>,
+        keep_excerpts: bool,
         cx: &mut Context<Self>,
     ) -> (Vec<Range<Anchor>>, bool) {
         let (new, counts) = Self::merge_excerpt_ranges(&excerpt_ranges);
@@ -1630,6 +1639,7 @@ impl MultiBuffer {
             buffer_snapshot,
             new,
             counts,
+            keep_excerpts,
             cx,
         )
     }
@@ -1664,6 +1674,7 @@ impl MultiBuffer {
                         &buffer_snapshot,
                         new,
                         counts,
+                        false,
                         cx,
                     );
                     ranges
@@ -1682,10 +1693,11 @@ impl MultiBuffer {
         buffer_snapshot: &BufferSnapshot,
         new: Vec<ExcerptRange<Point>>,
         counts: Vec<usize>,
+        keep_excerpts: bool,
         cx: &mut Context<Self>,
     ) -> (Vec<Range<Anchor>>, bool) {
         let (excerpt_ids, added_a_new_excerpt) =
-            self.update_path_excerpts(path, buffer, buffer_snapshot, new, cx);
+            self.update_path_excerpts(path, buffer, buffer_snapshot, new, keep_excerpts, cx);
 
         let mut result = Vec::new();
         let mut ranges = ranges.into_iter();
@@ -1734,6 +1746,7 @@ impl MultiBuffer {
         buffer: Entity<Buffer>,
         buffer_snapshot: &BufferSnapshot,
         new: Vec<ExcerptRange<Point>>,
+        keep_excerpts: bool,
         cx: &mut Context<Self>,
     ) -> (Vec<ExcerptId>, bool) {
         let mut insert_after = self
@@ -1818,8 +1831,20 @@ impl MultiBuffer {
             match (new, existing) {
                 (None, None) => break,
                 (None, Some((existing_id, _))) => {
-                    existing_iter.next();
-                    to_remove.push(existing_id);
+                    if keep_excerpts {
+                        self.insert_excerpts_with_ids_after(
+                            insert_after,
+                            buffer.clone(),
+                            mem::take(&mut to_insert),
+                            cx,
+                        );
+                        insert_after = existing_iter.next().unwrap();
+                        excerpt_ids.push(insert_after);
+                        new_iter.next();
+                    } else {
+                        existing_iter.next();
+                        to_remove.push(existing_id);
+                    }
                     continue;
                 }
                 (Some(_), None) => {
