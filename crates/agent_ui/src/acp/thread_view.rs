@@ -1305,14 +1305,23 @@ impl AcpThreadView {
                     None
                 };
 
+                let has_checkpoint_button = message
+                    .checkpoint
+                    .as_ref()
+                    .is_some_and(|checkpoint| checkpoint.show);
+
                 let agent_name = self.agent.name();
 
                 v_flex()
                     .id(("user_message", entry_ix))
-                    .map(|this| if rules_item.is_some() {
-                        this.pt_3()
-                    } else {
-                        this.pt_2()
+                    .map(|this| {
+                        if entry_ix == 0 && !has_checkpoint_button && rules_item.is_none()  {
+                            this.pt_4()
+                        } else if rules_item.is_some() {
+                            this.pt_3()
+                        } else {
+                            this.pt_2()
+                        }
                     })
                     .pb_4()
                     .px_2()
