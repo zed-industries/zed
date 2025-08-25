@@ -1,6 +1,8 @@
 use anyhow::{Context as _, Result};
 
+use cpal::Sample;
 use cpal::traits::{DeviceTrait, StreamTrait as _};
+use dasp_sample::ToSample;
 use futures::channel::mpsc::UnboundedSender;
 use futures::{Stream, StreamExt as _};
 use gpui::{
@@ -19,7 +21,9 @@ use livekit::webrtc::{
 };
 use parking_lot::Mutex;
 use rodio::Source;
+use rodio::source::{LimitSettings, UniformSourceIterator};
 use std::cell::RefCell;
+use std::num::NonZero;
 use std::sync::Weak;
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::time::Duration;
@@ -252,6 +256,63 @@ impl AudioStack {
             device_change_listener.next().await;
             drop(end_on_drop_tx)
         }
+    }
+
+    async fn capture_input_rodio(
+        apm: Arc<Mutex<apm::AudioProcessingModule>>,
+        frame_tx: UnboundedSender<AudioFrame<'static>>,
+        sample_rate: u32,
+        num_channels: u32,
+    ) -> Result<()> {
+        use crate::livekit_client::playback::source::RodioExt;
+        const NUM_CHANNELS: usize = 1;
+        const LIVEKIT_BUFFER_SIZE: usize = (SAMPLE_RATE as usize / 100) * NUM_CHANNELS as usize;
+
+        thread::spawn(move || {
+            let stream = rodio::microphone::MicrophoneBuilder::new()
+                .default_device()?
+                .default_config()?
+                .open_stream()?;
+            let mut stream = UniformSourceIterator::new(
+                stream,
+                NonZero::new(1).expect("1 is not zero"),
+                NonZero::new(SAMPLE_RATE).expect("constant is not zero"),
+            )
+            .limit(LimitSettings::live_performance())
+            .process_buffer::<LIVEKIT_BUFFER_SIZE, _>(|buffer| {
+                let mut int_buffer: [i16; _] = buffer.map(|s| s.to_sample());
+                apm.lock()
+                    .process_stream(&mut int_buffer, sample_rate as i32, num_channels as i32)
+                    .unwrap(); // TODO dvdsk fix this
+                for (sample, processed) in buffer.iter_mut().zip(&int_buffer) {
+                    *sample = (*processed).to_sample_();
+                }
+            })
+            .automatic_gain_control(1.0, 4.0, 0.0, 5.0);
+
+            loop {
+                let sampled = stream
+                    .by_ref()
+                    .take(LIVEKIT_BUFFER_SIZE)
+                    .map(|s| s.to_sample())
+                    .collect();
+
+                if frame_tx
+                    .unbounded_send(AudioFrame {
+                        data: Cow::Owned(sampled),
+                        sample_rate,
+                        num_channels,
+                        samples_per_channel: sample_rate / 100,
+                    })
+                    .is_err()
+                {
+                    break;
+                }
+            }
+            Ok::<(), anyhow::Error>(())
+        });
+
+        Ok(())
     }
 
     async fn capture_input(
