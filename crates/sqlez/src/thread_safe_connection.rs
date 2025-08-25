@@ -278,12 +278,8 @@ mod test {
 
         enum TestDomain {}
         impl Domain for TestDomain {
-            fn name() -> &'static str {
-                "test"
-            }
-            fn migrations() -> &'static [&'static str] {
-                &["CREATE TABLE test(col1 TEXT, col2 TEXT) STRICT;"]
-            }
+            const NAME: &str = "test";
+            const MIGRATIONS: &[&str] = &["CREATE TABLE test(col1 TEXT, col2 TEXT) STRICT;"];
         }
 
         for _ in 0..100 {
@@ -312,12 +308,9 @@ mod test {
     fn wild_zed_lost_failure() {
         enum TestWorkspace {}
         impl Domain for TestWorkspace {
-            fn name() -> &'static str {
-                "workspace"
-            }
+            const NAME: &str = "workspace";
 
-            fn migrations() -> &'static [&'static str] {
-                &["
+            const MIGRATIONS: &[&str] = &["
                     CREATE TABLE workspaces(
                         workspace_id INTEGER PRIMARY KEY,
                         dock_visible INTEGER, -- Boolean
@@ -336,8 +329,7 @@ mod test {
                             ON DELETE CASCADE
                             ON UPDATE CASCADE
                     ) STRICT;
-                "]
-            }
+                "];
         }
 
         let builder =

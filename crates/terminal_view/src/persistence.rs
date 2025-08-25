@@ -9,7 +9,11 @@ use std::path::{Path, PathBuf};
 use ui::{App, Context, Pixels, Window};
 use util::ResultExt as _;
 
-use db::{define_connection, query, sqlez::statement::Statement, sqlez_macros::sql};
+use db::{
+    query,
+    sqlez::{domain::Domain, statement::Statement, thread_safe_connection::ThreadSafeConnection},
+    sqlez_macros::sql,
+};
 use workspace::{
     ItemHandle, ItemId, Member, Pane, PaneAxis, PaneGroup, SerializableItem as _, Workspace,
     WorkspaceDb, WorkspaceId,
@@ -375,9 +379,13 @@ impl<'de> Deserialize<'de> for SerializedAxis {
     }
 }
 
-define_connection! {
-    pub static ref TERMINAL_DB: TerminalDb<WorkspaceDb> =
-        &[sql!(
+pub struct TerminalDb(ThreadSafeConnection);
+
+impl Domain for TerminalDb {
+    const NAME: &str = stringify!(TerminalDb);
+
+    const MIGRATIONS: &[&str] = &[
+        sql!(
             CREATE TABLE terminals (
                 workspace_id INTEGER,
                 item_id INTEGER UNIQUE,
@@ -413,6 +421,8 @@ define_connection! {
         ),
     ];
 }
+
+db::static_connection!(TERMINAL_DB, TerminalDb, [WorkspaceDb]);
 
 impl TerminalDb {
     query! {

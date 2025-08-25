@@ -65,7 +65,9 @@ impl Connection {
                         &sqlformat::QueryParams::None,
                         Default::default(),
                     );
-                    if completed_migration == migration {
+                    if completed_migration == migration
+                        || migration.trim().starts_with("-- ALLOW_MIGRATION_CHANGE")
+                    {
                         // Migration already run. Continue
                         continue;
                     } else {
