@@ -46,7 +46,7 @@ pub struct AcpConnectionRegistry {
 }
 
 struct ActiveConnection {
-    server_name: &'static str,
+    server_name: SharedString,
     connection: Weak<acp::ClientSideConnection>,
 }
 
@@ -63,12 +63,12 @@ impl AcpConnectionRegistry {
 
     pub fn set_active_connection(
         &self,
-        server_name: &'static str,
+        server_name: impl Into<SharedString>,
         connection: &Rc<acp::ClientSideConnection>,
         cx: &mut Context<Self>,
     ) {
         self.active_connection.replace(Some(ActiveConnection {
-            server_name,
+            server_name: server_name.into(),
             connection: Rc::downgrade(connection),
         }));
         cx.notify();
@@ -85,7 +85,7 @@ struct AcpTools {
 }
 
 struct WatchedConnection {
-    server_name: &'static str,
+    server_name: SharedString,
     messages: Vec<WatchedConnectionMessage>,
     list_state: ListState,
     connection: Weak<acp::ClientSideConnection>,
@@ -142,7 +142,7 @@ impl AcpTools {
             });
 
             self.watched_connection = Some(WatchedConnection {
-                server_name: active_connection.server_name,
+                server_name: active_connection.server_name.clone(),
                 messages: vec![],
                 list_state: ListState::new(0, ListAlignment::Bottom, px(2048.)),
                 connection: active_connection.connection.clone(),
@@ -442,7 +442,7 @@ impl Item for AcpTools {
             "ACP: {}",
             self.watched_connection
                 .as_ref()
-                .map_or("Disconnected", |connection| connection.server_name)
+                .map_or("Disconnected", |connection| &connection.server_name)
         )
         .into()
     }
