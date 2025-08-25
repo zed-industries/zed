@@ -1007,7 +1007,7 @@ impl Render for LspTool {
 
         let lsp_tool = cx.entity();
 
-        div().child(
+        div().py(DynamicSpacing::Base04.rems(cx)).child(
             PopoverMenu::new("lsp-tool")
                 .menu(move |_, cx| lsp_tool.read(cx).lsp_menu.clone())
                 .anchor(Corner::BottomLeft)

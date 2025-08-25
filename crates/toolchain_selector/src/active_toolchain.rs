@@ -2,12 +2,15 @@ use std::{path::Path, sync::Arc};
 
 use editor::Editor;
 use gpui::{
-    AsyncWindowContext, Context, Entity, IntoElement, ParentElement, Render, Subscription, Task,
-    WeakEntity, Window, div,
+    AsyncWindowContext, Context, Entity, IntoElement, ParentElement, Render, Styled, Subscription,
+    Task, WeakEntity, Window, div,
 };
 use language::{Buffer, BufferEvent, LanguageName, Toolchain};
 use project::{Project, ProjectPath, WorktreeId, toolchain_store::ToolchainStoreEvent};
-use ui::{Button, ButtonCommon, Clickable, FluentBuilder, LabelSize, SharedString, Tooltip};
+use ui::{
+    Button, ButtonCommon, Clickable, DynamicSpacing, FluentBuilder, LabelSize, SharedString,
+    Tooltip,
+};
 use util::maybe;
 use workspace::{StatusItemView, Workspace, item::ItemHandle};
 
@@ -219,7 +222,7 @@ impl Render for ActiveToolchain {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         div().when_some(self.active_toolchain.as_ref(), |el, active_toolchain| {
             let term = self.term.clone();
-            el.child(
+            el.py(DynamicSpacing::Base04.rems(cx)).child(
                 Button::new("change-toolchain", active_toolchain.name.clone())
                     .label_size(LabelSize::Small)
                     .on_click(cx.listener(|this, _, window, cx| {

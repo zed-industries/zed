@@ -1,13 +1,13 @@
 use editor::{Editor, EditorSettings, MultiBufferSnapshot};
-use gpui::{App, Entity, FocusHandle, Focusable, Subscription, Task, WeakEntity};
+use gpui::{App, Entity, FocusHandle, Focusable, Styled, Subscription, Task, WeakEntity};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources};
 use std::{fmt::Write, num::NonZeroU32, time::Duration};
 use text::{Point, Selection};
 use ui::{
-    Button, ButtonCommon, Clickable, Context, FluentBuilder, IntoElement, LabelSize, ParentElement,
-    Render, Tooltip, Window, div,
+    Button, ButtonCommon, Clickable, Context, DynamicSpacing, FluentBuilder, IntoElement,
+    LabelSize, ParentElement, Render, Tooltip, Window, div,
 };
 use util::paths::FILE_ROW_COLUMN_DELIMITER;
 use workspace::{StatusItemView, Workspace, item::ItemHandle};
@@ -223,7 +223,7 @@ impl Render for CursorPosition {
 
             let context = self.context.clone();
 
-            el.child(
+            el.py(DynamicSpacing::Base04.rems(cx)).child(
                 Button::new("go-to-line-column", text)
                     .label_size(LabelSize::Small)
                     .on_click(cx.listener(|this, _, window, cx| {
