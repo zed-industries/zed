@@ -50,7 +50,7 @@ sum_tree.workspace = true
 task.workspace = true
 ui.workspace = true
 util.workspace = true
-workspace.workspace = true
+workspace = { path = "../workspace", default-features = false }
 workspace-hack.workspace = true
 itertools.workspace = true
 

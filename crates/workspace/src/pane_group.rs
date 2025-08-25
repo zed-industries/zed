@@ -4,11 +4,14 @@ use crate::{
     workspace_settings::{PaneSplitDirectionHorizontal, PaneSplitDirectionVertical},
 };
 use anyhow::Result;
+
+#[cfg(feature = "call")]
 use call::{ActiveCall, ParticipantLocation};
+
 use collections::HashMap;
 use gpui::{
-    Along, AnyView, AnyWeakView, Axis, Bounds, Entity, Hsla, IntoElement, MouseButton, Pixels,
-    Point, StyleRefinement, WeakEntity, Window, point, size,
+    Along, AnyView, AnyWeakView, Axis, Bounds, Entity, Hsla, IntoElement, Pixels, Point,
+    StyleRefinement, WeakEntity, Window, point, size,
 };
 use parking_lot::Mutex;
 use project::Project;
@@ -197,6 +200,7 @@ pub enum Member {
 pub struct PaneRenderContext<'a> {
     pub project: &'a Entity<Project>,
     pub follower_states: &'a HashMap<CollaboratorId, FollowerState>,
+    #[cfg(feature = "call")]
     pub active_call: Option<&'a Entity<ActiveCall>>,
     pub active_pane: &'a Entity<Pane>,
     pub app_state: &'a Arc<AppState>,
@@ -258,6 +262,11 @@ impl PaneLeaderDecorator for PaneRenderContext<'_> {
         let mut leader_color;
         let status_box;
         match leader_id {
+            #[cfg(not(feature = "call"))]
+            CollaboratorId::PeerId(_) => {
+                return LeaderDecoration::default();
+            }
+            #[cfg(feature = "call")]
             CollaboratorId::PeerId(peer_id) => {
                 let Some(leader) = self.active_call.as_ref().and_then(|call| {
                     let room = call.read(cx).room()?.read(cx);
@@ -315,7 +324,7 @@ impl PaneLeaderDecorator for PaneRenderContext<'_> {
                             |this, (leader_project_id, leader_user_id)| {
                                 let app_state = self.app_state.clone();
                                 this.cursor_pointer().on_mouse_down(
-                                    MouseButton::Left,
+                                    gpui::MouseButton::Left,
                                     move |_, _, cx| {
                                         crate::join_in_room_project(
                                             leader_project_id,

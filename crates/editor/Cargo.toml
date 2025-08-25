@@ -89,7 +89,7 @@ ui.workspace = true
 url.workspace = true
 util.workspace = true
 uuid.workspace = true
-workspace.workspace = true
+workspace = { path = "../workspace", default-features = false }
 zed_actions.workspace = true
 workspace-hack.workspace = true
 

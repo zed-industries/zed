@@ -13,6 +13,7 @@ path = "src/workspace.rs"
 doctest = false
 
 [features]
+default = ["call"]
 test-support = [
     "call/test-support",
     "client/test-support",
@@ -29,7 +30,7 @@ test-support = [
 any_vec.workspace = true
 anyhow.workspace = true
 async-recursion.workspace = true
-call.workspace = true
+call = { workspace = true, optional = true }
 client.workspace = true
 clock.workspace = true
 collections.workspace = true

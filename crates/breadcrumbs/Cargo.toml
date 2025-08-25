@@ -19,7 +19,7 @@ itertools.workspace = true
 settings.workspace = true
 theme.workspace = true
 ui.workspace = true
-workspace.workspace = true
+workspace = { path = "../workspace", default-features = false }
 zed_actions.workspace = true
 workspace-hack.workspace = true
 
