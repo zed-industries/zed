@@ -5,6 +5,7 @@ use agent_settings::AgentProfileId;
 use anyhow::Result;
 use client::{Client, UserStore};
 use cloud_llm_client::CompletionIntent;
+use collections::IndexMap;
 use context_server::{ContextServer, ContextServerCommand, ContextServerId};
 use fs::{FakeFs, Fs};
 use futures::{
@@ -673,15 +674,6 @@ async fn test_resume_after_tool_use_limit(cx: &mut TestAppContext) {
             "}
         )
     });
-
-    // Ensure we error if calling resume when tool use limit was *not* reached.
-    let error = thread
-        .update(cx, |thread, cx| thread.resume(cx))
-        .unwrap_err();
-    assert_eq!(
-        error.to_string(),
-        "can only resume after tool use limit is reached"
-    )
 }
 
 #[gpui::test]
@@ -2105,6 +2097,7 @@ async fn test_send_retry_on_error(cx: &mut TestAppContext) {
         .unwrap();
     cx.run_until_parked();
 
+    fake_model.send_last_completion_stream_text_chunk("Hey,");
     fake_model.send_last_completion_stream_error(LanguageModelCompletionError::ServerOverloaded {
         provider: LanguageModelProviderName::new("Anthropic"),
         retry_after: Some(Duration::from_secs(3)),
@@ -2114,8 +2107,9 @@ async fn test_send_retry_on_error(cx: &mut TestAppContext) {
     cx.executor().advance_clock(Duration::from_secs(3));
     cx.run_until_parked();
 
-    fake_model.send_last_completion_stream_text_chunk("Hey!");
+    fake_model.send_last_completion_stream_text_chunk("there!");
     fake_model.end_last_completion_stream();
+    cx.run_until_parked();
 
     let mut retry_events = Vec::new();
     while let Some(Ok(event)) = events.next().await {
@@ -2143,10 +2137,92 @@ async fn test_send_retry_on_error(cx: &mut TestAppContext) {
 
                 ## Assistant
 
-                Hey!
+                Hey,
+
+                [resume]
+
+                ## Assistant
+
+                there!
             "}
         )
     });
+}
+
+#[gpui::test]
+async fn test_send_retry_finishes_tool_calls_on_error(cx: &mut TestAppContext) {
+    let ThreadTest { thread, model, .. } = setup(cx, TestModel::Fake).await;
+    let fake_model = model.as_fake();
+
+    let events = thread
+        .update(cx, |thread, cx| {
+            thread.set_completion_mode(agent_settings::CompletionMode::Burn, cx);
+            thread.add_tool(EchoTool);
+            thread.send(UserMessageId::new(), ["Call the echo tool!"], cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+
+    let tool_use_1 = LanguageModelToolUse {
+        id: "tool_1".into(),
+        name: EchoTool::name().into(),
+        raw_input: json!({"text": "test"}).to_string(),
+        input: json!({"text": "test"}),
+        is_input_complete: true,
+    };
+    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(
+        tool_use_1.clone(),
+    ));
+    fake_model.send_last_completion_stream_error(LanguageModelCompletionError::ServerOverloaded {
+        provider: LanguageModelProviderName::new("Anthropic"),
+        retry_after: Some(Duration::from_secs(3)),
+    });
+    fake_model.end_last_completion_stream();
+
+    cx.executor().advance_clock(Duration::from_secs(3));
+    let completion = fake_model.pending_completions().pop().unwrap();
+    assert_eq!(
+        completion.messages[1..],
+        vec![
+            LanguageModelRequestMessage {
+                role: Role::User,
+                content: vec!["Call the echo tool!".into()],
+                cache: false
+            },
+            LanguageModelRequestMessage {
+                role: Role::Assistant,
+                content: vec![language_model::MessageContent::ToolUse(tool_use_1.clone())],
+                cache: false
+            },
+            LanguageModelRequestMessage {
+                role: Role::User,
+                content: vec![language_model::MessageContent::ToolResult(
+                    LanguageModelToolResult {
+                        tool_use_id: tool_use_1.id.clone(),
+                        tool_name: tool_use_1.name.clone(),
+                        is_error: false,
+                        content: "test".into(),
+                        output: Some("test".into())
+                    }
+                )],
+                cache: true
+            },
+        ]
+    );
+
+    fake_model.send_last_completion_stream_text_chunk("Done");
+    fake_model.end_last_completion_stream();
+    cx.run_until_parked();
+    events.collect::<Vec<_>>().await;
+    thread.read_with(cx, |thread, _cx| {
+        assert_eq!(
+            thread.last_message(),
+            Some(Message::Agent(AgentMessage {
+                content: vec![AgentMessageContent::Text("Done".into())],
+                tool_results: IndexMap::default()
+            }))
+        );
+    })
 }
 
 #[gpui::test]

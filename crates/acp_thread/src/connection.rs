@@ -43,7 +43,7 @@ pub trait AgentConnection {
     fn resume(
         &self,
         _session_id: &acp::SessionId,
-        _cx: &mut App,
+        _cx: &App,
     ) -> Option<Rc<dyn AgentSessionResume>> {
         None
     }
@@ -53,7 +53,7 @@ pub trait AgentConnection {
     fn truncate(
         &self,
         _session_id: &acp::SessionId,
-        _cx: &mut App,
+        _cx: &App,
     ) -> Option<Rc<dyn AgentSessionTruncate>> {
         None
     }
@@ -61,7 +61,7 @@ pub trait AgentConnection {
     fn set_title(
         &self,
         _session_id: &acp::SessionId,
-        _cx: &mut App,
+        _cx: &App,
     ) -> Option<Rc<dyn AgentSessionSetTitle>> {
         None
     }
@@ -439,7 +439,7 @@ mod test_support {
         fn truncate(
             &self,
             _session_id: &agent_client_protocol::SessionId,
-            _cx: &mut App,
+            _cx: &App,
         ) -> Option<Rc<dyn AgentSessionTruncate>> {
             Some(Rc::new(StubAgentSessionEditor))
         }
