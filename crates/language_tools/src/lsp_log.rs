@@ -1,11 +1,9 @@
-use anyhow::Result;
-use client::AnyProtoClient;
 use collections::{HashMap, VecDeque};
 use copilot::Copilot;
 use editor::{Editor, EditorEvent, actions::MoveToEnd, scroll::Autoscroll};
 use futures::{StreamExt, channel::mpsc};
 use gpui::{
-    AnyView, App, AsyncApp, Context, Corner, Entity, EventEmitter, FocusHandle, Focusable, Global,
+    AnyView, App, Context, Corner, Entity, EventEmitter, FocusHandle, Focusable, Global,
     IntoElement, ParentElement, Render, Styled, Subscription, WeakEntity, Window, actions, div,
 };
 use itertools::Itertools;
@@ -15,7 +13,6 @@ use lsp::{
     MessageType, SetTraceParams, TraceValue, notification::SetTrace,
 };
 use project::{Project, WorktreeId, lsp_store::LanguageServerLogType, search::SearchQuery};
-use proto::TypedEnvelope;
 use std::{any::TypeId, borrow::Cow, sync::Arc};
 use ui::{Button, Checkbox, ContextMenu, Label, PopoverMenu, ToggleState, prelude::*};
 use util::ResultExt as _;
@@ -115,8 +112,7 @@ impl Message for RpcMessage {
     type Level = ();
 }
 
-pub(super) struct LanguageServerState {
-    project: Option<WeakEntity<Project>>,
+pub struct LanguageServerState {
     name: Option<LanguageServerName>,
     worktree_id: Option<WorktreeId>,
     kind: LanguageServerKind,
@@ -155,7 +151,7 @@ impl LanguageServerKind {
     }
 }
 
-struct LanguageServerRpcState {
+pub struct LanguageServerRpcState {
     rpc_messages: VecDeque<RpcMessage>,
     last_message_kind: Option<MessageKind>,
 }
@@ -232,9 +228,7 @@ pub struct GlobalLogStore(pub WeakEntity<LogStore>);
 
 impl Global for GlobalLogStore {}
 
-pub fn init(client: AnyProtoClient, store_logs: bool, cx: &mut App) {
-    client.add_entity_message_handler(handle_toggle_lsp_logs);
-
+pub fn init(store_logs: bool, cx: &mut App) {
     let log_store = cx.new(|cx| LogStore::new(store_logs, cx));
     cx.set_global(GlobalLogStore(log_store.downgrade()));
 
@@ -293,7 +287,6 @@ impl LogStore {
                         Some(name),
                         None,
                         Some(server.clone()),
-                        None,
                         cx,
                     );
                 }
@@ -311,9 +304,9 @@ impl LogStore {
 
         cx.spawn(async move |this, cx| {
             while let Some((server_id, io_kind, message)) = io_rx.next().await {
-                if let Some(this) = this.upgrade() {
-                    this.update(cx, |this, cx| {
-                        this.on_io(server_id, io_kind, &message, cx);
+                if let Some(log_store) = this.upgrade() {
+                    log_store.update(cx, |log_store, cx| {
+                        log_store.on_io(server_id, io_kind, &message, cx);
                     })?;
                 }
             }
@@ -324,6 +317,11 @@ impl LogStore {
     }
 
     pub fn add_project(&mut self, project: &Entity<Project>, cx: &mut Context<Self>) {
+        log::error!(
+            "?????????????? ssh: {} local: {}",
+            project.read(cx).is_via_ssh(),
+            project.read(cx).is_local()
+        );
         let weak_project = project.downgrade();
         let subscription_weak_project = weak_project.clone();
         self.projects.insert(
@@ -336,17 +334,15 @@ impl LogStore {
                             .retain(|_, state| state.kind.project() != Some(&weak_project));
                     }),
                     cx.subscribe(project, move |log_store, project, event, cx| {
-                        let subscription_weak_project = project.downgrade();
-                        let server_kind = if project.read(cx).is_via_remote_server() {
-                            LanguageServerKind::Remote {
-                                project: project.downgrade(),
-                            }
-                        } else {
+                        let server_kind = if project.read(cx).is_local() {
                             LanguageServerKind::Local {
                                 project: project.downgrade(),
                             }
+                        } else {
+                            LanguageServerKind::Remote {
+                                project: project.downgrade(),
+                            }
                         };
-
                         match event {
                             project::Event::LanguageServerAdded(id, name, worktree_id) => {
                                 log_store.add_language_server(
@@ -359,7 +355,6 @@ impl LogStore {
                                         .lsp_store()
                                         .read(cx)
                                         .language_server_for_id(*id),
-                                    Some(subscription_weak_project),
                                     cx,
                                 );
                             }
@@ -373,7 +368,6 @@ impl LogStore {
                                     None,
                                     None,
                                     None,
-                                    Some(subscription_weak_project),
                                     cx,
                                 );
                                 match typ {
@@ -401,24 +395,27 @@ impl LogStore {
                             _ => {}
                         }
                     }),
-                    cx.subscribe_self(move |_, e, cx| match e {
-                        Event::NewServerLogEntry { id, kind, text } => {
-                            subscription_weak_project
-                                .update(cx, |project, cx| {
-                                    if let Some((client, project_id)) =
-                                        project.lsp_store().read(cx).downstream_client()
-                                    {
-                                        client
-                                            .send(proto::LanguageServerLog {
-                                                project_id,
-                                                language_server_id: id.to_proto(),
-                                                message: text.clone(),
-                                                log_type: Some(kind.to_proto()),
-                                            })
-                                            .log_err();
-                                    };
-                                })
-                                .ok();
+                    cx.subscribe(&cx.entity(), move |_, _, e, cx| {
+                        log::error!("||??????????????????????????????????????||||||@@@@|| {e:?}");
+                        match e {
+                            Event::NewServerLogEntry { id, kind, text } => {
+                                subscription_weak_project
+                                    .update(cx, |project, cx| {
+                                        if let Some((client, project_id)) =
+                                            project.lsp_store().read(cx).downstream_client()
+                                        {
+                                            client
+                                                .send(proto::LanguageServerLog {
+                                                    project_id,
+                                                    language_server_id: id.to_proto(),
+                                                    message: text.clone(),
+                                                    log_type: Some(kind.to_proto()),
+                                                })
+                                                .log_err();
+                                        };
+                                    })
+                                    .ok();
+                            }
                         }
                     }),
                 ],
@@ -433,14 +430,13 @@ impl LogStore {
         self.language_servers.get_mut(&id)
     }
 
-    fn add_language_server(
+    pub fn add_language_server(
         &mut self,
         kind: LanguageServerKind,
         server_id: LanguageServerId,
         name: Option<LanguageServerName>,
         worktree_id: Option<WorktreeId>,
         server: Option<Arc<LanguageServer>>,
-        project: Option<WeakEntity<Project>>,
         cx: &mut Context<Self>,
     ) -> Option<&mut LanguageServerState> {
         let server_state = self.language_servers.entry(server_id).or_insert_with(|| {
@@ -449,7 +445,6 @@ impl LogStore {
                 name: None,
                 worktree_id: None,
                 kind,
-                project,
                 rpc_state: None,
                 log_messages: VecDeque::with_capacity(MAX_STORED_LOG_ENTRIES),
                 trace_messages: VecDeque::with_capacity(MAX_STORED_LOG_ENTRIES),
@@ -619,6 +614,8 @@ impl LogStore {
                 message: message.trim().to_owned(),
             });
         }
+
+        log::error!("|||||||||| {message}");
         cx.emit(Event::NewServerLogEntry {
             id: language_server_id,
             kind: LanguageServerLogType::Rpc {
@@ -628,7 +625,7 @@ impl LogStore {
         });
     }
 
-    fn remove_language_server(&mut self, id: LanguageServerId, cx: &mut Context<Self>) {
+    pub fn remove_language_server(&mut self, id: LanguageServerId, cx: &mut Context<Self>) {
         self.language_servers.remove(&id);
         cx.notify();
     }
@@ -662,7 +659,7 @@ impl LogStore {
             })
     }
 
-    fn enable_rpc_trace_for_language_server(
+    pub fn enable_rpc_trace_for_language_server(
         &mut self,
         server_id: LanguageServerId,
     ) -> Option<&mut LanguageServerRpcState> {
@@ -817,23 +814,6 @@ impl LogStore {
     }
 }
 
-async fn handle_toggle_lsp_logs(
-    lsp_log: Entity<LogStore>,
-    envelope: TypedEnvelope<proto::ToggleLspLogs>,
-    mut cx: AsyncApp,
-) -> Result<()> {
-    let server_id = LanguageServerId::from_proto(envelope.payload.server_id);
-    lsp_log.update(&mut cx, |lsp_log, _| {
-        // we do not support any other log toggling yet
-        if envelope.payload.enabled {
-            lsp_log.enable_rpc_trace_for_language_server(server_id);
-        } else {
-            lsp_log.disable_rpc_trace_for_language_server(server_id);
-        }
-    })?;
-    Ok(())
-}
-
 impl LspLogView {
     pub fn new(
         project: Entity<Project>,
@@ -875,48 +855,48 @@ impl LspLogView {
 
                 cx.notify();
             });
-        let events_subscriptions = cx.subscribe_in(
-            &log_store,
-            window,
-            move |log_view, _, e, window, cx| match e {
-                Event::NewServerLogEntry { id, kind, text } => {
-                    if log_view.current_server_id == Some(*id)
-                        && LogKind::from_server_log_type(kind) == log_view.active_entry_kind
-                    {
-                        log_view.editor.update(cx, |editor, cx| {
-                            editor.set_read_only(false);
-                            let last_offset = editor.buffer().read(cx).len(cx);
-                            let newest_cursor_is_at_end =
-                                editor.selections.newest::<usize>(cx).start >= last_offset;
-                            editor.edit(
-                                vec![
-                                    (last_offset..last_offset, text.as_str()),
-                                    (last_offset..last_offset, "\n"),
-                                ],
-                                cx,
-                            );
-                            if text.len() > 1024
-                                && let Some((fold_offset, _)) =
-                                    text.char_indices().dropping(1024).next()
-                                && fold_offset < text.len()
-                            {
-                                editor.fold_ranges(
-                                    vec![last_offset + fold_offset..last_offset + text.len()],
-                                    false,
-                                    window,
+        let events_subscriptions =
+            cx.subscribe_in(&log_store, window, move |log_view, _, e, window, cx| {
+                log::error!("||||||||@@@@|| {e:?}");
+                match e {
+                    Event::NewServerLogEntry { id, kind, text } => {
+                        if log_view.current_server_id == Some(*id)
+                            && LogKind::from_server_log_type(kind) == log_view.active_entry_kind
+                        {
+                            log_view.editor.update(cx, |editor, cx| {
+                                editor.set_read_only(false);
+                                let last_offset = editor.buffer().read(cx).len(cx);
+                                let newest_cursor_is_at_end =
+                                    editor.selections.newest::<usize>(cx).start >= last_offset;
+                                editor.edit(
+                                    vec![
+                                        (last_offset..last_offset, text.as_str()),
+                                        (last_offset..last_offset, "\n"),
+                                    ],
                                     cx,
                                 );
-                            }
+                                if text.len() > 1024
+                                    && let Some((fold_offset, _)) =
+                                        text.char_indices().dropping(1024).next()
+                                    && fold_offset < text.len()
+                                {
+                                    editor.fold_ranges(
+                                        vec![last_offset + fold_offset..last_offset + text.len()],
+                                        false,
+                                        window,
+                                        cx,
+                                    );
+                                }
 
-                            if newest_cursor_is_at_end {
-                                editor.request_autoscroll(Autoscroll::bottom(), cx);
-                            }
-                            editor.set_read_only(true);
-                        });
+                                if newest_cursor_is_at_end {
+                                    editor.request_autoscroll(Autoscroll::bottom(), cx);
+                                }
+                                editor.set_read_only(true);
+                            });
+                        }
                     }
                 }
-            },
-        );
+            });
         let (editor, editor_subscriptions) = Self::editor_for_logs(String::new(), window, cx);
 
         let focus_handle = cx.focus_handle();
@@ -1207,7 +1187,7 @@ impl LspLogView {
             }
 
             if let Some(server_state) = log_store.language_servers.get(&server_id) {
-                if let Some(project) = &server_state.project {
+                if let LanguageServerKind::Remote { project } = &server_state.kind {
                     project
                         .update(cx, |project, cx| {
                             if let Some((client, project_id)) =
@@ -1937,6 +1917,7 @@ impl ServerInfo {
     }
 }
 
+#[derive(Debug)]
 pub enum Event {
     NewServerLogEntry {
         id: LanguageServerId,
