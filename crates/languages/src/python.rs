@@ -34,7 +34,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use task::{ShellKind, TaskTemplate, TaskTemplates, VariableName};
+use task::{TaskTemplate, TaskTemplates, VariableName};
 use util::ResultExt;
 
 pub(crate) struct PyprojectTomlManifestProvider;
@@ -875,50 +875,12 @@ impl ToolchainLister for PythonToolchainProvider {
                 if let Some(nk) = name_and_kind {
                     _ = write!(name, " {nk}");
                 }
+
                 Some(Toolchain {
                     name: name.into(),
                     path: toolchain.executable.as_ref()?.to_str()?.to_owned().into(),
                     language_name: LanguageName::new("Python"),
                     as_json: serde_json::to_value(toolchain.clone()).ok()?,
-                    activation_script: match (toolchain.kind, toolchain.prefix) {
-                        (Some(PythonEnvironmentKind::Venv), Some(prefix)) => [
-                            (
-                                ShellKind::Fish,
-                                "source",
-                                prefix.join(BINARY_DIR).join("activate.fish"),
-                            ),
-                            (
-                                ShellKind::Powershell,
-                                ".",
-                                prefix.join(BINARY_DIR).join("activate.ps1"),
-                            ),
-                            (
-                                ShellKind::Nushell,
-                                "overlay use",
-                                prefix.join(BINARY_DIR).join("activate.nu"),
-                            ),
-                            (
-                                ShellKind::Posix,
-                                ".",
-                                prefix.join(BINARY_DIR).join("activate"),
-                            ),
-                            (
-                                ShellKind::Cmd,
-                                ".",
-                                prefix.join(BINARY_DIR).join("activate.bat"),
-                            ),
-                            (
-                                ShellKind::Csh,
-                                ".",
-                                prefix.join(BINARY_DIR).join("activate.csh"),
-                            ),
-                        ]
-                        .into_iter()
-                        .filter(|(_, _, path)| path.exists() && path.is_file())
-                        .map(|(kind, cmd, path)| (kind, format!("{cmd} {}", path.display())))
-                        .collect(),
-                        _ => Default::default(),
-                    },
                 })
             })
             .collect();
@@ -931,6 +893,24 @@ impl ToolchainLister for PythonToolchainProvider {
     }
     fn term(&self) -> SharedString {
         self.term.clone()
+    }
+    fn activation_script(&self, toolchain: &Toolchain) -> Option<String> {
+        let toolchain = serde_json::from_value::<pet_core::python_environment::PythonEnvironment>(
+            toolchain.as_json.clone(),
+        )
+        .ok()?;
+        let mut activation_script = None;
+        if let Some(prefix) = &toolchain.prefix {
+            #[cfg(not(target_os = "windows"))]
+            let path = prefix.join(BINARY_DIR).join("activate");
+            #[cfg(target_os = "windows")]
+            let path = prefix.join(BINARY_DIR).join("activate.ps1");
+            // todo: sync fs access
+            if path.exists() && path.is_file() {
+                activation_script = Some(format!(". {}", path.display()));
+            }
+        }
+        activation_script
     }
 }
 

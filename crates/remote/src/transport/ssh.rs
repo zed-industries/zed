@@ -30,7 +30,10 @@ use std::{
     time::Instant,
 };
 use tempfile::TempDir;
-use util::paths::{PathStyle, RemotePathBuf};
+use util::{
+    get_default_system_shell,
+    paths::{PathStyle, RemotePathBuf},
+};
 
 pub(crate) struct SshRemoteConnection {
     socket: SshSocket,
@@ -159,7 +162,8 @@ impl RemoteConnection for SshRemoteConnection {
             write!(&mut script, "exec {shell} -l").unwrap();
         };
 
-        let shell_invocation = format!("{shell} -c {}", shlex::try_quote(&script).unwrap());
+        let sys_shell = get_default_system_shell();
+        let shell_invocation = format!("{sys_shell} -c {}", shlex::try_quote(&script).unwrap());
 
         let mut args = Vec::new();
         args.extend(self.socket.ssh_args());
@@ -171,7 +175,6 @@ impl RemoteConnection for SshRemoteConnection {
 
         args.push("-t".into());
         args.push(shell_invocation);
-
         Ok(CommandTemplate {
             program: "ssh".into(),
             args,

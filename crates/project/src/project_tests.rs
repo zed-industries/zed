@@ -9205,7 +9205,6 @@ fn python_lang(fs: Arc<FakeFs>) -> Arc<Language> {
                         path: venv_path.to_string_lossy().into_owned().into(),
                         language_name: LanguageName(SharedString::new_static("Python")),
                         as_json: serde_json::Value::Null,
-                        activation_script: Default::default(),
                     })
                 }
             }
@@ -9221,6 +9220,10 @@ fn python_lang(fs: Arc<FakeFs>) -> Arc<Language> {
         /// Returns the name of the manifest file for this toolchain.
         fn manifest_name(&self) -> ManifestName {
             SharedString::new_static("pyproject.toml").into()
+        }
+        fn activation_script(&self, _: &Toolchain) -> Option<String> {
+            // todo
+            None
         }
     }
     Arc::new(

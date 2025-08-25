@@ -11,11 +11,11 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use task::{Shell, ShellBuilder, ShellKind, SpawnInTerminal};
+use task::{Shell, ShellBuilder, SpawnInTerminal};
 use terminal::{
     TaskState, TaskStatus, Terminal, TerminalBuilder, terminal_settings::TerminalSettings,
 };
-use util::{get_system_shell, maybe};
+use util::{get_default_system_shell, get_system_shell, maybe};
 
 use crate::{Project, ProjectPath};
 
@@ -103,7 +103,7 @@ impl Project {
             Some(remote_client) => remote_client
                 .read(cx)
                 .shell()
-                .unwrap_or_else(|| "sh".to_owned()),
+                .unwrap_or_else(get_default_system_shell),
             None => match &settings.shell {
                 Shell::Program(program) => program.clone(),
                 Shell::WithArguments {
@@ -114,21 +114,25 @@ impl Project {
                 Shell::System => get_system_shell(),
             },
         };
-        let shell_kind = ShellKind::new(&shell);
 
         let toolchain =
             project_path_context.map(|p| self.active_toolchain(p, LanguageName::new("Python"), cx));
+        let lang_registry = self.languages.clone();
         cx.spawn(async move |project, cx| {
-            let scripts = maybe!(async {
+            let activation_script = maybe!(async {
                 let toolchain = toolchain?.await?;
-                Some(toolchain.activation_script)
+                lang_registry
+                    .language_for_name(&toolchain.language_name.0)
+                    .await
+                    .ok()?
+                    .toolchain_lister()?
+                    .activation_script(&toolchain)
             })
             .await;
 
             project.update(cx, move |this, cx| {
                 let shell = {
                     env.extend(spawn_task.env);
-                    let activation_script = scripts.as_ref().and_then(|it| it.get(&shell_kind));
                     match remote_client {
                         Some(remote_client) => create_remote_shell(
                             spawn_task
@@ -138,10 +142,10 @@ impl Project {
                             &mut env,
                             path,
                             remote_client,
-                            None,
+                            activation_script.clone(),
                             cx,
                         )?,
-                        None => match activation_script {
+                        None => match activation_script.clone() {
                             Some(activation_script) => {
                                 let to_run = if let Some(command) = spawn_task.command {
                                     let command: Option<Cow<str>> = shlex::try_quote(&command).ok();
@@ -154,7 +158,7 @@ impl Project {
                                     format!("exec {shell} -l")
                                 };
                                 Shell::WithArguments {
-                                    program: shell,
+                                    program: get_default_system_shell(),
                                     args: vec![
                                         "-c".to_owned(),
                                         format!("{activation_script}; {to_run}",),
@@ -188,7 +192,7 @@ impl Project {
                     cx.entity_id().as_u64(),
                     Some(completion_tx),
                     cx,
-                    None,
+                    activation_script,
                 )
                 .map(|builder| {
                     let terminal_handle = cx.new(|cx| builder.subscribe(cx));
@@ -256,7 +260,7 @@ impl Project {
             Some(remote_client) => remote_client
                 .read(cx)
                 .shell()
-                .unwrap_or_else(|| "sh".to_owned()),
+                .unwrap_or_else(get_default_system_shell),
             None => match &settings.shell {
                 Shell::Program(program) => program.clone(),
                 Shell::WithArguments {
@@ -267,15 +271,19 @@ impl Project {
                 Shell::System => get_system_shell(),
             },
         };
-        let shell_kind = ShellKind::new(&shell);
 
+        let lang_registry = self.languages.clone();
         cx.spawn(async move |project, cx| {
-            let scripts = maybe!(async {
+            let activation_script = maybe!(async {
                 let toolchain = toolchain?.await?;
-                Some(toolchain.activation_script)
+                let language = lang_registry
+                    .language_for_name(&toolchain.language_name.0)
+                    .await
+                    .ok();
+                let lister = language?.toolchain_lister();
+                lister?.activation_script(&toolchain)
             })
             .await;
-            let activation_script = scripts.as_ref().and_then(|it| it.get(&shell_kind));
             project.update(cx, move |this, cx| {
                 let shell = {
                     match remote_client {
@@ -284,12 +292,12 @@ impl Project {
                             &mut env,
                             path,
                             remote_client,
-                            activation_script.cloned(),
+                            activation_script.clone(),
                             cx,
                         )?,
-                        None => match activation_script {
+                        None => match activation_script.clone() {
                             Some(activation_script) => Shell::WithArguments {
-                                program: shell.clone(),
+                                program: get_default_system_shell(),
                                 args: vec![
                                     "-c".to_owned(),
                                     format!("{activation_script}; exec {shell} -l",),
@@ -312,7 +320,7 @@ impl Project {
                     cx.entity_id().as_u64(),
                     None,
                     cx,
-                    None,
+                    activation_script,
                 )
                 .map(|builder| {
                     let terminal_handle = cx.new(|cx| builder.subscribe(cx));
@@ -413,6 +421,7 @@ impl Project {
                     &args,
                     &env,
                     None,
+                    // todo
                     None,
                     None,
                 )?;

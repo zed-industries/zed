@@ -9269,7 +9269,6 @@ dependencies = [
  "snippet_provider",
  "task",
  "tempfile",
- "terminal",
  "text",
  "theme",
  "toml 0.8.20",

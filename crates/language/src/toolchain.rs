@@ -10,10 +10,9 @@ use std::{
 };
 
 use async_trait::async_trait;
-use collections::{FxHashMap, HashMap};
+use collections::HashMap;
 use gpui::{AsyncApp, SharedString};
 use settings::WorktreeId;
-use task::ShellKind;
 
 use crate::{LanguageName, ManifestName};
 
@@ -26,11 +25,6 @@ pub struct Toolchain {
     pub language_name: LanguageName,
     /// Full toolchain data (including language-specific details)
     pub as_json: serde_json::Value,
-    /// shell -> script
-    pub activation_script: FxHashMap<ShellKind, String>,
-    // Option<String>
-    // sh activate -c "user shell -l"
-    // check if this work with powershell
 }
 
 impl std::hash::Hash for Toolchain {
@@ -40,7 +34,6 @@ impl std::hash::Hash for Toolchain {
             path,
             language_name,
             as_json: _,
-            activation_script: _,
         } = self;
         name.hash(state);
         path.hash(state);
@@ -55,16 +48,10 @@ impl PartialEq for Toolchain {
             path,
             language_name,
             as_json: _,
-            activation_script: startup_script,
         } = self;
         // Do not use as_json for comparisons; it shouldn't impact equality, as it's not user-surfaced.
         // Thus, there could be multiple entries that look the same in the UI.
-        (name, path, language_name, startup_script).eq(&(
-            &other.name,
-            &other.path,
-            &other.language_name,
-            &other.activation_script,
-        ))
+        (name, path, language_name).eq(&(&other.name, &other.path, &other.language_name))
     }
 }
 
@@ -80,6 +67,7 @@ pub trait ToolchainLister: Send + Sync {
     fn term(&self) -> SharedString;
     /// Returns the name of the manifest file for this toolchain.
     fn manifest_name(&self) -> ManifestName;
+    fn activation_script(&self, toolchain: &Toolchain) -> Option<String>;
 }
 
 #[async_trait(?Send)]
