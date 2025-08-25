@@ -1,19 +1,39 @@
 use crate::{BufferDiagnosticsEditor, ProjectDiagnosticsEditor, ToggleDiagnosticsRefresh};
-use gpui::{Context, EventEmitter, ParentElement, Render, WeakEntity, Window};
+use gpui::{Context, EventEmitter, ParentElement, Render, Window};
+use language::DiagnosticEntry;
+use text::{Anchor, BufferId};
 use ui::prelude::*;
 use ui::{IconButton, IconButtonShape, IconName, Tooltip};
 use workspace::{ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, item::ItemHandle};
 
 pub struct ToolbarControls {
-    editor: Option<DiagnosticsEditorHandle>,
+    editor: Option<Box<dyn DiagnosticsToolbarEditor>>,
 }
 
-enum DiagnosticsEditorHandle {
-    Project(WeakEntity<ProjectDiagnosticsEditor>),
-    Buffer(WeakEntity<BufferDiagnosticsEditor>),
+pub(crate) trait DiagnosticsToolbarEditor: Send + Sync {
+    /// Informs the toolbar whether warnings are included in the diagnostics.
+    fn include_warnings(&self, cx: &App) -> bool;
+    /// Toggles whether warning diagnostics should be displayed by the
+    /// diagnostics editor.
+    fn toggle_warnings(&self, window: &mut Window, cx: &mut App);
+    /// Indicates whether any of the excerpts displayed by the diagnostics
+    /// editor are stale.
+    fn has_stale_excerpts(&self, cx: &App) -> bool;
+    /// Indicates whether the diagnostics editor is currently updating the
+    /// diagnostics.
+    fn is_updating(&self, cx: &App) -> bool;
+    /// Requests that the diagnostics editor stop updating the diagnostics.
+    fn stop_updating(&self, cx: &mut App);
+    /// Requests that the diagnostics editor updates the displayed diagnostics
+    /// with the latest information.
+    fn refresh_diagnostics(&self, window: &mut Window, cx: &mut App);
+    /// Returns a list of diagnostics for the provided buffer id.
+    fn get_diagnostics_for_buffer(
+        &self,
+        buffer_id: BufferId,
+        cx: &App,
+    ) -> Vec<DiagnosticEntry<Anchor>>;
 }
-
-impl DiagnosticsEditorHandle {}
 
 impl Render for ToolbarControls {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -22,32 +42,10 @@ impl Render for ToolbarControls {
         let mut is_updating = false;
 
         match &self.editor {
-            Some(DiagnosticsEditorHandle::Project(editor)) => {
-                if let Some(editor) = editor.upgrade() {
-                    let diagnostics = editor.read(cx);
-                    include_warnings = diagnostics.include_warnings;
-                    has_stale_excerpts = !diagnostics.paths_to_update.is_empty();
-                    is_updating = diagnostics.update_excerpts_task.is_some()
-                        || diagnostics
-                            .project
-                            .read(cx)
-                            .language_servers_running_disk_based_diagnostics(cx)
-                            .next()
-                            .is_some();
-                }
-            }
-            Some(DiagnosticsEditorHandle::Buffer(editor)) => {
-                if let Some(editor) = editor.upgrade() {
-                    let diagnostics = editor.read(cx);
-                    include_warnings = diagnostics.include_warnings;
-                    is_updating = diagnostics.update_excerpts_task.is_some()
-                        || diagnostics
-                            .project
-                            .read(cx)
-                            .language_servers_running_disk_based_diagnostics(cx)
-                            .next()
-                            .is_some();
-                }
+            Some(editor) => {
+                include_warnings = editor.include_warnings(cx);
+                has_stale_excerpts = editor.has_stale_excerpts(cx);
+                is_updating = editor.is_updating(cx);
             }
             None => {}
         }
@@ -78,29 +76,9 @@ impl Render for ToolbarControls {
                             ))
                             .on_click(cx.listener(move |toolbar_controls, _, _, cx| {
                                 match toolbar_controls.editor() {
-                                    Some(DiagnosticsEditorHandle::Buffer(
-                                        buffer_diagnostics_editor,
-                                    )) => {
-                                        let _ = buffer_diagnostics_editor.update(
-                                            cx,
-                                            |buffer_diagnostics_editor, cx| {
-                                                buffer_diagnostics_editor.update_excerpts_task =
-                                                    None;
-                                                cx.notify();
-                                            },
-                                        );
-                                    }
-                                    Some(DiagnosticsEditorHandle::Project(
-                                        project_diagnostics_editor,
-                                    )) => {
-                                        let _ = project_diagnostics_editor.update(
-                                            cx,
-                                            |project_diagnostics_editor, cx| {
-                                                project_diagnostics_editor.update_excerpts_task =
-                                                    None;
-                                                cx.notify();
-                                            },
-                                        );
+                                    Some(editor) => {
+                                        editor.stop_updating(cx);
+                                        cx.notify();
                                     }
                                     None => {}
                                 }
@@ -120,28 +98,7 @@ impl Render for ToolbarControls {
                                 move |toolbar_controls, _, window, cx| match toolbar_controls
                                     .editor()
                                 {
-                                    Some(DiagnosticsEditorHandle::Buffer(
-                                        buffer_diagnostics_editor,
-                                    )) => {
-                                        let _ = buffer_diagnostics_editor.update(
-                                            cx,
-                                            |buffer_diagnostics_editor, cx| {
-                                                buffer_diagnostics_editor
-                                                    .update_all_excerpts(window, cx);
-                                            },
-                                        );
-                                    }
-                                    Some(DiagnosticsEditorHandle::Project(
-                                        project_diagnostics_editor,
-                                    )) => {
-                                        let _ = project_diagnostics_editor.update(
-                                            cx,
-                                            |project_diagnostics_editor, cx| {
-                                                project_diagnostics_editor
-                                                    .update_all_excerpts(window, cx);
-                                            },
-                                        );
-                                    }
+                                    Some(editor) => editor.refresh_diagnostics(window, cx),
                                     None => {}
                                 }
                             })),
@@ -154,31 +111,8 @@ impl Render for ToolbarControls {
                     .shape(IconButtonShape::Square)
                     .tooltip(Tooltip::text(warning_tooltip))
                     .on_click(cx.listener(|this, _, window, cx| match &this.editor {
-                        Some(DiagnosticsEditorHandle::Project(project_diagnostics_editor)) => {
-                            let _ = project_diagnostics_editor.update(
-                                cx,
-                                |project_diagnostics_editor, cx| {
-                                    project_diagnostics_editor.toggle_warnings(
-                                        &Default::default(),
-                                        window,
-                                        cx,
-                                    );
-                                },
-                            );
-                        }
-                        Some(DiagnosticsEditorHandle::Buffer(buffer_diagnostics_editor)) => {
-                            let _ = buffer_diagnostics_editor.update(
-                                cx,
-                                |buffer_diagnostics_editor, cx| {
-                                    buffer_diagnostics_editor.toggle_warnings(
-                                        &Default::default(),
-                                        window,
-                                        cx,
-                                    );
-                                },
-                            );
-                        }
-                        _ => {}
+                        Some(editor) => editor.toggle_warnings(window, cx),
+                        None => {}
                     })),
             )
     }
@@ -195,10 +129,10 @@ impl ToolbarItemView for ToolbarControls {
     ) -> ToolbarItemLocation {
         if let Some(pane_item) = active_pane_item.as_ref() {
             if let Some(editor) = pane_item.downcast::<ProjectDiagnosticsEditor>() {
-                self.editor = Some(DiagnosticsEditorHandle::Project(editor.downgrade()));
+                self.editor = Some(Box::new(editor.downgrade()));
                 ToolbarItemLocation::PrimaryRight
             } else if let Some(editor) = pane_item.downcast::<BufferDiagnosticsEditor>() {
-                self.editor = Some(DiagnosticsEditorHandle::Buffer(editor.downgrade()));
+                self.editor = Some(Box::new(editor.downgrade()));
                 ToolbarItemLocation::PrimaryRight
             } else {
                 ToolbarItemLocation::Hidden
@@ -220,7 +154,7 @@ impl ToolbarControls {
         ToolbarControls { editor: None }
     }
 
-    fn editor(&self) -> Option<&DiagnosticsEditorHandle> {
-        self.editor.as_ref()
+    fn editor(&self) -> Option<&dyn DiagnosticsToolbarEditor> {
+        self.editor.as_deref()
     }
 }
