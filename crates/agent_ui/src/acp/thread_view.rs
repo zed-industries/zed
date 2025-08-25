@@ -3694,16 +3694,19 @@ impl AcpThreadView {
 
     fn toggle_following(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let following = self.is_following(cx);
+
         self.should_be_following = !following;
-        self.workspace
-            .update(cx, |workspace, cx| {
-                if following {
-                    workspace.unfollow(CollaboratorId::Agent, window, cx);
-                } else {
-                    workspace.follow(CollaboratorId::Agent, window, cx);
-                }
-            })
-            .ok();
+        if self.thread().map(|thread| thread.read(cx).status()) == Some(ThreadStatus::Generating) {
+            self.workspace
+                .update(cx, |workspace, cx| {
+                    if following {
+                        workspace.unfollow(CollaboratorId::Agent, window, cx);
+                    } else {
+                        workspace.follow(CollaboratorId::Agent, window, cx);
+                    }
+                })
+                .ok();
+        }
     }
 
     fn render_follow_toggle(&self, cx: &mut Context<Self>) -> impl IntoElement {
