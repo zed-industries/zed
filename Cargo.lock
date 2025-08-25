@@ -13521,6 +13521,7 @@ dependencies = [
  "smol",
  "sysinfo",
  "telemetry_events",
+ "thiserror 2.0.12",
  "toml 0.8.20",
  "unindent",
  "util",
