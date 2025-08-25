@@ -235,7 +235,7 @@
       "alt-shift-c": "agent::OpenSettings",
       "alt-shift-p": "agent::OpenRulesLibrary",
       "ctrl-i": "agent::ToggleProfileSelector",
-      "ctrl-alt-/": "agent::ToggleModelSelector",
+      "alt-?": "agent::ToggleModelSelector",
       "ctrl-shift-a": "agent::ToggleContextPicker",
       "ctrl-shift-j": "agent::ToggleNavigationMenu",
       "ctrl-shift-i": "agent::ToggleOptionsMenu",
@@ -431,7 +431,7 @@
       "ctrl-shift-pagedown": "pane::SwapItemRight",
       "ctrl-f4": ["pane::CloseActiveItem", { "close_pinned": false }],
       "ctrl-w": ["pane::CloseActiveItem", { "close_pinned": false }],
-      "ctrl-alt-t": ["pane::CloseOtherItems", { "close_pinned": false }],
+      "ctrl-alt-shift-t": ["pane::CloseOtherItems", { "close_pinned": false }],
       "ctrl-alt-shift-w": "workspace::CloseInactiveTabsAndPanes",
       "ctrl-k e": ["pane::CloseItemsToTheLeft", { "close_pinned": false }],
       "ctrl-k t": ["pane::CloseItemsToTheRight", { "close_pinned": false }],
@@ -498,7 +498,7 @@
       "ctrl-m": "editor::MoveToEnclosingBracket", // from jetbrains
       "ctrl-|": "editor::MoveToEnclosingBracket",
       "ctrl-{": "editor::Fold",
-      "ctrl-}": "editor::UnfoldLines",
+      // "ctrl-}": "editor::UnfoldLines",
       "ctrl-k ctrl-l": "editor::ToggleFold",
       "ctrl-k ctrl-[": "editor::FoldRecursive",
       "ctrl-k ctrl-]": "editor::UnfoldRecursive",
@@ -584,14 +584,14 @@
       "ctrl-alt-b": "workspace::ToggleRightDock",
       "ctrl-b": "workspace::ToggleLeftDock",
       "ctrl-j": "workspace::ToggleBottomDock",
-      "ctrl-alt-y": "workspace::CloseAllDocks",
-      "ctrl-alt-0": "workspace::ResetActiveDockSize",
+      "ctrl-alt-shift-y": "workspace::CloseAllDocks",
+      "alt-r": "workspace::ResetActiveDockSize",
       // For 0px parameter, uses UI font size value.
-      "ctrl-alt--": ["workspace::DecreaseActiveDockSize", { "px": 0 }],
-      "ctrl-alt-=": ["workspace::IncreaseActiveDockSize", { "px": 0 }],
-      "ctrl-alt-)": "workspace::ResetOpenDocksSize",
-      "ctrl-alt-_": ["workspace::DecreaseOpenDocksSize", { "px": 0 }],
-      "ctrl-alt-+": ["workspace::IncreaseOpenDocksSize", { "px": 0 }],
+      "alt--": ["workspace::DecreaseActiveDockSize", { "px": 0 }],
+      "alt-=": ["workspace::IncreaseActiveDockSize", { "px": 0 }],
+      "alt-)": "workspace::ResetOpenDocksSize",
+      "alt-_": ["workspace::DecreaseOpenDocksSize", { "px": 0 }],
+      "alt-+": ["workspace::IncreaseOpenDocksSize", { "px": 0 }],
       "shift-find": "pane::DeploySearch",
       "ctrl-shift-f": "pane::DeploySearch",
       "ctrl-shift-h": ["pane::DeploySearch", { "replace_enabled": true }],
@@ -666,10 +666,10 @@
       "ctrl-u": "editor::UndoSelection",
       "ctrl-shift-u": "editor::RedoSelection",
       "ctrl-shift-j": "editor::JoinLines",
-      "ctrl-alt-backspace": "editor::DeleteToPreviousSubwordStart",
-      "ctrl-alt-h": "editor::DeleteToPreviousSubwordStart",
-      "ctrl-alt-delete": "editor::DeleteToNextSubwordEnd",
-      "ctrl-alt-d": "editor::DeleteToNextSubwordEnd",
+      "alt-shift-backspace": "editor::DeleteToPreviousSubwordStart",
+      "alt-shift-h": "editor::DeleteToPreviousSubwordStart",
+      "alt-shift-delete": "editor::DeleteToNextSubwordEnd",
+      "alt-shift-d": "editor::DeleteToNextSubwordEnd",
       "ctrl-alt-left": "editor::MoveToPreviousSubwordStart",
       "ctrl-alt-right": "editor::MoveToNextSubwordEnd",
       "ctrl-alt-shift-left": "editor::SelectToPreviousSubwordStart",
@@ -753,7 +753,7 @@
     "bindings": {
       "ctrl-alt-shift-f": "workspace::FollowNextCollaborator",
       // Only available in debug builds: opens an element inspector for development.
-      "ctrl-alt-i": "dev::ToggleInspector"
+      "ctrl-shift-i": "dev::ToggleInspector"
     }
   },
   {
@@ -767,7 +767,7 @@
     "bindings": {
       "alt-enter": "editor::OpenExcerpts",
       "shift-enter": "editor::ExpandExcerpts",
-      "ctrl-alt-enter": "editor::OpenExcerptsSplit",
+      "alt-shift-enter": "editor::OpenExcerptsSplit",
       "ctrl-shift-e": "pane::RevealInProjectPanel",
       "ctrl-f8": "editor::GoToHunk",
       "ctrl-shift-f8": "editor::GoToPreviousHunk",
@@ -780,7 +780,7 @@
     "bindings": {
       "ctrl-[": "agent::CyclePreviousInlineAssist",
       "ctrl-]": "agent::CycleNextInlineAssist",
-      "ctrl-alt-e": "agent::RemoveAllContext"
+      "alt-shift-e": "agent::RemoveAllContext"
     }
   },
   {
@@ -805,7 +805,7 @@
       "left": "outline_panel::CollapseSelectedEntry",
       "right": "outline_panel::ExpandSelectedEntry",
       "alt-copy": "outline_panel::CopyPath",
-      "ctrl-alt-c": "outline_panel::CopyPath",
+      "ctrl-shift-c": "outline_panel::CopyPath",
       "alt-shift-copy": "workspace::CopyRelativePath",
       "ctrl-alt-shift-c": "workspace::CopyRelativePath",
       "shift-alt-r": "outline_panel::RevealInFileManager",
@@ -813,7 +813,7 @@
       "shift-down": "menu::SelectNext",
       "shift-up": "menu::SelectPrevious",
       "alt-enter": "editor::OpenExcerpts",
-      "ctrl-alt-enter": "editor::OpenExcerptsSplit"
+      "alt-shift-enter": "editor::OpenExcerptsSplit"
     }
   },
   {
@@ -868,7 +868,7 @@
       "enter": "menu::Confirm",
       "alt-y": "git::StageFile",
       "alt-shift-y": "git::UnstageFile",
-      "alt-shift-y": "git::ToggleStaged",
+      "ctrl-shift-y": "git::ToggleStaged",
       "space": "git::ToggleStaged",
       "shift-space": "git::StageRange",
       "tab": "git_panel::FocusEditor",
