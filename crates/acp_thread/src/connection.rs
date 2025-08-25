@@ -38,8 +38,6 @@ pub trait AgentConnection {
         cx: &mut App,
     ) -> Task<Result<acp::PromptResponse>>;
 
-    fn prompt_capabilities(&self) -> acp::PromptCapabilities;
-
     fn resume(
         &self,
         _session_id: &acp::SessionId,
@@ -329,13 +327,19 @@ mod test_support {
         ) -> Task<gpui::Result<Entity<AcpThread>>> {
             let session_id = acp::SessionId(self.sessions.lock().len().to_string().into());
             let action_log = cx.new(|_| ActionLog::new(project.clone()));
-            let thread = cx.new(|_cx| {
+            let thread = cx.new(|cx| {
                 AcpThread::new(
                     "Test",
                     self.clone(),
                     project,
                     action_log,
                     session_id.clone(),
+                    watch::Receiver::constant(acp::PromptCapabilities {
+                        image: true,
+                        audio: true,
+                        embedded_context: true,
+                    }),
+                    cx,
                 )
             });
             self.sessions.lock().insert(
@@ -346,14 +350,6 @@ mod test_support {
                 },
             );
             Task::ready(Ok(thread))
-        }
-
-        fn prompt_capabilities(&self) -> acp::PromptCapabilities {
-            acp::PromptCapabilities {
-                image: true,
-                audio: true,
-                embedded_context: true,
-            }
         }
 
         fn authenticate(

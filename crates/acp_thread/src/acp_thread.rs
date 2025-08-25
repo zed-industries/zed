@@ -756,6 +756,8 @@ pub struct AcpThread {
     connection: Rc<dyn AgentConnection>,
     session_id: acp::SessionId,
     token_usage: Option<TokenUsage>,
+    prompt_capabilities: acp::PromptCapabilities,
+    _observe_prompt_capabilities: Task<anyhow::Result<()>>,
 }
 
 #[derive(Debug)]
@@ -770,6 +772,7 @@ pub enum AcpThreadEvent {
     Stopped,
     Error,
     LoadError(LoadError),
+    PromptCapabilitiesUpdated,
 }
 
 impl EventEmitter<AcpThreadEvent> for AcpThread {}
@@ -821,7 +824,20 @@ impl AcpThread {
         project: Entity<Project>,
         action_log: Entity<ActionLog>,
         session_id: acp::SessionId,
+        mut prompt_capabilities_rx: watch::Receiver<acp::PromptCapabilities>,
+        cx: &mut Context<Self>,
     ) -> Self {
+        let prompt_capabilities = *prompt_capabilities_rx.borrow();
+        let task = cx.spawn::<_, anyhow::Result<()>>(async move |this, cx| {
+            loop {
+                let caps = prompt_capabilities_rx.recv().await?;
+                this.update(cx, |this, cx| {
+                    this.prompt_capabilities = caps;
+                    cx.emit(AcpThreadEvent::PromptCapabilitiesUpdated);
+                })?;
+            }
+        });
+
         Self {
             action_log,
             shared_buffers: Default::default(),
@@ -833,7 +849,13 @@ impl AcpThread {
             connection,
             session_id,
             token_usage: None,
+            prompt_capabilities,
+            _observe_prompt_capabilities: task,
         }
+    }
+
+    pub fn prompt_capabilities(&self) -> acp::PromptCapabilities {
+        self.prompt_capabilities
     }
 
     pub fn connection(&self) -> &Rc<dyn AgentConnection> {
@@ -2599,13 +2621,19 @@ mod tests {
                     .into(),
             );
             let action_log = cx.new(|_| ActionLog::new(project.clone()));
-            let thread = cx.new(|_cx| {
+            let thread = cx.new(|cx| {
                 AcpThread::new(
                     "Test",
                     self.clone(),
                     project,
                     action_log,
                     session_id.clone(),
+                    watch::Receiver::constant(acp::PromptCapabilities {
+                        image: true,
+                        audio: true,
+                        embedded_context: true,
+                    }),
+                    cx,
                 )
             });
             self.sessions.lock().insert(session_id, thread.downgrade());
@@ -2636,14 +2664,6 @@ mod tests {
                 Task::ready(Ok(acp::PromptResponse {
                     stop_reason: acp::StopReason::EndTurn,
                 }))
-            }
-        }
-
-        fn prompt_capabilities(&self) -> acp::PromptCapabilities {
-            acp::PromptCapabilities {
-                image: true,
-                audio: true,
-                embedded_context: true,
             }
         }
 
