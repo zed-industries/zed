@@ -1404,7 +1404,7 @@ impl ProjectItem for Editor {
     }
 
     fn for_broken_project_item(
-        abs_path: PathBuf,
+        abs_path: &Path,
         is_local: bool,
         e: &anyhow::Error,
         window: &mut Window,
