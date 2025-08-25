@@ -43,6 +43,10 @@ use acp_thread::{AcpThread, AgentConnection, AuthRequired, LoadError, MentionUri
 pub struct ClaudeCode;
 
 impl AgentServer for ClaudeCode {
+    fn telemetry_id(&self) -> &'static str {
+        "claude-code"
+    }
+
     fn name(&self) -> SharedString {
         "Claude Code".into()
     }
