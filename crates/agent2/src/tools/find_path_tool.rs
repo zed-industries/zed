@@ -165,15 +165,17 @@ fn search_paths(glob: &str, project: Entity<Project>, cx: &mut App) -> Task<Resu
         .collect();
 
     cx.background_spawn(async move {
-        Ok(snapshots
-            .iter()
-            .flat_map(|snapshot| {
-                snapshot
-                    .entries(false, 0)
-                    .map(move |entry| snapshot.abs_path().join(&entry.path))
-                    .filter(|path| path_matcher.is_match(&path))
-            })
-            .collect())
+        let mut results = Vec::new();
+        for snapshot in snapshots {
+            for entry in snapshot.entries(false, 0) {
+                let root_name = PathBuf::from(snapshot.root_name());
+                if path_matcher.is_match(root_name.join(&entry.path)) {
+                    results.push(snapshot.abs_path().join(entry.path.as_ref()));
+                }
+            }
+        }
+
+        Ok(results)
     })
 }
 
@@ -214,8 +216,8 @@ mod test {
         assert_eq!(
             matches,
             &[
-                PathBuf::from("root/apple/banana/carrot"),
-                PathBuf::from("root/apple/bandana/carbonara")
+                PathBuf::from("/root/apple/banana/carrot"),
+                PathBuf::from("/root/apple/bandana/carbonara")
             ]
         );
 
@@ -226,8 +228,8 @@ mod test {
         assert_eq!(
             matches,
             &[
-                PathBuf::from("root/apple/banana/carrot"),
-                PathBuf::from("root/apple/bandana/carbonara")
+                PathBuf::from("/root/apple/banana/carrot"),
+                PathBuf::from("/root/apple/bandana/carbonara")
             ]
         );
     }
