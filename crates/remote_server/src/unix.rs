@@ -789,9 +789,8 @@ fn spawn_server(paths: &ServerPaths) -> Result<(), SpawnServerError> {
         return Err(SpawnServerError::LaunchStatus {
             status,
             paths: format!(
-                "log file: {}, pid file: {}",
-                paths.log_file.display(),
-                paths.pid_file.display()
+                "log file: {:?}, pid file: {:?}",
+                paths.log_file, paths.pid_file,
             ),
         });
     }

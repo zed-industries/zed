@@ -49,6 +49,7 @@ fn main() -> anyhow::Result<()> {
     if let Some(command) = cli.command {
         remote_server::run(command)
     } else {
-        Err(anyhow::anyhow!("usage: remote <run|proxy|version>"))
+        eprintln!("usage: remote <run|proxy|version>");
+        std::process::exit(1);
     }
 }
