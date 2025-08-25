@@ -75,7 +75,7 @@ use lsp::{
     LSP_REQUEST_TIMEOUT, LanguageServer, LanguageServerBinary, LanguageServerBinaryOptions,
     LanguageServerId, LanguageServerName, LanguageServerSelector, LspRequestFuture,
     MessageActionItem, MessageType, OneOf, RenameFilesParams, SymbolKind,
-    TextDocumentSyncSaveOptions, TextEdit, WillRenameFiles, WorkDoneProgressCancelParams,
+    TextEdit, WillRenameFiles, WorkDoneProgressCancelParams,
     WorkspaceFolder, notification::DidRenameFiles,
 };
 use node_runtime::read_package_installed_version;
@@ -7208,40 +7208,9 @@ impl LspStore {
                     .collect()
             };
 
-            let document_sync_kind = {
-                let dyn_caps = language_server.dynamic_capabilities();
-                let dynamic = dyn_caps
-                    .text_document_sync_did_change
-                    .as_ref()
-                    .and_then(|m| {
-                        if m.is_empty() {
-                            None
-                        } else {
-                            let mut best: Option<lsp::TextDocumentSyncKind> = None;
-                            for kind in m.values() {
-                                best = Some(match (best, kind) {
-                                    (None, k) => *k,
-                                    (
-                                        Some(lsp::TextDocumentSyncKind::FULL),
-                                        lsp::TextDocumentSyncKind::INCREMENTAL,
-                                    ) => lsp::TextDocumentSyncKind::INCREMENTAL,
-                                    (Some(curr), _) => curr,
-                                });
-                            }
-                            best
-                        }
-                    });
-                dynamic.or_else(|| {
-                    language_server
-                        .capabilities()
-                        .text_document_sync
-                        .as_ref()
-                        .and_then(|sync| match sync {
-                            lsp::TextDocumentSyncCapability::Kind(kind) => Some(*kind),
-                            lsp::TextDocumentSyncCapability::Options(options) => options.change,
-                        })
-                })
-            };
+            let document_sync_kind = language_server
+                .effective_text_document_sync()
+                .change;
 
             let content_changes: Vec<_> = match document_sync_kind {
                 Some(lsp::TextDocumentSyncKind::FULL) => {
@@ -7302,7 +7271,7 @@ impl LspStore {
         let local = self.as_local()?;
 
         for server in local.language_servers_for_worktree(worktree_id) {
-            if let Some(include_text) = include_text(server.as_ref()) {
+            if let Some(include_text) = server.effective_text_document_sync().save_include_text {
                 let text = if include_text {
                     Some(buffer.read(cx).text())
                 } else {
@@ -13284,29 +13253,7 @@ async fn populate_labels_for_symbols(
     }
 }
 
-fn include_text(server: &lsp::LanguageServer) -> Option<bool> {
-    let dyn_caps = server.dynamic_capabilities();
-    if let Some(map) = dyn_caps.text_document_sync_did_save.as_ref() {
-        if !map.is_empty() {
-            let any_true = map.values().any(|opts| opts.include_text.unwrap_or(false));
-            return Some(any_true);
-        }
-    }
-    match server.capabilities().text_document_sync.as_ref()? {
-        lsp::TextDocumentSyncCapability::Options(opts) => match opts.save.as_ref()? {
-            // Server wants didSave but didn't specify includeText.
-            lsp::TextDocumentSyncSaveOptions::Supported(true) => Some(false),
-            // Server doesn't want didSave at all.
-            lsp::TextDocumentSyncSaveOptions::Supported(false) => None,
-            // Server provided SaveOptions.
-            lsp::TextDocumentSyncSaveOptions::SaveOptions(save_options) => {
-                Some(save_options.include_text.unwrap_or(false))
-            }
-        },
-        // We do not have any save info. Kind affects didChange only.
-        lsp::TextDocumentSyncCapability::Kind(_) => None,
-    }
-}
+// include_text logic moved into lsp::LanguageServer::effective_text_document_sync()
 
 /// Completion items are displayed in a `UniformList`.
 /// Usually, those items are single-line strings, but in LSP responses,
