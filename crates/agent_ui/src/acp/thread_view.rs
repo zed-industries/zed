@@ -1528,12 +1528,11 @@ impl AcpThreadView {
             return primary;
         };
 
-        let is_generating = matches!(thread.read(cx).status(), ThreadStatus::Generating);
-        let primary = if entry_ix == total_entries - 1 && !is_generating {
+        let primary = if entry_ix == total_entries - 1 {
             v_flex()
                 .w_full()
                 .child(primary)
-                .child(self.render_thread_controls(cx))
+                .child(self.render_thread_controls(&thread, cx))
                 .when_some(
                     self.thread_feedback.comments_editor.clone(),
                     |this, editor| this.child(Self::render_feedback_feedback_editor(editor, cx)),
@@ -4160,7 +4159,20 @@ impl AcpThreadView {
         }
     }
 
-    fn render_thread_controls(&self, cx: &Context<Self>) -> impl IntoElement {
+    fn render_thread_controls(
+        &self,
+        thread: &Entity<AcpThread>,
+        cx: &Context<Self>,
+    ) -> impl IntoElement {
+        let is_generating = matches!(thread.read(cx).status(), ThreadStatus::Generating);
+        if is_generating {
+            return h_flex().id("thread-controls-container").ml_1().child(
+                div()
+                    .py_2()
+                    .px(rems_from_px(22.))
+                    .child(SpinnerLabel::new().size(LabelSize::Small)),
+            );
+        }
         let open_as_markdown = IconButton::new("open-as-markdown", IconName::FileMarkdown)
             .shape(ui::IconButtonShape::Square)
             .icon_size(IconSize::Small)
@@ -4884,45 +4896,30 @@ impl Render for AcpThreadView {
                     .items_center()
                     .justify_end()
                     .child(self.render_load_error(e, cx)),
-                ThreadState::Ready { thread, .. } => {
-                    let thread_clone = thread.clone();
-
-                    v_flex().flex_1().map(|this| {
-                        if has_messages {
-                            this.child(
-                                list(
-                                    self.list_state.clone(),
-                                    cx.processor(|this, index: usize, window, cx| {
-                                        let Some((entry, len)) = this.thread().and_then(|thread| {
-                                            let entries = &thread.read(cx).entries();
-                                            Some((entries.get(index)?, entries.len()))
-                                        }) else {
-                                            return Empty.into_any();
-                                        };
-                                        this.render_entry(index, len, entry, window, cx)
-                                    }),
-                                )
-                                .with_sizing_behavior(gpui::ListSizingBehavior::Auto)
-                                .flex_grow()
-                                .into_any(),
+                ThreadState::Ready { .. } => v_flex().flex_1().map(|this| {
+                    if has_messages {
+                        this.child(
+                            list(
+                                self.list_state.clone(),
+                                cx.processor(|this, index: usize, window, cx| {
+                                    let Some((entry, len)) = this.thread().and_then(|thread| {
+                                        let entries = &thread.read(cx).entries();
+                                        Some((entries.get(index)?, entries.len()))
+                                    }) else {
+                                        return Empty.into_any();
+                                    };
+                                    this.render_entry(index, len, entry, window, cx)
+                                }),
                             )
-                            .child(self.render_vertical_scrollbar(cx))
-                            .children(
-                                match thread_clone.read(cx).status() {
-                                    ThreadStatus::Idle
-                                    | ThreadStatus::WaitingForToolConfirmation => None,
-                                    ThreadStatus::Generating => div()
-                                        .py_2()
-                                        .px(rems_from_px(22.))
-                                        .child(SpinnerLabel::new().size(LabelSize::Small))
-                                        .into(),
-                                },
-                            )
-                        } else {
-                            this.child(self.render_recent_history(window, cx))
-                        }
-                    })
-                }
+                            .with_sizing_behavior(gpui::ListSizingBehavior::Auto)
+                            .flex_grow()
+                            .into_any(),
+                        )
+                        .child(self.render_vertical_scrollbar(cx))
+                    } else {
+                        this.child(self.render_recent_history(window, cx))
+                    }
+                }),
             })
             // The activity bar is intentionally rendered outside of the ThreadState::Ready match
             // above so that the scrollbar doesn't render behind it. The current setup allows
