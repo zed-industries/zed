@@ -275,7 +275,7 @@ impl TitleBar {
 
         let banner = cx.new(|cx| {
             OnboardingBanner::new(
-                "Gemini CLI Onboarding",
+                "ACP Onboarding",
                 IconName::AiGemini,
                 "Gemini CLI in Zed",
                 Some("News:".into()),

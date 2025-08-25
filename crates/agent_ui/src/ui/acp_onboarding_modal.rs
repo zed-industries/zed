@@ -47,10 +47,10 @@ impl AcpOnboardingModal {
     }
 
     fn view_docs(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
-        cx.open_url("https://zed.dev/blog/extensible-agent-support-in-zed"); // TODO: Add final link
+        cx.open_url("https://zed.dev/docs"); // TODO: Add final link
         cx.notify();
 
-        acp_onboarding_event!("Blog Post Link Clicked");
+        acp_onboarding_event!("Documentation Link Clicked");
     }
 
     fn cancel(&mut self, _: &menu::Cancel, _: &mut Window, cx: &mut Context<Self>) {
@@ -70,6 +70,41 @@ impl ModalView for AcpOnboardingModal {}
 
 impl Render for AcpOnboardingModal {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let illustration_element = |label: bool, opacity: f32| {
+            h_flex()
+                .px_1()
+                .py_0p5()
+                .gap_1()
+                .rounded_sm()
+                .bg(cx.theme().colors().element_active.opacity(0.05))
+                .border_1()
+                .border_color(cx.theme().colors().border)
+                .border_dashed()
+                .child(
+                    Icon::new(IconName::Stop)
+                        .size(IconSize::Small)
+                        .color(Color::Custom(cx.theme().colors().text_muted.opacity(0.15))),
+                )
+                .map(|this| {
+                    if label {
+                        this.child(
+                            Label::new("Your Agent Here")
+                                .size(LabelSize::Small)
+                                .color(Color::Muted),
+                        )
+                    } else {
+                        this.child(
+                            div().w_16().h_1().rounded_full().bg(cx
+                                .theme()
+                                .colors()
+                                .element_active
+                                .opacity(0.6)),
+                        )
+                    }
+                })
+                .opacity(opacity)
+        };
+
         let illustration = h_flex()
             .relative()
             .h(rems_from_px(126.))
@@ -78,10 +113,11 @@ impl Render for AcpOnboardingModal {
             .border_color(cx.theme().colors().border_variant)
             .justify_center()
             .rounded_t_md()
+            .overflow_hidden()
             .child(
                 div().absolute().inset_0().w(px(515.)).h(px(126.)).child(
                     Vector::new(VectorName::AcpGrid, rems_from_px(515.), rems_from_px(126.))
-                        .color(ui::Color::Custom(cx.theme().colors().text.opacity(0.02))),
+                        .color(ui::Color::Custom(cx.theme().colors().text.opacity(0.012))),
                 ),
             )
             .child(div().absolute().inset_0().size_full().bg(linear_gradient(
@@ -97,27 +133,28 @@ impl Render for AcpOnboardingModal {
             )))
             .child(
                 v_flex()
-                    .gap_px()
-                    .child(
-                        Label::new("External Agents")
-                            .ml_1()
-                            .size(LabelSize::XSmall)
-                            .color(Color::Muted),
-                    )
+                    .gap_1p5()
+                    .child(illustration_element(false, 0.15))
+                    .child(illustration_element(true, 0.3))
                     .child(
                         h_flex()
-                            .px_1()
+                            .pl_1()
+                            .pr_2()
                             .py_0p5()
                             .gap_1()
                             .rounded_sm()
                             .bg(cx.theme().colors().element_active.opacity(0.2))
+                            .border_1()
+                            .border_color(cx.theme().colors().border)
                             .child(
                                 Icon::new(IconName::AiGemini)
                                     .size(IconSize::Small)
                                     .color(Color::Muted),
                             )
                             .child(Label::new("New Gemini CLI Thread").size(LabelSize::Small)),
-                    ),
+                    )
+                    .child(illustration_element(true, 0.3))
+                    .child(illustration_element(false, 0.15)),
             );
 
         let heading = v_flex()
@@ -137,7 +174,7 @@ impl Render for AcpOnboardingModal {
             .full_width()
             .on_click(cx.listener(Self::open_panel));
 
-        let docs_button = Button::new("view-post", "Read Blog Post")
+        let docs_button = Button::new("add-agent", "Add Your Own Agent")
             .icon(IconName::ArrowUpRight)
             .icon_size(IconSize::Indicator)
             .icon_color(Color::Muted)
@@ -181,7 +218,7 @@ impl Render for AcpOnboardingModal {
                         v_flex()
                             .w_full()
                             .mt_2()
-                            .gap_2()
+                            .gap_1()
                             .child(open_panel_button)
                             .child(docs_button),
                     ),
