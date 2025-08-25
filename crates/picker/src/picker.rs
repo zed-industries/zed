@@ -144,6 +144,16 @@ pub trait PickerDelegate: Sized + 'static {
         false
     }
 
+    // Allow intercepting up and down for history navigation in the command palette.
+    fn handle_history(
+        &mut self,
+        _direction: Direction,
+        _window: &mut Window,
+        _cx: &mut Context<Picker<Self>>,
+    ) -> Option<String> {
+        None
+    }
+
     /// Override if you want to have <enter> update the query instead of confirming.
     fn confirm_update_query(
         &mut self,
@@ -436,6 +446,10 @@ impl<D: PickerDelegate> Picker<D> {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if let Some(query) = self.delegate.handle_history(Direction::Down, window, cx) {
+            self.set_query(query, window, cx);
+            return;
+        }
         let count = self.delegate.match_count();
         if count > 0 {
             let index = self.delegate.selected_index();
@@ -455,6 +469,10 @@ impl<D: PickerDelegate> Picker<D> {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if let Some(query) = self.delegate.handle_history(Direction::Down, window, cx) {
+            self.set_query(query, window, cx);
+            return;
+        }
         let count = self.delegate.match_count();
         if count > 0 {
             let index = self.delegate.selected_index();
