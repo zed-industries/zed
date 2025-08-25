@@ -15,4 +15,6 @@ path = "src/jj.rs"
 anyhow.workspace = true
 gpui.workspace = true
 jj-lib.workspace = true
+project.workspace = true
 workspace-hack.workspace = true
+worktree.workspace = true
