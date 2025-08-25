@@ -462,7 +462,7 @@ impl AcpThreadHistory {
 
                         cx.notify();
                     }))
-                    .end_slot::<IconButton>(if hovered || selected {
+                    .end_slot::<IconButton>(if hovered {
                         Some(
                             IconButton::new("delete", IconName::Trash)
                                 .shape(IconButtonShape::Square)
