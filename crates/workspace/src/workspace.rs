@@ -613,48 +613,59 @@ impl ProjectItemRegistry {
         self.build_project_item_for_path_fns
             .push(|project, project_path, window, cx| {
                 let project_path = project_path.clone();
-                let abs_path = project.read(cx).absolute_path(&project_path, cx);
+                let is_file = project
+                    .read(cx)
+                    .entry_for_path(&project_path, cx)
+                    .is_some_and(|entry| entry.is_file());
+                let entry_abs_path = project.read(cx).absolute_path(&project_path, cx);
                 let is_local = project.read(cx).is_local();
                 let project_item =
                     <T::Item as project::ProjectItem>::try_open(project, &project_path, cx)?;
                 let project = project.clone();
-                Some(window.spawn(cx, async move |cx| match project_item.await {
-                    Ok(project_item) => {
-                        let project_item = project_item;
-                        let project_entry_id: Option<ProjectEntryId> =
-                            project_item.read_with(cx, project::ProjectItem::entry_id)?;
-                        let build_workspace_item = Box::new(
-                            |pane: &mut Pane, window: &mut Window, cx: &mut Context<Pane>| {
-                                Box::new(cx.new(|cx| {
-                                    T::for_project_item(
-                                        project,
-                                        Some(pane),
-                                        project_item,
-                                        window,
-                                        cx,
-                                    )
-                                })) as Box<dyn ItemHandle>
-                            },
-                        ) as Box<_>;
-                        Ok((project_entry_id, build_workspace_item))
-                    }
-                    Err(e) => match abs_path {
-                        Some(abs_path) => match cx.update(|window, cx| {
-                            T::for_broken_project_item(abs_path, is_local, &e, window, cx)
-                        })? {
-                            Some(broken_project_item_view) => {
-                                let build_workspace_item = Box::new(
+                Some(window.spawn(cx, async move |cx| {
+                    match project_item.await.with_context(|| {
+                        format!(
+                            "opening project path {:?}",
+                            entry_abs_path.as_deref().unwrap_or(&project_path.path)
+                        )
+                    }) {
+                        Ok(project_item) => {
+                            let project_item = project_item;
+                            let project_entry_id: Option<ProjectEntryId> =
+                                project_item.read_with(cx, project::ProjectItem::entry_id)?;
+                            let build_workspace_item = Box::new(
+                                |pane: &mut Pane, window: &mut Window, cx: &mut Context<Pane>| {
+                                    Box::new(cx.new(|cx| {
+                                        T::for_project_item(
+                                            project,
+                                            Some(pane),
+                                            project_item,
+                                            window,
+                                            cx,
+                                        )
+                                    })) as Box<dyn ItemHandle>
+                                },
+                            ) as Box<_>;
+                            Ok((project_entry_id, build_workspace_item))
+                        }
+                        Err(e) => match entry_abs_path.as_deref().filter(|_| is_file) {
+                            Some(abs_path) => match cx.update(|window, cx| {
+                                T::for_broken_project_item(abs_path, is_local, &e, window, cx)
+                            })? {
+                                Some(broken_project_item_view) => {
+                                    let build_workspace_item = Box::new(
                                     move |_: &mut Pane, _: &mut Window, cx: &mut Context<Pane>| {
                                         cx.new(|_| broken_project_item_view).boxed_clone()
                                     },
                                 )
                                     as Box<_>;
-                                Ok((None, build_workspace_item))
-                            }
+                                    Ok((None, build_workspace_item))
+                                }
+                                None => Err(e)?,
+                            },
                             None => Err(e)?,
                         },
-                        None => Err(e)?,
-                    },
+                    }
                 }))
             });
     }
@@ -4009,52 +4020,6 @@ impl Workspace {
             };
         cx.notify();
         maybe_pane_handle
-    }
-
-    pub fn split_pane_with_item(
-        &mut self,
-        pane_to_split: WeakEntity<Pane>,
-        split_direction: SplitDirection,
-        from: WeakEntity<Pane>,
-        item_id_to_move: EntityId,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(pane_to_split) = pane_to_split.upgrade() else {
-            return;
-        };
-        let Some(from) = from.upgrade() else {
-            return;
-        };
-
-        let new_pane = self.add_pane(window, cx);
-        move_item(&from, &new_pane, item_id_to_move, 0, true, window, cx);
-        self.center
-            .split(&pane_to_split, &new_pane, split_direction)
-            .unwrap();
-        cx.notify();
-    }
-
-    pub fn split_pane_with_project_entry(
-        &mut self,
-        pane_to_split: WeakEntity<Pane>,
-        split_direction: SplitDirection,
-        project_entry: ProjectEntryId,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Option<Task<Result<()>>> {
-        let pane_to_split = pane_to_split.upgrade()?;
-        let new_pane = self.add_pane(window, cx);
-        self.center
-            .split(&pane_to_split, &new_pane, split_direction)
-            .unwrap();
-
-        let path = self.project.read(cx).path_for_entry(project_entry, cx)?;
-        let task = self.open_path(path, Some(new_pane.downgrade()), true, window, cx);
-        Some(cx.foreground_executor().spawn(async move {
-            task.await?;
-            Ok(())
-        }))
     }
 
     pub fn join_all_panes(&mut self, window: &mut Window, cx: &mut Context<Self>) {
