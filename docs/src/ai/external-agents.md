@@ -1,6 +1,6 @@
 # External Agents
 
-Zed has support for integrating with existing terminal based agentic coding tools through the [Agent Client Protocol (ACP)](https://agentclientprotocol.com),
+Zed has support for integrating with existing terminal-based agentic coding tools through the [Agent Client Protocol (ACP)](https://agentclientprotocol.com).
 
 At the moment, Zed supports [Gemini CLI](https://github.com/google-gemini/gemini-cli) as a reference implementation of an external agent speaking ACP.
 
