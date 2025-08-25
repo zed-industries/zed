@@ -575,7 +575,7 @@ List of `string` values
 "cursor_shape": "underline"
 ```
 
-4. An box drawn around the following character:
+4. A box drawn around the following character:
 
 ```json
 "cursor_shape": "hollow"
