@@ -1,6 +1,5 @@
 mod base_keymap_setting;
 mod editable_setting_control;
-mod key_equivalents;
 mod keymap_file;
 mod settings_file;
 mod settings_json;
@@ -14,7 +13,6 @@ use util::asset_str;
 
 pub use base_keymap_setting::*;
 pub use editable_setting_control::*;
-pub use key_equivalents::*;
 pub use keymap_file::{
     KeyBindingValidator, KeyBindingValidatorRegistration, KeybindSource, KeybindUpdateOperation,
     KeybindUpdateTarget, KeymapFile, KeymapFileLoadResult,

@@ -89,6 +89,10 @@ impl PlatformKeyboardMapper for WindowsKeyboardMapper {
             display_key: key,
         }
     }
+
+    fn get_key_equivalents(&self) -> Option<&HashMap<char, char>> {
+        None
+    }
 }
 
 impl WindowsKeyboardLayout {

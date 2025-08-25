@@ -44,6 +44,10 @@ impl PlatformKeyboardMapper for MacKeyboardMapper {
         }
         KeybindingKeystroke::from_keystroke(keystroke)
     }
+
+    fn get_key_equivalents(&self) -> Option<&HashMap<char, char>> {
+        self.key_equivalents.as_ref()
+    }
 }
 
 impl MacKeyboardLayout {
