@@ -74,9 +74,8 @@ use lsp::{
     FileOperationPatternKind, FileOperationRegistrationOptions, FileRename, FileSystemWatcher,
     LSP_REQUEST_TIMEOUT, LanguageServer, LanguageServerBinary, LanguageServerBinaryOptions,
     LanguageServerId, LanguageServerName, LanguageServerSelector, LspRequestFuture,
-    MessageActionItem, MessageType, OneOf, RenameFilesParams, SymbolKind,
-    TextEdit, WillRenameFiles, WorkDoneProgressCancelParams,
-    WorkspaceFolder, notification::DidRenameFiles,
+    MessageActionItem, MessageType, OneOf, RenameFilesParams, SymbolKind, TextEdit,
+    WillRenameFiles, WorkDoneProgressCancelParams, WorkspaceFolder, notification::DidRenameFiles,
 };
 use node_runtime::read_package_installed_version;
 use parking_lot::Mutex;
@@ -7208,9 +7207,8 @@ impl LspStore {
                     .collect()
             };
 
-            let document_sync_kind = language_server
-                .effective_text_document_sync()
-                .change;
+            let document_sync_kind =
+                language_server.effective_capability::<lsp::cap::DidChangeTextDocument>();
 
             let content_changes: Vec<_> = match document_sync_kind {
                 Some(lsp::TextDocumentSyncKind::FULL) => {
@@ -7271,7 +7269,9 @@ impl LspStore {
         let local = self.as_local()?;
 
         for server in local.language_servers_for_worktree(worktree_id) {
-            if let Some(include_text) = server.effective_text_document_sync().save_include_text {
+            if let Some(include_text) =
+                server.effective_capability::<lsp::cap::DidSaveTextDocument>()
+            {
                 let text = if include_text {
                     Some(buffer.read(cx).text())
                 } else {
@@ -11842,7 +11842,7 @@ impl LspStore {
                             let map = dyn_caps
                                 .text_document_sync_did_change
                                 .get_or_insert_with(HashMap::default);
-                            map.insert(reg.id.clone(), sync_kind);
+                            map.insert(reg.id, sync_kind);
                         });
                         notify_server_capabilities_updated(&server, cx);
                     }
@@ -11867,7 +11867,7 @@ impl LspStore {
                             let map = dyn_caps
                                 .text_document_sync_did_save
                                 .get_or_insert_with(HashMap::default);
-                            map.insert(reg.id.clone(), lsp::SaveOptions { include_text });
+                            map.insert(reg.id, lsp::SaveOptions { include_text });
                         });
                         notify_server_capabilities_updated(&server, cx);
                     }
@@ -13252,8 +13252,6 @@ async fn populate_labels_for_symbols(
         }
     }
 }
-
-// include_text logic moved into lsp::LanguageServer::effective_text_document_sync()
 
 /// Completion items are displayed in a `UniformList`.
 /// Usually, those items are single-line strings, but in LSP responses,

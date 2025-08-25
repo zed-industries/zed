@@ -1,4 +1,7 @@
+mod capabilities;
 mod input_handler;
+
+pub use capabilities::{EffectiveCapability, cap};
 
 pub use lsp_types::request::*;
 pub use lsp_types::*;
@@ -306,15 +309,6 @@ pub struct AdapterServerCapabilities {
 pub struct DynamicCapabilities {
     pub text_document_sync_did_change: Option<HashMap<String, TextDocumentSyncKind>>,
     pub text_document_sync_did_save: Option<HashMap<String, SaveOptions>>,
-}
-
-/// Effective text document synchronization behavior, merging static and dynamic capabilities.
-#[derive(Debug, Default, Clone)]
-pub struct EffectiveTextDocumentSync {
-    /// Effective change sync kind (FULL or INCREMENTAL), if any.
-    pub change: Option<TextDocumentSyncKind>,
-    /// Whether to include text on didSave, or None if didSave is not supported.
-    pub save_include_text: Option<bool>,
 }
 
 impl LanguageServer {
@@ -1150,74 +1144,14 @@ impl LanguageServer {
         self.static_capabilities.read().clone()
     }
 
-    pub fn dynamic_capabilities(&self) -> DynamicCapabilities {
-        self.dynamic_capabilities.read().clone()
-    }
-
     pub fn update_dynamic_capabilities(&self, update: impl FnOnce(&mut DynamicCapabilities)) {
         update(self.dynamic_capabilities.write().deref_mut());
     }
 
-    pub fn effective_text_document_sync(&self) -> EffectiveTextDocumentSync {
-        let static_caps = self.capabilities();
-        let dyn_caps = self.dynamic_capabilities();
-
-        let change = dyn_caps
-            .text_document_sync_did_change
-            .as_ref()
-            .and_then(|m| {
-                if m.is_empty() {
-                    None
-                } else {
-                    let mut best: Option<TextDocumentSyncKind> = None;
-                    for kind in m.values() {
-                        best = Some(match (best, kind) {
-                            (None, k) => *k,
-                            (
-                                Some(TextDocumentSyncKind::FULL),
-                                &TextDocumentSyncKind::INCREMENTAL,
-                            ) => TextDocumentSyncKind::INCREMENTAL,
-                            (Some(curr), _) => curr,
-                        });
-                    }
-                    best
-                }
-            })
-            .or_else(|| {
-                static_caps
-                    .text_document_sync
-                    .as_ref()
-                    .and_then(|sync| match sync {
-                        TextDocumentSyncCapability::Kind(kind) => Some(*kind),
-                        TextDocumentSyncCapability::Options(options) => options.change,
-                    })
-            });
-
-        let save_include_text = dyn_caps
-            .text_document_sync_did_save
-            .as_ref()
-            .and_then(|m| {
-                if m.is_empty() {
-                    None
-                } else {
-                    Some(m.values().any(|opts| opts.include_text.unwrap_or(false)))
-                }
-            })
-            .or_else(|| match static_caps.text_document_sync.as_ref()? {
-                TextDocumentSyncCapability::Options(opts) => match opts.save.as_ref()? {
-                    TextDocumentSyncSaveOptions::Supported(true) => Some(false),
-                    TextDocumentSyncSaveOptions::Supported(false) => None,
-                    TextDocumentSyncSaveOptions::SaveOptions(save_opts) => {
-                        Some(save_opts.include_text.unwrap_or(false))
-                    }
-                },
-                TextDocumentSyncCapability::Kind(_) => None,
-            });
-
-        EffectiveTextDocumentSync {
-            change,
-            save_include_text,
-        }
+    pub fn effective_capability<Cap: EffectiveCapability>(&self) -> Cap::Value {
+        let static_capabilities = self.capabilities();
+        let dynamic_capabilities = self.dynamic_capabilities.read().clone();
+        Cap::compute(&static_capabilities, &dynamic_capabilities)
     }
 
     /// Get the reported capabilities of the running language server and
