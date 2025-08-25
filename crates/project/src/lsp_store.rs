@@ -7588,19 +7588,16 @@ impl LspStore {
                 let snapshot = buffer_handle.read(cx).snapshot();
                 let buffer = buffer_handle.read(cx);
                 let reused_diagnostics = buffer
-                    .get_diagnostics(server_id)
-                    .into_iter()
-                    .flat_map(|diag| {
-                        diag.iter()
-                            .filter(|v| merge(buffer, &v.diagnostic, cx))
-                            .map(|v| {
-                                let start = Unclipped(v.range.start.to_point_utf16(&snapshot));
-                                let end = Unclipped(v.range.end.to_point_utf16(&snapshot));
-                                DiagnosticEntry {
-                                    range: start..end,
-                                    diagnostic: v.diagnostic.clone(),
-                                }
-                            })
+                    .buffer_diagnostics(Some(server_id))
+                    .iter()
+                    .filter(|v| merge(buffer, &v.diagnostic, cx))
+                    .map(|v| {
+                        let start = Unclipped(v.range.start.to_point_utf16(&snapshot));
+                        let end = Unclipped(v.range.end.to_point_utf16(&snapshot));
+                        DiagnosticEntry {
+                            range: start..end,
+                            diagnostic: v.diagnostic.clone(),
+                        }
                     })
                     .collect::<Vec<_>>();
 
