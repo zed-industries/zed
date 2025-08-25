@@ -1415,7 +1415,7 @@ pub fn get_key_equivalents(layout: &str) -> Option<HashMap<char, char>> {
         _ => return None,
     };
 
-    Some(HashMap::from_iter(mappings.into_iter().cloned()))
+    Some(HashMap::from_iter(mappings.iter().cloned()))
 }
 
 #[cfg(not(target_os = "macos"))]

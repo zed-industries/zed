@@ -103,28 +103,16 @@ impl ChatPanel {
         });
 
         cx.new(|cx| {
-            let entity = cx.entity().downgrade();
-            let message_list = ListState::new(
-                0,
-                gpui::ListAlignment::Bottom,
-                px(1000.),
-                move |ix, window, cx| {
-                    if let Some(entity) = entity.upgrade() {
-                        entity.update(cx, |this: &mut Self, cx| {
-                            this.render_message(ix, window, cx).into_any_element()
-                        })
-                    } else {
-                        div().into_any()
-                    }
-                },
-            );
+            let message_list = ListState::new(0, gpui::ListAlignment::Bottom, px(1000.));
 
-            message_list.set_scroll_handler(cx.listener(|this, event: &ListScrollEvent, _, cx| {
-                if event.visible_range.start < MESSAGE_LOADING_THRESHOLD {
-                    this.load_more_messages(cx);
-                }
-                this.is_scrolled_to_bottom = !event.is_scrolled;
-            }));
+            message_list.set_scroll_handler(cx.listener(
+                |this: &mut Self, event: &ListScrollEvent, _, cx| {
+                    if event.visible_range.start < MESSAGE_LOADING_THRESHOLD {
+                        this.load_more_messages(cx);
+                    }
+                    this.is_scrolled_to_bottom = !event.is_scrolled;
+                },
+            ));
 
             let local_offset = chrono::Local::now().offset().local_minus_utc();
             let mut this = Self {
@@ -299,19 +287,20 @@ impl ChatPanel {
     }
 
     fn acknowledge_last_message(&mut self, cx: &mut Context<Self>) {
-        if self.active && self.is_scrolled_to_bottom {
-            if let Some((chat, _)) = &self.active_chat {
-                if let Some(channel_id) = self.channel_id(cx) {
-                    self.last_acknowledged_message_id = self
-                        .channel_store
-                        .read(cx)
-                        .last_acknowledge_message_id(channel_id);
-                }
-
-                chat.update(cx, |chat, cx| {
-                    chat.acknowledge_last_message(cx);
-                });
+        if self.active
+            && self.is_scrolled_to_bottom
+            && let Some((chat, _)) = &self.active_chat
+        {
+            if let Some(channel_id) = self.channel_id(cx) {
+                self.last_acknowledged_message_id = self
+                    .channel_store
+                    .read(cx)
+                    .last_acknowledge_message_id(channel_id);
             }
+
+            chat.update(cx, |chat, cx| {
+                chat.acknowledge_last_message(cx);
+            });
         }
     }
 
@@ -399,7 +388,7 @@ impl ChatPanel {
         ix: usize,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> impl IntoElement {
+    ) -> AnyElement {
         let active_chat = &self.active_chat.as_ref().unwrap().0;
         let (message, is_continuation_from_previous, is_admin) =
             active_chat.update(cx, |active_chat, cx| {
@@ -417,14 +406,13 @@ impl ChatPanel {
                     && last_message.id != this_message.id
                     && duration_since_last_message < Duration::from_secs(5 * 60);
 
-                if let ChannelMessageId::Saved(id) = this_message.id {
-                    if this_message
+                if let ChannelMessageId::Saved(id) = this_message.id
+                    && this_message
                         .mentions
                         .iter()
                         .any(|(_, user_id)| Some(*user_id) == self.client.user_id())
-                    {
-                        active_chat.acknowledge_message(id);
-                    }
+                {
+                    active_chat.acknowledge_message(id);
                 }
 
                 (this_message, is_continuation_from_previous, is_admin)
@@ -582,6 +570,7 @@ impl ChatPanel {
                 self.render_popover_buttons(message_id, can_delete_message, can_edit_message, cx)
                     .mt_neg_2p5(),
             )
+            .into_any_element()
     }
 
     fn has_open_menu(&self, message_id: Option<u64>) -> bool {
@@ -685,7 +674,7 @@ impl ChatPanel {
                 })
             })
             .when_some(message_id, |el, message_id| {
-                let this = cx.entity().clone();
+                let this = cx.entity();
 
                 el.child(
                     self.render_popover_button(
@@ -882,34 +871,33 @@ impl ChatPanel {
                 scroll_to_message_id.or(this.last_acknowledged_message_id)
             })?;
 
-            if let Some(message_id) = scroll_to_message_id {
-                if let Some(item_ix) =
+            if let Some(message_id) = scroll_to_message_id
+                && let Some(item_ix) =
                     ChannelChat::load_history_since_message(chat.clone(), message_id, cx.clone())
                         .await
-                {
-                    this.update(cx, |this, cx| {
-                        if let Some(highlight_message_id) = highlight_message_id {
-                            let task = cx.spawn(async move |this, cx| {
-                                cx.background_executor().timer(Duration::from_secs(2)).await;
-                                this.update(cx, |this, cx| {
-                                    this.highlighted_message.take();
-                                    cx.notify();
-                                })
-                                .ok();
-                            });
+            {
+                this.update(cx, |this, cx| {
+                    if let Some(highlight_message_id) = highlight_message_id {
+                        let task = cx.spawn(async move |this, cx| {
+                            cx.background_executor().timer(Duration::from_secs(2)).await;
+                            this.update(cx, |this, cx| {
+                                this.highlighted_message.take();
+                                cx.notify();
+                            })
+                            .ok();
+                        });
 
-                            this.highlighted_message = Some((highlight_message_id, task));
-                        }
+                        this.highlighted_message = Some((highlight_message_id, task));
+                    }
 
-                        if this.active_chat.as_ref().map_or(false, |(c, _)| *c == chat) {
-                            this.message_list.scroll_to(ListOffset {
-                                item_ix,
-                                offset_in_item: px(0.0),
-                            });
-                            cx.notify();
-                        }
-                    })?;
-                }
+                    if this.active_chat.as_ref().is_some_and(|(c, _)| *c == chat) {
+                        this.message_list.scroll_to(ListOffset {
+                            item_ix,
+                            offset_in_item: px(0.0),
+                        });
+                        cx.notify();
+                    }
+                })?;
             }
 
             Ok(())
@@ -979,7 +967,13 @@ impl Render for ChatPanel {
             )
             .child(div().flex_grow().px_2().map(|this| {
                 if self.active_chat.is_some() {
-                    this.child(list(self.message_list.clone()).size_full())
+                    this.child(
+                        list(
+                            self.message_list.clone(),
+                            cx.processor(Self::render_message),
+                        )
+                        .size_full(),
+                    )
                 } else {
                     this.child(
                         div()
@@ -1044,7 +1038,7 @@ impl Render for ChatPanel {
                     .cloned();
 
                 el.when_some(reply_message, |el, reply_message| {
-                    let user_being_replied_to = reply_message.sender.clone();
+                    let user_being_replied_to = reply_message.sender;
 
                     el.child(
                         h_flex()
@@ -1162,7 +1156,7 @@ impl Panel for ChatPanel {
     }
 
     fn icon(&self, _window: &Window, cx: &App) -> Option<ui::IconName> {
-        self.enabled(cx).then(|| ui::IconName::MessageBubbles)
+        self.enabled(cx).then(|| ui::IconName::Chat)
     }
 
     fn icon_tooltip(&self, _: &Window, _: &App) -> Option<&'static str> {
@@ -1192,7 +1186,7 @@ impl Panel for ChatPanel {
                 let is_in_call = ActiveCall::global(cx)
                     .read(cx)
                     .room()
-                    .map_or(false, |room| room.read(cx).contains_guests());
+                    .is_some_and(|room| room.read(cx).contains_guests());
 
                 self.active || is_in_call
             }

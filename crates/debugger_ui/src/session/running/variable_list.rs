@@ -272,7 +272,7 @@ impl VariableList {
         let mut entries = vec![];
 
         let scopes: Vec<_> = self.session.update(cx, |session, cx| {
-            session.scopes(stack_frame_id, cx).iter().cloned().collect()
+            session.scopes(stack_frame_id, cx).to_vec()
         });
 
         let mut contains_local_scope = false;
@@ -291,7 +291,7 @@ impl VariableList {
                 }
 
                 self.session.update(cx, |session, cx| {
-                    session.variables(scope.variables_reference, cx).len() > 0
+                    !session.variables(scope.variables_reference, cx).is_empty()
                 })
             })
             .map(|scope| {
@@ -313,7 +313,7 @@ impl VariableList {
                         watcher.variables_reference,
                         watcher.variables_reference,
                         EntryPath::for_watcher(watcher.expression.clone()),
-                        DapEntry::Watcher(watcher.clone()),
+                        DapEntry::Watcher(watcher),
                     )
                 })
                 .collect::<Vec<_>>(),
@@ -670,9 +670,9 @@ impl VariableList {
         let focus_handle = self.focus_handle.clone();
         cx.spawn_in(window, async move |this, cx| {
             let can_toggle_data_breakpoint = if let Some(task) = can_toggle_data_breakpoint {
-                task.await.is_some()
+                task.await
             } else {
-                true
+                None
             };
             cx.update(|window, cx| {
                 let context_menu = ContextMenu::build(window, cx, |menu, _, _| {
@@ -686,11 +686,35 @@ impl VariableList {
                                 menu.action("Go To Memory", GoToMemory.boxed_clone())
                             })
                             .action("Watch Variable", AddWatch.boxed_clone())
-                            .when(can_toggle_data_breakpoint, |menu| {
-                                menu.action(
-                                    "Toggle Data Breakpoint",
-                                    crate::ToggleDataBreakpoint.boxed_clone(),
-                                )
+                            .when_some(can_toggle_data_breakpoint, |mut menu, data_info| {
+                                menu = menu.separator();
+                                if let Some(access_types) = data_info.access_types {
+                                    for access in access_types {
+                                        menu = menu.action(
+                                            format!(
+                                                "Toggle {} Data Breakpoint",
+                                                match access {
+                                                    dap::DataBreakpointAccessType::Read => "Read",
+                                                    dap::DataBreakpointAccessType::Write => "Write",
+                                                    dap::DataBreakpointAccessType::ReadWrite =>
+                                                        "Read/Write",
+                                                }
+                                            ),
+                                            crate::ToggleDataBreakpoint {
+                                                access_type: Some(access),
+                                            }
+                                            .boxed_clone(),
+                                        );
+                                    }
+
+                                    menu
+                                } else {
+                                    menu.action(
+                                        "Toggle Data Breakpoint",
+                                        crate::ToggleDataBreakpoint { access_type: None }
+                                            .boxed_clone(),
+                                    )
+                                }
                             })
                     })
                     .when(entry.as_watcher().is_some(), |menu| {
@@ -729,7 +753,7 @@ impl VariableList {
 
     fn toggle_data_breakpoint(
         &mut self,
-        _: &crate::ToggleDataBreakpoint,
+        data_info: &crate::ToggleDataBreakpoint,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -759,9 +783,26 @@ impl VariableList {
         });
 
         let session = self.session.downgrade();
+        let access_type = data_info.access_type;
         cx.spawn(async move |_, cx| {
-            let Some(data_id) = data_breakpoint.await.and_then(|info| info.data_id) else {
+            let Some((data_id, access_types)) = data_breakpoint
+                .await
+                .and_then(|info| Some((info.data_id?, info.access_types)))
+            else {
                 return;
+            };
+
+            // Because user's can manually add this action to the keymap
+            // we check if access type is supported
+            let access_type = match access_types {
+                None => None,
+                Some(access_types) => {
+                    if access_type.is_some_and(|access_type| access_types.contains(&access_type)) {
+                        access_type
+                    } else {
+                        None
+                    }
+                }
             };
             _ = session.update(cx, |session, cx| {
                 session.create_data_breakpoint(
@@ -769,7 +810,7 @@ impl VariableList {
                     data_id.clone(),
                     dap::DataBreakpoint {
                         data_id,
-                        access_type: None,
+                        access_type,
                         condition: None,
                         hit_condition: None,
                     },
@@ -906,7 +947,7 @@ impl VariableList {
     #[track_caller]
     #[cfg(test)]
     pub(crate) fn assert_visual_entries(&self, expected: Vec<&str>) {
-        const INDENT: &'static str = "    ";
+        const INDENT: &str = "    ";
 
         let entries = &self.entries;
         let mut visual_entries = Vec::with_capacity(entries.len());
@@ -956,7 +997,7 @@ impl VariableList {
                 DapEntry::Watcher { .. } => continue,
                 DapEntry::Variable(dap) => scopes[idx].1.push(dap.clone()),
                 DapEntry::Scope(scope) => {
-                    if scopes.len() > 0 {
+                    if !scopes.is_empty() {
                         idx += 1;
                     }
 
@@ -1066,7 +1107,7 @@ impl VariableList {
                                     let variable_value = value.clone();
                                     this.on_click(cx.listener(
                                         move |this, click: &ClickEvent, window, cx| {
-                                            if click.down.click_count < 2 {
+                                            if click.click_count() < 2 {
                                                 return;
                                             }
                                             let editor = Self::create_variable_editor(
@@ -1248,7 +1289,7 @@ impl VariableList {
                             }),
                         )
                         .child(self.render_variable_value(
-                            &entry,
+                            entry,
                             &variable_color,
                             watcher.value.to_string(),
                             cx,
@@ -1260,8 +1301,6 @@ impl VariableList {
                         IconName::Close,
                     )
                     .on_click({
-                        let weak = weak.clone();
-                        let path = path.clone();
                         move |_, window, cx| {
                             weak.update(cx, |variable_list, cx| {
                                 variable_list.selection = Some(path.clone());
@@ -1429,7 +1468,6 @@ impl VariableList {
                     }))
                 })
                 .on_secondary_mouse_down(cx.listener({
-                    let path = path.clone();
                     let entry = variable.clone();
                     move |this, event: &MouseDownEvent, window, cx| {
                         this.selection = Some(path.clone());
@@ -1453,7 +1491,7 @@ impl VariableList {
                             }),
                         )
                         .child(self.render_variable_value(
-                            &variable,
+                            variable,
                             &variable_color,
                             dap.value.clone(),
                             cx,

@@ -1,5 +1,14 @@
 use crate::{Capslock, xcb_flush};
+use anyhow::{Context as _, anyhow};
+use calloop::{
+    EventLoop, LoopHandle, RegistrationToken,
+    generic::{FdWrapper, Generic},
+};
+use collections::HashMap;
 use core::str;
+use http_client::Url;
+use log::Level;
+use smallvec::SmallVec;
 use std::{
     cell::RefCell,
     collections::{BTreeMap, HashSet},
@@ -8,16 +17,6 @@ use std::{
     rc::{Rc, Weak},
     time::{Duration, Instant},
 };
-
-use anyhow::{Context as _, anyhow};
-use calloop::{
-    EventLoop, LoopHandle, RegistrationToken,
-    generic::{FdWrapper, Generic},
-};
-use collections::HashMap;
-use http_client::Url;
-use log::Level;
-use smallvec::SmallVec;
 use util::ResultExt;
 
 use x11rb::{
@@ -38,7 +37,7 @@ use x11rb::{
 };
 use xim::{AttributeName, Client, InputStyle, x11rb::X11rbClient};
 use xkbc::x11::ffi::{XKB_X11_MIN_MAJOR_XKB_VERSION, XKB_X11_MIN_MINOR_XKB_VERSION};
-use xkbcommon::xkb::{self as xkbc, LayoutIndex, ModMask, STATE_LAYOUT_EFFECTIVE};
+use xkbcommon::xkb::{self as xkbc, STATE_LAYOUT_EFFECTIVE};
 
 use super::{
     ButtonOrScroll, ScrollDirection, X11Display, X11WindowStatePtr, XcbAtoms, XimCallbackEvent,
@@ -141,13 +140,6 @@ impl From<xim::ClientError> for EventHandlerError {
     }
 }
 
-#[derive(Debug, Default, Clone)]
-struct XKBStateNotiy {
-    depressed_layout: LayoutIndex,
-    latched_layout: LayoutIndex,
-    locked_layout: LayoutIndex,
-}
-
 #[derive(Debug, Default)]
 pub struct Xdnd {
     other_window: xproto::Window,
@@ -200,7 +192,6 @@ pub struct X11ClientState {
     pub(crate) mouse_focused_window: Option<xproto::Window>,
     pub(crate) keyboard_focused_window: Option<xproto::Window>,
     pub(crate) xkb: xkbc::State,
-    previous_xkb_state: XKBStateNotiy,
     keyboard_layout: LinuxKeyboardLayout,
     pub(crate) ximc: Option<X11rbClient<Rc<XCBConnection>>>,
     pub(crate) xim_handler: Option<XimHandler>,
@@ -241,15 +232,12 @@ impl X11ClientStatePtr {
         };
         let mut state = client.0.borrow_mut();
 
-        if let Some(window_ref) = state.windows.remove(&x_window) {
-            match window_ref.refresh_state {
-                Some(RefreshState::PeriodicRefresh {
-                    event_loop_token, ..
-                }) => {
-                    state.loop_handle.remove(event_loop_token);
-                }
-                _ => {}
-            }
+        if let Some(window_ref) = state.windows.remove(&x_window)
+            && let Some(RefreshState::PeriodicRefresh {
+                event_loop_token, ..
+            }) = window_ref.refresh_state
+        {
+            state.loop_handle.remove(event_loop_token);
         }
         if state.mouse_focused_window == Some(x_window) {
             state.mouse_focused_window = None;
@@ -468,7 +456,7 @@ impl X11Client {
                 move |event, _, client| match event {
                     XDPEvent::WindowAppearance(appearance) => {
                         client.with_common(|common| common.appearance = appearance);
-                        for (_, window) in &mut client.0.borrow_mut().windows {
+                        for window in client.0.borrow_mut().windows.values_mut() {
                             window.window.set_appearance(appearance);
                         }
                     }
@@ -507,7 +495,6 @@ impl X11Client {
             mouse_focused_window: None,
             keyboard_focused_window: None,
             xkb: xkb_state,
-            previous_xkb_state: XKBStateNotiy::default(),
             keyboard_layout,
             ximc,
             xim_handler,
@@ -575,10 +562,10 @@ impl X11Client {
                                     events.push(last_keymap_change_event);
                                 }
 
-                                if let Some(last_press) = last_key_press.as_ref() {
-                                    if last_press.detail == key_press.detail {
-                                        continue;
-                                    }
+                                if let Some(last_press) = last_key_press.as_ref()
+                                    && last_press.detail == key_press.detail
+                                {
+                                    continue;
                                 }
 
                                 if let Some(Event::KeyRelease(key_release)) =
@@ -652,13 +639,7 @@ impl X11Client {
                 let xim_connected = xim_handler.connected;
                 drop(state);
 
-                let xim_filtered = match ximc.filter_event(&event, &mut xim_handler) {
-                    Ok(handled) => handled,
-                    Err(err) => {
-                        log::error!("XIMClientError: {}", err);
-                        false
-                    }
-                };
+                let xim_filtered = ximc.filter_event(&event, &mut xim_handler);
                 let xim_callback_event = xim_handler.last_callback_event.take();
 
                 let mut state = self.0.borrow_mut();
@@ -669,14 +650,28 @@ impl X11Client {
                     self.handle_xim_callback_event(event);
                 }
 
-                if xim_filtered {
-                    continue;
-                }
-
-                if xim_connected {
-                    self.xim_handle_event(event);
-                } else {
-                    self.handle_event(event);
+                match xim_filtered {
+                    Ok(handled) => {
+                        if handled {
+                            continue;
+                        }
+                        if xim_connected {
+                            self.xim_handle_event(event);
+                        } else {
+                            self.handle_event(event);
+                        }
+                    }
+                    Err(err) => {
+                        // this might happen when xim server crashes on one of the events
+                        // we do lose 1-2 keys when crash happens since there is no reliable way to get that info
+                        // luckily, x11 sends us window not found error when xim server crashes upon further key press
+                        // hence we fall back to handle_event
+                        log::error!("XIMClientError: {}", err);
+                        let mut state = self.0.borrow_mut();
+                        state.take_xim();
+                        drop(state);
+                        self.handle_event(event);
+                    }
                 }
             }
         }
@@ -878,22 +873,19 @@ impl X11Client {
                 let Some(reply) = reply else {
                     return Some(());
                 };
-                match str::from_utf8(&reply.value) {
-                    Ok(file_list) => {
-                        let paths: SmallVec<[_; 2]> = file_list
-                            .lines()
-                            .filter_map(|path| Url::parse(path).log_err())
-                            .filter_map(|url| url.to_file_path().log_err())
-                            .collect();
-                        let input = PlatformInput::FileDrop(FileDropEvent::Entered {
-                            position: state.xdnd_state.position,
-                            paths: crate::ExternalPaths(paths),
-                        });
-                        drop(state);
-                        window.handle_input(input);
-                        self.0.borrow_mut().xdnd_state.retrieved = true;
-                    }
-                    Err(_) => {}
+                if let Ok(file_list) = str::from_utf8(&reply.value) {
+                    let paths: SmallVec<[_; 2]> = file_list
+                        .lines()
+                        .filter_map(|path| Url::parse(path).log_err())
+                        .filter_map(|url| url.to_file_path().log_err())
+                        .collect();
+                    let input = PlatformInput::FileDrop(FileDropEvent::Entered {
+                        position: state.xdnd_state.position,
+                        paths: crate::ExternalPaths(paths),
+                    });
+                    drop(state);
+                    window.handle_input(input);
+                    self.0.borrow_mut().xdnd_state.retrieved = true;
                 }
             }
             Event::ConfigureNotify(event) => {
@@ -959,14 +951,6 @@ impl X11Client {
                         state.xkb_device_id,
                     )
                 };
-                let depressed_layout = xkb_state.serialize_layout(xkbc::STATE_LAYOUT_DEPRESSED);
-                let latched_layout = xkb_state.serialize_layout(xkbc::STATE_LAYOUT_LATCHED);
-                let locked_layout = xkb_state.serialize_layout(xkbc::ffi::XKB_STATE_LAYOUT_LOCKED);
-                state.previous_xkb_state = XKBStateNotiy {
-                    depressed_layout,
-                    latched_layout,
-                    locked_layout,
-                };
                 state.xkb = xkb_state;
                 drop(state);
                 self.handle_keyboard_layout_change();
@@ -983,12 +967,6 @@ impl X11Client {
                     event.latched_group as u32,
                     event.locked_group.into(),
                 );
-                state.previous_xkb_state = XKBStateNotiy {
-                    depressed_layout: event.base_group as u32,
-                    latched_layout: event.latched_group as u32,
-                    locked_layout: event.locked_group.into(),
-                };
-
                 let modifiers = Modifiers::from_xkb(&state.xkb);
                 let capslock = Capslock::from_xkb(&state.xkb);
                 if state.last_modifiers_changed_event == modifiers
@@ -1025,20 +1003,16 @@ impl X11Client {
                 state.pre_key_char_down.take();
                 let keystroke = {
                     let code = event.detail.into();
-                    let xkb_state = state.previous_xkb_state.clone();
-                    state.xkb.update_mask(
-                        event.state.bits() as ModMask,
-                        0,
-                        0,
-                        xkb_state.depressed_layout,
-                        xkb_state.latched_layout,
-                        xkb_state.locked_layout,
-                    );
                     let mut keystroke = crate::Keystroke::from_xkb(&state.xkb, modifiers, code);
                     let keysym = state.xkb.key_get_one_sym(code);
+
                     if keysym.is_modifier_key() {
                         return Some(());
                     }
+
+                    // should be called after key_get_one_sym
+                    state.xkb.update_key(code, xkbc::KeyDirection::Down);
+
                     if let Some(mut compose_state) = state.compose_state.take() {
                         compose_state.feed(keysym);
                         match compose_state.status() {
@@ -1093,20 +1067,16 @@ impl X11Client {
 
                 let keystroke = {
                     let code = event.detail.into();
-                    let xkb_state = state.previous_xkb_state.clone();
-                    state.xkb.update_mask(
-                        event.state.bits() as ModMask,
-                        0,
-                        0,
-                        xkb_state.depressed_layout,
-                        xkb_state.latched_layout,
-                        xkb_state.locked_layout,
-                    );
                     let keystroke = crate::Keystroke::from_xkb(&state.xkb, modifiers, code);
                     let keysym = state.xkb.key_get_one_sym(code);
+
                     if keysym.is_modifier_key() {
                         return Some(());
                     }
+
+                    // should be called after key_get_one_sym
+                    state.xkb.update_key(code, xkbc::KeyDirection::Up);
+
                     keystroke
                 };
                 drop(state);
@@ -1236,7 +1206,7 @@ impl X11Client {
 
                 state = self.0.borrow_mut();
                 if let Some(mut pointer) = state.pointer_device_states.get_mut(&event.sourceid) {
-                    let scroll_delta = get_scroll_delta_and_update_state(&mut pointer, &event);
+                    let scroll_delta = get_scroll_delta_and_update_state(pointer, &event);
                     drop(state);
                     if let Some(scroll_delta) = scroll_delta {
                         window.handle_input(PlatformInput::ScrollWheel(make_scroll_wheel_event(
@@ -1295,7 +1265,7 @@ impl X11Client {
             Event::XinputDeviceChanged(event) => {
                 let mut state = self.0.borrow_mut();
                 if let Some(mut pointer) = state.pointer_device_states.get_mut(&event.sourceid) {
-                    reset_pointer_device_scroll_positions(&mut pointer);
+                    reset_pointer_device_scroll_positions(pointer);
                 }
             }
             _ => {}
@@ -1359,7 +1329,7 @@ impl X11Client {
         state.composing = false;
         drop(state);
         if let Some(mut keystroke) = keystroke {
-            keystroke.key_char = Some(text.clone());
+            keystroke.key_char = Some(text);
             window.handle_input(PlatformInput::KeyDown(crate::KeyDownEvent {
                 keystroke,
                 is_held: false,
@@ -1482,7 +1452,7 @@ impl LinuxClient for X11Client {
     #[cfg(feature = "screen-capture")]
     fn screen_capture_sources(
         &self,
-    ) -> futures::channel::oneshot::Receiver<anyhow::Result<Vec<Box<dyn crate::ScreenCaptureSource>>>>
+    ) -> futures::channel::oneshot::Receiver<anyhow::Result<Vec<Rc<dyn crate::ScreenCaptureSource>>>>
     {
         crate::platform::scap_screen_capture::scap_screen_sources(
             &self.0.borrow().common.foreground_executor,
@@ -1610,11 +1580,11 @@ impl LinuxClient for X11Client {
 
     fn read_from_primary(&self) -> Option<crate::ClipboardItem> {
         let state = self.0.borrow_mut();
-        return state
+        state
             .clipboard
             .get_any(clipboard::ClipboardKind::Primary)
             .context("X11: Failed to read from clipboard (primary)")
-            .log_with_level(log::Level::Debug);
+            .log_with_level(log::Level::Debug)
     }
 
     fn read_from_clipboard(&self) -> Option<crate::ClipboardItem> {
@@ -1627,11 +1597,11 @@ impl LinuxClient for X11Client {
         {
             return state.clipboard_item.clone();
         }
-        return state
+        state
             .clipboard
             .get_any(clipboard::ClipboardKind::Clipboard)
             .context("X11: Failed to read from clipboard (clipboard)")
-            .log_with_level(log::Level::Debug);
+            .log_with_level(log::Level::Debug)
     }
 
     fn run(&self) {
@@ -1827,6 +1797,7 @@ impl X11ClientState {
                             drop(state);
                             window.refresh(RequestFrameOptions {
                                 require_presentation: expose_event_received,
+                                force_render: false,
                             });
                         }
                         xcb_connection
@@ -2033,12 +2004,12 @@ fn check_gtk_frame_extents_supported(
 }
 
 fn xdnd_is_atom_supported(atom: u32, atoms: &XcbAtoms) -> bool {
-    return atom == atoms.TEXT
+    atom == atoms.TEXT
         || atom == atoms.STRING
         || atom == atoms.UTF8_STRING
         || atom == atoms.TEXT_PLAIN
         || atom == atoms.TEXT_PLAIN_UTF8
-        || atom == atoms.TextUriList;
+        || atom == atoms.TextUriList
 }
 
 fn xdnd_get_supported_atom(
@@ -2058,16 +2029,15 @@ fn xdnd_get_supported_atom(
         ),
     )
     .log_with_level(Level::Warn)
+        && let Some(atoms) = reply.value32()
     {
-        if let Some(atoms) = reply.value32() {
-            for atom in atoms {
-                if xdnd_is_atom_supported(atom, &supported_atoms) {
-                    return atom;
-                }
+        for atom in atoms {
+            if xdnd_is_atom_supported(atom, supported_atoms) {
+                return atom;
             }
         }
     }
-    return 0;
+    0
 }
 
 fn xdnd_send_finished(
@@ -2138,7 +2108,7 @@ fn current_pointer_device_states(
                     .classes
                     .iter()
                     .filter_map(|class| class.data.as_scroll())
-                    .map(|class| *class)
+                    .copied()
                     .rev()
                     .collect::<Vec<_>>();
                 let old_state = scroll_values_to_preserve.get(&info.deviceid);
@@ -2168,7 +2138,7 @@ fn current_pointer_device_states(
     if pointer_device_states.is_empty() {
         log::error!("Found no xinput mouse pointers.");
     }
-    return Some(pointer_device_states);
+    Some(pointer_device_states)
 }
 
 /// Returns true if the device is a pointer device. Does not include pointer device groups.
@@ -2434,11 +2404,13 @@ fn legacy_get_randr_scale_factor(connection: &XCBConnection, root: u32) -> Optio
     let mut crtc_infos: HashMap<randr::Crtc, randr::GetCrtcInfoReply> = HashMap::default();
     let mut valid_outputs: HashSet<randr::Output> = HashSet::new();
     for (crtc, cookie) in crtc_cookies {
-        if let Ok(reply) = cookie.reply() {
-            if reply.width > 0 && reply.height > 0 && !reply.outputs.is_empty() {
-                crtc_infos.insert(crtc, reply.clone());
-                valid_outputs.extend(&reply.outputs);
-            }
+        if let Ok(reply) = cookie.reply()
+            && reply.width > 0
+            && reply.height > 0
+            && !reply.outputs.is_empty()
+        {
+            crtc_infos.insert(crtc, reply.clone());
+            valid_outputs.extend(&reply.outputs);
         }
     }
 

@@ -3,7 +3,8 @@ use crate::{
 };
 use collections::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
-use std::fmt::Debug;
+use stacksafe::{StackSafe, stacksafe};
+use std::{fmt::Debug, ops::Range};
 use taffy::{
     TaffyTree, TraversePartialTree as _,
     geometry::{Point as TaffyPoint, Rect as TaffyRect, Size as TaffySize},
@@ -11,8 +12,15 @@ use taffy::{
     tree::NodeId,
 };
 
-type NodeMeasureFn = Box<
-    dyn FnMut(Size<Option<Pixels>>, Size<AvailableSpace>, &mut Window, &mut App) -> Size<Pixels>,
+type NodeMeasureFn = StackSafe<
+    Box<
+        dyn FnMut(
+            Size<Option<Pixels>>,
+            Size<AvailableSpace>,
+            &mut Window,
+            &mut App,
+        ) -> Size<Pixels>,
+    >,
 >;
 
 struct NodeContext {
@@ -50,23 +58,21 @@ impl TaffyLayoutEngine {
         children: &[LayoutId],
     ) -> LayoutId {
         let taffy_style = style.to_taffy(rem_size);
-        let layout_id = if children.is_empty() {
+
+        if children.is_empty() {
             self.taffy
                 .new_leaf(taffy_style)
                 .expect(EXPECT_MESSAGE)
                 .into()
         } else {
-            let parent_id = self
-                .taffy
+            self.taffy
                 // This is safe because LayoutId is repr(transparent) to taffy::tree::NodeId.
                 .new_with_children(taffy_style, unsafe {
                     std::mem::transmute::<&[LayoutId], &[taffy::NodeId]>(children)
                 })
                 .expect(EXPECT_MESSAGE)
-                .into();
-            parent_id
-        };
-        layout_id
+                .into()
+        }
     }
 
     pub fn request_measured_layout(
@@ -83,17 +89,15 @@ impl TaffyLayoutEngine {
     ) -> LayoutId {
         let taffy_style = style.to_taffy(rem_size);
 
-        let layout_id = self
-            .taffy
+        self.taffy
             .new_leaf_with_context(
                 taffy_style,
                 NodeContext {
-                    measure: Box::new(measure),
+                    measure: StackSafe::new(Box::new(measure)),
                 },
             )
             .expect(EXPECT_MESSAGE)
-            .into();
-        layout_id
+            .into()
     }
 
     // Used to understand performance
@@ -143,6 +147,7 @@ impl TaffyLayoutEngine {
         Ok(edges)
     }
 
+    #[stacksafe]
     pub fn compute_layout(
         &mut self,
         id: LayoutId,
@@ -159,7 +164,6 @@ impl TaffyLayoutEngine {
         // for (a, b) in self.get_edges(id)? {
         //     println!("N{} --> N{}", u64::from(a), u64::from(b));
         // }
-        // println!("");
         //
 
         if !self.computed_layouts.insert(id) {
@@ -182,7 +186,7 @@ impl TaffyLayoutEngine {
             .compute_layout_with_measure(
                 id.into(),
                 available_space.into(),
-                |known_dimensions, available_space, _id, node_context| {
+                |known_dimensions, available_space, _id, node_context, _style| {
                     let Some(node_context) = node_context else {
                         return taffy::geometry::Size::default();
                     };
@@ -251,6 +255,25 @@ trait ToTaffy<Output> {
 
 impl ToTaffy<taffy::style::Style> for Style {
     fn to_taffy(&self, rem_size: Pixels) -> taffy::style::Style {
+        use taffy::style_helpers::{fr, length, minmax, repeat};
+
+        fn to_grid_line(
+            placement: &Range<crate::GridPlacement>,
+        ) -> taffy::Line<taffy::GridPlacement> {
+            taffy::Line {
+                start: placement.start.into(),
+                end: placement.end.into(),
+            }
+        }
+
+        fn to_grid_repeat<T: taffy::style::CheapCloneStr>(
+            unit: &Option<u16>,
+        ) -> Vec<taffy::GridTemplateComponent<T>> {
+            // grid-template-columns: repeat(<number>, minmax(0, 1fr));
+            unit.map(|count| vec![repeat(count, vec![minmax(length(0.0), fr(1.0))])])
+                .unwrap_or_default()
+        }
+
         taffy::style::Style {
             display: self.display.into(),
             overflow: self.overflow.into(),
@@ -274,7 +297,19 @@ impl ToTaffy<taffy::style::Style> for Style {
             flex_basis: self.flex_basis.to_taffy(rem_size),
             flex_grow: self.flex_grow,
             flex_shrink: self.flex_shrink,
-            ..Default::default() // Ignore grid properties for now
+            grid_template_rows: to_grid_repeat(&self.grid_rows),
+            grid_template_columns: to_grid_repeat(&self.grid_cols),
+            grid_row: self
+                .grid_location
+                .as_ref()
+                .map(|location| to_grid_line(&location.row))
+                .unwrap_or_default(),
+            grid_column: self
+                .grid_location
+                .as_ref()
+                .map(|location| to_grid_line(&location.column))
+                .unwrap_or_default(),
+            ..Default::default()
         }
     }
 }
@@ -283,7 +318,7 @@ impl ToTaffy<taffy::style::LengthPercentageAuto> for Length {
     fn to_taffy(&self, rem_size: Pixels) -> taffy::prelude::LengthPercentageAuto {
         match self {
             Length::Definite(length) => length.to_taffy(rem_size),
-            Length::Auto => taffy::prelude::LengthPercentageAuto::Auto,
+            Length::Auto => taffy::prelude::LengthPercentageAuto::auto(),
         }
     }
 }
@@ -292,7 +327,7 @@ impl ToTaffy<taffy::style::Dimension> for Length {
     fn to_taffy(&self, rem_size: Pixels) -> taffy::prelude::Dimension {
         match self {
             Length::Definite(length) => length.to_taffy(rem_size),
-            Length::Auto => taffy::prelude::Dimension::Auto,
+            Length::Auto => taffy::prelude::Dimension::auto(),
         }
     }
 }
@@ -302,14 +337,14 @@ impl ToTaffy<taffy::style::LengthPercentage> for DefiniteLength {
         match self {
             DefiniteLength::Absolute(length) => match length {
                 AbsoluteLength::Pixels(pixels) => {
-                    taffy::style::LengthPercentage::Length(pixels.into())
+                    taffy::style::LengthPercentage::length(pixels.into())
                 }
                 AbsoluteLength::Rems(rems) => {
-                    taffy::style::LengthPercentage::Length((*rems * rem_size).into())
+                    taffy::style::LengthPercentage::length((*rems * rem_size).into())
                 }
             },
             DefiniteLength::Fraction(fraction) => {
-                taffy::style::LengthPercentage::Percent(*fraction)
+                taffy::style::LengthPercentage::percent(*fraction)
             }
         }
     }
@@ -320,14 +355,14 @@ impl ToTaffy<taffy::style::LengthPercentageAuto> for DefiniteLength {
         match self {
             DefiniteLength::Absolute(length) => match length {
                 AbsoluteLength::Pixels(pixels) => {
-                    taffy::style::LengthPercentageAuto::Length(pixels.into())
+                    taffy::style::LengthPercentageAuto::length(pixels.into())
                 }
                 AbsoluteLength::Rems(rems) => {
-                    taffy::style::LengthPercentageAuto::Length((*rems * rem_size).into())
+                    taffy::style::LengthPercentageAuto::length((*rems * rem_size).into())
                 }
             },
             DefiniteLength::Fraction(fraction) => {
-                taffy::style::LengthPercentageAuto::Percent(*fraction)
+                taffy::style::LengthPercentageAuto::percent(*fraction)
             }
         }
     }
@@ -337,12 +372,12 @@ impl ToTaffy<taffy::style::Dimension> for DefiniteLength {
     fn to_taffy(&self, rem_size: Pixels) -> taffy::style::Dimension {
         match self {
             DefiniteLength::Absolute(length) => match length {
-                AbsoluteLength::Pixels(pixels) => taffy::style::Dimension::Length(pixels.into()),
+                AbsoluteLength::Pixels(pixels) => taffy::style::Dimension::length(pixels.into()),
                 AbsoluteLength::Rems(rems) => {
-                    taffy::style::Dimension::Length((*rems * rem_size).into())
+                    taffy::style::Dimension::length((*rems * rem_size).into())
                 }
             },
-            DefiniteLength::Fraction(fraction) => taffy::style::Dimension::Percent(*fraction),
+            DefiniteLength::Fraction(fraction) => taffy::style::Dimension::percent(*fraction),
         }
     }
 }
@@ -350,9 +385,9 @@ impl ToTaffy<taffy::style::Dimension> for DefiniteLength {
 impl ToTaffy<taffy::style::LengthPercentage> for AbsoluteLength {
     fn to_taffy(&self, rem_size: Pixels) -> taffy::style::LengthPercentage {
         match self {
-            AbsoluteLength::Pixels(pixels) => taffy::style::LengthPercentage::Length(pixels.into()),
+            AbsoluteLength::Pixels(pixels) => taffy::style::LengthPercentage::length(pixels.into()),
             AbsoluteLength::Rems(rems) => {
-                taffy::style::LengthPercentage::Length((*rems * rem_size).into())
+                taffy::style::LengthPercentage::length((*rems * rem_size).into())
             }
         }
     }

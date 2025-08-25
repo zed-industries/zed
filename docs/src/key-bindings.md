@@ -14,17 +14,17 @@ If you're used to a specific editor's defaults you can set a `base_keymap` in yo
 - TextMate
 - None (disables _all_ key bindings)
 
-You can also enable `vim_mode`, which adds vim bindings too.
+You can also enable `vim_mode` or `helix_mode`, which add modal bindings. For more information, see the documentation for [Vim mode](./vim.md) and [Helix mode](./helix.md).
 
 ## User keymaps
 
-Zed reads your keymap from `~/.config/zed/keymap.json`. You can open the file within Zed with {#kb zed::OpenKeymap}, or via `zed: Open Keymap` in the command palette.
+Zed reads your keymap from `~/.config/zed/keymap.json`. You can open the file within Zed with {#action zed::OpenKeymap} from the command palette or to spawn the Zed Keymap Editor ({#action zed::OpenKeymapEditor}) use {#kb zed::OpenKeymapEditor}.
 
 The file contains a JSON array of objects with `"bindings"`. If no `"context"` is set the bindings are always active. If it is set the binding is only active when the [context matches](#contexts).
 
 Within each binding section a [key sequence](#keybinding-syntax) is mapped to an [action](#actions). If conflicts are detected they are resolved as [described below](#precedence).
 
-If you are using a non-QWERTY, Latin-character keyboard, you may want to set `use_layout_keys` to `true`. See [Non-QWERTY keyboards](#non-qwerty-keyboards) for more information.
+If you are using a non-QWERTY, Latin-character keyboard, you may want to set `use_key_equivalents` to `true`. See [Non-QWERTY keyboards](#non-qwerty-keyboards) for more information.
 
 For example:
 
@@ -87,15 +87,13 @@ If a binding group has a `"context"` key it will be matched against the currentl
 
 Zed's contexts make up a tree, with the root being `Workspace`. Workspaces contain Panes and Panels, and Panes contain Editors, etc. The easiest way to see what contexts are active at a given moment is the key context view, which you can get to with `dev: Open Key Context View` in the command palette.
 
-Contexts can contain extra attributes in addition to the name, so that you can (for example) match only in markdown files with `"context": "Editor && extension==md"`. It's worth noting that you can only use attributes at the level they are defined.
-
 For example:
 
 ```
 # in an editor, it might look like this:
 Workspace os=macos keyboard_layout=com.apple.keylayout.QWERTY
   Pane
-    Editor mode=full extension=md inline_completion vim_mode=insert
+    Editor mode=full extension=md vim_mode=insert
 
 # in the project panel
 Workspace os=macos
@@ -106,11 +104,22 @@ Workspace os=macos
 Context expressions can contain the following syntax:
 
 - `X && Y`, `X || Y` to and/or two conditions
-- `!X` to negate a condition
+- `!X` to check that a condition is false
 - `(X)` for grouping
-- `X > Y` to match if a parent in the tree matches X and this layer matches Y.
+- `X > Y` to match if an ancestor in the tree matches X and this layer matches Y.
 
-If you're using Vim mode, we have information on how [vim modes influence the context](./vim.md#contexts)
+For example:
+
+- `"context": "Editor"` - matches any editor (including inline inputs)
+- `"context": "Editor && mode=full"` - matches the main editors used for editing code
+- `"context": "!Editor && !Terminal"` - matches anywhere except where an Editor or Terminal is focused
+- `"context": "os=macos > Editor"` - matches any editor on macOS.
+
+It's worth noting that attributes are only available on the node they are defined on. This means that if you want to (for example) only enable a keybinding when the debugger is stopped in vim normal mode, you need to do `debugger_stopped > vim_mode == normal`.
+
+Note: Before Zed v0.197.x, the ! operator only looked at one node at a time, and `>` meant "parent" not "ancestor". This meant that `!Editor` would match the context `Workspace > Pane > Editor`, because (confusingly) the Pane matches `!Editor`, and that `os=macos > Editor` did not match the context `Workspace > Pane > Editor` because of the intermediate `Pane` node.
+
+If you're using Vim mode, we have information on how [vim modes influence the context](./vim.md#contexts). Helix mode is built on top of Vim mode and uses the same contexts.
 
 ### Actions
 
@@ -216,12 +225,14 @@ A common request is to be able to map from a single keystroke to a sequence. You
 [
   {
     "bindings": {
+      // Move down four times
       "alt-down": ["workspace::SendKeystrokes", "down down down down"],
+      // Expand the selection (editor::SelectLargerSyntaxNode);
+      // copy to the clipboard; and then undo the selection expansion.
       "cmd-alt-c": [
         "workspace::SendKeystrokes",
-        "cmd-shift-p copy relative path enter"
-      ],
-      "cmd-alt-r": ["workspace::SendKeystrokes", "cmd-p README enter"]
+        "ctrl-shift-right ctrl-shift-right ctrl-shift-right cmd-c ctrl-shift-left ctrl-shift-left ctrl-shift-left"
+      ]
     }
   },
   {

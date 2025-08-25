@@ -74,6 +74,12 @@ impl Borrow<str> for DebugAdapterName {
     }
 }
 
+impl Borrow<SharedString> for DebugAdapterName {
+    fn borrow(&self) -> &SharedString {
+        &self.0
+    }
+}
+
 impl std::fmt::Display for DebugAdapterName {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         std::fmt::Display::fmt(&self.0, f)
@@ -279,7 +285,7 @@ pub async fn download_adapter_from_github(
     }
 
     if !adapter_path.exists() {
-        fs.create_dir(&adapter_path.as_path())
+        fs.create_dir(adapter_path.as_path())
             .await
             .context("Failed creating adapter path")?;
     }

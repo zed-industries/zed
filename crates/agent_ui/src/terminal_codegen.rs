@@ -48,7 +48,7 @@ impl TerminalCodegen {
             let prompt = prompt_task.await;
             let model_telemetry_id = model.telemetry_id();
             let model_provider_id = model.provider_id();
-            let response = model.stream_completion_text(prompt, &cx).await;
+            let response = model.stream_completion_text(prompt, cx).await;
             let generate = async {
                 let message_id = response
                     .as_ref()

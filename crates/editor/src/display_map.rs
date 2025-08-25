@@ -635,7 +635,7 @@ pub(crate) struct Highlights<'a> {
 }
 
 #[derive(Clone, Copy, Debug)]
-pub struct InlineCompletionStyles {
+pub struct EditPredictionStyles {
     pub insertion: HighlightStyle,
     pub whitespace: HighlightStyle,
 }
@@ -643,7 +643,7 @@ pub struct InlineCompletionStyles {
 #[derive(Default, Debug, Clone, Copy)]
 pub struct HighlightStyles {
     pub inlay_hint: Option<HighlightStyle>,
-    pub inline_completion: Option<InlineCompletionStyles>,
+    pub edit_prediction: Option<EditPredictionStyles>,
 }
 
 #[derive(Clone)]
@@ -958,7 +958,7 @@ impl DisplaySnapshot {
             language_aware,
             HighlightStyles {
                 inlay_hint: Some(editor_style.inlay_hints_style),
-                inline_completion: Some(editor_style.inline_completion_styles),
+                edit_prediction: Some(editor_style.edit_prediction_styles),
             },
         )
         .flat_map(|chunk| {
@@ -969,13 +969,13 @@ impl DisplaySnapshot {
             if let Some(chunk_highlight) = chunk.highlight_style {
                 // For color inlays, blend the color with the editor background
                 let mut processed_highlight = chunk_highlight;
-                if chunk.is_inlay {
-                    if let Some(inlay_color) = chunk_highlight.color {
-                        // Only blend if the color has transparency (alpha < 1.0)
-                        if inlay_color.a < 1.0 {
-                            let blended_color = editor_style.background.blend(inlay_color);
-                            processed_highlight.color = Some(blended_color);
-                        }
+                if chunk.is_inlay
+                    && let Some(inlay_color) = chunk_highlight.color
+                {
+                    // Only blend if the color has transparency (alpha < 1.0)
+                    if inlay_color.a < 1.0 {
+                        let blended_color = editor_style.background.blend(inlay_color);
+                        processed_highlight.color = Some(blended_color);
                     }
                 }
 
@@ -991,7 +991,7 @@ impl DisplaySnapshot {
             if let Some(severity) = chunk.diagnostic_severity.filter(|severity| {
                 self.diagnostics_max_severity
                     .into_lsp()
-                    .map_or(false, |max_severity| severity <= &max_severity)
+                    .is_some_and(|max_severity| severity <= &max_severity)
             }) {
                 if chunk.is_unnecessary {
                     diagnostic_highlight.fade_out = Some(editor_style.unnecessary_code_fade);
@@ -2036,7 +2036,7 @@ pub mod tests {
         map.update(cx, |map, cx| {
             map.splice_inlays(
                 &[],
-                vec![Inlay::inline_completion(
+                vec![Inlay::edit_prediction(
                     0,
                     buffer_snapshot.anchor_after(0),
                     "\n",
@@ -2351,11 +2351,12 @@ pub mod tests {
                 .highlight_style
                 .and_then(|style| style.color)
                 .map_or(black, |color| color.to_rgb());
-            if let Some((last_chunk, last_severity, last_color)) = chunks.last_mut() {
-                if *last_severity == chunk.diagnostic_severity && *last_color == color {
-                    last_chunk.push_str(chunk.text);
-                    continue;
-                }
+            if let Some((last_chunk, last_severity, last_color)) = chunks.last_mut()
+                && *last_severity == chunk.diagnostic_severity
+                && *last_color == color
+            {
+                last_chunk.push_str(chunk.text);
+                continue;
             }
 
             chunks.push((chunk.text.to_string(), chunk.diagnostic_severity, color));
@@ -2901,11 +2902,12 @@ pub mod tests {
                 .syntax_highlight_id
                 .and_then(|id| id.style(theme)?.color);
             let highlight_color = chunk.highlight_style.and_then(|style| style.color);
-            if let Some((last_chunk, last_syntax_color, last_highlight_color)) = chunks.last_mut() {
-                if syntax_color == *last_syntax_color && highlight_color == *last_highlight_color {
-                    last_chunk.push_str(chunk.text);
-                    continue;
-                }
+            if let Some((last_chunk, last_syntax_color, last_highlight_color)) = chunks.last_mut()
+                && syntax_color == *last_syntax_color
+                && highlight_color == *last_highlight_color
+            {
+                last_chunk.push_str(chunk.text);
+                continue;
             }
             chunks.push((chunk.text.to_string(), syntax_color, highlight_color));
         }

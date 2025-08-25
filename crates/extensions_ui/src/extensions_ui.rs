@@ -6,6 +6,7 @@ use std::sync::OnceLock;
 use std::time::Duration;
 use std::{ops::Range, sync::Arc};
 
+use anyhow::Context as _;
 use client::{ExtensionMetadata, ExtensionProvides};
 use collections::{BTreeMap, BTreeSet};
 use editor::{Editor, EditorElement, EditorStyle};
@@ -23,7 +24,7 @@ use settings::Settings;
 use strum::IntoEnumIterator as _;
 use theme::ThemeSettings;
 use ui::{
-    CheckboxWithLabel, ContextMenu, PopoverMenu, ScrollableHandle, Scrollbar, ScrollbarState,
+    CheckboxWithLabel, Chip, ContextMenu, PopoverMenu, ScrollableHandle, Scrollbar, ScrollbarState,
     ToggleButton, Tooltip, prelude::*,
 };
 use vim_mode_setting::VimModeSetting;
@@ -80,16 +81,24 @@ pub fn init(cx: &mut App) {
                         .find_map(|item| item.downcast::<ExtensionsPage>());
 
                     if let Some(existing) = existing {
-                        if provides_filter.is_some() {
-                            existing.update(cx, |extensions_page, cx| {
+                        existing.update(cx, |extensions_page, cx| {
+                            if provides_filter.is_some() {
                                 extensions_page.change_provides_filter(provides_filter, cx);
-                            });
-                        }
+                            }
+                            if let Some(id) = action.id.as_ref() {
+                                extensions_page.focus_extension(id, window, cx);
+                            }
+                        });
 
                         workspace.activate_item(&existing, true, true, window, cx);
                     } else {
-                        let extensions_page =
-                            ExtensionsPage::new(workspace, provides_filter, window, cx);
+                        let extensions_page = ExtensionsPage::new(
+                            workspace,
+                            provides_filter,
+                            action.id.as_deref(),
+                            window,
+                            cx,
+                        );
                         workspace.add_item_to_active_pane(
                             Box::new(extensions_page),
                             None,
@@ -107,6 +116,7 @@ pub fn init(cx: &mut App) {
                         files: false,
                         directories: true,
                         multiple: false,
+                        prompt: None,
                     },
                     DirectoryLister::Local(
                         workspace.project().clone(),
@@ -287,6 +297,7 @@ impl ExtensionsPage {
     pub fn new(
         workspace: &Workspace,
         provides_filter: Option<ExtensionProvides>,
+        focus_extension_id: Option<&str>,
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) -> Entity<Self> {
@@ -317,6 +328,9 @@ impl ExtensionsPage {
             let query_editor = cx.new(|cx| {
                 let mut input = Editor::single_line(window, cx);
                 input.set_placeholder_text("Search extensions...", cx);
+                if let Some(id) = focus_extension_id {
+                    input.set_text(format!("id:{id}"), window, cx);
+                }
                 input
             });
             cx.subscribe(&query_editor, Self::on_query_change).detach();
@@ -340,7 +354,7 @@ impl ExtensionsPage {
                 scrollbar_state: ScrollbarState::new(scroll_handle),
             };
             this.fetch_extensions(
-                None,
+                this.search_query(cx),
                 Some(BTreeSet::from_iter(this.provides_filter)),
                 None,
                 cx,
@@ -464,9 +478,23 @@ impl ExtensionsPage {
             .cloned()
             .collect::<Vec<_>>();
 
-        let remote_extensions = extension_store.update(cx, |store, cx| {
-            store.fetch_extensions(search.as_deref(), provides_filter.as_ref(), cx)
-        });
+        let remote_extensions =
+            if let Some(id) = search.as_ref().and_then(|s| s.strip_prefix("id:")) {
+                let versions =
+                    extension_store.update(cx, |store, cx| store.fetch_extension_versions(id, cx));
+                cx.foreground_executor().spawn(async move {
+                    let versions = versions.await?;
+                    let latest = versions
+                        .into_iter()
+                        .max_by_key(|v| v.published_at)
+                        .context("no extension found")?;
+                    Ok(vec![latest])
+                })
+            } else {
+                extension_store.update(cx, |store, cx| {
+                    store.fetch_extensions(search.as_deref(), provides_filter.as_ref(), cx)
+                })
+            };
 
         cx.spawn(async move |this, cx| {
             let dev_extensions = if let Some(search) = search {
@@ -666,7 +694,7 @@ impl ExtensionsPage {
                                 cx.open_url(&repository_url);
                             }
                         }))
-                        .tooltip(Tooltip::text(repository_url.clone()))
+                        .tooltip(Tooltip::text(repository_url))
                     })),
             )
     }
@@ -676,7 +704,7 @@ impl ExtensionsPage {
         extension: &ExtensionMetadata,
         cx: &mut Context<Self>,
     ) -> ExtensionCard {
-        let this = cx.entity().clone();
+        let this = cx.entity();
         let status = Self::extension_status(&extension.id, cx);
         let has_dev_extension = Self::dev_extension_exists(&extension.id, cx);
 
@@ -732,20 +760,7 @@ impl ExtensionsPage {
                                                     _ => {}
                                                 }
 
-                                                Some(
-                                                    div()
-                                                        .px_1()
-                                                        .border_1()
-                                                        .rounded_sm()
-                                                        .border_color(cx.theme().colors().border)
-                                                        .bg(cx.theme().colors().element_background)
-                                                        .child(
-                                                            Label::new(extension_provides_label(
-                                                                *provides,
-                                                            ))
-                                                            .size(LabelSize::XSmall),
-                                                        ),
-                                                )
+                                                Some(Chip::new(extension_provides_label(*provides)))
                                             })
                                             .collect::<Vec<_>>(),
                                     ),
@@ -812,7 +827,7 @@ impl ExtensionsPage {
                                         cx.open_url(&repository_url);
                                     }
                                 }))
-                                .tooltip(Tooltip::text(repository_url.clone())),
+                                .tooltip(Tooltip::text(repository_url)),
                             )
                             .child(
                                 PopoverMenu::new(SharedString::from(format!(
@@ -848,7 +863,7 @@ impl ExtensionsPage {
         window: &mut Window,
         cx: &mut App,
     ) -> Entity<ContextMenu> {
-        let context_menu = ContextMenu::build(window, cx, |context_menu, window, _| {
+        ContextMenu::build(window, cx, |context_menu, window, _| {
             context_menu
                 .entry(
                     "Install Another Version...",
@@ -872,9 +887,7 @@ impl ExtensionsPage {
                         cx.write_to_clipboard(ClipboardItem::new_string(authors.join(", ")));
                     }
                 })
-        });
-
-        context_menu
+        })
     }
 
     fn show_extension_version_list(
@@ -1016,15 +1029,14 @@ impl ExtensionsPage {
                                 .read(cx)
                                 .extension_manifest_for_id(&extension_id)
                                 .cloned()
+                                && let Some(events) = extension::ExtensionEvents::try_global(cx)
                             {
-                                if let Some(events) = extension::ExtensionEvents::try_global(cx) {
-                                    events.update(cx, |this, cx| {
-                                        this.emit(
-                                            extension::Event::ConfigureExtensionRequested(manifest),
-                                            cx,
-                                        )
-                                    });
-                                }
+                                events.update(cx, |this, cx| {
+                                    this.emit(
+                                        extension::Event::ConfigureExtensionRequested(manifest),
+                                        cx,
+                                    )
+                                });
                             }
                         }
                     })
@@ -1163,6 +1175,13 @@ impl ExtensionsPage {
             cx,
         );
         self.refresh_feature_upsells(cx);
+    }
+
+    pub fn focus_extension(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
+        self.query_editor.update(cx, |editor, cx| {
+            editor.set_text(format!("id:{id}"), window, cx)
+        });
+        self.refresh_search(cx);
     }
 
     pub fn change_provides_filter(

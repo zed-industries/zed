@@ -29,8 +29,6 @@ pub struct Model {
 pub enum Relation {
     #[sea_orm(has_many = "super::access_token::Entity")]
     AccessToken,
-    #[sea_orm(has_one = "super::billing_customer::Entity")]
-    BillingCustomer,
     #[sea_orm(has_one = "super::room_participant::Entity")]
     RoomParticipant,
     #[sea_orm(has_many = "super::project::Entity")]
@@ -65,12 +63,6 @@ impl Model {
 impl Related<super::access_token::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::AccessToken.def()
-    }
-}
-
-impl Related<super::billing_customer::Entity> for Entity {
-    fn to() -> RelationDef {
-        Relation::BillingCustomer.def()
     }
 }
 

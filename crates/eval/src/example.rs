@@ -15,11 +15,11 @@ use agent_settings::AgentProfileId;
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use buffer_diff::DiffHunkStatus;
+use cloud_llm_client::CompletionIntent;
 use collections::HashMap;
 use futures::{FutureExt as _, StreamExt, channel::mpsc, select_biased};
 use gpui::{App, AppContext, AsyncApp, Entity};
 use language_model::{LanguageModel, Role, StopReason};
-use zed_llm_client::CompletionIntent;
 
 pub const THREAD_EVENT_TIMEOUT: Duration = Duration::from_secs(60 * 2);
 
@@ -64,7 +64,7 @@ impl ExampleMetadata {
         self.url
             .split('/')
             .next_back()
-            .unwrap_or(&"")
+            .unwrap_or("")
             .trim_end_matches(".git")
             .into()
     }
@@ -221,9 +221,6 @@ impl ExampleContext {
                 ThreadEvent::ShowError(thread_error) => {
                     tx.try_send(Err(anyhow!(thread_error.clone()))).ok();
                 }
-                ThreadEvent::RetriesFailed { .. } => {
-                    // Ignore retries failed events
-                }
                 ThreadEvent::Stopped(reason) => match reason {
                     Ok(StopReason::EndTurn) => {
                         tx.close_channel();
@@ -258,7 +255,7 @@ impl ExampleContext {
                     thread.update(cx, |thread, _cx| {
                         if let Some(tool_use) = pending_tool_use {
                             let mut tool_metrics = tool_metrics.lock().unwrap();
-                            if let Some(tool_result) = thread.tool_result(&tool_use_id) {
+                            if let Some(tool_result) = thread.tool_result(tool_use_id) {
                                 let message = if tool_result.is_error {
                                     format!("✖︎ {}", tool_use.name)
                                 } else {
@@ -338,7 +335,7 @@ impl ExampleContext {
             for message in thread.messages().skip(message_count_before) {
                 messages.push(Message {
                     _role: message.role,
-                    text: message.to_string(),
+                    text: message.to_message_content(),
                     tool_use: thread
                         .tool_uses_for_message(message.id, cx)
                         .into_iter()
@@ -423,6 +420,13 @@ impl AppContext for ExampleContext {
         T: 'static,
     {
         self.app.update_entity(handle, update)
+    }
+
+    fn as_mut<'a, T>(&'a mut self, handle: &Entity<T>) -> Self::Result<gpui::GpuiBorrow<'a, T>>
+    where
+        T: 'static,
+    {
+        self.app.as_mut(handle)
     }
 
     fn read_entity<T, R>(

@@ -166,14 +166,13 @@ impl ThreadHistory {
                                 this.all_entries.len().saturating_sub(1),
                                 cx,
                             );
-                        } else if let Some(prev_id) = previously_selected_entry {
-                            if let Some(new_ix) = this
+                        } else if let Some(prev_id) = previously_selected_entry
+                            && let Some(new_ix) = this
                                 .all_entries
                                 .iter()
                                 .position(|probe| probe.id() == prev_id)
-                            {
-                                this.set_selected_entry_index(new_ix, cx);
-                            }
+                        {
+                            this.set_selected_entry_index(new_ix, cx);
                         }
                     }
                     SearchState::Searching { query, .. } | SearchState::Searched { query, .. } => {
@@ -541,6 +540,7 @@ impl Render for ThreadHistory {
         v_flex()
             .key_context("ThreadHistory")
             .size_full()
+            .bg(cx.theme().colors().panel_background)
             .on_action(cx.listener(Self::select_previous))
             .on_action(cx.listener(Self::select_next))
             .on_action(cx.listener(Self::select_first))
@@ -701,7 +701,7 @@ impl RenderOnce for HistoryEntryElement {
             .on_hover(self.on_hover)
             .end_slot::<IconButton>(if self.hovered || self.selected {
                 Some(
-                    IconButton::new("delete", IconName::TrashAlt)
+                    IconButton::new("delete", IconName::Trash)
                         .shape(IconButtonShape::Square)
                         .icon_size(IconSize::XSmall)
                         .icon_color(Color::Muted)

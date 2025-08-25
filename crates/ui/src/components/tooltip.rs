@@ -175,7 +175,7 @@ impl Tooltip {
         move |_, cx| {
             let title = title.clone();
             cx.new(|_| Self {
-                title: title,
+                title,
                 meta: None,
                 key_binding: None,
             })
@@ -274,7 +274,7 @@ impl Render for LinkPreview {
 
 impl Component for Tooltip {
     fn scope() -> ComponentScope {
-        ComponentScope::None
+        ComponentScope::DataDisplay
     }
 
     fn description() -> Option<&'static str> {

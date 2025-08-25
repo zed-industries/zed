@@ -106,9 +106,7 @@ async fn test_debug_session_substitutes_variables_and_relativizes_paths(
                         );
 
                         let expected_other_field = if input_path.contains("$ZED_WORKTREE_ROOT") {
-                            input_path
-                                .replace("$ZED_WORKTREE_ROOT", &path!("/test/worktree/path"))
-                                .to_owned()
+                            input_path.replace("$ZED_WORKTREE_ROOT", path!("/test/worktree/path"))
                         } else {
                             input_path.to_string()
                         };
@@ -298,7 +296,7 @@ async fn test_dap_adapter_config_conversion_and_validation(cx: &mut TestAppConte
 
     let adapter_names = cx.update(|cx| {
         let registry = DapRegistry::global(cx);
-        registry.enumerate_adapters()
+        registry.enumerate_adapters::<Vec<_>>()
     });
 
     let zed_config = ZedDebugConfig {

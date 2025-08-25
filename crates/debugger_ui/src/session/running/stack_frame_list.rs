@@ -70,13 +70,7 @@ impl StackFrameList {
                 _ => {}
             });
 
-        let list_state = ListState::new(0, gpui::ListAlignment::Top, px(1000.), {
-            let this = cx.weak_entity();
-            move |ix, _window, cx| {
-                this.update(cx, |this, cx| this.render_entry(ix, cx))
-                    .unwrap_or(div().into_any())
-            }
-        });
+        let list_state = ListState::new(0, gpui::ListAlignment::Top, px(1000.));
         let scrollbar_state = ScrollbarState::new(list_state.clone());
 
         let mut this = Self {
@@ -132,7 +126,7 @@ impl StackFrameList {
         self.stack_frames(cx)
             .unwrap_or_default()
             .into_iter()
-            .map(|stack_frame| stack_frame.dap.clone())
+            .map(|stack_frame| stack_frame.dap)
             .collect()
     }
 
@@ -230,7 +224,7 @@ impl StackFrameList {
 
         let collapsed_entries = std::mem::take(&mut collapsed_entries);
         if !collapsed_entries.is_empty() {
-            entries.push(StackFrameEntry::Collapsed(collapsed_entries.clone()));
+            entries.push(StackFrameEntry::Collapsed(collapsed_entries));
         }
         self.entries = entries;
 
@@ -424,7 +418,7 @@ impl StackFrameList {
         let source = stack_frame.source.clone();
         let is_selected_frame = Some(ix) == self.selected_ix;
 
-        let path = source.clone().and_then(|s| s.path.or(s.name));
+        let path = source.and_then(|s| s.path.or(s.name));
         let formatted_path = path.map(|path| format!("{}:{}", path, stack_frame.line,));
         let formatted_path = formatted_path.map(|path| {
             Label::new(path)
@@ -499,7 +493,7 @@ impl StackFrameList {
                             .child(
                                 IconButton::new(
                                     ("restart-stack-frame", stack_frame.id),
-                                    IconName::DebugRestart,
+                                    IconName::RotateCcw,
                                 )
                                 .icon_size(IconSize::Small)
                                 .on_click(cx.listener({
@@ -627,7 +621,7 @@ impl StackFrameList {
 
     fn select_next(&mut self, _: &menu::SelectNext, _window: &mut Window, cx: &mut Context<Self>) {
         let ix = match self.selected_ix {
-            _ if self.entries.len() == 0 => None,
+            _ if self.entries.is_empty() => None,
             None => Some(0),
             Some(ix) => {
                 if ix == self.entries.len() - 1 {
@@ -647,7 +641,7 @@ impl StackFrameList {
         cx: &mut Context<Self>,
     ) {
         let ix = match self.selected_ix {
-            _ if self.entries.len() == 0 => None,
+            _ if self.entries.is_empty() => None,
             None => Some(self.entries.len() - 1),
             Some(ix) => {
                 if ix == 0 {
@@ -666,7 +660,7 @@ impl StackFrameList {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let ix = if self.entries.len() > 0 {
+        let ix = if !self.entries.is_empty() {
             Some(0)
         } else {
             None
@@ -675,7 +669,7 @@ impl StackFrameList {
     }
 
     fn select_last(&mut self, _: &menu::SelectLast, _window: &mut Window, cx: &mut Context<Self>) {
-        let ix = if self.entries.len() > 0 {
+        let ix = if !self.entries.is_empty() {
             Some(self.entries.len() - 1)
         } else {
             None
@@ -708,11 +702,14 @@ impl StackFrameList {
         self.activate_selected_entry(window, cx);
     }
 
-    fn render_list(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        div()
-            .p_1()
-            .size_full()
-            .child(list(self.list_state.clone()).size_full())
+    fn render_list(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        div().p_1().size_full().child(
+            list(
+                self.list_state.clone(),
+                cx.processor(|this, ix, _window, cx| this.render_entry(ix, cx)),
+            )
+            .size_full(),
+        )
     }
 }
 

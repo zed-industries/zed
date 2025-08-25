@@ -1,4 +1,4 @@
-use crate::{CompletionDiffElement, InlineCompletion, InlineCompletionRating, Zeta};
+use crate::{CompletionDiffElement, EditPrediction, EditPredictionRating, Zeta};
 use editor::Editor;
 use gpui::{App, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, actions, prelude::*};
 use language::language_settings;
@@ -34,7 +34,7 @@ pub struct RateCompletionModal {
 }
 
 struct ActiveCompletion {
-    completion: InlineCompletion,
+    completion: EditPrediction,
     feedback_editor: Entity<Editor>,
 }
 
@@ -157,7 +157,7 @@ impl RateCompletionModal {
             if let Some(active) = &self.active_completion {
                 zeta.rate_completion(
                     &active.completion,
-                    InlineCompletionRating::Positive,
+                    EditPredictionRating::Positive,
                     active.feedback_editor.read(cx).text(cx),
                     cx,
                 );
@@ -189,7 +189,7 @@ impl RateCompletionModal {
             self.zeta.update(cx, |zeta, cx| {
                 zeta.rate_completion(
                     &active.completion,
-                    InlineCompletionRating::Negative,
+                    EditPredictionRating::Negative,
                     active.feedback_editor.read(cx).text(cx),
                     cx,
                 );
@@ -250,7 +250,7 @@ impl RateCompletionModal {
 
     pub fn select_completion(
         &mut self,
-        completion: Option<InlineCompletion>,
+        completion: Option<EditPrediction>,
         focus: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -267,13 +267,13 @@ impl RateCompletionModal {
                 .unwrap_or(self.selected_index);
             cx.notify();
 
-            if let Some(prev_completion) = self.active_completion.as_ref() {
-                if completion.id == prev_completion.completion.id {
-                    if focus {
-                        window.focus(&prev_completion.feedback_editor.focus_handle(cx));
-                    }
-                    return;
+            if let Some(prev_completion) = self.active_completion.as_ref()
+                && completion.id == prev_completion.completion.id
+            {
+                if focus {
+                    window.focus(&prev_completion.feedback_editor.focus_handle(cx));
                 }
+                return;
             }
         }
 
@@ -607,7 +607,7 @@ impl Render for RateCompletionModal {
                                     .children(self.zeta.read(cx).shown_completions().cloned().enumerate().map(
                                         |(index, completion)| {
                                             let selected =
-                                                self.active_completion.as_ref().map_or(false, |selected| {
+                                                self.active_completion.as_ref().is_some_and(|selected| {
                                                     selected.completion.id == completion.id
                                                 });
                                             let rated =

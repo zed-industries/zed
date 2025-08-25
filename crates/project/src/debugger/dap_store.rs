@@ -34,7 +34,7 @@ use http_client::HttpClient;
 use language::{Buffer, LanguageToolchainStore, language_settings::InlayHintKind};
 use node_runtime::NodeRuntime;
 
-use remote::{SshRemoteClient, ssh_session::SshArgs};
+use remote::{SshInfo, SshRemoteClient, ssh_session::SshArgs};
 use rpc::{
     AnyProtoClient, TypedEnvelope,
     proto::{self},
@@ -215,7 +215,7 @@ impl DapStore {
                     dap_settings.and_then(|s| s.binary.as_ref().map(PathBuf::from));
                 let user_args = dap_settings.map(|s| s.args.clone());
 
-                let delegate = self.delegate(&worktree, console, cx);
+                let delegate = self.delegate(worktree, console, cx);
                 let cwd: Arc<Path> = worktree.read(cx).abs_path().as_ref().into();
 
                 cx.spawn(async move |this, cx| {
@@ -254,14 +254,18 @@ impl DapStore {
                 cx.spawn(async move |_, cx| {
                     let response = request.await?;
                     let binary = DebugAdapterBinary::from_proto(response)?;
-                    let (mut ssh_command, envs, path_style) =
+                    let (mut ssh_command, envs, path_style, ssh_shell) =
                         ssh_client.read_with(cx, |ssh, _| {
-                            let (SshArgs { arguments, envs }, path_style) =
-                                ssh.ssh_info().context("SSH arguments not found")?;
+                            let SshInfo {
+                                args: SshArgs { arguments, envs },
+                                path_style,
+                                shell,
+                            } = ssh.ssh_info().context("SSH arguments not found")?;
                             anyhow::Ok((
                                 SshCommand { arguments },
                                 envs.unwrap_or_default(),
                                 path_style,
+                                shell,
                             ))
                         })??;
 
@@ -280,6 +284,7 @@ impl DapStore {
                     }
 
                     let (program, args) = wrap_for_ssh(
+                        &ssh_shell,
                         &ssh_command,
                         binary
                             .command
@@ -470,9 +475,8 @@ impl DapStore {
         session_id: impl Borrow<SessionId>,
     ) -> Option<Entity<session::Session>> {
         let session_id = session_id.borrow();
-        let client = self.sessions.get(session_id).cloned();
 
-        client
+        self.sessions.get(session_id).cloned()
     }
     pub fn sessions(&self) -> impl Iterator<Item = &Entity<Session>> {
         self.sessions.values()
@@ -685,7 +689,7 @@ impl DapStore {
             let shutdown_id = parent_session.update(cx, |parent_session, _| {
                 parent_session.remove_child_session_id(session_id);
 
-                if parent_session.child_session_ids().len() == 0 {
+                if parent_session.child_session_ids().is_empty() {
                     Some(parent_session.session_id())
                 } else {
                     None
@@ -702,7 +706,7 @@ impl DapStore {
         cx.emit(DapStoreEvent::DebugClientShutdown(session_id));
 
         cx.background_spawn(async move {
-            if shutdown_children.len() > 0 {
+            if !shutdown_children.is_empty() {
                 let _ = join_all(shutdown_children).await;
             }
 
@@ -722,7 +726,7 @@ impl DapStore {
         downstream_client: AnyProtoClient,
         _: &mut Context<Self>,
     ) {
-        self.downstream_client = Some((downstream_client.clone(), project_id));
+        self.downstream_client = Some((downstream_client, project_id));
     }
 
     pub fn unshared(&mut self, cx: &mut Context<Self>) {
@@ -902,7 +906,7 @@ impl dap::adapters::DapDelegate for DapAdapterDelegate {
     }
 
     fn worktree_root_path(&self) -> &Path {
-        &self.worktree.abs_path()
+        self.worktree.abs_path()
     }
     fn http_client(&self) -> Arc<dyn HttpClient> {
         self.http_client.clone()
@@ -920,10 +924,20 @@ impl dap::adapters::DapDelegate for DapAdapterDelegate {
         self.console.unbounded_send(msg).ok();
     }
 
+    #[cfg(not(target_os = "windows"))]
     async fn which(&self, command: &OsStr) -> Option<PathBuf> {
         let worktree_abs_path = self.worktree.abs_path();
         let shell_path = self.shell_env().await.get("PATH").cloned();
         which::which_in(command, shell_path.as_ref(), worktree_abs_path).ok()
+    }
+
+    #[cfg(target_os = "windows")]
+    async fn which(&self, command: &OsStr) -> Option<PathBuf> {
+        // On Windows, `PATH` is handled differently from Unix. Windows generally expects users to modify the `PATH` themselves,
+        // and every program loads it directly from the system at startup.
+        // There's also no concept of a default shell on Windows, and you can't really retrieve one, so trying to get shell environment variables
+        // from a specific directory doesn’t make sense on Windows.
+        which::which(command).ok()
     }
 
     async fn shell_env(&self) -> HashMap<String, String> {

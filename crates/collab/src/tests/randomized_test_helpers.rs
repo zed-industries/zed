@@ -198,11 +198,11 @@ pub async fn run_randomized_test<T: RandomizedTest>(
 }
 
 pub fn save_randomized_test_plan() {
-    if let Some(serialize_plan) = LAST_PLAN.lock().take() {
-        if let Some(path) = plan_save_path() {
-            eprintln!("saved test plan to path {:?}", path);
-            std::fs::write(path, serialize_plan()).unwrap();
-        }
+    if let Some(serialize_plan) = LAST_PLAN.lock().take()
+        && let Some(path) = plan_save_path()
+    {
+        eprintln!("saved test plan to path {:?}", path);
+        std::fs::write(path, serialize_plan()).unwrap();
     }
 }
 
@@ -290,10 +290,9 @@ impl<T: RandomizedTest> TestPlan<T> {
                         if let StoredOperation::Client {
                             user_id, batch_id, ..
                         } = operation
+                            && batch_id == current_batch_id
                         {
-                            if batch_id == current_batch_id {
-                                return Some(user_id);
-                            }
+                            return Some(user_id);
                         }
                         None
                     }));
@@ -366,10 +365,9 @@ impl<T: RandomizedTest> TestPlan<T> {
                     },
                     applied,
                 ) = stored_operation
+                    && user_id == &current_user_id
                 {
-                    if user_id == &current_user_id {
-                        return Some((operation.clone(), applied.clone()));
-                    }
+                    return Some((operation.clone(), applied.clone()));
                 }
             }
             None
@@ -550,11 +548,11 @@ impl<T: RandomizedTest> TestPlan<T> {
                         .unwrap();
                     let pool = server.connection_pool.lock();
                     for contact in contacts {
-                        if let db::Contact::Accepted { user_id, busy, .. } = contact {
-                            if user_id == removed_user_id {
-                                assert!(!pool.is_user_online(user_id));
-                                assert!(!busy);
-                            }
+                        if let db::Contact::Accepted { user_id, busy, .. } = contact
+                            && user_id == removed_user_id
+                        {
+                            assert!(!pool.is_user_online(user_id));
+                            assert!(!busy);
                         }
                     }
                 }

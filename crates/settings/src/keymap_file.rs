@@ -10,6 +10,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use std::borrow::Cow;
 use std::{any::TypeId, fmt::Write, rc::Rc, sync::Arc, sync::LazyLock};
+use util::ResultExt as _;
 use util::{
     asset_str,
     markdown::{MarkdownEscaped, MarkdownInlineCode, MarkdownString},
@@ -357,11 +358,11 @@ impl KeymapFile {
                 let action_input = items[1].clone();
                 let action_input_string = action_input.to_string();
                 (
-                    cx.build_action(&name, Some(action_input)),
+                    cx.build_action(name, Some(action_input)),
                     Some(action_input_string),
                 )
             }
-            Value::String(name) => (cx.build_action(&name, None), None),
+            Value::String(name) => (cx.build_action(name, None), None),
             Value::Null => (Ok(NoAction.boxed_clone()), None),
             _ => {
                 return Err(format!(
@@ -542,27 +543,27 @@ impl KeymapFile {
             //
             // When a struct with no deserializable fields is added by deriving `Action`, an empty
             // object schema is produced. The action should be invoked without data in this case.
-            if let Some(schema) = action_schema {
-                if schema != empty_object {
-                    let mut matches_action_name = json_schema!({
-                        "const": name
-                    });
-                    if let Some(desc) = description.clone() {
-                        add_description(&mut matches_action_name, desc);
-                    }
-                    if let Some(message) = deprecation_messages.get(name) {
-                        add_deprecation(&mut matches_action_name, message.to_string());
-                    } else if let Some(new_name) = deprecation {
-                        add_deprecation_preferred_name(&mut matches_action_name, new_name);
-                    }
-                    let action_with_input = json_schema!({
-                        "type": "array",
-                        "items": [matches_action_name, schema],
-                        "minItems": 2,
-                        "maxItems": 2
-                    });
-                    keymap_action_alternatives.push(action_with_input);
+            if let Some(schema) = action_schema
+                && schema != empty_object
+            {
+                let mut matches_action_name = json_schema!({
+                    "const": name
+                });
+                if let Some(desc) = description.clone() {
+                    add_description(&mut matches_action_name, desc);
                 }
+                if let Some(message) = deprecation_messages.get(name) {
+                    add_deprecation(&mut matches_action_name, message.to_string());
+                } else if let Some(new_name) = deprecation {
+                    add_deprecation_preferred_name(&mut matches_action_name, new_name);
+                }
+                let action_with_input = json_schema!({
+                    "type": "array",
+                    "items": [matches_action_name, schema],
+                    "minItems": 2,
+                    "maxItems": 2
+                });
+                keymap_action_alternatives.push(action_with_input);
             }
         }
 
@@ -592,10 +593,10 @@ impl KeymapFile {
         match fs.load(paths::keymap_file()).await {
             result @ Ok(_) => result,
             Err(err) => {
-                if let Some(e) = err.downcast_ref::<std::io::Error>() {
-                    if e.kind() == std::io::ErrorKind::NotFound {
-                        return Ok(crate::initial_keymap_content().to_string());
-                    }
+                if let Some(e) = err.downcast_ref::<std::io::Error>()
+                    && e.kind() == std::io::ErrorKind::NotFound
+                {
+                    return Ok(crate::initial_keymap_content().to_string());
                 }
                 Err(err)
             }
@@ -612,19 +613,26 @@ impl KeymapFile {
             KeybindUpdateOperation::Replace {
                 target_keybind_source: target_source,
                 source,
-                ..
+                target,
             } if target_source != KeybindSource::User => {
-                operation = KeybindUpdateOperation::Add(source);
+                operation = KeybindUpdateOperation::Add {
+                    source,
+                    from: Some(target),
+                };
             }
             // if trying to remove a keybinding that is not user-defined, treat it as creating a binding
             // that binds it to `zed::NoAction`
             KeybindUpdateOperation::Remove {
-                mut target,
+                target,
                 target_keybind_source,
             } if target_keybind_source != KeybindSource::User => {
-                target.action_name = gpui::NoAction.name();
-                target.input.take();
-                operation = KeybindUpdateOperation::Add(target);
+                let mut source = target.clone();
+                source.action_name = gpui::NoAction.name();
+                source.action_arguments.take();
+                operation = KeybindUpdateOperation::Add {
+                    source,
+                    from: Some(target),
+                };
             }
             _ => {}
         }
@@ -645,7 +653,7 @@ impl KeymapFile {
             let is_only_binding = keymap.0[index]
                 .bindings
                 .as_ref()
-                .map_or(true, |bindings| bindings.len() == 1);
+                .is_none_or(|bindings| bindings.len() == 1);
             let key_path: &[&str] = if is_only_binding {
                 &[]
             } else {
@@ -695,7 +703,7 @@ impl KeymapFile {
                 } else if keymap.0[index]
                     .bindings
                     .as_ref()
-                    .map_or(true, |bindings| bindings.len() == 1)
+                    .is_none_or(|bindings| bindings.len() == 1)
                 {
                     // if we are replacing the only binding in the section,
                     // just update the section in place, updating the context
@@ -742,7 +750,10 @@ impl KeymapFile {
                         )
                         .context("Failed to replace keybinding")?;
                     keymap_contents.replace_range(replace_range, &replace_value);
-                    operation = KeybindUpdateOperation::Add(source);
+                    operation = KeybindUpdateOperation::Add {
+                        source,
+                        from: Some(target),
+                    };
                 }
             } else {
                 log::warn!(
@@ -752,16 +763,28 @@ impl KeymapFile {
                     source.keystrokes,
                     source_action_value,
                 );
-                operation = KeybindUpdateOperation::Add(source);
+                operation = KeybindUpdateOperation::Add {
+                    source,
+                    from: Some(target),
+                };
             }
         }
 
-        if let KeybindUpdateOperation::Add(keybinding) = operation {
+        if let KeybindUpdateOperation::Add {
+            source: keybinding,
+            from,
+        } = operation
+        {
             let mut value = serde_json::Map::with_capacity(4);
             if let Some(context) = keybinding.context {
                 value.insert("context".to_string(), context.into());
             }
-            if keybinding.use_key_equivalents {
+            let use_key_equivalents = from.and_then(|from| {
+                let action_value = from.action_value().context("Failed to serialize action value. `use_key_equivalents` on new keybinding may be incorrect.").log_err()?;
+                let (index, _) = find_binding(&keymap, &from, &action_value)?;
+                Some(keymap.0[index].use_key_equivalents)
+            }).unwrap_or(false);
+            if use_key_equivalents {
                 value.insert("use_key_equivalents".to_string(), true.into());
             }
 
@@ -794,9 +817,6 @@ impl KeymapFile {
                 if section_context_parsed != target_context_parsed {
                     continue;
                 }
-                if section.use_key_equivalents != target.use_key_equivalents {
-                    continue;
-                }
                 let Some(bindings) = &section.bindings else {
                     continue;
                 };
@@ -819,7 +839,7 @@ impl KeymapFile {
                     if &action.0 != target_action_value {
                         continue;
                     }
-                    return Some((index, &keystrokes_str));
+                    return Some((index, keystrokes_str));
                 }
             }
             None
@@ -827,6 +847,7 @@ impl KeymapFile {
     }
 }
 
+#[derive(Clone)]
 pub enum KeybindUpdateOperation<'a> {
     Replace {
         /// Describes the keybind to create
@@ -835,34 +856,86 @@ pub enum KeybindUpdateOperation<'a> {
         target: KeybindUpdateTarget<'a>,
         target_keybind_source: KeybindSource,
     },
-    Add(KeybindUpdateTarget<'a>),
+    Add {
+        source: KeybindUpdateTarget<'a>,
+        from: Option<KeybindUpdateTarget<'a>>,
+    },
     Remove {
         target: KeybindUpdateTarget<'a>,
         target_keybind_source: KeybindSource,
     },
 }
 
-#[derive(Debug)]
+impl KeybindUpdateOperation<'_> {
+    pub fn generate_telemetry(
+        &self,
+    ) -> (
+        // The keybind that is created
+        String,
+        // The keybinding that was removed
+        String,
+        // The source of the keybinding
+        String,
+    ) {
+        let (new_binding, removed_binding, source) = match &self {
+            KeybindUpdateOperation::Replace {
+                source,
+                target,
+                target_keybind_source,
+            } => (Some(source), Some(target), Some(*target_keybind_source)),
+            KeybindUpdateOperation::Add { source, .. } => (Some(source), None, None),
+            KeybindUpdateOperation::Remove {
+                target,
+                target_keybind_source,
+            } => (None, Some(target), Some(*target_keybind_source)),
+        };
+
+        let new_binding = new_binding
+            .map(KeybindUpdateTarget::telemetry_string)
+            .unwrap_or("null".to_owned());
+        let removed_binding = removed_binding
+            .map(KeybindUpdateTarget::telemetry_string)
+            .unwrap_or("null".to_owned());
+
+        let source = source
+            .as_ref()
+            .map(KeybindSource::name)
+            .map(ToOwned::to_owned)
+            .unwrap_or("null".to_owned());
+
+        (new_binding, removed_binding, source)
+    }
+}
+
+impl<'a> KeybindUpdateOperation<'a> {
+    pub fn add(source: KeybindUpdateTarget<'a>) -> Self {
+        Self::Add { source, from: None }
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct KeybindUpdateTarget<'a> {
     pub context: Option<&'a str>,
     pub keystrokes: &'a [Keystroke],
     pub action_name: &'a str,
-    pub use_key_equivalents: bool,
-    pub input: Option<&'a str>,
+    pub action_arguments: Option<&'a str>,
 }
 
 impl<'a> KeybindUpdateTarget<'a> {
     fn action_value(&self) -> Result<Value> {
+        if self.action_name == gpui::NoAction.name() {
+            return Ok(Value::Null);
+        }
         let action_name: Value = self.action_name.into();
-        let value = match self.input {
-            Some(input) => {
-                let input = serde_json::from_str::<Value>(input)
-                    .context("Failed to parse action input as JSON")?;
-                serde_json::json!([action_name, input])
+        let value = match self.action_arguments {
+            Some(args) if !args.is_empty() => {
+                let args = serde_json::from_str::<Value>(args)
+                    .context("Failed to parse action arguments as JSON")?;
+                serde_json::json!([action_name, args])
             }
-            None => action_name,
+            _ => action_name,
         };
-        return Ok(value);
+        Ok(value)
     }
 
     fn keystrokes_unparsed(&self) -> String {
@@ -874,21 +947,33 @@ impl<'a> KeybindUpdateTarget<'a> {
         keystrokes.pop();
         keystrokes
     }
+
+    fn telemetry_string(&self) -> String {
+        format!(
+            "action_name: {}, context: {}, action_arguments: {}, keystrokes: {}",
+            self.action_name,
+            self.context.unwrap_or("global"),
+            self.action_arguments.unwrap_or("none"),
+            self.keystrokes_unparsed()
+        )
+    }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord)]
 pub enum KeybindSource {
     User,
-    Default,
-    Base,
     Vim,
+    Base,
+    #[default]
+    Default,
+    Unknown,
 }
 
 impl KeybindSource {
-    const BASE: KeyBindingMetaIndex = KeyBindingMetaIndex(0);
-    const DEFAULT: KeyBindingMetaIndex = KeyBindingMetaIndex(1);
-    const VIM: KeyBindingMetaIndex = KeyBindingMetaIndex(2);
-    const USER: KeyBindingMetaIndex = KeyBindingMetaIndex(3);
+    const BASE: KeyBindingMetaIndex = KeyBindingMetaIndex(KeybindSource::Base as u32);
+    const DEFAULT: KeyBindingMetaIndex = KeyBindingMetaIndex(KeybindSource::Default as u32);
+    const VIM: KeyBindingMetaIndex = KeyBindingMetaIndex(KeybindSource::Vim as u32);
+    const USER: KeyBindingMetaIndex = KeyBindingMetaIndex(KeybindSource::User as u32);
 
     pub fn name(&self) -> &'static str {
         match self {
@@ -896,6 +981,7 @@ impl KeybindSource {
             KeybindSource::Default => "Default",
             KeybindSource::Base => "Base",
             KeybindSource::Vim => "Vim",
+            KeybindSource::Unknown => "Unknown",
         }
     }
 
@@ -905,6 +991,7 @@ impl KeybindSource {
             KeybindSource::Default => Self::DEFAULT,
             KeybindSource::Base => Self::BASE,
             KeybindSource::Vim => Self::VIM,
+            KeybindSource::Unknown => KeyBindingMetaIndex(*self as u32),
         }
     }
 
@@ -914,7 +1001,7 @@ impl KeybindSource {
             Self::BASE => KeybindSource::Base,
             Self::DEFAULT => KeybindSource::Default,
             Self::VIM => KeybindSource::Vim,
-            _ => unreachable!(),
+            _ => KeybindSource::Unknown,
         }
     }
 }
@@ -927,12 +1014,13 @@ impl From<KeyBindingMetaIndex> for KeybindSource {
 
 impl From<KeybindSource> for KeyBindingMetaIndex {
     fn from(source: KeybindSource) -> Self {
-        return source.meta();
+        source.meta()
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use gpui::Keystroke;
     use unindent::Unindent;
 
     use crate::{
@@ -955,38 +1043,54 @@ mod tests {
         KeymapFile::parse(json).unwrap();
     }
 
+    #[track_caller]
+    fn check_keymap_update(
+        input: impl ToString,
+        operation: KeybindUpdateOperation,
+        expected: impl ToString,
+    ) {
+        let result = KeymapFile::update_keybinding(operation, input.to_string(), 4)
+            .expect("Update succeeded");
+        pretty_assertions::assert_eq!(expected.to_string(), result);
+    }
+
+    #[track_caller]
+    fn parse_keystrokes(keystrokes: &str) -> Vec<Keystroke> {
+        keystrokes
+            .split(' ')
+            .map(|s| Keystroke::parse(s).expect("Keystrokes valid"))
+            .collect()
+    }
+
     #[test]
     fn keymap_update() {
-        use gpui::Keystroke;
-
         zlog::init_test();
-        #[track_caller]
-        fn check_keymap_update(
-            input: impl ToString,
-            operation: KeybindUpdateOperation,
-            expected: impl ToString,
-        ) {
-            let result = KeymapFile::update_keybinding(operation, input.to_string(), 4)
-                .expect("Update succeeded");
-            pretty_assertions::assert_eq!(expected.to_string(), result);
-        }
-
-        #[track_caller]
-        fn parse_keystrokes(keystrokes: &str) -> Vec<Keystroke> {
-            return keystrokes
-                .split(' ')
-                .map(|s| Keystroke::parse(s).expect("Keystrokes valid"))
-                .collect();
-        }
 
         check_keymap_update(
             "[]",
-            KeybindUpdateOperation::Add(KeybindUpdateTarget {
+            KeybindUpdateOperation::add(KeybindUpdateTarget {
                 keystrokes: &parse_keystrokes("ctrl-a"),
                 action_name: "zed::SomeAction",
                 context: None,
-                use_key_equivalents: false,
-                input: None,
+                action_arguments: None,
+            }),
+            r#"[
+                {
+                    "bindings": {
+                        "ctrl-a": "zed::SomeAction"
+                    }
+                }
+            ]"#
+            .unindent(),
+        );
+
+        check_keymap_update(
+            "[]",
+            KeybindUpdateOperation::add(KeybindUpdateTarget {
+                keystrokes: &parse_keystrokes("ctrl-a"),
+                action_name: "zed::SomeAction",
+                context: None,
+                action_arguments: Some(""),
             }),
             r#"[
                 {
@@ -1007,12 +1111,11 @@ mod tests {
                 }
             ]"#
             .unindent(),
-            KeybindUpdateOperation::Add(KeybindUpdateTarget {
+            KeybindUpdateOperation::add(KeybindUpdateTarget {
                 keystrokes: &parse_keystrokes("ctrl-b"),
                 action_name: "zed::SomeOtherAction",
                 context: None,
-                use_key_equivalents: false,
-                input: None,
+                action_arguments: None,
             }),
             r#"[
                 {
@@ -1038,12 +1141,11 @@ mod tests {
                 }
             ]"#
             .unindent(),
-            KeybindUpdateOperation::Add(KeybindUpdateTarget {
+            KeybindUpdateOperation::add(KeybindUpdateTarget {
                 keystrokes: &parse_keystrokes("ctrl-b"),
                 action_name: "zed::SomeOtherAction",
                 context: None,
-                use_key_equivalents: false,
-                input: Some(r#"{"foo": "bar"}"#),
+                action_arguments: Some(r#"{"foo": "bar"}"#),
             }),
             r#"[
                 {
@@ -1074,12 +1176,11 @@ mod tests {
                 }
             ]"#
             .unindent(),
-            KeybindUpdateOperation::Add(KeybindUpdateTarget {
+            KeybindUpdateOperation::add(KeybindUpdateTarget {
                 keystrokes: &parse_keystrokes("ctrl-b"),
                 action_name: "zed::SomeOtherAction",
                 context: Some("Zed > Editor && some_condition = true"),
-                use_key_equivalents: true,
-                input: Some(r#"{"foo": "bar"}"#),
+                action_arguments: Some(r#"{"foo": "bar"}"#),
             }),
             r#"[
                 {
@@ -1089,7 +1190,6 @@ mod tests {
                 },
                 {
                     "context": "Zed > Editor && some_condition = true",
-                    "use_key_equivalents": true,
                     "bindings": {
                         "ctrl-b": [
                             "zed::SomeOtherAction",
@@ -1117,15 +1217,13 @@ mod tests {
                     keystrokes: &parse_keystrokes("ctrl-a"),
                     action_name: "zed::SomeAction",
                     context: None,
-                    use_key_equivalents: false,
-                    input: None,
+                    action_arguments: None,
                 },
                 source: KeybindUpdateTarget {
                     keystrokes: &parse_keystrokes("ctrl-b"),
                     action_name: "zed::SomeOtherAction",
                     context: None,
-                    use_key_equivalents: false,
-                    input: Some(r#"{"foo": "bar"}"#),
+                    action_arguments: Some(r#"{"foo": "bar"}"#),
                 },
                 target_keybind_source: KeybindSource::Base,
             },
@@ -1163,15 +1261,13 @@ mod tests {
                     keystrokes: &parse_keystrokes("a"),
                     action_name: "zed::SomeAction",
                     context: None,
-                    use_key_equivalents: false,
-                    input: None,
+                    action_arguments: None,
                 },
                 source: KeybindUpdateTarget {
                     keystrokes: &parse_keystrokes("ctrl-b"),
                     action_name: "zed::SomeOtherAction",
                     context: None,
-                    use_key_equivalents: false,
-                    input: Some(r#"{"foo": "bar"}"#),
+                    action_arguments: Some(r#"{"foo": "bar"}"#),
                 },
                 target_keybind_source: KeybindSource::User,
             },
@@ -1204,15 +1300,13 @@ mod tests {
                     keystrokes: &parse_keystrokes("ctrl-a"),
                     action_name: "zed::SomeNonexistentAction",
                     context: None,
-                    use_key_equivalents: false,
-                    input: None,
+                    action_arguments: None,
                 },
                 source: KeybindUpdateTarget {
                     keystrokes: &parse_keystrokes("ctrl-b"),
                     action_name: "zed::SomeOtherAction",
                     context: None,
-                    use_key_equivalents: false,
-                    input: None,
+                    action_arguments: None,
                 },
                 target_keybind_source: KeybindSource::User,
             },
@@ -1247,15 +1341,13 @@ mod tests {
                     keystrokes: &parse_keystrokes("ctrl-a"),
                     action_name: "zed::SomeAction",
                     context: None,
-                    use_key_equivalents: false,
-                    input: None,
+                    action_arguments: None,
                 },
                 source: KeybindUpdateTarget {
                     keystrokes: &parse_keystrokes("ctrl-b"),
                     action_name: "zed::SomeOtherAction",
                     context: None,
-                    use_key_equivalents: false,
-                    input: Some(r#"{"foo": "bar"}"#),
+                    action_arguments: Some(r#"{"foo": "bar"}"#),
                 },
                 target_keybind_source: KeybindSource::User,
             },
@@ -1292,15 +1384,13 @@ mod tests {
                     keystrokes: &parse_keystrokes("a"),
                     action_name: "foo::bar",
                     context: Some("SomeContext"),
-                    use_key_equivalents: false,
-                    input: None,
+                    action_arguments: None,
                 },
                 source: KeybindUpdateTarget {
                     keystrokes: &parse_keystrokes("c"),
                     action_name: "foo::baz",
                     context: Some("SomeOtherContext"),
-                    use_key_equivalents: false,
-                    input: None,
+                    action_arguments: None,
                 },
                 target_keybind_source: KeybindSource::User,
             },
@@ -1336,15 +1426,13 @@ mod tests {
                     keystrokes: &parse_keystrokes("a"),
                     action_name: "foo::bar",
                     context: Some("SomeContext"),
-                    use_key_equivalents: false,
-                    input: None,
+                    action_arguments: None,
                 },
                 source: KeybindUpdateTarget {
                     keystrokes: &parse_keystrokes("c"),
                     action_name: "foo::baz",
                     context: Some("SomeOtherContext"),
-                    use_key_equivalents: false,
-                    input: None,
+                    action_arguments: None,
                 },
                 target_keybind_source: KeybindSource::User,
             },
@@ -1375,8 +1463,7 @@ mod tests {
                     context: Some("SomeContext"),
                     keystrokes: &parse_keystrokes("a"),
                     action_name: "foo::bar",
-                    use_key_equivalents: false,
-                    input: None,
+                    action_arguments: None,
                 },
                 target_keybind_source: KeybindSource::User,
             },
@@ -1407,8 +1494,7 @@ mod tests {
                     context: Some("SomeContext"),
                     keystrokes: &parse_keystrokes("a"),
                     action_name: "foo::bar",
-                    use_key_equivalents: false,
-                    input: Some("true"),
+                    action_arguments: Some("true"),
                 },
                 target_keybind_source: KeybindSource::User,
             },
@@ -1450,8 +1536,7 @@ mod tests {
                     context: Some("SomeContext"),
                     keystrokes: &parse_keystrokes("a"),
                     action_name: "foo::bar",
-                    use_key_equivalents: false,
-                    input: Some("true"),
+                    action_arguments: Some("true"),
                 },
                 target_keybind_source: KeybindSource::User,
             },
@@ -1470,6 +1555,130 @@ mod tests {
                 },
             ]"#
             .unindent(),
+        );
+        check_keymap_update(
+            r#"[
+                {
+                    "context": "SomeOtherContext",
+                    "use_key_equivalents": true,
+                    "bindings": {
+                        "b": "foo::bar",
+                    }
+                },
+            ]"#
+            .unindent(),
+            KeybindUpdateOperation::Add {
+                source: KeybindUpdateTarget {
+                    context: Some("SomeContext"),
+                    keystrokes: &parse_keystrokes("a"),
+                    action_name: "foo::baz",
+                    action_arguments: Some("true"),
+                },
+                from: Some(KeybindUpdateTarget {
+                    context: Some("SomeOtherContext"),
+                    keystrokes: &parse_keystrokes("b"),
+                    action_name: "foo::bar",
+                    action_arguments: None,
+                }),
+            },
+            r#"[
+                {
+                    "context": "SomeOtherContext",
+                    "use_key_equivalents": true,
+                    "bindings": {
+                        "b": "foo::bar",
+                    }
+                },
+                {
+                    "context": "SomeContext",
+                    "use_key_equivalents": true,
+                    "bindings": {
+                        "a": [
+                            "foo::baz",
+                            true
+                        ]
+                    }
+                }
+            ]"#
+            .unindent(),
+        );
+
+        check_keymap_update(
+            r#"[
+                {
+                    "context": "SomeOtherContext",
+                    "use_key_equivalents": true,
+                    "bindings": {
+                        "b": "foo::bar",
+                    }
+                },
+            ]"#
+            .unindent(),
+            KeybindUpdateOperation::Remove {
+                target: KeybindUpdateTarget {
+                    context: Some("SomeContext"),
+                    keystrokes: &parse_keystrokes("a"),
+                    action_name: "foo::baz",
+                    action_arguments: Some("true"),
+                },
+                target_keybind_source: KeybindSource::Default,
+            },
+            r#"[
+                {
+                    "context": "SomeOtherContext",
+                    "use_key_equivalents": true,
+                    "bindings": {
+                        "b": "foo::bar",
+                    }
+                },
+                {
+                    "context": "SomeContext",
+                    "bindings": {
+                        "a": null
+                    }
+                }
+            ]"#
+            .unindent(),
+        );
+    }
+
+    #[test]
+    fn test_keymap_remove() {
+        zlog::init_test();
+
+        check_keymap_update(
+            r#"
+            [
+              {
+                "context": "Editor",
+                "bindings": {
+                  "cmd-k cmd-u": "editor::ConvertToUpperCase",
+                  "cmd-k cmd-l": "editor::ConvertToLowerCase",
+                  "cmd-[": "pane::GoBack",
+                }
+              },
+            ]
+            "#,
+            KeybindUpdateOperation::Remove {
+                target: KeybindUpdateTarget {
+                    context: Some("Editor"),
+                    keystrokes: &parse_keystrokes("cmd-k cmd-l"),
+                    action_name: "editor::ConvertToLowerCase",
+                    action_arguments: None,
+                },
+                target_keybind_source: KeybindSource::User,
+            },
+            r#"
+            [
+              {
+                "context": "Editor",
+                "bindings": {
+                  "cmd-k cmd-u": "editor::ConvertToUpperCase",
+                  "cmd-[": "pane::GoBack",
+                }
+              },
+            ]
+            "#,
         );
     }
 }

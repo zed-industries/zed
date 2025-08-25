@@ -44,7 +44,7 @@ impl KeyBinding {
     pub fn for_action_in(
         action: &dyn Action,
         focus: &FocusHandle,
-        window: &mut Window,
+        window: &Window,
         cx: &App,
     ) -> Option<Self> {
         let key_binding = window.highest_precedence_binding_for_action_in(action, focus)?;
@@ -163,7 +163,7 @@ pub fn render_keystroke(
     let size = size.into();
 
     if use_text {
-        let element = Key::new(keystroke_text(&keystroke, platform_style, vim_mode), color)
+        let element = Key::new(keystroke_text(keystroke, platform_style, vim_mode), color)
             .size(size)
             .into_any_element();
         vec![element]
@@ -176,7 +176,7 @@ pub fn render_keystroke(
             size,
             true,
         ));
-        elements.push(render_key(&keystroke, color, platform_style, size));
+        elements.push(render_key(keystroke, color, platform_style, size));
         elements
     }
 }
@@ -188,7 +188,7 @@ fn icon_for_key(keystroke: &Keystroke, platform_style: PlatformStyle) -> Option<
         "up" => Some(IconName::ArrowUp),
         "down" => Some(IconName::ArrowDown),
         "backspace" => Some(IconName::Backspace),
-        "delete" => Some(IconName::Delete),
+        "delete" => Some(IconName::Backspace),
         "return" => Some(IconName::Return),
         "enter" => Some(IconName::Return),
         "tab" => Some(IconName::Tab),
@@ -325,7 +325,7 @@ impl RenderOnce for Key {
             .text_size(size)
             .line_height(relative(1.))
             .text_color(self.color.unwrap_or(Color::Muted).color(cx))
-            .child(self.key.clone())
+            .child(self.key)
     }
 }
 

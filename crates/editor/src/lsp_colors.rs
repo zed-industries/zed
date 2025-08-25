@@ -6,7 +6,7 @@ use gpui::{Hsla, Rgba};
 use itertools::Itertools;
 use language::point_from_lsp;
 use multi_buffer::Anchor;
-use project::{DocumentColor, lsp_store::ColorFetchStrategy};
+use project::{DocumentColor, lsp_store::LspFetchStrategy};
 use settings::Settings as _;
 use text::{Bias, BufferId, OffsetRangeExt as _};
 use ui::{App, Context, Window};
@@ -180,9 +180,9 @@ impl Editor {
                 .filter_map(|buffer| {
                     let buffer_id = buffer.read(cx).remote_id();
                     let fetch_strategy = if ignore_cache {
-                        ColorFetchStrategy::IgnoreCache
+                        LspFetchStrategy::IgnoreCache
                     } else {
-                        ColorFetchStrategy::UseCache {
+                        LspFetchStrategy::UseCache {
                             known_cache_version: self.colors.as_ref().and_then(|colors| {
                                 Some(colors.buffer_colors.get(&buffer_id)?.cache_version_used)
                             }),
@@ -207,7 +207,7 @@ impl Editor {
                             .entry(buffer_snapshot.remote_id())
                             .or_insert_with(Vec::new);
                         let excerpt_point_range =
-                            excerpt_range.context.to_point_utf16(&buffer_snapshot);
+                            excerpt_range.context.to_point_utf16(buffer_snapshot);
                         excerpt_data.push((
                             excerpt_id,
                             buffer_snapshot.clone(),

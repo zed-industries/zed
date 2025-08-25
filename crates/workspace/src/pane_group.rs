@@ -619,15 +619,15 @@ impl PaneAxis {
         let mut found_axis_index: Option<usize> = None;
         if !found_pane {
             for (i, pa) in self.members.iter_mut().enumerate() {
-                if let Member::Axis(pa) = pa {
-                    if let Some(done) = pa.resize(pane, axis, amount, bounds) {
-                        if done {
-                            return Some(true); // pane found and operations already done
-                        } else if self.axis != axis {
-                            return Some(false); // pane found but this is not the correct axis direction
-                        } else {
-                            found_axis_index = Some(i); // pane found and this is correct direction
-                        }
+                if let Member::Axis(pa) = pa
+                    && let Some(done) = pa.resize(pane, axis, amount, bounds)
+                {
+                    if done {
+                        return Some(true); // pane found and operations already done
+                    } else if self.axis != axis {
+                        return Some(false); // pane found but this is not the correct axis direction
+                    } else {
+                        found_axis_index = Some(i); // pane found and this is correct direction
                     }
                 }
             }
@@ -743,13 +743,13 @@ impl PaneAxis {
         let bounding_boxes = self.bounding_boxes.lock();
 
         for (idx, member) in self.members.iter().enumerate() {
-            if let Some(coordinates) = bounding_boxes[idx] {
-                if coordinates.contains(&coordinate) {
-                    return match member {
-                        Member::Pane(found) => Some(found),
-                        Member::Axis(axis) => axis.pane_at_pixel_position(coordinate),
-                    };
-                }
+            if let Some(coordinates) = bounding_boxes[idx]
+                && coordinates.contains(&coordinate)
+            {
+                return match member {
+                    Member::Pane(found) => Some(found),
+                    Member::Axis(axis) => axis.pane_at_pixel_position(coordinate),
+                };
             }
         }
         None
@@ -943,6 +943,8 @@ mod element {
     pub struct PaneAxisElement {
         axis: Axis,
         basis: usize,
+        /// Equivalent to ColumnWidths (but in terms of flexes instead of percentages)
+        /// For example, flexes "1.33, 1, 1", instead of "40%, 30%, 30%"
         flexes: Arc<Mutex<Vec<f32>>>,
         bounding_boxes: Arc<Mutex<Vec<Option<Bounds<Pixels>>>>>,
         children: SmallVec<[AnyElement; 2]>,
@@ -998,6 +1000,7 @@ mod element {
             let mut flexes = flexes.lock();
             debug_assert!(flex_values_in_bounds(flexes.as_slice()));
 
+            // Math to convert a flex value to a pixel value
             let size = move |ix, flexes: &[f32]| {
                 container_size.along(axis) * (flexes[ix] / flexes.len() as f32)
             };
@@ -1007,9 +1010,13 @@ mod element {
                 return;
             }
 
+            // This is basically a "bucket" of pixel changes that need to be applied in response to this
+            // mouse event. Probably a small, fractional number like 0.5 or 1.5 pixels
             let mut proposed_current_pixel_change =
                 (e.position - child_start).along(axis) - size(ix, flexes.as_slice());
 
+            // This takes a pixel change, and computes the flex changes that correspond to this pixel change
+            // as well as the next one, for some reason
             let flex_changes = |pixel_dx, target_ix, next: isize, flexes: &[f32]| {
                 let flex_change = pixel_dx / container_size.along(axis);
                 let current_target_flex = flexes[target_ix] + flex_change;
@@ -1017,6 +1024,9 @@ mod element {
                 (current_target_flex, next_target_flex)
             };
 
+            // Generate the list of flex successors, from the current index.
+            // If you're dragging column 3 forward, out of 6 columns, then this code will produce [4, 5, 6]
+            // If you're dragging column 3 backward, out of 6 columns, then this code will produce [2, 1, 0]
             let mut successors = iter::from_fn({
                 let forward = proposed_current_pixel_change > px(0.);
                 let mut ix_offset = 0;
@@ -1034,6 +1044,7 @@ mod element {
                 }
             });
 
+            // Now actually loop over these, and empty our bucket of pixel changes
             while proposed_current_pixel_change.abs() > px(0.) {
                 let Some(current_ix) = successors.next() else {
                     break;
@@ -1164,7 +1175,7 @@ mod element {
             bounding_boxes.clear();
 
             let mut layout = PaneAxisLayout {
-                dragged_handle: dragged_handle.clone(),
+                dragged_handle,
                 children: Vec::new(),
             };
             for (ix, mut child) in mem::take(&mut self.children).into_iter().enumerate() {
@@ -1262,17 +1273,18 @@ mod element {
                         window.paint_quad(gpui::fill(overlay_bounds, overlay_background));
                     }
 
-                    if let Some(border) = overlay_border {
-                        if self.active_pane_ix == Some(ix) && child.is_leaf_pane {
-                            window.paint_quad(gpui::quad(
-                                overlay_bounds,
-                                0.,
-                                gpui::transparent_black(),
-                                border,
-                                cx.theme().colors().border_selected,
-                                BorderStyle::Solid,
-                            ));
-                        }
+                    if let Some(border) = overlay_border
+                        && self.active_pane_ix == Some(ix)
+                        && child.is_leaf_pane
+                    {
+                        window.paint_quad(gpui::quad(
+                            overlay_bounds,
+                            0.,
+                            gpui::transparent_black(),
+                            border,
+                            cx.theme().colors().border_selected,
+                            BorderStyle::Solid,
+                        ));
                     }
                 }
 

@@ -123,7 +123,7 @@ impl VenvSettings {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ActivateScript {
     #[default]
@@ -248,7 +248,7 @@ pub struct TerminalSettingsContent {
     /// - 75: Minimum for body text
     /// - 90: Preferred for body text
     ///
-    /// Default: 0 (no adjustment)
+    /// Default: 45
     pub minimum_contrast: Option<f32>,
 }
 
@@ -325,10 +325,10 @@ impl settings::Settings for TerminalSettings {
             .and_then(|v| v.as_object())
         {
             for (k, v) in env {
-                if v.is_null() {
-                    if let Some(zed_env) = current.env.as_mut() {
-                        zed_env.remove(k);
-                    }
+                if v.is_null()
+                    && let Some(zed_env) = current.env.as_mut()
+                {
+                    zed_env.remove(k);
                 }
                 let Some(v) = v.as_str() else { continue };
                 if let Some(zed_env) = current.env.as_mut() {

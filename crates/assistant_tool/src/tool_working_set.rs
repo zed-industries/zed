@@ -156,13 +156,13 @@ fn resolve_context_server_tool_name_conflicts(
 
     if duplicated_tool_names.is_empty() {
         return context_server_tools
-            .into_iter()
+            .iter()
             .map(|tool| (resolve_tool_name(tool).into(), tool.clone()))
             .collect();
     }
 
     context_server_tools
-        .into_iter()
+        .iter()
         .filter_map(|tool| {
             let mut tool_name = resolve_tool_name(tool);
             if !duplicated_tool_names.contains(&tool_name) {
@@ -375,7 +375,12 @@ mod tests {
             false
         }
 
-        fn needs_confirmation(&self, _input: &serde_json::Value, _cx: &App) -> bool {
+        fn needs_confirmation(
+            &self,
+            _input: &serde_json::Value,
+            _project: &Entity<Project>,
+            _cx: &App,
+        ) -> bool {
             true
         }
 

@@ -1,7 +1,4 @@
 pub mod access_token;
-pub mod billing_customer;
-pub mod billing_preference;
-pub mod billing_subscription;
 pub mod buffer;
 pub mod buffer_operation;
 pub mod buffer_snapshot;
@@ -23,7 +20,6 @@ pub mod notification;
 pub mod notification_kind;
 pub mod observed_buffer_edits;
 pub mod observed_channel_messages;
-pub mod processed_stripe_event;
 pub mod project;
 pub mod project_collaborator;
 pub mod project_repository;

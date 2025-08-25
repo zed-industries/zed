@@ -15,7 +15,6 @@ pub fn replace_subschema<T: JsonSchema>(
     generator: &mut schemars::SchemaGenerator,
     schema: impl Fn() -> schemars::Schema,
 ) -> schemars::Schema {
-    // fallback on just using the schema name, which could collide.
     let schema_name = T::schema_name();
     let definitions = generator.definitions_mut();
     assert!(!definitions.contains_key(&format!("{schema_name}2")));
@@ -45,13 +44,12 @@ pub struct DefaultDenyUnknownFields;
 
 impl schemars::transform::Transform for DefaultDenyUnknownFields {
     fn transform(&mut self, schema: &mut schemars::Schema) {
-        if let Some(object) = schema.as_object_mut() {
-            if object.contains_key("properties")
-                && !object.contains_key("additionalProperties")
-                && !object.contains_key("unevaluatedProperties")
-            {
-                object.insert("additionalProperties".to_string(), false.into());
-            }
+        if let Some(object) = schema.as_object_mut()
+            && object.contains_key("properties")
+            && !object.contains_key("additionalProperties")
+            && !object.contains_key("unevaluatedProperties")
+        {
+            object.insert("additionalProperties".to_string(), false.into());
         }
         transform_subschemas(self, schema);
     }

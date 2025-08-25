@@ -37,7 +37,7 @@ const FALLBACK_DB_NAME: &str = "FALLBACK_MEMORY_DB";
 const DB_FILE_NAME: &str = "db.sqlite";
 
 pub static ZED_STATELESS: LazyLock<bool> =
-    LazyLock::new(|| env::var("ZED_STATELESS").map_or(false, |v| !v.is_empty()));
+    LazyLock::new(|| env::var("ZED_STATELESS").is_ok_and(|v| !v.is_empty()));
 
 pub static ALL_FILE_DB_FAILED: LazyLock<AtomicBool> = LazyLock::new(|| AtomicBool::new(false));
 
@@ -74,7 +74,7 @@ pub async fn open_db<M: Migrator + 'static>(db_dir: &Path, scope: &str) -> Threa
 }
 
 async fn open_main_db<M: Migrator>(db_path: &Path) -> Option<ThreadSafeConnection> {
-    log::info!("Opening database {}", db_path.display());
+    log::trace!("Opening database {}", db_path.display());
     ThreadSafeConnection::builder::<M>(db_path.to_string_lossy().as_ref(), true)
         .with_db_initialization_query(DB_INITIALIZE_QUERY)
         .with_connection_initialize_query(CONNECTION_INITIALIZE_QUERY)
@@ -238,7 +238,7 @@ mod tests {
             .unwrap();
         let _bad_db = open_db::<BadDB>(
             tempdir.path(),
-            &release_channel::ReleaseChannel::Dev.dev_name(),
+            release_channel::ReleaseChannel::Dev.dev_name(),
         )
         .await;
     }
@@ -279,7 +279,7 @@ mod tests {
         {
             let corrupt_db = open_db::<CorruptedDB>(
                 tempdir.path(),
-                &release_channel::ReleaseChannel::Dev.dev_name(),
+                release_channel::ReleaseChannel::Dev.dev_name(),
             )
             .await;
             assert!(corrupt_db.persistent());
@@ -287,7 +287,7 @@ mod tests {
 
         let good_db = open_db::<GoodDB>(
             tempdir.path(),
-            &release_channel::ReleaseChannel::Dev.dev_name(),
+            release_channel::ReleaseChannel::Dev.dev_name(),
         )
         .await;
         assert!(
@@ -334,7 +334,7 @@ mod tests {
             // Setup the bad database
             let corrupt_db = open_db::<CorruptedDB>(
                 tempdir.path(),
-                &release_channel::ReleaseChannel::Dev.dev_name(),
+                release_channel::ReleaseChannel::Dev.dev_name(),
             )
             .await;
             assert!(corrupt_db.persistent());
@@ -347,7 +347,7 @@ mod tests {
             let guard = thread::spawn(move || {
                 let good_db = smol::block_on(open_db::<GoodDB>(
                     tmp_path.as_path(),
-                    &release_channel::ReleaseChannel::Dev.dev_name(),
+                    release_channel::ReleaseChannel::Dev.dev_name(),
                 ));
                 assert!(
                     good_db.select_row::<usize>("SELECT * FROM test2").unwrap()()

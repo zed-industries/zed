@@ -94,7 +94,7 @@ async fn test_fuzzy_score(cx: &mut TestAppContext) {
             filter_and_sort_matches("set_text", &completions, SnippetSortOrder::Top, cx).await;
         assert_eq!(matches[0].string, "set_text");
         assert_eq!(matches[1].string, "set_text_style_refinement");
-        assert_eq!(matches[2].string, "set_context_menu_options");
+        assert_eq!(matches[2].string, "set_placeholder_text");
     }
 
     // fuzzy filter text over label, sort_text and sort_kind
@@ -216,6 +216,28 @@ async fn test_sort_positions(cx: &mut TestAppContext) {
     assert_eq!(matches[0].string, "rounded-full");
 }
 
+#[gpui::test]
+async fn test_fuzzy_over_sort_positions(cx: &mut TestAppContext) {
+    let completions = vec![
+        CompletionBuilder::variable("lsp_document_colors", None, "7fffffff"), // 0.29 fuzzy score
+        CompletionBuilder::function(
+            "language_servers_running_disk_based_diagnostics",
+            None,
+            "7fffffff",
+        ), // 0.168 fuzzy score
+        CompletionBuilder::function("code_lens", None, "7fffffff"),           // 3.2 fuzzy score
+        CompletionBuilder::variable("lsp_code_lens", None, "7fffffff"),       // 3.2 fuzzy score
+        CompletionBuilder::function("fetch_code_lens", None, "7fffffff"),     // 3.2 fuzzy score
+    ];
+
+    let matches =
+        filter_and_sort_matches("lens", &completions, SnippetSortOrder::default(), cx).await;
+
+    assert_eq!(matches[0].string, "code_lens");
+    assert_eq!(matches[1].string, "lsp_code_lens");
+    assert_eq!(matches[2].string, "fetch_code_lens");
+}
+
 async fn test_for_each_prefix<F>(
     target: &str,
     completions: &Vec<Completion>,
@@ -295,7 +317,7 @@ async fn filter_and_sort_matches(
     let candidates: Arc<[StringMatchCandidate]> = completions
         .iter()
         .enumerate()
-        .map(|(id, completion)| StringMatchCandidate::new(id, &completion.label.filter_text()))
+        .map(|(id, completion)| StringMatchCandidate::new(id, completion.label.filter_text()))
         .collect();
     let cancel_flag = Arc::new(AtomicBool::new(false));
     let background_executor = cx.executor();
@@ -309,5 +331,5 @@ async fn filter_and_sort_matches(
         background_executor,
     )
     .await;
-    CompletionsMenu::sort_string_matches(matches, Some(query), snippet_sort_order, &completions)
+    CompletionsMenu::sort_string_matches(matches, Some(query), snippet_sort_order, completions)
 }

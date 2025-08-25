@@ -321,7 +321,7 @@ impl CompletionsMenu {
         let match_candidates = choices
             .iter()
             .enumerate()
-            .map(|(id, completion)| StringMatchCandidate::new(id, &completion))
+            .map(|(id, completion)| StringMatchCandidate::new(id, completion))
             .collect();
         let entries = choices
             .iter()
@@ -514,7 +514,7 @@ impl CompletionsMenu {
         // Expand the range to resolve more completions than are predicted to be visible, to reduce
         // jank on navigation.
         let entry_indices = util::expanded_and_wrapped_usize_range(
-            entry_range.clone(),
+            entry_range,
             RESOLVE_BEFORE_ITEMS,
             RESOLVE_AFTER_ITEMS,
             entries.len(),
@@ -1057,9 +1057,9 @@ impl CompletionsMenu {
         enum MatchTier<'a> {
             WordStartMatch {
                 sort_exact: Reverse<i32>,
-                sort_positions: Vec<usize>,
                 sort_snippet: Reverse<i32>,
                 sort_score: Reverse<OrderedFloat<f64>>,
+                sort_positions: Vec<usize>,
                 sort_text: Option<&'a str>,
                 sort_kind: usize,
                 sort_label: &'a str,
@@ -1073,6 +1073,20 @@ impl CompletionsMenu {
             .as_ref()
             .and_then(|q| q.chars().next())
             .and_then(|c| c.to_lowercase().next());
+
+        if snippet_sort_order == SnippetSortOrder::None {
+            matches.retain(|string_match| {
+                let completion = &completions[string_match.candidate_id];
+
+                let is_snippet = matches!(
+                    &completion.source,
+                    CompletionSource::Lsp { lsp_completion, .. }
+                    if lsp_completion.kind == Some(CompletionItemKind::SNIPPET)
+                );
+
+                !is_snippet
+            });
+        }
 
         matches.sort_unstable_by_key(|string_match| {
             let completion = &completions[string_match.candidate_id];
@@ -1097,10 +1111,8 @@ impl CompletionsMenu {
             let query_start_doesnt_match_split_words = query_start_lower
                 .map(|query_char| {
                     !split_words(&string_match.string).any(|word| {
-                        word.chars()
-                            .next()
-                            .and_then(|c| c.to_lowercase().next())
-                            .map_or(false, |word_char| word_char == query_char)
+                        word.chars().next().and_then(|c| c.to_lowercase().next())
+                            == Some(query_char)
                     })
                 })
                 .unwrap_or(false);
@@ -1112,6 +1124,7 @@ impl CompletionsMenu {
                     SnippetSortOrder::Top => Reverse(if is_snippet { 1 } else { 0 }),
                     SnippetSortOrder::Bottom => Reverse(if is_snippet { 0 } else { 1 }),
                     SnippetSortOrder::Inline => Reverse(0),
+                    SnippetSortOrder::None => Reverse(0),
                 };
                 let sort_positions = string_match.positions.clone();
                 let sort_exact = Reverse(if Some(completion.label.filter_text()) == query {
@@ -1122,9 +1135,9 @@ impl CompletionsMenu {
 
                 MatchTier::WordStartMatch {
                     sort_exact,
-                    sort_positions,
                     sort_snippet,
                     sort_score,
+                    sort_positions,
                     sort_text,
                     sort_kind,
                     sort_label,
@@ -1369,7 +1382,7 @@ impl CodeActionsMenu {
         }
     }
 
-    fn visible(&self) -> bool {
+    pub fn visible(&self) -> bool {
         !self.actions.is_empty()
     }
 
