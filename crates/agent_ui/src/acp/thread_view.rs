@@ -820,6 +820,9 @@ impl AcpThreadView {
         let Some(thread) = self.thread() else {
             return;
         };
+        if !thread.read(cx).can_resume(cx) {
+            return;
+        }
 
         let task = thread.update(cx, |thread, cx| thread.resume(cx));
         cx.spawn(async move |this, cx| {
@@ -4459,12 +4462,53 @@ impl AcpThreadView {
     }
 
     fn render_any_thread_error(&self, error: SharedString, cx: &mut Context<'_, Self>) -> Callout {
+        let can_resume = self
+            .thread()
+            .map_or(false, |thread| thread.read(cx).can_resume(cx));
+
+        let can_enable_burn_mode = self.as_native_thread(cx).map_or(false, |thread| {
+            let thread = thread.read(cx);
+            let supports_burn_mode = thread
+                .model()
+                .map_or(false, |model| model.supports_burn_mode());
+            supports_burn_mode && thread.completion_mode() == CompletionMode::Normal
+        });
+
         Callout::new()
             .severity(Severity::Error)
             .title("Error")
             .icon(IconName::XCircle)
             .description(error.clone())
-            .actions_slot(self.create_copy_button(error.to_string()))
+            .actions_slot(
+                h_flex()
+                    .gap_0p5()
+                    .when(can_resume && can_enable_burn_mode, |this| {
+                        this.child(
+                            Button::new("enable-burn-mode-and-retry", "Enable Burn Mode and Retry")
+                                .icon(IconName::ZedBurnMode)
+                                .icon_position(IconPosition::Start)
+                                .icon_size(IconSize::Small)
+                                .label_size(LabelSize::Small)
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.toggle_burn_mode(&ToggleBurnMode, window, cx);
+                                    this.resume_chat(cx);
+                                })),
+                        )
+                    })
+                    .when(can_resume, |this| {
+                        this.child(
+                            Button::new("retry", "Retry")
+                                .icon(IconName::RotateCw)
+                                .icon_position(IconPosition::Start)
+                                .icon_size(IconSize::Small)
+                                .label_size(LabelSize::Small)
+                                .on_click(cx.listener(|this, _, _window, cx| {
+                                    this.resume_chat(cx);
+                                })),
+                        )
+                    })
+                    .child(self.create_copy_button(error.to_string())),
+            )
             .dismiss_action(self.dismiss_error_button(cx))
     }
 
