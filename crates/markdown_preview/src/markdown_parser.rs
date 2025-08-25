@@ -938,6 +938,7 @@ mod tests {
         HighlightId, Language, LanguageConfig, LanguageMatcher, LanguageRegistry, tree_sitter_rust,
     };
     use pretty_assertions::assert_eq;
+    use ui::Pixels;
 
     async fn parse(input: &str) -> ParsedMarkdown {
         parse_markdown(input, None, None).await
@@ -1207,32 +1208,54 @@ mod tests {
         // Test percentage values
         assert_eq!(
             MarkdownParser::parse_length("50%"),
-            Some(relative(0.5).into())
+            Some(DefiniteLength::Fraction(0.5))
         );
         assert_eq!(
             MarkdownParser::parse_length("100%"),
-            Some(relative(1.0).into())
+            Some(DefiniteLength::Fraction(1.0))
         );
         assert_eq!(
             MarkdownParser::parse_length("25%"),
-            Some(relative(0.25).into())
+            Some(DefiniteLength::Fraction(0.25))
         );
         assert_eq!(
             MarkdownParser::parse_length("0%"),
-            Some(relative(0.0).into())
+            Some(DefiniteLength::Fraction(0.0))
         );
 
         // Test pixel values
         assert_eq!(
             MarkdownParser::parse_length("100px"),
-            Some(px(100.0).into())
+            Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(Pixels(
+                100.0
+            ))))
         );
-        assert_eq!(MarkdownParser::parse_length("50px"), Some(px(50.0).into()));
-        assert_eq!(MarkdownParser::parse_length("0px"), Some(px(0.0).into()));
+        assert_eq!(
+            MarkdownParser::parse_length("50px"),
+            Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(Pixels(
+                50.0
+            ))))
+        );
+        assert_eq!(
+            MarkdownParser::parse_length("0px"),
+            Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(Pixels(
+                0.0
+            ))))
+        );
 
         // Test values without units (should be treated as pixels)
-        assert_eq!(MarkdownParser::parse_length("100"), Some(px(100.0).into()));
-        assert_eq!(MarkdownParser::parse_length("42"), Some(px(42.0).into()));
+        assert_eq!(
+            MarkdownParser::parse_length("100"),
+            Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(Pixels(
+                100.0
+            ))))
+        );
+        assert_eq!(
+            MarkdownParser::parse_length("42"),
+            Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(Pixels(
+                42.0
+            ))))
+        );
 
         // Test invalid values
         assert_eq!(MarkdownParser::parse_length("invalid"), None);
@@ -1245,13 +1268,20 @@ mod tests {
         // Test decimal values
         assert_eq!(
             MarkdownParser::parse_length("50.5%"),
-            Some(relative(0.505).into())
+            Some(DefiniteLength::Fraction(0.505))
         );
         assert_eq!(
             MarkdownParser::parse_length("100.25px"),
-            Some(px(100.25).into())
+            Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(Pixels(
+                100.25
+            ))))
         );
-        assert_eq!(MarkdownParser::parse_length("42.0"), Some(px(42.0).into()));
+        assert_eq!(
+            MarkdownParser::parse_length("42.0"),
+            Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(Pixels(
+                42.0
+            ))))
+        );
     }
 
     #[gpui::test]
@@ -1331,7 +1361,7 @@ mod tests {
         assert_eq!(
             image.clone(),
             Image {
-                source_range: 0..65,
+                source_range: 0..75,
                 link: Link::Web {
                     url: "http://example.com/foo.png".to_string(),
                 },
