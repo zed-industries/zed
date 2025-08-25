@@ -135,12 +135,6 @@ pub enum LanguageServerKind {
     Global,
 }
 
-impl LanguageServerKind {
-    fn is_remote(&self) -> bool {
-        matches!(self, LanguageServerKind::Remote { .. })
-    }
-}
-
 impl std::fmt::Debug for LanguageServerKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -1160,6 +1154,7 @@ impl LspLogView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.toggle_rpc_trace_for_server(server_id, true, window, cx);
         let rpc_log = self.log_store.update(cx, |log_store, _| {
             log_store
                 .enable_rpc_trace_for_language_server(server_id)
@@ -1597,7 +1592,6 @@ impl Render for LspLogToolbarItemView {
 
         let view_selector = current_server.map(|server| {
             let server_id = server.server_id;
-            let is_remote = server.server_kind.is_remote();
             let rpc_trace_enabled = server.rpc_trace_enabled;
             let log_view = log_view.clone();
             PopoverMenu::new("LspViewSelector")
@@ -1619,55 +1613,53 @@ impl Render for LspLogToolbarItemView {
                                 view.show_logs_for_server(server_id, window, cx);
                             }),
                         )
-                        .when(!is_remote, |this| {
-                            this.entry(
-                                SERVER_TRACE,
-                                None,
-                                window.handler_for(&log_view, move |view, window, cx| {
-                                    view.show_trace_for_server(server_id, window, cx);
-                                }),
-                            )
-                            .custom_entry(
-                                {
-                                    let log_toolbar_view = log_toolbar_view.clone();
-                                    move |window, _| {
-                                        h_flex()
-                                            .w_full()
-                                            .justify_between()
-                                            .child(Label::new(RPC_MESSAGES))
-                                            .child(
-                                                div().child(
-                                                    Checkbox::new(
-                                                        "LspLogEnableRpcTrace",
-                                                        if rpc_trace_enabled {
+                        .entry(
+                            SERVER_TRACE,
+                            None,
+                            window.handler_for(&log_view, move |view, window, cx| {
+                                view.show_trace_for_server(server_id, window, cx);
+                            }),
+                        )
+                        .custom_entry(
+                            {
+                                let log_toolbar_view = log_toolbar_view.clone();
+                                move |window, _| {
+                                    h_flex()
+                                        .w_full()
+                                        .justify_between()
+                                        .child(Label::new(RPC_MESSAGES))
+                                        .child(
+                                            div().child(
+                                                Checkbox::new(
+                                                    "LspLogEnableRpcTrace",
+                                                    if rpc_trace_enabled {
+                                                        ToggleState::Selected
+                                                    } else {
+                                                        ToggleState::Unselected
+                                                    },
+                                                )
+                                                .on_click(window.listener_for(
+                                                    &log_toolbar_view,
+                                                    move |view, selection, window, cx| {
+                                                        let enabled = matches!(
+                                                            selection,
                                                             ToggleState::Selected
-                                                        } else {
-                                                            ToggleState::Unselected
-                                                        },
-                                                    )
-                                                    .on_click(window.listener_for(
-                                                        &log_toolbar_view,
-                                                        move |view, selection, window, cx| {
-                                                            let enabled = matches!(
-                                                                selection,
-                                                                ToggleState::Selected
-                                                            );
-                                                            view.toggle_rpc_logging_for_server(
-                                                                server_id, enabled, window, cx,
-                                                            );
-                                                            cx.stop_propagation();
-                                                        },
-                                                    )),
-                                                ),
-                                            )
-                                            .into_any_element()
-                                    }
-                                },
-                                window.handler_for(&log_view, move |view, window, cx| {
-                                    view.show_rpc_trace_for_server(server_id, window, cx);
-                                }),
-                            )
-                        })
+                                                        );
+                                                        view.toggle_rpc_logging_for_server(
+                                                            server_id, enabled, window, cx,
+                                                        );
+                                                        cx.stop_propagation();
+                                                    },
+                                                )),
+                                            ),
+                                        )
+                                        .into_any_element()
+                                }
+                            },
+                            window.handler_for(&log_view, move |view, window, cx| {
+                                view.show_rpc_trace_for_server(server_id, window, cx);
+                            }),
+                        )
                         .entry(
                             SERVER_INFO,
                             None,
