@@ -3709,6 +3709,20 @@ impl AcpThreadView {
     fn render_follow_toggle(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let following = self.is_following(cx);
 
+        let tooltip_label = if following {
+            if self.agent.name() == "Zed Agent" {
+                format!("Stop Following the {}", self.agent.name())
+            } else {
+                format!("Stop Following {}", self.agent.name())
+            }
+        } else {
+            if self.agent.name() == "Zed Agent" {
+                format!("Follow the {}", self.agent.name())
+            } else {
+                format!("Follow {}", self.agent.name())
+            }
+        };
+
         IconButton::new("follow-agent", IconName::Crosshair)
             .icon_size(IconSize::Small)
             .icon_color(Color::Muted)
@@ -3716,10 +3730,10 @@ impl AcpThreadView {
             .selected_icon_color(Some(Color::Custom(cx.theme().players().agent().cursor)))
             .tooltip(move |window, cx| {
                 if following {
-                    Tooltip::for_action("Stop Following Agent", &Follow, window, cx)
+                    Tooltip::for_action(tooltip_label.clone(), &Follow, window, cx)
                 } else {
                     Tooltip::with_meta(
-                        "Follow Agent",
+                        tooltip_label.clone(),
                         Some(&Follow),
                         "Track the agent's location as it reads and edits files.",
                         window,
