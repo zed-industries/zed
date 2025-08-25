@@ -38,9 +38,9 @@ pub struct KeybindingKeystroke {
     /// TODO:
     pub inner: Keystroke,
     /// TODO:
-    pub modifiers: Modifiers,
+    pub display_modifiers: Modifiers,
     /// TODO:
-    pub key: String,
+    pub display_key: String,
 }
 
 /// Error type for `Keystroke::parse`. This is used instead of `anyhow::Error` so that Zed can use
@@ -300,8 +300,8 @@ impl KeybindingKeystroke {
         let modifiers = keystroke.modifiers;
         KeybindingKeystroke {
             inner: keystroke,
-            modifiers,
-            key,
+            display_modifiers: modifiers,
+            display_key: key,
         }
     }
 }
@@ -369,8 +369,8 @@ impl std::fmt::Display for Keystroke {
 
 impl std::fmt::Display for KeybindingKeystroke {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        display_modifiers(&self.modifiers, f)?;
-        display_key(&self.key, f)
+        display_modifiers(&self.display_modifiers, f)?;
+        display_key(&self.display_key, f)
     }
 }
 

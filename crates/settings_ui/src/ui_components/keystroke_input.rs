@@ -116,7 +116,7 @@ impl KeystrokeInput {
             && self
                 .keystrokes
                 .last()
-                .is_some_and(|last| last.key.is_empty())
+                .is_some_and(|last| last.display_key.is_empty())
         {
             return &self.keystrokes[..self.keystrokes.len() - 1];
         }
@@ -130,8 +130,8 @@ impl KeystrokeInput {
                 key: "".to_string(),
                 key_char: None,
             },
-            modifiers,
-            key: "".to_string(),
+            display_modifiers: modifiers,
+            display_key: "".to_string(),
         }
     }
 
@@ -258,7 +258,7 @@ impl KeystrokeInput {
         self.keystrokes_changed(cx);
 
         if let Some(last) = self.keystrokes.last_mut()
-            && last.key.is_empty()
+            && last.display_key.is_empty()
             && keystrokes_len <= Self::KEYSTROKE_COUNT_MAX
         {
             if !self.search && !event.modifiers.modified() {
@@ -267,14 +267,14 @@ impl KeystrokeInput {
             }
             if self.search {
                 if self.previous_modifiers.modified() {
-                    last.modifiers |= event.modifiers;
+                    last.display_modifiers |= event.modifiers;
                     last.inner.modifiers |= event.modifiers;
                 } else {
                     self.keystrokes.push(Self::dummy(event.modifiers));
                 }
                 self.previous_modifiers |= event.modifiers;
             } else {
-                last.modifiers = event.modifiers;
+                last.display_modifiers = event.modifiers;
                 last.inner.modifiers = event.modifiers;
                 return;
             }
@@ -306,13 +306,13 @@ impl KeystrokeInput {
         let mut keystroke =
             KeybindingKeystroke::new(keystroke.clone(), false, cx.keyboard_mapper());
         if let Some(last) = self.keystrokes.last()
-            && last.key.is_empty()
+            && last.display_key.is_empty()
             && (!self.search || self.previous_modifiers.modified())
         {
-            let key = keystroke.key.clone();
+            let display_key = keystroke.display_key.clone();
             let inner_key = keystroke.inner.key.clone();
             keystroke = last.clone();
-            keystroke.key = key;
+            keystroke.display_key = display_key;
             keystroke.inner.key = inner_key;
             self.keystrokes.pop();
         }
@@ -333,11 +333,14 @@ impl KeystrokeInput {
         self.keystrokes_changed(cx);
 
         if self.search {
-            self.previous_modifiers = keystroke.modifiers;
+            self.previous_modifiers = keystroke.display_modifiers;
             return;
         }
-        if self.keystrokes.len() < Self::KEYSTROKE_COUNT_MAX && keystroke.modifiers.modified() {
-            self.keystrokes.push(Self::dummy(keystroke.modifiers));
+        if self.keystrokes.len() < Self::KEYSTROKE_COUNT_MAX
+            && keystroke.display_modifiers.modified()
+        {
+            self.keystrokes
+                .push(Self::dummy(keystroke.display_modifiers));
         }
     }
 

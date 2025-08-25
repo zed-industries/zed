@@ -2452,8 +2452,8 @@ impl KeybindingEditorModal {
 fn remove_key_char(
     KeybindingKeystroke {
         inner,
-        modifiers,
-        key,
+        display_modifiers,
+        display_key,
     }: KeybindingKeystroke,
 ) -> KeybindingKeystroke {
     KeybindingKeystroke {
@@ -2462,8 +2462,8 @@ fn remove_key_char(
             key: inner.key,
             key_char: None,
         },
-        modifiers,
-        key,
+        display_modifiers,
+        display_key,
     }
 }
 

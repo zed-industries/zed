@@ -85,8 +85,8 @@ impl PlatformKeyboardMapper for WindowsKeyboardMapper {
 
         KeybindingKeystroke {
             inner: keystroke,
-            modifiers,
-            key,
+            display_modifiers: modifiers,
+            display_key: key,
         }
     }
 }
@@ -140,7 +140,7 @@ impl WindowsKeyboardMapper {
 
     fn get_vkey_from_key(&self, key: &str, use_key_equivalents: bool) -> Option<(u16, bool)> {
         if use_key_equivalents {
-            key_needs_processing(key)
+            get_vkey_from_key_with_us_layout(key)
         } else {
             self.key_to_vkey.get(key).cloned()
         }
@@ -240,8 +240,9 @@ pub(crate) fn generate_key_char(
     }
 }
 
-fn key_needs_processing(key: &str) -> Option<(u16, bool)> {
+fn get_vkey_from_key_with_us_layout(key: &str) -> Option<(u16, bool)> {
     match key {
+        // ` => VK_OEM_3
         "`" => Some((VK_OEM_3.0, false)),
         "~" => Some((VK_OEM_3.0, true)),
         "1" => Some((VK_1.0, false)),
@@ -331,8 +332,8 @@ mod tests {
         };
         let mapped = mapper.map_key_equivalent(keystroke.clone(), true);
         assert_eq!(mapped.inner, keystroke);
-        assert_eq!(mapped.key, "a");
-        assert_eq!(mapped.modifiers, Modifiers::control());
+        assert_eq!(mapped.display_key, "a");
+        assert_eq!(mapped.display_modifiers, Modifiers::control());
 
         // Shifted case, ctrl-$
         let keystroke = Keystroke {
@@ -342,8 +343,8 @@ mod tests {
         };
         let mapped = mapper.map_key_equivalent(keystroke.clone(), true);
         assert_eq!(mapped.inner, keystroke);
-        assert_eq!(mapped.key, "4");
-        assert_eq!(mapped.modifiers, Modifiers::control_shift());
+        assert_eq!(mapped.display_key, "4");
+        assert_eq!(mapped.display_modifiers, Modifiers::control_shift());
 
         // Shifted case, but shift is true
         let keystroke = Keystroke {
@@ -353,8 +354,8 @@ mod tests {
         };
         let mapped = mapper.map_key_equivalent(keystroke, true);
         assert_eq!(mapped.inner.modifiers, Modifiers::control());
-        assert_eq!(mapped.key, "4");
-        assert_eq!(mapped.modifiers, Modifiers::control_shift());
+        assert_eq!(mapped.display_key, "4");
+        assert_eq!(mapped.display_modifiers, Modifiers::control_shift());
 
         // Windows style
         let keystroke = Keystroke {
@@ -365,7 +366,7 @@ mod tests {
         let mapped = mapper.map_key_equivalent(keystroke, true);
         assert_eq!(mapped.inner.modifiers, Modifiers::control());
         assert_eq!(mapped.inner.key, "$");
-        assert_eq!(mapped.key, "4");
-        assert_eq!(mapped.modifiers, Modifiers::control_shift());
+        assert_eq!(mapped.display_key, "4");
+        assert_eq!(mapped.display_modifiers, Modifiers::control_shift());
     }
 }
