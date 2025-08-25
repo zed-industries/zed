@@ -301,6 +301,7 @@ pub fn build_window_options(display_uuid: Option<Uuid>, cx: &mut App) -> WindowO
             width: px(360.0),
             height: px(240.0),
         }),
+        ..Default::default()
     }
 }
 
