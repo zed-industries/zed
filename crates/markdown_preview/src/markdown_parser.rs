@@ -926,17 +926,14 @@ impl<'a> MarkdownParser<'a> {
 
 #[cfg(test)]
 mod tests {
-    use core::panic;
-
     use super::*;
-
     use ParsedMarkdownListItemType::*;
-    use gpui::BackgroundExecutor;
+    use core::panic;
+    use gpui::{AbsoluteLength, BackgroundExecutor, DefiniteLength};
     use language::{
         HighlightId, Language, LanguageConfig, LanguageMatcher, LanguageRegistry, tree_sitter_rust,
     };
     use pretty_assertions::assert_eq;
-    use ui::{AbsoluteLength, DefiniteLength};
 
     async fn parse(input: &str) -> ParsedMarkdown {
         parse_markdown(input, None, None).await
@@ -1201,6 +1198,58 @@ mod tests {
         );
     }
 
+    #[test]
+    fn test_parse_length() {
+        // Test percentage values
+        assert_eq!(
+            MarkdownParser::parse_length("50%"),
+            Some(relative(0.5).into())
+        );
+        assert_eq!(
+            MarkdownParser::parse_length("100%"),
+            Some(relative(1.0).into())
+        );
+        assert_eq!(
+            MarkdownParser::parse_length("25%"),
+            Some(relative(0.25).into())
+        );
+        assert_eq!(
+            MarkdownParser::parse_length("0%"),
+            Some(relative(0.0).into())
+        );
+
+        // Test pixel values
+        assert_eq!(
+            MarkdownParser::parse_length("100px"),
+            Some(px(100.0).into())
+        );
+        assert_eq!(MarkdownParser::parse_length("50px"), Some(px(50.0).into()));
+        assert_eq!(MarkdownParser::parse_length("0px"), Some(px(0.0).into()));
+
+        // Test values without units (should be treated as pixels)
+        assert_eq!(MarkdownParser::parse_length("100"), Some(px(100.0).into()));
+        assert_eq!(MarkdownParser::parse_length("42"), Some(px(42.0).into()));
+
+        // Test invalid values
+        assert_eq!(MarkdownParser::parse_length("invalid"), None);
+        assert_eq!(MarkdownParser::parse_length("px"), None);
+        assert_eq!(MarkdownParser::parse_length("%"), None);
+        assert_eq!(MarkdownParser::parse_length(""), None);
+        assert_eq!(MarkdownParser::parse_length("abc%"), None);
+        assert_eq!(MarkdownParser::parse_length("abcpx"), None);
+
+        // Test decimal values
+        assert_eq!(
+            MarkdownParser::parse_length("50.5%"),
+            Some(relative(0.505).into())
+        );
+        assert_eq!(
+            MarkdownParser::parse_length("100.25px"),
+            Some(px(100.25).into())
+        );
+        assert_eq!(MarkdownParser::parse_length("42.0"), Some(px(42.0).into()));
+    }
+
     #[gpui::test]
     async fn test_html_image_tag() {
         let parsed = parse("<img src=\"http://example.com/foo.png\" />").await;
@@ -1247,6 +1296,30 @@ mod tests {
     async fn test_html_image_tag_with_height_and_width() {
         let parsed =
             parse("<img src=\"http://example.com/foo.png\" height=\"100\" width=\"200\" />").await;
+
+        let ParsedMarkdownElement::Image(image) = &parsed.children[0] else {
+            panic!("Expected a image element");
+        };
+        assert_eq!(
+            image.clone(),
+            Image {
+                source_range: 0..65,
+                link: Link::Web {
+                    url: "http://example.com/foo.png".to_string(),
+                },
+                alt_text: None,
+                height: Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(px(100.)))),
+                width: Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(px(200.)))),
+            },
+        );
+    }
+
+    #[gpui::test]
+    async fn test_html_image_style_tag_with_height_and_width() {
+        let parsed = parse(
+            "<img src=\"http://example.com/foo.png\" style=\"height:100px; width:200px;\" />",
+        )
+        .await;
 
         let ParsedMarkdownElement::Image(image) = &parsed.children[0] else {
             panic!("Expected a image element");
