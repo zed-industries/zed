@@ -14856,6 +14856,7 @@ dependencies = [
  "serde_derive",
  "serde_json",
  "serde_json_lenient",
+ "settings_ui_macros",
  "smallvec",
  "tree-sitter",
  "tree-sitter-json",
@@ -14924,6 +14925,15 @@ dependencies = [
  "workspace",
  "workspace-hack",
  "zed_actions",
+]
+
+[[package]]
+name = "settings_ui_macros"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.101",
 ]
 
 [[package]]

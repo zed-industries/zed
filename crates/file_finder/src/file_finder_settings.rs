@@ -1,9 +1,9 @@
 use anyhow::Result;
 use schemars::JsonSchema;
 use serde_derive::{Deserialize, Serialize};
-use settings::{Settings, SettingsSources};
+use settings::{DeriveSettingsUI as SettingsUI, Settings, SettingsSources};
 
-#[derive(Deserialize, Debug, Clone, Copy, PartialEq)]
+#[derive(Deserialize, Debug, Clone, Copy, PartialEq, SettingsUI)]
 pub struct FileFinderSettings {
     pub file_icons: bool,
     pub modal_max_width: Option<FileFinderWidth>,

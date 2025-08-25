@@ -1,6 +1,6 @@
 use std::fmt::{Display, Formatter};
 
-use crate::{Settings, SettingsSources, VsCodeSettings};
+use crate::{Settings, SettingsSources, SettingsUI, VsCodeSettings};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -95,6 +95,8 @@ impl BaseKeymap {
             .unwrap_or_default()
     }
 }
+
+impl SettingsUI for BaseKeymap {}
 
 impl Settings for BaseKeymap {
     const KEY: Option<&'static str> = Some("base_keymap");

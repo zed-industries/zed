@@ -1,10 +1,10 @@
 use gpui::Pixels;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsSources};
+use settings::{DeriveSettingsUI as SettingsUI, Settings, SettingsSources};
 use workspace::dock::DockPosition;
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, SettingsUI)]
 pub struct CollaborationPanelSettings {
     pub button: bool,
     pub dock: DockPosition,
@@ -20,7 +20,7 @@ pub enum ChatPanelButton {
     WhenInCall,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, SettingsUI)]
 pub struct ChatPanelSettings {
     pub button: ChatPanelButton,
     pub dock: DockPosition,
@@ -43,7 +43,7 @@ pub struct ChatPanelSettingsContent {
     pub default_width: Option<f32>,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, SettingsUI)]
 pub struct NotificationPanelSettings {
     pub button: bool,
     pub dock: DockPosition,
@@ -66,7 +66,7 @@ pub struct PanelSettingsContent {
     pub default_width: Option<f32>,
 }
 
-#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, Debug)]
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, Debug, SettingsUI)]
 pub struct MessageEditorSettings {
     /// Whether to automatically replace emoji shortcodes with emoji characters.
     /// For example: typing `:wave:` gets replaced with `👋`.

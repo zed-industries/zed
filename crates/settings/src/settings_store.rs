@@ -35,10 +35,12 @@ use crate::{
     WorktreeId, parse_json_with_comments, update_value_in_json_text,
 };
 
+pub trait SettingsUI {}
+
 /// A value that can be defined as a user setting.
 ///
 /// Settings can be loaded from a combination of multiple JSON files.
-pub trait Settings: 'static + Send + Sync {
+pub trait Settings: SettingsUI + 'static + Send + Sync {
     /// The name of a key within the JSON file from which this setting should
     /// be deserialized. If this is `None`, then the setting will be deserialized
     /// from the root object.
@@ -1505,7 +1507,10 @@ mod tests {
     use crate::VsCodeSettingsSource;
 
     use super::*;
+    // This is so the SettingsUI macro can still work properly
+    use crate as settings;
     use serde_derive::Deserialize;
+    use settings_ui_macros::SettingsUI;
     use unindent::Unindent;
 
     #[gpui::test]
@@ -2048,14 +2053,14 @@ mod tests {
         pretty_assertions::assert_eq!(new, expected);
     }
 
-    #[derive(Debug, PartialEq, Deserialize)]
+    #[derive(Debug, PartialEq, Deserialize, SettingsUI)]
     struct UserSettings {
         name: String,
         age: u32,
         staff: bool,
     }
 
-    #[derive(Default, Clone, Serialize, Deserialize, JsonSchema)]
+    #[derive(Default, Clone, Serialize, Deserialize, JsonSchema, SettingsUI)]
     struct UserSettingsContent {
         name: Option<String>,
         age: Option<u32>,
@@ -2075,7 +2080,7 @@ mod tests {
         }
     }
 
-    #[derive(Debug, Deserialize, PartialEq)]
+    #[derive(Debug, Deserialize, PartialEq, SettingsUI)]
     struct TurboSetting(bool);
 
     impl Settings for TurboSetting {
@@ -2089,7 +2094,7 @@ mod tests {
         fn import_from_vscode(_vscode: &VsCodeSettings, _current: &mut Self::FileContent) {}
     }
 
-    #[derive(Clone, Debug, PartialEq, Deserialize)]
+    #[derive(Clone, Debug, PartialEq, Deserialize, SettingsUI)]
     struct MultiKeySettings {
         #[serde(default)]
         key1: String,
@@ -2122,7 +2127,7 @@ mod tests {
         }
     }
 
-    #[derive(Debug, Deserialize)]
+    #[derive(Debug, Deserialize, SettingsUI)]
     struct JournalSettings {
         pub path: String,
         pub hour_format: HourFormat,
@@ -2223,7 +2228,7 @@ mod tests {
         );
     }
 
-    #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+    #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, SettingsUI)]
     struct LanguageSettings {
         #[serde(default)]
         languages: HashMap<String, LanguageSettingEntry>,

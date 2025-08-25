@@ -2,9 +2,9 @@ use anyhow::Result;
 use gpui::App;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsSources};
+use settings::{DeriveSettingsUI as SettingsUI, Settings, SettingsSources};
 
-#[derive(Deserialize, Debug)]
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, Debug, SettingsUI)]
 pub struct AudioSettings {
     /// Opt into the new audio system.
     #[serde(rename = "experimental.rodio_audio", default)]

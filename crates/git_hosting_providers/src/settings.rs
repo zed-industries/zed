@@ -5,7 +5,7 @@ use git::GitHostingProviderRegistry;
 use gpui::App;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsStore};
+use settings::{DeriveSettingsUI as SettingsUI, Settings, SettingsStore};
 use url::Url;
 use util::ResultExt as _;
 
@@ -78,7 +78,7 @@ pub struct GitHostingProviderConfig {
     pub name: String,
 }
 
-#[derive(Default, Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Default, Debug, Clone, Serialize, Deserialize, JsonSchema, SettingsUI)]
 pub struct GitHostingProviderSettings {
     /// The list of custom Git hosting providers.
     #[serde(default)]

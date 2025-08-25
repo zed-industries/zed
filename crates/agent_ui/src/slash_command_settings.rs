@@ -2,10 +2,10 @@ use anyhow::Result;
 use gpui::App;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsSources};
+use settings::{DeriveSettingsUI as SettingsUI, Settings, SettingsSources};
 
 /// Settings for slash commands.
-#[derive(Deserialize, Serialize, Debug, Default, Clone, JsonSchema)]
+#[derive(Deserialize, Serialize, Debug, Default, Clone, JsonSchema, SettingsUI)]
 pub struct SlashCommandSettings {
     /// Settings for the `/cargo-workspace` slash command.
     #[serde(default)]

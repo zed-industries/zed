@@ -2,7 +2,7 @@ use editor::{Editor, EditorSettings, MultiBufferSnapshot};
 use gpui::{App, Entity, FocusHandle, Focusable, Subscription, Task, WeakEntity};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsSources};
+use settings::{DeriveSettingsUI as SettingsUI, Settings, SettingsSources};
 use std::{fmt::Write, num::NonZeroU32, time::Duration};
 use text::{Point, Selection};
 use ui::{
@@ -293,7 +293,7 @@ impl StatusItemView for CursorPosition {
     }
 }
 
-#[derive(Clone, Copy, Default, PartialEq, JsonSchema, Deserialize, Serialize)]
+#[derive(Clone, Copy, Default, PartialEq, JsonSchema, Deserialize, Serialize, SettingsUI)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum LineIndicatorFormat {
     Short,

@@ -17,7 +17,8 @@ use serde::{
 };
 
 use settings::{
-    ParameterizedJsonSchema, Settings, SettingsLocation, SettingsSources, SettingsStore,
+    DeriveSettingsUI as SettingsUI, ParameterizedJsonSchema, Settings, SettingsLocation,
+    SettingsSources, SettingsStore,
 };
 use shellexpand;
 use std::{borrow::Cow, num::NonZeroU32, path::Path, slice, sync::Arc};
@@ -55,7 +56,7 @@ pub fn all_language_settings<'a>(
 }
 
 /// The settings for all languages.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, SettingsUI)]
 pub struct AllLanguageSettings {
     /// The edit prediction settings.
     pub edit_predictions: EditPredictionSettings,

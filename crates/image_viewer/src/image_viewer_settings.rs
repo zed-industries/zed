@@ -1,10 +1,10 @@
 use gpui::App;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsSources};
+use settings::{DeriveSettingsUI as SettingsUI, Settings, SettingsSources};
 
 /// The settings for the image viewer.
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, Default)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, Default, SettingsUI)]
 pub struct ImageViewerSettings {
     /// The unit to use for displaying image file sizes.
     ///
