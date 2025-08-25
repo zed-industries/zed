@@ -1,3 +1,7 @@
+mod boundary;
+mod object;
+mod select;
+
 use editor::display_map::DisplaySnapshot;
 use editor::{DisplayPoint, Editor, SelectionEffects, ToOffset, ToPoint, movement};
 use gpui::{Action, actions};

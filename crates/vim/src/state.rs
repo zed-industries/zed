@@ -132,6 +132,13 @@ pub enum Operator {
     ToggleComments,
     ReplaceWithRegister,
     Exchange,
+    HelixMatch,
+    HelixNext {
+        around: bool,
+    },
+    HelixPrevious {
+        around: bool,
+    },
 }
 
 #[derive(Default, Clone, Debug)]
@@ -1018,6 +1025,9 @@ impl Operator {
             Operator::RecordRegister => "q",
             Operator::ReplayRegister => "@",
             Operator::ToggleComments => "gc",
+            Operator::HelixMatch => "helix_m",
+            Operator::HelixNext { .. } => "helix_next",
+            Operator::HelixPrevious { .. } => "helix_previous",
         }
     }
 
@@ -1039,6 +1049,9 @@ impl Operator {
             } => format!("^V{}", make_visible(prefix)),
             Operator::AutoIndent => "=".to_string(),
             Operator::ShellCommand => "=".to_string(),
+            Operator::HelixMatch => "m".to_string(),
+            Operator::HelixNext { .. } => "]".to_string(),
+            Operator::HelixPrevious { .. } => "[".to_string(),
             _ => self.id().to_string(),
         }
     }
@@ -1077,7 +1090,10 @@ impl Operator {
             | Operator::Object { .. }
             | Operator::ChangeSurrounds { target: None }
             | Operator::OppositeCase
-            | Operator::ToggleComments => false,
+            | Operator::ToggleComments
+            | Operator::HelixMatch
+            | Operator::HelixNext { .. }
+            | Operator::HelixPrevious { .. } => false,
         }
     }
 
@@ -1101,7 +1117,9 @@ impl Operator {
             | Operator::AddSurrounds { target: None }
             | Operator::ChangeSurrounds { target: None }
             | Operator::DeleteSurrounds
-            | Operator::Exchange => true,
+            | Operator::Exchange
+            | Operator::HelixNext { .. }
+            | Operator::HelixPrevious { .. } => true,
             Operator::Yank
             | Operator::Object { .. }
             | Operator::FindForward { .. }
@@ -1116,7 +1134,8 @@ impl Operator {
             | Operator::Jump { .. }
             | Operator::Register
             | Operator::RecordRegister
-            | Operator::ReplayRegister => false,
+            | Operator::ReplayRegister
+            | Operator::HelixMatch => false,
         }
     }
 }
