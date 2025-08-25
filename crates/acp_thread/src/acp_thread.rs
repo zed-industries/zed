@@ -2639,7 +2639,11 @@ mod tests {
             }
         }
 
-        fn prompt_capabilities(&self) -> acp::PromptCapabilities {
+        fn prompt_capabilities(
+            &self,
+            _session: &acp::SessionId,
+            _cx: &mut App,
+        ) -> acp::PromptCapabilities {
             acp::PromptCapabilities {
                 image: true,
                 audio: true,

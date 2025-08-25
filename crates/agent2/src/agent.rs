@@ -26,7 +26,7 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::rc::Rc;
 use std::sync::Arc;
-use util::ResultExt;
+use util::{ResultExt, maybe};
 
 const RULES_FILE_NAMES: [&str; 9] = [
     ".rules",
@@ -925,9 +925,23 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
         })
     }
 
-    fn prompt_capabilities(&self) -> acp::PromptCapabilities {
+    fn prompt_capabilities(
+        &self,
+        session: &acp::SessionId,
+        cx: &mut App,
+    ) -> acp::PromptCapabilities {
+        let model = maybe!({
+            let thread = self
+                .0
+                .read(cx)
+                .sessions
+                .get(session)
+                .map(|session| session.thread.clone())?;
+            thread.read(cx).model().cloned()
+        });
+        let image = model.map_or(true, |model| model.supports_images());
         acp::PromptCapabilities {
-            image: true,
+            image,
             audio: false,
             embedded_context: true,
         }

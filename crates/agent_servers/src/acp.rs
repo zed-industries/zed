@@ -279,7 +279,12 @@ impl AgentConnection for AcpConnection {
         })
     }
 
-    fn prompt_capabilities(&self) -> acp::PromptCapabilities {
+    fn prompt_capabilities(
+        &self,
+        _session: &acp::SessionId,
+        _cx: &mut App,
+    ) -> acp::PromptCapabilities {
+        // TODO: support ACP sending prompt capabilities per session?
         self.prompt_capabilities
     }
 

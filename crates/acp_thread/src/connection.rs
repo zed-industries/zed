@@ -38,7 +38,11 @@ pub trait AgentConnection {
         cx: &mut App,
     ) -> Task<Result<acp::PromptResponse>>;
 
-    fn prompt_capabilities(&self) -> acp::PromptCapabilities;
+    fn prompt_capabilities(
+        &self,
+        session: &acp::SessionId,
+        cx: &mut App,
+    ) -> acp::PromptCapabilities;
 
     fn resume(
         &self,
@@ -348,7 +352,11 @@ mod test_support {
             Task::ready(Ok(thread))
         }
 
-        fn prompt_capabilities(&self) -> acp::PromptCapabilities {
+        fn prompt_capabilities(
+            &self,
+            _session: &acp::SessionId,
+            _cx: &mut App,
+        ) -> acp::PromptCapabilities {
             acp::PromptCapabilities {
                 image: true,
                 audio: true,

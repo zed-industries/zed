@@ -471,8 +471,9 @@ impl AcpThreadView {
                     Ok(thread) => {
                         let action_log = thread.read(cx).action_log().clone();
 
+                        let session = thread.read(cx).session_id().clone();
                         this.prompt_capabilities
-                            .set(connection.prompt_capabilities());
+                            .set(connection.prompt_capabilities(&session, cx));
 
                         let count = thread.read(cx).entries().len();
                         this.list_state.splice(0..0, count);
@@ -5316,7 +5317,11 @@ pub(crate) mod tests {
             &[]
         }
 
-        fn prompt_capabilities(&self) -> acp::PromptCapabilities {
+        fn prompt_capabilities(
+            &self,
+            _session: &acp::SessionId,
+            _cx: &mut App,
+        ) -> acp::PromptCapabilities {
             acp::PromptCapabilities {
                 image: true,
                 audio: true,

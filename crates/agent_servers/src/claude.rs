@@ -319,7 +319,11 @@ impl AgentConnection for ClaudeAgentConnection {
         cx.foreground_executor().spawn(async move { end_rx.await? })
     }
 
-    fn prompt_capabilities(&self) -> acp::PromptCapabilities {
+    fn prompt_capabilities(
+        &self,
+        _session: &acp::SessionId,
+        _cx: &mut App,
+    ) -> acp::PromptCapabilities {
         acp::PromptCapabilities {
             image: true,
             audio: false,
