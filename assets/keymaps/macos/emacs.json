@@ -38,6 +38,7 @@
       "alt-;": ["editor::ToggleComments", { "advance_downwards": false }],
       "ctrl-x ctrl-;": "editor::ToggleComments",
       "alt-.": "editor::GoToDefinition", // xref-find-definitions
+      "alt-?": "editor::FindAllReferences", // xref-find-references
       "alt-,": "pane::GoBack", // xref-pop-marker-stack
       "ctrl-x h": "editor::SelectAll", // mark-whole-buffer
       "ctrl-d": "editor::Delete", // delete-char
