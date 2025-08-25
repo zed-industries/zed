@@ -241,6 +241,7 @@ enum WhichFontSize {
     None,
 }
 
+// TODO unify this with ExternalAgent
 #[derive(Debug, Default, Clone, PartialEq, Serialize, Deserialize)]
 pub enum AgentType {
     #[default]
@@ -1025,6 +1026,8 @@ impl AgentPanel {
     }
 
     fn new_prompt_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        telemetry::event!("Agent Thread Started", agent = "zed-text");
+
         let context = self
             .context_store
             .update(cx, |context_store, cx| context_store.create(cx));
@@ -1116,6 +1119,8 @@ impl AgentPanel {
                     .agent
                 }
             };
+
+            telemetry::event!("Agent Thread Started", agent = ext_agent.name());
 
             let server = ext_agent.server(fs, history);
 
@@ -1474,6 +1479,7 @@ impl AgentPanel {
                 tools,
                 self.language_registry.clone(),
                 self.workspace.clone(),
+                self.project.downgrade(),
                 window,
                 cx,
             )
@@ -2325,6 +2331,8 @@ impl AgentPanel {
             .menu({
                 let menu = self.assistant_navigation_menu.clone();
                 move |window, cx| {
+                    telemetry::event!("View Thread History Clicked");
+
                     if let Some(menu) = menu.as_ref() {
                         menu.update(cx, |_, cx| {
                             cx.defer_in(window, |menu, window, cx| {
@@ -2503,6 +2511,8 @@ impl AgentPanel {
                 let workspace = self.workspace.clone();
 
                 move |window, cx| {
+                    telemetry::event!("New Thread Clicked");
+
                     let active_thread = active_thread.clone();
                     Some(ContextMenu::build(window, cx, |mut menu, _window, cx| {
                         menu = menu

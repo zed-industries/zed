@@ -36,6 +36,7 @@ pub trait AgentServer: Send {
     fn name(&self) -> SharedString;
     fn empty_state_headline(&self) -> SharedString;
     fn empty_state_message(&self) -> SharedString;
+    fn telemetry_id(&self) -> &'static str;
 
     fn connect(
         &self,
@@ -97,7 +98,7 @@ pub struct AgentServerCommand {
 }
 
 impl AgentServerCommand {
-    pub(crate) async fn resolve(
+    pub async fn resolve(
         path_bin_name: &'static str,
         extra_args: &[&'static str],
         fallback_path: Option<&Path>,

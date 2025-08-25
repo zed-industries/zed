@@ -17,6 +17,10 @@ pub struct Gemini;
 const ACP_ARG: &str = "--experimental-acp";
 
 impl AgentServer for Gemini {
+    fn telemetry_id(&self) -> &'static str {
+        "gemini-cli"
+    }
+
     fn name(&self) -> SharedString {
         "Gemini CLI".into()
     }
@@ -53,7 +57,7 @@ impl AgentServer for Gemini {
                 return Err(LoadError::NotInstalled {
                     error_message: "Failed to find Gemini CLI binary".into(),
                     install_message: "Install Gemini CLI".into(),
-                    install_command: "npm install -g @google/gemini-cli@preview".into()
+                    install_command: Self::install_command().into(),
                 }.into());
             };
 
@@ -88,7 +92,7 @@ impl AgentServer for Gemini {
                             current_version
                         ).into(),
                         upgrade_message: "Upgrade Gemini CLI to latest".into(),
-                        upgrade_command: "npm install -g @google/gemini-cli@preview".into(),
+                        upgrade_command: Self::upgrade_command().into(),
                     }.into())
                 }
             }
@@ -98,6 +102,20 @@ impl AgentServer for Gemini {
 
     fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
         self
+    }
+}
+
+impl Gemini {
+    pub fn binary_name() -> &'static str {
+        "gemini"
+    }
+
+    pub fn install_command() -> &'static str {
+        "npm install -g @google/gemini-cli@preview"
+    }
+
+    pub fn upgrade_command() -> &'static str {
+        "npm install -g @google/gemini-cli@preview"
     }
 }
 

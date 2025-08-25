@@ -1529,6 +1529,7 @@ impl AgentDiff {
             | AcpThreadEvent::TokenUsageUpdated
             | AcpThreadEvent::EntriesRemoved(_)
             | AcpThreadEvent::ToolAuthorizationRequired
+            | AcpThreadEvent::PromptCapabilitiesUpdated
             | AcpThreadEvent::Retry(_) => {}
         }
     }

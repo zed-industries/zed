@@ -43,6 +43,10 @@ use acp_thread::{AcpThread, AgentConnection, AuthRequired, LoadError, MentionUri
 pub struct ClaudeCode;
 
 impl AgentServer for ClaudeCode {
+    fn telemetry_id(&self) -> &'static str {
+        "claude-code"
+    }
+
     fn name(&self) -> SharedString {
         "Claude Code".into()
     }
@@ -249,13 +253,19 @@ impl AgentConnection for ClaudeAgentConnection {
             });
 
             let action_log = cx.new(|_| ActionLog::new(project.clone()))?;
-            let thread = cx.new(|_cx| {
+            let thread = cx.new(|cx| {
                 AcpThread::new(
                     "Claude Code",
                     self.clone(),
                     project,
                     action_log,
                     session_id.clone(),
+                    watch::Receiver::constant(acp::PromptCapabilities {
+                        image: true,
+                        audio: false,
+                        embedded_context: true,
+                    }),
+                    cx,
                 )
             })?;
 
@@ -317,14 +327,6 @@ impl AgentConnection for ClaudeAgentConnection {
         }
 
         cx.foreground_executor().spawn(async move { end_rx.await? })
-    }
-
-    fn prompt_capabilities(&self) -> acp::PromptCapabilities {
-        acp::PromptCapabilities {
-            image: true,
-            audio: false,
-            embedded_context: true,
-        }
     }
 
     fn cancel(&self, session_id: &acp::SessionId, _cx: &mut App) {

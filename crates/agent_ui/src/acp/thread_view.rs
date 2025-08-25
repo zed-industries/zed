@@ -475,7 +475,7 @@ impl AcpThreadView {
                         let action_log = thread.read(cx).action_log().clone();
 
                         this.prompt_capabilities
-                            .set(connection.prompt_capabilities());
+                            .set(thread.read(cx).prompt_capabilities());
 
                         let count = thread.read(cx).entries().len();
                         this.list_state.splice(0..0, count);
@@ -893,6 +893,8 @@ impl AcpThreadView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let agent_telemetry_id = self.agent.telemetry_id();
+
         self.thread_error.take();
         self.editing_message.take();
         self.thread_feedback.clear();
@@ -937,6 +939,9 @@ impl AcpThreadView {
                     }
                 });
                 drop(guard);
+
+                telemetry::event!("Agent Message Sent", agent = agent_telemetry_id);
+
                 thread.send(contents, cx)
             })?;
             send.await
@@ -1164,6 +1169,10 @@ impl AcpThreadView {
                     });
                 }
             }
+            AcpThreadEvent::PromptCapabilitiesUpdated => {
+                self.prompt_capabilities
+                    .set(thread.read(cx).prompt_capabilities());
+            }
             AcpThreadEvent::TokenUsageUpdated => {}
         }
         cx.notify();
@@ -1243,30 +1252,44 @@ impl AcpThreadView {
         pending_auth_method.replace(method.clone());
         let authenticate = connection.authenticate(method, cx);
         cx.notify();
-        self.auth_task = Some(cx.spawn_in(window, {
-            let project = self.project.clone();
-            let agent = self.agent.clone();
-            async move |this, cx| {
-                let result = authenticate.await;
+        self.auth_task =
+            Some(cx.spawn_in(window, {
+                let project = self.project.clone();
+                let agent = self.agent.clone();
+                async move |this, cx| {
+                    let result = authenticate.await;
 
-                this.update_in(cx, |this, window, cx| {
-                    if let Err(err) = result {
-                        this.handle_thread_error(err, cx);
-                    } else {
-                        this.thread_state = Self::initial_state(
-                            agent,
-                            None,
-                            this.workspace.clone(),
-                            project.clone(),
-                            window,
-                            cx,
-                        )
+                    match &result {
+                        Ok(_) => telemetry::event!(
+                            "Authenticate Agent Succeeded",
+                            agent = agent.telemetry_id()
+                        ),
+                        Err(_) => {
+                            telemetry::event!(
+                                "Authenticate Agent Failed",
+                                agent = agent.telemetry_id(),
+                            )
+                        }
                     }
-                    this.auth_task.take()
-                })
-                .ok();
-            }
-        }));
+
+                    this.update_in(cx, |this, window, cx| {
+                        if let Err(err) = result {
+                            this.handle_thread_error(err, cx);
+                        } else {
+                            this.thread_state = Self::initial_state(
+                                agent,
+                                None,
+                                this.workspace.clone(),
+                                project.clone(),
+                                window,
+                                cx,
+                            )
+                        }
+                        this.auth_task.take()
+                    })
+                    .ok();
+                }
+            }));
     }
 
     fn authorize_tool_call(
@@ -2725,6 +2748,12 @@ impl AcpThreadView {
                                         .on_click({
                                             let method_id = method.id.clone();
                                             cx.listener(move |this, _, window, cx| {
+                                                telemetry::event!(
+                                                    "Authenticate Agent Started",
+                                                    agent = this.agent.telemetry_id(),
+                                                    method = method_id
+                                                );
+
                                                 this.authenticate(method_id.clone(), window, cx)
                                             })
                                         })
@@ -2753,6 +2782,8 @@ impl AcpThreadView {
                     .icon_color(Color::Muted)
                     .icon_position(IconPosition::Start)
                     .on_click(cx.listener(move |this, _, window, cx| {
+                        telemetry::event!("Agent Install CLI", agent = this.agent.telemetry_id());
+
                         let task = this
                             .workspace
                             .update(cx, |workspace, cx| {
@@ -2760,7 +2791,7 @@ impl AcpThreadView {
                                 let cwd = project.first_project_directory(cx);
                                 let shell = project.terminal_settings(&cwd, cx).shell.clone();
                                 let spawn_in_terminal = task::SpawnInTerminal {
-                                    id: task::TaskId("install".to_string()),
+                                    id: task::TaskId(install_command.clone()),
                                     full_label: install_command.clone(),
                                     label: install_command.clone(),
                                     command: Some(install_command.clone()),
@@ -2810,6 +2841,8 @@ impl AcpThreadView {
                     .icon_color(Color::Muted)
                     .icon_position(IconPosition::Start)
                     .on_click(cx.listener(move |this, _, window, cx| {
+                        telemetry::event!("Agent Upgrade CLI", agent = this.agent.telemetry_id());
+
                         let task = this
                             .workspace
                             .update(cx, |workspace, cx| {
@@ -2817,7 +2850,7 @@ impl AcpThreadView {
                                 let cwd = project.first_project_directory(cx);
                                 let shell = project.terminal_settings(&cwd, cx).shell.clone();
                                 let spawn_in_terminal = task::SpawnInTerminal {
-                                    id: task::TaskId("upgrade".to_string()),
+                                    id: task::TaskId(upgrade_command.to_string()),
                                     full_label: upgrade_command.clone(),
                                     label: upgrade_command.clone(),
                                     command: Some(upgrade_command.clone()),
@@ -3660,6 +3693,8 @@ impl AcpThreadView {
                 })
                 .ok();
         }
+
+        telemetry::event!("Follow Agent Selected", following = !following);
     }
 
     fn render_follow_toggle(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -5287,6 +5322,10 @@ pub(crate) mod tests {
     where
         C: 'static + AgentConnection + Send + Clone,
     {
+        fn telemetry_id(&self) -> &'static str {
+            "test"
+        }
+
         fn logo(&self) -> ui::IconName {
             ui::IconName::Ai
         }
@@ -5335,20 +5374,18 @@ pub(crate) mod tests {
                     project,
                     action_log,
                     SessionId("test".into()),
+                    watch::Receiver::constant(acp::PromptCapabilities {
+                        image: true,
+                        audio: true,
+                        embedded_context: true,
+                    }),
+                    cx,
                 )
             })))
         }
 
         fn auth_methods(&self) -> &[acp::AuthMethod] {
             &[]
-        }
-
-        fn prompt_capabilities(&self) -> acp::PromptCapabilities {
-            acp::PromptCapabilities {
-                image: true,
-                audio: true,
-                embedded_context: true,
-            }
         }
 
         fn authenticate(

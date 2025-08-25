@@ -160,6 +160,7 @@ pub struct NewNativeAgentThreadFromSummary {
     from_session_id: agent_client_protocol::SessionId,
 }
 
+// TODO unify this with AgentType
 #[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 enum ExternalAgent {
@@ -174,6 +175,15 @@ enum ExternalAgent {
 }
 
 impl ExternalAgent {
+    fn name(&self) -> &'static str {
+        match self {
+            Self::NativeAgent => "zed",
+            Self::Gemini => "gemini-cli",
+            Self::ClaudeCode => "claude-code",
+            Self::Custom { .. } => "custom",
+        }
+    }
+
     pub fn server(
         &self,
         fs: Arc<dyn fs::Fs>,
