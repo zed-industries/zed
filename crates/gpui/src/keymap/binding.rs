@@ -1,7 +1,5 @@
 use std::rc::Rc;
 
-use collections::HashMap;
-
 use crate::{
     Action, AsKeystroke, DummyKeyboardMapper, InvalidKeystrokeError, KeyBindingContextPredicate,
     KeybindingKeystroke, Keystroke, PlatformKeyboardMapper, SharedString,
@@ -41,7 +39,6 @@ impl KeyBinding {
             context_predicate,
             false,
             None,
-            None,
             &DummyKeyboardMapper,
         )
         .unwrap()
@@ -53,31 +50,20 @@ impl KeyBinding {
         action: Box<dyn Action>,
         context_predicate: Option<Rc<KeyBindingContextPredicate>>,
         use_key_equivalents: bool,
-        key_equivalents: Option<&HashMap<char, char>>,
         action_input: Option<SharedString>,
         keyboard_mapper: &dyn PlatformKeyboardMapper,
     ) -> std::result::Result<Self, InvalidKeystrokeError> {
-        let mut keystrokes: SmallVec<[Keystroke; 2]> = keystrokes
+        let keystrokes: SmallVec<[KeybindingKeystroke; 2]> = keystrokes
             .split_whitespace()
-            .map(Keystroke::parse)
-            .collect::<std::result::Result<_, _>>()?;
-
-        if let Some(equivalents) = key_equivalents {
-            for keystroke in keystrokes.iter_mut() {
-                if keystroke.key.chars().count() == 1
-                    && let Some(key) = equivalents.get(&keystroke.key.chars().next().unwrap())
-                {
-                    keystroke.key = key.to_string();
-                }
-            }
-        }
-
-        let keystrokes = keystrokes
-            .into_iter()
-            .map(|keystroke| {
-                KeybindingKeystroke::new(keystroke, use_key_equivalents, keyboard_mapper)
+            .map(|source| {
+                let keystroke = Keystroke::parse(source)?;
+                Ok(KeybindingKeystroke::new(
+                    keystroke,
+                    use_key_equivalents,
+                    keyboard_mapper,
+                ))
             })
-            .collect();
+            .collect::<std::result::Result<_, _>>()?;
 
         Ok(Self {
             keystrokes,

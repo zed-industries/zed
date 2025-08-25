@@ -212,9 +212,6 @@ impl KeymapFile {
     }
 
     pub fn load(content: &str, cx: &App) -> KeymapFileLoadResult {
-        let key_equivalents =
-            crate::key_equivalents::get_key_equivalents(cx.keyboard_layout().id());
-
         if content.is_empty() {
             return KeymapFileLoadResult::Success {
                 key_bindings: Vec::new(),
@@ -256,12 +253,6 @@ impl KeymapFile {
                 }
             };
 
-            let key_equivalents = if *use_key_equivalents {
-                key_equivalents.as_ref()
-            } else {
-                None
-            };
-
             let mut section_errors = String::new();
 
             if !unrecognized_fields.is_empty() {
@@ -280,7 +271,6 @@ impl KeymapFile {
                         action,
                         context_predicate.clone(),
                         *use_key_equivalents,
-                        key_equivalents,
                         cx,
                     );
                     match result {
@@ -339,7 +329,6 @@ impl KeymapFile {
         action: &KeymapAction,
         context: Option<Rc<KeyBindingContextPredicate>>,
         use_key_equivalents: bool,
-        key_equivalents: Option<&HashMap<char, char>>,
         cx: &App,
     ) -> std::result::Result<KeyBinding, String> {
         let (build_result, action_input_string) = match &action.0 {
@@ -408,7 +397,6 @@ impl KeymapFile {
             action,
             context,
             use_key_equivalents,
-            key_equivalents,
             action_input_string.map(SharedString::from),
             cx.keyboard_mapper(),
         ) {
