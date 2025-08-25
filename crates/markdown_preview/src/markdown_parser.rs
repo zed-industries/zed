@@ -938,7 +938,6 @@ mod tests {
         HighlightId, Language, LanguageConfig, LanguageMatcher, LanguageRegistry, tree_sitter_rust,
     };
     use pretty_assertions::assert_eq;
-    use ui::Pixels;
 
     async fn parse(input: &str) -> ParsedMarkdown {
         parse_markdown(input, None, None).await
@@ -1226,35 +1225,25 @@ mod tests {
         // Test pixel values
         assert_eq!(
             MarkdownParser::parse_length("100px"),
-            Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(Pixels(
-                100.0
-            ))))
+            Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(px(100.0))))
         );
         assert_eq!(
             MarkdownParser::parse_length("50px"),
-            Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(Pixels(
-                50.0
-            ))))
+            Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(px(50.0))))
         );
         assert_eq!(
             MarkdownParser::parse_length("0px"),
-            Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(Pixels(
-                0.0
-            ))))
+            Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(px(0.0))))
         );
 
         // Test values without units (should be treated as pixels)
         assert_eq!(
             MarkdownParser::parse_length("100"),
-            Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(Pixels(
-                100.0
-            ))))
+            Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(px(100.0))))
         );
         assert_eq!(
             MarkdownParser::parse_length("42"),
-            Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(Pixels(
-                42.0
-            ))))
+            Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(px(42.0))))
         );
 
         // Test invalid values
@@ -1272,15 +1261,11 @@ mod tests {
         );
         assert_eq!(
             MarkdownParser::parse_length("100.25px"),
-            Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(Pixels(
-                100.25
-            ))))
+            Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(px(100.25))))
         );
         assert_eq!(
             MarkdownParser::parse_length("42.0"),
-            Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(Pixels(
-                42.0
-            ))))
+            Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(px(42.0))))
         );
     }
 

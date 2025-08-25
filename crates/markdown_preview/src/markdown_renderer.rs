@@ -26,9 +26,6 @@ use ui::{
 };
 use workspace::{OpenOptions, OpenVisible, Workspace};
 
-const OPEN_IMAGE_TOOLTIP: SharedString = SharedString::new_static("open image");
-const TOGGLE_CHECKBOX_TOOLTIP: SharedString = SharedString::new_static("toggle checkbox");
-
 pub struct CheckboxClickedEvent {
     pub checked: bool,
     pub source_range: Range<usize>,
@@ -263,7 +260,7 @@ fn render_markdown_list_item(
             )
             .hover(|s| s.cursor_pointer())
             .tooltip(|_, cx| {
-                InteractiveMarkdownElementTooltip::new(None, TOGGLE_CHECKBOX_TOOLTIP, cx).into()
+                InteractiveMarkdownElementTooltip::new(None, "toggle checkbox", cx).into()
             })
             .into_any_element(),
     };
@@ -767,7 +764,7 @@ fn render_markdown_image(image: &Image, cx: &mut RenderContext) -> AnyElement {
             move |_, cx| {
                 InteractiveMarkdownElementTooltip::new(
                     Some(alt_text.clone().unwrap_or(link.to_string().into())),
-                    OPEN_IMAGE_TOOLTIP,
+                    "open image",
                     cx,
                 )
                 .into()
@@ -811,14 +808,14 @@ struct InteractiveMarkdownElementTooltip {
 impl InteractiveMarkdownElementTooltip {
     pub fn new(
         tooltip_text: Option<SharedString>,
-        action_text: SharedString,
+        action_text: impl Into<SharedString>,
         cx: &mut App,
     ) -> Entity<Self> {
         let tooltip_text = tooltip_text.map(|t| util::truncate_and_trailoff(&t, 50).into());
 
         cx.new(|_cx| Self {
             tooltip_text,
-            action_text,
+            action_text: action_text.into(),
         })
     }
 }
