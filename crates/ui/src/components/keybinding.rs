@@ -165,7 +165,7 @@ pub fn render_keybinding_keystroke(
     if use_text {
         let element = Key::new(
             keystroke_text(
-                &keystroke.modifiers,
+                &keystroke.display_modifiers,
                 &keystroke.display_key,
                 platform_style,
                 vim_mode,
@@ -178,7 +178,7 @@ pub fn render_keybinding_keystroke(
     } else {
         let mut elements = Vec::new();
         elements.extend(render_modifiers(
-            &keystroke.modifiers,
+            &keystroke.display_modifiers,
             platform_style,
             color,
             size,
@@ -418,7 +418,7 @@ pub fn text_for_keybinding_keystrokes(keystrokes: &[KeybindingKeystroke], cx: &A
         .iter()
         .map(|keystroke| {
             keystroke_text(
-                &keystroke.modifiers,
+                &keystroke.display_modifiers,
                 &keystroke.display_key,
                 platform_style,
                 vim_enabled,

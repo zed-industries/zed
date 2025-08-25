@@ -14,9 +14,9 @@ use gpui::{
     Action, AppContext as _, AsyncApp, Axis, ClickEvent, Context, DismissEvent, Entity,
     EventEmitter, FocusHandle, Focusable, Global, IsZero,
     KeyBindingContextPredicate::{And, Descendant, Equal, Identifier, Not, NotEqual, Or},
-    KeyContext, KeybindingKeystroke,Keystroke, MouseButton, Point, ScrollStrategy, ScrollWheelEvent, Stateful,
-    StyledText, Subscription, Task, TextStyleRefinement, WeakEntity, actions, anchored, deferred,
-    div,
+    KeyContext, KeybindingKeystroke, Keystroke, MouseButton, Point, ScrollStrategy,
+    ScrollWheelEvent, Stateful, StyledText, Subscription, Task, TextStyleRefinement, WeakEntity,
+    actions, anchored, deferred, div,
 };
 use language::{Language, LanguageConfig, ToOffset as _};
 use notifications::status_toast::{StatusToast, ToastIcon};
@@ -236,7 +236,7 @@ struct ConflictState {
 }
 
 type ConflictKeybindMapping = HashMap<
-    Vec<Keystroke>,
+    Vec<KeybindingKeystroke>,
     Vec<(
         Option<gpui::KeyBindingContextPredicate>,
         Vec<ConflictOrigin>,
