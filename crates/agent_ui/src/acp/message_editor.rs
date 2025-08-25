@@ -373,7 +373,7 @@ impl MessageEditor {
 
         if Img::extensions().contains(&extension) && !extension.contains("svg") {
             if !self.prompt_capabilities.get().image {
-                return Task::ready(Err(anyhow!("This agent does not support images yet")));
+                return Task::ready(Err(anyhow!("This model does not support images yet")));
             }
             let task = self
                 .project

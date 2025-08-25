@@ -185,13 +185,16 @@ impl AgentConnection for AcpConnection {
 
             let session_id = response.session_id;
             let action_log = cx.new(|_| ActionLog::new(project.clone()))?;
-            let thread = cx.new(|_cx| {
+            let thread = cx.new(|cx| {
                 AcpThread::new(
                     self.server_name.clone(),
                     self.clone(),
                     project,
                     action_log,
                     session_id.clone(),
+                    // ACP doesn't currently support per-session prompt capabilities or changing capabilities dynamically.
+                    watch::Receiver::constant(self.prompt_capabilities),
+                    cx,
                 )
             })?;
 
@@ -277,10 +280,6 @@ impl AgentConnection for AcpConnection {
                 }
             }
         })
-    }
-
-    fn prompt_capabilities(&self) -> acp::PromptCapabilities {
-        self.prompt_capabilities
     }
 
     fn cancel(&self, session_id: &acp::SessionId, cx: &mut App) {
