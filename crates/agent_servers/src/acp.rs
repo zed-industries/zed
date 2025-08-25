@@ -266,7 +266,9 @@ impl AgentConnection for AcpConnection {
 
                     match serde_json::from_value(data.clone()) {
                         Ok(ErrorDetails { details }) => {
-                            if suppress_abort_err && details.contains("This operation was aborted")
+                            if suppress_abort_err
+                                && (details.contains("This operation was aborted")
+                                    || details.contains("The user aborted a request"))
                             {
                                 Ok(acp::PromptResponse {
                                     stop_reason: acp::StopReason::Cancelled,
