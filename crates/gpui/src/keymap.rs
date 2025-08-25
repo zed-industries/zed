@@ -4,7 +4,7 @@ mod context;
 pub use binding::*;
 pub use context::*;
 
-use crate::{Action, Keystroke, is_no_action};
+use crate::{Action, AsKeystroke, Keystroke, is_no_action};
 use collections::{HashMap, HashSet};
 use smallvec::SmallVec;
 use std::any::TypeId;
@@ -141,7 +141,7 @@ impl Keymap {
     /// only.
     pub fn bindings_for_input(
         &self,
-        input: &[Keystroke],
+        input: &[impl AsKeystroke],
         context_stack: &[KeyContext],
     ) -> (SmallVec<[KeyBinding; 1]>, bool) {
         let mut matched_bindings = SmallVec::<[(usize, BindingIndex, &KeyBinding); 1]>::new();
@@ -192,7 +192,6 @@ impl Keymap {
 
         (bindings, !pending.is_empty())
     }
-
     /// Check if the given binding is enabled, given a certain key context.
     /// Returns the deepest depth at which the binding matches, or None if it doesn't match.
     fn binding_enabled(&self, binding: &KeyBinding, contexts: &[KeyContext]) -> Option<usize> {
@@ -639,7 +638,7 @@ mod tests {
         fn assert_bindings(keymap: &Keymap, action: &dyn Action, expected: &[&str]) {
             let actual = keymap
                 .bindings_for_action(action)
-                .map(|binding| binding.keystrokes[0].unparse())
+                .map(|binding| binding.keystrokes[0].inner.unparse())
                 .collect::<Vec<_>>();
             assert_eq!(actual, expected, "{:?}", action);
         }

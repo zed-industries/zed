@@ -3,7 +3,8 @@ use collections::{BTreeMap, HashMap, IndexMap};
 use fs::Fs;
 use gpui::{
     Action, ActionBuildError, App, InvalidKeystrokeError, KEYSTROKE_PARSE_EXPECTED_MESSAGE,
-    KeyBinding, KeyBindingContextPredicate, KeyBindingMetaIndex, Keystroke, NoAction, SharedString,
+    KeyBinding, KeyBindingContextPredicate, KeyBindingMetaIndex, KeybindingKeystroke, Keystroke,
+    NoAction, SharedString,
 };
 use schemars::{JsonSchema, json_schema};
 use serde::Deserialize;
@@ -211,9 +212,6 @@ impl KeymapFile {
     }
 
     pub fn load(content: &str, cx: &App) -> KeymapFileLoadResult {
-        let key_equivalents =
-            crate::key_equivalents::get_key_equivalents(cx.keyboard_layout().id());
-
         if content.is_empty() {
             return KeymapFileLoadResult::Success {
                 key_bindings: Vec::new(),
@@ -255,12 +253,6 @@ impl KeymapFile {
                 }
             };
 
-            let key_equivalents = if *use_key_equivalents {
-                key_equivalents.as_ref()
-            } else {
-                None
-            };
-
             let mut section_errors = String::new();
 
             if !unrecognized_fields.is_empty() {
@@ -278,7 +270,7 @@ impl KeymapFile {
                         keystrokes,
                         action,
                         context_predicate.clone(),
-                        key_equivalents,
+                        *use_key_equivalents,
                         cx,
                     );
                     match result {
@@ -336,7 +328,7 @@ impl KeymapFile {
         keystrokes: &str,
         action: &KeymapAction,
         context: Option<Rc<KeyBindingContextPredicate>>,
-        key_equivalents: Option<&HashMap<char, char>>,
+        use_key_equivalents: bool,
         cx: &App,
     ) -> std::result::Result<KeyBinding, String> {
         let (build_result, action_input_string) = match &action.0 {
@@ -404,8 +396,9 @@ impl KeymapFile {
             keystrokes,
             action,
             context,
-            key_equivalents,
+            use_key_equivalents,
             action_input_string.map(SharedString::from),
+            cx.keyboard_mapper(),
         ) {
             Ok(key_binding) => key_binding,
             Err(InvalidKeystrokeError { keystroke }) => {
@@ -916,7 +909,7 @@ impl<'a> KeybindUpdateOperation<'a> {
 #[derive(Debug, Clone)]
 pub struct KeybindUpdateTarget<'a> {
     pub context: Option<&'a str>,
-    pub keystrokes: &'a [Keystroke],
+    pub keystrokes: &'a [KeybindingKeystroke],
     pub action_name: &'a str,
     pub action_arguments: Option<&'a str>,
 }
@@ -941,7 +934,7 @@ impl<'a> KeybindUpdateTarget<'a> {
     fn keystrokes_unparsed(&self) -> String {
         let mut keystrokes = String::with_capacity(self.keystrokes.len() * 8);
         for keystroke in self.keystrokes {
-            keystrokes.push_str(&keystroke.unparse());
+            keystrokes.push_str(&keystroke.inner.unparse());
             keystrokes.push(' ');
         }
         keystrokes.pop();
@@ -1020,7 +1013,7 @@ impl From<KeybindSource> for KeyBindingMetaIndex {
 
 #[cfg(test)]
 mod tests {
-    use gpui::Keystroke;
+    use gpui::{DummyKeyboardMapper, KeybindingKeystroke, Keystroke};
     use unindent::Unindent;
 
     use crate::{
@@ -1055,10 +1048,16 @@ mod tests {
     }
 
     #[track_caller]
-    fn parse_keystrokes(keystrokes: &str) -> Vec<Keystroke> {
+    fn parse_keystrokes(keystrokes: &str) -> Vec<KeybindingKeystroke> {
         keystrokes
             .split(' ')
-            .map(|s| Keystroke::parse(s).expect("Keystrokes valid"))
+            .map(|s| {
+                KeybindingKeystroke::new(
+                    Keystroke::parse(s).expect("Keystrokes valid"),
+                    false,
+                    &DummyKeyboardMapper,
+                )
+            })
             .collect()
     }
 
