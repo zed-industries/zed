@@ -1,6 +1,7 @@
 use crate::{
     DIAGNOSTICS_UPDATE_DELAY, IncludeWarnings, ToggleWarnings, context_range_for_entry,
-    diagnostic_renderer::{DiagnosticBlock, DiagnosticRenderer, DiagnosticsEditorHandle},
+    diagnostic_renderer::{DiagnosticBlock, DiagnosticRenderer},
+    toolbar_controls::DiagnosticsToolbarEditor,
 };
 use anyhow::Result;
 use collections::HashMap;
@@ -12,7 +13,7 @@ use editor::{
 use gpui::{
     AnyElement, App, AppContext, Context, Entity, EntityId, EventEmitter, FocusHandle, Focusable,
     InteractiveElement, IntoElement, ParentElement, Render, SharedString, Styled, Subscription,
-    Task, Window, actions, div,
+    Task, WeakEntity, Window, actions, div,
 };
 use language::{Buffer, DiagnosticEntry, Point};
 use project::{
@@ -247,7 +248,7 @@ impl BufferDiagnosticsEditor {
                     )
                 });
 
-                workspace.add_item_to_active_pane(Box::new(item.clone()), None, true, window, cx);
+                workspace.add_item_to_active_pane(Box::new(item), None, true, window, cx);
             }
         }
     }
@@ -374,9 +375,7 @@ impl BufferDiagnosticsEditor {
                     DiagnosticRenderer::diagnostic_blocks_for_group(
                         group,
                         buffer_snapshot.remote_id(),
-                        Some(DiagnosticsEditorHandle::Buffer(
-                            buffer_diagnostics_editor.clone(),
-                        )),
+                        Some(Arc::new(buffer_diagnostics_editor.clone())),
                         cx,
                     )
                 })?;
@@ -917,5 +916,61 @@ impl Render for BufferDiagnosticsEditor {
             .track_focus(&self.focus_handle(cx))
             .size_full()
             .child(child)
+    }
+}
+
+impl DiagnosticsToolbarEditor for WeakEntity<BufferDiagnosticsEditor> {
+    fn include_warnings(&self, cx: &App) -> bool {
+        self.read_with(cx, |buffer_diagnostics_editor, _cx| {
+            buffer_diagnostics_editor.include_warnings
+        })
+        .unwrap_or(false)
+    }
+
+    fn has_stale_excerpts(&self, _cx: &App) -> bool {
+        false
+    }
+
+    fn is_updating(&self, cx: &App) -> bool {
+        self.read_with(cx, |buffer_diagnostics_editor, cx| {
+            buffer_diagnostics_editor.update_excerpts_task.is_some()
+                || buffer_diagnostics_editor
+                    .project
+                    .read(cx)
+                    .language_servers_running_disk_based_diagnostics(cx)
+                    .next()
+                    .is_some()
+        })
+        .unwrap_or(false)
+    }
+
+    fn stop_updating(&self, cx: &mut App) {
+        let _ = self.update(cx, |buffer_diagnostics_editor, cx| {
+            buffer_diagnostics_editor.update_excerpts_task = None;
+            cx.notify();
+        });
+    }
+
+    fn refresh_diagnostics(&self, window: &mut Window, cx: &mut App) {
+        let _ = self.update(cx, |buffer_diagnostics_editor, cx| {
+            buffer_diagnostics_editor.update_all_excerpts(window, cx);
+        });
+    }
+
+    fn toggle_warnings(&self, window: &mut Window, cx: &mut App) {
+        let _ = self.update(cx, |buffer_diagnostics_editor, cx| {
+            buffer_diagnostics_editor.toggle_warnings(&Default::default(), window, cx);
+        });
+    }
+
+    fn get_diagnostics_for_buffer(
+        &self,
+        _buffer_id: text::BufferId,
+        cx: &App,
+    ) -> Vec<language::DiagnosticEntry<text::Anchor>> {
+        self.read_with(cx, |buffer_diagnostics_editor, _cx| {
+            buffer_diagnostics_editor.diagnostics.clone()
+        })
+        .unwrap_or_default()
     }
 }

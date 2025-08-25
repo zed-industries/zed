@@ -18,42 +18,7 @@ use ui::{
 };
 use util::maybe;
 
-use crate::ProjectDiagnosticsEditor;
-use crate::buffer_diagnostics::BufferDiagnosticsEditor;
-
-#[derive(Clone)]
-pub(crate) enum DiagnosticsEditorHandle {
-    Project(WeakEntity<ProjectDiagnosticsEditor>),
-    Buffer(WeakEntity<BufferDiagnosticsEditor>),
-}
-
-impl DiagnosticsEditorHandle {
-    fn get_diagnostics_for_buffer(
-        &self,
-        buffer_id: BufferId,
-        cx: &App,
-    ) -> Vec<DiagnosticEntry<text::Anchor>> {
-        match self {
-            // Not sure if possible, as currently there shouldn't be a way for this
-            // method to be called for a buffer other than the one the
-            // `BufferDiagnosticsEditor` is working with, but we should probably
-            // save the ID of the buffer that it is working with, so that, if it
-            // doesn't match the argument, we can return an empty vector.
-            Self::Buffer(editor) => editor
-                .read_with(cx, |editor, _cx| editor.diagnostics.clone())
-                .unwrap_or(vec![]),
-            Self::Project(editor) => editor
-                .read_with(cx, |editor, _cx| {
-                    editor
-                        .diagnostics
-                        .get(&buffer_id)
-                        .cloned()
-                        .unwrap_or_default()
-                })
-                .unwrap_or(vec![]),
-        }
-    }
-}
+use crate::toolbar_controls::DiagnosticsToolbarEditor;
 
 pub struct DiagnosticRenderer;
 
@@ -61,7 +26,7 @@ impl DiagnosticRenderer {
     pub fn diagnostic_blocks_for_group(
         diagnostic_group: Vec<DiagnosticEntry<Point>>,
         buffer_id: BufferId,
-        diagnostics_editor: Option<DiagnosticsEditorHandle>,
+        diagnostics_editor: Option<Arc<dyn DiagnosticsToolbarEditor>>,
         cx: &mut App,
     ) -> Vec<DiagnosticBlock> {
         let Some(primary_ix) = diagnostic_group
@@ -218,7 +183,7 @@ pub(crate) struct DiagnosticBlock {
     pub(crate) initial_range: Range<Point>,
     pub(crate) severity: DiagnosticSeverity,
     pub(crate) markdown: Entity<Markdown>,
-    pub(crate) diagnostics_editor: Option<DiagnosticsEditorHandle>,
+    pub(crate) diagnostics_editor: Option<Arc<dyn DiagnosticsToolbarEditor>>,
 }
 
 impl DiagnosticBlock {
@@ -269,7 +234,7 @@ impl DiagnosticBlock {
 
     pub fn open_link(
         editor: &mut Editor,
-        diagnostics_editor: &Option<DiagnosticsEditorHandle>,
+        diagnostics_editor: &Option<Arc<dyn DiagnosticsToolbarEditor>>,
         link: SharedString,
         window: &mut Window,
         cx: &mut Context<Editor>,

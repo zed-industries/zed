@@ -38,6 +38,7 @@ use std::{
 };
 use text::{BufferId, OffsetRangeExt};
 use theme::ActiveTheme;
+use toolbar_controls::DiagnosticsToolbarEditor;
 pub use toolbar_controls::ToolbarControls;
 use ui::{Icon, IconName, Label, h_flex, prelude::*};
 use util::ResultExt;
@@ -46,8 +47,6 @@ use workspace::{
     item::{BreadcrumbText, Item, ItemEvent, ItemHandle, SaveOptions, TabContentParams},
     searchable::SearchableItemHandle,
 };
-
-use crate::diagnostic_renderer::DiagnosticsEditorHandle;
 
 actions!(
     diagnostics,
@@ -486,7 +485,7 @@ impl ProjectDiagnosticsEditor {
                     crate::diagnostic_renderer::DiagnosticRenderer::diagnostic_blocks_for_group(
                         group,
                         buffer_snapshot.remote_id(),
-                        Some(DiagnosticsEditorHandle::Project(this.clone())),
+                        Some(Arc::new(this.clone())),
                         cx,
                     )
                 })?;
@@ -829,6 +828,68 @@ impl Item for ProjectDiagnosticsEditor {
     }
 }
 
+impl DiagnosticsToolbarEditor for WeakEntity<ProjectDiagnosticsEditor> {
+    fn include_warnings(&self, cx: &App) -> bool {
+        self.read_with(cx, |project_diagnostics_editor, _cx| {
+            project_diagnostics_editor.include_warnings
+        })
+        .unwrap_or(false)
+    }
+
+    fn has_stale_excerpts(&self, cx: &App) -> bool {
+        self.read_with(cx, |project_diagnostics_editor, _cx| {
+            !project_diagnostics_editor.paths_to_update.is_empty()
+        })
+        .unwrap_or(false)
+    }
+
+    fn is_updating(&self, cx: &App) -> bool {
+        self.read_with(cx, |project_diagnostics_editor, cx| {
+            project_diagnostics_editor.update_excerpts_task.is_some()
+                || project_diagnostics_editor
+                    .project
+                    .read(cx)
+                    .language_servers_running_disk_based_diagnostics(cx)
+                    .next()
+                    .is_some()
+        })
+        .unwrap_or(false)
+    }
+
+    fn stop_updating(&self, cx: &mut App) {
+        let _ = self.update(cx, |project_diagnostics_editor, cx| {
+            project_diagnostics_editor.update_excerpts_task = None;
+            cx.notify();
+        });
+    }
+
+    fn refresh_diagnostics(&self, window: &mut Window, cx: &mut App) {
+        let _ = self.update(cx, |project_diagnostics_editor, cx| {
+            project_diagnostics_editor.update_all_excerpts(window, cx);
+        });
+    }
+
+    fn toggle_warnings(&self, window: &mut Window, cx: &mut App) {
+        let _ = self.update(cx, |project_diagnostics_editor, cx| {
+            project_diagnostics_editor.toggle_warnings(&Default::default(), window, cx);
+        });
+    }
+
+    fn get_diagnostics_for_buffer(
+        &self,
+        buffer_id: text::BufferId,
+        cx: &App,
+    ) -> Vec<language::DiagnosticEntry<text::Anchor>> {
+        self.read_with(cx, |project_diagnostics_editor, _cx| {
+            project_diagnostics_editor
+                .diagnostics
+                .get(&buffer_id)
+                .cloned()
+                .unwrap_or_default()
+        })
+        .unwrap_or_default()
+    }
+}
 const DIAGNOSTIC_EXPANSION_ROW_LIMIT: u32 = 32;
 
 async fn context_range_for_entry(
