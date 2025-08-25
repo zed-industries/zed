@@ -605,6 +605,19 @@ impl Domain for WorkspaceDb {
 
             CREATE UNIQUE INDEX ix_workspaces_location ON workspaces(ssh_connection_id, paths);
         ),
+        sql!(
+            UPDATE workspaces
+            SET paths = CASE
+                WHEN substr(paths, 1, 2) = '[' || '"' AND substr(paths, -2, 2) = ']' || '"' THEN
+                    replace(
+                        substr(paths, 2, length(paths) - 2),
+                        '"' || ',' || '"',
+                        '\0'
+                    )
+                ELSE
+                    replace(paths, ',', '\0')
+            END
+        ),
     ];
 
     // Allow recovering from bad migration
