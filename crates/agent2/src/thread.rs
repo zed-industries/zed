@@ -27,8 +27,7 @@ use futures::{
 };
 use git::repository::DiffType;
 use gpui::{
-    App, AppContext, AsyncApp, Context, Entity, EventEmitter, FutureExt as _, SharedString, Task,
-    WeakEntity,
+    App, AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Task, WeakEntity,
 };
 use language_model::{
     LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelExt,
