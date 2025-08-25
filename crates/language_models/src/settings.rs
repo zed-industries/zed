@@ -22,6 +22,7 @@ use crate::provider::{
     open_router::OpenRouterSettings,
     vercel::VercelSettings,
     x_ai::XAiSettings,
+    z_ai::ZAiSettings,
 };
 
 /// Initializes the language model settings.
@@ -43,6 +44,7 @@ pub struct AllLanguageModelSettings {
     pub openai_compatible: HashMap<Arc<str>, OpenAiCompatibleSettings>,
     pub vercel: VercelSettings,
     pub x_ai: XAiSettings,
+    pub z_ai: ZAiSettings,
     pub zed_dot_dev: ZedDotDevSettings,
 }
 
@@ -60,6 +62,7 @@ pub struct AllLanguageModelSettingsContent {
     pub openai_compatible: Option<HashMap<Arc<str>, OpenAiCompatibleSettingsContent>>,
     pub vercel: Option<VercelSettingsContent>,
     pub x_ai: Option<XAiSettingsContent>,
+    pub z_ai: Option<ZAiSettingsContent>,
     #[serde(rename = "zed.dev")]
     pub zed_dot_dev: Option<ZedDotDevSettingsContent>,
 }
@@ -131,6 +134,12 @@ pub struct GoogleSettingsContent {
 pub struct XAiSettingsContent {
     pub api_url: Option<String>,
     pub available_models: Option<Vec<provider::x_ai::AvailableModel>>,
+}
+
+#[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
+pub struct ZAiSettingsContent {
+    pub api_url: Option<String>,
+    pub available_models: Option<Vec<provider::z_ai::AvailableModel>>,
 }
 
 #[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
@@ -271,6 +280,17 @@ impl settings::Settings for AllLanguageModelSettings {
             merge(
                 &mut settings.x_ai.available_models,
                 x_ai.as_ref().and_then(|s| s.available_models.clone()),
+            );
+
+            // ZAI
+            let z_ai = value.z_ai.clone();
+            merge(
+                &mut settings.z_ai.api_url,
+                z_ai.as_ref().and_then(|s| s.api_url.clone()),
+            );
+            merge(
+                &mut settings.z_ai.available_models,
+                z_ai.as_ref().and_then(|s| s.available_models.clone()),
             );
 
             // ZedDotDev
