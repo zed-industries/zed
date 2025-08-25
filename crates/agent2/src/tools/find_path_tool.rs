@@ -168,10 +168,9 @@ fn search_paths(glob: &str, project: Entity<Project>, cx: &mut App) -> Task<Resu
         Ok(snapshots
             .iter()
             .flat_map(|snapshot| {
-                let root_name = PathBuf::from(snapshot.root_name());
                 snapshot
                     .entries(false, 0)
-                    .map(move |entry| root_name.join(&entry.path))
+                    .map(move |entry| snapshot.abs_path().join(&entry.path))
                     .filter(|path| path_matcher.is_match(&path))
             })
             .collect())

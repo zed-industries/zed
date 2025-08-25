@@ -35,6 +35,7 @@ use prompt_store::{PromptId, PromptStore};
 use rope::Point;
 use settings::{Settings as _, SettingsStore};
 use std::cell::Cell;
+use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
 use std::{collections::BTreeMap, rc::Rc, time::Duration};
@@ -2042,8 +2043,25 @@ impl AcpThreadView {
         let uri: SharedString = resource_link.uri.clone().into();
         let is_file = resource_link.uri.strip_prefix("file://");
 
-        let label: SharedString = if let Some(path) = is_file {
-            path.to_string().into()
+        let label: SharedString = if let Some(abs_path) = is_file {
+            if let Some(project_path) = self
+                .project
+                .read(cx)
+                .project_path_for_absolute_path(&Path::new(abs_path), cx)
+                && let Some(worktree) = self
+                    .project
+                    .read(cx)
+                    .worktree_for_id(project_path.worktree_id, cx)
+            {
+                worktree
+                    .read(cx)
+                    .full_path(&project_path.path)
+                    .to_string_lossy()
+                    .to_string()
+                    .into()
+            } else {
+                abs_path.to_string().into()
+            }
         } else {
             uri.clone()
         };
