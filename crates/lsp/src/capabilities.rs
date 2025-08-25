@@ -80,7 +80,7 @@ impl EffectiveCapability for cap::DidSaveTextDocument {
                     Some(
                         id_to_save_options_map
                             .values()
-                            .any(|data| data.include_text),
+                            .any(|data| data.include_text.unwrap_or(false)),
                     )
                 }
             })
