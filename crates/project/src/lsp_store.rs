@@ -7208,14 +7208,40 @@ impl LspStore {
                     .collect()
             };
 
-            let document_sync_kind = language_server
-                .capabilities()
-                .text_document_sync
-                .as_ref()
-                .and_then(|sync| match sync {
-                    lsp::TextDocumentSyncCapability::Kind(kind) => Some(*kind),
-                    lsp::TextDocumentSyncCapability::Options(options) => options.change,
-                });
+            let document_sync_kind = {
+                let dyn_caps = language_server.dynamic_capabilities();
+                let dynamic = dyn_caps
+                    .text_document_sync_did_change
+                    .as_ref()
+                    .and_then(|m| {
+                        if m.is_empty() {
+                            None
+                        } else {
+                            let mut best: Option<lsp::TextDocumentSyncKind> = None;
+                            for kind in m.values() {
+                                best = Some(match (best, kind) {
+                                    (None, k) => *k,
+                                    (
+                                        Some(lsp::TextDocumentSyncKind::FULL),
+                                        lsp::TextDocumentSyncKind::INCREMENTAL,
+                                    ) => lsp::TextDocumentSyncKind::INCREMENTAL,
+                                    (Some(curr), _) => curr,
+                                });
+                            }
+                            best
+                        }
+                    });
+                dynamic.or_else(|| {
+                    language_server
+                        .capabilities()
+                        .text_document_sync
+                        .as_ref()
+                        .and_then(|sync| match sync {
+                            lsp::TextDocumentSyncCapability::Kind(kind) => Some(*kind),
+                            lsp::TextDocumentSyncCapability::Options(options) => options.change,
+                        })
+                })
+            };
 
             let content_changes: Vec<_> = match document_sync_kind {
                 Some(lsp::TextDocumentSyncKind::FULL) => {
@@ -11843,12 +11869,11 @@ impl LspStore {
                         .map(serde_json::from_value::<lsp::TextDocumentSyncKind>)
                         .transpose()?
                     {
-                        server.update_capabilities(|capabilities| {
-                            let mut sync_options =
-                                Self::take_text_document_sync_options(capabilities);
-                            sync_options.change = Some(sync_kind);
-                            capabilities.text_document_sync =
-                                Some(lsp::TextDocumentSyncCapability::Options(sync_options));
+                        server.update_dynamic_capabilities(|dyn_caps| {
+                            let map = dyn_caps
+                                .text_document_sync_did_change
+                                .get_or_insert_with(HashMap::default);
+                            map.insert(reg.id.clone(), sync_kind);
                         });
                         notify_server_capabilities_updated(&server, cx);
                     }
@@ -11869,15 +11894,11 @@ impl LspStore {
                         })
                         .transpose()?
                     {
-                        server.update_capabilities(|capabilities| {
-                            let mut sync_options =
-                                Self::take_text_document_sync_options(capabilities);
-                            sync_options.save =
-                                Some(TextDocumentSyncSaveOptions::SaveOptions(lsp::SaveOptions {
-                                    include_text,
-                                }));
-                            capabilities.text_document_sync =
-                                Some(lsp::TextDocumentSyncCapability::Options(sync_options));
+                        server.update_dynamic_capabilities(|dyn_caps| {
+                            let map = dyn_caps
+                                .text_document_sync_did_save
+                                .get_or_insert_with(HashMap::default);
+                            map.insert(reg.id.clone(), lsp::SaveOptions { include_text });
                         });
                         notify_server_capabilities_updated(&server, cx);
                     }
@@ -12028,20 +12049,18 @@ impl LspStore {
                     notify_server_capabilities_updated(&server, cx);
                 }
                 "textDocument/didChange" => {
-                    server.update_capabilities(|capabilities| {
-                        let mut sync_options = Self::take_text_document_sync_options(capabilities);
-                        sync_options.change = None;
-                        capabilities.text_document_sync =
-                            Some(lsp::TextDocumentSyncCapability::Options(sync_options));
+                    server.update_dynamic_capabilities(|dyn_caps| {
+                        if let Some(map) = dyn_caps.text_document_sync_did_change.as_mut() {
+                            map.remove(&unreg.id);
+                        }
                     });
                     notify_server_capabilities_updated(&server, cx);
                 }
                 "textDocument/didSave" => {
-                    server.update_capabilities(|capabilities| {
-                        let mut sync_options = Self::take_text_document_sync_options(capabilities);
-                        sync_options.save = None;
-                        capabilities.text_document_sync =
-                            Some(lsp::TextDocumentSyncCapability::Options(sync_options));
+                    server.update_dynamic_capabilities(|dyn_caps| {
+                        if let Some(map) = dyn_caps.text_document_sync_did_save.as_mut() {
+                            map.remove(&unreg.id);
+                        }
                     });
                     notify_server_capabilities_updated(&server, cx);
                 }
@@ -13266,6 +13285,13 @@ async fn populate_labels_for_symbols(
 }
 
 fn include_text(server: &lsp::LanguageServer) -> Option<bool> {
+    let dyn_caps = server.dynamic_capabilities();
+    if let Some(map) = dyn_caps.text_document_sync_did_save.as_ref() {
+        if !map.is_empty() {
+            let any_true = map.values().any(|opts| opts.include_text.unwrap_or(false));
+            return Some(any_true);
+        }
+    }
     match server.capabilities().text_document_sync.as_ref()? {
         lsp::TextDocumentSyncCapability::Options(opts) => match opts.save.as_ref()? {
             // Server wants didSave but didn't specify includeText.

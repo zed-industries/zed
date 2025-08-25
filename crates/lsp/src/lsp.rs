@@ -87,6 +87,7 @@ pub struct LanguageServer {
     process_name: Arc<str>,
     binary: LanguageServerBinary,
     static_capabilities: RwLock<ServerCapabilities>,
+    dynamic_capabilities: RwLock<DynamicCapabilities>,
     /// Configuration sent to the server, stored for display in the language server logs
     /// buffer. This is represented as the message sent to the LSP in order to avoid cloning it (can
     /// be large in cases like sending schemas to the json server).
@@ -301,6 +302,12 @@ pub struct AdapterServerCapabilities {
     pub code_action_kinds: Option<Vec<CodeActionKind>>,
 }
 
+#[derive(Debug, Default, Clone)]
+pub struct DynamicCapabilities {
+    pub text_document_sync_did_change: Option<HashMap<String, TextDocumentSyncKind>>,
+    pub text_document_sync_did_save: Option<HashMap<String, SaveOptions>>,
+}
+
 impl LanguageServer {
     /// Starts a language server process.
     pub fn new(
@@ -485,6 +492,7 @@ impl LanguageServer {
                 .unwrap_or_default(),
             binary,
             static_capabilities: Default::default(),
+            dynamic_capabilities: Default::default(),
             configuration,
             code_action_kinds,
             next_id: Default::default(),
@@ -1131,6 +1139,14 @@ impl LanguageServer {
     /// Get the reported capabilities of the running language server.
     pub fn capabilities(&self) -> ServerCapabilities {
         self.static_capabilities.read().clone()
+    }
+
+    pub fn dynamic_capabilities(&self) -> DynamicCapabilities {
+        self.dynamic_capabilities.read().clone()
+    }
+
+    pub fn update_dynamic_capabilities(&self, update: impl FnOnce(&mut DynamicCapabilities)) {
+        update(self.dynamic_capabilities.write().deref_mut());
     }
 
     /// Get the reported capabilities of the running language server and
