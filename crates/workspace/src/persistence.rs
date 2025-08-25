@@ -608,9 +608,9 @@ impl Domain for WorkspaceDb {
         sql!(
             UPDATE workspaces
             SET paths = CASE
-                WHEN substr(paths, 1, 2) = '[' || '"' AND substr(paths, -2, 2) = ']' || '"' THEN
+                WHEN substr(paths, 1, 2) = '[' || '"' AND substr(paths, -2, 2) = '"' || ']' THEN
                     replace(
-                        substr(paths, 2, length(paths) - 2),
+                        substr(paths, 3, length(paths) - 4),
                         '"' || ',' || '"',
                         '\0'
                     )
