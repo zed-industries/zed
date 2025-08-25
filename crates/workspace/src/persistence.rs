@@ -1403,7 +1403,8 @@ impl WorkspaceDb {
                 name: name.into(),
                 path: path.into(),
                 language_name,
-                as_json: serde_json::Value::from_str(&raw_json).ok()?
+                as_json: serde_json::Value::from_str(&raw_json).ok()?,
+                activation_script: Default::default(),
             })))
         })
         .await
@@ -1423,11 +1424,13 @@ impl WorkspaceDb {
             let toolchain: Vec<(String, String, u64, String, String, String)> =
                 select(workspace_id)?;
 
+            // todo look into re-serializing these if we fix up
             Ok(toolchain.into_iter().filter_map(|(name, path, worktree_id, relative_worktree_path, language_name, raw_json)| Some((Toolchain {
                 name: name.into(),
                 path: path.into(),
                 language_name: LanguageName::new(&language_name),
-                as_json: serde_json::Value::from_str(&raw_json).ok()?
+                as_json: serde_json::Value::from_str(&raw_json).ok()?,
+                activation_script: Default::default(),
             }, WorktreeId::from_proto(worktree_id), Arc::from(relative_worktree_path.as_ref())))).collect())
         })
         .await

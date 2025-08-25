@@ -20,6 +20,7 @@ use rpc::{
     proto::{self, FromProto, ToProto},
 };
 use settings::WorktreeId;
+use task::ShellKind;
 use util::ResultExt as _;
 
 use crate::{
@@ -138,6 +139,11 @@ impl ToolchainStore {
                 // Do we need to convert path to native string?
                 path: PathBuf::from(toolchain.path).to_proto().into(),
                 as_json: serde_json::Value::from_str(&toolchain.raw_json)?,
+                activation_script: toolchain
+                    .activation_script
+                    .into_iter()
+                    .map(|(k, v)| (ShellKind::new(&k), v))
+                    .collect(),
                 language_name,
             };
             let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
@@ -178,6 +184,11 @@ impl ToolchainStore {
                     name: toolchain.name.into(),
                     path: path.to_proto(),
                     raw_json: toolchain.as_json.to_string(),
+                    activation_script: toolchain
+                        .activation_script
+                        .into_iter()
+                        .map(|(k, v)| (k.to_string(), v))
+                        .collect(),
                 }
             }),
         })
@@ -221,6 +232,11 @@ impl ToolchainStore {
                         name: toolchain.name.to_string(),
                         path: path.to_proto(),
                         raw_json: toolchain.as_json.to_string(),
+                        activation_script: toolchain
+                            .activation_script
+                            .into_iter()
+                            .map(|(k, v)| (k.to_string(), v))
+                            .collect(),
                     }
                 })
                 .collect::<Vec<_>>();
@@ -449,6 +465,11 @@ impl RemoteToolchainStore {
                                 name: toolchain.name.into(),
                                 path: path.to_proto(),
                                 raw_json: toolchain.as_json.to_string(),
+                                activation_script: toolchain
+                                    .activation_script
+                                    .into_iter()
+                                    .map(|(k, v)| (k.to_string(), v))
+                                    .collect(),
                             }),
                             path: Some(project_path.path.to_string_lossy().into_owned()),
                         })
@@ -501,6 +522,11 @@ impl RemoteToolchainStore {
                             .to_string()
                             .into(),
                         as_json: serde_json::Value::from_str(&toolchain.raw_json).ok()?,
+                        activation_script: toolchain
+                            .activation_script
+                            .into_iter()
+                            .map(|(k, v)| (ShellKind::new(&k), v))
+                            .collect(),
                     })
                 })
                 .collect();
@@ -557,6 +583,11 @@ impl RemoteToolchainStore {
                         .to_string()
                         .into(),
                     as_json: serde_json::Value::from_str(&toolchain.raw_json).ok()?,
+                    activation_script: toolchain
+                        .activation_script
+                        .into_iter()
+                        .map(|(k, v)| (ShellKind::new(&k), v))
+                        .collect(),
                 })
             })
         })

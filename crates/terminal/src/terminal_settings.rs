@@ -95,6 +95,7 @@ pub enum VenvSettings {
         /// to the current working directory. We recommend overriding this
         /// in your project's settings, rather than globally.
         activate_script: Option<ActivateScript>,
+        // deprecate but use
         venv_name: Option<String>,
         directories: Option<Vec<PathBuf>>,
     },

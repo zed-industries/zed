@@ -2,6 +2,7 @@ use anyhow::{Context as _, ensure};
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use collections::HashMap;
+use futures::AsyncBufReadExt;
 use gpui::{App, Task};
 use gpui::{AsyncApp, SharedString};
 use language::Toolchain;
@@ -30,12 +31,10 @@ use std::{
     borrow::Cow,
     ffi::OsString,
     fmt::Write,
-    fs,
-    io::{self, BufRead},
     path::{Path, PathBuf},
     sync::Arc,
 };
-use task::{TaskTemplate, TaskTemplates, VariableName};
+use task::{ShellKind, TaskTemplate, TaskTemplates, VariableName};
 use util::ResultExt;
 
 pub(crate) struct PyprojectTomlManifestProvider;
@@ -741,14 +740,16 @@ fn env_priority(kind: Option<PythonEnvironmentKind>) -> usize {
 /// Return the name of environment declared in <worktree-root/.venv.
 ///
 /// https://virtualfish.readthedocs.io/en/latest/plugins.html#auto-activation-auto-activation
-fn get_worktree_venv_declaration(worktree_root: &Path) -> Option<String> {
-    fs::File::open(worktree_root.join(".venv"))
-        .and_then(|file| {
-            let mut venv_name = String::new();
-            io::BufReader::new(file).read_line(&mut venv_name)?;
-            Ok(venv_name.trim().to_string())
-        })
-        .ok()
+async fn get_worktree_venv_declaration(worktree_root: &Path) -> Option<String> {
+    let file = async_fs::File::open(worktree_root.join(".venv"))
+        .await
+        .ok()?;
+    let mut venv_name = String::new();
+    smol::io::BufReader::new(file)
+        .read_line(&mut venv_name)
+        .await
+        .ok()?;
+    Some(venv_name.trim().to_string())
 }
 
 #[async_trait]
@@ -791,7 +792,7 @@ impl ToolchainLister for PythonToolchainProvider {
             .map_or(Vec::new(), |mut guard| std::mem::take(&mut guard));
 
         let wr = worktree_root;
-        let wr_venv = get_worktree_venv_declaration(&wr);
+        let wr_venv = get_worktree_venv_declaration(&wr).await;
         // Sort detected environments by:
         //     environment name matching activation file (<workdir>/.venv)
         //     environment project dir matching worktree_root
@@ -856,7 +857,7 @@ impl ToolchainLister for PythonToolchainProvider {
             .into_iter()
             .filter_map(|toolchain| {
                 let mut name = String::from("Python");
-                if let Some(ref version) = toolchain.version {
+                if let Some(version) = &toolchain.version {
                     _ = write!(name, " {version}");
                 }
 
@@ -872,12 +873,50 @@ impl ToolchainLister for PythonToolchainProvider {
                 if let Some(nk) = name_and_kind {
                     _ = write!(name, " {nk}");
                 }
-
                 Some(Toolchain {
                     name: name.into(),
                     path: toolchain.executable.as_ref()?.to_str()?.to_owned().into(),
                     language_name: LanguageName::new("Python"),
-                    as_json: serde_json::to_value(toolchain).ok()?,
+                    as_json: serde_json::to_value(toolchain.clone()).ok()?,
+                    activation_script: match (toolchain.kind, toolchain.prefix) {
+                        (Some(PythonEnvironmentKind::Venv), Some(prefix)) => [
+                            (
+                                ShellKind::Fish,
+                                "source",
+                                prefix.join(BINARY_DIR).join("activate.fish"),
+                            ),
+                            (
+                                ShellKind::Powershell,
+                                ".",
+                                prefix.join(BINARY_DIR).join("activate.ps1"),
+                            ),
+                            (
+                                ShellKind::Nushell,
+                                "overlay use",
+                                prefix.join(BINARY_DIR).join("activate.nu"),
+                            ),
+                            (
+                                ShellKind::Posix,
+                                ".",
+                                prefix.join(BINARY_DIR).join("activate"),
+                            ),
+                            (
+                                ShellKind::Cmd,
+                                ".",
+                                prefix.join(BINARY_DIR).join("activate.bat"),
+                            ),
+                            (
+                                ShellKind::Csh,
+                                ".",
+                                prefix.join(BINARY_DIR).join("activate.csh"),
+                            ),
+                        ]
+                        .into_iter()
+                        .filter(|(_, _, path)| path.exists() && path.is_file())
+                        .map(|(kind, cmd, path)| (kind, format!("{cmd} {}", path.display())))
+                        .collect(),
+                        _ => Default::default(),
+                    },
                 })
             })
             .collect();
