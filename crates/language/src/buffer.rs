@@ -21,7 +21,8 @@ use anyhow::{Context as _, Result};
 pub use clock::ReplicaId;
 use clock::{AGENT_REPLICA_ID, Lamport};
 use collections::HashMap;
-use fs::MTime;
+use encoding::Encoding;
+use fs::{Fs, MTime, RealFs};
 use futures::channel::oneshot;
 use gpui::{
     App, AppContext as _, Context, Entity, EventEmitter, HighlightStyle, SharedString, StyledText,
@@ -127,6 +128,7 @@ pub struct Buffer {
     has_unsaved_edits: Cell<(clock::Global, bool)>,
     change_bits: Vec<rc::Weak<Cell<bool>>>,
     _subscriptions: Vec<gpui::Subscription>,
+    pub encoding: &'static dyn encoding::Encoding,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -400,6 +402,10 @@ pub trait LocalFile: File {
 
     /// Loads the file's contents from disk.
     fn load_bytes(&self, cx: &App) -> Task<Result<Vec<u8>>>;
+
+    /// Loads the file contents from disk, decoding them with the given encoding.
+    fn load_with_encoding(&self, cx: &App, encoding: &'static dyn Encoding)
+    -> Task<Result<String>>;
 }
 
 /// The auto-indent behavior associated with an editing operation.
@@ -958,6 +964,7 @@ impl Buffer {
             has_conflict: false,
             change_bits: Default::default(),
             _subscriptions: Vec::new(),
+            encoding: encoding::all::UTF_8,
         }
     }
 
@@ -1274,12 +1281,15 @@ impl Buffer {
     /// Reloads the contents of the buffer from disk.
     pub fn reload(&mut self, cx: &Context<Self>) -> oneshot::Receiver<Option<Transaction>> {
         let (tx, rx) = futures::channel::oneshot::channel();
+        let encoding = self.encoding.clone();
         let prev_version = self.text.version();
         self.reload_task = Some(cx.spawn(async move |this, cx| {
             let Some((new_mtime, new_text)) = this.update(cx, |this, cx| {
                 let file = this.file.as_ref()?.as_local()?;
-
-                Some((file.disk_state().mtime(), file.load(cx)))
+                Some((
+                    file.disk_state().mtime(),
+                    file.load_with_encoding(cx, encoding),
+                ))
             })?
             else {
                 return Ok(());
@@ -4953,6 +4963,14 @@ impl LocalFile for TestFile {
     }
 
     fn load_bytes(&self, _cx: &App) -> Task<Result<Vec<u8>>> {
+        unimplemented!()
+    }
+
+    fn load_with_encoding(
+        &self,
+        cx: &App,
+        encoding: &'static dyn Encoding,
+    ) -> Task<Result<String>> {
         unimplemented!()
     }
 }
