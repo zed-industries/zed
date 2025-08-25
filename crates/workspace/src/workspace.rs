@@ -613,7 +613,12 @@ impl ProjectItemRegistry {
         self.build_project_item_for_path_fns
             .push(|project, project_path, window, cx| {
                 let project_path = project_path.clone();
-                let abs_path = project.read(cx).absolute_path(&project_path, cx);
+                let file_abs_path = project
+                    .read(cx)
+                    .entry_for_path(&project_path, cx)
+                    .is_some_and(|entry| entry.is_file())
+                    .then(|| project.read(cx).absolute_path(&project_path, cx))
+                    .flatten();
                 let is_local = project.read(cx).is_local();
                 let project_item =
                     <T::Item as project::ProjectItem>::try_open(project, &project_path, cx)?;
@@ -638,7 +643,7 @@ impl ProjectItemRegistry {
                         ) as Box<_>;
                         Ok((project_entry_id, build_workspace_item))
                     }
-                    Err(e) => match abs_path {
+                    Err(e) => match file_abs_path {
                         Some(abs_path) => match cx.update(|window, cx| {
                             T::for_broken_project_item(abs_path, is_local, &e, window, cx)
                         })? {
