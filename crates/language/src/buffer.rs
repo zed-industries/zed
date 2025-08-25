@@ -121,6 +121,7 @@ pub struct Buffer {
     completion_triggers_timestamp: clock::Lamport,
     deferred_ops: OperationQueue<Operation>,
     capability: Capability,
+    has_unsaved_line_ending_change: Option<LineEnding>,
     has_conflict: bool,
     /// Memoize calls to has_changes_since(saved_version).
     /// The contents of a cell are (self.version, has_changes) at the time of a last call.
@@ -955,6 +956,7 @@ impl Buffer {
             completion_triggers_per_language_server: Default::default(),
             completion_triggers_timestamp: Default::default(),
             deferred_ops: OperationQueue::new(),
+            has_unsaved_line_ending_change: None,
             has_conflict: false,
             change_bits: Default::default(),
             _subscriptions: Vec::new(),
@@ -1242,6 +1244,19 @@ impl Buffer {
         self.syntax_map.lock().language_registry()
     }
 
+    /// Assign the line ending type to the buffer.
+    pub fn set_line_ending(&mut self, line_ending: LineEnding) {
+        self.text.set_line_ending(line_ending);
+        self.has_unsaved_line_ending_change = if let Some(unsaved_line_ending) =
+            self.has_unsaved_line_ending_change
+            && unsaved_line_ending != line_ending
+        {
+            None
+        } else {
+            Some(line_ending)
+        }
+    }
+
     /// Assign the buffer a new [`Capability`].
     pub fn set_capability(&mut self, capability: Capability, cx: &mut Context<Self>) {
         self.capability = capability;
@@ -1259,6 +1274,7 @@ impl Buffer {
         self.has_unsaved_edits
             .set((self.saved_version().clone(), false));
         self.has_conflict = false;
+        self.has_unsaved_line_ending_change = None;
         self.saved_mtime = mtime;
         self.was_changed();
         cx.emit(BufferEvent::Saved);
@@ -1955,7 +1971,7 @@ impl Buffer {
         if self.capability == Capability::ReadOnly {
             return false;
         }
-        if self.has_conflict {
+        if self.has_conflict || self.has_unsaved_line_ending_change.is_some() {
             return true;
         }
         match self.file.as_ref().map(|f| f.disk_state()) {
