@@ -426,8 +426,6 @@ pub fn update_inlay_link_and_hover_points(
                                     }
                                     if let Some((language_server_id, location)) =
                                         part.location.clone()
-                                        && secondary_held
-                                        && !editor.has_pending_nonempty_selection()
                                     {
                                         // When there's no tooltip but we have a location, perform a "Go to Definition" style operation
                                         let filename = location
