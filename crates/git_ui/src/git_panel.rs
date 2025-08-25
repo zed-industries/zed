@@ -24,11 +24,12 @@ use git::repository::{
     PushOptions, Remote, RemoteCommandOutput, ResetMode, Upstream, UpstreamTracking,
     UpstreamTrackingStatus, get_git_committer,
 };
+use git::stash::GitStash;
 use git::status::StageStatus;
 use git::{Amend, Signoff, ToggleStaged, repository::RepoPath, status::FileStatus};
 use git::{
-    ExpandCommitEditor, RestoreTrackedFiles, StageAll, StashAll, StashPop, TrashUntrackedFiles,
-    UnstageAll,
+    ExpandCommitEditor, RestoreTrackedFiles, StageAll, StashAll, StashApply, StashPop,
+    TrashUntrackedFiles, UnstageAll,
 };
 use gpui::{
     Action, Animation, AnimationExt as _, AsyncApp, AsyncWindowContext, Axis, ClickEvent, Corner,
@@ -119,6 +120,7 @@ struct GitMenuState {
     has_staged_changes: bool,
     has_unstaged_changes: bool,
     has_new_changes: bool,
+    has_stash_items: bool,
 }
 
 fn git_panel_context_menu(
@@ -146,7 +148,8 @@ fn git_panel_context_menu(
                 "Stash All",
                 StashAll.boxed_clone(),
             )
-            .action("Stash Pop", StashPop.boxed_clone())
+            .action_disabled_when(!state.has_stash_items, "Stash Pop", StashPop.boxed_clone())
+            .action("View Stash", zed_actions::git::ViewStash.boxed_clone())
             .separator()
             .action("Open Diff", project_diff::Diff.boxed_clone())
             .separator()
@@ -369,6 +372,7 @@ pub struct GitPanel {
     local_committer: Option<GitCommitter>,
     local_committer_task: Option<Task<()>>,
     bulk_staging: Option<BulkStaging>,
+    stash_entries: GitStash,
     _settings_subscription: Subscription,
 }
 
@@ -558,6 +562,7 @@ impl GitPanel {
                 horizontal_scrollbar,
                 vertical_scrollbar,
                 bulk_staging: None,
+                stash_entries: Default::default(),
                 _settings_subscription,
             };
 
@@ -1422,12 +1427,35 @@ impl GitPanel {
         cx.spawn({
             async move |this, cx| {
                 let stash_task = active_repository
-                    .update(cx, |repo, cx| repo.stash_pop(cx))?
+                    .update(cx, |repo, cx| repo.stash_pop(None, cx))?
                     .await;
                 this.update(cx, |this, cx| {
                     stash_task
                         .map_err(|e| {
                             this.show_error_toast("stash pop", e, cx);
+                        })
+                        .ok();
+                    cx.notify();
+                })
+            }
+        })
+        .detach();
+    }
+
+    pub fn stash_apply(&mut self, _: &StashApply, _window: &mut Window, cx: &mut Context<Self>) {
+        let Some(active_repository) = self.active_repository.clone() else {
+            return;
+        };
+
+        cx.spawn({
+            async move |this, cx| {
+                let stash_task = active_repository
+                    .update(cx, |repo, cx| repo.stash_apply(None, cx))?
+                    .await;
+                this.update(cx, |this, cx| {
+                    stash_task
+                        .map_err(|e| {
+                            this.show_error_toast("stash apply", e, cx);
                         })
                         .ok();
                     cx.notify();
@@ -2685,6 +2713,8 @@ impl GitPanel {
 
         let repo = repo.read(cx);
 
+        self.stash_entries = repo.cached_stash();
+
         for entry in repo.cached_status() {
             let is_conflict = repo.had_conflict_on_last_merge_head_change(&entry.repo_path);
             let is_new = entry.status.is_created();
@@ -3053,6 +3083,7 @@ impl GitPanel {
         let has_staged_changes = self.has_staged_changes();
         let has_unstaged_changes = self.has_unstaged_changes();
         let has_new_changes = self.new_count > 0;
+        let has_stash_items = self.stash_entries.entries.len() > 0;
 
         PopoverMenu::new(id.into())
             .trigger(
@@ -3068,6 +3099,7 @@ impl GitPanel {
                         has_staged_changes,
                         has_unstaged_changes,
                         has_new_changes,
+                        has_stash_items,
                     },
                     window,
                     cx,
@@ -4115,6 +4147,7 @@ impl GitPanel {
                 has_staged_changes: self.has_staged_changes(),
                 has_unstaged_changes: self.has_unstaged_changes(),
                 has_new_changes: self.new_count > 0,
+                has_stash_items: self.stash_entries.entries.len() > 0,
             },
             window,
             cx,
