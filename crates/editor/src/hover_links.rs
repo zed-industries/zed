@@ -298,120 +298,123 @@ pub fn update_inlay_link_and_hover_points(
     window: &mut Window,
     cx: &mut Context<Editor>,
 ) {
-    // For inlay hints, we need to use the exact position where the mouse is
-    // But we must clip it to valid bounds to avoid panics
-    let clipped_point = snapshot.clip_point(point_for_position.exact_unclipped, Bias::Left);
-    let hovered_offset = snapshot.display_point_to_inlay_offset(clipped_point, Bias::Left);
-
+    let hovered_offset = if point_for_position.column_overshoot_after_line_end == 0 {
+        Some(snapshot.display_point_to_inlay_offset(point_for_position.exact_unclipped, Bias::Left))
+    } else {
+        None
+    };
     let mut go_to_definition_updated = false;
     let mut hover_updated = false;
 
-    // Get all visible inlay hints
-    let visible_hints = editor.visible_inlay_hints(cx);
+    if let Some(hovered_offset) = hovered_offset {
+        // Get all visible inlay hints
+        let visible_hints = editor.visible_inlay_hints(cx);
 
-    // Find if we're hovering over an inlay hint
-    if let Some(hovered_inlay) = visible_hints.into_iter().find(|inlay| {
-        // Only process hint inlays
-        if !matches!(inlay.id, InlayId::Hint(_)) {
-            return false;
-        }
+        // Find if we're hovering over an inlay hint
+        if let Some(hovered_inlay) = visible_hints.into_iter().find(|inlay| {
+            // Only process hint inlays
+            if !matches!(inlay.id, InlayId::Hint(_)) {
+                return false;
+            }
 
-        // Check if the hovered position falls within this inlay's display range
-        let inlay_start = snapshot.anchor_to_inlay_offset(inlay.position);
-        let inlay_end = InlayOffset(inlay_start.0 + inlay.text.len());
+            // Check if the hovered position falls within this inlay's display range
+            let inlay_start = snapshot.anchor_to_inlay_offset(inlay.position);
+            let inlay_end = InlayOffset(inlay_start.0 + inlay.text.len());
 
-        hovered_offset >= inlay_start && hovered_offset < inlay_end
-    }) {
-        let inlay_hint_cache = editor.inlay_hint_cache();
-        let excerpt_id = hovered_inlay.position.excerpt_id;
+            hovered_offset >= inlay_start && hovered_offset < inlay_end
+        }) {
+            let inlay_hint_cache = editor.inlay_hint_cache();
+            let excerpt_id = hovered_inlay.position.excerpt_id;
 
-        // Extract the hint ID from the inlay
-        if let InlayId::Hint(_hint_id) = hovered_inlay.id {
-            if let Some(cached_hint) = inlay_hint_cache.hint_by_id(excerpt_id, hovered_inlay.id) {
-                // Check if we should process this hint for hover
-                let should_process_hint = match cached_hint.resolve_state {
-                    ResolveState::CanResolve(_, _) => {
-                        if let Some(buffer_id) = snapshot
-                            .buffer_snapshot
-                            .buffer_id_for_anchor(hovered_inlay.position)
-                        {
-                            inlay_hint_cache.spawn_hint_resolve(
-                                buffer_id,
-                                excerpt_id,
-                                hovered_inlay.id,
-                                window,
-                                cx,
-                            );
-                        }
-                        false // Don't process unresolved hints
-                    }
-                    ResolveState::Resolved => true,
-                    ResolveState::Resolving => false,
-                };
-
-                if should_process_hint {
-                    let mut extra_shift_left = 0;
-                    let mut extra_shift_right = 0;
-                    if cached_hint.padding_left {
-                        extra_shift_left += 1;
-                        extra_shift_right += 1;
-                    }
-                    if cached_hint.padding_right {
-                        extra_shift_right += 1;
-                    }
-                    match cached_hint.label {
-                        project::InlayHintLabel::String(_) => {
-                            if let Some(tooltip) = cached_hint.tooltip {
-                                hover_popover::hover_at_inlay(
-                                    editor,
-                                    InlayHover {
-                                        tooltip: match tooltip {
-                                            InlayHintTooltip::String(text) => HoverBlock {
-                                                text,
-                                                kind: HoverBlockKind::PlainText,
-                                            },
-                                            InlayHintTooltip::MarkupContent(content) => {
-                                                HoverBlock {
-                                                    text: content.value,
-                                                    kind: content.kind,
-                                                }
-                                            }
-                                        },
-                                        range: InlayHighlight {
-                                            inlay: hovered_inlay.id,
-                                            inlay_position: hovered_inlay.position,
-                                            range: extra_shift_left
-                                                ..hovered_inlay.text.len() + extra_shift_right,
-                                        },
-                                    },
+            // Extract the hint ID from the inlay
+            if let InlayId::Hint(_hint_id) = hovered_inlay.id {
+                if let Some(cached_hint) = inlay_hint_cache.hint_by_id(excerpt_id, hovered_inlay.id)
+                {
+                    // Check if we should process this hint for hover
+                    let should_process_hint = match cached_hint.resolve_state {
+                        ResolveState::CanResolve(_, _) => {
+                            if let Some(buffer_id) = snapshot
+                                .buffer_snapshot
+                                .buffer_id_for_anchor(hovered_inlay.position)
+                            {
+                                inlay_hint_cache.spawn_hint_resolve(
+                                    buffer_id,
+                                    excerpt_id,
+                                    hovered_inlay.id,
                                     window,
                                     cx,
                                 );
-                                hover_updated = true;
                             }
+                            false // Don't process unresolved hints
                         }
-                        project::InlayHintLabel::LabelParts(label_parts) => {
-                            // Find the first part with actual hover information (tooltip or location)
-                            let _hint_start =
-                                snapshot.anchor_to_inlay_offset(hovered_inlay.position);
-                            let mut part_offset = 0;
+                        ResolveState::Resolved => true,
+                        ResolveState::Resolving => false,
+                    };
 
-                            for part in label_parts {
-                                let part_len = part.value.chars().count();
+                    if should_process_hint {
+                        let mut extra_shift_left = 0;
+                        let mut extra_shift_right = 0;
+                        if cached_hint.padding_left {
+                            extra_shift_left += 1;
+                            extra_shift_right += 1;
+                        }
+                        if cached_hint.padding_right {
+                            extra_shift_right += 1;
+                        }
+                        match cached_hint.label {
+                            project::InlayHintLabel::String(_) => {
+                                if let Some(tooltip) = cached_hint.tooltip {
+                                    hover_popover::hover_at_inlay(
+                                        editor,
+                                        InlayHover {
+                                            tooltip: match tooltip {
+                                                InlayHintTooltip::String(text) => HoverBlock {
+                                                    text,
+                                                    kind: HoverBlockKind::PlainText,
+                                                },
+                                                InlayHintTooltip::MarkupContent(content) => {
+                                                    HoverBlock {
+                                                        text: content.value,
+                                                        kind: content.kind,
+                                                    }
+                                                }
+                                            },
+                                            range: InlayHighlight {
+                                                inlay: hovered_inlay.id,
+                                                inlay_position: hovered_inlay.position,
+                                                range: extra_shift_left
+                                                    ..hovered_inlay.text.len() + extra_shift_right,
+                                            },
+                                        },
+                                        window,
+                                        cx,
+                                    );
+                                    hover_updated = true;
+                                }
+                            }
+                            project::InlayHintLabel::LabelParts(label_parts) => {
+                                // Find the first part with actual hover information (tooltip or location)
+                                let _hint_start =
+                                    snapshot.anchor_to_inlay_offset(hovered_inlay.position);
+                                let mut part_offset = 0;
 
-                                if part.tooltip.is_some() || part.location.is_some() {
-                                    // Found the meaningful part - show hover for it
-                                    let highlight_start = part_offset + extra_shift_left;
-                                    let highlight_end = part_offset + part_len + extra_shift_right;
+                                for part in label_parts {
+                                    let part_len = part.value.chars().count();
 
-                                    let highlight = InlayHighlight {
-                                        inlay: hovered_inlay.id,
-                                        inlay_position: hovered_inlay.position,
-                                        range: highlight_start..highlight_end,
-                                    };
+                                    if part.tooltip.is_some() || part.location.is_some() {
+                                        // Found the meaningful part - show hover for it
+                                        let highlight_start = part_offset + extra_shift_left;
+                                        let highlight_end =
+                                            part_offset + part_len + extra_shift_right;
 
-                                    if let Some(tooltip) = part.tooltip {
-                                        hover_popover::hover_at_inlay(
+                                        let highlight = InlayHighlight {
+                                            inlay: hovered_inlay.id,
+                                            inlay_position: hovered_inlay.position,
+                                            range: highlight_start..highlight_end,
+                                        };
+
+                                        if let Some(tooltip) = part.tooltip {
+                                            hover_popover::hover_at_inlay(
                                             editor,
                                             InlayHover {
                                                 tooltip: match tooltip {
@@ -433,41 +436,42 @@ pub fn update_inlay_link_and_hover_points(
                                             window,
                                             cx,
                                         );
-                                        hover_updated = true;
-                                    }
-                                    if let Some((language_server_id, location)) =
-                                        part.location.clone()
-                                    {
-                                        // When there's no tooltip but we have a location, perform a "Go to Definition" style operation
-                                        let filename = location
-                                            .uri
-                                            .path()
-                                            .split('/')
-                                            .next_back()
-                                            .unwrap_or("unknown")
-                                            .to_string();
+                                            hover_updated = true;
+                                        }
+                                        if let Some((language_server_id, location)) =
+                                            part.location.clone()
+                                        {
+                                            // When there's no tooltip but we have a location, perform a "Go to Definition" style operation
+                                            let filename = location
+                                                .uri
+                                                .path()
+                                                .split('/')
+                                                .next_back()
+                                                .unwrap_or("unknown")
+                                                .to_string();
 
-                                        hover_popover::hover_at_inlay(
-                                            editor,
-                                            InlayHover {
-                                                tooltip: HoverBlock {
-                                                    text: "Loading documentation...".to_string(),
-                                                    kind: HoverBlockKind::PlainText,
+                                            hover_popover::hover_at_inlay(
+                                                editor,
+                                                InlayHover {
+                                                    tooltip: HoverBlock {
+                                                        text: "Loading documentation..."
+                                                            .to_string(),
+                                                        kind: HoverBlockKind::PlainText,
+                                                    },
+                                                    range: highlight.clone(),
                                                 },
-                                                range: highlight.clone(),
-                                            },
-                                            window,
-                                            cx,
-                                        );
-                                        hover_updated = true;
+                                                window,
+                                                cx,
+                                            );
+                                            hover_updated = true;
 
-                                        // Now perform the "Go to Definition" flow to get hover documentation
-                                        if let Some(project) = editor.project.clone() {
-                                            let highlight = highlight.clone();
-                                            let hint_value = part.value.clone();
-                                            let location_uri = location.uri.clone();
+                                            // Now perform the "Go to Definition" flow to get hover documentation
+                                            if let Some(project) = editor.project.clone() {
+                                                let highlight = highlight.clone();
+                                                let hint_value = part.value.clone();
+                                                let location_uri = location.uri.clone();
 
-                                            cx.spawn_in(window, async move |editor, cx| {
+                                                cx.spawn_in(window, async move |editor, cx| {
                                                 async move {
                                                     // Small delay to show the loading message first
                                                     cx.background_executor()
@@ -585,36 +589,38 @@ pub fn update_inlay_link_and_hover_points(
                                                 .log_err()
                                                 .await
                                             }).detach();
+                                            }
                                         }
-                                    }
 
-                                    if let Some((language_server_id, location)) = &part.location {
-                                        if secondary_held
-                                            && !editor.has_pending_nonempty_selection()
+                                        if let Some((language_server_id, location)) = &part.location
                                         {
-                                            go_to_definition_updated = true;
-                                            show_link_definition(
-                                                shift_held,
-                                                editor,
-                                                TriggerPoint::InlayHint(
-                                                    highlight,
-                                                    location.clone(),
-                                                    *language_server_id,
-                                                ),
-                                                snapshot,
-                                                window,
-                                                cx,
-                                            );
+                                            if secondary_held
+                                                && !editor.has_pending_nonempty_selection()
+                                            {
+                                                go_to_definition_updated = true;
+                                                show_link_definition(
+                                                    shift_held,
+                                                    editor,
+                                                    TriggerPoint::InlayHint(
+                                                        highlight,
+                                                        location.clone(),
+                                                        *language_server_id,
+                                                    ),
+                                                    snapshot,
+                                                    window,
+                                                    cx,
+                                                );
+                                            }
                                         }
+
+                                        break;
                                     }
 
-                                    break;
+                                    part_offset += part_len;
                                 }
-
-                                part_offset += part_len;
                             }
-                        }
-                    };
+                        };
+                    }
                 }
             }
         }
