@@ -124,9 +124,20 @@ impl Editor {
     ) {
         let hovered_link_modifier = Editor::multi_cursor_modifier(false, &modifiers, cx);
 
+        // When you're dragging to select, and you release the drag to create the selection,
+        // if you happened to end over something hoverable (including an inlay hint), don't
+        // have the hovered link appear. That would be annoying, because all you're trying
+        // to do is to create a selection, not hover to see a hovered link.
+        if self.has_pending_selection() {
+            self.hide_hovered_link(cx);
+            return;
+        }
+
         match point_for_position.as_valid() {
             Some(point) => {
-                if !hovered_link_modifier || self.has_pending_selection() {
+                // Hide the underline unless you're holding the modifier key on the keyboard
+                // which will perform a goto definition.
+                if !hovered_link_modifier {
                     self.hide_hovered_link(cx);
                     return;
                 }
