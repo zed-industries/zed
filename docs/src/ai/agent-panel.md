@@ -34,7 +34,7 @@ The checkpoint button appears even if you interrupt the thread midway through an
 
 ### Navigating History {#navigating-history}
 
-To quickly navigate through recently opened threads, use the {#kb agent::ToggleNavigationMenu} binding, when focused on the panel's editor, or click the menu icon button at the top left of the panel to open the dropdown that shows you the six most recent threads.
+To quickly navigate through recently opened threads, use the {#kb agent::ToggleNavigationMenu} binding, when focused on the panel's editor, or click the menu icon button at the top right of the panel to open the dropdown that shows you the six most recent threads.
 
 The items in this menu function similarly to tabs, and closing them doesn’t delete the thread; instead, it simply removes them from the recent list.
 
@@ -74,16 +74,13 @@ So, if your active tab had edits made by the AI, you'll see diffs with the same 
 
 Although Zed's agent is very efficient at reading through your code base to autonomously pick up relevant files, directories, and other context, manually adding context is still encouraged as a way to speed up and improve the AI's response quality.
 
-If you have a tab open while using the Agent Panel, that tab appears as a suggested context in form of a dashed button.
-You can also add other forms of context by mentioning them by typing `@` in the editor.
-
-You can include files with `@files`, symbols with `@symbol`, previous Agent Panel threads with `@thread` or fetch from the web with `@fetch`.
+To add any file, directory, symbol, previous threads, rules files, or even web pages as context, type `@` to mention them in the editor.
 
 Pasting images as context is also supported by the Agent Panel.
 
 ### Token Usage {#token-usage}
 
-Zed surfaces how many tokens you are consuming for your currently active thread in the panel's toolbar.
+Zed surfaces how many tokens you are consuming for your currently active thread nearby the profile selector in the panel's message editor.
 Depending on how many pieces of context you add, your token consumption can grow rapidly.
 
 With that in mind, once you get close to the model's context window, a banner appears below the message editor suggesting to start a new thread with the current one summarized and added as context.
@@ -149,7 +146,7 @@ Zed's UI will inform about this via a warning icon that appears close to the mod
 
 ## Text Threads {#text-threads}
 
-["Text threads"](./text-threads.md) present your conversation with the LLM in a different format—as raw text.
+["Text Threads"](./text-threads.md) present your conversation with the LLM in a different format—as raw text.
 With text threads, you have full control over the conversation data.
 You can remove and edit responses from the LLM, swap roles, and include more context earlier in the conversation.
 
