@@ -1569,24 +1569,20 @@ impl Buffer {
         self.send_operation(op, true, cx);
     }
 
-    /// Retrieve the diagnostics entries for the given language server, or all
-    /// diagnostics if `server_id` is `None`.
-    pub fn get_diagnostics(
+    pub fn buffer_diagnostics(
         &self,
-        server_id: Option<LanguageServerId>,
-    ) -> Option<Vec<&DiagnosticEntry<Anchor>>> {
-        if let Some(server_id) = server_id {
-            let Ok(idx) = self.diagnostics.binary_search_by_key(&server_id, |v| v.0) else {
-                return None;
-            };
-            Some(self.diagnostics[idx].1.iter().collect::<Vec<_>>())
-        } else {
-            let diag = self
+        for_server: Option<LanguageServerId>,
+    ) -> Vec<&DiagnosticEntry<Anchor>> {
+        match for_server {
+            Some(server_id) => match self.diagnostics.binary_search_by_key(&server_id, |v| v.0) {
+                Ok(idx) => self.diagnostics[idx].1.iter().collect(),
+                Err(_) => Vec::new(),
+            },
+            None => self
                 .diagnostics
                 .iter()
-                .flat_map(|(_, diags)| (*diags).iter())
-                .collect::<Vec<_>>();
-            Some(diag)
+                .flat_map(|(_, diagnostic_set)| diagnostic_set.iter())
+                .collect(),
         }
     }
 

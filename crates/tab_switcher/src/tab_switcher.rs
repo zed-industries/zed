@@ -246,54 +246,48 @@ impl TabMatch {
         window: &Window,
         cx: &App,
     ) -> Option<DecoratedIcon> {
-        self.item.tab_icon(window, cx).map(|icon| {
-            let show_diagnostics = ItemSettings::get_global(cx).show_diagnostics;
-            let git_status_color = {
-                ItemSettings::get_global(cx)
-                    .git_status
-                    .then(|| {
-                        self.item
-                            .project_path(cx)
-                            .as_ref()
-                            .and_then(|path| {
-                                let project = project.read(cx);
-                                let entry = project.entry_for_path(path, cx)?;
-                                let git_status = project
-                                    .project_path_git_status(path, cx)
-                                    .map(|status| status.summary())
-                                    .unwrap_or_default();
-                                Some((entry, git_status))
-                            })
-                            .map(|(entry, git_status)| {
-                                entry_git_aware_label_color(git_status, entry.is_ignored, selected)
-                            })
-                    })
-                    .flatten()
-            };
-            let colored_icon = icon.color(git_status_color.unwrap_or_default());
+        let icon = self.item.tab_icon(window, cx)?;
+        let item_settings = ItemSettings::get_global(cx);
+        let show_diagnostics = item_settings.show_diagnostics;
+        let git_status_color = item_settings
+            .git_status
+            .then(|| {
+                let path = self.item.project_path(cx)?;
+                let project = project.read(cx);
+                let entry = project.entry_for_path(&path, cx)?;
+                let git_status = project
+                    .project_path_git_status(&path, cx)
+                    .map(|status| status.summary())
+                    .unwrap_or_default();
+                Some(entry_git_aware_label_color(
+                    git_status,
+                    entry.is_ignored,
+                    selected,
+                ))
+            })
+            .flatten();
+        let colored_icon = icon.color(git_status_color.unwrap_or_default());
 
-            let item_diagnostics = {
-                if show_diagnostics == ShowDiagnostics::Off {
-                    None
-                } else {
-                    let buffer_store = project.read(cx).buffer_store().read(cx);
-                    let buffer = self
-                        .item
-                        .project_path(cx)
-                        .and_then(|path| buffer_store.get_by_path(&path))
-                        .map(|buffer| buffer.read(cx));
-                    buffer.and_then(|buffer| {
-                        buffer
-                            .get_diagnostics(None)
-                            .unwrap_or_default()
-                            .iter()
-                            .map(|diag| diag.diagnostic.severity)
-                            .min()
-                    })
-                }
-            };
+        let most_sever_diagostic_level = if show_diagnostics == ShowDiagnostics::Off {
+            None
+        } else {
+            let buffer_store = project.read(cx).buffer_store().read(cx);
+            let buffer = self
+                .item
+                .project_path(cx)
+                .and_then(|path| buffer_store.get_by_path(&path))
+                .map(|buffer| buffer.read(cx));
+            buffer.and_then(|buffer| {
+                buffer
+                    .buffer_diagnostics(None)
+                    .iter()
+                    .map(|diagnostic_entry| diagnostic_entry.diagnostic.severity)
+                    .min()
+            })
+        };
 
-            let decorations = entry_diagnostic_aware_icon_decoration_and_color(item_diagnostics)
+        let decorations =
+            entry_diagnostic_aware_icon_decoration_and_color(most_sever_diagostic_level)
                 .filter(|(d, _)| {
                     *d != IconDecorationKind::Triangle
                         || show_diagnostics != ShowDiagnostics::Errors
@@ -311,9 +305,7 @@ impl TabMatch {
                             y: px(-2.),
                         })
                 });
-
-            DecoratedIcon::new(colored_icon, decorations)
-        })
+        Some(DecoratedIcon::new(colored_icon, decorations))
     }
 }
 
