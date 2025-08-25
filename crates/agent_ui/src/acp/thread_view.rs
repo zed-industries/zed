@@ -2012,7 +2012,7 @@ impl AcpThreadView {
                     .label_size(LabelSize::Small)
                     .color(Color::Muted)
                     .truncate(true)
-                    .when(!is_file.is_some(), |this| {
+                    .when(is_file.is_none(), |this| {
                         this.icon(IconName::ArrowUpRight)
                             .icon_size(IconSize::XSmall)
                             .icon_color(Color::Muted)
