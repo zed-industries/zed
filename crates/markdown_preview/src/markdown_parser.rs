@@ -759,11 +759,15 @@ impl<'a> MarkdownParser<'a> {
     }
 
     async fn parse_html_block(&mut self) -> Vec<ParsedMarkdownElement> {
-        let (_event, _source_range) = self.previous().unwrap();
         let mut elements = Vec::new();
+        let Some((_event, _source_range)) = self.previous() else {
+            return elements;
+        };
 
         while !self.eof() {
-            let (current, source_range) = self.current().unwrap();
+            let Some((current, source_range)) = self.current() else {
+                break;
+            };
             let source_range = source_range.clone();
             match current {
                 Event::Html(html) => {
