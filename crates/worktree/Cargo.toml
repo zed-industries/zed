@@ -47,6 +47,8 @@ smol.workspace = true
 sum_tree.workspace = true
 text.workspace = true
 util.workspace = true
+encoding = "0.2.33"
+
 
 [dev-dependencies]
 clock = { workspace = true, features = ["test-support"] }

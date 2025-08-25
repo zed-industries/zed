@@ -7,7 +7,11 @@ use ::ignore::gitignore::{Gitignore, GitignoreBuilder};
 use anyhow::{Context as _, Result, anyhow};
 use clock::ReplicaId;
 use collections::{HashMap, HashSet, VecDeque};
-use fs::{Fs, MTime, PathEvent, RemoveOptions, Watcher, copy_recursive, read_dir_items};
+use encoding::Encoding;
+use fs::{
+    Fs, MTime, PathEvent, RemoveOptions, Watcher, copy_recursive, encodings::EncodingWrapper,
+    read_dir_items,
+};
 use futures::{
     FutureExt as _, Stream, StreamExt,
     channel::{
@@ -3116,6 +3120,19 @@ impl language::LocalFile for File {
         let abs_path = worktree.absolutize(&self.path);
         let fs = worktree.fs.clone();
         cx.background_spawn(async move { fs.load_bytes(&abs_path).await })
+    }
+
+    fn load_with_encoding(
+        &self,
+        cx: &App,
+        encoding: &'static dyn Encoding,
+    ) -> Task<Result<String>> {
+        let worktree = self.worktree.read(cx).as_local().unwrap();
+        let path = worktree.absolutize(&self.path);
+        let fs = worktree.fs.clone();
+
+        let encoding = EncodingWrapper::new(encoding);
+        cx.background_spawn(async move { fs.load_with_encoding(path?, encoding).await })
     }
 }
 
