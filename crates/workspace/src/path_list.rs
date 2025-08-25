@@ -58,7 +58,7 @@ impl PathList {
         let mut paths: Vec<PathBuf> = if serialized.paths.is_empty() {
             Vec::new()
         } else {
-            serialized.paths.split('\0').map(PathBuf::from).collect()
+            serialized.paths.split('\n').map(PathBuf::from).collect()
         };
 
         let mut order: Vec<usize> = serialized
@@ -84,7 +84,7 @@ impl PathList {
         let mut paths = String::new();
         for path in self.paths.iter() {
             if !paths.is_empty() {
-                paths.push('\0');
+                paths.push('\n');
             }
             paths.push_str(&path.to_string_lossy());
         }
