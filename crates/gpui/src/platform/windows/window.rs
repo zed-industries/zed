@@ -1,5 +1,13 @@
 #![deny(unsafe_op_in_unsafe_fn)]
 
+use crate::*;
+use ::util::ResultExt;
+use anyhow::{Context as _, Result};
+use async_task::Runnable;
+use futures::channel::oneshot::{self, Receiver};
+use raw_window_handle as rwh;
+use smallvec::SmallVec;
+use std::ffi::c_void;
 use std::{
     cell::RefCell,
     num::NonZeroIsize,
@@ -9,13 +17,7 @@ use std::{
     sync::{Arc, Once},
     time::{Duration, Instant},
 };
-
-use ::util::ResultExt;
-use anyhow::{Context as _, Result};
-use async_task::Runnable;
-use futures::channel::oneshot::{self, Receiver};
-use raw_window_handle as rwh;
-use smallvec::SmallVec;
+use windows::Win32::Graphics::Dwm::{DWMWA_NONCLIENT_RTL_LAYOUT, DwmSetWindowAttribute};
 use windows::{
     Win32::{
         Foundation::*,
@@ -25,8 +27,6 @@ use windows::{
     },
     core::*,
 };
-
-use crate::*;
 
 pub(crate) struct WindowsWindow(pub Rc<WindowsWindowInner>);
 
@@ -167,7 +167,7 @@ impl WindowsWindowState {
     fn calculate_window_bounds(&self) -> (Bounds<Pixels>, bool) {
         let placement = unsafe {
             let mut placement = WINDOWPLACEMENT {
-                length: std::mem::size_of::<WINDOWPLACEMENT>() as u32,
+                length: size_of::<WINDOWPLACEMENT>() as u32,
                 ..Default::default()
             };
             GetWindowPlacement(self.hwnd, &mut placement).log_err();
@@ -438,6 +438,18 @@ impl WindowsWindow {
         let this = context.inner.take().unwrap()?;
         let hwnd = creation_result?;
 
+        if params.layout_direction == LayoutDirection::RightToLeft {
+            let mut true_var = 1_i32;
+            unsafe {
+                DwmSetWindowAttribute(
+                    hwnd,
+                    DWMWA_NONCLIENT_RTL_LAYOUT,
+                    &mut true_var as *mut _ as *mut c_void,
+                    size_of::<i32>() as u32,
+                )?;
+            }
+        }
+
         register_drag_drop(&this)?;
         configure_dwm_dark_mode(hwnd, appearance);
         this.state.borrow_mut().border_offset.update(hwnd)?;
@@ -600,7 +612,7 @@ impl PlatformWindow for WindowsWindow {
             .spawn(async move {
                 unsafe {
                     let mut config = TASKDIALOGCONFIG::default();
-                    config.cbSize = std::mem::size_of::<TASKDIALOGCONFIG>() as _;
+                    config.cbSize = size_of::<TASKDIALOGCONFIG>() as _;
                     config.hwndParent = handle;
                     let title;
                     let main_icon;
@@ -1271,7 +1283,7 @@ fn retrieve_window_placement(
     border_offset: WindowBorderOffset,
 ) -> Result<WINDOWPLACEMENT> {
     let mut placement = WINDOWPLACEMENT {
-        length: std::mem::size_of::<WINDOWPLACEMENT>() as u32,
+        length: size_of::<WINDOWPLACEMENT>() as u32,
         ..Default::default()
     };
     unsafe { GetWindowPlacement(hwnd, &mut placement)? };
@@ -1321,7 +1333,7 @@ fn set_window_composition_attribute(hwnd: HWND, color: Option<Color>, state: u32
             let mut data = WINDOWCOMPOSITIONATTRIBDATA {
                 attrib: 0x13,
                 pv_data: &accent as *const _ as *mut _,
-                cb_data: std::mem::size_of::<AccentPolicy>(),
+                cb_data: size_of::<AccentPolicy>(),
             };
             let _ = set_window_composition_attribute(hwnd, &mut data as *mut _ as _);
         }

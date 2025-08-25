@@ -1,7 +1,7 @@
 use gpui::{
-    App, Application, Bounds, Context, DisplayId, Hsla, Pixels, SharedString, Size, Window,
-    WindowBackgroundAppearance, WindowBounds, WindowKind, WindowOptions, div, point, prelude::*,
-    px, rgb,
+    App, Application, Bounds, Context, DisplayId, Hsla, LayoutDirection, Pixels, SharedString,
+    Size, Window, WindowBackgroundAppearance, WindowBounds, WindowKind, WindowOptions, div, point,
+    prelude::*, px, rgb,
 };
 
 struct WindowContent {
@@ -60,6 +60,7 @@ fn build_window_options(display_id: DisplayId, bounds: Bounds<Pixels>) -> Window
         kind: WindowKind::PopUp,
         is_movable: false,
         app_id: None,
+        layout_direction: LayoutDirection::LeftToRight,
         window_min_size: None,
         window_decorations: None,
     }

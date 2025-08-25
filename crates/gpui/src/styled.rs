@@ -4,6 +4,7 @@ use crate::{
     GridPlacement, Hsla, JustifyContent, Length, SharedString, StrikethroughStyle, StyleRefinement,
     TextAlign, TextOverflow, TextStyleRefinement, UnderlineStyle, WhiteSpace, px, relative, rems,
 };
+use crate::{BidiStyleRefinement, LayoutDirection};
 pub use gpui_macros::{
     border_style_methods, box_shadow_style_methods, cursor_style_methods, margin_style_methods,
     overflow_style_methods, padding_style_methods, position_style_methods,
@@ -740,6 +741,22 @@ pub trait Styled: Sized {
     fn row_span_full(mut self) -> Self {
         let grid_location = self.style().grid_location_mut();
         grid_location.row = GridPlacement::Line(1)..GridPlacement::Line(-1);
+        self
+    }
+
+    /// Sets the drawing direction to LTR
+    fn dir_ltr(mut self) -> Self {
+        self.style().bidi = Some(BidiStyleRefinement {
+            dir: Some(LayoutDirection::LeftToRight),
+        });
+        self
+    }
+
+    /// Sets the drawing direction to LTR
+    fn dir_rtl(mut self) -> Self {
+        self.style().bidi = Some(BidiStyleRefinement {
+            dir: Some(LayoutDirection::RightToLeft),
+        });
         self
     }
 

@@ -38,10 +38,10 @@ pub(crate) mod scap_screen_capture;
 use crate::{
     Action, AnyWindowHandle, App, AsyncWindowContext, BackgroundExecutor, Bounds,
     DEFAULT_WINDOW_SIZE, DevicePixels, DispatchEventResult, Font, FontId, FontMetrics, FontRun,
-    ForegroundExecutor, GlyphId, GpuSpecs, ImageSource, Keymap, LineLayout, Pixels, PlatformInput,
-    Point, RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams, ScaledPixels, Scene,
-    ShapedGlyph, ShapedRun, SharedString, Size, SvgRenderer, SvgSize, Task, TaskLabel, Window,
-    WindowControlArea, hash, point, px, size,
+    ForegroundExecutor, GlyphId, GpuSpecs, ImageSource, Keymap, LayoutDirection, LineLayout,
+    Pixels, PlatformInput, Point, RenderGlyphParams, RenderImage, RenderImageParams,
+    RenderSvgParams, ScaledPixels, Scene, ShapedGlyph, ShapedRun, SharedString, Size, SvgRenderer,
+    SvgSize, Task, TaskLabel, Window, WindowControlArea, hash, point, px, size,
 };
 use anyhow::Result;
 use async_task::Runnable;
@@ -237,6 +237,9 @@ pub(crate) trait Platform: 'static {
     fn get_menus(&self) -> Option<Vec<OwnedMenu>> {
         None
     }
+
+    fn set_default_layout_direction(&self, direction: LayoutDirection);
+    fn get_default_layout_direction(&self) -> LayoutDirection;
 
     fn set_dock_menu(&self, menu: Vec<MenuItem>, keymap: &Keymap);
     fn perform_dock_menu_action(&self, _action: usize) {}
@@ -1105,6 +1108,9 @@ pub struct WindowOptions {
     /// Whether to use client or server side decorations. Wayland only
     /// Note that this may be ignored.
     pub window_decorations: Option<WindowDecorations>,
+
+    /// The layout direction
+    pub layout_direction: LayoutDirection,
 }
 
 /// The variables that can be configured when creating a new window
@@ -1144,6 +1150,9 @@ pub(crate) struct WindowParams {
     pub display_id: Option<DisplayId>,
 
     pub window_min_size: Option<Size<Pixels>>,
+
+    #[cfg_attr(any(target_os = "linux", target_os = "freebsd"), allow(dead_code))]
+    pub layout_direction: LayoutDirection,
 }
 
 /// Represents the status of how a window should be opened.
@@ -1194,6 +1203,7 @@ impl Default for WindowOptions {
             app_id: None,
             window_min_size: None,
             window_decorations: None,
+            layout_direction: LayoutDirection::LeftToRight,
         }
     }
 }
