@@ -193,7 +193,7 @@ impl AgentConnection for AcpConnection {
                     action_log,
                     session_id.clone(),
                     // ACP doesn't currently support per-session prompt capabilities or changing capabilities dynamically.
-                    watch::Receiver::constant(self.prompt_capabilities.clone()),
+                    watch::Receiver::constant(self.prompt_capabilities),
                     cx,
                 )
             })?;

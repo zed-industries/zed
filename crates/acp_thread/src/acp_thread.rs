@@ -827,7 +827,7 @@ impl AcpThread {
         mut prompt_capabilities_rx: watch::Receiver<acp::PromptCapabilities>,
         cx: &mut Context<Self>,
     ) -> Self {
-        let prompt_capabilities = prompt_capabilities_rx.borrow().clone();
+        let prompt_capabilities = *prompt_capabilities_rx.borrow();
         let task = cx.spawn::<_, anyhow::Result<()>>(async move |this, cx| {
             loop {
                 let caps = prompt_capabilities_rx.recv().await?;
