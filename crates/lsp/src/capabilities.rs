@@ -32,10 +32,16 @@ impl EffectiveCapability for cap::DidChangeTextDocument {
                 }
                 let mut has_incremental = false;
                 for data in id_to_sync_kind_map.values() {
-                    if data.sync_kind == TextDocumentSyncKind::FULL {
+                    let sync_kind = match data.sync_kind {
+                        0 => Some(TextDocumentSyncKind::NONE),
+                        1 => Some(TextDocumentSyncKind::FULL),
+                        2 => Some(TextDocumentSyncKind::INCREMENTAL),
+                        _ => None,
+                    };
+                    if sync_kind == Some(TextDocumentSyncKind::FULL) {
                         return Some(TextDocumentSyncKind::FULL);
                     }
-                    if data.sync_kind == TextDocumentSyncKind::INCREMENTAL {
+                    if sync_kind == Some(TextDocumentSyncKind::INCREMENTAL) {
                         has_incremental = true;
                     }
                 }
