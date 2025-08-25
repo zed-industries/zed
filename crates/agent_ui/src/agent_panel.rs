@@ -2683,9 +2683,9 @@ impl AgentPanel {
                             })
                             .when(cx.has_flag::<GeminiAndNativeFeatureFlag>(), |menu| {
                                 menu.separator().link(
-                                    "Build Your Own Agent",
+                                    "Add Your Own Agent",
                                     OpenBrowser {
-                                        url: zed_urls::account_url(cx), // TODO: Add final URL
+                                        url: "https://agentclientprotocol.com/".into(),
                                     }
                                     .boxed_clone(),
                                 )
