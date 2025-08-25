@@ -1,13 +1,12 @@
 use crate::markdown_elements::*;
 use async_recursion::async_recursion;
 use collections::FxHashMap;
-use gpui::FontWeight;
+use gpui::{DefiniteLength, FontWeight, px, relative};
 use html5ever::{ParseOpts, local_name, parse_document, tendril::TendrilSink};
 use language::LanguageRegistry;
 use markup5ever_rcdom::RcDom;
 use pulldown_cmark::{Alignment, Event, Options, Parser, Tag, TagEnd};
 use std::{cell::RefCell, collections::HashMap, ops::Range, path::PathBuf, rc::Rc, sync::Arc, vec};
-use ui::{px, relative};
 
 pub async fn parse_markdown(
     markdown_input: &str,
@@ -175,7 +174,7 @@ impl<'a> MarkdownParser<'a> {
 
                     self.cursor += 1;
 
-                    let code_block = self.parse_code_block(language).await;
+                    let code_block = self.parse_code_block(language).await?;
                     Some(vec![ParsedMarkdownElement::CodeBlock(code_block)])
                 }
                 Tag::HtmlBlock => {
@@ -703,13 +702,22 @@ impl<'a> MarkdownParser<'a> {
         }
     }
 
-    async fn parse_code_block(&mut self, language: Option<String>) -> ParsedMarkdownCodeBlock {
-        let (_event, source_range) = self.previous().unwrap();
+    async fn parse_code_block(
+        &mut self,
+        language: Option<String>,
+    ) -> Option<ParsedMarkdownCodeBlock> {
+        let Some((_event, source_range)) = self.previous() else {
+            return None;
+        };
+
         let source_range = source_range.clone();
         let mut code = String::new();
 
         while !self.eof() {
-            let (current, _source_range) = self.current().unwrap();
+            let Some((current, _source_range)) = self.current() else {
+                break;
+            };
+
             match current {
                 Event::Text(text) => {
                     code.push_str(text);
@@ -742,12 +750,12 @@ impl<'a> MarkdownParser<'a> {
             None
         };
 
-        ParsedMarkdownCodeBlock {
+        Some(ParsedMarkdownCodeBlock {
             source_range,
             contents: code.into(),
             language,
             highlights,
-        }
+        })
     }
 
     async fn parse_html_block(&mut self) -> Vec<ParsedMarkdownElement> {
@@ -899,14 +907,8 @@ impl<'a> MarkdownParser<'a> {
     }
 
     /// Parses the width/height attribute value of an html element (e.g. img element)
-    fn parse_length(value: &str) -> Option<ui::DefiniteLength> {
-        if value.ends_with("px") {
-            value
-                .trim_end_matches("px")
-                .parse()
-                .ok()
-                .map(|value| px(value).into())
-        } else if value.ends_with("%") {
+    fn parse_length(value: &str) -> Option<DefiniteLength> {
+        if value.ends_with("%") {
             value
                 .trim_end_matches("%")
                 .parse::<f32>()
