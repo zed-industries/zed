@@ -4434,7 +4434,6 @@ mod tests {
             assert_eq!(actions_without_namespace, Vec::<&str>::new());
 
             let expected_namespaces = vec![
-                "acp",
                 "activity_indicator",
                 "agent",
                 #[cfg(not(target_os = "macos"))]

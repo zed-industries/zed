@@ -21,12 +21,12 @@ use ui::prelude::*;
 use util::ResultExt as _;
 use workspace::{Item, Workspace};
 
-actions!(acp, [OpenDebugTools]);
+actions!(dev, [OpenAcpLogs]);
 
 pub fn init(cx: &mut App) {
     cx.observe_new(
         |workspace: &mut Workspace, _window, _cx: &mut Context<Workspace>| {
-            workspace.register_action(|workspace, _: &OpenDebugTools, window, cx| {
+            workspace.register_action(|workspace, _: &OpenAcpLogs, window, cx| {
                 let acp_tools =
                     Box::new(cx.new(|cx| AcpTools::new(workspace.project().clone(), cx)));
                 workspace.add_item_to_active_pane(acp_tools, None, true, window, cx);
