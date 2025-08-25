@@ -305,7 +305,6 @@ pub fn update_inlay_link_and_hover_points(
     };
     let mut go_to_definition_updated = false;
     let mut hover_updated = false;
-
     if let Some(hovered_offset) = hovered_offset {
         let buffer_snapshot = editor.buffer().read(cx).snapshot(cx);
         let previous_valid_anchor = buffer_snapshot.anchor_at(
@@ -316,7 +315,7 @@ pub fn update_inlay_link_and_hover_points(
             point_for_position.next_valid.to_point(snapshot),
             Bias::Right,
         );
-        if let Some(hovered_inlay) = editor
+        if let Some(hovered_hint) = editor
             .visible_inlay_hints(cx)
             .into_iter()
             .skip_while(|hint| {
@@ -332,23 +331,23 @@ pub fn update_inlay_link_and_hover_points(
             .max_by_key(|hint| hint.id)
         {
             let inlay_hint_cache = editor.inlay_hint_cache();
-            let excerpt_id = hovered_inlay.position.excerpt_id;
+            let excerpt_id = hovered_hint.position.excerpt_id;
 
             // Extract the hint ID from the inlay
-            if let InlayId::Hint(_hint_id) = hovered_inlay.id
-                && let Some(cached_hint) = inlay_hint_cache.hint_by_id(excerpt_id, hovered_inlay.id)
+            if let InlayId::Hint(_hint_id) = hovered_hint.id
+                && let Some(cached_hint) = inlay_hint_cache.hint_by_id(excerpt_id, hovered_hint.id)
             {
                 // Check if we should process this hint for hover
                 let should_process_hint = match cached_hint.resolve_state {
                     ResolveState::CanResolve(_, _) => {
                         if let Some(buffer_id) = snapshot
                             .buffer_snapshot
-                            .buffer_id_for_anchor(hovered_inlay.position)
+                            .buffer_id_for_anchor(hovered_hint.position)
                         {
                             inlay_hint_cache.spawn_hint_resolve(
                                 buffer_id,
                                 excerpt_id,
-                                hovered_inlay.id,
+                                hovered_hint.id,
                                 window,
                                 cx,
                             );
@@ -388,10 +387,10 @@ pub fn update_inlay_link_and_hover_points(
                                             }
                                         },
                                         range: InlayHighlight {
-                                            inlay: hovered_inlay.id,
-                                            inlay_position: hovered_inlay.position,
+                                            inlay: hovered_hint.id,
+                                            inlay_position: hovered_hint.position,
                                             range: extra_shift_left
-                                                ..hovered_inlay.text.len() + extra_shift_right,
+                                                ..hovered_hint.text.len() + extra_shift_right,
                                         },
                                     },
                                     window,
@@ -403,7 +402,7 @@ pub fn update_inlay_link_and_hover_points(
                         project::InlayHintLabel::LabelParts(label_parts) => {
                             // Find the first part with actual hover information (tooltip or location)
                             let _hint_start =
-                                snapshot.anchor_to_inlay_offset(hovered_inlay.position);
+                                snapshot.anchor_to_inlay_offset(hovered_hint.position);
                             let mut part_offset = 0;
 
                             for part in label_parts {
@@ -415,8 +414,8 @@ pub fn update_inlay_link_and_hover_points(
                                     let highlight_end = part_offset + part_len + extra_shift_right;
 
                                     let highlight = InlayHighlight {
-                                        inlay: hovered_inlay.id,
-                                        inlay_position: hovered_inlay.position,
+                                        inlay: hovered_hint.id,
+                                        inlay_position: hovered_hint.position,
                                         range: highlight_start..highlight_end,
                                     };
 
