@@ -183,13 +183,13 @@ If you wish to use alternate models or customize the API endpoint, you can do so
       "api_url": "https://api.deepseek.com",
       "available_models": [
         {
-          "name": "deepseek-chat",
-          "display_name": "DeepSeek Chat",
+          "name": "deepseek-v3.1",
+          "display_name": "DeepSeek V3.1",
           "max_tokens": 64000
         },
         {
-          "name": "deepseek-reasoner",
-          "display_name": "DeepSeek Reasoner",
+          "name": "deepseek-v3.1(think)",
+          "display_name": "DeepSeek V3.1(think)",
           "max_tokens": 64000,
           "max_output_tokens": 4096
         }
