@@ -1148,6 +1148,7 @@ impl LanguageServer {
         update(self.dynamic_capabilities.write().deref_mut());
     }
 
+    /// Get effective capabilities by combining static and dynamic capabilities.
     pub fn effective_capability<Cap: EffectiveCapability>(&self) -> Cap::Value {
         let static_capabilities = self.capabilities();
         let dynamic_capabilities = self.dynamic_capabilities.read().clone();

@@ -27,20 +27,21 @@ impl EffectiveCapability for cap::DidChangeTextDocument {
             .as_ref()
             .and_then(|id_to_sync_kind_map| {
                 if id_to_sync_kind_map.is_empty() {
-                    None
-                } else {
-                    let mut best: Option<TextDocumentSyncKind> = None;
-                    for kind in id_to_sync_kind_map.values() {
-                        best = Some(match (best, kind) {
-                            (None, kind) => *kind,
-                            (
-                                Some(TextDocumentSyncKind::FULL),
-                                &TextDocumentSyncKind::INCREMENTAL,
-                            ) => TextDocumentSyncKind::INCREMENTAL,
-                            (Some(kind), _) => kind,
-                        });
+                    return None;
+                }
+                let mut has_incremental = false;
+                for &kind in id_to_sync_kind_map.values() {
+                    if kind == TextDocumentSyncKind::FULL {
+                        return Some(TextDocumentSyncKind::FULL);
                     }
-                    best
+                    if kind == TextDocumentSyncKind::INCREMENTAL {
+                        has_incremental = true;
+                    }
+                }
+                if has_incremental {
+                    Some(TextDocumentSyncKind::INCREMENTAL)
+                } else {
+                    None
                 }
             })
             .or_else(|| {
