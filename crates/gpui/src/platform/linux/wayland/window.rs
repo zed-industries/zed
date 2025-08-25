@@ -157,7 +157,7 @@ impl WaylandWindowState {
 
         if let Some(titlebar) = options.titlebar {
             if let Some(title) = titlebar.title {
-               toplevel.set_title(title.to_string());
+                toplevel.set_title(title.to_string());
             }
         }
 
