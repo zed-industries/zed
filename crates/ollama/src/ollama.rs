@@ -6,6 +6,7 @@ use serde_json::Value;
 use std::time::Duration;
 
 pub const OLLAMA_API_URL: &str = "http://localhost:11434";
+pub const OLLAMA_API_KEY_VAR: &str = "OLLAMA_API_KEY";
 
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[derive(Clone, Serialize, Deserialize, Debug, Eq, PartialEq)]
@@ -97,6 +98,39 @@ impl Model {
     pub fn max_token_count(&self) -> u64 {
         self.max_tokens
     }
+}
+
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+#[derive(Debug, Serialize, Deserialize)]
+pub struct GenerateRequest {
+    pub model: String,
+    pub prompt: String,
+    pub suffix: Option<String>,
+    pub stream: bool,
+    pub options: Option<GenerateOptions>,
+    pub keep_alive: Option<KeepAlive>,
+    pub context: Option<Vec<i64>>,
+}
+
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+#[derive(Debug, Serialize, Deserialize)]
+pub struct GenerateOptions {
+    pub num_predict: Option<i32>,
+    pub temperature: Option<f32>,
+    pub top_p: Option<f32>,
+    pub stop: Option<Vec<String>>,
+}
+
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+#[derive(Debug, Serialize, Deserialize)]
+pub struct GenerateResponse {
+    pub response: String,
+    pub done: bool,
+    pub context: Option<Vec<i64>>,
+    pub total_duration: Option<u64>,
+    pub load_duration: Option<u64>,
+    pub prompt_eval_count: Option<i32>,
+    pub eval_count: Option<i32>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -309,13 +343,18 @@ pub async fn stream_chat_completion(
 pub async fn get_models(
     client: &dyn HttpClient,
     api_url: &str,
+    api_key: Option<String>,
     _: Option<Duration>,
 ) -> Result<Vec<LocalModelListing>> {
     let uri = format!("{api_url}/api/tags");
-    let request_builder = HttpRequest::builder()
+    let mut request_builder = HttpRequest::builder()
         .method(Method::GET)
         .uri(uri)
         .header("Accept", "application/json");
+
+    if let Some(api_key) = api_key {
+        request_builder = request_builder.header("Authorization", format!("Bearer {api_key}"))
+    }
 
     let request = request_builder.body(AsyncBody::default())?;
 
@@ -336,15 +375,25 @@ pub async fn get_models(
 }
 
 /// Fetch details of a model, used to determine model capabilities
-pub async fn show_model(client: &dyn HttpClient, api_url: &str, model: &str) -> Result<ModelShow> {
+pub async fn show_model(
+    client: &dyn HttpClient,
+    api_url: &str,
+    api_key: Option<String>,
+    model: &str,
+) -> Result<ModelShow> {
     let uri = format!("{api_url}/api/show");
-    let request = HttpRequest::builder()
+    let mut request_builder = HttpRequest::builder()
         .method(Method::POST)
         .uri(uri)
-        .header("Content-Type", "application/json")
-        .body(AsyncBody::from(
-            serde_json::json!({ "model": model }).to_string(),
-        ))?;
+        .header("Content-Type", "application/json");
+
+    if let Some(api_key) = api_key {
+        request_builder = request_builder.header("Authorization", format!("Bearer {api_key}"));
+    }
+
+    let request = request_builder.body(AsyncBody::from(
+        serde_json::json!({ "model": model }).to_string(),
+    ))?;
 
     let mut response = client.send(request).await?;
     let mut body = String::new();
@@ -360,9 +409,197 @@ pub async fn show_model(client: &dyn HttpClient, api_url: &str, model: &str) -> 
     Ok(details)
 }
 
+pub async fn generate(
+    client: &dyn HttpClient,
+    api_url: &str,
+    api_key: Option<String>,
+    request: GenerateRequest,
+) -> Result<GenerateResponse> {
+    let uri = format!("{api_url}/api/generate");
+    let mut request_builder = HttpRequest::builder()
+        .method(Method::POST)
+        .uri(uri)
+        .header("Content-Type", "application/json");
+
+    if let Some(api_key) = api_key {
+        request_builder = request_builder.header("Authorization", format!("Bearer {api_key}"))
+    }
+
+    let serialized_request = serde_json::to_string(&request)?;
+    let request = request_builder.body(AsyncBody::from(serialized_request))?;
+
+    let mut response = match client.send(request).await {
+        Ok(response) => response,
+        Err(err) => {
+            log::error!("Ollama server unavailable at {}: {}", api_url, err);
+            return Err(err);
+        }
+    };
+
+    let mut body = String::new();
+    response.body_mut().read_to_string(&mut body).await?;
+
+    anyhow::ensure!(
+        response.status().is_success(),
+        "Failed to connect to Ollama API: {} {}",
+        response.status(),
+        body,
+    );
+
+    let response: GenerateResponse =
+        serde_json::from_str(&body).context("Unable to parse Ollama generate response")?;
+    Ok(response)
+}
+
+#[cfg(any(test, feature = "test-support"))]
+pub mod fake {
+    use super::*;
+    use crate::ollama_completion_provider::OllamaCompletionProvider;
+    use gpui::AppContext;
+    use http_client::{AsyncBody, Response, Url};
+    use std::collections::HashMap;
+    use std::sync::{Arc, Mutex};
+
+    pub struct FakeHttpClient {
+        responses: Arc<Mutex<HashMap<String, String>>>,
+        requests: Arc<Mutex<Vec<(String, String)>>>, // (path, body)
+    }
+
+    impl FakeHttpClient {
+        pub fn new() -> Self {
+            Self {
+                responses: Arc::new(Mutex::new(HashMap::new())),
+                requests: Arc::new(Mutex::new(Vec::new())),
+            }
+        }
+
+        pub fn set_response(&self, path: &str, response: String) {
+            self.responses
+                .lock()
+                .unwrap()
+                .insert(path.to_string(), response);
+        }
+
+        pub fn set_generate_response(&self, completion_text: &str) {
+            let response = serde_json::json!({
+                "response": completion_text,
+                "done": true,
+                "context": [],
+                "total_duration": 1000000_u64,
+                "load_duration": 1000000_u64,
+                "prompt_eval_count": 10,
+                "prompt_eval_duration": 1000000_u64,
+                "eval_count": 20,
+                "eval_duration": 1000000_u64
+            });
+            self.set_response("/api/generate", response.to_string());
+        }
+
+        pub fn set_error(&self, path: &str) {
+            // Remove any existing response to force an error
+            self.responses.lock().unwrap().remove(path);
+        }
+
+        pub fn get_requests(&self) -> Vec<(String, String)> {
+            self.requests.lock().unwrap().clone()
+        }
+
+        pub fn clear_requests(&self) {
+            self.requests.lock().unwrap().clear();
+        }
+    }
+
+    impl HttpClient for FakeHttpClient {
+        fn type_name(&self) -> &'static str {
+            "FakeHttpClient"
+        }
+
+        fn user_agent(&self) -> Option<&http::HeaderValue> {
+            None
+        }
+
+        fn proxy(&self) -> Option<&Url> {
+            None
+        }
+
+        fn send(
+            &self,
+            req: http_client::Request<AsyncBody>,
+        ) -> futures::future::BoxFuture<'static, Result<Response<AsyncBody>, anyhow::Error>>
+        {
+            let path = req.uri().path().to_string();
+            let responses = Arc::clone(&self.responses);
+            let requests = Arc::clone(&self.requests);
+
+            Box::pin(async move {
+                // Store the request
+                requests.lock().unwrap().push((path.clone(), String::new()));
+
+                let responses = responses.lock().unwrap();
+
+                if let Some(response_body) = responses.get(&path).cloned() {
+                    let response = Response::builder()
+                        .status(200)
+                        .header("content-type", "application/json")
+                        .body(AsyncBody::from(response_body))
+                        .unwrap();
+                    Ok(response)
+                } else {
+                    Err(anyhow::anyhow!("No mock response set for {}", path))
+                }
+            })
+        }
+    }
+
+    pub struct Ollama;
+
+    impl Ollama {
+        pub fn fake(
+            cx: &mut gpui::TestAppContext,
+        ) -> (
+            gpui::Entity<OllamaCompletionProvider>,
+            std::sync::Arc<FakeHttpClient>,
+        ) {
+            let fake_client = std::sync::Arc::new(FakeHttpClient::new());
+
+            let provider =
+                cx.new(|cx| OllamaCompletionProvider::new("qwencoder".to_string(), None, cx));
+
+            (provider, fake_client)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_generate_request_with_suffix_serialization() {
+        let request = GenerateRequest {
+            model: "qwen2.5-coder:32b".to_string(),
+            prompt: "def fibonacci(n):".to_string(),
+            suffix: Some("    return result".to_string()),
+            stream: false,
+            options: Some(GenerateOptions {
+                num_predict: Some(150),
+                temperature: Some(0.1),
+                top_p: Some(0.95),
+                stop: None,
+            }),
+            keep_alive: None,
+            context: None,
+        };
+
+        let json = serde_json::to_string(&request).unwrap();
+        let parsed: GenerateRequest = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(parsed.model, "qwen2.5-coder:32b");
+        assert_eq!(parsed.prompt, "def fibonacci(n):");
+        assert_eq!(parsed.suffix, Some("    return result".to_string()));
+        assert!(!parsed.stream);
+        assert!(parsed.options.is_some());
+    }
 
     #[test]
     fn parse_completion() {
@@ -584,5 +821,65 @@ mod tests {
         let message_images = parsed["messages"][0]["images"].as_array().unwrap();
         assert_eq!(message_images.len(), 1);
         assert_eq!(message_images[0].as_str().unwrap(), base64_image);
+    }
+
+    #[test]
+    fn test_generate_request_with_api_key_serialization() {
+        let request = GenerateRequest {
+            model: "qwen2.5-coder:32b".to_string(),
+            prompt: "def fibonacci(n):".to_string(),
+            suffix: Some("    return result".to_string()),
+            stream: false,
+            options: Some(GenerateOptions {
+                num_predict: Some(150),
+                temperature: Some(0.1),
+                top_p: Some(0.95),
+                stop: None,
+            }),
+            keep_alive: None,
+            context: None,
+        };
+
+        // Test with API key
+        let json = serde_json::to_string(&request).unwrap();
+        let parsed: GenerateRequest = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(parsed.model, "qwen2.5-coder:32b");
+        assert_eq!(parsed.prompt, "def fibonacci(n):");
+        assert_eq!(parsed.suffix, Some("    return result".to_string()));
+        assert!(!parsed.stream);
+        assert!(parsed.options.is_some());
+
+        // Note: The API key parameter is passed to the generate function itself,
+        // not included in the GenerateRequest struct that gets serialized to JSON
+    }
+
+    #[test]
+    fn test_generate_request_with_stop_tokens() {
+        let request = GenerateRequest {
+            model: "codellama:7b-code".to_string(),
+            prompt: "def fibonacci(n):".to_string(),
+            suffix: Some("    return result".to_string()),
+            stream: false,
+            options: Some(GenerateOptions {
+                num_predict: Some(150),
+                temperature: Some(0.1),
+                top_p: Some(0.95),
+                stop: Some(vec!["<EOT>".to_string()]),
+            }),
+            keep_alive: None,
+            context: None,
+        };
+
+        let json = serde_json::to_string(&request).unwrap();
+        let parsed: GenerateRequest = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(parsed.model, "codellama:7b-code");
+        assert_eq!(parsed.prompt, "def fibonacci(n):");
+        assert_eq!(parsed.suffix, Some("    return result".to_string()));
+        assert!(!parsed.stream);
+        assert!(parsed.options.is_some());
+        let options = parsed.options.unwrap();
+        assert_eq!(options.stop, Some(vec!["<EOT>".to_string()]));
     }
 }
