@@ -618,15 +618,12 @@ impl<S: ScrollbarVisibilitySetting, T: ScrollableHandle> ScrollbarState<S, T> {
         &self.scroll_handle
     }
 
-    fn set_offset(&mut self, offset: Point<Pixels>, window: &mut Window, cx: &mut Context<Self>) {
+    fn set_offset(&mut self, offset: Point<Pixels>, cx: &mut Context<Self>) {
         if self.scroll_handle.offset() != offset {
             self.scroll_handle.set_offset(offset);
             self.notify_parent(cx);
             cx.notify();
         }
-
-        // We always want to show scrollbars in cases where the offset is updated.
-        self.show_scrollbars(window, cx);
     }
 
     fn is_dragging(&self) -> bool {
@@ -667,7 +664,7 @@ impl<S: ScrollbarVisibilitySetting, T: ScrollableHandle> ScrollbarState<S, T> {
 
     fn set_thumb_state(&mut self, state: ThumbState, window: &mut Window, cx: &mut Context<Self>) {
         if self.thumb_state != state {
-            if matches!(state, ThumbState::Inactive) {
+            if state == ThumbState::Inactive {
                 self.schedule_auto_hide(window, cx);
             } else {
                 self.show_scrollbars(window, cx);
@@ -916,6 +913,12 @@ impl ScrollbarLayout {
     }
 }
 
+impl PartialEq for ScrollbarLayout {
+    fn eq(&self, other: &Self) -> bool {
+        self.axis == other.axis && self.thumb_bounds == other.thumb_bounds
+    }
+}
+
 #[derive(Clone)]
 pub struct ScrollbarPrepaintState {
     parent_bounds: Bounds<Pixels>,
@@ -937,6 +940,12 @@ impl ScrollbarPrepaintState {
                 info.thumb_bounds.contains(position)
             }
         })
+    }
+}
+
+impl PartialEq for ScrollbarPrepaintState {
+    fn eq(&self, other: &Self) -> bool {
+        self.thumbs == other.thumbs
     }
 }
 
@@ -978,7 +987,8 @@ impl<S: ScrollbarVisibilitySetting, T: ScrollableHandle> Element for ScrollbarEl
         window: &mut Window,
         cx: &mut App,
     ) -> Self::PrepaintState {
-        self.state
+        let prepaint_state = self
+            .state
             .read(cx)
             .disabled()
             .not()
@@ -1056,7 +1066,16 @@ impl<S: ScrollbarVisibilitySetting, T: ScrollableHandle> Element for ScrollbarEl
                         })
                         .collect()
                 },
-            })
+            });
+        if prepaint_state
+            .as_ref()
+            .is_some_and(|state| Some(state) != self.state.read(cx).last_prepaint_state.as_ref())
+        {
+            self.state
+                .update(cx, |state, cx| state.show_scrollbars(window, cx));
+        }
+
+        prepaint_state
     }
 
     fn paint(
@@ -1158,7 +1177,6 @@ impl<S: ScrollbarVisibilitySetting, T: ScrollableHandle> Element for ScrollbarEl
                             );
                             state.set_offset(
                                 scroll_handle.offset().apply_along(*axis, |_| click_offset),
-                                window,
                                 cx,
                             );
                         };
@@ -1200,9 +1218,7 @@ impl<S: ScrollbarVisibilitySetting, T: ScrollableHandle> Element for ScrollbarEl
                                 let new_offset =
                                     scroll_handle.offset().apply_along(axis, |_| drag_offset);
 
-                                state.update(cx, |state, cx| {
-                                    state.set_offset(new_offset, window, cx)
-                                });
+                                state.update(cx, |state, cx| state.set_offset(new_offset, cx));
                                 cx.stop_propagation();
                             }
                         }
@@ -1218,7 +1234,7 @@ impl<S: ScrollbarVisibilitySetting, T: ScrollableHandle> Element for ScrollbarEl
                                     cx.stop_propagation();
                                 }
                                 ParentHovered::No(state_changed) if state_changed => {
-                                    state.schedule_auto_hide(window, cx);
+                                    state.set_thumb_state(ThumbState::Inactive, window, cx);
                                 }
                                 _ => {}
                             }
