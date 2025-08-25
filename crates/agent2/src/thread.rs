@@ -1287,7 +1287,7 @@ impl Thread {
                             started_at: Instant::now(),
                             duration: delay,
                         });
-                        this.update(cx, |this, cx| this.flush_pending_message(cx))?;
+                        this.update(cx, |this, _cx| this.pending_message.take())?;
 
                         cx.background_executor().timer(delay).await;
                         continue 'retry;
