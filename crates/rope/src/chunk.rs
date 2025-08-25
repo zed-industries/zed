@@ -13,7 +13,7 @@ pub struct Chunk {
     chars: u128,
     chars_utf16: u128,
     newlines: u128,
-    tabs: u128,
+    pub tabs: u128,
     pub text: ArrayString<MAX_BASE>,
 }
 
@@ -66,6 +66,11 @@ impl Chunk {
     #[inline(always)]
     pub fn slice(&self, range: Range<usize>) -> ChunkSlice<'_> {
         self.as_slice().slice(range)
+    }
+
+    #[inline(always)]
+    pub fn chars(&self) -> u128 {
+        self.chars
     }
 }
 
