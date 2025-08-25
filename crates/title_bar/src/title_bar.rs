@@ -276,9 +276,9 @@ impl TitleBar {
         let banner = cx.new(|cx| {
             OnboardingBanner::new(
                 "ACP Onboarding",
-                IconName::AiGemini,
-                "Gemini CLI in Zed",
-                Some("News:".into()),
+                IconName::Sparkle,
+                "Bring Your Own Agent",
+                Some("Introducing:".into()),
                 zed_actions::agent::OpenAcpOnboardingModal.boxed_clone(),
                 cx,
             )
